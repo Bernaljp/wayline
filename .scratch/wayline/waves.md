@@ -14,10 +14,10 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 | 2 | 02 (M0, #3), 03 (M0, #4), 04 (M0, #5) | Three independent slices on top of 01: init, the launcher, the guards. |
 | 3 | 05 (M0, #6), 11 (M1, #12), 16 (M2, #17), 18 (M2, #19), 20 (M3, #21) | First wide wave: the conductor, the dashboard, resources, the manifest, the scout are in different modules and merge cleanly. |
 | 4 | 06 (M0, #7), 07 (M1, #8), 12 (M1, #13), 17 (M2, #18), 21 (M3, #22), 23 (M3, #24), 25 (M3, #26), 27 (M4, #28), 32 (M4, #33), 48 (M7, #49), 52 (M7, #53) | Widest wave. 06 is the M0 live demo; the rest fan out across M1 to M7. |
-| 5 | 09 (M1, #10), 19 (M2, #20), 22 (M3, #23), 28 (M4, #29), 40 (M5, #41), 42 (M5, #43), 49 (M7, #50) | 09 is the resume ticket, at max; the six others live in other modules and run beside it. 08 and 10 wait for 09 (wave 6). 19 is the M2 demo: alone on `master`. |
+| 5 | 09 (M1, #10), 19 (M2, #20), 22 (M3, #23), 28 (M4, #29), 40 (M5, #41), 42 (M5, #43), 49 (M7, #50) | 09 is the resume ticket, at max; the six others live in other modules and run beside it. 08 and 10 wait for 09 (wave 6). 19 is the M2 demo: it runs after 15 (rule 7), at no calendar cost. |
 | 6 | 08 (M1, #9), 10 (M1, #11), 13 (M1, #14), 24 (M3, #25), 30 (M4, #31), 39 (M5, #40), 41 (M5, #42), 44 (M6, #45) | 08 and 10 both edit the conductor on top of 09: one after the other, or together and expect one real merge plus a suite run. |
-| 7 | 14 (M1, #15), 26 (M3, #27), 31 (M4, #32), 46 (M6, #47) |  |
-| 8 | 15 (M1, #16), 29 (M4, #30), 33 (M4, #34), 35 (M4, #36), 37 (M5, #38) | 15 closes M1; 33 and 34 (M4) sit on the critical path. |
+| 7 | 14 (M1, #15), 26 (M3, #27), 31 (M4, #32), 46 (M6, #47) | 26 is the M3 demo: it runs after 19 (rule 7). |
+| 8 | 15 (M1, #16), 29 (M4, #30), 33 (M4, #34), 35 (M4, #36), 37 (M5, #38) | 15 closes M1, and the demos 19 and 26 follow it (rule 7); 33 and 34 (M4) sit on the critical path. |
 | 9 | 34 (M4, #35) | 34 is the planner; five later tickets wait on it. |
 | 10 | 36 (M4, #37), 38 (M5, #39), 45 (M6, #46) | 36 is the M4 demo: alone on `master` first. 38 and 45 both touch the conductor loop: 38 first (43 needs it), then 45, or together and expect a merge. |
 | 11 | 43 (M5, #44) | 43 is the overnight run; it needs a real night. |
@@ -96,7 +96,7 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 4. Never use `git stash` across worktrees; `refs/stash` is shared.
 5. Keep two or three sessions in flight at most: the subscription window is shared by every session, and one ticket typically costs a large part of a window.
 6. Run 01 to 05 one at a time on `master` directly (no worktree needed while nothing else runs): they define the modules everything else edits.
-7. The eight milestone demos (06, 15, 19, 26, 36, 43, 47, 53) are integration points: run each alone, on `master`, with the tree clean.
+7. The eight milestone demos (06, 15, 19, 26, 36, 43, 47, 53) are integration points: run each alone, on `master`, with the tree clean, and in milestone order, so that every tag from v0.1.0 to v1.0.0 contains the code of the tags before it (`upgrade` moves a project between tags and prints the changelog between them, which needs a straight line). 19 and 26 therefore wait for 15 (wave 8), and 39 and 29 wait for them; this costs no calendar time, since none of the four is on the critical path. The schedule that follows these rules step by step is the order column of `.scratch/wayline/models.md`.
 8. Same-module pairs: 09 before 08 and 10 (recorded as blocked-by edges, so the frontier query holds 08 and 10 until 09 closes), and 38 before 45 in wave 10 (a note only). Running such a pair together is allowed at the price of one real merge and a suite run on `master` afterwards; if the merge conflicts, start a session at the repo root and use `/resolving-merge-conflicts`.
 
 ## Sequential alternative

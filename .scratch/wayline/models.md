@@ -36,23 +36,23 @@ Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`medium`, `high`, 
 
 ## By wave
 
-Waves are the earliest start from `.scratch/wayline/waves.md`. The suggestion column says how to fill the window: one Fable session at a time, with sonnet-grade tickets of the same wave beside it.
+Waves are the earliest start from `.scratch/wayline/waves.md`. The order column is a schedule under four rules: at most three sessions in flight; one Fable session at a time (so 07 and 32 never overlap); a milestone demo runs alone, and the demos land in milestone order so that every tag contains the code of the tags before it (`upgrade` moves a project between tags); same-module pairs (08 and 10 after 09, 38 before 45) run one after the other. Read a cell left to right: tickets separated by commas start together, each in its own worktree; "then" waits until everything before it has landed on `master` and is pushed; "alone" means nothing else in flight.
 
-| Wave | Tickets with their grade | Suggestion |
+| Wave | Tickets with their grade | Order |
 |---|---|---|
-| 1 | 01 fable xhigh | Alone on `master`. |
-| 2 | 02 opus high, 03 fable xhigh, 04 opus high | 03 first (the seam 05 needs most); 02 and 04 beside it. |
-| 3 | 05 fable max, 11 opus high, 16 sonnet medium, 18 sonnet medium, 20 opus high | 05 alone at max with 16 and 18 as cheap fillers; 11 and 20 after. |
-| 4 | 06 opus high, 07 fable xhigh, 12 sonnet medium, 17 opus high, 21 opus high, 23 sonnet medium, 25 sonnet medium, 27 opus high, 32 fable xhigh, 48 sonnet medium, 52 opus high | 06 first and alone (M0 demo, v0.1.0). Then 07 and 32 one at a time on Fable; 12, 23, 25, 48 fill the gaps. |
-| 5 | 09 fable max, 19 opus high, 22 opus high, 28 opus high, 40 opus high, 42 sonnet medium, 49 opus high | 09 at max at the top of a window, with 42 beside it; the others live in other modules and fill the window after. 19 is the M2 demo (v0.3.0), alone. |
-| 6 | 08 opus high, 10 opus high, 13 opus high, 24 opus high, 30 fable xhigh, 39 opus high, 41 sonnet medium, 44 opus high | 08 and 10 wait for 09 (same module): one after the other, or together with one real merge. 30 on Fable with 41 beside it. |
-| 7 | 14 opus high, 26 opus high, 31 fable xhigh, 46 opus high | 31 on Fable; 26 ends with the M3 demo (v0.4.0). |
-| 8 | 15 opus high, 29 opus high, 33 opus high, 35 opus high, 37 sonnet medium | No Fable ticket; 15 is the M1 demo (v0.2.0), run it alone. |
-| 9 | 34 fable max | Alone; five tickets wait on it. |
-| 10 | 36 opus high, 38 opus high, 45 fable xhigh | 36 is the M4 demo (v0.5.0), alone on `master` first; then 38 (43 needs it), then 45 on Fable. 38 and 45 both touch the conductor loop. |
-| 11 | 43 fable xhigh | The overnight run (v0.6.0); start it at the top of a window in the evening. |
-| 12 | 47 opus high, 50 fable xhigh, 51 opus high | 50 on Fable; 47 is the M6 demo (v0.7.0). |
-| 13 | 53 fable xhigh | The paper and the M7 demo (v1.0.0). |
+| 1 | 01 fable xhigh | 01 alone. |
+| 2 | 02 opus high, 03 fable xhigh, 04 opus high | 02, 03, 04 together. |
+| 3 | 05 fable max, 11 opus high, 16 sonnet medium, 18 sonnet medium, 20 opus high | 05, 16, 18 together, 05 at the top of a window; then 11, 20 together. |
+| 4 | 06 opus high, 07 fable xhigh, 12 sonnet medium, 17 opus high, 21 opus high, 23 sonnet medium, 25 sonnet medium, 27 opus high, 32 fable xhigh, 48 sonnet medium, 52 opus high | 06 alone; then 07, 27, 12 together; then 32, 17, 21 together; then 23, 25, 52 together; then 48. |
+| 5 | 09 fable max, 19 opus high, 22 opus high, 28 opus high, 40 opus high, 42 sonnet medium, 49 opus high | 09, 28, 42 together, 09 at the top of a window; then 22, 40, 49 together. 19 is the M2 demo: it waits for wave 8, after 15. |
+| 6 | 08 opus high, 10 opus high, 13 opus high, 24 opus high, 30 fable xhigh, 39 opus high, 41 sonnet medium, 44 opus high | 30, 08, 41 together; then 10, 13, 24 together; then 44. 39 waits for 19 (wave 8). |
+| 7 | 14 opus high, 26 opus high, 31 fable xhigh, 46 opus high | 31, 14, 46 together. 26 is the M3 demo: it waits for wave 8, after 19. |
+| 8 | 15 opus high, 29 opus high, 33 opus high, 35 opus high, 37 sonnet medium | 33, 35, 37 together; then 15 alone; then 19 alone; then 26 alone; then 29, 39 together. |
+| 9 | 34 fable max | 34 at the top of a window. It may start together with 29 and 39, since it needs only 33. |
+| 10 | 36 opus high, 38 opus high, 45 fable xhigh | 36 alone; then 38; then 45 (or 38 and 45 together, and expect one merge). |
+| 11 | 43 fable xhigh | 43 alone, started at the top of a window in the evening; nothing else that night. |
+| 12 | 47 opus high, 50 fable xhigh, 51 opus high | 50, 51 together; then 47 alone. |
+| 13 | 53 fable xhigh | 53 alone. |
 
 ## Per ticket
 
