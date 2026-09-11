@@ -2,7 +2,7 @@
 
 **What to build:** The conductor slows down before the subscription window closes and pauses when it does: it reads the five-hour and weekly utilization from every worker's `rate_limit_event` and from `claude -p "/usage"` at start, launches nothing new above 0.90, only difficulty 1 and 2 above 0.80, recognizes a hit limit by any of three signals, journals `paused` with the reset time, keeps doing subscription-free work, and continues at the reset. `wayline run --simulate-limit <seconds>` fakes a hit limit so the whole path can be demonstrated in minutes, and `wayline status` shows the utilization and the current action.
 
-**Blocked by:** 07 (Frontier, launchable subset, and two parallel workers)
+**Blocked by:** 07 (Frontier, launchable subset, and two parallel workers), 09 (Resume from the journal, heartbeat, control events, and worker re-adoption; a sequencing edge added on 2026-09-12: all three M1 conductor tickets edit the same wave loop, and 09 rewrites the event replay that 08 and 10 extend)
 
 **Status:** ready-for-agent
 

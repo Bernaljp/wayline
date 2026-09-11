@@ -1,6 +1,6 @@
 # Wayline tickets: what can run in parallel, and what waits
 
-Computed from the 98 blocking edges of the 53 tickets on 2026-09-11. The model and effort to implement each ticket are in `.scratch/wayline/models.md`. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline`; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
+Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline`; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
 
 ## The rule
 
@@ -14,12 +14,12 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 | 2 | 02 (M0, #3), 03 (M0, #4), 04 (M0, #5) | Three independent slices on top of 01: init, the launcher, the guards. |
 | 3 | 05 (M0, #6), 11 (M1, #12), 16 (M2, #17), 18 (M2, #19), 20 (M3, #21) | First wide wave: the conductor, the dashboard, resources, the manifest, the scout are in different modules and merge cleanly. |
 | 4 | 06 (M0, #7), 07 (M1, #8), 12 (M1, #13), 17 (M2, #18), 21 (M3, #22), 23 (M3, #24), 25 (M3, #26), 27 (M4, #28), 32 (M4, #33), 48 (M7, #49), 52 (M7, #53) | Widest wave. 06 is the M0 live demo; the rest fan out across M1 to M7. |
-| 5 | 08 (M1, #9), 09 (M1, #10), 10 (M1, #11), 19 (M2, #20), 22 (M3, #23), 28 (M4, #29), 40 (M5, #41), 42 (M5, #43), 49 (M7, #50) | M1's conductor features (08, 09, 10) all touch the conductor module: run them one at a time or expect merges. |
-| 6 | 13 (M1, #14), 24 (M3, #25), 30 (M4, #31), 39 (M5, #40), 41 (M5, #42), 44 (M6, #45) |  |
+| 5 | 09 (M1, #10), 19 (M2, #20), 22 (M3, #23), 28 (M4, #29), 40 (M5, #41), 42 (M5, #43), 49 (M7, #50) | 09 is the resume ticket, at max; the six others live in other modules and run beside it. 08 and 10 wait for 09 (wave 6). 19 is the M2 demo: alone on `master`. |
+| 6 | 08 (M1, #9), 10 (M1, #11), 13 (M1, #14), 24 (M3, #25), 30 (M4, #31), 39 (M5, #40), 41 (M5, #42), 44 (M6, #45) | 08 and 10 both edit the conductor on top of 09: one after the other, or together and expect one real merge plus a suite run. |
 | 7 | 14 (M1, #15), 26 (M3, #27), 31 (M4, #32), 46 (M6, #47) |  |
 | 8 | 15 (M1, #16), 29 (M4, #30), 33 (M4, #34), 35 (M4, #36), 37 (M5, #38) | 15 closes M1; 33 and 34 (M4) sit on the critical path. |
 | 9 | 34 (M4, #35) | 34 is the planner; five later tickets wait on it. |
-| 10 | 36 (M4, #37), 38 (M5, #39), 45 (M6, #46) |  |
+| 10 | 36 (M4, #37), 38 (M5, #39), 45 (M6, #46) | 36 is the M4 demo: alone on `master` first. 38 and 45 both touch the conductor loop: 38 first (43 needs it), then 45, or together and expect a merge. |
 | 11 | 43 (M5, #44) | 43 is the overnight run; it needs a real night. |
 | 12 | 47 (M6, #48), 50 (M7, #51), 51 (M7, #52) |  |
 | 13 | 53 (M7, #54) | The last ticket. |
@@ -39,9 +39,9 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 | 05 The conductor's M0 path with the fake worker | #6 | 3 | 02, 03, 04 | 06, 07, 27, 32 |
 | 06 M0 live: one trivial ticket end to end (verbatim prototype 16) | #7 | 4 | 05 | 15 |
 | 07 Frontier, launchable subset, and two parallel workers | #8 | 4 | 05 | 08, 09, 10, 19, 35, 37 |
-| 08 Integration protocol and the integrator role | #9 | 5 | 07 | 15, 38 |
-| 09 Resume from the journal, heartbeat, control events, and worker re-adoption | #10 | 5 | 07 | 13, 15, 44 |
-| 10 Pacing and pause on usage limits | #11 | 5 | 07 | 14, 15 |
+| 08 Integration protocol and the integrator role | #9 | 6 | 07, 09 | 15, 38 |
+| 09 Resume from the journal, heartbeat, control events, and worker re-adoption | #10 | 5 | 07 | 08, 10, 13, 15, 44 |
+| 10 Pacing and pause on usage limits | #11 | 6 | 07, 09 | 14, 15 |
 | 11 Read-only dashboard: transport, tabs, journal tail, overview (verbatim prototype 36) | #12 | 3 | 02 | 12, 13 |
 | 12 Dashboard graph, ticket pages, and logs endpoints | #13 | 4 | 11 | 15, 35, 42 |
 | 13 User units, run --detach, and the notifier | #14 | 6 | 09, 11 | 14 |
@@ -90,13 +90,14 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 
 `implement` commits to the current branch of the checkout it runs in. It creates no branch, opens no pull request, and closes nothing. Two `implement` sessions in one checkout share one index and one HEAD and corrupt each other (the skill's own docs report amended commits landing on the wrong session and vanished stashes). So:
 
-1. One session, one ticket, one git worktree. From the harness root: `git worktree add -b ticket/NN .worktrees/NN master` (the `.worktrees/` directory is ignored), then start Claude Code in `.worktrees/NN` and run `/implement` with the full path of the ticket file (or the issue URL) and ask it to confirm the title back before it starts. Claude Code's `--worktree NN` flag does the same in one step.
-2. When the session ends at its commit: from the harness root, `git merge --ff-only ticket/NN` (use a plain `git merge` when other tickets landed first), run `python -m unittest`, push `master`, and `git worktree remove .worktrees/NN`.
+1. One session, one ticket, one git worktree. A new agent created from `claude agents` gets one by default (`worktree.bgIsolation` is `auto`): `.claude/worktrees/<name>` on branch `worktree-<name>`, branched from origin's `master`. From a terminal, `claude -w ticket-NN --model <alias> --effort <effort>` does the same. Give the session `/implement` with the full path of the ticket file (or the issue URL) and ask it to confirm the title back before it starts. The manual route still works: `git worktree add -b ticket/NN .worktrees/NN master` (the `.worktrees/` directory is ignored), then start Claude Code inside it.
+2. When the agent reports done: from the harness root, `git merge --ff-only worktree-<name>` (a plain `git merge` once other tickets or close-out commits landed on `master` first, which is the normal case with several agents in flight), run `python -m unittest`, push `master` (the next worktree branches from origin's `master`, so push before creating the agents that depend on this ticket), then `claude rm <id>` to delete the finished session and its worktree (`git worktree remove .worktrees/NN` for a manual one).
 3. Close out by hand: set the ticket file's `Status:` to `done`, tick its criteria, close the GitHub issue (`gh issue close <n>`); the parent's progress bar and every dependent's blocked-by count update on their own.
 4. Never use `git stash` across worktrees; `refs/stash` is shared.
 5. Keep two or three sessions in flight at most: the subscription window is shared by every session, and one ticket typically costs a large part of a window.
 6. Run 01 to 05 one at a time on `master` directly (no worktree needed while nothing else runs): they define the modules everything else edits.
 7. The eight milestone demos (06, 15, 19, 26, 36, 43, 47, 53) are integration points: run each alone, on `master`, with the tree clean.
+8. Same-module pairs: 09 before 08 and 10 (recorded as blocked-by edges, so the frontier query holds 08 and 10 until 09 closes), and 38 before 45 in wave 10 (a note only). Running such a pair together is allowed at the price of one real merge and a suite run on `master` afterwards; if the merge conflicts, start a session at the repo root and use `/resolving-merge-conflicts`.
 
 ## Sequential alternative
 

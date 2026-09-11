@@ -25,14 +25,14 @@ It goes down when the spec and the research notes already carry the exact comman
 
 ## Launching at the right grade
 
-Each ticket gets a fresh session. Pick the model and the effort on the command line, then call implement:
+Each ticket gets a fresh session in its own git worktree. A new agent created from `claude agents` gets the worktree by default (`.claude/worktrees/<name>` on branch `worktree-<name>`, branched from origin's `master`); set its model and effort from the table when you create it. From a terminal the same launch is:
 
 ```
-claude --model fable --effort xhigh
+claude -w ticket-03 --model fable --effort xhigh
 /implement .scratch/wayline/issues/03-worker-launcher-seam.md
 ```
 
-Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`medium`, `high`, `xhigh`, `max`) from the table. Follow-up fixes to a ticket already on `master` rarely need its grade: `/clear` and relaunch one tier down.
+Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`medium`, `high`, `xhigh`, `max`) from the table. Push `master` after each merge: the next worktree branches from origin's `master`, not from your local one. Follow-up fixes to a ticket already on `master` rarely need its grade: `/clear` and relaunch one tier down.
 
 ## By wave
 
@@ -44,12 +44,12 @@ Waves are the earliest start from `.scratch/wayline/waves.md`. The suggestion co
 | 2 | 02 opus high, 03 fable xhigh, 04 opus high | 03 first (the seam 05 needs most); 02 and 04 beside it. |
 | 3 | 05 fable max, 11 opus high, 16 sonnet medium, 18 sonnet medium, 20 opus high | 05 alone at max with 16 and 18 as cheap fillers; 11 and 20 after. |
 | 4 | 06 opus high, 07 fable xhigh, 12 sonnet medium, 17 opus high, 21 opus high, 23 sonnet medium, 25 sonnet medium, 27 opus high, 32 fable xhigh, 48 sonnet medium, 52 opus high | 06 first and alone (M0 demo, v0.1.0). Then 07 and 32 one at a time on Fable; 12, 23, 25, 48 fill the gaps. |
-| 5 | 08 opus high, 09 fable max, 10 opus high, 19 opus high, 22 opus high, 28 opus high, 40 opus high, 42 sonnet medium, 49 opus high | 09 at max with 42 beside it; 08 and 10 after 09 (all three edit the conductor). |
-| 6 | 13 opus high, 24 opus high, 30 fable xhigh, 39 opus high, 41 sonnet medium, 44 opus high | 30 on Fable with 41 beside it. |
+| 5 | 09 fable max, 19 opus high, 22 opus high, 28 opus high, 40 opus high, 42 sonnet medium, 49 opus high | 09 at max at the top of a window, with 42 beside it; the others live in other modules and fill the window after. 19 is the M2 demo (v0.3.0), alone. |
+| 6 | 08 opus high, 10 opus high, 13 opus high, 24 opus high, 30 fable xhigh, 39 opus high, 41 sonnet medium, 44 opus high | 08 and 10 wait for 09 (same module): one after the other, or together with one real merge. 30 on Fable with 41 beside it. |
 | 7 | 14 opus high, 26 opus high, 31 fable xhigh, 46 opus high | 31 on Fable; 26 ends with the M3 demo (v0.4.0). |
 | 8 | 15 opus high, 29 opus high, 33 opus high, 35 opus high, 37 sonnet medium | No Fable ticket; 15 is the M1 demo (v0.2.0), run it alone. |
 | 9 | 34 fable max | Alone; five tickets wait on it. |
-| 10 | 36 opus high, 38 opus high, 45 fable xhigh | 36 is the M4 demo (v0.5.0), alone on `master`; 45 on Fable after it. |
+| 10 | 36 opus high, 38 opus high, 45 fable xhigh | 36 is the M4 demo (v0.5.0), alone on `master` first; then 38 (43 needs it), then 45 on Fable. 38 and 45 both touch the conductor loop. |
 | 11 | 43 fable xhigh | The overnight run (v0.6.0); start it at the top of a window in the evening. |
 | 12 | 47 opus high, 50 fable xhigh, 51 opus high | 50 on Fable; 47 is the M6 demo (v0.7.0). |
 | 13 | 53 fable xhigh | The paper and the M7 demo (v1.0.0). |
@@ -65,9 +65,9 @@ Waves are the earliest start from `.scratch/wayline/waves.md`. The suggestion co
 | 05 The conductor's M0 path with the fake worker | #6 | 3 | 5 | fable | max | The wave, prompt assembly, and the integration protocol: the shape every M1 to M5 ticket extends. |
 | 06 M0 live: one trivial ticket end to end | #7 | 4 | 3 | opus | high | A live run against the real CLI; the work is recording and fixing what the CLI does differently from the notes. |
 | 07 Frontier, launchable subset, and two parallel workers | #8 | 4 | 4 | fable | xhigh | Two workers at once decide the conductor's concurrency model; six tickets wait on it. |
-| 08 Integration protocol and the integrator role | #9 | 5 | 3 | opus | high | Rebase, fast-forward, and a fresh integrator on conflict, with real git conflicts in the tests. |
+| 08 Integration protocol and the integrator role | #9 | 6 | 3 | opus | high | Rebase, fast-forward, and a fresh integrator on conflict, with real git conflicts in the tests. |
 | 09 Resume from the journal, heartbeat, control events, and worker re-adoption | #10 | 5 | 5 | fable | max | Idempotent replay, re-adopting live workers by pid and stream, SIGKILL mid-wave: the "journal is the bus" thesis. |
-| 10 Pacing and pause on usage limits | #11 | 5 | 3 | opus | high | Utilization parsing and the three hit-limit signals; this is what keeps the overnight run alive at the window. |
+| 10 Pacing and pause on usage limits | #11 | 6 | 3 | opus | high | Utilization parsing and the three hit-limit signals; this is what keeps the overnight run alive at the window. |
 | 11 Read-only dashboard: transport, tabs, journal tail, overview | #12 | 3 | 3 | opus | high | Threading server, ETags, and the server-sent events alternative; research-notes 08 carries the server. |
 | 12 Dashboard graph, ticket pages, and logs endpoints | #13 | 4 | 2 | sonnet | medium | The 43-line layered layout is in the research note; the rest is endpoints and a page. |
 | 13 User units, run --detach, and the notifier | #14 | 6 | 3 | opus | high | Touches the owner's systemd user manager and the credentials env file; the uninstall must leave nothing behind. |

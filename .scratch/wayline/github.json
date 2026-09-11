@@ -74,7 +74,8 @@
    "id": 5428690081,
    "title": "Integration protocol and the integrator role",
    "blockers": [
-    "07"
+    "07",
+    "09"
    ],
    "milestone": "M1"
   },
@@ -92,7 +93,8 @@
    "id": 5428690833,
    "title": "Pacing and pause on usage limits",
    "blockers": [
-    "07"
+    "07",
+    "09"
    ],
    "milestone": "M1"
   },
@@ -531,8 +533,8 @@
  "relationships": {
   "sub_issues": 53,
   "sub_issue_error": null,
-  "dependencies": 98,
-  "dependencies_total": 98,
+  "dependencies": 100,
+  "dependencies_total": 100,
   "dependency_error": null
  }
 }
