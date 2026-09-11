@@ -3,7 +3,9 @@
 Every other module returns structured values and the ledger writes them: JSON and markdown by
 write-to-temp-then-rename, `journal.jsonl` and the other line files by append. Every write takes
 `fcntl.flock` on `research/.lock`, because the conductor, the tick, the dashboard, and the CLI
-verbs are separate processes that all write through this module.
+verbs are separate processes that all write through this module; inside one process the same
+lock is shared by every Ledger of the same project and by every thread, so it is re-entrant for
+the holder and exclusive for everyone else.
 
 The journal is the bus: one JSON object per line with `ts`, `event`, `ticket`, `session_id`,
 `job`, `payload`. The event names and the payload keys below are the vocabulary of the spec's
@@ -13,8 +15,12 @@ constants against the spec so the two cannot drift silently.
 
 import fcntl
 import json
+import logging
+import math
 import os
-import tempfile
+import stat
+import threading
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +31,12 @@ __all__ = ["Ledger", "LedgerError", "make_event", "now_ts", "EVENTS", "PAYLOAD_E
 
 JOURNAL = "journal.jsonl"
 LOCK = ".lock"
+
+_log = logging.getLogger("wayline.ledger")
+
+# Characters that end a line for some reader (str.splitlines, JavaScript, editors); a line file
+# never contains one raw, and the journal writer escapes them inside JSON strings.
+_LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85  "
 
 # --- event names -----------------------------------------------------------------------------
 
@@ -212,8 +224,8 @@ EVENTS = {
     FINDING: (K_ID, K_TICKET, K_TEXT, K_PROVENANCE, K_NEGATIVE),
     PROGRESS: (K_METRIC, K_VALUE, K_TICKET, K_RUN_ID, K_KEPT),
     DISCARDED: (K_TICKET, K_METRIC, K_BEST, K_SD, K_SEEDS),
-    PROPOSAL_ADMITTED: (K_ID, K_FROM, K_KIND, K_TICKET, K_REASON),
-    PROPOSAL_PARKED: (K_ID, K_FROM, K_KIND, K_TICKET, K_REASON),
+    PROPOSAL_ADMITTED: (K_ID, K_FROM, K_KIND, K_TICKET),
+    PROPOSAL_PARKED: (K_ID, K_FROM, K_KIND, K_REASON),
     DECISION_OPENED: (K_TICKET, K_BLOCKING, K_HUMAN_ONLY),
     DECISION: (K_TICKET, K_ANSWER, K_DECIDED_BY, K_RATIONALE, K_CONFIDENCE),
     JOB_LAUNCHED: (K_JOB, K_TICKET, K_UNIT, K_GPU_UUIDS, K_CORES, K_RAM_GB, K_ATTEMPT),
@@ -248,7 +260,6 @@ PAYLOAD_ENUMS = {
     (INTEGRATED, K_RESOLVED_BY): ("none", "integrator"),
     (TICKET_FAILED, K_NEXT): ("resume", "tier_up", "split", "needs_human"),
     (VERDICT, K_SUBJECT_KIND): ("ticket", "claim", "figure", "spec", "dossier", "paper"),
-    (PROPOSAL_ADMITTED, K_REASON): ("radius", "duplicate", "cap", "blockers"),
     (PROPOSAL_PARKED, K_REASON): ("radius", "duplicate", "cap", "blockers"),
     (DECISION, K_DECIDED_BY): ("human", "decider"),
     (JOB_RETRIED, K_OOM): ("host", "gpu"),
@@ -261,7 +272,7 @@ PAYLOAD_ENUMS = {
 
 
 class LedgerError(ValueError):
-    """A write the ledger refuses: an event outside the vocabulary, a path outside research/, an invalid value."""
+    """A write the ledger refuses: an event outside the vocabulary, a path outside research/, a value it cannot write."""
 
 
 def now_ts():
@@ -294,49 +305,89 @@ def make_event(event, payload=None, ticket=None, session_id=None, job=None, ts=N
     return record
 
 
+# --- the per-process lock state --------------------------------------------------------------
+# flock is per open file description, so one process must hold one descriptor per lock file and
+# serialize its own threads in front of it; every Ledger of the same project shares this.
+
+
+class _ProcessLock:
+    def __init__(self):
+        self.mutex = threading.RLock()
+        self.fd = None
+        self.depth = 0
+
+
+_process_locks = {}
+_registry_mutex = threading.Lock()
+
+
+def _process_lock(lock_path):
+    with _registry_mutex:
+        return _process_locks.setdefault(str(lock_path), _ProcessLock())
+
+
+def _forget_locks_in_child():
+    # A forked child inherits the descriptors but not the right to the parent's lock.
+    _process_locks.clear()
+
+
+os.register_at_fork(after_in_child=_forget_locks_in_child)
+
+
 class Ledger:
     """The writer for one project's `research/`; every method takes the lock."""
 
     def __init__(self, project):
-        self.project = Path(project)
+        self.project = Path(project).resolve()
         self.research = self.project / "research"
         self.lock_path = self.research / LOCK
         self.journal_path = self.research / JOURNAL
-        self._lock_fd = None
-        self._lock_depth = 0
 
     # --- the lock ---
 
     @contextmanager
     def lock(self):
-        """Hold `flock(research/.lock)`; re-entrant within one Ledger, exclusive across processes."""
-        if self._lock_depth == 0:
-            self.research.mkdir(parents=True, exist_ok=True)
-            fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        """Hold `flock(research/.lock)`: re-entrant for the holding thread, exclusive for every other thread and process."""
+        state = _process_lock(self.lock_path)
+        with state.mutex:
+            if state.depth == 0:
+                self.research.mkdir(parents=True, exist_ok=True)
+                fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                except BaseException:
+                    os.close(fd)
+                    raise
+                state.fd = fd
+            state.depth += 1
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-            except BaseException:
-                os.close(fd)
-                raise
-            self._lock_fd = fd
-        self._lock_depth += 1
-        try:
-            yield
-        finally:
-            self._lock_depth -= 1
-            if self._lock_depth == 0:
-                fd, self._lock_fd = self._lock_fd, None
-                fcntl.flock(fd, fcntl.LOCK_UN)
-                os.close(fd)
+                yield
+            finally:
+                state.depth -= 1
+                if state.depth == 0:
+                    fd, state.fd = state.fd, None
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
 
     # --- paths ---
 
-    def path(self, relpath):
-        """The absolute path of a file under research/; refuses anything outside it."""
+    def path(self, relpath, replacing=False):
+        """The absolute path of a file under research/; refuses anything that would land outside it.
+
+        `replacing` marks a write-then-rename, which the append-only journal never accepts.
+        The lock file is never a target.
+        """
         relative = Path(relpath)
         if relative.is_absolute() or ".." in relative.parts or not relative.parts:
             raise LedgerError("ledger paths are relative to research/ and stay inside it, got %r" % (relpath,))
-        return self.research / relative
+        if relative.name == LOCK:
+            raise LedgerError("research/%s is the ledger's lock, not a file to write" % LOCK)
+        if replacing and relative == Path(JOURNAL):
+            raise LedgerError("research/%s is append-only; use append_event" % JOURNAL)
+        target = self.research / relative
+        if not target.resolve().is_relative_to(self.research.resolve()):
+            raise LedgerError("%r resolves outside research/ (through a symlink); refused" % (relpath,))
+        return target
 
     # --- writes ---
 
@@ -344,15 +395,15 @@ class Ledger:
         """Write a JSON file atomically; with `schema` (a shipped schema name) the value is validated first."""
         if schema is not None:
             check(value, load_schema(schema), name="%s (schema %s)" % (relpath, schema))
-        text = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
-        target = self.path(relpath)
+        text = _dumps(value, indent=2) + "\n"
+        target = self.path(relpath, replacing=True)
         with self.lock():
             _atomic_write(target, text)
         return target
 
     def write_markdown(self, relpath, text):
         """Write a markdown (or any text) file atomically."""
-        target = self.path(relpath)
+        target = self.path(relpath, replacing=True)
         if not text.endswith("\n"):
             text += "\n"
         with self.lock():
@@ -360,15 +411,24 @@ class Ledger:
         return target
 
     def append_line(self, relpath, line):
-        """Append one line to a line file (journal.jsonl, findings.jsonl, qa_log.md), durably."""
-        if "\n" in line or "\r" in line:
-            raise LedgerError("a line file takes one line at a time; the line contains a line break")
+        """Append one line to a line file (journal.jsonl, findings.jsonl, qa_log.md), durably.
+
+        A torn last line left by a crashed writer is closed with a newline first, so the new
+        record never glues onto it; readers skip the torn line.
+        """
+        bad = [char for char in _LINE_BREAKS if char in line]
+        if bad:
+            raise LedgerError("a line file takes one line at a time; the line contains %s" % ", ".join("U+%04X" % ord(char) for char in bad))
         target = self.path(relpath)
         with self.lock():
             target.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+            fd = os.open(target, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
             try:
                 data = (line + "\n").encode("utf-8")
+                size = os.fstat(fd).st_size
+                if size > 0 and os.pread(fd, 1, size - 1) != b"\n":
+                    _log.warning("%s ended without a newline (a torn line); closing it before appending", target)
+                    data = b"\n" + data
                 view = memoryview(data)
                 while view:
                     written = os.write(fd, view)
@@ -379,15 +439,22 @@ class Ledger:
         return target
 
     def append_event(self, event, payload=None, ticket=None, session_id=None, job=None, ts=None):
-        """Validate and append one journal event; returns the record written."""
-        record = make_event(event, payload, ticket=ticket, session_id=session_id, job=job, ts=ts)
-        self.append_line(JOURNAL, json.dumps(record, separators=(",", ":"), ensure_ascii=False))
+        """Validate and append one journal event; returns the record written.
+
+        The timestamp is taken under the lock, so the journal's file order and its `ts` order agree.
+        """
+        with self.lock():
+            record = make_event(event, payload, ticket=ticket, session_id=session_id, job=job, ts=ts or now_ts())
+            self.append_line(JOURNAL, _escape_line_breaks(_dumps(record, separators=(",", ":"))))
         return record
 
     # --- reads (anyone may read; these are conveniences for replay) ---
 
     def read_events(self, offset=0):
-        """The journal events from byte `offset` on, and the offset after the last whole line."""
+        """The journal events from byte `offset` on, and the offset after the last whole line.
+
+        A line that is not JSON (a torn line closed by a later append) is skipped with a warning.
+        """
         if not self.journal_path.exists():
             return [], 0
         events = []
@@ -398,8 +465,12 @@ class Ledger:
                 if not raw.endswith(b"\n"):
                     break  # a line still being written; read it next time
                 position += len(raw)
-                if raw.strip():
+                if not raw.strip():
+                    continue
+                try:
                     events.append(json.loads(raw.decode("utf-8")))
+                except ValueError:
+                    _log.warning("%s: skipping a torn line at byte %d", self.journal_path, position - len(raw))
         return events, position
 
     def read_json(self, relpath):
@@ -407,18 +478,48 @@ class Ledger:
             return json.load(handle)
 
 
+def _dumps(value, **options):
+    """JSON text, refusing NaN and Infinity (which are not JSON) and unserializable values."""
+    try:
+        return json.dumps(value, ensure_ascii=False, allow_nan=False, **options)
+    except ValueError as failure:  # NaN or Infinity
+        raise LedgerError("the ledger cannot write %s" % failure) from None
+    except TypeError as failure:
+        raise LedgerError("the ledger cannot write %s" % failure) from None
+
+
+def _escape_line_breaks(text):
+    """Escape the line-breaking characters json.dumps leaves raw, so one record stays one line."""
+    for char in "\x85  ":
+        if char in text:
+            text = text.replace(char, "\\u%04x" % ord(char))
+    return text
+
+
 def _atomic_write(target, text):
+    """Write `text` to a temp file next to `target`, fsync, and rename it into place.
+
+    The new file gets the mode of the file it replaces, else 0666 under the umask, so a rewrite
+    never narrows who can read a ledger file.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix="." + target.name + ".", suffix=".tmp", dir=target.parent)
+    try:
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+    except FileNotFoundError:
+        mode = None
+    temp = target.parent / (".%s.%s.tmp" % (target.name, uuid.uuid4().hex))
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            if mode is not None:
+                os.fchmod(handle.fileno(), mode)
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_name, target)
+        os.replace(temp, target)
     except BaseException:
         try:
-            os.unlink(temp_name)
+            os.unlink(temp)
         except FileNotFoundError:
             pass
         raise

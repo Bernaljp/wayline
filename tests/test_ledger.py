@@ -4,9 +4,12 @@ import fcntl
 import json
 import multiprocessing
 import os
+import stat
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from wayline import ledger
 from wayline.jsonschema import ValidationError
@@ -153,13 +156,143 @@ class WriteTest(LedgerCase):
 
     def test_failed_write_leaves_the_old_file_and_no_temp(self):
         self.book.write_json("a.json", {"v": 1})
-        with self.assertRaises(TypeError):
-            self.book.write_json("a.json", {"v": object()})
+
+        def refuse(source, target):
+            raise OSError("disk went away")
+
+        with mock.patch.object(ledger.os, "replace", refuse):
+            with self.assertRaises(OSError):
+                self.book.write_json("a.json", {"v": 2})
         self.assertEqual(self.book.read_json("a.json"), {"v": 1})
         self.assertEqual([p.name for p in self.book.research.iterdir() if p.name.endswith(".tmp")], [])
 
+    def test_values_that_are_not_json_are_refused(self):
+        with self.assertRaises(LedgerError):
+            self.book.write_json("a.json", {"v": object()})
+        for bad in [float("nan"), float("inf"), float("-inf")]:
+            with self.subTest(value=bad):
+                with self.assertRaises(LedgerError):
+                    self.book.write_json("a.json", {"v": bad})
+                with self.assertRaises((LedgerError, ValidationError)):
+                    self.book.append_event(ledger.PROGRESS, {"metric": "m", "value": bad})
+        self.assertFalse((self.book.research / "a.json").exists())
+        self.assertFalse(self.book.journal_path.exists())
+
+    def test_rewrite_keeps_the_file_mode_and_a_new_file_gets_the_umask(self):
+        old_umask = os.umask(0o022)
+        try:
+            target = self.book.write_json("wide.json", {"v": 1})
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644)
+            os.chmod(target, 0o600)
+            self.book.write_json("wide.json", {"v": 2})
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+            lines = self.book.append_line("lines.jsonl", "{}")
+            self.assertEqual(stat.S_IMODE(lines.stat().st_mode), 0o644)
+        finally:
+            os.umask(old_umask)
+
+    def test_a_symlink_cannot_lead_a_write_outside_research(self):
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        self.book.research.mkdir(parents=True, exist_ok=True)
+        os.symlink(outside, self.book.research / "out")
+        with self.assertRaises(LedgerError):
+            self.book.write_json("out/escaped.json", {"v": 1})
+        with self.assertRaises(LedgerError):
+            self.book.append_line("out/escaped.jsonl", "{}")
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_a_relative_project_path_becomes_absolute(self):
+        cwd = os.getcwd()
+        os.chdir(self.temp.name)
+        try:
+            book = Ledger("proj")
+        finally:
+            os.chdir(cwd)
+        self.assertTrue(book.research.is_absolute())
+        self.assertEqual(book.research, (Path(self.temp.name) / "proj" / "research").resolve())
+
+    def test_the_lock_and_the_journal_are_not_targets_of_a_rename(self):
+        with self.assertRaises(LedgerError):
+            self.book.write_json(".lock", {})
+        with self.assertRaises(LedgerError):
+            self.book.append_line(".lock", "x")
+        with self.assertRaises(LedgerError):
+            self.book.write_markdown("journal.jsonl", "not json")
+        with self.assertRaises(LedgerError):
+            self.book.write_json("journal.jsonl", [])
+
+    def test_line_breaking_characters_never_reach_a_line_file_raw(self):
+        for char in ["\n", "\r", " ", " ", "\x85", "\x0c"]:
+            with self.subTest(char="U+%04X" % ord(char)):
+                with self.assertRaises(LedgerError):
+                    self.book.append_line("findings.jsonl", "a%sb" % char)
+        record = self.book.append_event(ledger.TICKET_NEEDS_HUMAN, {"ticket": 1, "question": "line sep\x85nel\r\n?"}, ticket=1)
+        raw = self.book.journal_path.read_bytes()
+        self.assertEqual(raw.count(b"\n"), 1)
+        for char in [" ", "\x85", "\r"]:
+            self.assertNotIn(char.encode("utf-8"), raw)
+        events, _ = self.book.read_events()
+        self.assertEqual(events, [record])
+
+    def test_a_torn_tail_is_closed_and_skipped(self):
+        first = self.book.append_event(ledger.UNPAUSED)
+        with open(self.book.journal_path, "ab") as handle:
+            handle.write(b'{"ts": "2026-09-12T00:00:00Z", "event": "unpau')
+        with self.assertLogs("wayline.ledger", level="WARNING"):
+            second = self.book.append_event(ledger.PHASE, {"from": "P0", "to": "P1"})
+        lines = self.book.journal_path.read_bytes().split(b"\n")
+        self.assertEqual(len(lines), 4)  # first, torn, second, and the empty tail
+        self.assertEqual(json.loads(lines[2]), second)
+        with self.assertLogs("wayline.ledger", level="WARNING"):
+            events, offset = self.book.read_events()
+        self.assertEqual(events, [first, second])
+        self.assertEqual(offset, self.book.journal_path.stat().st_size)
+
 
 class LockTest(LedgerCase):
+    def test_two_ledgers_of_one_project_share_the_lock_in_one_process(self):
+        other = Ledger(self.project)
+        with self.book.lock():
+            other.write_json("shared.json", {"v": 1})  # would deadlock on a second flock descriptor
+            with other.lock():
+                self.book.append_event(ledger.UNPAUSED)
+        self.assertEqual(other.read_json("shared.json"), {"v": 1})
+
+    def test_another_thread_waits_for_the_lock(self):
+        held = threading.Event()
+        release = threading.Event()
+        entered = []
+
+        def holder():
+            with self.book.lock():
+                held.set()
+                release.wait(60)
+
+        def contender():
+            with self.book.lock():
+                entered.append(True)
+
+        first = threading.Thread(target=holder)
+        first.start()
+        self.assertTrue(held.wait(60))
+        second = threading.Thread(target=contender)
+        second.start()
+        state = ledger._process_lock(self.book.lock_path)
+        self.assertFalse(state.mutex.acquire(blocking=False), "a second thread could enter the critical section")
+        self.assertEqual(entered, [])
+        release.set()
+        first.join(60)
+        second.join(60)
+        self.assertEqual(entered, [True])
+
+    def test_timestamps_follow_file_order(self):
+        for _ in range(50):
+            self.book.append_event(ledger.UNPAUSED)
+        events, _ = self.book.read_events()
+        stamps = [event["ts"] for event in events]
+        self.assertEqual(stamps, sorted(stamps))
+
     def test_lock_is_flock_on_research_lock_and_reentrant(self):
         context = multiprocessing.get_context("fork")
         queue = context.Queue()

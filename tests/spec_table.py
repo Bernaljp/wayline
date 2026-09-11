@@ -65,7 +65,13 @@ def spec_journal_vocabulary(spec_path):
     events, enums = {}, {}
     for cells in table_rows(text, ["Event", "Payload keys"]):
         names = _BACKTICKED.findall(cells[0])
-        keys, key_enums, only_for = _parse_payload_cell(cells[1])
+        keys, key_enums, only_for, alternatives = _parse_payload_cell(cells[1])
+        if alternatives:
+            # "`ticket` or `reason`" in a row naming two events: the first key is the first event's.
+            if len(alternatives) != len(names):
+                raise ValueError("row %r: %d alternatives for %d events" % (cells[0], len(alternatives), len(names)))
+            for name, key in zip(names, alternatives):
+                only_for[key] = name
         for name in names:
             events[name] = tuple(key for key in keys if only_for.get(key, name) == name)
             for key, values in key_enums.items():
@@ -77,8 +83,8 @@ def spec_journal_vocabulary(spec_path):
 def _parse_payload_cell(cell):
     cell = _PARENTHETICAL.sub("", cell)
     if cell.strip() == "none":
-        return [], {}, {}
-    keys, key_enums, only_for = [], {}, {}
+        return [], {}, {}, []
+    keys, key_enums, only_for, alternatives = [], {}, {}, []
     for segment in cell.split(";"):
         adds = re.match(r"\s*`(\w+)` adds `(\w+)`\s*$", segment)
         if adds:
@@ -86,11 +92,14 @@ def _parse_payload_cell(cell):
             keys.append(adds.group(2))
             continue
         head, colon, tail = segment.partition(":")
+        either = re.search(r"`(\w+)` or `(\w+)`", head)
+        if either:
+            alternatives.extend(either.groups())
         head_keys = _BACKTICKED.findall(head)
         keys.extend(head_keys)
         if colon:
             key_enums[head_keys[-1]] = _BACKTICKED.findall(tail)
-    return keys, key_enums, only_for
+    return keys, key_enums, only_for, alternatives
 
 
 def spec_policy_keys(spec_path):

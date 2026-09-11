@@ -23,6 +23,8 @@ _INT_RE = re.compile(r"-?\d+\Z")
 _FLOAT_RE = re.compile(r"-?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?\Z|-?\d+[eE][-+]?\d+\Z")
 _LOOKALIKES = frozenset(["~", "True", "TRUE", "False", "FALSE", "Null", "NULL", ".inf", "-.inf", ".nan", ".Inf", ".NaN"])
 _INDICATORS = frozenset("[]{}\"'&*|>!%@`#,?:")
+# Characters some reader treats as a line end (str.splitlines does); written escaped, never raw.
+_LINE_BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85  ")
 _ESCAPES = {"\\": "\\", '"': '"', "n": "\n", "t": "\t", "r": "\r", "/": "/", "0": "\0"}
 
 
@@ -43,8 +45,12 @@ class FrontmatterError(ValueError):
 
 
 def parse(text, line_offset=0):
-    """Parse frontmatter text into a dict, keeping key order; `line_offset` shifts line numbers."""
-    lines = text.splitlines()
+    """Parse frontmatter text into a dict, keeping key order; `line_offset` shifts line numbers.
+
+    Only "\\n" ends a line, as in the files the ledger writes; the other characters
+    `str.splitlines` would break on (U+000D, U+0085, U+2028, ...) are data and are quoted on write.
+    """
+    lines = text.split("\n")
     result = {}
     index = 0
     while index < len(lines):
@@ -272,11 +278,17 @@ def _parse_quoted(text, lineno):
                 break
             escape = text[position]
             if escape == "u":
-                hex_digits = text[position + 1: position + 5]
-                if len(hex_digits) != 4 or any(digit not in "0123456789abcdefABCDEF" for digit in hex_digits):
-                    raise FrontmatterError("a \\u escape needs four hex digits", lineno)
-                out.append(chr(int(hex_digits, 16)))
-                position += 5
+                code, position = _unicode_escape(text, position, lineno)
+                if 0xD800 <= code <= 0xDBFF:  # a high surrogate must pair with a low one
+                    if text[position:position + 2] != "\\u":
+                        raise FrontmatterError("a lone surrogate \\u%04x cannot be written back" % code, lineno)
+                    low, position = _unicode_escape(text, position + 1, lineno)
+                    if not 0xDC00 <= low <= 0xDFFF:
+                        raise FrontmatterError("a lone surrogate \\u%04x cannot be written back" % code, lineno)
+                    code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                elif 0xDC00 <= code <= 0xDFFF:
+                    raise FrontmatterError("a lone surrogate \\u%04x cannot be written back" % code, lineno)
+                out.append(chr(code))
                 continue
             if escape not in _ESCAPES:
                 raise FrontmatterError("unknown escape \\%s in double-quoted string" % escape, lineno)
@@ -290,6 +302,14 @@ def _parse_quoted(text, lineno):
         out.append(char)
         position += 1
     raise FrontmatterError("unterminated double quote", lineno)
+
+
+def _unicode_escape(text, position, lineno):
+    """Read the four hex digits after the `u` at `position`; return the code and the position after them."""
+    hex_digits = text[position + 1: position + 5]
+    if len(hex_digits) != 4 or any(digit not in "0123456789abcdefABCDEF" for digit in hex_digits):
+        raise FrontmatterError("a \\u escape needs four hex digits", lineno)
+    return int(hex_digits, 16), position + 5
 
 
 # --- serializing -----------------------------------------------------------------------------
@@ -379,7 +399,7 @@ def _safe_bare(text, flow):
         return False
     if '"' in text or "\\" in text:
         return False
-    if any(ord(char) < 32 or ord(char) == 127 for char in text):
+    if any(ord(char) < 32 or ord(char) == 127 or char in _LINE_BREAKS or 0xD800 <= ord(char) <= 0xDFFF for char in text):
         return False
     if flow and any(char in text for char in "[]{},"):
         return False
@@ -399,8 +419,10 @@ def _quote(text):
             out.append("\\t")
         elif char == "\r":
             out.append("\\r")
-        elif ord(char) < 32 or ord(char) == 127:
+        elif ord(char) < 32 or ord(char) == 127 or char in _LINE_BREAKS:
             out.append("\\u%04x" % ord(char))
+        elif 0xD800 <= ord(char) <= 0xDFFF:
+            raise FrontmatterError("a lone surrogate U+%04X cannot be written" % ord(char))
         else:
             out.append(char)
     out.append('"')
@@ -419,7 +441,8 @@ def load_document(text):
         if lines[index].rstrip() == "---":
             mapping = parse("\n".join(lines[1:index]), line_offset=1)
             return mapping, "\n".join(lines[index + 1:])
-    raise FrontmatterError("closing '---' line not found", len(lines))
+    last_line = len(lines) - 1 if text.endswith("\n") else len(lines)
+    raise FrontmatterError("closing '---' line not found", last_line)
 
 
 def dump_document(mapping, body):

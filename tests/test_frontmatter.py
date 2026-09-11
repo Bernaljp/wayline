@@ -41,6 +41,28 @@ class ScalarTest(unittest.TestCase):
     def test_bare_string_may_end_with_a_bracket(self):
         self.assertEqual(parse("a: see figure 2]\n"), {"a": "see figure 2]"})
 
+    def test_surrogate_pairs_and_lone_surrogates(self):
+        self.assertEqual(parse(r'a: "😀"'), {"a": "\U0001f600"})
+        self.assertEqual(parse(serialize({"a": "\U0001f600"})), {"a": "\U0001f600"})
+        for text in [r'a: "\ud83d"', r'a: "\ud83dx"', r'a: "\ude00"', r'a: "\ud83dA"']:
+            with self.subTest(text=text):
+                with self.assertRaises(FrontmatterError):
+                    parse(text)
+        with self.assertRaises(FrontmatterError):
+            serialize({"a": "\ud83d"})
+
+    def test_only_newline_ends_a_line(self):
+        """U+2028, U+0085, a lone carriage return: data inside a line, never a line end."""
+        for value in ["x y", "x y", "x\x85y", "x\ry", "x\x0cy", "x y #"]:
+            with self.subTest(value=repr(value)):
+                text = serialize({"a": value, "b": 1})
+                self.assertEqual(text.count("\n"), 2)
+                self.assertNotIn(value[1], text)
+                self.assertEqual(parse(text), {"a": value, "b": 1})
+        self.assertEqual(parse("a: x y\nb: 1\n"), {"a": "x y", "b": 1})
+        self.assertEqual(parse('a: "x y #"\nb: 1\n'), {"a": "x y #", "b": 1})
+        self.assertEqual(parse("a: 1\r\nb: 2\r\n"), {"a": 1, "b": 2})
+
     def test_empty_value_is_null(self):
         self.assertEqual(parse("a:\nb: 1\n"), {"a": None, "b": 1})
 
@@ -164,6 +186,17 @@ class RejectionTest(unittest.TestCase):
         with self.assertRaises(FrontmatterError) as caught:
             load_document("---\na: 1\nb: &x 1\n---\n")
         self.assertEqual(caught.exception.line, 3)
+        with self.assertRaises(FrontmatterError) as caught:
+            load_document("---\na: 1\nb: 2\r\nc: &x 1\n---\n")
+        self.assertEqual(caught.exception.line, 4)
+
+    def test_missing_closing_fence_names_the_last_line(self):
+        with self.assertRaises(FrontmatterError) as caught:
+            load_document("---\na: 1\nbody\n")
+        self.assertEqual(caught.exception.line, 3)
+        with self.assertRaises(FrontmatterError) as caught:
+            load_document("---\na: 1")
+        self.assertEqual(caught.exception.line, 2)
 
 
 class SerializeTest(unittest.TestCase):

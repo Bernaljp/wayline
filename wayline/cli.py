@@ -106,6 +106,9 @@ def temporary_verb(verb):
 def overview():
     lines = ["wayline " + TAG, "", "usage: wayline <verb> [arguments]", ""]
     width = max(len(verb.usage) for verb in VERBS)
+    stray = [verb.name for verb in VERBS if verb.group not in GROUP_TITLES]
+    if stray:
+        raise ValueError("verb(s) %s belong to a group the overview does not print" % ", ".join(stray))
     for group in GROUP_TITLES:
         members = [verb for verb in VERBS if verb.group == group]
         if not members:
@@ -135,4 +138,15 @@ def main(argv=None):
     if verb.handler is None:
         print("wayline %s: not yet implemented" % verb.name, file=sys.stderr)
         return 2
-    return int(verb.handler(args[1:]) or 0)
+    return exit_code(verb.name, verb.handler(args[1:]))
+
+
+def exit_code(name, result):
+    """The process exit code for what a handler returned: None or True is 0, False is 1, an int 0..255 is itself."""
+    if result is None or result is True:
+        return 0
+    if result is False:
+        return 1
+    if isinstance(result, int) and 0 <= result <= 255:
+        return result
+    raise TypeError("wayline %s returned %r; a verb returns an exit code 0..255, True, False, or None" % (name, result))

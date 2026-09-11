@@ -51,10 +51,19 @@ class VocabularyTest(unittest.TestCase):
         spec_events = set(self.events)
         spec_keys = {key for payload in self.events.values() for key in payload}
         for name in dir(ledger):
+            if name.startswith("_"):
+                continue
             if name.startswith("K_"):
                 self.assertIn(getattr(ledger, name), spec_keys, name)
             elif name.isupper() and isinstance(getattr(ledger, name), str) and name not in ("JOURNAL", "LOCK"):
                 self.assertIn(getattr(ledger, name), spec_events, name)
+
+    def test_a_row_with_alternatives_splits_per_event(self):
+        """'`ticket` or `reason`' on the proposal row: admitted carries the ticket, parked the reason."""
+        self.assertEqual(self.events["proposal_admitted"], ("id", "from", "kind", "ticket"))
+        self.assertEqual(self.events["proposal_parked"], ("id", "from", "kind", "reason"))
+        self.assertIn(("proposal_parked", "reason"), self.enums)
+        self.assertNotIn(("proposal_admitted", "reason"), self.enums)
 
 
 if __name__ == "__main__":

@@ -92,11 +92,27 @@ class NotYetImplementedTest(unittest.TestCase):
 
     def test_a_handler_receives_the_remaining_arguments(self):
         seen = []
-        verb = cli.Verb("probe", "probe [args]", "a test verb", "test", handler=lambda args: seen.append(args) or 7)
+        verb = cli.Verb("probe", "probe [args]", "a test verb", "tools", handler=lambda args: seen.append(args) or 7)
         with cli.temporary_verb(verb):
             code = cli.main(["probe", "--x", "1"])
         self.assertEqual(code, 7)
         self.assertEqual(seen, [["--x", "1"]])
+
+    def test_exit_codes_from_what_a_handler_returns(self):
+        for result, code in [(None, 0), (True, 0), (False, 1), (0, 0), (3, 3), (255, 255)]:
+            with self.subTest(result=result):
+                self.assertEqual(cli.exit_code("probe", result), code)
+        for result in [256, -1, "done", 1.5, [0]]:
+            with self.subTest(result=result):
+                with self.assertRaises(TypeError):
+                    cli.exit_code("probe", result)
+
+    def test_every_verb_belongs_to_a_printed_group(self):
+        for verb in cli.VERBS:
+            self.assertIn(verb.group, cli.GROUP_TITLES, verb.name)
+        with cli.temporary_verb(cli.Verb("stray", "stray", "misfiled", "nowhere")):
+            with self.assertRaises(ValueError):
+                cli.overview()
 
 
 if __name__ == "__main__":

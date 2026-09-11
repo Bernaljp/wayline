@@ -109,6 +109,21 @@ class ValueKeywordsTest(unittest.TestCase):
         self.assertEqual(validate("abc", {"pattern": "b"}), [])
         self.assertEqual(validate(5, {"pattern": "b"}), [])
 
+    def test_dollar_does_not_match_before_a_trailing_newline(self):
+        self.assertEqual(messages("a" * 64 + "\n", {"pattern": "^[0-9a-f]{64}$"}), [("$", "pattern")])
+        self.assertEqual(messages("worker\n", {"pattern": "^[a-z]+$"}), [("$", "pattern")])
+        self.assertEqual(messages("b\n", {"pattern": "^a$|^b$"}), [("$", "pattern")])
+        self.assertEqual(validate("b", {"pattern": "^a$|^b$"}), [])
+        self.assertEqual(validate("x$y", {"pattern": "x[$]y"}), [])
+        self.assertEqual(validate("x$", {"pattern": "x\\$"}), [])
+
+    def test_nan_and_infinity_are_not_numbers(self):
+        for value in [float("nan"), float("inf"), float("-inf")]:
+            with self.subTest(value=value):
+                self.assertEqual(messages(value, {"type": "number"}), [("$", "type")])
+                self.assertEqual(messages(value, {"type": "integer"}), [("$", "type")])
+                self.assertEqual(validate(value, {"minimum": 0}), [])  # not a number, so not compared
+
 
 class CombinatorTest(unittest.TestCase):
     schema = {
@@ -158,6 +173,20 @@ class RefTest(unittest.TestCase):
         with self.assertRaises(SchemaError):
             validate({}, {"$ref": "#/$defs/missing"})
 
+    def test_ref_must_point_at_a_schema(self):
+        schema = {"title": "x", "type": "object", "properties": {"a": {"$ref": "#/title"}}}
+        with self.assertRaises(SchemaError):
+            check_schema(schema)
+        with self.assertRaises(SchemaError):
+            validate({"a": 5}, schema)
+
+    def test_cyclic_refs_are_rejected(self):
+        with self.assertRaises(SchemaError):
+            check_schema({"$ref": "#"})
+        with self.assertRaises(SchemaError):
+            check_schema({"$defs": {"a": {"$ref": "#/$defs/b"}, "b": {"$ref": "#/$defs/a"}}})
+        check_schema({"type": "object", "properties": {"child": {"$ref": "#"}}})  # consumes input: fine
+
 
 class SchemaSubsetTest(unittest.TestCase):
     def test_keywords_outside_the_subset_are_rejected(self):
@@ -182,6 +211,14 @@ class SchemaSubsetTest(unittest.TestCase):
             check_schema({"type": "text"})
         with self.assertRaises(SchemaError):
             check_schema({"type": "string", "pattern": "("})
+        with self.assertRaises(SchemaError):
+            check_schema({"type": [["string"]]})
+
+    def test_malformed_containers_are_rejected(self):
+        for schema in [{"$defs": []}, {"properties": []}, {"definitions": "x"}, {"properties": {"a": "string"}}]:
+            with self.subTest(schema=schema):
+                with self.assertRaises(SchemaError):
+                    check_schema(schema)
 
     def test_annotations_are_allowed(self):
         check_schema({"$schema": "x", "$id": "y", "title": "t", "description": "d", "default": 1,
@@ -199,6 +236,16 @@ class CheckTest(unittest.TestCase):
 
     def test_check_passes_silently(self):
         self.assertIsNone(check(1, {"type": "integer"}))
+
+    def test_validation_error_survives_pickling(self):
+        import pickle
+        with self.assertRaises(ValidationError) as caught:
+            check({"c": 1}, {"type": "object", "required": ["a"]}, name="thing")
+        original = caught.exception
+        again = pickle.loads(pickle.dumps(original))
+        self.assertEqual(again.errors, original.errors)
+        self.assertEqual(again.name, "thing")
+        self.assertEqual(str(again), str(original))
 
     def test_load_schema_reads_and_caches(self):
         first = jsonschema.load_schema("journal_event")

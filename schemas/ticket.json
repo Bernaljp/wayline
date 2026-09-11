@@ -67,8 +67,7 @@
         "host_oom": {"type": "array", "items": {"type": "object"}},
         "gpu_oom": {"type": "array", "items": {"type": "object"}}
       }
-    },
-    "attempt": {"type": "integer", "minimum": 0}
+    }
   },
   "$defs": {
     "kind": {"type": "string", "enum": ["dossier", "lit", "code", "docs", "experiment", "analysis", "figure", "writing", "review", "decision", "harness"]},

@@ -9,6 +9,7 @@ check that is never run. Errors carry the failing path (`$.payload.ticket`, `$.e
 """
 
 import json
+import math
 import re
 from collections import namedtuple
 
@@ -34,11 +35,14 @@ class ValidationError(ValueError):
     """An instance failed; `errors` holds every Error found."""
 
     def __init__(self, errors, name=None):
-        self.errors = list(errors)
+        self.errors = [Error(*error) for error in errors]
         self.name = name
         head = "%s is not valid" % (name or "instance")
         lines = ["  %s: %s" % (error.path, error.message) for error in self.errors]
         super().__init__("\n".join([head] + lines))
+
+    def __reduce__(self):  # picklable across a multiprocessing boundary
+        return (ValidationError, (self.errors, self.name))
 
 
 def validate(instance, schema, root=None):
@@ -75,7 +79,7 @@ def load_schema(name):
 
 def _validate(instance, schema, root, path, errors):
     if "$ref" in schema:
-        _validate(instance, _resolve(schema["$ref"], root), root, path, errors)
+        _validate(instance, _resolve_schema(schema["$ref"], root), root, path, errors)
     if "type" in schema and not _has_type(instance, schema["type"]):
         wanted = schema["type"] if isinstance(schema["type"], str) else " or ".join(schema["type"])
         errors.append(Error(path, "type", "expected %s, got %s" % (wanted, _type_name(instance))))
@@ -112,7 +116,7 @@ def _validate(instance, schema, root, path, errors):
         if "maximum" in schema and instance > schema["maximum"]:
             errors.append(Error(path, "maximum", "%s is greater than maximum %s" % (instance, schema["maximum"])))
     elif isinstance(instance, str):
-        if "pattern" in schema and not re.search(schema["pattern"], instance):
+        if "pattern" in schema and not _compile_pattern(schema["pattern"]).search(instance):
             errors.append(Error(path, "pattern", "%s does not match pattern %s" % (_show(instance), schema["pattern"])))
     if "oneOf" in schema:
         branches = schema["oneOf"]
@@ -138,7 +142,44 @@ def _child(path, key):
 
 
 def _is_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A JSON number: an int or a finite float; booleans, NaN, and infinities are not."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
+
+
+_pattern_cache = {}
+
+
+def _compile_pattern(pattern):
+    """Compile a JSON Schema pattern with ECMA-262 semantics for `$`: the end of the string, not before a final newline."""
+    if pattern not in _pattern_cache:
+        _pattern_cache[pattern] = re.compile(_ecma_dollar(pattern))
+    return _pattern_cache[pattern]
+
+
+def _ecma_dollar(pattern):
+    out, in_class, position = [], False, 0
+    while position < len(pattern):
+        char = pattern[position]
+        if char == "\\":
+            out.append(pattern[position:position + 2])
+            position += 2
+            continue
+        if in_class:
+            if char == "]":
+                in_class = False
+        elif char == "[":
+            in_class = True
+        elif char == "$":
+            out.append("(?!\\n)$")
+            position += 1
+            continue
+        out.append(char)
+        position += 1
+    return "".join(out)
 
 
 def _has_type(instance, expected):
@@ -169,7 +210,7 @@ def _type_name(instance):
     if isinstance(instance, int):
         return "integer"
     if isinstance(instance, float):
-        return "number"
+        return "number" if math.isfinite(instance) else "non-finite number (not JSON)"
     return {dict: "object", list: "array", str: "string"}.get(type(instance), type(instance).__name__)
 
 
@@ -213,6 +254,13 @@ def _resolve(ref, root):
     return node
 
 
+def _resolve_schema(ref, root):
+    target = _resolve(ref, root)
+    if not isinstance(target, dict):
+        raise SchemaError("$ref %r points at %s, not a schema" % (ref, _type_name(target)))
+    return target
+
+
 # --- the subset ------------------------------------------------------------------------------
 
 
@@ -225,6 +273,8 @@ def check_schema(schema, root=None, where="#"):
     for keyword, value in schema.items():
         if keyword in ANNOTATIONS:
             if keyword in ("$defs", "definitions"):
+                if not isinstance(value, dict):
+                    raise SchemaError("%s: %s must be an object of schemas" % (where, keyword))
                 for name, definition in value.items():
                     check_schema(definition, root, "%s/%s/%s" % (where, keyword, name))
             continue
@@ -232,9 +282,11 @@ def check_schema(schema, root=None, where="#"):
             raise SchemaError("%s: keyword %r is outside the validator's subset" % (where, keyword))
         if keyword == "type":
             names = [value] if isinstance(value, str) else value
-            if not isinstance(names, list) or not names or any(name not in TYPES for name in names):
+            if not isinstance(names, list) or not names or any(not isinstance(name, str) or name not in TYPES for name in names):
                 raise SchemaError("%s: unknown type %r" % (where, value))
         elif keyword == "properties":
+            if not isinstance(value, dict):
+                raise SchemaError("%s: properties must be an object of schemas" % where)
             for name, sub in value.items():
                 check_schema(sub, root, "%s/properties/%s" % (where, name))
         elif keyword == "additionalProperties":
@@ -261,8 +313,15 @@ def check_schema(schema, root=None, where="#"):
                 raise SchemaError("%s: %s must be a number" % (where, keyword))
         elif keyword == "pattern":
             try:
-                re.compile(value)
+                _compile_pattern(value)
             except (re.error, TypeError) as failure:
                 raise SchemaError("%s: pattern %r does not compile: %s" % (where, value, failure)) from None
         elif keyword == "$ref":
-            _resolve(value, root)
+            # The target must be a schema, and a chain of bare $refs must not come back to itself.
+            chain = [id(schema)]
+            node = schema
+            while "$ref" in node:
+                node = _resolve_schema(node["$ref"], root)
+                if id(node) in chain:
+                    raise SchemaError("%s: $ref %r is cyclic" % (where, value))
+                chain.append(id(node))
