@@ -1,6 +1,6 @@
 # Wayline tickets: what can run in parallel, and what waits
 
-Computed from the 98 blocking edges of the 53 tickets on 2026-09-11. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline`; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
+Computed from the 98 blocking edges of the 53 tickets on 2026-09-11. The model and effort to implement each ticket are in `.scratch/wayline/models.md`. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline`; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
 
 ## The rule
 
