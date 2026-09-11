@@ -32,6 +32,14 @@ class ScalarTest(unittest.TestCase):
     def test_quoted_escapes(self):
         got = parse(r'a: "line\nbreak \"q\" back\\slash tab\t"')
         self.assertEqual(got["a"], 'line\nbreak "q" back\\slash tab\t')
+        self.assertEqual(parse(r'a: "é中"'), {"a": "é中"})
+        with self.assertRaises(FrontmatterError):
+            parse(r'a: "\u00zz"')
+        with self.assertRaises(FrontmatterError):
+            parse(r'a: "\q"')
+
+    def test_bare_string_may_end_with_a_bracket(self):
+        self.assertEqual(parse("a: see figure 2]\n"), {"a": "see figure 2]"})
 
     def test_empty_value_is_null(self):
         self.assertEqual(parse("a:\nb: 1\n"), {"a": None, "b": 1})
@@ -209,8 +217,10 @@ class SerializeTest(unittest.TestCase):
             serialize({"bad key": 1})
         with self.assertRaises(FrontmatterError):
             serialize({"a": float("inf")})
-        with self.assertRaises(FrontmatterError):
+        with self.assertRaises(FrontmatterError) as caught:
             serialize({"a": object()})
+        self.assertIsNone(caught.exception.line)
+        self.assertNotIn("line", str(caught.exception).split(":")[0])
 
     def test_empty_mapping(self):
         self.assertEqual(serialize({}), "")

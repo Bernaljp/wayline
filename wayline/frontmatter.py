@@ -27,10 +27,14 @@ _ESCAPES = {"\\": "\\", '"': '"', "n": "\n", "t": "\t", "r": "\r", "/": "/", "0"
 
 
 class FrontmatterError(ValueError):
-    """A line the subset does not accept; `line` counts from the opening `---` of a document."""
+    """Text the subset does not accept, or a value it cannot write.
 
-    def __init__(self, message, line):
-        super().__init__("line %d: %s" % (line, message))
+    `line` counts from the opening `---` of a document when parsing; it is None for a
+    serializer error, which has no line.
+    """
+
+    def __init__(self, message, line=None):
+        super().__init__(message if line is None else "line %d: %s" % (line, message))
         self.message = message
         self.line = line
 
@@ -242,8 +246,6 @@ def _parse_scalar(text, lineno, flow):
         raise FrontmatterError("nested collections are not allowed here", lineno)
     if flow and any(char in text for char in "[]{},"):
         raise FrontmatterError("a bare string inside a flow collection cannot contain [ ] { } or ','; double-quote it", lineno)
-    if not flow and text[-1] in "]}" and ("[" not in text and "{" not in text):
-        raise FrontmatterError("text after the value", lineno)
     if ": " in text or text.endswith(":"):
         raise FrontmatterError("a bare string cannot contain ': ' or end with ':'; double-quote it", lineno)
     if text == "true":
@@ -269,12 +271,11 @@ def _parse_quoted(text, lineno):
             if position >= len(text):
                 break
             escape = text[position]
-            if escape == "u" and position + 4 < len(text) + 0:
+            if escape == "u":
                 hex_digits = text[position + 1: position + 5]
-                try:
-                    out.append(chr(int(hex_digits, 16)))
-                except ValueError:
-                    raise FrontmatterError("bad \\u escape", lineno) from None
+                if len(hex_digits) != 4 or any(digit not in "0123456789abcdefABCDEF" for digit in hex_digits):
+                    raise FrontmatterError("a \\u escape needs four hex digits", lineno)
+                out.append(chr(int(hex_digits, 16)))
                 position += 5
                 continue
             if escape not in _ESCAPES:
@@ -308,7 +309,7 @@ def serialize(mapping):
                     _check_key(subkey)
                     if isinstance(item, dict):
                         if not all(_is_scalar(leaf) for leaf in item.values()):
-                            raise FrontmatterError("deeper nesting under %r.%r cannot be written" % (key, subkey), 0)
+                            raise FrontmatterError("deeper nesting under %r.%r cannot be written" % (key, subkey))
                         lines.append("  %s: %s" % (subkey, _flow_map(item, subkey)))
                     elif isinstance(item, (list, tuple)):
                         lines.append("  %s: %s" % (subkey, _flow_list(item, subkey)))
@@ -323,7 +324,7 @@ def serialize(mapping):
 
 def _check_key(key):
     if not isinstance(key, str) or not _KEY_RE.match(key):
-        raise FrontmatterError("key %r is not letters, digits, '_' and '-'" % (key,), 0)
+        raise FrontmatterError("key %r is not letters, digits, '_' and '-'" % (key,))
 
 
 def _is_scalar(value):
@@ -334,7 +335,7 @@ def _flow_list(items, key):
     parts = []
     for item in items:
         if not _is_scalar(item):
-            raise FrontmatterError("list %r holds a non-scalar item; only scalars can be written" % key, 0)
+            raise FrontmatterError("list %r holds a non-scalar item; only scalars can be written" % key)
         parts.append(_scalar(item, key, flow=True))
     return "[" + ", ".join(parts) + "]"
 
@@ -358,11 +359,11 @@ def _scalar(value, key, flow):
         return str(value)
     if isinstance(value, float):
         if value != value or value in (float("inf"), float("-inf")):
-            raise FrontmatterError("%r under %r cannot be written" % (value, key), 0)
+            raise FrontmatterError("%r under %r cannot be written" % (value, key))
         return repr(value)
     if isinstance(value, str):
         return value if _safe_bare(value, flow) else _quote(value)
-    raise FrontmatterError("value of type %s under %r cannot be written" % (type(value).__name__, key), 0)
+    raise FrontmatterError("value of type %s under %r cannot be written" % (type(value).__name__, key))
 
 
 def _safe_bare(text, flow):
