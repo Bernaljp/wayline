@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#29](https://github.com/Bernaljp/wayline/issues/29) (mirror; the local file is the source)
+
 **Milestone:** M4 Front door. **Spec:** Implementation Decisions 10 (intake), 4 (the irreversible list and `human_only` defaults); BRIEF 6.4.
 
 - [ ] `wayline intake` and the `wayline-intake` skill write `INTAKE.md` with the sections above from whatever the owner gives (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) and record `autonomy`, `radius`, `budgets`, and the `human_only` classes (default: decisions that change the goal or the data) in `harness.json`.

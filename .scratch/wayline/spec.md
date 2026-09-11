@@ -2,6 +2,7 @@
 
 Status: ready-for-agent
 Tracker: local markdown. This spec is `.scratch/wayline/spec.md`; `to-tickets` cuts its tickets into `.scratch/wayline/issues/NN-slug.md`, numbered blockers first.
+GitHub mirror: [Bernaljp/wayline issue #1](https://github.com/Bernaljp/wayline/issues/1) with the 53 tickets as sub-issues #2 to #54 (ticket NN is issue NN+1), blocked-by edges as native dependencies, milestones M0 to M7; the mapping is `.scratch/wayline/github.json`. The local files remain the source.
 Sources: `BRIEF.md` revision 2 (its DECIDED items and constraints C1 to C10 are settled); the wayfinder map `.scratch/harness/map.md` (charted and closed 2026-09-11, 41 resolved tickets under `.scratch/harness/issues/`); the research notes and guard scripts under `research-notes/`; the glossary `CONTEXT.md`, whose terms this spec uses verbatim. Where the map differs from the brief, the map wins.
 Written: 2026-09-11. American English, no em dashes.
 

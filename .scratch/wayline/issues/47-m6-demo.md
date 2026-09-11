@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#48](https://github.com/Bernaljp/wayline/issues/48) (mirror; the local file is the source)
+
 **Milestone:** M6 Evolve. **Spec:** milestone M6 as a whole; Implementation Decisions 12.
 
 - [ ] The two feedback items filed from the dashboard become two change records, two harness tickets, and two fixtures; the "captions overclaim" fixture fails on the old subject and passes after the change; the "tickets too big" change is a local planner override applied at once.

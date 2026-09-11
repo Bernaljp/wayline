@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#11](https://github.com/Bernaljp/wayline/issues/11) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** Implementation Decisions 5 (pacing and pause, wave step 8), 3 (stream parsing), 14 (`pacing.stop_at`, `pacing.cheap_at`).
 
 - [ ] Utilization comes from every `rate_limit_event`'s `unifiedWindows.five_hour` and `seven_day` and from `claude -p "/usage" --output-format json` parsed with the two regexes of Implementation Decisions 5 at `run` start; the action is `stop` at or above `pacing.stop_at` on either window, `cheap_only` at or above `pacing.cheap_at`, else `normal`; `pacing` is journaled only on change; both thresholds are read from `harness.json`.

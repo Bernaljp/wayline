@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#37](https://github.com/Bernaljp/wayline/issues/37) (mirror; the local file is the source)
+
 **Milestone:** M4 Front door. **Spec:** milestone M4 as a whole; Implementation Decisions 10.
 
 - [ ] Starting from a one-paragraph intent, the ten references of M3, and a goal, the owner runs intake, position, grill (raising the switch mid-way), and plan in one sitting, and every artifact (`INTAKE.md`, `GOAL.json`, `POSITION.md`, `DECISIONS.md` with human and decider entries, `CONTEXT.md`, `SPEC.md`, `tickets/`, `graph.json`, `registry.json`) is present and valid.

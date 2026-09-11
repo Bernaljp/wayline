@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#36](https://github.com/Bernaljp/wayline/issues/36) (mirror; the local file is the source)
+
 **Milestone:** M4 Front door. **Spec:** Implementation Decisions 5 (decision tickets), 8 (actions, views), 7 (tick relaunch conditions); BRIEF 6.6.
 
 - [ ] A decision ticket created by the planner or from a worker's `decision_requests` carries the question, options, recommended answer, evidence, `blocking: subgraph | all`, and `human_only`; its creation journals `decision_opened` and notifies; the frontier rule of ticket 07 holds it and its dependents while open.

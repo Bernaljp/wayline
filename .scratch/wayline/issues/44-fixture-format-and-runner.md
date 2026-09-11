@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#45](https://github.com/Bernaljp/wayline/issues/45) (mirror; the local file is the source)
+
 **Milestone:** M6 Evolve. **Spec:** milestone M6 criteria 1 and 5; Implementation Decisions 12 (fixtures, runner contract, recording), 14 (`fixtures`); research-notes 07 (the proposed format, adopted).
 
 - [ ] Carried verbatim from the closed prototype ticket 32 (Prototype: one behavior fixture):

@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#38](https://github.com/Bernaljp/wayline/issues/38) (mirror; the local file is the source)
+
 **Milestone:** M5 Overnight and report. **Spec:** Implementation Decisions 5 (proposals), 14 (`proposals`); OPEN-13 (map ticket 25); BRIEF 6.3, 9.5.
 
 - [ ] Admission runs on every result's `proposals[]` and on the critic's and verifier's proposals: inside the radius (`strict` admits only tickets tracing to a spec claim; `moderate` adds follow-ups probing a claim's failure; `exploratory` adds new directions gated on a scout novelty check), not a duplicate (same kind and normalized-title similarity above 0.8, or identical touch set and origin, is a duplicate; similarity between 0.6 and 0.8 goes to one `haiku --effort low` judgment through the launcher), under the per-wave cap (`strict` 0, `moderate` 3, `exploratory` 6), every `blocked_by` existing.

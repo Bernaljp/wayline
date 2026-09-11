@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#2](https://github.com/Bernaljp/wayline/issues/2) (mirror; the local file is the source)
+
 **Milestone:** M0 Skeleton. **Spec:** `.scratch/wayline/spec.md`, Implementation Decisions 1, 2, 14; Testing Decisions. Glossary: `CONTEXT.md` (use its terms, avoid its avoid-words in code and docs).
 
 - [ ] `bin/wayline --version` and `python -m wayline --version` print the current tag; `wayline --help` lists every verb of Implementation Decisions 1; a verb not yet implemented exits 2 with "not yet implemented".

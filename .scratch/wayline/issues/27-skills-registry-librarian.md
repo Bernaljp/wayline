@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#28](https://github.com/Bernaljp/wayline/issues/28) (mirror; the local file is the source)
+
 **Milestone:** M4 Front door. **Spec:** Implementation Decisions 10 (interactive skills, registry entry), 1 (skills and roles layout), 12 (fixture layout, for the directories only).
 
 - [ ] A skill is `skills/<wayline-name>/SKILL.md` plus `wayline.json` (`id, scope_kind, capability_summary, applicability_tags: {kinds[], data_types[], libraries[], venues[]}, cost_hint, fixtures[], sha256`); a role's `wayline.json` carries the same registry fields plus `allowed_tools`, `disallowed_tools`, `output_schema`, `may_judge`.

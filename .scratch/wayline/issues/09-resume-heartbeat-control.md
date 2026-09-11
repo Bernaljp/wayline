@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#10](https://github.com/Bernaljp/wayline/issues/10) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** Implementation Decisions 2 (the journal is the bus), 5 (process, resume, termination), 1 (the command).
 
 - [ ] Replay from byte zero rebuilds statuses, attempts, session ids, pids, jobs, the pause, pacing, and the stall counter; replaying twice yields the same view (test); a hand edit of `pinned_difficulty` or a `## Answer` section in a ticket file wins over the journal on reconcile.

@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#35](https://github.com/Bernaljp/wayline/issues/35) (mirror; the local file is the source)
+
 **Milestone:** M4 Front door. **Spec:** Implementation Decisions 10 (plan), 2 (ticket files), 5 (escalation `split`, stall `replan`); BRIEF 8.2 to 8.4.
 
 - [ ] `roles/planner/` exists (fable, xhigh); `wayline plan` and the `wayline-plan` skill launch it with `SPEC.md`, the query pack, the registry, and the journal, validate every ticket against the `ticket` schema, write `tickets/NN-slug.md` in the flat YAML subset, and regenerate `graph.json`.

@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#17](https://github.com/Bernaljp/wayline/issues/17) (mirror; the local file is the source)
+
 **Milestone:** M2 Hardware. **Spec:** Implementation Decisions 6 (detection and slots), 14 (`reservations`, `jobs`); research-notes 05 A8.
 
 - [ ] Detection runs `nvidia-smi --query-gpu=index,uuid,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory --format=csv,noheader,nounits` and `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits`, reads `/proc/loadavg` field 1 against `nproc`, `/proc/pressure/cpu`, `MemAvailable` from `/proc/meminfo`, and `df -B1 --output=avail /home`, and degrades to CPU-only when `nvidia-smi` is absent.

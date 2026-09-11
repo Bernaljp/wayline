@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#14](https://github.com/Bernaljp/wayline/issues/14) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** Implementation Decisions 7 (units, notifier, login durability), 5 (process); research-notes 05 A6 and A7.
 
 - [ ] `init` writes `wayline-tick.service`, `wayline-tick.timer`, and `wayline-dashboard.service` into `~/.config/systemd/user/` exactly as Implementation Decisions 7 gives them (absolute interpreter and harness paths, `EnvironmentFile=-<home>/.wayline/env`, `OnCalendar=*:0/15`, `Persistent=true`, `Restart=on-failure` on the dashboard), runs `daemon-reload` and `enable --now` on the timer and the dashboard, and is idempotent; `init --uninstall-units` disables and removes exactly those three units and cleans the timer's persistent stamp, touching nothing else (the crontab is never read or written).

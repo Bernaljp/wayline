@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#42](https://github.com/Bernaljp/wayline/issues/42) (mirror; the local file is the source)
+
 **Milestone:** M5 Overnight and report. **Spec:** Implementation Decisions 14 (the toy project); milestone M5 criterion 1.
 
 - [ ] `fixtures/projects/toy/` holds the intent, a dataset generator with a seed and a signal-strength parameter, two short synthetic papers as PDFs and one as an arXiv-style source tarball with a tiny code repository at a pinned commit, `GOAL.json` (`metric: auroc`, `direction: up`, a reachable `target`, `held_out_split`, `eval_command`, `stop_when: goal_reached`), autonomy `autonomous` after intake, radius `moderate`.

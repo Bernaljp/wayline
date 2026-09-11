@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#13](https://github.com/Bernaljp/wayline/issues/13) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** Implementation Decisions 8 (endpoints, views); research-notes 08 Section 5 (the 43-line layered layout).
 
 - [ ] `GET /api/projects/<id>/graph.svg` returns inline SVG from a server-side layered layout (longest-path layering, two barycenter sweeps, straight edges with an arrow marker, one link per node, status fills, the frontier highlighted); a 14-node, 18-edge fixture lays out into well-formed SVG under 10 KB.

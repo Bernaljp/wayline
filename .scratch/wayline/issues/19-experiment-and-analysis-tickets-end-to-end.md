@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#20](https://github.com/Bernaljp/wayline/issues/20) (mirror; the local file is the source)
+
 **Milestone:** M2 Hardware. **Spec:** milestone M2 criteria 2 to 9; Implementation Decisions 5 (wave step 2, worker outcome `running`), 6 (sweeps, OOM retry), 1 (roles).
 
 - [ ] `roles/experimenter/` and `roles/analyst/` exist; the experimenter's allowed tools include `Bash(wayline job add*)` and `Bash(nvidia-smi *)`; an experiment ticket's `resources` and `retry` fields reach the job spec.

@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#18](https://github.com/Bernaljp/wayline/issues/18) (mirror; the local file is the source)
+
 **Milestone:** M2 Hardware. **Spec:** milestone M2 criterion 1; Implementation Decisions 6 (interface, launch line, poll, OOM rule, kill, fallback, job file); Testing Decisions seam 2; research-notes 05 A1 to A5 and the raw outputs R2 to R11.
 
 - [ ] Carried verbatim from the closed prototype ticket 27 (Prototype: the detached GPU job runner):

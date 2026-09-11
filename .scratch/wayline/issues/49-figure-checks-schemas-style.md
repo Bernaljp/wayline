@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#50](https://github.com/Bernaljp/wayline/issues/50) (mirror; the local file is the source)
+
 **Milestone:** M7 Figures, docs, paper. **Spec:** Implementation Decisions 13 (the figure role's checks, figure schemas, style); research-notes 11 Sections 3 and 4.
 
 - [ ] `schemas/figure_request.json` (`figure_request/1`) and `schemas/figure_result.json` (`figure_result/1`) carry the fields of Implementation Decisions 13, with `register: conceptual` forced for `framework` and `graphical_abstract` kinds and `guided` requiring `revision_of` and non-empty `change_requests`.

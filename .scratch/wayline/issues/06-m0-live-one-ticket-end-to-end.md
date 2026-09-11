@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#7](https://github.com/Bernaljp/wayline/issues/7) (mirror; the local file is the source)
+
 **Milestone:** M0 Skeleton. **Spec:** milestone M0 criteria 1, 7, 8, 10; Implementation Decisions 3, 4.
 
 - [ ] Carried verbatim from the closed prototype ticket 16 (Prototype: the M0 worker launch):

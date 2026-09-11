@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#26](https://github.com/Bernaljp/wayline/issues/26) (mirror; the local file is the source)
+
 **Milestone:** M3 Dossiers. **Spec:** Implementation Decisions 9 (code dossiers); research-notes 06 Section 4.
 
 - [ ] `wayline absorb --code <slug> <url>@<sha>` clones with `git clone --filter=blob:none --no-checkout` and `git checkout <sha>` (or `fetch --depth 1 origin <sha>`) under `refs/<slug>/code/` and records `url, sha, author_date, nearest tag, submodules`.

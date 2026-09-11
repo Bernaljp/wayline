@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#47](https://github.com/Bernaljp/wayline/issues/47) (mirror; the local file is the source)
+
 **Milestone:** M6 Evolve. **Spec:** Implementation Decisions 12 (versioning, pins, upgrade, rollback, promotion), 5 (run refuses on a pin mismatch), 1 (CHANGELOG.md); BRIEF 12.
 
 - [ ] Tags are `vMAJOR.MINOR.PATCH`; `CHANGELOG.md` carries one entry per tag; `harness.json.harness_tag` is the pin; `wayline run` refuses to start when `git describe --tags --exact-match` on the harness checkout differs from the pin and prints the `upgrade` command that fixes it.

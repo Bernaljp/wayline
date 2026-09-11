@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#30](https://github.com/Bernaljp/wayline/issues/30) (mirror; the local file is the source)
+
 **Milestone:** M4 Front door. **Spec:** Implementation Decisions 10 (position), 1 (roles: critic); BRIEF 6.5.
 
 - [ ] `roles/critic/` exists (read-only tools; opus high by policy); `wayline position` launches it through the launcher with only the dossiers, `INTAKE.md`, and `GOAL.json` in its context and a schema for the memo.

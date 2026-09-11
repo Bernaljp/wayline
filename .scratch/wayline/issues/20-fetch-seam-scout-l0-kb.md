@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#21](https://github.com/Bernaljp/wayline/issues/21) (mirror; the local file is the source)
+
 **Milestone:** M3 Dossiers. **Spec:** Implementation Decisions 9 (levels, the scout, the knowledge base); Testing Decisions seam 5; research-notes 06 Section 3.
 
 - [ ] `fetch(url, headers) -> Response` has a real backend on `urllib` and a recording backend that reads and writes `fixtures/fetch/<host>/<request hash>.json`; every outbound request carries `User-Agent: wayline/<tag> (mailto:<owner_email>)` with the email `init` asked for and stored in `harness.json`; per-host rate limits are enforced in the seam (Crossref 10 per second, arXiv one per 3 s on a single connection, OpenAlex sparingly, the galleries 1 per second).

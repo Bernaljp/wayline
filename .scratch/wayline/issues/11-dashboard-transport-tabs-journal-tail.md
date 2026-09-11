@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#12](https://github.com/Bernaljp/wayline/issues/12) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** milestone M1 criteria 2 and 9; Implementation Decisions 8; research-notes 08 (the server, the scan, the measurements).
 
 - [ ] Carried verbatim from the closed prototype ticket 36 (Prototype: dashboard transport through the tunnel):

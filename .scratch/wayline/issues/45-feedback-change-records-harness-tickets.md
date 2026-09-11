@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#46](https://github.com/Bernaljp/wayline/issues/46) (mirror; the local file is the source)
+
 **Milestone:** M6 Evolve. **Spec:** Implementation Decisions 12 (intake, change records, application), 10 (registry, model-authored skills), 4 (global changes are irreversible); BRIEF 12.
 
 - [ ] `wayline evolve "<text>"`, the dashboard's feedback form (a new action and view), and files dropped in `research/feedback/` each journal `feedback` with the source; after every `run_ended` the evolver runs a retrospective over the journal (failures, escalations, stalls, rework, turns per closed ticket, skills below the registry's median first-time pass rate).

@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#5](https://github.com/Bernaljp/wayline/issues/5) (mirror; the local file is the source)
+
 **Milestone:** M0 Skeleton. **Spec:** Implementation Decisions 4; research-notes 03 and the scripts under `research-notes/03-hooks/`.
 
 - [ ] `hooks/touch_set_guard.sh` and `hooks/stop_guard.sh` are the validated scripts from `research-notes/03-hooks/`, unchanged in behavior; `hooks/worker-settings.json` is the template of Implementation Decisions 4 with the deny list.

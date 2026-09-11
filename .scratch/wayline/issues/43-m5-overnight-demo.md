@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#44](https://github.com/Bernaljp/wayline/issues/44) (mirror; the local file is the source)
+
 **Milestone:** M5 Overnight and report. **Spec:** milestone M5 as a whole; Implementation Decisions 5, 7, 11.
 
 - [ ] The toy project is initialized, absorbed, positioned, grilled with the switch raised, specified, planned, and run detached in the evening; the run crosses a real five-hour window boundary, and the journal shows `paused` with the reset time and either the conductor's own continuation or the tick's relaunch.

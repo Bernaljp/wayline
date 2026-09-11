@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#9](https://github.com/Bernaljp/wayline/issues/9) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** Implementation Decisions 5 (integration protocol, escalation `next: split`), 1 (roles: integrator).
 
 - [ ] Integration runs one ticket at a time under the ledger lock: `git rebase main` in the worktree; on conflict, `git rebase --abort`, then the `integrator` role is launched once in the worktree with the conflicting paths as its touch set and the conflict markers as its context, then the rebase is retried; a second conflict journals `ticket_failed` with `next: split`.

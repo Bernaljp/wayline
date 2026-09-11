@@ -1,0 +1,538 @@
+{
+ "repo": "Bernaljp/wayline",
+ "commit": "9b0cf02c177739b4431eda4bf0de52f120a83b07",
+ "spec": {
+  "number": 1,
+  "id": 5428687547
+ },
+ "tickets": {
+  "01": {
+   "number": 2,
+   "id": 5428687843,
+   "title": "Package skeleton, frontmatter parser, schema validator, ledger core",
+   "blockers": [],
+   "milestone": "M0"
+  },
+  "02": {
+   "number": 3,
+   "id": 5428688178,
+   "title": "init lays out a project and status reads it",
+   "blockers": [
+    "01"
+   ],
+   "milestone": "M0"
+  },
+  "03": {
+   "number": 4,
+   "id": 5428688508,
+   "title": "Worker launcher seam with fake and claude_cli backends",
+   "blockers": [
+    "01"
+   ],
+   "milestone": "M0"
+  },
+  "04": {
+   "number": 5,
+   "id": 5428688815,
+   "title": "Guards, per-launch settings, and accept",
+   "blockers": [
+    "01"
+   ],
+   "milestone": "M0"
+  },
+  "05": {
+   "number": 6,
+   "id": 5428689104,
+   "title": "The conductor's M0 path with the fake worker",
+   "blockers": [
+    "02",
+    "03",
+    "04"
+   ],
+   "milestone": "M0"
+  },
+  "06": {
+   "number": 7,
+   "id": 5428689431,
+   "title": "M0 live: one trivial ticket end to end (verbatim prototype 16)",
+   "blockers": [
+    "05"
+   ],
+   "milestone": "M0"
+  },
+  "07": {
+   "number": 8,
+   "id": 5428689771,
+   "title": "Frontier, launchable subset, and two parallel workers",
+   "blockers": [
+    "05"
+   ],
+   "milestone": "M1"
+  },
+  "08": {
+   "number": 9,
+   "id": 5428690081,
+   "title": "Integration protocol and the integrator role",
+   "blockers": [
+    "07"
+   ],
+   "milestone": "M1"
+  },
+  "09": {
+   "number": 10,
+   "id": 5428690545,
+   "title": "Resume from the journal, heartbeat, control events, and worker re-adoption",
+   "blockers": [
+    "07"
+   ],
+   "milestone": "M1"
+  },
+  "10": {
+   "number": 11,
+   "id": 5428690833,
+   "title": "Pacing and pause on usage limits",
+   "blockers": [
+    "07"
+   ],
+   "milestone": "M1"
+  },
+  "11": {
+   "number": 12,
+   "id": 5428691169,
+   "title": "Read-only dashboard: transport, tabs, journal tail, overview (verbatim prototype 36)",
+   "blockers": [
+    "02"
+   ],
+   "milestone": "M1"
+  },
+  "12": {
+   "number": 13,
+   "id": 5428691634,
+   "title": "Dashboard graph, ticket pages, and logs endpoints",
+   "blockers": [
+    "11"
+   ],
+   "milestone": "M1"
+  },
+  "13": {
+   "number": 14,
+   "id": 5428691890,
+   "title": "User units, run --detach, and the notifier",
+   "blockers": [
+    "09",
+    "11"
+   ],
+   "milestone": "M1"
+  },
+  "14": {
+   "number": 15,
+   "id": 5428692386,
+   "title": "The tick (verbatim prototype 29)",
+   "blockers": [
+    "10",
+    "13"
+   ],
+   "milestone": "M1"
+  },
+  "15": {
+   "number": 16,
+   "id": 5428692694,
+   "title": "M1 live demo: five tickets, a killed conductor, a simulated limit, the tick, the dashboard",
+   "blockers": [
+    "06",
+    "08",
+    "09",
+    "10",
+    "12",
+    "14"
+   ],
+   "milestone": "M1"
+  },
+  "16": {
+   "number": 17,
+   "id": 5428693132,
+   "title": "Resources detection and slots",
+   "blockers": [
+    "02"
+   ],
+   "milestone": "M2"
+  },
+  "17": {
+   "number": 18,
+   "id": 5428693415,
+   "title": "Job runner seam (verbatim prototype 27)",
+   "blockers": [
+    "16"
+   ],
+   "milestone": "M2"
+  },
+  "18": {
+   "number": 19,
+   "id": 5428693723,
+   "title": "Manifest and findings provenance",
+   "blockers": [
+    "02"
+   ],
+   "milestone": "M2"
+  },
+  "19": {
+   "number": 20,
+   "id": 5428694207,
+   "title": "Experiment and analysis tickets end to end (M2 demo)",
+   "blockers": [
+    "07",
+    "17",
+    "18"
+   ],
+   "milestone": "M2"
+  },
+  "20": {
+   "number": 21,
+   "id": 5428694530,
+   "title": "Fetch seam, scout, L0 records, and the knowledge base",
+   "blockers": [
+    "02"
+   ],
+   "milestone": "M3"
+  },
+  "21": {
+   "number": 22,
+   "id": 5428694999,
+   "title": "arXiv e-print sources and the LaTeX inventory",
+   "blockers": [
+    "20"
+   ],
+   "milestone": "M3"
+  },
+  "22": {
+   "number": 23,
+   "id": 5428695330,
+   "title": "Non-arXiv PDF inventory chain and the tools venv (verbatim prototype 30)",
+   "blockers": [
+    "21"
+   ],
+   "milestone": "M3"
+  },
+  "23": {
+   "number": 24,
+   "id": 5428695731,
+   "title": "L1 skims, reading budgets, and promotion triggers",
+   "blockers": [
+    "03",
+    "20"
+   ],
+   "milestone": "M3"
+  },
+  "24": {
+   "number": 25,
+   "id": 5428696168,
+   "title": "The absorb workflow for L2",
+   "blockers": [
+    "22",
+    "23"
+   ],
+   "milestone": "M3"
+  },
+  "25": {
+   "number": 26,
+   "id": 5428696513,
+   "title": "Code dossiers",
+   "blockers": [
+    "20"
+   ],
+   "milestone": "M3"
+  },
+  "26": {
+   "number": 27,
+   "id": 5428696763,
+   "title": "The consultant and the M3 demo",
+   "blockers": [
+    "24",
+    "25"
+   ],
+   "milestone": "M3"
+  },
+  "27": {
+   "number": 28,
+   "id": 5428697013,
+   "title": "Skills, the registry, and the librarian",
+   "blockers": [
+    "05"
+   ],
+   "milestone": "M4"
+  },
+  "28": {
+   "number": 29,
+   "id": 5428697284,
+   "title": "Intake and the goal",
+   "blockers": [
+    "27"
+   ],
+   "milestone": "M4"
+  },
+  "29": {
+   "number": 30,
+   "id": 5428697569,
+   "title": "The position memo",
+   "blockers": [
+    "26",
+    "28"
+   ],
+   "milestone": "M4"
+  },
+  "30": {
+   "number": 31,
+   "id": 5428697859,
+   "title": "The grill and the autonomy switch",
+   "blockers": [
+    "28"
+   ],
+   "milestone": "M4"
+  },
+  "31": {
+   "number": 32,
+   "id": 5428698144,
+   "title": "The decider",
+   "blockers": [
+    "30"
+   ],
+   "milestone": "M4"
+  },
+  "32": {
+   "number": 33,
+   "id": 5428698428,
+   "title": "Type-B verdicts: the verifier role and gates",
+   "blockers": [
+    "05"
+   ],
+   "milestone": "M4"
+  },
+  "33": {
+   "number": 34,
+   "id": 5428698729,
+   "title": "Specify",
+   "blockers": [
+    "31",
+    "32"
+   ],
+   "milestone": "M4"
+  },
+  "34": {
+   "number": 35,
+   "id": 5428698988,
+   "title": "Plan: the planner, plan-time checks, and ticket assignment",
+   "blockers": [
+    "27",
+    "33"
+   ],
+   "milestone": "M4"
+  },
+  "35": {
+   "number": 36,
+   "id": 5428699243,
+   "title": "Decision tickets end to end and dashboard actions",
+   "blockers": [
+    "07",
+    "12",
+    "14",
+    "28"
+   ],
+   "milestone": "M4"
+  },
+  "36": {
+   "number": 37,
+   "id": 5428699475,
+   "title": "M4 live demo: from a vague intent to a graph with roles and skills",
+   "blockers": [
+    "29",
+    "34",
+    "35"
+   ],
+   "milestone": "M4"
+  },
+  "37": {
+   "number": 38,
+   "id": 5428699775,
+   "title": "Proposals admission",
+   "blockers": [
+    "07",
+    "31"
+   ],
+   "milestone": "M5"
+  },
+  "38": {
+   "number": 39,
+   "id": 5428700040,
+   "title": "Stall detection and the escalation chain",
+   "blockers": [
+    "08",
+    "34"
+   ],
+   "milestone": "M5"
+  },
+  "39": {
+   "number": 40,
+   "id": 5428700361,
+   "title": "Keep-if-better under a quantitative goal",
+   "blockers": [
+    "19",
+    "28"
+   ],
+   "milestone": "M5"
+  },
+  "40": {
+   "number": 41,
+   "id": 5428700650,
+   "title": "Provenance tags, the linter, and REPORT.md",
+   "blockers": [
+    "18",
+    "32"
+   ],
+   "milestone": "M5"
+  },
+  "41": {
+   "number": 42,
+   "id": 5428700928,
+   "title": "The toy project fixture",
+   "blockers": [
+    "17",
+    "28"
+   ],
+   "milestone": "M5"
+  },
+  "42": {
+   "number": 43,
+   "id": 5428701210,
+   "title": "Dashboard outputs, downloads, and logs",
+   "blockers": [
+    "12"
+   ],
+   "milestone": "M5"
+  },
+  "43": {
+   "number": 44,
+   "id": 5428701489,
+   "title": "M5 overnight demo: the toy project end to end across a window boundary",
+   "blockers": [
+    "14",
+    "36",
+    "37",
+    "38",
+    "39",
+    "40",
+    "41",
+    "42"
+   ],
+   "milestone": "M5"
+  },
+  "44": {
+   "number": 45,
+   "id": 5428701774,
+   "title": "Fixture format and runner (verbatim prototype 32)",
+   "blockers": [
+    "03",
+    "09"
+   ],
+   "milestone": "M6"
+  },
+  "45": {
+   "number": 46,
+   "id": 5428702050,
+   "title": "Feedback, change records, harness tickets, and local skills",
+   "blockers": [
+    "34",
+    "42",
+    "44"
+   ],
+   "milestone": "M6"
+  },
+  "46": {
+   "number": 47,
+   "id": 5428702323,
+   "title": "Tags, pins, upgrade, rollback, and promotion",
+   "blockers": [
+    "27",
+    "44"
+   ],
+   "milestone": "M6"
+  },
+  "47": {
+   "number": 48,
+   "id": 5428702594,
+   "title": "M6 demo: feedback to a tagged harness change and back",
+   "blockers": [
+    "43",
+    "45",
+    "46"
+   ],
+   "milestone": "M6"
+  },
+  "48": {
+   "number": 49,
+   "id": 5428702859,
+   "title": "The plot index",
+   "blockers": [
+    "20"
+   ],
+   "milestone": "M7"
+  },
+  "49": {
+   "number": 50,
+   "id": 5428703174,
+   "title": "Figure machine checks, schemas, and the house style",
+   "blockers": [
+    "48"
+   ],
+   "milestone": "M7"
+  },
+  "50": {
+   "number": 51,
+   "id": 5428703540,
+   "title": "The figure role pipeline end to end",
+   "blockers": [
+    "32",
+    "43",
+    "49"
+   ],
+   "milestone": "M7"
+  },
+  "51": {
+   "number": 52,
+   "id": 5428703778,
+   "title": "The documentation site",
+   "blockers": [
+    "34",
+    "43"
+   ],
+   "milestone": "M7"
+  },
+  "52": {
+   "number": 53,
+   "id": 5428704042,
+   "title": "Venue guidelines",
+   "blockers": [
+    "20"
+   ],
+   "milestone": "M7"
+  },
+  "53": {
+   "number": 54,
+   "id": 5428704331,
+   "title": "The paper and the M7 demo",
+   "blockers": [
+    "40",
+    "50",
+    "51",
+    "52"
+   ],
+   "milestone": "M7"
+  }
+ },
+ "relationships": {
+  "sub_issues": 53,
+  "sub_issue_error": null,
+  "dependencies": 98,
+  "dependencies_total": 98,
+  "dependency_error": null
+ }
+}

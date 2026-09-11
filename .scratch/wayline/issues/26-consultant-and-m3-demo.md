@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#27](https://github.com/Bernaljp/wayline/issues/27) (mirror; the local file is the source)
+
 **Milestone:** M3 Dossiers. **Spec:** milestone M3 criteria 8 to 11 and its demo; Implementation Decisions 9 (the consultant); map ticket 41.
 
 - [ ] `roles/consultant/` exists with read-only tools; `wayline consult <slug> "<question>"` launches `claude -p "<question>" --agent consultant --add-dir <project>/research/refs/<slug> --disallowedTools Edit Write --json-schema consultant_answer.json` through the launcher with the same `dontAsk`, `--permission-prompts none`, stream-json flags and the `NotebookEdit Bash Agent WebFetch WebSearch` removals as every read-only role.

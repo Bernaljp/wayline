@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#6](https://github.com/Bernaljp/wayline/issues/6) (mirror; the local file is the source)
+
 **Milestone:** M0 Skeleton. **Spec:** Implementation Decisions 1 (roles), 3 (prompt assembly), 5 (process, wave, worker outcome, integration for the conflict-free case, context packs); Testing Decisions seam 4.
 
 - [ ] `roles/coder/agent.md` and `roles/coder/wayline.json` exist with the system prompt, no `tools` field, and the default `allowed_tools` and `disallowed_tools` of Implementation Decisions 4; the conductor composes `agent.json` (description, prompt, model alias, effort, maxTurns, permissionMode) from them.

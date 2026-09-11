@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#25](https://github.com/Bernaljp/wayline/issues/25) (mirror; the local file is the source)
+
 **Milestone:** M3 Dossiers. **Spec:** Implementation Decisions 9 (the absorb workflow), 3 (the launcher), 11 (the critic's verdict); research-notes 04.
 
 - [ ] Chunking is code: one chunk per section's text cut at `policy.absorb.chunk_max_chars` with the inventory items located in it as its obligation list; each figure and table is its own chunk with its image file; equations, algorithms, and theorems ride with their section; the chunk manifest is written under `refs/<slug>/`.

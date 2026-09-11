@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#53](https://github.com/Bernaljp/wayline/issues/53) (mirror; the local file is the source)
+
 **Milestone:** M7 Figures, docs, paper. **Spec:** Implementation Decisions 13 (guidelines); OPEN-19 (map ticket 35); research-notes 10 (the URLs, the per-venue findings, the layout, the seven checks).
 
 - [ ] `wayline guidelines build` fetches each venue's guidelines URL recorded in research-notes 10 through the seam and writes `guidelines/<venue>/guidelines.json` (schema `guidelines`: `venue, display_name, guidelines_url, date_checked, length_limits, required_structure[], structure_flexible, figure_spec, reference_style, reporting_checklists[], submission_steps[], template, license_of_summary_source, verification: {fully_verified_fields[], unverified_fields[]}`), `source.md` (what was fetched, what is unverified, caveats), and `checklist/` with cached reporting-checklist forms only; manuscript templates are linked, never stored.

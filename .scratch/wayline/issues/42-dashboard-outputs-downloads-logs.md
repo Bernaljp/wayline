@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#43](https://github.com/Bernaljp/wayline/issues/43) (mirror; the local file is the source)
+
 **Milestone:** M5 Overnight and report. **Spec:** Implementation Decisions 8 (endpoints, views); research-notes 08 Section 3 and 4.
 
 - [ ] `GET /api/projects/<id>/outputs` indexes `results/` (through the manifest), findings, figures, dossiers, `REPORT.md`, `paper/`, and the docs site with sizes and hashes.

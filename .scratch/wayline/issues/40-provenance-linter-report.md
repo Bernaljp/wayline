@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#41](https://github.com/Bernaljp/wayline/issues/41) (mirror; the local file is the source)
+
 **Milestone:** M5 Overnight and report. **Spec:** Implementation Decisions 11 (provenance tags, REPORT.md), 14 (`provenance`); map ticket 40; BRIEF 13.4.
 
 - [ ] Tags `{res:<run-id>/<artifact>#<locator>}` and `{ref:<slug>#<locator>}` end claim sentences and render as citations or supplementary references; negative results are claims and need a tag.

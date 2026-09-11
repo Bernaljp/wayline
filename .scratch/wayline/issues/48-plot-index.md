@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#49](https://github.com/Bernaljp/wayline/issues/49) (mirror; the local file is the source)
+
 **Milestone:** M7 Figures, docs, paper. **Spec:** Implementation Decisions 13 (plot index), 14 (`plot_index`); OPEN-18 (map ticket 34); research-notes 09 (sources, schema, cadence) and 11 Section 2 (the traps).
 
 - [ ] `wayline figures build-index` fetches python-graph-gallery `/all-charts/`, r-graph-gallery `/all-graphs.html`, Altair `/gallery/index.html`, seaborn `/examples/index.html`, and plotnine `sitemap.xml` and their linked pages through the seam at one request per second with the descriptive User-Agent, and writes `figures/plot_index.json`.

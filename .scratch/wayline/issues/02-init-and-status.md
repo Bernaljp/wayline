@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#3](https://github.com/Bernaljp/wayline/issues/3) (mirror; the local file is the source)
+
 **Milestone:** M0 Skeleton. **Spec:** Implementation Decisions 1 (project layout, per-machine pointers, the command), 2 (graph.json), 14 (defaults).
 
 - [ ] `wayline init <path>` creates the project layout of Implementation Decisions 1: `CLAUDE.md` block (appended, never overwriting an existing file), `harness.json` (harness_tag from the checkout, autonomy `checkpoints`, radius `moderate`, reservations no GPU, 8 cores, 64 GB, pacing 0.90 and 0.80, dashboard port 8765, notify block, empty policy overrides), the `research/` tree with `INTAKE.md` template, empty `journal.jsonl`, `findings.jsonl`, `manifest.json`, `graph.json`, and `.gitignore` entries for `.worktrees/`, `results/`, `research/.cache/`, and `research/sessions/*/*/stream.jsonl`.

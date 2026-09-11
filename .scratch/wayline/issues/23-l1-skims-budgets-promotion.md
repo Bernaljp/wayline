@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#24](https://github.com/Bernaljp/wayline/issues/24) (mirror; the local file is the source)
+
 **Milestone:** M3 Dossiers. **Spec:** Implementation Decisions 9 (levels and budgets), 14 (`absorb`); OPEN-16 (map ticket 31).
 
 - [ ] `wayline absorb --level 1 <slug>` builds the capped input (title, abstract, introduction, conclusion, figure captions, results table headers, cut at `policy.absorb.l1_max_chars`) from the inventory or the text layer, makes one `sonnet --effort medium` call through the launcher with the L1 record schema, and writes the record into `refs/<slug>/dossier.json` at level 1 with `relation_to_intent` and `deserves_l2_if`.

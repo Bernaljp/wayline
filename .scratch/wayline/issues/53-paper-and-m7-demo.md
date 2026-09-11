@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#54](https://github.com/Bernaljp/wayline/issues/54) (mirror; the local file is the source)
+
 **Milestone:** M7 Figures, docs, paper. **Spec:** milestone M7 as a whole; Implementation Decisions 13 (paper), 11 (kill argument, provenance); BRIEF 13.3.
 
 - [ ] `roles/writer/` (fable, xhigh) drafts `research/paper/` from `findings.jsonl`, the knowledge base, and `REPORT.md` under the venue's `guidelines.json`, every claim tagged; `wayline paper` without `--venue` asks the decider to pick the best-fitting venue from `guidelines/` and journals the decision; `paper_started` is journaled.

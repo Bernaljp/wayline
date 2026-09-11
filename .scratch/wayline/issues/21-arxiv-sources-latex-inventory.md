@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#22](https://github.com/Bernaljp/wayline/issues/22) (mirror; the local file is the source)
+
 **Milestone:** M3 Dossiers. **Spec:** Implementation Decisions 9 (arXiv sources, inventory); research-notes 06 Section 2.
 
 - [ ] The source is fetched from `https://export.arxiv.org/src/<id>[vN]` through the seam at one request per 3 s on one connection with an ETag cache that never expires, stored under `refs/<slug>/source/`; `init`'s `.gitignore` also excludes `research/refs/*/source/` so a pushed project never republishes an e-print (an addition this ticket makes to the spec's ignore list, for the arXiv terms of use); a PDF-only submission is routed to the PDF chain of ticket 22.

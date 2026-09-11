@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#39](https://github.com/Bernaljp/wayline/issues/39) (mirror; the local file is the source)
+
 **Milestone:** M5 Overnight and report. **Spec:** Implementation Decisions 5 (escalation, stall), 14 (`escalation`, `stall.waves`); OPEN-12 (map ticket 24); BRIEF 8.4, 9.7.
 
 - [ ] A settling wave is one that processed at least one worker or job outcome; the stall counter increments on each settling wave without `ticket_done`, `finding`, or `progress` with `kept: true`, resets on any of them, and at `policy.stall.waves` journals `stall` and files a replan ticket (`wayline plan --replan`) or, in radius `strict`, journals `run_ended` with `stall_strict` and renders the report.

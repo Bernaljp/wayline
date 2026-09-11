@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#40](https://github.com/Bernaljp/wayline/issues/40) (mirror; the local file is the source)
+
 **Milestone:** M5 Overnight and report. **Spec:** Implementation Decisions 5 (keep-if-better, goal check, integration skip on discard), 14 (`goal`); map ticket 39; BRIEF 6.4.
 
 - [ ] For every ticket with `goal_metric`, the conductor runs `GOAL.json.eval_command` on the held-out split and the ticket's outputs per seed before integration, computes the mean and standard deviation, and keeps the change (fast-forward) only when the mean improves in `direction` over the best kept value by more than one standard deviation with at least `policy.goal.min_seeds` seeds; fewer seeds fail the ticket with a request for more.

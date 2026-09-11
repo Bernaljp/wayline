@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#4](https://github.com/Bernaljp/wayline/issues/4) (mirror; the local file is the source)
+
 **Milestone:** M0 Skeleton. **Spec:** Implementation Decisions 3; Testing Decisions seam 1; research-notes 01 and 02 (recorded streams and envelopes).
 
 - [ ] `LaunchRequest` carries `role, model, effort, prompt, agent_json, allowed_tools, disallowed_tools, settings_path, add_dirs, cwd, env, schema_path, max_minutes`; `Envelope` carries `session_id, model, structured_output, is_error, subtype, num_turns, duration_ms, duration_api_ms, usage, model_usage, permission_denials, api_error_status, rate_limit_events, exit_code, stream_path`.

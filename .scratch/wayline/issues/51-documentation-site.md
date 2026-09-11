@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#52](https://github.com/Bernaljp/wayline/issues/52) (mirror; the local file is the source)
+
 **Milestone:** M7 Figures, docs, paper. **Spec:** Implementation Decisions 13 (documentation), 10 (the planner's docs rule); BRIEF 13.2; OPEN-10 (map ticket 22).
 
 - [ ] `roles/documentarian/` exists; a `docs` ticket runs it in the project's own environment (Sphinx installed there, not in the harness) to produce the four-part structure, the API reference from docstrings, executed examples, a figure gallery, and the Read the Docs configuration under the project's `docs/`.

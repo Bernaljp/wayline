@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#19](https://github.com/Bernaljp/wayline/issues/19) (mirror; the local file is the source)
+
 **Milestone:** M2 Hardware. **Spec:** Implementation Decisions 6 (artifacts), 2 (the ledger); OPEN-14 (map ticket 26).
 
 - [ ] The ledger's `register_artifact(path, job, run_id, ticket)` writes a `manifest.json` entry `{path, size, sha256, job, run_id, ticket, ts}` and journals `manifest`; `run_id` is `t<ticket>-a<attempt>`.

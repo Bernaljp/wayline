@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#51](https://github.com/Bernaljp/wayline/issues/51) (mirror; the local file is the source)
+
 **Milestone:** M7 Figures, docs, paper. **Spec:** milestone M7 criterion 2; Implementation Decisions 13 (the figure role), 14 (`figures`); research-notes 11 Sections 1 and 4.
 
 - [ ] `roles/figure-designer/` and `roles/figure-critic/` exist; the designer's prompt carries the register rules for a framework figure and the honesty discipline as doctrine and never a library fact (pitfalls arrive per candidate from the index as `pitfalls_consulted`).

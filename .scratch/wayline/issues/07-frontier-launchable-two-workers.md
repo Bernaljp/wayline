@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#8](https://github.com/Bernaljp/wayline/issues/8) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** Implementation Decisions 5 (wave steps 7 to 9, context packs), 14 (`max_parallel_workers`, `context_pack.max_chars`).
 
 - [ ] The frontier is open tickets whose blockers are all `done` or `accepted`, where a difficulty-5 blocker counts only when `accepted`, minus tickets blocked by an open decision ticket with `blocking: subgraph`, minus everything while a `blocking: all` decision ticket is open (decision tickets are a kind the schema already knows; the answer paths arrive with ticket 35).

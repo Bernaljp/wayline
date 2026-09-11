@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#23](https://github.com/Bernaljp/wayline/issues/23) (mirror; the local file is the source)
+
 **Milestone:** M3 Dossiers. **Spec:** milestone M3 criteria 1 and 4; Implementation Decisions 9 (non-arXiv PDFs, inventory); research-notes 06 Section 1 and the comparison table.
 
 - [ ] Carried verbatim from the closed prototype ticket 30 (Prototype: inventory one non-arXiv PDF and one arXiv source):

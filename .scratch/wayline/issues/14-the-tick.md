@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#15](https://github.com/Bernaljp/wayline/issues/15) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** milestone M1 criterion 1; Implementation Decisions 7 (tick contract, login durability), 14 (`tick`, `heartbeat_stale_s`).
 
 - [ ] Carried verbatim from the closed prototype ticket 29 (Prototype: the tick):

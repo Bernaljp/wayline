@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#34](https://github.com/Bernaljp/wayline/issues/34) (mirror; the local file is the source)
+
 **Milestone:** M4 Front door. **Spec:** Implementation Decisions 10 (specify), 11 (verdicts); BRIEF 6.1 P3.
 
 - [ ] `wayline specify` launches the planner role in its specify protocol through the launcher with `DECISIONS.md`, `POSITION.md`, `GOAL.json`, and the query pack, and renders `SPEC.md` from the validated draft with the required sections.

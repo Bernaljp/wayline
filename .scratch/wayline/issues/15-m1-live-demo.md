@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**GitHub:** [#16](https://github.com/Bernaljp/wayline/issues/16) (mirror; the local file is the source)
+
 **Milestone:** M1 Frontier and windows. **Spec:** milestone M1 criteria 3 to 8, 10; Implementation Decisions 5, 14.
 
 - [ ] The five-ticket project from `fixtures/projects/five-tickets/` runs live with `max_parallel_workers: 2`; the journal shows two tickets running concurrently and the conflicting ticket launched only after its counterpart was integrated; if the pair produces a real git conflict, the integrator resolves it live.
