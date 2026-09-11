@@ -1,0 +1,16 @@
+# 24 - The absorb workflow for L2
+
+**What to build:** A promoted paper is read in full without skimming: code chunks the source by the inventory, one reader per chunk returns one entry per obligation item with a locator and the exact form, a synthesizer writes the dossier prose from entries with a locator on every sentence, the coverage audit fails on any item without an entry, and a critic spot-checks depth. The fan-out runs as a Workflow script inside one headless session, with conductor fan-out as the fallback behind the same function.
+
+**Blocked by:** 22 (Non-arXiv PDF inventory chain and the tools venv (verbatim prototype 30)), 23 (L1 skims, reading budgets, and promotion triggers)
+
+**Status:** ready-for-agent
+
+**Milestone:** M3 Dossiers. **Spec:** Implementation Decisions 9 (the absorb workflow), 3 (the launcher), 11 (the critic's verdict); research-notes 04.
+
+- [ ] Chunking is code: one chunk per section's text cut at `policy.absorb.chunk_max_chars` with the inventory items located in it as its obligation list; each figure and table is its own chunk with its image file; equations, algorithms, and theorems ride with their section; the chunk manifest is written under `refs/<slug>/`.
+- [ ] `workflows/absorb.js` runs `pipeline` over the chunks with `agent(prompt, {agentType: 'reader', schema})`, one entry per obligation item (`item_id, locator, kind, content` in exact form, `importance` 1 to 5, `relation_to_intent`, `oddities`; figure entries add `what_it_shows`, `supports_cited_claim`, `anything_odd`), then one `synthesizer` call over all entries for the prose sections (method, claims, results, assumptions, limitations, flaws found, reusable ideas, open questions, relation to intent) with a locator on every sentence, and returns `{entries, sections, failures}`.
+- [ ] The absorb session is launched through the launcher from the project root with `--allowedTools Workflow Skill Read Glob Grep`, the read-only removals, `--agents` defining `reader` (sonnet, medium) and `synthesizer` (opus, high), and a prompt whose first line is `/absorb <manifest path>`; the narrower `Workflow(absorb)` and `Skill(absorb)` rules are tried first and the outcome recorded; the run file is found by `glob ~/.claude/projects/*/<session_id>/workflows/wf_*.json` and the conductor journals `absorbed`.
+- [ ] Code merges entries into `entries.jsonl` and `dossier.json` (level 2), renders `dossier.md`, runs the coverage audit (every inventory item has at least one entry, else the gate fails with the missing items), and queues the depth spot-check verdict by the `critic` role on the five most important items and every claimed flaw.
+- [ ] The fallback (`policy.absorb.fanout: conductor`) launches N reader sessions through the launcher, one chunk each, with the coverage bookkeeping in the conductor, behind the same function signature.
+- [ ] Tests drive the fake launcher with scripted reader entries over a fixture inventory and assert the combined entries, the audit pass and fail, and the fallback; live: the primary paper of the M3 intake reaches L2 with every item covered and every figure described, and the chunk count and fan-out cost are recorded in `docs/verification/m3.md`.
