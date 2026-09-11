@@ -1,0 +1,5 @@
+.scratch/smoke/
+.scratch/proto/*/artifacts/
+__pycache__/
+*.pyc
+.worktrees/
