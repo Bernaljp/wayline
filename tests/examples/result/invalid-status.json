@@ -1,0 +1,54 @@
+{
+  "ticket_id": 17,
+  "status": "ok",
+  "summary": "Removed the attention term; AUROC fell on all three seeds.",
+  "outputs_written": [
+    "results/ablation_b/summary.json"
+  ],
+  "commands_run": [
+    "python scripts/check_seeds.py results/ablation_b --min 3"
+  ],
+  "checks": {
+    "pytest": "pass",
+    "seeds>=3": "pass"
+  },
+  "findings": [
+    {
+      "text": "Removing the term lowers AUROC by 0.04.",
+      "provenance": "results/ablation_b/summary.json#L4",
+      "negative": false
+    }
+  ],
+  "goal_progress": {
+    "metric": "auroc_b",
+    "value": 0.83
+  },
+  "proposals": [
+    {
+      "title": "Probe the term on dataset C",
+      "kind": "experiment",
+      "why": "The effect may be dataset-specific.",
+      "blocked_by": [
+        17
+      ],
+      "radius": "moderate"
+    }
+  ],
+  "decision_requests": [
+    {
+      "question": "Keep the smaller model for the sweep?",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "recommended": "yes",
+      "blocking": "subgraph"
+    }
+  ],
+  "touched_outside_declared": [],
+  "blocked_on": null,
+  "cost": {
+    "turns": 61,
+    "minutes": 34
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "path": "results/ablation_b/summary.json",
+      "size": 1234,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "job": "t17-a1-j1",
+      "run_id": "t17-a1",
+      "ticket": 17
+    }
+  ]
+}

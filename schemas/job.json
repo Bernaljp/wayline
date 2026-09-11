@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "job",
+  "description": "A job file research/jobs/<id>.json (Implementation Decisions 6): a detached hardware process polled by code.",
+  "type": "object",
+  "required": ["id", "ticket", "array", "backend", "unit", "command", "cwd", "env", "devices", "log", "expected_outputs", "retry", "attempts", "status", "wallclock_minutes"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+    "ticket": {"type": "integer", "minimum": 1},
+    "array": {"type": ["string", "null"], "description": "the group id of a sweep, or null"},
+    "backend": {"type": "string", "enum": ["systemd_run", "setsid", "fake"]},
+    "unit": {"type": ["string", "null"]},
+    "command": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "argv"},
+    "cwd": {"type": "string"},
+    "env": {"type": "object", "additionalProperties": {"type": "string"}},
+    "devices": {
+      "type": "object",
+      "required": ["gpu_uuids", "gpu_indices", "cores", "ram_gb"],
+      "additionalProperties": false,
+      "properties": {
+        "gpu_uuids": {"type": "array", "items": {"type": "string"}},
+        "gpu_indices": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "cores": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "ram_gb": {"type": "number", "minimum": 0}
+      }
+    },
+    "log": {"type": "string"},
+    "expected_outputs": {"type": "array", "items": {"type": "string"}},
+    "retry": {
+      "type": "object",
+      "required": ["host_oom", "gpu_oom"],
+      "additionalProperties": false,
+      "properties": {
+        "host_oom": {"type": "array", "items": {"type": "object"}},
+        "gpu_oom": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "attempts": {"type": "array", "items": {"$ref": "#/$defs/attempt"}},
+    "status": {"type": "string", "enum": ["pending", "running", "exited", "oom_host", "oom_gpu", "failed", "killed", "gone"]},
+    "wallclock_minutes": {"type": "integer", "minimum": 1}
+  },
+  "$defs": {
+    "attempt": {
+      "type": "object",
+      "required": ["n", "started_at", "ended_at", "result", "exit_code", "oom", "overrides"],
+      "additionalProperties": false,
+      "properties": {
+        "n": {"type": "integer", "minimum": 1},
+        "started_at": {"type": "string"},
+        "ended_at": {"type": ["string", "null"]},
+        "result": {"type": ["string", "null"], "description": "the manager's Result= value, or the fallback's decoding"},
+        "exit_code": {"type": ["integer", "null"]},
+        "oom": {"enum": ["host", "gpu", null]},
+        "overrides": {"type": "object"}
+      }
+    }
+  }
+}

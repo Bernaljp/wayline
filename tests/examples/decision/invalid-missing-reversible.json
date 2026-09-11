@@ -1,0 +1,19 @@
+{
+  "ticket": 3,
+  "question": "Which held-out split defines the goal?",
+  "options": [
+    "split A",
+    "split B"
+  ],
+  "recommended": "split A",
+  "evidence": [
+    "research/POSITION.md#feasibility"
+  ],
+  "blocking": "subgraph",
+  "human_only": true,
+  "answer": "split A",
+  "rationale": "It is the split the baseline paper reports.",
+  "confidence": 0.8,
+  "decided_by": "human",
+  "timestamp": "2026-09-12T02:00:00Z"
+}

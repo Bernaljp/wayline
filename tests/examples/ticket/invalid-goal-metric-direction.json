@@ -1,0 +1,70 @@
+{
+  "id": 17,
+  "title": "Ablate the attention term on dataset B",
+  "kind": "experiment",
+  "difficulty": 3,
+  "status": "open",
+  "blocked_by": [
+    12,
+    14
+  ],
+  "blocking": null,
+  "human_only": false,
+  "touches": [
+    "experiments/ablation_b/",
+    "results/ablation_b/"
+  ],
+  "resources": {
+    "gpu": 1,
+    "cpu": 8,
+    "ram_gb": 32,
+    "wallclock_minutes": 90
+  },
+  "role": "experimenter",
+  "skills": [
+    "sweep-runner",
+    "metrics-b"
+  ],
+  "inputs": [
+    "research/SPEC.md#claim-2",
+    "results/baseline_b/summary.json"
+  ],
+  "outputs": [
+    "results/ablation_b/summary.json",
+    "research/findings.jsonl#entry"
+  ],
+  "acceptance": {
+    "machine": [
+      "python scripts/check_seeds.py results/ablation_b --min 3",
+      "test -f results/ablation_b/summary.json"
+    ],
+    "quality": [
+      "Does the ablation isolate the attention term and nothing else?"
+    ]
+  },
+  "goal_metric": {
+    "reports": "auroc_b",
+    "expected_direction": "lower"
+  },
+  "budget": {
+    "max_turns": 150,
+    "max_minutes": 120
+  },
+  "context_pack": [
+    "research/SPEC.md",
+    "research/refs/foo2025/dossier.md#method",
+    "research/findings.jsonl#12"
+  ],
+  "origin": "SPEC.md#claim-2",
+  "proposed_by": "planner",
+  "demo": "A table with three seeds showing the effect of removing the term on dataset B.",
+  "pinned_difficulty": null,
+  "retry": {
+    "host_oom": [],
+    "gpu_oom": [
+      {
+        "--batch-size": 16
+      }
+    ]
+  }
+}

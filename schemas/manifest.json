@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "manifest",
+  "description": "research/manifest.json (Implementation Decisions 6): every artifact a finding may cite, hashed; the ledger refuses a finding whose provenance is not here.",
+  "type": "object",
+  "required": ["entries"],
+  "additionalProperties": false,
+  "properties": {
+    "entries": {"type": "array", "items": {"$ref": "#/$defs/entry"}}
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": ["path", "size", "sha256", "job", "run_id", "ticket", "ts"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "pattern": "\\S"},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "job": {"type": ["string", "null"], "description": "the job id when a job wrote the file"},
+        "run_id": {"type": "string", "pattern": "^t[0-9]+-a[0-9]+$", "description": "t<ticket>-a<attempt>, the attempt that produced or registered the file"},
+        "ticket": {"type": "integer", "minimum": 1},
+        "ts": {"type": "string"}
+      }
+    }
+  }
+}

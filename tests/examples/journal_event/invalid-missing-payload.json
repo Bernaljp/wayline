@@ -1,0 +1,7 @@
+{
+  "ts": "2026-09-12T01:02:03.456Z",
+  "event": "ticket_launched",
+  "ticket": 17,
+  "session_id": null,
+  "job": null
+}

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "harness",
+  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
+  "type": "object",
+  "required": ["harness_tag", "autonomy", "radius"],
+  "additionalProperties": false,
+  "properties": {
+    "harness_tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "autonomy": {"type": "string", "enum": ["interactive", "checkpoints", "autonomous"]},
+    "radius": {"type": "string", "enum": ["strict", "moderate", "exploratory"]},
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gpu_hours": {"type": ["number", "null"], "minimum": 0},
+        "wallclock_hours": {"type": ["number", "null"], "minimum": 0},
+        "usage_windows": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "reservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gpu": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "GPU indices kept for the owner; empty means none"},
+        "cores": {"type": "integer", "minimum": 0},
+        "ram_gb": {"type": "number", "minimum": 0},
+        "processes": {"type": "array", "items": {"type": "string"}, "description": "process names whose GPU memory and cores count as reserved"}
+      }
+    },
+    "pacing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stop_at": {"type": "number", "minimum": 0, "maximum": 1},
+        "cheap_at": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "notify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hermes_python": {"type": ["string", "null"], "description": "the interpreter that runs hermes_cli; null disables the Telegram channel"}
+      }
+    },
+    "dashboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "bind": {"type": "string"},
+        "poll_journal_s": {"type": "number", "minimum": 0},
+        "poll_views_s": {"type": "number", "minimum": 0}
+      }
+    },
+    "policy": {"type": "object", "description": "overrides of policy.json keys, same shape"},
+    "docs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "theme": {"type": "string"}
+      }
+    },
+    "owner_email": {"type": ["string", "null"], "description": "sent in the scout's User-Agent to the polite pools"}
+  }
+}

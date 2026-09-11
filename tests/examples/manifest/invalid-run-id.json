@@ -1,0 +1,22 @@
+{
+  "entries": [
+    {
+      "path": "results/ablation_b/summary.json",
+      "size": 1234,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "job": "t17-a1-j1",
+      "run_id": "run-17",
+      "ticket": 17,
+      "ts": "2026-09-12T01:30:00Z"
+    },
+    {
+      "path": "results/baseline_b/summary.json",
+      "size": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "job": null,
+      "run_id": "t12-a2",
+      "ticket": 12,
+      "ts": "2026-09-11T20:00:00Z"
+    }
+  ]
+}
