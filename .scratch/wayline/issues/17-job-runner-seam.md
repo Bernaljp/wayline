@@ -4,13 +4,13 @@
 
 **Blocked by:** 16 (Resources detection and slots)
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#18](https://github.com/Bernaljp/wayline/issues/18) (mirror; the local file is the source)
 
 **Milestone:** M2 Hardware. **Spec:** milestone M2 criterion 1; Implementation Decisions 6 (interface, launch line, poll, OOM rule, kill, fallback, job file); Testing Decisions seam 2; research-notes 05 A1 to A5 and the raw outputs R2 to R11.
 
-- [ ] Carried verbatim from the closed prototype ticket 27 (Prototype: the detached GPU job runner):
+- [x] Carried verbatim from the closed prototype ticket 27 (Prototype: the detached GPU job runner):
 
   > Does the recommended runner work on this machine end to end? Build a throwaway script that:
   >
@@ -22,10 +22,10 @@
   > Record the commands and the job file. The answer is the job file schema and the runner call M2 implements. Keep it under `.scratch/proto/job-runner/`.
 
   The real job runner stands in for the throwaway script; `docs/verification/m2.md` holds the commands, the job files, and the poll outputs for the pinned job, the OOM job, and the fallback.
-- [ ] `JobRunner.launch(spec) -> handle`, `poll(handle) -> JobState` (`running, exited, oom_host, oom_gpu, failed, killed, gone`), `kill(handle, hard=False)`, `cleanup(handle)`; backends `systemd_run`, `setsid` (chosen automatically when `systemctl --user show-environment` fails), and `fake`.
-- [ ] The `systemd_run` backend runs the Implementation Decisions 6 launch line verbatim (unit `wayline-job-<id>`, slice `wayline-jobs`, `--remain-after-exit`, `--expand-environment=no`, `CPUAffinity`, `MemoryMax`, `MemorySwapMax=0`, `TimeoutStopSec=30`, `RuntimeMaxSec` from `wallclock_minutes`, `WorkingDirectory`, `StandardOutput=append:` and `StandardError=append:` to the same log, `CUDA_VISIBLE_DEVICES`, `PYTHONUNBUFFERED=1`) and never `--collect`; polls with `systemctl --user show wayline-job-<id>.service -p LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus` and decodes per the table; `LoadState=not-found` never implies success.
-- [ ] The OOM rule: `Result=oom-kill` is `oom_host`; `Result=exit-code` plus one of the eight CUDA signatures in the last 64 KB of the log is `oom_gpu`; the signature list is one table; `Result=signal` with 9 and no `oom-kill` is `killed`; `Result=timeout` is `failed` with reason `wallclock`.
-- [ ] Kill and cleanup follow research-notes 05 A4 (`stop`, `kill --signal=SIGKILL`, `stop wayline-jobs.slice`, `reset-failed`, `stop` for exited units, errors ignored); the `setsid` backend follows A5 with the `.exit` and `.pid` files and records `backend: setsid` in the job file.
-- [ ] `jobs/<id>.json` follows the `job` schema (`id, ticket, array, backend, unit, command, cwd, env, devices: {gpu_uuids, gpu_indices, cores, ram_gb}, log, expected_outputs, retry: {host_oom, gpu_oom}, attempts[], status, wallclock_minutes`); GPUs are recorded by uuid and resolved to an index at launch.
+- [x] `JobRunner.launch(spec) -> handle`, `poll(handle) -> JobState` (`running, exited, oom_host, oom_gpu, failed, killed, gone`), `kill(handle, hard=False)`, `cleanup(handle)`; backends `systemd_run`, `setsid` (chosen automatically when `systemctl --user show-environment` fails), and `fake`.
+- [x] The `systemd_run` backend runs the Implementation Decisions 6 launch line verbatim (unit `wayline-job-<id>`, slice `wayline-jobs`, `--remain-after-exit`, `--expand-environment=no`, `CPUAffinity`, `MemoryMax`, `MemorySwapMax=0`, `TimeoutStopSec=30`, `RuntimeMaxSec` from `wallclock_minutes`, `WorkingDirectory`, `StandardOutput=append:` and `StandardError=append:` to the same log, `CUDA_VISIBLE_DEVICES`, `PYTHONUNBUFFERED=1`) and never `--collect`; polls with `systemctl --user show wayline-job-<id>.service -p LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus` and decodes per the table; `LoadState=not-found` never implies success.
+- [x] The OOM rule: `Result=oom-kill` is `oom_host`; `Result=exit-code` plus one of the eight CUDA signatures in the last 64 KB of the log is `oom_gpu`; the signature list is one table; `Result=signal` with 9 and no `oom-kill` is `killed`; `Result=timeout` is `failed` with reason `wallclock`.
+- [x] Kill and cleanup follow research-notes 05 A4 (`stop`, `kill --signal=SIGKILL`, `stop wayline-jobs.slice`, `reset-failed`, `stop` for exited units, errors ignored); the `setsid` backend follows A5 with the `.exit` and `.pid` files and records `backend: setsid` in the job file.
+- [x] `jobs/<id>.json` follows the `job` schema (`id, ticket, array, backend, unit, command, cwd, env, devices: {gpu_uuids, gpu_indices, cores, ram_gb}, log, expected_outputs, retry: {host_oom, gpu_oom}, attempts[], status, wallclock_minutes`); GPUs are recorded by uuid and resolved to an index at launch.
 - [ ] `wayline job add` writes one job file (or one per array member with a shared `array` id) from a JSON spec on stdin, validating it against the schema, and is on the experimenter's allowed tools.
-- [ ] Tests decode the recorded `systemctl show` outputs R2 to R11 and drive the fake backend through every `JobState` value; the live criterion above runs on the GPU.
+- [x] Tests decode the recorded `systemctl show` outputs R2 to R11 and drive the fake backend through every `JobState` value; the live criterion above runs on the GPU.
