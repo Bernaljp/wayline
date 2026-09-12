@@ -12,17 +12,19 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import EXAMPLES_DIR, FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from tests.test_conductor import FIVE_TICKETS, ConductorCase, done, patch, run_verb
+from tests.test_conductor import FIVE_TICKETS, ConductorCase, done, drive, patch, run_verb
 from tests.test_verdicts import passing
 from wayline import cli, project, replay, tickets, worker
-from wayline.worker import Envelope
-from wayline.conductor import Conductor, ConductorError, control
+from wayline.conductor import Conductor, ConductorError
 from wayline.ledger import Ledger, conductor_holder, read_heartbeat
+from wayline.project import control
+from wayline.worker import Envelope
 
 HOLDER = {"pid": 4242, "started_at": "2026-09-12T10:00:00.000Z", "last_wave_at": None, "harness_tag": "v0.0.0"}
 
@@ -34,7 +36,7 @@ class HeartbeatTest(ConductorCase):
         """Another conductor, as far as this project can tell: the lock held and a heartbeat written."""
         holder = Ledger(self.project).heartbeat().acquire()
         self.addCleanup(holder.release)
-        holder.write(HOLDER)
+        holder.write(**HOLDER)
         return holder
 
     def test_the_run_writes_the_heartbeat_at_every_poll_and_lets_go_of_it_at_the_end(self):
@@ -177,6 +179,53 @@ class ReadoptionTest(ReadoptionCase):
         self.assertEqual([event["payload"]["attempt"] for event in self.events("ticket_launched")], [1, 1])
         self.assertEqual(self.ticket()["status"], "done")
 
+    def test_a_readopted_worker_past_its_budget_is_sent_sigterm_and_resumed_once_out_of_time(self):
+        """Decision 3's timeout, for the worker nobody's launcher is timing: the one a restart re-adopted."""
+        self.killed()
+        (self.run_dir() / "env.json").write_text(json.dumps({"started_at": "2020-01-01T00:00:00.000Z"}), encoding="utf-8")
+        with worker.use_fake() as fake:
+            fake.alive[KILLED_PID] = True
+            fake.script(done(), patch=patch())
+            drive(Conductor(self.project, out=io.StringIO()))
+            calls, alive = list(fake.calls), fake.alive[KILLED_PID]
+        self.assertFalse(alive, "the worker was not sent SIGTERM")
+        self.assertEqual(self.resumed(), [("readopted", SESSION), ("timeout", SESSION)])
+        self.assertEqual([(call.kind, call.session_id) for call in calls], [("resume", SESSION)])
+        self.assertIn("ran out of time", calls[0].message)
+        self.assertEqual(self.ticket()["status"], "done")
+
+
+class PausedRestartTest(ReadoptionCase):
+    """Decision 5, wave step 8: while the owner has paused the run, a restart starts no session either."""
+
+    def restart_while_paused(self):
+        """A first wave over the killed project while paused; then the owner resumes and the run goes on."""
+        control(self.project, "pause")
+        with worker.use_fake() as fake:
+            fake.script(done(), patch=patch())
+            driven = Conductor(self.project, out=io.StringIO())
+            held = driven.wave()
+            self.held = (list(fake.calls), self.events("ticket_resumed"), held.ended)
+            control(self.project, "resume")
+            drive(driven)
+            self.calls = list(fake.calls)
+
+    def test_a_relaunch_waits_until_the_owner_resumes_the_run(self):
+        self.killed(session=False, stream=False)
+        self.restart_while_paused()
+        self.assertEqual(self.held, ([], [], False))
+        self.assertEqual([call.kind for call in self.calls], ["launch"])
+        self.assertEqual(self.resumed(), [("worker_died", None)])
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_a_resume_by_session_id_waits_until_the_owner_resumes_the_run(self):
+        self.killed()
+        self.restart_while_paused()
+        self.assertEqual(self.held, ([], [], False))
+        self.assertEqual([(call.kind, call.session_id) for call in self.calls], [("resume", SESSION)])
+        self.assertEqual(self.resumed(), [("worker_died", SESSION)])
+        self.assertEqual(self.ticket()["status"], "done")
+
 
 class TakeOverCase(ReadoptionCase):
     def write(self, **changes):
@@ -264,21 +313,29 @@ class ControlCase(ConductorCase):
     """A conductor driven wave by wave, with control events appended between its waves as another process would."""
 
     def conductor_over(self, *scripted, **policy):
+        """A conductor driven wave by wave over the fake, scripted with `(envelope, patch, delay)` triples.
+
+        A long `delay` holds a worker until the test releases it, so nothing here sleeps.
+        """
         fake = self.enterContext(worker.use_fake())
         for envelope, applied, delay in scripted:
             fake.script(envelope, patch=applied, delay=delay)
         driven = Conductor(self.project, out=io.StringIO())
         driven.policy = dict(driven.policy, **policy)
         self.addCleanup(driven.settle, 30)
+        self.addCleanup(fake.release)
         return fake, driven
 
     def until_quiet(self, driven):
-        """Waves until the run ends or nothing is in flight, settling the sessions between them."""
-        while True:
-            result = driven.wave()
-            if result.ended or not driven.flight:
-                return result
-            driven.settle()
+        """The last result of `drive`: waves until the run ends or nothing is in flight."""
+        return drive(driven)[-1]
+
+    def another_ticket(self, identifier):
+        """Ticket `identifier`, independent of ticket 1: its own file to write and its own acceptance."""
+        fields, body = tickets.read_ticket(tickets.tickets_dir(self.project) / "01-write-the-hello-file.md")
+        name = "f%d.txt" % identifier
+        tickets.write_ticket(self.ledger, dict(fields, id=identifier, title="Write file %d" % identifier, touches=[name],
+                                               outputs=[name], acceptance=dict(fields["acceptance"], machine=["test -f " + name])), body)
 
     def second_ticket(self):
         path = tickets.tickets_dir(self.project) / "01-write-the-hello-file.md"
@@ -303,28 +360,33 @@ class ControlTest(ControlCase):
         self.assertTrue(last.ended)
         self.assertEqual(self.ticket()["status"], "done")
 
-    def test_a_stop_ends_the_run_now_and_leaves_its_worker_for_the_next_run_to_resume(self):
-        fake, driven = self.conductor_over((done(), patch(), 30))
+    def test_a_stop_ends_the_run_now_and_leaves_its_worker_running_for_the_next_run_to_readopt(self):
+        fake, driven = self.conductor_over((done(), patch(), 600))
         driven.wave()
         control(self.project, "stop")
         stopped = driven.wave()
         self.assertEqual((stopped.ended, stopped.reason), (True, "stopped"))
         self.assertEqual(self.payload("run_ended"), {"reason": "stopped"})
-        self.assertEqual(self.events("ticket_result"), [], "a stopped worker's outcome is the next run's to find")
-        self.assertEqual(self.ticket()["status"], "running")
-        fake.reset()
-        fake.script(done(), patch=patch())
+        self.assertEqual(self.events("ticket_result"), [], "a stop does not wait for the worker")
+        self.assertTrue(worker.pid_alive(self.payload("ticket_launched")["pid"]), "nor does it end the worker")
         after = Conductor(self.project, out=io.StringIO())
-        after.run(resume=True, wait=lambda seconds: after.settle(), max_waves=12)
-        self.assertEqual([event["payload"]["reason"] for event in self.events("ticket_resumed")], ["worker_died"])
+
+        def wait(seconds):
+            fake.release()  # the worker the stopped run left behind finishes on its own
+            driven.settle()
+
+        after.run(resume=True, wait=wait, max_waves=12)
+        self.assertEqual([event["payload"]["reason"] for event in self.events("ticket_resumed")], ["readopted"])
+        self.assertEqual([call.kind for call in fake.calls], ["launch"], "nothing was resumed or launched again")
         self.assertEqual(self.ticket()["status"], "done")
 
     def test_a_drain_waits_for_the_running_worker_and_launches_nothing_new(self):
         self.second_ticket()
-        fake, driven = self.conductor_over((done(), patch(), 2), max_parallel_workers=1)
+        fake, driven = self.conductor_over((done(), patch(), 600), max_parallel_workers=1)
         self.assertEqual(driven.wave().launched, [1])
         control(self.project, "stop", {"drain": True})
         draining = driven.wave()
+        fake.release()
         driven.settle()
         ended = driven.wave()
         self.assertFalse(draining.ended or draining.launched)
@@ -421,34 +483,93 @@ class AnswerTest(ControlCase):
         self.assertIn("decision", err)
         self.assertEqual(self.events("decision"), [])
 
+    def test_a_rerun_decision_ticket_is_asked_again_and_takes_a_new_answer(self):
+        self.decision_ticket()
+        verb(self.project, "answer", "2", "the plain greeting")
+        fake, driven = self.conductor_over((done(), patch(), 0))
+        self.until_quiet(driven)
+        control(self.project, "pause")  # the reopened decision ticket is not launched; the answer still applies
+        control(self.project, "rerun", {"ticket": 2})
+        driven.wave()
+        self.assertEqual(self.statuses()[2], "open", "the old answer must not close the ticket again")
+        self.assertEqual(len(self.events("decision")), 1)
+        self.assertIn("## Superseded answer\n\nthe plain greeting", self.body_of(2))
+        code, _, err = verb(self.project, "answer", "2", "the loud greeting")
+        self.assertEqual(code, 0, err)
+        driven.wave()
+        self.assertEqual(self.statuses()[2], "done")
+        self.assertEqual([event["payload"]["answer"] for event in self.events("decision")],
+                         ["the plain greeting", "the loud greeting"])
+
 
 class SwitchDrainTest(ControlCase):
-    """Criterion 5: `switch` away from a project whose conductor is running."""
+    """Criterion 5, in decision 1's order: `switch` asks for the drain, waits for it, then moves the pointer."""
 
-    def test_switch_drains_the_run_ends_it_as_switched_and_leaves_its_jobs_alone(self):
+    def test_switch_drains_the_run_waits_for_it_and_only_then_moves_the_pointer(self):
         other = self.temp / "other"
         project.init_project(other)
         project.set_active(self.project)
         job = self.project / "research" / "jobs" / "j-0001.json"
         job.write_text('{"id": "j-0001", "status": "running"}\n', encoding="utf-8")
-        with worker.use_fake() as fake:
-            fake.script(done(), patch=patch(), delay=1)
-            driven = Conductor(self.project, out=io.StringIO())
-            moved = []
+        fake = self.enterContext(worker.use_fake())
+        fake.script(done(), patch=patch(), delay=600)
+        driven = Conductor(self.project, out=io.StringIO())
+        launched, asked, waves = threading.Event(), threading.Event(), []
 
-            def wait(seconds):
-                if not moved:
-                    moved.append(project.switch_project(other))
-                driven.settle()
+        def wait(seconds):
+            launched.set()     # the first wave launched ticket 1, whose worker is held
+            asked.wait(60)     # until `switch` has asked for the drain
+            fake.release()
+            driven.settle()
 
-            waves = driven.run(wait=wait, max_waves=12)
+        running = threading.Thread(target=lambda: waves.extend(driven.run(wait=wait, max_waves=12)), daemon=True)
+        running.start()
+        self.addCleanup(running.join, 60)
+        self.addCleanup(fake.release)
+        self.addCleanup(asked.set)
+        self.assertTrue(launched.wait(60))
+        seen = []
+
+        def drain(previous):
+            seen.append(project.read_active())
+            asked.set()
+            running.join(60)
+
+        moved = project.switch_project(other, wait=drain)
+        self.assertEqual(seen, [self.project.resolve()], "the pointer moved before the drain was done")
+        self.assertEqual(project.read_active(), other.resolve())
         self.assertEqual(waves[-1].reason, "switched")
-        self.assertEqual(self.payload("run_ended"), {"reason": "switched"})
+        self.assertEqual(moved["drained"]["pid"], os.getpid())
         self.assertEqual([event["payload"] for event in self.events("control")],
                          [{"command": "stop", "args": {"drain": True, "switch_to": str(other.resolve())}, "by": "cli"}])
+        names = [event["event"] for event in self.events()]
+        self.assertLess(names.index("run_ended"), names.index("switched"))
+        self.assertEqual(self.payload("run_ended"), {"reason": "switched"})
         self.assertEqual(self.ticket()["status"], "done", "the worker running at the switch was waited for")
         self.assertEqual(job.read_text(encoding="utf-8"), '{"id": "j-0001", "status": "running"}\n')
-        self.assertEqual(project.read_active(), other.resolve())
+
+
+class SlotsWhileRunningTest(ControlCase):
+    """`max_parallel_workers` counts the workers still running from earlier waves, not only this wave's."""
+
+    def test_a_wave_launches_only_into_the_slots_the_running_workers_leave_free(self):
+        for identifier in (2, 3, 4):
+            self.another_ticket(identifier)
+        fake = self.enterContext(worker.use_fake())
+        fake.script(done(), patch=patch(), delay=600, ticket=1)
+        for identifier in (2, 3, 4):
+            name = "f%d.txt" % identifier
+            fake.script(done(ticket_id=identifier, outputs_written=[name]),
+                        patch=patch({name: "x\n"}, "ticket %d" % identifier), delay=600, ticket=identifier)
+        driven = Conductor(self.project, out=io.StringIO())
+        driven.policy = dict(driven.policy, max_parallel_workers=2)
+        self.addCleanup(driven.settle, 30)
+        self.addCleanup(fake.release)
+        first = driven.wave()
+        fake.release(ticket=1)
+        driven.flight[1].thread.join(10)  # ticket 1's worker has returned, and ticket 2's is still running
+        second = driven.wave()
+        self.assertEqual((first.launched, second.done, second.launched), ([1, 2], [1], [3]))
 
 
 class VerbTest(ControlCase):
@@ -463,16 +584,16 @@ class VerbTest(ControlCase):
                          [("pause", {}, "cli", None), ("resume", {}, "cli", None),
                           ("cancel", {"ticket": 1}, "cli", 1), ("rerun", {"ticket": 1}, "cli", 1)])
 
-    def test_stop_with_no_conductor_running_says_so_and_journals_nothing(self):
+    def test_stop_with_no_conductor_running_is_journaled_all_the_same_and_says_so(self):
         code, out, err = verb(self.project, "stop", "--drain")
         self.assertEqual(code, 0, err)
         self.assertIn("no conductor is running", out)
-        self.assertEqual(self.events("control"), [])
+        self.assertEqual(self.payload("control"), {"command": "stop", "args": {"drain": True}, "by": "cli"})
 
     def test_stop_reaches_the_conductor_that_holds_the_heartbeat(self):
         holder = Ledger(self.project).heartbeat().acquire()
         self.addCleanup(holder.release)
-        holder.write(HOLDER)
+        holder.write(**HOLDER)
         code, out, err = verb(self.project, "stop", "--drain")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.payload("control"), {"command": "stop", "args": {"drain": True}, "by": "cli"})
@@ -519,7 +640,7 @@ class RecordedKillTest(unittest.TestCase):
                          {1: 1, 2: 1, 3: 1, 4: 1})
 
     def test_the_two_interrupted_workers_are_owed_their_results_by_session_and_pid(self):
-        self.assertEqual([(identifier, attempt.state) for identifier, attempt in self.view.in_flight()],
+        self.assertEqual([(identifier, attempt.owed) for identifier, attempt in self.view.in_flight()],
                          [(3, "session"), (4, "session")])
         for identifier, attempt in self.view.in_flight():
             with self.subTest(ticket=identifier):
@@ -538,6 +659,32 @@ class RecordedKillTest(unittest.TestCase):
     def test_the_ticket_files_it_recorded_say_what_the_journal_says(self):
         self.assertEqual({ticket["id"]: ticket["status"] for ticket in tickets.read_tickets(KILL_RESUME)},
                          {1: "done", 2: "done", 3: "running", 4: "running", 5: "open"})
+
+
+class RecordedKillResumeTest(ProjectTestCase):
+    """Testing Decisions, seam 4: the recorded journal is the input, and what the next waves append is asserted."""
+
+    def test_the_next_run_resumes_both_interrupted_workers_and_ends_with_an_empty_frontier(self):
+        target = self.temp / "m1-kill-resume"
+        shutil.copytree(KILL_RESUME, target)
+        project.init_project(target)
+        recorded, _ = Ledger(KILL_RESUME).read_events()
+        sessions = {identifier: attempt.session_id for identifier, attempt in replay.replay(recorded).in_flight()}
+        with worker.use_fake() as fake:
+            fake.load(FIVE_TICKETS / "fake-worker.json")
+            driven = Conductor(target, out=io.StringIO())
+            driven.run(resume=True, wait=lambda seconds: driven.settle(), max_waves=12)
+            calls = [(call.kind, call.request.env["WAYLINE_TICKET"], call.session_id) for call in fake.calls]
+        appended = Ledger(target).read_events()[0][len(recorded):]
+        self.assertEqual((appended[0]["event"], appended[0]["payload"]["resume"]), ("run_started", True))
+        self.assertEqual([(event["ticket"], event["payload"]["reason"], event["payload"]["session_id"])
+                          for event in appended if event["event"] == "ticket_resumed"],
+                         [(3, "worker_died", sessions[3]), (4, "worker_died", sessions[4])])
+        self.assertEqual(calls, [("resume", "3", sessions[3]), ("resume", "4", sessions[4]), ("launch", "5", None)])
+        self.assertEqual((appended[-1]["event"], appended[-1]["payload"]), ("run_ended", {"reason": "frontier_empty"}))
+        self.assertEqual([ticket["status"] for ticket in tickets.read_tickets(target)], ["done"] * 5)
+        self.assertEqual((target / "notes" / "alpha.md").read_text(encoding="utf-8"), "alpha\nalpha extended\n")
+        self.assertEqual((target / "reports" / "beta.md").read_text(encoding="utf-8"), "beta\nbeta extended\n")
 
 
 class KillResumeTest(ProjectTestCase):

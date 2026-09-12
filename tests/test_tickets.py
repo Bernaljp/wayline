@@ -12,9 +12,9 @@ from wayline.jsonschema import ValidationError
 from wayline.ledger import Ledger
 from wayline.project import init_project
 from wayline.tickets import (
-    GRAPH, SCHEDULING_FIELDS, STATUSES, TicketError, attempts_from_events, build_graph, by_status,
-    filename, frontier, read_graph, read_ticket, read_tickets, refresh_graph, slug, snapshot,
-    write_ticket,
+    GRAPH, SCHEDULING_FIELDS, STATUSES, TicketError, answer_section, attempts_from_events, build_graph,
+    by_status, filename, frontier, read_graph, read_ticket, read_tickets, refresh_graph, retire_answer,
+    slug, snapshot, with_answer, write_ticket,
 )
 
 
@@ -33,6 +33,23 @@ def ticket(identifier, title="A ticket", **extra):
     }
     fields.update(extra)
     return fields
+
+
+class AnswerSectionTest(unittest.TestCase):
+    """The `## Answer` of a decision ticket: written, read back, and retired by a rerun (decision 2)."""
+
+    BODY = "\n## Question\n\nWhich split is held out?\n"
+
+    def test_an_answer_is_read_back_up_to_the_next_heading(self):
+        body = with_answer(self.BODY, "  the second split  ") + "\n## Notes\n\nmore\n"
+        self.assertEqual(answer_section(body), "the second split")
+        self.assertIsNone(answer_section(self.BODY))
+
+    def test_a_retired_answer_stays_in_the_file_and_is_no_longer_the_answer(self):
+        retired = retire_answer(with_answer(self.BODY, "the second split"))
+        self.assertIsNone(answer_section(retired))
+        self.assertIn("## Superseded answer\n\nthe second split", retired)
+        self.assertEqual(answer_section(with_answer(retired, "the first split")), "the first split")
 
 
 class TicketFileTest(ProjectTestCase):

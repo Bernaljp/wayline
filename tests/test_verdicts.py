@@ -16,7 +16,7 @@ from pathlib import Path
 
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from tests.test_conductor import ConductorCase, done, patch, merged
+from tests.test_conductor import ConductorCase, done, patch, combined, drive
 from wayline import conductor, gates, project, schedule, tickets, worker
 from wayline.gates import GateError
 from wayline.ledger import Ledger
@@ -526,12 +526,7 @@ class ConductorVerdictTest(ConductorCase):
             for envelope in verdicts:
                 fake.script(envelope, role=gates.VERIFIER)
             self.conductor = conductor.Conductor(self.project, out=io.StringIO())
-            results = []
-            while True:
-                results.append(self.conductor.wave())
-                if results[-1].ended or not self.conductor.flight or (waves is not None and len(results) >= waves):
-                    break
-                self.conductor.settle()
+            results = drive(self.conductor, waves)
             self.calls = list(fake.calls)
         return results
 
@@ -542,7 +537,7 @@ class ConductorVerdictTest(ConductorCase):
 
     def test_a_passing_verdict_accepts_the_ticket(self):
         self.quality()
-        result = merged(self.conduct_with([passing()]))
+        result = combined(self.conduct_with([passing()]))
         self.assertEqual(self.ticket()["status"], "accepted")
         self.assertEqual([event["payload"]["ticket"] for event in self.events("ticket_accepted")], [1])
         self.assertEqual(result.accepted, [1])
@@ -565,7 +560,7 @@ class ConductorVerdictTest(ConductorCase):
 
     def test_a_failing_verdict_fails_the_ticket_with_the_findings_as_its_output(self):
         self.quality()
-        result = merged(self.conduct_with([failing()]))
+        result = combined(self.conduct_with([failing()]))
         self.assertEqual(self.ticket()["status"], "failed")
         payload = self.payload("ticket_failed")
         self.assertEqual(payload["next"], "resume")
@@ -649,7 +644,7 @@ class ConductorVerdictTest(ConductorCase):
     def test_a_verdict_nobody_could_take_leaves_the_ticket_done_and_unaccepted(self):
         self.quality()
         unusable = Envelope(subtype="error_max_structured_output_retries", is_error=True)
-        result = merged(self.conduct_with([unusable, unusable]))
+        result = combined(self.conduct_with([unusable, unusable]))
         self.assertEqual(self.ticket()["status"], "done")
         self.assertEqual(self.events("verdict"), [])
         self.assertEqual(self.events("ticket_accepted"), [])

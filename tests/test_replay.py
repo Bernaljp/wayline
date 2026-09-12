@@ -111,9 +111,9 @@ class SessionTest(unittest.TestCase):
             6: ("s-6", 4006), 7: ("s-7", 4007), 8: (None, 4108), 9: ("s-9", 4009),
         })
 
-    def test_the_state_says_what_a_restarted_conductor_owes_each_attempt(self):
-        self.assertEqual({ticket: self.attempt(ticket).state for ticket in range(1, 10)}, {
-            1: "ended", 2: "session", 3: "session", 4: "result", 5: "jobs",
+    def test_owed_says_what_a_restarted_conductor_still_owes_each_attempt(self):
+        self.assertEqual({ticket: self.attempt(ticket).owed for ticket in range(1, 10)}, {
+            1: None, 2: "session", 3: "session", 4: "result", 5: "jobs",
             6: "session", 7: "session", 8: "session", 9: "session",
         })
         self.assertEqual([ticket for ticket, _ in self.view.in_flight()], [2, 3, 4, 6, 7, 8, 9])
@@ -145,7 +145,7 @@ def wave(number, outcomes, progressed, at=0):
     return event("wave", {"number": number, "outcomes": outcomes, "progressed": progressed}, at=at)
 
 
-class StandingStateTest(unittest.TestCase):
+class ProjectViewTest(unittest.TestCase):
     """What holds for the project rather than for one ticket: the windows, the owner's say, the stall."""
 
     def test_the_window_pause_lasts_until_unpaused_and_outlives_a_restart(self):
@@ -185,8 +185,9 @@ class StandingStateTest(unittest.TestCase):
         self.assertEqual(view.apply(wave(5, 1, False)).stall, 1)
         self.assertEqual(view.apply(event("stall", {"waves": 1, "action": "replan"})).stall, 0)
         view.apply(wave(6, 1, False))
-        self.assertEqual(view.apply(run_started(resume=True, pid=2)).stall, 1, "a resumed run keeps its count")
-        self.assertEqual(view.apply(run_started(resume=False, pid=3)).stall, 0, "a new run starts from zero")
+        self.assertEqual(view.apply(run_started(resume=True, pid=2)).stall, 1, "a restart keeps the count")
+        self.assertEqual(view.apply(run_started(resume=False, pid=3)).stall, 1,
+                         "resume is start: the flag changes nothing the view holds")
 
 
 class CommandTest(unittest.TestCase):

@@ -28,7 +28,7 @@ __all__ = [
     "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "by_status", "empty_graph", "tickets_dir",
-    "with_result", "with_result_note", "result_notes", "ANSWER_HEADING", "answer_section", "with_answer",
+    "with_result", "with_result_note", "result_notes", "ANSWER_HEADING", "SUPERSEDED_ANSWER_HEADING", "answer_section", "with_answer", "retire_answer",
 ]
 
 RESEARCH = "research"
@@ -52,6 +52,8 @@ HARDEST = 5
 RESULT_HEADING = "## Result"
 # The heading an answer to a decision ticket is written under, by a person or by `wayline answer`.
 ANSWER_HEADING = "## Answer"
+# What a rerun renames that heading to: the old answer stays in the file and stops being the answer.
+SUPERSEDED_ANSWER_HEADING = "## Superseded answer"
 
 _FILENAME_RE = re.compile(r"(\d+)-([a-z0-9][a-z0-9-]*)\.md\Z")
 _SLUG_MAX = 48
@@ -223,6 +225,17 @@ def answer_section(body):
 def with_answer(body, text):
     """The ticket body with `text` appended under an `## Answer` heading (decision 2)."""
     return body.rstrip("\n") + "\n\n" + ANSWER_HEADING + "\n\n" + text.strip() + "\n"
+
+
+def retire_answer(body):
+    """The ticket body with every `## Answer` heading renamed `## Superseded answer`, the text under it kept.
+
+    A rerun of a decision ticket asks its question again, so the answer it was given stops being
+    its answer without being deleted: the file keeps the history, and the next answer is the one
+    written under a new `## Answer` heading.
+    """
+    return "\n".join(SUPERSEDED_ANSWER_HEADING if line.strip() == ANSWER_HEADING else line
+                     for line in body.split("\n"))
 
 
 def write_ticket(ledger, fields, body=""):

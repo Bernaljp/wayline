@@ -47,7 +47,7 @@ def patch(files=None, message="ticket 1: write hello.txt", commit=True):
     return Patch(files=dict(files or HELLO), message=message, commit=commit)
 
 
-def merged(results):
+def combined(results):
     """Every wave's result as one: the lists run together, and the end is the last wave's."""
     whole = WaveResult(results[-1].number)
     for result in results:
@@ -55,6 +55,20 @@ def merged(results):
             getattr(whole, name).extend(getattr(result, name))
     whole.ended, whole.reason = results[-1].ended, results[-1].reason
     return whole
+
+
+def drive(conductor, waves=None):
+    """Waves until the run ends or nothing is in flight, settling the sessions in between; every wave's result.
+
+    A wave does not wait for its workers, so a test that wants a ticket carried settles the sessions
+    the last wave started before it takes the next one. `waves` bounds how many it takes.
+    """
+    results = []
+    while True:
+        results.append(conductor.wave())
+        if results[-1].ended or not conductor.flight or (waves is not None and len(results) >= waves):
+            return results
+        conductor.settle()
 
 
 class ConductorCase(ProjectTestCase):
@@ -110,22 +124,12 @@ class ConductorCase(ProjectTestCase):
     # --- driving a wave ---
 
     def conduct(self, *scripted, waves=None):
-        """Script the fake with `(envelope, patch)` pairs and take waves until nothing is left in flight.
-
-        A wave does not wait for its workers, so the sessions it started are settled before the
-        next wave carries them. The waves stop when the run ends, when no session is in flight, or
-        after `waves` of them; what the fake was called with is kept.
-        """
+        """Script the fake with `(envelope, patch)` pairs, `drive` the conductor, keep what the fake was called with."""
         with worker.use_fake() as fake:
             for envelope, applied in scripted:
                 fake.script(envelope, patch=applied)
             self.conductor = Conductor(self.project, out=io.StringIO())
-            results = []
-            while True:
-                results.append(self.conductor.wave())
-                if results[-1].ended or not self.conductor.flight or (waves is not None and len(results) >= waves):
-                    break
-                self.conductor.settle()
+            results = drive(self.conductor, waves)
             self.calls = list(fake.calls)  # the fake is reset when the block ends
         return results
 
@@ -135,7 +139,7 @@ class WholePathTest(ConductorCase):
 
     def setUp(self):
         super().setUp()
-        self.result = merged(self.conduct((done(findings=[{"text": "a finding", "provenance": "hello.txt#L1"}]), patch())))
+        self.result = combined(self.conduct((done(findings=[{"text": "a finding", "provenance": "hello.txt#L1"}]), patch())))
 
     def test_the_journal_carries_the_steps_in_order(self):
         self.assertEqual(self.sequence(), [
@@ -327,7 +331,7 @@ class InvalidResultTest(ConductorCase):
         self.assertIn("ticket_id 9", self.payload("ticket_failed")["reason"])
 
     def test_a_run_that_ends_with_a_failed_ticket_still_ends(self):
-        result = merged(self.conduct((Envelope(), None), (Envelope(), None)))
+        result = combined(self.conduct((Envelope(), None), (Envelope(), None)))
         self.assertTrue(result.ended)
         self.assertEqual(result.failed, [1])
 
@@ -417,7 +421,7 @@ class ResultStatusTest(ConductorCase):
         """Decision 5: a running result records the job ids and leaves the ticket for the poller."""
         envelope = done()
         envelope.structured_output.update({"status": "running", "jobs": ["j-0001"]})
-        result = merged(self.conduct((envelope, None)))
+        result = combined(self.conduct((envelope, None)))
         self.assertEqual(self.ticket()["status"], "running")
         self.assertEqual((result.running, result.failed, result.done), ([1], [], []))
         self.assertFalse(result.ended, "a ticket is still running, so the run is not over")
@@ -657,10 +661,10 @@ class ParallelOutcomeTest(FiveTicketsCase):
         self.lay_out()
         with worker.use_fake() as fake:
             fake.script(done(ticket_id=2), patch=patch({"reports/beta.md": "beta\n"}, "ticket 2"), ticket="2")
-            conductor_ = Conductor(self.project, out=io.StringIO())
-            wave = conductor_.wave()
-            conductor_.settle()
-            carried = conductor_.wave()
+            driven = Conductor(self.project, out=io.StringIO())
+            wave = driven.wave()
+            driven.settle()
+            carried = driven.wave()
         self.assertEqual(wave.launched, [2])
         self.assertEqual(sorted(wave.failed), [1], "a refused launch fails in the wave that tried it")
         self.assertEqual(sorted(carried.done), [2])

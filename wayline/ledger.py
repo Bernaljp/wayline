@@ -36,6 +36,11 @@ JOURNAL = "journal.jsonl"
 LOCK = ".lock"
 # The conductor's heartbeat, whose flock keeps a second conductor off the project (decision 5).
 HEARTBEAT = "conductor.json"
+# A conductor starting while a reader probes the heartbeat's lock tries this many times, this far
+# apart, before it concludes that another conductor holds it; a reader retries a torn read as often.
+HEARTBEAT_TRIES = 5
+HEARTBEAT_PAUSE_S = 0.01
+HEARTBEAT_READS = 3
 
 _log = logging.getLogger("wayline.ledger")
 
@@ -574,20 +579,22 @@ class Heartbeat:
         self.path = ledger.path(HEARTBEAT)
         self.fd = None
 
-    def acquire(self, tries=20, pause=0.05, sleep=None):
+    def acquire(self, tries=HEARTBEAT_TRIES):
         """Take the lock or raise `ConductorBusy`; returns the heartbeat.
 
         A reader's probe (`conductor_holder`) holds a shared lock for an instant, so a conductor
-        starting in that instant tries a few more times before it concludes one is running.
+        starting in that instant tries `tries` times, `HEARTBEAT_PAUSE_S` apart, before it
+        concludes that another conductor is running. The file is created under the ledger's lock,
+        like every other write under `research/`.
         """
-        self.ledger.research.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        with self.ledger.lock():
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
         for attempt in range(max(1, int(tries))):
+            if attempt:
+                time.sleep(HEARTBEAT_PAUSE_S)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                if attempt + 1 < tries:
-                    (sleep or time.sleep)(pause)
                 continue
             except BaseException:
                 os.close(fd)
@@ -597,10 +604,11 @@ class Heartbeat:
         os.close(fd)
         raise ConductorBusy(self.ledger.project, read_heartbeat(self.ledger.project) or {})
 
-    def write(self, record):
-        """Rewrite the heartbeat with `record` (`pid, started_at, last_wave_at, harness_tag`)."""
+    def write(self, pid, started_at, last_wave_at, harness_tag):
+        """Rewrite the heartbeat: the conductor's pid, when its run started, its last wave, its harness tag."""
         if self.fd is None:
             raise LedgerError("the heartbeat is written only by the conductor holding its lock")
+        record = {"pid": pid, "started_at": started_at, "last_wave_at": last_wave_at, "harness_tag": harness_tag}
         data = (_dumps(record, separators=(", ", ": ")) + "\n").encode("utf-8")
         with self.ledger.lock():
             os.pwrite(self.fd, data, 0)
@@ -609,25 +617,21 @@ class Heartbeat:
         return record
 
     def release(self):
+        """Let go of the lock; the file stays, holding the last heartbeat for the tick to read."""
         if self.fd is not None:
             fd, self.fd = self.fd, None
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
-    def __enter__(self):
-        return self.acquire() if self.fd is None else self
 
-    def __exit__(self, *exc):
-        self.release()
-
-
-def read_heartbeat(project, attempts=3):
+def read_heartbeat(project):
     """The last heartbeat a conductor wrote in this project, or None when there is none to read.
 
-    Only the first line is read, and a read that catches a rewrite halfway is read again.
+    Only the first line is read, and a read that catches a rewrite halfway is read again, up to
+    `HEARTBEAT_READS` times.
     """
     path = ledger_for(project).research / HEARTBEAT
-    for _ in range(max(1, attempts)):
+    for _ in range(HEARTBEAT_READS):
         try:
             with open(path, "rb") as handle:
                 line = handle.readline()

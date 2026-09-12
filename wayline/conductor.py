@@ -52,21 +52,21 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from wayline import HARNESS_ROOT, gates, replay, schedule, tickets, worker
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, DECISION, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, TICKET_BLOCKED,
-    TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, TICKET_RESUMED,
-    TICKET_CANCELLED, TICKET_RERUN, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
+    ACCEPTANCE, CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
+    TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
+    TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, now_ts,
 )
-from wayline.cli import parse_args
 from wayline.project import ProjectError, find_project, policy_for, read_harness
 
 __all__ = [
     "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "porcelain_entries",
-    "dirty_outside_research", "refuse_to_start", "run_command", "control", "answer", "WORKTREES", "RESEARCH", "BRANCH",
+    "dirty_outside_research", "refuse_to_start", "run_command", "WORKTREES", "RESEARCH", "BRANCH",
 ]
 
 MAIN = "main"
@@ -80,7 +80,7 @@ HEARTBEAT_PATH = RESEARCH + "/conductor.json"
 
 # How often a run waiting between waves looks at its sessions and at the journal, in seconds.
 POLL_S = 2
-# How long a stop waits for a terminated session before it is killed outright.
+# How long a cancel or a rerun waits for the worker it terminated before killing it outright.
 STOP_WAIT_S = 15
 
 # The gate a session answers (BRIEF 9.1): the launch, or the one resume each gate is given. The
@@ -88,6 +88,10 @@ STOP_WAIT_S = 15
 LAUNCH_STAGE = "launch"
 INVALID_RESULT = "invalid_result"
 ACCEPTANCE_FAILED = "acceptance_failed"
+# What a worker that died before its session started waits for: a relaunch in the same attempt.
+RELAUNCH = "relaunch"
+# The gate a worker that ran past its budget is resumed at, once (decision 3).
+TIMEOUT = "timeout"
 
 # The identity a conductor commits the ledger under when the project's repository has none.
 IDENTITY = ("-c", "user.name=wayline", "-c", "user.email=wayline@localhost")
@@ -109,9 +113,24 @@ RESUME_DIED = (
     "and return the structured result."
 )
 RESUME_DIED_MESSAGE = "\n\nThe message your interrupted session was answering:\n\n%s"
+RESUME_TIMEOUT = (
+    "You ran out of time: this session passed its budget of %s minute(s). Return the structured result "
+    "now, through the structured output, matching the schema this session was launched with. Do not "
+    "start new work."
+)
 REJECTED = (
     "the %s verdict failed: a fresh %s session that did not write this read it and found\n\n%s"
 )
+
+
+# What the conductor says when a `control` event another process appended arrives, by command.
+ARRIVALS = {
+    "pause": lambda args, by: "paused by %s" % by,
+    "resume": lambda args, by: "resumed by %s" % by,
+    "stop": lambda args, by: "asked by %s to stop %s" % (by, "once the running workers return" if args.get("drain") else "at this wave"),
+    "autonomy": lambda args, by: "autonomy is now %s" % args.get("autonomy"),
+    "pacing": lambda args, by: "pacing thresholds: %s" % ", ".join("%s %s" % (key, args[key]) for key in ("stop_at", "cheap_at") if key in args),
+}
 
 
 class ConductorError(ValueError):
@@ -275,6 +294,26 @@ class _Queued:
 
 
 @dataclass
+class _Want:
+    """The session an attempt waits to start while the run holds model work.
+
+    `stage` is the gate a resume answers (`invalid_result`, `acceptance_failed`), `worker_died` for
+    the resume of a session that died, or `relaunch` for a worker that died before its session
+    started; `message` is what a resume says.
+    """
+
+    stage: str
+    message: Optional[str] = None
+
+
+class _Stop(NamedTuple):
+    """A stop this run is to apply: whether it drains, and the reason its `run_ended` carries."""
+
+    drain: bool
+    reason: str
+
+
+@dataclass
 class _Attempt:
     """One attempt at one ticket, carried through the steps of the outcome."""
 
@@ -309,16 +348,25 @@ class _Attempt:
     stream_path: Optional[Path] = None
     tail: Optional[worker.StreamTail] = None
     session_journaled: bool = False
-    # A resume the attempt waits to start, `(stage, message)`, while the run holds model work.
-    want: Optional[tuple] = None
+    # The session the attempt waits to start while the run holds model work: a resume, or a relaunch.
+    want: Optional[_Want] = None
     # A session this conductor did not start (a restart re-adopted it): polled by stream and pid.
     adopted: bool = False
+    # When a re-adopted session started, which its budget is counted from, and when the conductor
+    # sent it SIGTERM for running past that budget.
+    started_at: Optional[str] = None
+    terminated_at: Optional[float] = None
     # The findings `_close` filed for this attempt.
     findings: int = 0
 
     @property
     def id(self):
         return self.ticket["id"]
+
+    @property
+    def running(self):
+        """Whether a session this conductor started for the attempt is still running in its thread."""
+        return self.thread is not None and self.thread.is_alive()
 
     @property
     def result(self):
@@ -449,7 +497,7 @@ class Conductor:
 
     def _ready(self):
         """Whether a session returned, or the journal grew past what this conductor has read."""
-        if any(attempt.thread is not None and not attempt.thread.is_alive() for attempt in self.flight.values()):
+        if any(attempt.thread is not None and not attempt.running for attempt in self.flight.values()):
             return True
         if any(attempt.adopted and attempt.tail.read().result is not None for attempt in self.flight.values()):
             return True
@@ -467,8 +515,8 @@ class Conductor:
     def _beat(self):
         """Rewrite the heartbeat `research/conductor.json` (decision 5), when this conductor holds it."""
         if self.heartbeat is not None:
-            self.heartbeat.write({"pid": os.getpid(), "started_at": self.started_at,
-                                  "last_wave_at": self.last_wave_at, "harness_tag": self.harness_tag})
+            self.heartbeat.write(pid=os.getpid(), started_at=self.started_at,
+                                 last_wave_at=self.last_wave_at, harness_tag=self.harness_tag)
 
     def _tail(self):
         """Fold what the journal gained since the last read into the working view (wave step 1)."""
@@ -483,20 +531,27 @@ class Conductor:
                                             "progressed": bool(result.done or result.findings)})
 
     def _end(self, result):
-        """`run_ended`: on a stop once its workers are dealt with, or once the frontier is empty and nothing runs.
+        """`run_ended`: once a stop has been applied, or once the frontier is empty and nothing runs.
 
-        A drain waits for the sessions still running and leaves a resume that has not started yet
-        to the next run, whose take-over finds it in the journal.
+        A stop without `drain` ends the run at this wave and leaves the workers still running to
+        finish on their own, for the next run to re-adopt. A drain waits for them, and leaves a
+        session that has not started yet to the next run, whose take-over finds it in the journal.
         """
         stopping = self._stop_requested()
         if stopping is not None:
-            for identifier, attempt in list(self.flight.items()):
-                if attempt.want is not None and (attempt.thread is None or not attempt.thread.is_alive()):
-                    self.flight.pop(identifier)
-            if self.flight:
-                return
-            self.ledger.append_event(RUN_ENDED, {"reason": stopping[1]})
-            result.ended, result.reason = True, stopping[1]
+            if stopping.drain:
+                for identifier, attempt in list(self.flight.items()):
+                    if attempt.want is not None and not attempt.running:
+                        self.flight.pop(identifier)
+                if self.flight:
+                    return
+            else:
+                left = sorted(identifier for identifier, attempt in self.flight.items() if attempt.running or attempt.adopted)
+                if left:
+                    self.say("  ticket(s) %s still have a worker running; it finishes on its own and the next run re-adopts it"
+                             % ", ".join(str(identifier) for identifier in left))
+            self.ledger.append_event(RUN_ENDED, {"reason": stopping.reason})
+            result.ended, result.reason = True, stopping.reason
             return
         if self.flight:
             return
@@ -518,13 +573,15 @@ class Conductor:
     def _picks(self, graph):
         """The tickets to launch now: the launchable subset of the frontier, in pick order.
 
-        A ticket left `running` by jobs that outlived their worker holds its touch set against the
-        frontier but occupies no worker slot, because `max_parallel_workers` counts workers and
-        that ticket has none.
+        `max_parallel_workers` counts workers, so a wave fills only the slots that the workers still
+        running from earlier waves leave free. A ticket left `running` by jobs that outlived their
+        worker holds its touch set against the frontier but occupies no worker slot, because that
+        ticket has no worker.
         """
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
+        busy = sum(1 for attempt in self.flight.values() if attempt.running or attempt.adopted)
         return schedule.pick(
-            graph, running=running, slots=self._slots(), action=self.action,
+            graph, running=running, slots=max(0, self._slots() - busy), action=self.action,
             root=self.project, free=self.resources_free, goal_tickets=self._goal_tickets(),
         )
 
@@ -618,19 +675,21 @@ class Conductor:
         A session with no `ticket_result` is re-adopted when its stream already holds the result or
         its pid is still that session's worker, resumed by session id when it died after its session
         started, and relaunched in the same attempt when it died before. Each is journaled as
-        `ticket_resumed` with its reason. This runs once, at the conductor's first wave.
+        `ticket_resumed` with its reason. A result no conductor carried is carried. This runs once,
+        at the conductor's first wave.
         """
         self.taken_over = True
         self._reconcile_statuses()
         graph = {entry["id"]: entry for entry in self._graph()["tickets"]}
-        for identifier, owed in self.view.in_flight():
+        for identifier, replayed in self.view.in_flight():
             if identifier not in graph:
                 continue
             ticket, body = self._ticket(identifier)
-            attempt = _Attempt(ticket, body, owed.number, self._worktree(identifier))
+            attempt = _Attempt(ticket, body, replayed.number, self._worktree(identifier))
             try:
-                self._adopt(attempt, owed, graph[identifier], result)
+                self._adopt(attempt, replayed, graph[identifier])
             except (ValueError, OSError) as failure:  # a role, a prompt, a settings file, or a git step
+                self.flight.pop(attempt.id, None)
                 self._fail(attempt, str(failure), "needs_human")
                 result.failed.append(attempt.id)
         self._reconcile_worktrees(graph)
@@ -696,77 +755,96 @@ class Conductor:
                 self.ledger.append_event(TICKET_ACCEPTED, {"ticket": identifier}, ticket=identifier)
                 self.say("  ticket %d passed every verdict before the restart; accepted" % identifier)
 
-    def _adopt(self, attempt, owed, entry, result):
-        """Take over one attempt whose session has not returned: re-adopt it, resume it, or relaunch it."""
+    def _adopt(self, attempt, replayed, entry):
+        """Take over one attempt a restart found still owed: carry its result, re-adopt it, resume it, or relaunch it."""
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
         attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
-        attempt.stage, attempt.resumed = owed.stage, bool(owed.spent)
-        attempt.session_id, attempt.session_journaled = owed.session_id, owed.session_id is not None
+        attempt.stage, attempt.resumed = replayed.stage, bool(replayed.spent)
+        attempt.session_id, attempt.session_journaled = replayed.session_id, replayed.session_id is not None
         self._prepare(attempt)
-        session = owed.sessions[-1]
+        session = replayed.sessions[-1]
         attempt.run_dir = self._session_path(attempt, session)
         attempt.stream_path = attempt.run_dir / "stream.jsonl" if attempt.run_dir else None
         attempt.pid = session.pid if session.kind == "launch" else _read_pid(attempt.run_dir)
-        attempt.tail = worker.StreamTail(attempt.stream_path or worker.session_dir(self.project, attempt.id, attempt.number) / "missing")
+        attempt.started_at = _session_started(attempt.run_dir) or session.ts
+        attempt.tail = worker.StreamTail(attempt.stream_path or self._attempt_dir(attempt) / "missing")
         attempt.tail.read()
         self._journal_session(attempt)  # a session the stream saw and the journal missed
         attempt.started = True
-        if owed.state == "result":
+        self.flight[attempt.id] = attempt
+        if replayed.owed == replay.RESULT:
             if attempt.stream_path is None or not attempt.stream_path.is_file():
                 raise ConductorError("ticket %d's result is journaled and its stream is gone; a person has to look"
                                      % attempt.id)
             attempt.envelope = worker.read_envelope(attempt.stream_path, attempt.request.schema_path)
             attempt.result_journaled = True
-            self.flight[attempt.id] = attempt
             self.say("  ticket %d: carrying the result its worker returned before the restart" % attempt.id)
-            return
-        if attempt.tail.result is not None or self._alive(attempt):
-            self.ledger.append_event(TICKET_RESUMED, {
-                "ticket": attempt.id, "attempt": attempt.number, "session_id": attempt.session_id, "reason": "readopted",
-            }, ticket=attempt.id, session_id=attempt.session_id)
+        elif attempt.tail.result is not None or self._alive(attempt):
+            self._journal_resumed(attempt, replay.READOPTED)
             attempt.adopted = True
-            self.flight[attempt.id] = attempt
             self.say("  ticket %d: re-adopted its worker (pid %s)" % (attempt.id, attempt.pid))
-            return
-        self._died(attempt, session)
-        if attempt.id in self.flight:
-            return
-        result.failed.append(attempt.id)
+        else:
+            self._died(attempt, session)
 
     def _died(self, attempt, session):
-        """A session that died without its result: resumed by session id, or relaunched when it had none."""
+        """A session that died without its result: resumed by session id, or relaunched when it had none.
+
+        Either one waits, like any session that needs a model, while the run is paused or stopping.
+        """
         if attempt.session_id:
             message = RESUME_DIED
             previous = attempt.run_dir / "prompt.md" if session.kind == "resume" and attempt.run_dir else None
             if previous is not None and previous.is_file():
                 message += RESUME_DIED_MESSAGE % previous.read_text(encoding="utf-8").strip()
-            attempt.want = ("worker_died", message)
-            self.flight[attempt.id] = attempt
-            self._start_wanted(attempt)
-            self.say("  ticket %d: its worker died; resuming session %s" % (attempt.id, attempt.session_id))
-            return
-        self.ledger.append_event(TICKET_RESUMED, {
-            "ticket": attempt.id, "attempt": attempt.number, "session_id": None, "reason": "worker_died",
-        }, ticket=attempt.id)
-        self.say("  ticket %d: its worker died before its session started; relaunching" % attempt.id)
-        attempt.started = attempt.session_journaled = False
-        attempt.tail = None
-        self._run_session(attempt, "launch")
-        attempt.begun.wait()
-        if attempt.started:
-            self.flight[attempt.id] = attempt
+            attempt.want = _Want(replay.WORKER_DIED, message)
+            doing = "its worker died; resuming session %s" % attempt.session_id
+        else:
+            attempt.want = _Want(RELAUNCH)
+            doing = "its worker died before its session started; relaunching it"
+        self.flight[attempt.id] = attempt
+        started = self._start_wanted(attempt)
+        self.say("  ticket %d: %s%s" % (attempt.id, doing, "" if started else " once the run may launch again"))
 
     def _adopted_returned(self, attempt):
-        """Whether a re-adopted session has returned; a dead one without a result is resumed or relaunched."""
+        """Whether a re-adopted session has returned; a dead one without a result is resumed or relaunched.
+
+        The launcher stops the sessions it started at their budget, and a re-adopted worker is nobody's
+        child, so the conductor holds it to the same budget (decision 3): past `max_minutes` it is sent
+        SIGTERM, then SIGKILL if it outlasts `STOP_WAIT_S`, and once it is gone its session is resumed
+        once with "you ran out of time".
+        """
         attempt.tail.read()
         if attempt.tail.result is not None:
             attempt.envelope = worker.read_envelope(attempt.stream_path, attempt.request.schema_path)
             return True
-        if not self._alive(attempt):
-            attempt.adopted = False
+        if self._alive(attempt):
+            if attempt.terminated_at is None and self._over_budget(attempt):
+                worker.terminate(attempt.pid, self._attempt_dir(attempt))
+                attempt.terminated_at = time.monotonic()
+                self.say("  ticket %d: its re-adopted worker ran past its budget of %s minute(s); sent it SIGTERM"
+                         % (attempt.id, attempt.tier.max_minutes))
+            elif attempt.terminated_at is not None and time.monotonic() - attempt.terminated_at > STOP_WAIT_S:
+                worker.terminate(attempt.pid, self._attempt_dir(attempt), hard=True)
+            return False
+        attempt.adopted = False
+        if attempt.terminated_at is not None and attempt.session_id:
+            attempt.want = _Want(TIMEOUT, RESUME_TIMEOUT % attempt.tier.max_minutes)
+            self.flight[attempt.id] = attempt
+            started = self._start_wanted(attempt)
+            self.say("  ticket %d: resuming session %s out of time%s"
+                     % (attempt.id, attempt.session_id, "" if started else " once the run may launch again"))
+        else:
             self._died(attempt, replay.Session("launch" if attempt.run_dir == self._attempt_dir(attempt) else "resume"))
         return False
+
+    def _over_budget(self, attempt):
+        """Whether a re-adopted session has run longer than its tier's `max_minutes`."""
+        started = _parse_ts(attempt.started_at)
+        limit = attempt.tier.max_minutes if attempt.tier is not None else None
+        if started is None or not limit:
+            return False
+        return (datetime.now(timezone.utc) - started).total_seconds() > limit * 60
 
     def _alive(self, attempt):
         return attempt.pid is not None and worker.pid_alive(attempt.pid, self._attempt_dir(attempt))
@@ -795,11 +873,10 @@ class Conductor:
             if suffix.isdigit():
                 numbered.append((int(suffix), candidate))
         for _, candidate in sorted(numbered, reverse=True):
-            try:
-                started = json.loads((candidate / "env.json").read_text(encoding="utf-8")).get("started_at")
-            except (OSError, ValueError, AttributeError):
+            started = _session_started(candidate)
+            if started is None:
                 continue
-            if started and session.ts and started >= session.ts:
+            if session.ts and started >= session.ts:
                 return candidate
             break
         return None
@@ -815,7 +892,7 @@ class Conductor:
             attempt = self.flight[identifier]
             try:
                 self._journal_session(attempt)
-                if attempt.thread is not None and attempt.thread.is_alive():
+                if attempt.running:
                     continue
                 if attempt.want is not None:
                     self._start_wanted(attempt)
@@ -955,7 +1032,7 @@ class Conductor:
                 return "failed"
         else:
             if problem is not None:
-                if attempt.stage == INVALID_RESULT:
+                if attempt.stage in (INVALID_RESULT, TIMEOUT):
                     self._fail(attempt, "the result was still unusable after one resume: %s" % problem, "tier_up")
                     return "failed"
                 return self._want_resume(attempt, INVALID_RESULT, RESUME_INVALID % problem)
@@ -996,24 +1073,33 @@ class Conductor:
             self._fail(attempt, "there is no session id to resume: %s"
                        % "; ".join(attempt.envelope.errors or ["the session never started"]), "tier_up")
             return "failed"
-        attempt.want = (stage, message)
+        attempt.want = _Want(stage, message)
         self._start_wanted(attempt)
         return "session"
 
     def _start_wanted(self, attempt):
-        """Start the resume an attempt waits for, unless the run holds model work; returns whether it did."""
+        """Start the session an attempt waits for, unless the run holds model work; returns whether it did."""
         if attempt.want is None or self._holds_launches():
             return False
-        stage, message = attempt.want
-        attempt.want = None
-        self.ledger.append_event(TICKET_RESUMED, {
-            "ticket": attempt.id, "attempt": attempt.number, "session_id": attempt.session_id, "reason": stage,
-        }, ticket=attempt.id, session_id=attempt.session_id)
-        if stage in replay.GATES:
-            attempt.stage, attempt.resumed = stage, True
-        self._run_session(attempt, "resume", message)
+        want, attempt.want = attempt.want, None
+        if want.stage == RELAUNCH:
+            self._journal_resumed(attempt, replay.WORKER_DIED)
+            attempt.started = attempt.session_journaled = False
+            attempt.tail = None
+            self._run_session(attempt, "launch")
+        else:
+            self._journal_resumed(attempt, want.stage)
+            if want.stage in replay.GATES:
+                attempt.stage, attempt.resumed = want.stage, True
+            self._run_session(attempt, "resume", want.message)
         attempt.begun.wait()
         return True
+
+    def _journal_resumed(self, attempt, reason):
+        """`ticket_resumed` for the attempt's session, with the reason decision 2's table gives it."""
+        self.ledger.append_event(TICKET_RESUMED, {
+            "ticket": attempt.id, "attempt": attempt.number, "session_id": attempt.session_id, "reason": reason,
+        }, ticket=attempt.id, session_id=attempt.session_id)
 
     def _act_on(self, attempt):
         """What the result's own status asks for: `done`, `running`, or `failed` for the wave's count.
@@ -1056,7 +1142,7 @@ class Conductor:
         return self.view.paused_by_owner or self._stop_requested() is not None
 
     def _stop_requested(self):
-        """`(drain, reason)` while this run is to stop, else None.
+        """The stop this run is to apply, as a `_Stop`, or None.
 
         A stop given to this run, or a `switched` that took the project away, which drains: the
         workers running are waited for and nothing new starts (decision 1, one active project).
@@ -1066,28 +1152,27 @@ class Conductor:
         if stop is None and not away:
             return None
         drain = True if stop is None else stop["drain"]
-        return drain, "switched" if away or (stop or {}).get("switch_to") else "stopped"
+        return _Stop(drain, "switched" if away or (stop or {}).get("switch_to") else "stopped")
 
     # --- what other processes asked for (decision 5, wave step 1) ---
 
     def _apply_controls(self, arrived, first):
-        """Take in the control events and feedback the journal gained, and act on the ones that act.
+        """Take in the control events and feedback the journal gained, and act on the ones that act here.
 
         At the first wave the journal was read from byte zero, so only what arrived after the last
-        run ended is said aloud; what an earlier conductor already said is not said again.
+        run ended is said aloud; what an earlier conductor already said is not said again. A stop
+        acts in `_end`, at the close of the wave; a cancel, a rerun, and an answer act here.
         """
         if first:
             ends = [index for index, event in enumerate(arrived) if event.get("event") == RUN_ENDED]
             arrived = arrived[ends[-1] + 1:] if ends else arrived
         for event in arrived:
             self._say_arrival(event)
-        stopping = self._stop_requested()
-        if stopping is not None and not stopping[0] and self.flight:
-            self._stop_sessions()
         for identifier in sorted(self.view.cancels):
             self._end_ticket(identifier, "cancel", self.view.cancels[identifier])
         for identifier in sorted(self.view.reruns):
             self._end_ticket(identifier, "rerun", self.view.reruns[identifier])
+        self._tail()  # what the cancels and the reruns just journaled, before the answers are read
         self._apply_answers()
 
     def _apply_answers(self):
@@ -1115,39 +1200,29 @@ class Conductor:
 
     def _say_arrival(self, event):
         payload = event.get("payload") or {}
-        name, args = event.get("event"), payload.get("args") if isinstance(payload.get("args"), dict) else {}
-        if name == "feedback":
+        if event.get("event") == FEEDBACK:
             self.say("  feedback %s (%s) waits for the evolve loop" % (payload.get("id"), payload.get("source")))
-        elif name != "control":
             return
-        elif payload.get("command") in ("pause", "resume"):
-            self.say("  %s by %s" % ("paused" if payload["command"] == "pause" else "resumed", payload.get("by")))
-        elif payload.get("command") == "autonomy":
-            self.say("  autonomy is now %s" % args.get("autonomy"))
-        elif payload.get("command") == "pacing":
-            self.say("  pacing thresholds: %s" % ", ".join("%s %s" % (key, args[key]) for key in ("stop_at", "cheap_at") if key in args))
-        elif payload.get("command") == "stop":
-            self.say("  asked to stop%s" % (" once the running workers return" if args.get("drain") else " now"))
-
-    def _stop_sessions(self):
-        """An immediate stop: end every session in flight and leave their attempts to the next run's take-over."""
-        for attempt in list(self.flight.values()):
-            self._terminate(attempt)
-        self.flight.clear()
-        self.say("  stopped every running worker; the next run resumes them")
+        say = ARRIVALS.get(payload.get("command")) if event.get("event") == CONTROL else None
+        if say is not None:
+            self.say("  " + say(payload.get("args") if isinstance(payload.get("args"), dict) else {}, payload.get("by")))
 
     def _terminate(self, attempt):
         """End one session, this process's child or a re-adopted worker, and wait for its thread."""
-        if attempt.pid is not None and (attempt.adopted or (attempt.thread is not None and attempt.thread.is_alive())):
+        if attempt.pid is not None and (attempt.adopted or attempt.running):
             worker.terminate(attempt.pid, self._attempt_dir(attempt))
         if attempt.thread is not None:
             attempt.thread.join(STOP_WAIT_S)
-            if attempt.thread.is_alive() and attempt.pid is not None:
+            if attempt.running and attempt.pid is not None:
                 worker.terminate(attempt.pid, self._attempt_dir(attempt), hard=True)
                 attempt.thread.join(STOP_WAIT_S)
 
     def _end_ticket(self, identifier, command, by):
-        """A `cancel` parks the ticket and a `rerun` opens it again, ending its running worker first."""
+        """A `cancel` parks the ticket and a `rerun` opens it again, ending its running worker first.
+
+        A rerun of an answered decision ticket asks its question again, so the answer's heading is
+        renamed and the file no longer closes the ticket at the next wave.
+        """
         attempt = self.flight.get(identifier)
         try:
             ticket, _ = self._ticket(identifier)
@@ -1169,7 +1244,8 @@ class Conductor:
             self.say("  ticket %d cancelled by %s; it is parked" % (identifier, by))
         else:
             self.ledger.append_event(TICKET_RERUN, {"ticket": identifier, "by": by}, ticket=identifier)
-            self._set_status(identifier, "open")
+            ticket, body = self._ticket(identifier)
+            tickets.write_ticket(self.ledger, dict(ticket, status="open"), tickets.retire_answer(body))
             self.say("  ticket %d rerun by %s; it is open for a new attempt" % (identifier, by))
 
     def _accept(self, attempt, where, cwd):
@@ -1460,154 +1536,20 @@ class Conductor:
 # --- the resume message and the touch set ---------------------------------------------------
 
 
-def control(project, command, args=None, by="cli"):
-    """Journal one `control` event for the running conductor to apply at its next wave (decision 1).
-
-    The verbs `pause`, `resume`, `stop [--drain]`, `cancel <id>`, and `rerun <id>` are this, and so
-    is every dashboard action that steers a run: the journal is the bus, and the conductor is the
-    only process that acts on what it carries.
-    """
-    args = dict(args or {})
-    ticket = args.get("ticket")
-    return Ledger(Path(project).resolve()).append_event(
-        CONTROL, {"command": command, "args": args, "by": by},
-        ticket=ticket if isinstance(ticket, int) and not isinstance(ticket, bool) else None)
-
-
-def answer(project, identifier, text, by="cli"):
-    """Answer a decision ticket (decision 5): `## Answer` in its file, and `decision` with `decided_by: human`.
-
-    The conductor closes the ticket at its next wave. A ticket that is not an open decision ticket,
-    or that is answered already, is refused; rerun a decision ticket to answer it again.
-    """
-    project = Path(project).resolve()
-    ledger = Ledger(project)
-    found = {ticket["id"]: ticket for ticket in tickets.read_tickets(project)}.get(identifier)
-    if found is None:
-        raise ConductorError("%s has no ticket %s" % (project, identifier))
-    if found["kind"] != tickets.DECISION:
-        raise ConductorError("ticket %d is a %s ticket, and only a decision ticket takes an answer" % (identifier, found["kind"]))
-    if found["status"] in tickets.SATISFIED + ("parked",):
-        raise ConductorError("ticket %d is %s; rerun it to answer it again" % (identifier, found["status"]))
-    fields, body = tickets.read_ticket(tickets.tickets_dir(project) / tickets.filename(found))
-    events, _ = ledger.read_events()
-    if identifier in replay.replay(events).answers or tickets.answer_section(body):
-        raise ConductorError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
-    text = str(text).strip()
-    if not text:
-        raise ConductorError("an answer needs some text")
-    tickets.write_ticket(ledger, fields, tickets.with_answer(body, text))
-    return ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": by if by == "decider" else "human",
-                                          "rationale": None, "confidence": None}, ticket=identifier)
-
-
-def _verb_parser(verb, description):
-    parser = argparse.ArgumentParser(prog="wayline %s" % verb, description=description)
-    parser.add_argument("--project", help="the project to steer; the active one by default")
-    return parser
-
-
-def _project_for(verb, options):
+def _session_started(run_dir):
+    """When the session in `run_dir` started, as the launcher recorded it in `env.json`, or None."""
     try:
-        return find_project(options.project)
-    except (ProjectError, OSError) as failure:
-        print("wayline %s: %s" % (verb, failure), file=sys.stderr)
+        return json.loads((Path(run_dir) / "env.json").read_text(encoding="utf-8")).get("started_at")
+    except (OSError, ValueError, AttributeError, TypeError):
         return None
 
 
-def pause_command(args):
-    """`wayline pause`: nothing that needs a model launches until `wayline resume`."""
-    return _steer("pause", args, "pause the run: nothing that needs a model launches until wayline resume")
-
-
-def resume_command(args):
-    """`wayline resume`: the paused run launches again."""
-    return _steer("resume", args, "resume a paused run")
-
-
-def _steer(command, args, description):
-    options, code = parse_args(_verb_parser(command, description), args)
-    if options is None:
-        return code
-    project = _project_for(command, options)
-    if project is None:
-        return 1
-    control(project, command)
-    running = conductor_holder(project) is not None
-    print("%s journaled for %s%s" % (command, project, "" if running else "; no conductor is running, and the next run takes it in"))
-    return 0
-
-
-def stop_command(args):
-    """`wayline stop [--drain]`: the running conductor stops now, or once its running workers return."""
-    parser = _verb_parser("stop", "stop the run now, or with --drain once its running workers return")
-    parser.add_argument("--drain", action="store_true", help="launch nothing new and end once the running workers return")
-    options, code = parse_args(parser, args)
-    if options is None:
-        return code
-    project = _project_for("stop", options)
-    if project is None:
-        return 1
-    holder = conductor_holder(project)
-    if holder is None:
-        print("no conductor is running on %s; nothing to stop" % project)
-        return 0
-    control(project, "stop", {"drain": bool(options.drain)})
-    print("asked the conductor (pid %s) on %s to stop %s"
-          % (holder.get("pid", "?"), project, "once its running workers return" if options.drain else "now"))
-    return 0
-
-
-def cancel_command(args):
-    """`wayline cancel <id>`: the ticket's worker is ended and the ticket is parked."""
-    return _ticket_verb("cancel", args, "cancel a ticket: its worker is ended and the ticket is parked")
-
-
-def rerun_command(args):
-    """`wayline rerun <id>`: the ticket's worker is ended and the ticket opens for a new attempt."""
-    return _ticket_verb("rerun", args, "rerun a ticket: its worker is ended and the ticket opens for a new attempt")
-
-
-def _ticket_verb(command, args, description):
-    parser = _verb_parser(command, description)
-    parser.add_argument("id", type=int, help="the ticket")
-    options, code = parse_args(parser, args)
-    if options is None:
-        return code
-    project = _project_for(command, options)
-    if project is None:
-        return 1
+def _parse_ts(value):
+    """A journal timestamp (`ledger.now_ts`) as an aware datetime, or None when it is not one."""
     try:
-        known = {ticket["id"] for ticket in tickets.read_tickets(project)}
-    except (ValueError, OSError) as failure:
-        print("wayline %s: %s" % (command, failure), file=sys.stderr)
-        return 1
-    if options.id not in known:
-        print("wayline %s: %s has no ticket %d" % (command, project, options.id), file=sys.stderr)
-        return 1
-    control(project, command, {"ticket": options.id})
-    print("%s of ticket %d journaled for %s" % (command, options.id, project))
-    return 0
-
-
-def answer_command(args):
-    """`wayline answer <id> "<text>"`."""
-    parser = _verb_parser("answer", "answer a decision ticket")
-    parser.add_argument("id", type=int, help="the decision ticket")
-    parser.add_argument("text", help="the answer")
-    options, code = parse_args(parser, args)
-    if options is None:
-        return code
-    project = _project_for("answer", options)
-    if project is None:
-        return 1
-    try:
-        answer(project, options.id, options.text)
-    except (ConductorError, ValueError, OSError) as failure:
-        print("wayline answer: %s" % failure, file=sys.stderr)
-        return 1
-    print("ticket %d answered; the conductor closes it at its next wave" % options.id)
-    return 0
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _read_pid(run_dir):

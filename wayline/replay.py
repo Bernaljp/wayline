@@ -2,8 +2,8 @@
 
 The journal is the bus: every process appends its events, and the conductor rebuilds what it
 knows by folding them in order. Resume is the same fold from byte zero, so the view is a pure
-function of the events: nothing here reads the ledger, the clock, or the machine, and replaying
-the same journal twice yields the same view.
+function of the events: nothing here reads a file, the clock, or the machine, and replaying the
+same journal twice yields the same view.
 
 A ticket's attempts are kept session by session, because that is what a restarted conductor has
 to act on. An attempt runs in one process at a time: its launch, or a resume of it. A session
@@ -15,37 +15,57 @@ closed is still owed its carrying.
 from dataclasses import dataclass, field
 from typing import Optional
 
-__all__ = ["STATUS_AFTER", "GATES", "ENDS_ATTEMPT", "JOB_STATUS_AFTER", "Session", "Attempt", "TicketView", "View", "replay"]
+from wayline.ledger import (
+    CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, JOB_CANCELLED, JOB_FAILED, JOB_FINISHED,
+    JOB_LAUNCHED, JOB_RETRIED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, STALL, SWITCHED,
+    TICKET_ACCEPTED, TICKET_BLOCKED, TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED,
+    TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
+    UNPAUSED, VERDICT, WAVE,
+)
+
+__all__ = [
+    "STATUS_AFTER", "GATES", "READOPTED", "WORKER_DIED", "SESSION", "RESULT", "JOBS", "ENDS_ATTEMPT",
+    "JOB_STATUS_AFTER", "Session", "Attempt", "TicketView", "View", "replay",
+]
 
 # The status each ticket event leaves its ticket at (the transitions of Implementation Decisions 2).
 STATUS_AFTER = {
-    "ticket_created": "open",
-    "ticket_launched": "running",
-    "ticket_resumed": "running",
-    "ticket_done": "done",
-    "ticket_accepted": "accepted",
-    "ticket_failed": "failed",
-    "ticket_blocked": "blocked",
-    "ticket_needs_human": "needs_human",
-    "ticket_cancelled": "parked",
-    "ticket_rerun": "open",
+    TICKET_CREATED: "open",
+    TICKET_LAUNCHED: "running",
+    TICKET_RESUMED: "running",
+    TICKET_DONE: "done",
+    TICKET_ACCEPTED: "accepted",
+    TICKET_FAILED: "failed",
+    TICKET_BLOCKED: "blocked",
+    TICKET_NEEDS_HUMAN: "needs_human",
+    TICKET_CANCELLED: "parked",
+    TICKET_RERUN: "open",
 }
 
 # The `ticket_resumed` reasons that spend a gate's one resume (BRIEF 9.1). The resumed session
 # answers that gate, which is the attempt's stage until its result is carried.
 GATES = ("invalid_result", "acceptance_failed", "timeout")
 
-# The events after which an attempt is owed nothing more.
-ENDS_ATTEMPT = ("ticket_done", "ticket_failed", "ticket_blocked", "ticket_needs_human",
-                "ticket_cancelled", "ticket_rerun")
+# The `ticket_resumed` reasons a restart journals: a worker picked up again without a new process
+# (its pid is still that session's worker, or its stream already holds its result), and a worker
+# that died without its result, resumed by its session id or, with none, relaunched.
+READOPTED = "readopted"
+WORKER_DIED = "worker_died"
 
-# The state each job event leaves its job in, as the journal can tell it (decision 6 polls the rest).
+# What an attempt still owes a conductor: its session's result, the carrying of that result, or
+# the jobs a `running` result left behind.
+SESSION, RESULT, JOBS = "session", "result", "jobs"
+
+# The events after which an attempt is owed nothing more.
+ENDS_ATTEMPT = (TICKET_DONE, TICKET_FAILED, TICKET_BLOCKED, TICKET_NEEDS_HUMAN, TICKET_CANCELLED, TICKET_RERUN)
+
+# What each job event says of its job, as far as the journal can tell (decision 6's poller reads the rest).
 JOB_STATUS_AFTER = {
-    "job_launched": "running",
-    "job_retried": "running",
-    "job_finished": "exited",
-    "job_failed": "failed",
-    "job_cancelled": "cancelled",
+    JOB_LAUNCHED: "running",
+    JOB_RETRIED: "running",
+    JOB_FINISHED: "exited",
+    JOB_FAILED: "failed",
+    JOB_CANCELLED: "cancelled",
 }
 
 
@@ -70,7 +90,7 @@ class Session:
 
 @dataclass
 class Attempt:
-    """One attempt at a ticket: what it was launched with, its sessions, and where it stands."""
+    """One attempt at a ticket: what it was launched with, its sessions, and what it is still owed."""
 
     number: int
     pid: Optional[int] = None
@@ -85,16 +105,16 @@ class Attempt:
     ended: Optional[str] = None
 
     @property
-    def state(self):
-        """What is owed: `session` (a result), `result` (its carrying), `jobs`, or nothing (`ended`)."""
+    def owed(self):
+        """What a conductor still owes this attempt: `SESSION`, `RESULT`, `JOBS`, or None once it ended."""
         if self.ended:
-            return "ended"
+            return None
         latest = self.sessions[-1] if self.sessions else None
         if latest is None or latest.result is None:
-            return "session"
+            return SESSION
         if latest.result.get("status") == "running" and latest.result.get("valid"):
-            return "jobs"
-        return "result"
+            return JOBS
+        return RESULT
 
 
 @dataclass
@@ -155,7 +175,7 @@ class TicketView:
         reason, session_id = payload.get("reason"), payload.get("session_id")
         if session_id:
             attempt.session_id = session_id
-        if reason == "readopted" or (reason == "worker_died" and not session_id):
+        if reason == READOPTED or (reason == WORKER_DIED and not session_id):
             # A re-adoption starts no process, and a relaunch is the `ticket_launched` that follows.
             return
         attempt.sessions.append(Session("resume", reason=reason, ts=ts))
@@ -183,13 +203,14 @@ class View:
     (`control pause` until `control resume`); both outlive a restart, because neither the usage
     window nor the owner's instruction ends with a conductor. `stall` is the stall counter of
     decision 5, rebuilt from the `wave` event the conductor journals at the end of every settling
-    wave, reset by a `stall` and by a run that starts afresh rather than resuming.
+    wave: progress resets it, and so does a `stall`, after which the count starts again. Nothing
+    else does, so a run started with `--resume` and one started without rebuild the same view.
 
     What other processes ask for is held until the event that carries it out. A `stop` belongs to
-    the run it was given to: the next `run_started` supersedes it and `run_ended` consumes it. A
-    `switched` is kept for its run the same way, because it ends that run and no later one. A
-    `cancel` or a `rerun` names a ticket and outlives a restart, until `ticket_cancelled` or
-    `ticket_rerun` says it was done. An answer stands until its ticket is rerun.
+    the run that is running: `run_ended` consumes it, and a run started after it is not stopped by
+    it. A `switched` is kept for its run the same way. A `cancel` or a `rerun` names a ticket and
+    outlives a restart, until `ticket_cancelled` or `ticket_rerun` says it was done. An answer
+    stands until its ticket is rerun.
     """
 
     tickets: dict = field(default_factory=dict)
@@ -216,55 +237,68 @@ class View:
         name = event.get("event")
         payload = event.get("payload") or {}
         identifier = _int(payload.get("ticket", event.get("ticket")))
-        if identifier is not None and (name in STATUS_AFTER or name in ("ticket_session", "ticket_result")):
+        if identifier is not None and (name in STATUS_AFTER or name in (TICKET_SESSION, TICKET_RESULT)):
             self._ticket_event(self.tickets.setdefault(identifier, TicketView(identifier)), name, payload, event.get("ts"))
-        if name == "run_started":
+        if name == RUN_STARTED:
             self.autonomy = payload.get("autonomy") or self.autonomy
             self.run = {"pid": payload.get("pid"), "resume": bool(payload.get("resume")),
                         "ts": event.get("ts"), "ended": None}
             self.stop = self.switched = None
-            if not payload.get("resume"):
-                self.stall = 0
-        elif name == "run_ended":
+        elif name == RUN_ENDED:
             if self.run is not None:
                 self.run["ended"] = payload.get("reason")
             self.stop = self.switched = None
-        elif name == "paused":
+        elif name == PAUSED:
             self.pause = {key: payload.get(key) for key in ("resets_at", "window", "utilization")}
-        elif name == "unpaused":
+        elif name == UNPAUSED:
             self.pause = None
-        elif name == "pacing":
+        elif name == PACING:
             self.pacing = _pacing(payload)
-        elif name == "control":
+        elif name == CONTROL:
             self._control(payload, identifier)
-        elif name == "wave":
+        elif name == WAVE:
             if (_int(payload.get("outcomes")) or 0) > 0:
                 self.stall = 0 if payload.get("progressed") else self.stall + 1
-        elif name == "stall":
+        elif name == STALL:
             self.stall = 0
-        elif name == "switched":
+        elif name == SWITCHED:
             self.switched = {"from": payload.get("from"), "to": payload.get("to")}
-        elif name == "feedback":
+        elif name == FEEDBACK:
             self.feedback.append({"id": payload.get("id"), "source": payload.get("source")})
-        elif name == "decision" and identifier is not None:
+        elif name == DECISION and identifier is not None:
             self.answers[identifier] = {key: payload.get(key) for key in ("answer", "decided_by", "rationale", "confidence")}
-        elif name == "ticket_cancelled" and identifier is not None:
+        elif name == TICKET_CANCELLED and identifier is not None:
             self.cancels.pop(identifier, None)
-        elif name == "ticket_rerun" and identifier is not None:
+        elif name == TICKET_RERUN and identifier is not None:
             self.reruns.pop(identifier, None)
             self.answers.pop(identifier, None)
-        elif name == "ticket_done" and identifier is not None:
+        elif name == TICKET_DONE and identifier is not None:
             self.verdicts.pop(identifier, None)
-        elif name == "verdict" and identifier is not None:
+        elif name == VERDICT and identifier is not None:
             self.verdicts.setdefault(identifier, []).append(
                 {"verdict_type": payload.get("verdict_type"), "pass": payload.get("pass")})
-        elif name == "finding" and payload.get("id"):
+        elif name == FINDING and payload.get("id"):
             self.findings.add(payload["id"])
-        elif name == "integrated" and identifier is not None:
+        elif name == INTEGRATED and identifier is not None:
             self.integrated[identifier] = payload.get("commit")
         elif name in JOB_STATUS_AFTER:
             self._job(name, payload, event)
         return self
+
+    @staticmethod
+    def _ticket_event(ticket, name, payload, ts):
+        if name in STATUS_AFTER:
+            ticket.status = STATUS_AFTER[name]
+        if name == TICKET_LAUNCHED:
+            ticket.launched(payload, ts)
+        elif name == TICKET_SESSION:
+            ticket.session(payload)
+        elif name == TICKET_RESULT:
+            ticket.result(payload)
+        elif name == TICKET_RESUMED:
+            ticket.resumed(payload, ts)
+        elif name in ENDS_ATTEMPT:
+            ticket.end(name, payload)
 
     def _control(self, payload, identifier):
         command = payload.get("command")
@@ -304,28 +338,13 @@ class View:
         record["status"] = JOB_STATUS_AFTER[name]
         if _int(payload.get("attempt")) is not None:
             record["attempt"] = payload["attempt"]
-        if name == "job_finished":
+        if name == JOB_FINISHED:
             record["exit_code"] = _int(payload.get("exit_code"))
 
-    @staticmethod
-    def _ticket_event(ticket, name, payload, ts):
-        if name in STATUS_AFTER:
-            ticket.status = STATUS_AFTER[name]
-        if name == "ticket_launched":
-            ticket.launched(payload, ts)
-        elif name == "ticket_session":
-            ticket.session(payload)
-        elif name == "ticket_result":
-            ticket.result(payload)
-        elif name == "ticket_resumed":
-            ticket.resumed(payload, ts)
-        elif name in ENDS_ATTEMPT:
-            ticket.end(name, payload)
-
     def in_flight(self):
-        """`(ticket id, attempt)` for every attempt still owed a result or its carrying, by id."""
+        """`(ticket id, attempt)` for every attempt still owed its session's result or that result's carrying, by id."""
         return [(identifier, ticket.latest) for identifier, ticket in sorted(self.tickets.items())
-                if ticket.latest is not None and ticket.latest.state in ("session", "result")]
+                if ticket.latest is not None and ticket.latest.owed in (SESSION, RESULT)]
 
 
 def replay(events, view=None):

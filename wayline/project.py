@@ -19,18 +19,21 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from string import Template
 
-from wayline import HARNESS_ROOT, POLICY_PATH, TAG
+from wayline import HARNESS_ROOT, POLICY_PATH, TAG, replay
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
-from wayline.ledger import Ledger, atomic_write, conductor_holder, now_ts
+from wayline.ledger import CONTROL, DECISION, SWITCHED, Ledger, atomic_write, conductor_holder, now_ts
 from wayline.resources import (
     LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
 )
+from wayline.tickets import DECISION as DECISION_KIND
 from wayline.tickets import (
-    GRAPH, by_status, empty_graph, frontier, open_decisions, read_graph, read_tickets, refresh_graph,
+    GRAPH, SATISFIED, answer_section, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
+    read_ticket, read_tickets, refresh_graph, tickets_dir, with_answer, write_ticket,
 )
 
 __all__ = [
@@ -39,6 +42,8 @@ __all__ = [
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
+    "control", "answer", "wait_for_conductor", "DRAIN_POLL_S",
+    "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
 
 HARNESS_JSON = "harness.json"
@@ -671,31 +676,26 @@ def read_jobs(project):
 
 
 def window_status(events, harness=None):
-    """The usage windows as the journal last saw them: the pacing reading and whether a run is paused."""
+    """The usage windows as the journal last saw them: the pacing reading and whether a run is paused.
+
+    The fold is the conductor's own (`replay.View`), so `status` and a conductor never disagree
+    about a pause: it lasts until `unpaused`, whatever restarts come in between.
+    """
     harness = harness or {}
     pacing = harness.get("pacing", {})
-    window = {
-        "action": "normal",
-        "five_hour": None,
-        "seven_day": None,
-        "paused": False,
-        "resets_at": None,
-        "window": None,
-        "utilization": None,
+    view = replay.replay(events)
+    pause = view.pause or {}
+    return {
+        "action": view.pacing["action"],
+        "five_hour": view.pacing["five_hour"],
+        "seven_day": view.pacing["seven_day"],
+        "paused": view.pause is not None,
+        "resets_at": pause.get("resets_at"),
+        "window": pause.get("window"),
+        "utilization": pause.get("utilization"),
         "stop_at": pacing.get("stop_at"),
         "cheap_at": pacing.get("cheap_at"),
     }
-    for event in events:
-        name, payload = event.get("event"), event.get("payload") or {}
-        if name == "pacing":
-            window["action"] = payload.get("action", window["action"])
-            window["five_hour"] = payload.get("five_hour", window["five_hour"])
-            window["seven_day"] = payload.get("seven_day", window["seven_day"])
-        elif name == "paused":
-            window.update(paused=True, resets_at=payload.get("resets_at"), window=payload.get("window"), utilization=payload.get("utilization"))
-        elif name in ("unpaused", "run_started"):
-            window.update(paused=False, resets_at=None, window=None, utilization=None)
-    return window
 
 
 def goal_progress(project, events):
@@ -851,13 +851,16 @@ def _short(value):
 # --- switch -------------------------------------------------------------------------------------------
 
 
-def switch_project(path, by="cli"):
+def switch_project(path, by="cli", wait=None):
     """Point the machine at another project, journalling `switched` in both (decision 1).
 
     A conductor running on the project being left is asked to drain first: `control stop` with
-    `drain` and the project switched to, which it applies at its next wave, launching nothing new,
-    waiting for its running workers, and ending with `switched` while its jobs finish on their own.
-    `drained` in the report is that conductor's heartbeat, or None when none was running.
+    `drain` and the project switched to. It launches nothing new, waits for its running workers,
+    and ends with `run_ended switched`, leaving its jobs to finish on their own. `wait(project)`
+    blocks until it has ended (`wait_for_conductor` by default), and only then is `switched`
+    journaled and the pointer moved, so one project never has a conductor draining while the next
+    one's starts. `drained` in the report is that conductor's heartbeat, or None when none was
+    running. `by` is who asked: `cli`, or `dashboard` for its switch action.
     """
     target = Path(path).expanduser().resolve()
     if not is_project(target):
@@ -871,12 +874,71 @@ def switch_project(path, by="cli"):
     if previous is not None and is_project(previous):
         drained = conductor_holder(previous)
         if drained is not None:
-            Ledger(previous).append_event("control", {"command": "stop", "args": {"drain": True, "switch_to": str(target)}, "by": by})
-        Ledger(previous).append_event("switched", payload)
-    Ledger(target).append_event("switched", payload)
+            control(previous, "stop", {"drain": True, "switch_to": str(target)}, by=by)
+            (wait or wait_for_conductor)(previous)
+        Ledger(previous).append_event(SWITCHED, payload)
+    Ledger(target).append_event(SWITCHED, payload)
     register(target, read_harness(target).get("harness_tag", TAG))
     set_active(target)
     return {"from": payload["from"], "to": payload["to"], "moved": True, "drained": drained}
+
+
+# How often `switch` looks whether the conductor it asked to drain has ended, in seconds.
+DRAIN_POLL_S = 2
+
+
+def wait_for_conductor(project):
+    """Block until no conductor holds `project`'s heartbeat, which is when the drained run has ended.
+
+    The drain lasts as long as the conductor's running workers do. A conductor that is killed lets
+    go of its lock as it dies, so this never waits on a dead one.
+    """
+    while conductor_holder(project) is not None:
+        time.sleep(DRAIN_POLL_S)
+
+
+# --- steering a running conductor ------------------------------------------------------------------------
+
+
+def control(project, command, args=None, by="cli"):
+    """Journal one `control` event for the conductor to apply at its next wave (decision 1).
+
+    The verbs `pause`, `resume`, `stop [--drain]`, `cancel <id>`, and `rerun <id>` are this, and so
+    is `switch` asking a running conductor to drain: the journal is the bus, and the conductor is the
+    one process that acts on what it carries. `by` is `cli`, or `dashboard` for its actions.
+    """
+    args = dict(args or {})
+    ticket = args.get("ticket")
+    return Ledger(Path(project).resolve()).append_event(
+        CONTROL, {"command": command, "args": args, "by": by},
+        ticket=ticket if isinstance(ticket, int) and not isinstance(ticket, bool) else None)
+
+
+def answer(project, identifier, text):
+    """Answer a decision ticket: `## Answer` in its file, and `decision` with `decided_by: human` (decision 5).
+
+    The conductor closes the ticket at its next wave. A ticket that is not an open decision ticket
+    is refused, and so is one already answered; `wayline rerun` asks a decision ticket's question again.
+    """
+    project = Path(project).resolve()
+    ledger = Ledger(project)
+    found = {ticket["id"]: ticket for ticket in read_tickets(project)}.get(identifier)
+    if found is None:
+        raise ProjectError("%s has no ticket %s" % (project, identifier))
+    if found["kind"] != DECISION_KIND:
+        raise ProjectError("ticket %d is a %s ticket, and only a decision ticket takes an answer" % (identifier, found["kind"]))
+    if found["status"] in SATISFIED + ("parked",):
+        raise ProjectError("ticket %d is %s; wayline rerun %d asks its question again" % (identifier, found["status"], identifier))
+    fields, body = read_ticket(tickets_dir(project) / filename(found))
+    events, _ = ledger.read_events()
+    if identifier in replay.replay(events).answers or answer_section(body):
+        raise ProjectError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
+    text = str(text).strip()
+    if not text:
+        raise ProjectError("an answer needs some text")
+    write_ticket(ledger, fields, with_answer(body, text))
+    return ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": "human",
+                                          "rationale": None, "confidence": None}, ticket=identifier)
 
 
 # --- the verbs ------------------------------------------------------------------------------------------
@@ -958,6 +1020,12 @@ def switch_command(args):
     if options is None:
         return code
     try:
+        previous = read_active()
+        if previous is not None and is_project(previous) and previous.resolve() != Path(options.path).expanduser().resolve():
+            holder = conductor_holder(previous)
+            if holder is not None:
+                print("draining the conductor (pid %s) on %s: it launches nothing new and ends once its running workers return"
+                      % (holder.get("pid", "?"), previous.resolve()), flush=True)
         moved = switch_project(options.path)
     except (ProjectError, ValidationError, OSError) as failure:
         print("wayline switch: %s" % failure, file=sys.stderr)
@@ -968,7 +1036,119 @@ def switch_command(args):
         print("active project  %s" % moved["to"])
         if moved["from"]:
             print("  was  %s" % moved["from"])
-        if moved.get("drained") is not None:
-            print("  the conductor on %s (pid %s) launches nothing new and ends once its running workers return"
-                  % (moved["from"], moved["drained"].get("pid", "?")))
+        if moved["drained"] is not None:
+            print("  its conductor (pid %s) drained and ended" % moved["drained"].get("pid", "?"))
+    return 0
+
+
+def _verb_parser(verb, description):
+    parser = argparse.ArgumentParser(prog="wayline %s" % verb, description=description)
+    parser.add_argument("--project", help="the project to steer; the active one by default")
+    return parser
+
+
+def _project_for(verb, options):
+    """The project a verb steers, or None after saying why there is none."""
+    try:
+        return find_project(options.project)
+    except (ProjectError, OSError) as failure:
+        print("wayline %s: %s" % (verb, failure), file=sys.stderr)
+        return None
+
+
+def pause_command(args):
+    """`wayline pause`: nothing that needs a model launches until `wayline resume`."""
+    return _steer("pause", args, "pause the run: nothing that needs a model launches until wayline resume")
+
+
+def resume_command(args):
+    """`wayline resume`: the paused run launches again."""
+    return _steer("resume", args, "resume a paused run")
+
+
+def _steer(command, args, description):
+    options, code = parse_args(_verb_parser(command, description), args)
+    if options is None:
+        return code
+    project = _project_for(command, options)
+    if project is None:
+        return 1
+    control(project, command)
+    running = conductor_holder(project) is not None
+    print("%s journaled for %s%s" % (command, project, "" if running else "; no conductor is running, and the next run takes it in"))
+    return 0
+
+
+def stop_command(args):
+    """`wayline stop [--drain]`: the running conductor ends at its next wave, or with --drain once its workers return."""
+    parser = _verb_parser("stop", "end the run at its next wave, leaving its running workers to finish; "
+                                  "with --drain, launch nothing new and end once they have returned")
+    parser.add_argument("--drain", action="store_true", help="launch nothing new and end once the running workers return")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    project = _project_for("stop", options)
+    if project is None:
+        return 1
+    control(project, "stop", {"drain": bool(options.drain)})
+    holder = conductor_holder(project)
+    if holder is None:
+        print("stop journaled for %s; no conductor is running, and a run started later is not stopped by it" % project)
+    elif options.drain:
+        print("asked the conductor (pid %s) on %s to stop once its running workers return" % (holder.get("pid", "?"), project))
+    else:
+        print("asked the conductor (pid %s) on %s to stop at its next wave; its running workers finish on their own "
+              "and the next run re-adopts them" % (holder.get("pid", "?"), project))
+    return 0
+
+
+def cancel_command(args):
+    """`wayline cancel <id>`: the ticket's worker is ended and the ticket is parked."""
+    return _ticket_verb("cancel", args, "cancel a ticket: its worker is ended and the ticket is parked")
+
+
+def rerun_command(args):
+    """`wayline rerun <id>`: the ticket's worker is ended and the ticket opens for a new attempt."""
+    return _ticket_verb("rerun", args, "rerun a ticket: its worker is ended and the ticket opens for a new attempt")
+
+
+def _ticket_verb(command, args, description):
+    parser = _verb_parser(command, description)
+    parser.add_argument("id", type=int, help="the ticket")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    project = _project_for(command, options)
+    if project is None:
+        return 1
+    try:
+        known = {ticket["id"] for ticket in read_tickets(project)}
+    except (ValueError, OSError) as failure:
+        print("wayline %s: %s" % (command, failure), file=sys.stderr)
+        return 1
+    if options.id not in known:
+        print("wayline %s: %s has no ticket %d" % (command, project, options.id), file=sys.stderr)
+        return 1
+    control(project, command, {"ticket": options.id})
+    print("%s of ticket %d journaled for %s" % (command, options.id, project))
+    return 0
+
+
+def answer_command(args):
+    """`wayline answer <id> "<text>"`."""
+    parser = _verb_parser("answer", "answer a decision ticket")
+    parser.add_argument("id", type=int, help="the decision ticket")
+    parser.add_argument("text", help="the answer")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    project = _project_for("answer", options)
+    if project is None:
+        return 1
+    try:
+        answer(project, options.id, options.text)
+    except (ProjectError, ValueError, OSError) as failure:
+        print("wayline answer: %s" % failure, file=sys.stderr)
+        return 1
+    print("ticket %d answered; the conductor closes it at its next wave" % options.id)
     return 0

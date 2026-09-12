@@ -59,6 +59,7 @@ __all__ = [
 _log = logging.getLogger("wayline.worker")
 
 TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
+PROC = Path("/proc")  # where a pid's environment says which session it belongs to
 FALLBACK_MODEL = "sonnet"  # `--fallback-model`: overload only, never usage limits (decision 3)
 MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")  # what decision 3 passes as --model; the policy schema's enum
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -1361,6 +1362,15 @@ class Call:
     pid: int
 
 
+@dataclass
+class _Hold:
+    """A scripted call still running: its ticket, the event that ends its delay, and whether a signal ended it."""
+
+    ticket: Optional[str]
+    ended: threading.Event = field(default_factory=threading.Event)
+    terminated: bool = False
+
+
 class FakeLauncher:
     """The fake backend: scripted envelopes, written as a stream the same parser reads.
 
@@ -1375,6 +1385,8 @@ class FakeLauncher:
     validates it. `died` cuts the stream after `system/init`, as a killed worker leaves it, and
     hands the scripted `errors` over as the harness's own (the timeout text). `alive` seeds the
     pid-alive simulation `pid_alive` answers from; `alive` is a dict a test may edit directly.
+    A scripted `delay` holds the call: `release()` ends the hold as a worker that finished and
+    `terminate(pid)` as one that was killed, and a call still held counts as a live pid.
     """
 
     name = "fake"
@@ -1388,7 +1400,7 @@ class FakeLauncher:
             self.queue = []
             self.calls = []
             self.alive = {}
-            self._stops = {}
+            self._holds = {}
             self._loaded = None
             self._next_pid = 100000
 
@@ -1455,17 +1467,38 @@ class FakeLauncher:
         return self._run("resume", request, _resume_dir(request.run_dir), session_id, message, on_start)
 
     def pid_alive(self, pid, run_dir=None):
-        return bool(self.alive.get(int(pid), False))
+        """`alive` answers for a pid it names; otherwise a scripted call still running counts as alive."""
+        pid = int(pid)
+        if pid in self.alive:
+            return bool(self.alive[pid])
+        with self._lock:
+            return pid in self._holds
 
     def terminate(self, pid, run_dir=None, hard=False):
-        """End a scripted call that is still running, or a pid `alive` simulates, as a signal would."""
+        """End a scripted call still running as a signal ends a worker (exit 143, no result), or a pid `alive` simulates."""
+        pid = int(pid)
         with self._lock:
-            stop = self._stops.get(int(pid))
-        running = stop is not None or bool(self.alive.get(int(pid), False))
-        self.alive[int(pid)] = False
-        if stop is not None:
-            stop.set()
+            hold = self._holds.get(pid)
+            if hold is not None:
+                hold.terminated = True
+        running = hold is not None or bool(self.alive.get(pid, False))
+        self.alive[pid] = False
+        if hold is not None:
+            hold.ended.set()
         return running
+
+    def release(self, ticket=None):
+        """End the delay of every scripted call still running, or of one ticket's, so each returns its result now.
+
+        This is how a test that must not sleep shows a worker finishing on its own: script a long
+        `delay`, and release it at the moment the test wants the worker to be done. Returns how
+        many calls were released.
+        """
+        with self._lock:
+            holds = [hold for hold in self._holds.values() if ticket is None or hold.ticket == str(ticket)]
+        for hold in holds:
+            hold.ended.set()
+        return len(holds)
 
     def _take(self, request):
         with self._lock:
@@ -1499,23 +1532,24 @@ class FakeLauncher:
         _write_text(stream_path, "".join(json.dumps(line) + "\n" for line in head))  # visible while the call runs, as the real stream is
         if scripted.alive is not None:
             self.alive[pid] = scripted.alive
-        stop = threading.Event()
+        ticket = request.env.get("WAYLINE_TICKET")
+        hold = _Hold(None if ticket is None else str(ticket))
         with self._lock:
             self.calls.append(Call(kind, request, session_id, message, run_dir, pid))
-            self._stops[pid] = stop
+            self._holds[pid] = hold
         try:
             if on_start is not None:
                 on_start(Started(pid, run_dir, stream_path))
             if scripted.patch is not None:
                 _apply_patch(Path(request.cwd), scripted.patch)
             if scripted.delay:
-                stop.wait(scripted.delay)  # `terminate` ends the wait, as a signal ends a real worker
+                hold.ended.wait(scripted.delay)  # `release` ends it as a finished worker, `terminate` as a killed one
         finally:
             with self._lock:
-                self._stops.pop(pid, None)
+                self._holds.pop(pid, None)
         exit_code = given.exit_code
         harness_errors = []
-        if stop.is_set():
+        if hold.terminated:
             exit_code = 143  # terminated: the stream stops after `system/init`, as a killed worker's does
         elif scripted.died:
             exit_code = 143 if exit_code is None else exit_code
@@ -1624,12 +1658,12 @@ def terminate(pid, run_dir=None, hard=False):
     return backend().terminate(pid, run_dir, hard)
 
 
-def _names_session(pid, run_dir, proc=Path("/proc")):
+def _names_session(pid, run_dir):
     """Whether the process's environment carries `WAYLINE_RUN=<run_dir>`; True where /proc cannot say."""
-    if not proc.is_dir():
+    if not PROC.is_dir():
         return True
     try:
-        environ = (proc / str(int(pid)) / "environ").read_bytes()
+        environ = (PROC / str(int(pid)) / "environ").read_bytes()
     except OSError:
         return False
     return ("WAYLINE_RUN=%s" % Path(run_dir)).encode("utf-8") in environ.split(b"\0")

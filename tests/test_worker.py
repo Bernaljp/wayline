@@ -18,7 +18,6 @@ import sys
 import tempfile
 import textwrap
 import threading
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -843,13 +842,31 @@ class FakeBackendTest(unittest.TestCase):
             self.assertFalse(worker.pid_alive(started[0].pid))
             self.assertEqual(int((self.run / "pid").read_text(encoding="utf-8")), started[1].pid)
 
-    def test_a_delay_is_honored(self):
+    def test_a_delay_holds_the_call_for_that_long(self):
         with worker.use_fake() as fake:
-            fake.script(Envelope(structured_output={"skill_token": "A", "report": "r"}), delay=0.2)
-            began = time.monotonic()
-            envelope = worker.launch(self.request())
-        self.assertGreaterEqual(time.monotonic() - began, 0.2)
+            fake.script(Envelope(structured_output={"skill_token": "A", "report": "r"}), delay=0.05)
+            with mock.patch.object(threading.Event, "wait", autospec=True, return_value=False) as wait:
+                envelope = worker.launch(self.request())
+        self.assertIn(mock.call(mock.ANY, 0.05), wait.call_args_list)
         self.assertEqual(envelope.exit_code, 0)
+
+    def test_a_released_call_returns_its_result_at_once_and_is_alive_until_then(self):
+        with worker.use_fake() as fake:
+            fake.script(Envelope(structured_output={"skill_token": "A", "report": "r"}), delay=600)
+            begun, box = threading.Event(), {}
+
+            def call():
+                box["envelope"] = worker.launch(self.request(), on_start=lambda started: (box.update(started=started), begun.set()))
+
+            thread = threading.Thread(target=call, daemon=True)
+            thread.start()
+            self.assertTrue(begun.wait(10))
+            self.assertTrue(worker.pid_alive(box["started"].pid), "a call still held is a live worker")
+            self.assertEqual(fake.release(), 1)
+            thread.join(10)
+            self.assertFalse(thread.is_alive(), "the released call kept holding")
+            self.assertEqual((box["envelope"].exit_code, box["envelope"].valid), (0, True))
+            self.assertFalse(worker.pid_alive(box["started"].pid))
 
     def test_a_script_file_drives_demos(self):
         script = self.root / "fake.json"

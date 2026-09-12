@@ -342,8 +342,7 @@ class LockTest(LedgerCase):
 def hold_heartbeat(project, ready, spawned, release):
     """A conductor in miniature: take the heartbeat, write it, start a long-lived worker, wait."""
     beat = Ledger(project).heartbeat().acquire(tries=1)
-    beat.write({"pid": os.getpid(), "started_at": "2026-09-12T10:00:00.000Z", "last_wave_at": None,
-                "harness_tag": "v0.0.0"})
+    beat.write(pid=os.getpid(), started_at="2026-09-12T10:00:00.000Z", last_wave_at=None, harness_tag="v0.0.0")
     worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
     spawned.put(worker.pid)
     ready.set()
@@ -368,7 +367,7 @@ class HeartbeatTest(LedgerCase):
     def test_a_second_conductor_is_refused_while_the_first_holds_the_heartbeat(self):
         first = self.book.heartbeat().acquire()
         self.addCleanup(first.release)
-        first.write(self.record())
+        first.write(**self.record())
         with self.assertRaises(ledger.ConductorBusy) as caught:
             Ledger(self.project).heartbeat().acquire(tries=1)
         self.assertEqual(caught.exception.holder, self.record())
@@ -379,9 +378,9 @@ class HeartbeatTest(LedgerCase):
         beat = self.book.heartbeat().acquire()
         self.addCleanup(beat.release)
         path = self.project / "research" / "conductor.json"
-        beat.write(self.record(last_wave_at="2026-09-12T10:01:00.000Z"))
+        beat.write(**self.record(last_wave_at="2026-09-12T10:01:00.000Z"))
         inode = path.stat().st_ino
-        beat.write(self.record())  # shorter than the record it replaces
+        beat.write(**self.record())  # shorter than the record it replaces
         self.assertEqual(path.stat().st_ino, inode, "a rename would leave the lock on a file no reader opens")
         self.assertEqual(json.loads(path.read_text(encoding="utf-8")), self.record())
         self.assertEqual(ledger.read_heartbeat(self.project), self.record())
@@ -397,7 +396,7 @@ class HeartbeatTest(LedgerCase):
     def test_the_holder_is_named_only_while_a_conductor_holds_the_lock(self):
         self.assertIsNone(ledger.conductor_holder(self.project))
         beat = self.book.heartbeat().acquire()
-        beat.write(self.record())
+        beat.write(**self.record())
         self.assertEqual(ledger.conductor_holder(self.project), self.record())
         beat.release()
         self.assertIsNone(ledger.conductor_holder(self.project))
