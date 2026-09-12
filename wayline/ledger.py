@@ -21,6 +21,7 @@ import os
 import shutil
 import stat
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -28,10 +29,13 @@ from pathlib import Path
 
 from wayline.jsonschema import check, load_schema
 
-__all__ = ["Ledger", "LedgerError", "ledger_for", "make_event", "now_ts", "atomic_write", "atomic_bytes", "EVENTS", "PAYLOAD_ENUMS", "JOURNAL", "LOCK"]
+__all__ = ["Ledger", "LedgerError", "ledger_for", "make_event", "now_ts", "atomic_write", "atomic_bytes", "EVENTS", "PAYLOAD_ENUMS", "JOURNAL", "LOCK",
+           "HEARTBEAT", "Heartbeat", "ConductorBusy", "read_heartbeat", "conductor_holder"]
 
 JOURNAL = "journal.jsonl"
 LOCK = ".lock"
+# The conductor's heartbeat, whose flock keeps a second conductor off the project (decision 5).
+HEARTBEAT = "conductor.json"
 
 _log = logging.getLogger("wayline.ledger")
 
@@ -77,6 +81,7 @@ JOB_RETRIED = "job_retried"
 JOB_FAILED = "job_failed"
 JOB_CANCELLED = "job_cancelled"
 MANIFEST = "manifest"
+WAVE = "wave"
 STALL = "stall"
 PROMOTED = "promoted"
 DEMOTED = "demoted"
@@ -171,6 +176,9 @@ K_OVERRIDES = "overrides"
 K_LOG_TAIL = "log_tail"
 K_SHA256 = "sha256"
 K_SIZE = "size"
+K_NUMBER = "number"
+K_OUTCOMES = "outcomes"
+K_PROGRESSED = "progressed"
 K_WAVES = "waves"
 K_SLUG = "slug"
 K_FROM_LEVEL = "from_level"
@@ -237,6 +245,7 @@ EVENTS = {
     JOB_FAILED: (K_JOB, K_REASON, K_LOG_TAIL),
     JOB_CANCELLED: (K_JOB, K_REASON, K_LOG_TAIL),
     MANIFEST: (K_PATH, K_SHA256, K_SIZE, K_JOB, K_RUN_ID),
+    WAVE: (K_NUMBER, K_OUTCOMES, K_PROGRESSED),
     STALL: (K_WAVES, K_ACTION),
     PROMOTED: (K_SLUG, K_FROM_LEVEL, K_TO_LEVEL, K_TRIGGER),
     DEMOTED: (K_SLUG, K_FROM_LEVEL, K_TO_LEVEL, K_TRIGGER),
@@ -258,7 +267,7 @@ PAYLOAD_ENUMS = {
     (RUN_ENDED, K_REASON): ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched"),
     (PACING, K_ACTION): ("normal", "cheap_only", "stop"),
     (PAUSED, K_WINDOW): ("five_hour", "seven_day", "unknown"),
-    (TICKET_RESUMED, K_REASON): ("invalid_result", "acceptance_failed", "worker_died", "timeout"),
+    (TICKET_RESUMED, K_REASON): ("invalid_result", "acceptance_failed", "worker_died", "timeout", "readopted"),
     (ACCEPTANCE, K_WHERE): ("worktree", "rebased", "main"),
     (INTEGRATED, K_RESOLVED_BY): ("none", "integrator"),
     (TICKET_FAILED, K_NEXT): ("resume", "tier_up", "split", "needs_human"),
@@ -528,6 +537,131 @@ class Ledger:
     def read_json(self, relpath):
         with open(self.path(relpath), encoding="utf-8") as handle:
             return json.load(handle)
+
+    # --- the conductor's heartbeat ---
+
+    def heartbeat(self):
+        """The heartbeat of the one conductor this project may run (decision 5); `acquire` it first."""
+        return Heartbeat(self)
+
+
+class ConductorBusy(LedgerError):
+    """Another conductor holds this project's heartbeat; `holder` is what its heartbeat says."""
+
+    def __init__(self, project, holder):
+        self.project = project
+        self.holder = holder
+        pid = holder.get("pid") if isinstance(holder, dict) else None
+        super().__init__("another conductor%s is running on %s" % (" (pid %s)" % pid if pid else "", project))
+
+
+class Heartbeat:
+    """`research/conductor.json`, and the `flock` on it that keeps a second conductor out.
+
+    The lock is held for the life of one conductor, on one open descriptor, and it dies with the
+    process however the process dies, which is what lets a killed conductor be resumed at once.
+    The descriptor is not inheritable (PEP 446), so a worker the conductor starts, which outlives
+    it by design, never holds the lock on its behalf.
+
+    The file is rewritten in place rather than renamed over, because a rename would move the
+    lock's inode out from under every later reader. The new record is written whole before the
+    old tail is cut, so a reader that catches the moment in between still reads a whole first
+    line, which is all `read_heartbeat` trusts.
+    """
+
+    def __init__(self, ledger):
+        self.ledger = ledger
+        self.path = ledger.path(HEARTBEAT)
+        self.fd = None
+
+    def acquire(self, tries=20, pause=0.05, sleep=None):
+        """Take the lock or raise `ConductorBusy`; returns the heartbeat.
+
+        A reader's probe (`conductor_holder`) holds a shared lock for an instant, so a conductor
+        starting in that instant tries a few more times before it concludes one is running.
+        """
+        self.ledger.research.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        for attempt in range(max(1, int(tries))):
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if attempt + 1 < tries:
+                    (sleep or time.sleep)(pause)
+                continue
+            except BaseException:
+                os.close(fd)
+                raise
+            self.fd = fd
+            return self
+        os.close(fd)
+        raise ConductorBusy(self.ledger.project, read_heartbeat(self.ledger.project) or {})
+
+    def write(self, record):
+        """Rewrite the heartbeat with `record` (`pid, started_at, last_wave_at, harness_tag`)."""
+        if self.fd is None:
+            raise LedgerError("the heartbeat is written only by the conductor holding its lock")
+        data = (_dumps(record, separators=(", ", ": ")) + "\n").encode("utf-8")
+        with self.ledger.lock():
+            os.pwrite(self.fd, data, 0)
+            os.ftruncate(self.fd, len(data))
+            os.fsync(self.fd)
+        return record
+
+    def release(self):
+        if self.fd is not None:
+            fd, self.fd = self.fd, None
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def __enter__(self):
+        return self.acquire() if self.fd is None else self
+
+    def __exit__(self, *exc):
+        self.release()
+
+
+def read_heartbeat(project, attempts=3):
+    """The last heartbeat a conductor wrote in this project, or None when there is none to read.
+
+    Only the first line is read, and a read that catches a rewrite halfway is read again.
+    """
+    path = ledger_for(project).research / HEARTBEAT
+    for _ in range(max(1, attempts)):
+        try:
+            with open(path, "rb") as handle:
+                line = handle.readline()
+        except FileNotFoundError:
+            return None
+        try:
+            record = json.loads(line.decode("utf-8"))
+        except ValueError:
+            continue
+        return record if isinstance(record, dict) else None
+    return None
+
+
+def conductor_holder(project):
+    """The heartbeat of the conductor running on this project, or None when none is running.
+
+    The lock answers the question, not the pid in the file: a pid can outlive its meaning or be
+    reused, and the lock of a dead process is already gone. A conductor that holds the lock and
+    has not yet written a heartbeat is named by an empty record.
+    """
+    path = ledger_for(project).research / HEARTBEAT
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except FileNotFoundError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return read_heartbeat(project) or {}
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return None
+    finally:
+        os.close(fd)
 
 
 def ledger_for(project_or_ledger):

@@ -25,7 +25,7 @@ from string import Template
 from wayline import HARNESS_ROOT, POLICY_PATH, TAG
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
-from wayline.ledger import Ledger, atomic_write, now_ts
+from wayline.ledger import Ledger, atomic_write, conductor_holder, now_ts
 from wayline.resources import (
     LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
 )
@@ -55,7 +55,8 @@ BLOCK_END = "<!-- wayline:end -->"
 GITIGNORE_HEADER = "# wayline"
 # The four entries of Implementation Decisions 1, plus the e-print sources: arXiv's terms of use
 # forbid re-serving an e-print, so a pushed project never carries the ones its dossiers fetched.
-GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/")
+# And the conductor's heartbeat, which is rewritten every wave and means nothing in a commit.
+GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/conductor.json")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")
@@ -850,11 +851,13 @@ def _short(value):
 # --- switch -------------------------------------------------------------------------------------------
 
 
-def switch_project(path):
-    """Point the machine at another project, journalling `switched` in both.
+def switch_project(path, by="cli"):
+    """Point the machine at another project, journalling `switched` in both (decision 1).
 
-    The drain of a running conductor arrives with ticket 09; this moves the pointer and leaves the
-    two journals saying so.
+    A conductor running on the project being left is asked to drain first: `control stop` with
+    `drain` and the project switched to, which it applies at its next wave, launching nothing new,
+    waiting for its running workers, and ending with `switched` while its jobs finish on their own.
+    `drained` in the report is that conductor's heartbeat, or None when none was running.
     """
     target = Path(path).expanduser().resolve()
     if not is_project(target):
@@ -862,14 +865,18 @@ def switch_project(path):
     previous = read_active()
     previous = previous.resolve() if previous is not None else None
     if previous == target:
-        return {"from": None if previous is None else str(previous), "to": str(target), "moved": False}
+        return {"from": None if previous is None else str(previous), "to": str(target), "moved": False, "drained": None}
     payload = {"from": str(previous) if previous else None, "to": str(target)}
+    drained = None
     if previous is not None and is_project(previous):
+        drained = conductor_holder(previous)
+        if drained is not None:
+            Ledger(previous).append_event("control", {"command": "stop", "args": {"drain": True, "switch_to": str(target)}, "by": by})
         Ledger(previous).append_event("switched", payload)
     Ledger(target).append_event("switched", payload)
     register(target, read_harness(target).get("harness_tag", TAG))
     set_active(target)
-    return {"from": payload["from"], "to": payload["to"], "moved": True}
+    return {"from": payload["from"], "to": payload["to"], "moved": True, "drained": drained}
 
 
 # --- the verbs ------------------------------------------------------------------------------------------
@@ -961,4 +968,7 @@ def switch_command(args):
         print("active project  %s" % moved["to"])
         if moved["from"]:
             print("  was  %s" % moved["from"])
+        if moved.get("drained") is not None:
+            print("  the conductor on %s (pid %s) launches nothing new and ends once its running workers return"
+                  % (moved["from"], moved["drained"].get("pid", "?")))
     return 0

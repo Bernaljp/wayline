@@ -1,0 +1,110 @@
+{
+  "snapshot": {
+    "01-write-the-alpha-note.md": [
+      824,
+      1789250768666849932
+    ],
+    "02-write-the-beta-report.md": [
+      794,
+      1789250768711849153
+    ],
+    "03-extend-the-alpha-note.md": [
+      691,
+      1789245511812769381
+    ],
+    "04-extend-the-beta-report.md": [
+      678,
+      1789245511812769381
+    ],
+    "05-index-the-notes-directory.md": [
+      877,
+      1789245511812769381
+    ]
+  },
+  "tickets": [
+    {
+      "id": 1,
+      "kind": "code",
+      "status": "done",
+      "difficulty": 1,
+      "blocked_by": [],
+      "blocking": null,
+      "human_only": false,
+      "touches": [
+        "notes/alpha.md"
+      ],
+      "resources": null,
+      "role": "coder",
+      "skills": [],
+      "attempt": 1
+    },
+    {
+      "id": 2,
+      "kind": "code",
+      "status": "done",
+      "difficulty": 1,
+      "blocked_by": [],
+      "blocking": null,
+      "human_only": false,
+      "touches": [
+        "reports/beta.md"
+      ],
+      "resources": null,
+      "role": "coder",
+      "skills": [],
+      "attempt": 1
+    },
+    {
+      "id": 3,
+      "kind": "code",
+      "status": "open",
+      "difficulty": 1,
+      "blocked_by": [
+        1
+      ],
+      "blocking": null,
+      "human_only": false,
+      "touches": [
+        "notes/alpha.md"
+      ],
+      "resources": null,
+      "role": "coder",
+      "skills": [],
+      "attempt": 0
+    },
+    {
+      "id": 4,
+      "kind": "code",
+      "status": "open",
+      "difficulty": 1,
+      "blocked_by": [
+        2
+      ],
+      "blocking": null,
+      "human_only": false,
+      "touches": [
+        "reports/beta.md"
+      ],
+      "resources": null,
+      "role": "coder",
+      "skills": [],
+      "attempt": 0
+    },
+    {
+      "id": 5,
+      "kind": "code",
+      "status": "open",
+      "difficulty": 1,
+      "blocked_by": [],
+      "blocking": null,
+      "human_only": false,
+      "touches": [
+        "notes/"
+      ],
+      "resources": null,
+      "role": "coder",
+      "skills": [],
+      "attempt": 0
+    }
+  ]
+}

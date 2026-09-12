@@ -10,28 +10,33 @@ is empty.
 
 What M0 and M1 build here, and what they leave to the tickets that extend them:
 
-- Up to `policy.max_parallel_workers` workers per wave (ticket 07), launched together and waited
-  for, and their outcomes carried one at a time in pick order, because the integration protocol
-  is one rebase and one fast-forward at a time. The wave is still as long as its slowest worker:
-  the poll of step 3, which lets a wave start work while another worker is still running, is
-  ticket 09's, and so is re-adopting a worker that outlives the process.
-- One resume per attempt, for an invalid result or a failed acceptance (BRIEF 9.1). The rest of
-  the escalation ladder (a tier up, a split ticket, `needs_human`) is named in the `next` of the
-  `ticket_failed` event and built by ticket 38.
+- Up to `policy.max_parallel_workers` workers (ticket 07), each session in a thread of its own.
+  A wave does not wait for them (ticket 09): it carries the outcomes of the sessions that returned
+  since the last wave, one at a time in id order, because the integration protocol is one rebase
+  and one fast-forward at a time, then launches what the frontier allows and returns. `run` waits
+  between waves, waking when a session returns or another process appends to the journal.
+- Resume is start (ticket 09). `run` takes the heartbeat `research/conductor.json`, whose `flock`
+  keeps a second conductor off the project, and rewrites it every wave. The first wave replays
+  the journal from byte zero into a `replay.View`, reconciles the ticket files and `.worktrees/`
+  with it, re-adopts a worker still running by its pid and stream, resumes a dead one by session
+  id or relaunches it, carries a result no conductor carried, and queues again the verdicts a done
+  ticket earned. Every later wave folds what the journal gained and applies the `control` events,
+  answers, and feedback that other processes appended.
+- One resume per gate, for an invalid result or a failed acceptance (BRIEF 9.1). The rest of the
+  escalation ladder (a tier up, a split ticket, `needs_human`) is named in the `next` of the
+  `ticket_failed` event and built by ticket 38, which also acts on the stall counter that the
+  `wave` event lets a restart rebuild.
 - The conflict-free integration. A rebase conflict fails the ticket with `next: split`; the
   integrator role that resolves one arrives with ticket 08.
-- No heartbeat, no lock on `research/conductor.json`, no `control` events and no replay: ticket
-  09. No pacing and no pause: ticket 10 computes the action the pick order already reads, and
-  decides what an action refuses to launch. No job poller, so an experiment ticket whose jobs
-  outlive its worker stays `running`, holds its touch set against the frontier, and this run ends
-  with nothing left that it can advance.
+- No pacing and no window pause: ticket 10 computes the action the pick order already reads and
+  decides what an action refuses to launch; the owner's pause (`wayline pause`) holds launches
+  here. No job poller, so an experiment ticket whose jobs outlive its worker stays `running` and
+  holds the run open until ticket 19's poller closes it or `wayline stop` ends the run.
 - A result's `proposals`, `decision_requests` and `goal_progress` are written into the ticket's
   `## Result` section so the owner sees them, and nothing else: admission is ticket 37, decision
   tickets are ticket 35, and keep-if-better is ticket 39.
 - The Type-B gate of decision 11 (ticket 32): a done ticket's verdicts are queued and drained
-  later in the same wave, and the ticket is `accepted` when every one of them passed. The queue
-  lives in this process, so a conductor that dies with one in it leaves the ticket done and
-  unaccepted rather than losing the ticket; finding those again on a resume is ticket 09's.
+  later in the same wave, and the ticket is `accepted` when every one of them passed.
 
 The conductor never trusts the worker's own acceptance file. It runs the ticket's commands itself,
 three times, and the ticket is `done` only once they passed on `main`. Nor does it trust the
@@ -39,26 +44,29 @@ worker's own account of its quality: `accepted` comes from a verifier on another
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from wayline import HARNESS_ROOT, gates, schedule, tickets, worker
+from wayline import HARNESS_ROOT, gates, replay, schedule, tickets, worker
 from wayline.ledger import (
-    ACCEPTANCE, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, TICKET_BLOCKED,
+    ACCEPTANCE, CONTROL, DECISION, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, TICKET_BLOCKED,
     TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, TICKET_RESUMED,
-    TICKET_SESSION, Ledger,
+    TICKET_CANCELLED, TICKET_RERUN, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
+from wayline.cli import parse_args
 from wayline.project import ProjectError, find_project, policy_for, read_harness
 
 __all__ = [
     "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "porcelain_entries",
-    "dirty_outside_research", "refuse_to_start", "run_command", "WORKTREES", "RESEARCH", "BRANCH",
+    "dirty_outside_research", "refuse_to_start", "run_command", "control", "answer", "WORKTREES", "RESEARCH", "BRANCH",
 ]
 
 MAIN = "main"
@@ -67,6 +75,19 @@ FINDINGS = "findings.jsonl"
 WORKTREES = ".worktrees"
 BRANCH = "ticket/%s"
 LEDGER_COMMIT = "ledger: wave %d"
+# The heartbeat is rewritten every wave; committing it would make every wave a ledger commit.
+HEARTBEAT_PATH = RESEARCH + "/conductor.json"
+
+# How often a run waiting between waves looks at its sessions and at the journal, in seconds.
+POLL_S = 2
+# How long a stop waits for a terminated session before it is killed outright.
+STOP_WAIT_S = 15
+
+# The gate a session answers (BRIEF 9.1): the launch, or the one resume each gate is given. The
+# resume stages are the `ticket_resumed` reasons that spend them.
+LAUNCH_STAGE = "launch"
+INVALID_RESULT = "invalid_result"
+ACCEPTANCE_FAILED = "acceptance_failed"
 
 # The identity a conductor commits the ledger under when the project's repository has none.
 IDENTITY = ("-c", "user.name=wayline", "-c", "user.email=wayline@localhost")
@@ -82,6 +103,12 @@ RESUME_ACCEPTANCE = (
     "Fix what failed, run `wayline accept` again, commit on the ticket branch, and return the "
     "structured result."
 )
+RESUME_DIED = (
+    "Your session was interrupted before it returned its result: the process running it died. "
+    "Continue the ticket from where you left off, commit on the ticket branch, run `wayline accept`, "
+    "and return the structured result."
+)
+RESUME_DIED_MESSAGE = "\n\nThe message your interrupted session was answering:\n\n%s"
 REJECTED = (
     "the %s verdict failed: a fresh %s session that did not write this read it and found\n\n%s"
 )
@@ -216,6 +243,10 @@ class WaveResult:
     ended: bool = False
     reason: Optional[str] = None
     ledger_commit: Optional[str] = None
+    # The worker outcomes this wave carried and the findings they filed: a wave that carried one is
+    # a settling wave, and whether it filed anything is what the stall counter reads.
+    outcomes: int = 0
+    findings: int = 0
 
     @property
     def touched(self):
@@ -225,7 +256,7 @@ class WaveResult:
         released whatever waited on them, so the next wave has work the last one did not.
         """
         return bool(self.launched or self.done or self.failed or self.running
-                    or self.accepted or self.rejected)
+                    or self.accepted or self.rejected or self.outcomes)
 
 
 @dataclass
@@ -267,6 +298,23 @@ class _Attempt:
     # What the launch raised, when it did: a thread cannot fail its own wave, so the failure is
     # carried back to the main thread and the ticket is failed there, in pick order, like any other.
     failure: Optional[BaseException] = None
+    # The gate the session in flight answers, and whether the result it returned is journaled yet.
+    stage: str = LAUNCH_STAGE
+    result_journaled: bool = False
+    # The session in flight: its thread, the moment its process exists, and where to find it.
+    thread: Optional[threading.Thread] = None
+    begun: threading.Event = field(default_factory=threading.Event)
+    pid: Optional[int] = None
+    run_dir: Optional[Path] = None
+    stream_path: Optional[Path] = None
+    tail: Optional[worker.StreamTail] = None
+    session_journaled: bool = False
+    # A resume the attempt waits to start, `(stage, message)`, while the run holds model work.
+    want: Optional[tuple] = None
+    # A session this conductor did not start (a restart re-adopted it): polled by stream and pid.
+    adopted: bool = False
+    # The findings `_close` filed for this attempt.
+    findings: int = 0
 
     @property
     def id(self):
@@ -300,6 +348,18 @@ class Conductor:
         # replaces `resources_free` with the free-slot rule of `wayline.resources`.
         self.action = schedule.NORMAL
         self.resources_free = schedule.everything_free
+        # What a run carries between waves: the working view folded from the journal, the byte
+        # offset read so far, the attempts whose sessions are in flight, and the heartbeat.
+        self.view = replay.View()
+        self.offset = 0
+        self.flight = {}
+        self._wake = threading.Event()
+        self.heartbeat = None
+        self.started_at = self.last_wave_at = self.harness_tag = None
+        # Resume is start: the first wave takes over what the replayed journal says is owed.
+        self.taken_over = False
+        # The cancels and reruns that changed nothing, said once each rather than every wave.
+        self.declined = set()
 
     def say(self, message):
         print(message, file=self.out, flush=True)
@@ -307,13 +367,139 @@ class Conductor:
     # --- the loop ---
 
     def wave(self):
-        """One pass of the loop (decision 5), called directly by tests."""
+        """One pass of the loop (decision 5), called directly by tests.
+
+        A wave does not wait for its workers. It carries the outcomes of the sessions that
+        finished since the last wave, launches what the frontier allows, and returns; the sessions
+        it started run on in their threads and are carried by a later wave.
+        """
         self.number += 1
+        self.last_wave_at = now_ts()
         result = WaveResult(self.number)
-        picks = self._picks(self._graph())
-        if picks:
-            self._work(picks, result)
-        self._drain_verdicts(result)
+        self._beat()
+        arrived = self._tail()
+        first = not self.taken_over
+        if first:
+            self._take_over(result)
+        self._apply_controls(arrived, first)
+        self._poll(result)
+        if not self._holds_launches():
+            picks = self._picks(self._graph())
+            if picks:
+                self._start(picks, result)
+            self._drain_verdicts(result)
+        self._journal_wave(result)
+        self._end(result)
+        result.ledger_commit = self._commit_ledger()
+        self._tail()
+        self._beat()
+        return result
+
+    def run(self, max_waves=None, resume=False, wait=None):
+        """Take the heartbeat, journal `run_started`, and take waves until the run ends.
+
+        Returns every wave's result. Between two waves the run waits up to `policy.poll_seconds`,
+        waking early when a session it started has returned or another process appended to the
+        journal; the wait lives here and not in the wave, so that no test sleeps (Testing
+        Decisions, seam 4). `wait(seconds)` replaces it, which is how a test settles its workers
+        between waves instead.
+
+        `run_started` is journaled here rather than in the verb, because the dashboard calls this
+        function in process. The heartbeat lock is taken first, so a second conductor on the same
+        project is refused before it has journaled anything.
+        """
+        harness = read_harness(self.project)
+        try:
+            self.heartbeat = self.ledger.heartbeat().acquire()
+        except ConductorBusy as busy:
+            raise ConductorError("%s; wayline stop --project %s stops it" % (busy, self.project)) from None
+        try:
+            self.harness_tag, self.started_at = harness.get("harness_tag"), now_ts()
+            self._beat()
+            self.ledger.append_event(RUN_STARTED, {
+                "resume": bool(resume), "harness_tag": harness.get("harness_tag"),
+                "autonomy": harness.get("autonomy"), "radius": harness.get("radius"), "pid": os.getpid(),
+            })
+            waves = []
+            wait = self._idle if wait is None else wait
+            while True:
+                waves.append(self.wave())
+                if waves[-1].ended or (max_waves is not None and len(waves) >= max_waves):
+                    return waves
+                wait(self._poll_seconds())
+        finally:
+            self.heartbeat.release()
+            self.heartbeat = None
+
+    def settle(self, timeout=None):
+        """Wait until every session this conductor started has returned; the next wave carries them."""
+        for attempt in list(self.flight.values()):
+            if attempt.thread is not None:
+                attempt.thread.join(timeout)
+
+    def _idle(self, seconds):
+        """Wait up to `seconds` for something the next wave can act on, looking every `POLL_S`."""
+        deadline = time.monotonic() + seconds
+        while not self._ready():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._wake.wait(min(remaining, POLL_S))
+            self._wake.clear()
+
+    def _ready(self):
+        """Whether a session returned, or the journal grew past what this conductor has read."""
+        if any(attempt.thread is not None and not attempt.thread.is_alive() for attempt in self.flight.values()):
+            return True
+        if any(attempt.adopted and attempt.tail.read().result is not None for attempt in self.flight.values()):
+            return True
+        try:
+            return self.ledger.journal_path.stat().st_size > self.offset
+        except OSError:
+            return False
+
+    def _poll_seconds(self):
+        seconds = self.policy.get("poll_seconds", 60)
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 0:
+            raise ConductorError("policy.poll_seconds is %r; it is a number of seconds, 0 or more" % (seconds,))
+        return seconds
+
+    def _beat(self):
+        """Rewrite the heartbeat `research/conductor.json` (decision 5), when this conductor holds it."""
+        if self.heartbeat is not None:
+            self.heartbeat.write({"pid": os.getpid(), "started_at": self.started_at,
+                                  "last_wave_at": self.last_wave_at, "harness_tag": self.harness_tag})
+
+    def _tail(self):
+        """Fold what the journal gained since the last read into the working view (wave step 1)."""
+        events, self.offset = self.ledger.read_events(self.offset)
+        replay.replay(events, self.view)
+        return events
+
+    def _journal_wave(self, result):
+        """The `wave` event of a settling wave, which is what lets a restart rebuild the stall counter."""
+        if result.outcomes:
+            self.ledger.append_event(WAVE, {"number": self.number, "outcomes": result.outcomes,
+                                            "progressed": bool(result.done or result.findings)})
+
+    def _end(self, result):
+        """`run_ended`: on a stop once its workers are dealt with, or once the frontier is empty and nothing runs.
+
+        A drain waits for the sessions still running and leaves a resume that has not started yet
+        to the next run, whose take-over finds it in the journal.
+        """
+        stopping = self._stop_requested()
+        if stopping is not None:
+            for identifier, attempt in list(self.flight.items()):
+                if attempt.want is not None and (attempt.thread is None or not attempt.thread.is_alive()):
+                    self.flight.pop(identifier)
+            if self.flight:
+                return
+            self.ledger.append_event(RUN_ENDED, {"reason": stopping[1]})
+            result.ended, result.reason = True, stopping[1]
+            return
+        if self.flight:
+            return
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         if not tickets.frontier(graph) and not running:
@@ -321,32 +507,6 @@ class Conductor:
                 self.say(line)
             self.ledger.append_event(RUN_ENDED, {"reason": "frontier_empty"})
             result.ended, result.reason = True, "frontier_empty"
-        result.ledger_commit = self._commit_ledger()
-        return result
-
-    def run(self, max_waves=None, resume=False):
-        """Journal `run_started` and take waves until the run ends; returns every wave's result.
-
-        A wave that moved nothing ends the loop, because in M0 nothing can arrive while the
-        conductor waits: there is no job poller, no tick, and no control event. The wait between
-        waves, and the pause at a usage limit, arrive with tickets 09 and 10 and live here rather
-        than inside the wave, so that no test sleeps (Testing Decisions, seam 4).
-
-        `run_started` is journaled here rather than in the verb, because the dashboard calls this
-        function in process.
-        """
-        harness = read_harness(self.project)
-        self.ledger.append_event(RUN_STARTED, {
-            "resume": bool(resume), "harness_tag": harness.get("harness_tag"),
-            "autonomy": harness.get("autonomy"), "radius": harness.get("radius"), "pid": os.getpid(),
-        })
-        waves = []
-        while max_waves is None or len(waves) < max_waves:
-            result = self.wave()
-            waves.append(result)
-            if result.ended or not result.touched:
-                break
-        return waves
 
     def _graph(self):
         events, _ = self.ledger.read_events()
@@ -386,12 +546,13 @@ class Conductor:
 
     # --- the tickets of one wave ---
 
-    def _work(self, picks, result):
-        """Launch every pick at once, then carry their outcomes one at a time, in pick order.
+    def _start(self, picks, result):
+        """Prepare every pick, start its session, and return once each worker process has started.
 
-        The launches overlap because that is the point of `max_parallel_workers`; the outcomes do
-        not, because the integration protocol is one rebase and one fast-forward at a time, and
-        because the second of two tickets that would conflict is never in the same wave anyway.
+        The preparation is serial, because `git worktree add` writes the repository the other
+        launches read and each launch says its line in pick order. The sessions then run in threads
+        of their own; the wave waits only until each process exists or its launch failed, so
+        `launched` names exactly the tickets whose `ticket_launched` was journaled.
         """
         attempts = []
         for entry in picks:
@@ -404,84 +565,312 @@ class Conductor:
                 result.failed.append(attempt.id)
                 continue
             attempts.append(attempt)
-        self._launch(attempts)
-        result.launched.extend(attempt.id for attempt in attempts if attempt.started)
-        escaped = None
+            self._run_session(attempt, "launch")
         for attempt in attempts:
+            attempt.begun.wait()
+            if attempt.started:
+                result.launched.append(attempt.id)
+                self.flight[attempt.id] = attempt
+            else:
+                self._carry(attempt, result)  # the launcher refused it before a process started
+
+    def _run_session(self, attempt, kind, message=None):
+        """Start one session of an attempt, its launch or a resume, in a thread of its own."""
+        attempt.envelope = attempt.failure = None
+        attempt.result_journaled = attempt.adopted = False
+        attempt.begun = threading.Event()
+        attempt.thread = threading.Thread(target=self._session, args=(attempt, kind, message),
+                                          name="wayline-ticket-%d" % attempt.id, daemon=True)
+        attempt.thread.start()
+
+    def _session(self, attempt, kind, message):
+        """A session's thread: the launcher seam, blocking on its child until the child exits.
+
+        Every `Exception` is carried to the main thread rather than raised here, where it would be
+        printed and lost; `_carry` fails the ticket on the two a ticket can be failed on and raises
+        the rest there. The thread is a daemon because a worker is a process of its own: a
+        conductor that exits leaves it running, for the next conductor to re-adopt.
+        """
+        try:
+            began = lambda started: self._began(attempt, started, kind)
+            if kind == "launch":
+                attempt.envelope = worker.launch(attempt.request, on_start=began)
+            else:
+                attempt.envelope = worker.resume(attempt.request, attempt.session_id, message, on_start=began)
+        except Exception as failure:  # carried to the main thread, and raised again there
+            attempt.failure = failure
+        finally:
+            attempt.begun.set()
+            self._wake.set()
+
+    def _began(self, attempt, started, kind):
+        """The session's process exists: where to find it, and, for a launch, `ticket_launched` with its pid."""
+        attempt.pid, attempt.run_dir, attempt.stream_path = started.pid, Path(started.run_dir), Path(started.stream_path)
+        attempt.tail = worker.StreamTail(started.stream_path)
+        if kind == "launch":
+            self._journal_launch(attempt, started)
+        attempt.started = True
+        attempt.begun.set()
+
+    def _take_over(self, result):
+        """Resume is start (decision 5): pick up every attempt the journal, replayed from byte zero, still owes.
+
+        A session with no `ticket_result` is re-adopted when its stream already holds the result or
+        its pid is still that session's worker, resumed by session id when it died after its session
+        started, and relaunched in the same attempt when it died before. Each is journaled as
+        `ticket_resumed` with its reason. This runs once, at the conductor's first wave.
+        """
+        self.taken_over = True
+        self._reconcile_statuses()
+        graph = {entry["id"]: entry for entry in self._graph()["tickets"]}
+        for identifier, owed in self.view.in_flight():
+            if identifier not in graph:
+                continue
+            ticket, body = self._ticket(identifier)
+            attempt = _Attempt(ticket, body, owed.number, self._worktree(identifier))
             try:
+                self._adopt(attempt, owed, graph[identifier], result)
+            except (ValueError, OSError) as failure:  # a role, a prompt, a settings file, or a git step
+                self._fail(attempt, str(failure), "needs_human")
+                result.failed.append(attempt.id)
+        self._reconcile_worktrees(graph)
+        self._requeue_verdicts(graph)
+
+    def _reconcile_statuses(self):
+        """Rewrite each ticket file whose status the journal contradicts (decision 5, resume).
+
+        The journal wins, because a conductor killed between an event and the file it rewrites
+        leaves the file one step behind. A ticket the journal never named whose file says `running`
+        was being launched when the conductor died, and goes back to `open`. Nothing else in the
+        file changes, so a hand-pinned difficulty and an `## Answer` section stay as they were left.
+        """
+        for ticket in tickets.read_tickets(self.project):
+            known = self.view.tickets.get(ticket["id"])
+            status = known.status if known is not None else None
+            if status is None and ticket["status"] == "running":
+                status = "open"
+            if status is None or status == ticket["status"]:
+                continue
+            self._set_status(ticket["id"], status)
+            self.say("  ticket %d: %s in its file and %s in the journal; the journal wins"
+                     % (ticket["id"], ticket["status"], status))
+
+    def _reconcile_worktrees(self, graph):
+        """Remove the worktree and the branch of every ticket the journal closed (decision 5, resume)."""
+        directory = self.project / WORKTREES
+        if not directory.is_dir():
+            return
+        for path in sorted(directory.iterdir()):
+            identifier = int(path.name) if path.name.isdigit() else None
+            entry = graph.get(identifier)
+            if entry is None or entry["status"] not in tickets.SATISFIED or identifier in self.flight:
+                continue
+            self._remove_worktree(identifier)
+            self.say("  removed the worktree of ticket %d, which the journal closed" % identifier)
+
+    def _requeue_verdicts(self, graph):
+        """Queue again the verdicts a done ticket earned and no conductor took (decision 11).
+
+        The queue lived in the process that died. A verdict the journal already holds as passed is
+        not taken twice, and a ticket all of whose verdicts passed is accepted here.
+        """
+        for identifier, entry in sorted(graph.items()):
+            known = self.view.tickets.get(identifier)
+            launched = known.latest if known is not None else None
+            if entry["status"] != "done" or launched is None or not launched.model:
+                continue
+            if any(queued.ticket == identifier for queued in self.verdicts):
+                continue
+            ticket, _ = self._ticket(identifier)
+            earned = gates.ticket_asks(ticket, entry.get("difficulty", ticket["difficulty"]), launched.model,
+                                       tickets.relative_path(ticket), commit=self.view.integrated.get(identifier),
+                                       outputs=ticket.get("outputs") or [])
+            passed = {item["verdict_type"] for item in self.view.verdicts.get(identifier, []) if item.get("pass")}
+            asks = [ask for ask in earned if ask.verdict_type not in passed]
+            if asks:
+                self.verdicts.append(_Queued(identifier, launched.number, asks))
+                self.say("  ticket %d is done and its %s verdict was never taken; queued again"
+                         % (identifier, ", ".join(ask.verdict_type for ask in asks)))
+            elif earned:
+                self._set_status(identifier, "accepted")
+                self.ledger.append_event(TICKET_ACCEPTED, {"ticket": identifier}, ticket=identifier)
+                self.say("  ticket %d passed every verdict before the restart; accepted" % identifier)
+
+    def _adopt(self, attempt, owed, entry, result):
+        """Take over one attempt whose session has not returned: re-adopt it, resume it, or relaunch it."""
+        attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
+        attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
+        attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
+        attempt.stage, attempt.resumed = owed.stage, bool(owed.spent)
+        attempt.session_id, attempt.session_journaled = owed.session_id, owed.session_id is not None
+        self._prepare(attempt)
+        session = owed.sessions[-1]
+        attempt.run_dir = self._session_path(attempt, session)
+        attempt.stream_path = attempt.run_dir / "stream.jsonl" if attempt.run_dir else None
+        attempt.pid = session.pid if session.kind == "launch" else _read_pid(attempt.run_dir)
+        attempt.tail = worker.StreamTail(attempt.stream_path or worker.session_dir(self.project, attempt.id, attempt.number) / "missing")
+        attempt.tail.read()
+        self._journal_session(attempt)  # a session the stream saw and the journal missed
+        attempt.started = True
+        if owed.state == "result":
+            if attempt.stream_path is None or not attempt.stream_path.is_file():
+                raise ConductorError("ticket %d's result is journaled and its stream is gone; a person has to look"
+                                     % attempt.id)
+            attempt.envelope = worker.read_envelope(attempt.stream_path, attempt.request.schema_path)
+            attempt.result_journaled = True
+            self.flight[attempt.id] = attempt
+            self.say("  ticket %d: carrying the result its worker returned before the restart" % attempt.id)
+            return
+        if attempt.tail.result is not None or self._alive(attempt):
+            self.ledger.append_event(TICKET_RESUMED, {
+                "ticket": attempt.id, "attempt": attempt.number, "session_id": attempt.session_id, "reason": "readopted",
+            }, ticket=attempt.id, session_id=attempt.session_id)
+            attempt.adopted = True
+            self.flight[attempt.id] = attempt
+            self.say("  ticket %d: re-adopted its worker (pid %s)" % (attempt.id, attempt.pid))
+            return
+        self._died(attempt, session)
+        if attempt.id in self.flight:
+            return
+        result.failed.append(attempt.id)
+
+    def _died(self, attempt, session):
+        """A session that died without its result: resumed by session id, or relaunched when it had none."""
+        if attempt.session_id:
+            message = RESUME_DIED
+            previous = attempt.run_dir / "prompt.md" if session.kind == "resume" and attempt.run_dir else None
+            if previous is not None and previous.is_file():
+                message += RESUME_DIED_MESSAGE % previous.read_text(encoding="utf-8").strip()
+            attempt.want = ("worker_died", message)
+            self.flight[attempt.id] = attempt
+            self._start_wanted(attempt)
+            self.say("  ticket %d: its worker died; resuming session %s" % (attempt.id, attempt.session_id))
+            return
+        self.ledger.append_event(TICKET_RESUMED, {
+            "ticket": attempt.id, "attempt": attempt.number, "session_id": None, "reason": "worker_died",
+        }, ticket=attempt.id)
+        self.say("  ticket %d: its worker died before its session started; relaunching" % attempt.id)
+        attempt.started = attempt.session_journaled = False
+        attempt.tail = None
+        self._run_session(attempt, "launch")
+        attempt.begun.wait()
+        if attempt.started:
+            self.flight[attempt.id] = attempt
+
+    def _adopted_returned(self, attempt):
+        """Whether a re-adopted session has returned; a dead one without a result is resumed or relaunched."""
+        attempt.tail.read()
+        if attempt.tail.result is not None:
+            attempt.envelope = worker.read_envelope(attempt.stream_path, attempt.request.schema_path)
+            return True
+        if not self._alive(attempt):
+            attempt.adopted = False
+            self._died(attempt, replay.Session("launch" if attempt.run_dir == self._attempt_dir(attempt) else "resume"))
+        return False
+
+    def _alive(self, attempt):
+        return attempt.pid is not None and worker.pid_alive(attempt.pid, self._attempt_dir(attempt))
+
+    def _attempt_dir(self, attempt):
+        return worker.session_dir(self.project, attempt.id, attempt.number)
+
+    def _prepare(self, attempt):
+        """The worktree, the prompt, and the request an attempt taken over needs for its next session."""
+        self._add_worktree(attempt)
+        attempt.prompt = self._prompt(attempt)
+        attempt.request = self._request(attempt, attempt.prompt)
+
+    def _session_path(self, attempt, session):
+        """The directory a session wrote to: the attempt's own for a launch, its `resume-<k>` for a resume.
+
+        A resume's directory is the one whose process started after the journal named the resume,
+        which `env.json` records; None when no process ever started for it.
+        """
+        base = self._attempt_dir(attempt)
+        if session.kind == "launch":
+            return base
+        numbered = []
+        for candidate in base.glob("resume-*"):
+            suffix = candidate.name.split("-", 1)[1]
+            if suffix.isdigit():
+                numbered.append((int(suffix), candidate))
+        for _, candidate in sorted(numbered, reverse=True):
+            try:
+                started = json.loads((candidate / "env.json").read_text(encoding="utf-8")).get("started_at")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if started and session.ts and started >= session.ts:
+                return candidate
+            break
+        return None
+
+    def _poll(self, result):
+        """Wave step 3: journal the sessions that began, carry the ones that returned, start what waits.
+
+        One attempt's unexpected exception does not abandon the others: every attempt is looked at,
+        and then the first such exception is raised again.
+        """
+        escaped = None
+        for identifier in sorted(self.flight):
+            attempt = self.flight[identifier]
+            try:
+                self._journal_session(attempt)
+                if attempt.thread is not None and attempt.thread.is_alive():
+                    continue
+                if attempt.want is not None:
+                    self._start_wanted(attempt)
+                    continue
+                if attempt.adopted and not self._adopted_returned(attempt):
+                    continue
                 self._carry(attempt, result)
             except Exception as failure:  # not one of the two a ticket can be failed on
-                # The other workers have finished and committed; leaving them uncarried would
-                # leave their tickets `running`, holding their touch sets against every wave to
-                # come with no poller to release them. They are carried, then this is raised.
+                self.flight.pop(identifier, None)
                 escaped = failure if escaped is None else escaped
         if escaped is not None:
             raise escaped
 
     def _carry(self, attempt, result):
-        """What one launched attempt came to, counted into the wave; nothing expected raises out."""
+        """What a returned session came to, counted into the wave; nothing expected raises out."""
+        if attempt.thread is not None:
+            attempt.thread.join()
         outcome = "failed"
         try:
             if attempt.failure is not None:
                 raise attempt.failure
             if attempt.envelope is None:
                 raise ConductorError("the worker thread ended without a result and without an error")
-            outcome = self._outcome(attempt)
+            attempt.session_id = attempt.session_id or attempt.envelope.session_id
+            self._journal_session(attempt)
+            outcome = self._advance(attempt)
         except (ValueError, OSError) as failure:  # a launch, a ticket file, or a git step
             self._fail(attempt, str(failure), "needs_human")
+        finally:
+            if attempt.started:
+                result.outcomes += 1
+        if outcome == "session":
+            self.flight[attempt.id] = attempt
+            return
+        self.flight.pop(attempt.id, None)
+        result.findings += attempt.findings
         {"done": result.done, "running": result.running}.get(outcome, result.failed).append(attempt.id)
 
-    def _launch(self, attempts):
-        """Run every prepared attempt's worker, together, and return once they have all stopped.
-
-        One thread per worker: the launcher seam blocks on its child process, so a thread spends
-        its life in `wait()`, and the two things it writes are the run directory of its own
-        session and the journal, whose appends are serialized by the ledger's lock. Ticket 09
-        replaces the join with the poll of wave step 3.
-        """
-        if len(attempts) < 2:
-            for attempt in attempts:
-                self._launch_one(attempt)
+    def _journal_session(self, attempt):
+        """`ticket_session`, once the stream's `system/init` says which session this is (decision 3)."""
+        if attempt.session_journaled:
             return
-        threads = [threading.Thread(target=self._launch_one, args=(attempt,),
-                                    name="wayline-ticket-%d" % attempt.id) for attempt in attempts]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-
-    def _launch_one(self, attempt):
-        """One worker, launched and waited for; what it raises is carried, not thrown at the wave.
-
-        Every `Exception` is carried, not only the two the wave knows how to fail a ticket on: one
-        left to a thread would be printed to stderr and lost, and the wave would go on to read an
-        envelope nobody ever set. Carried, it is raised again on the main thread, where a launch
-        failure fails its ticket and anything else still ends the run. What is left uncaught is
-        what must not be turned into a ticket outcome at all (`KeyboardInterrupt`, `SystemExit`);
-        `_carry` fails the ticket for the missing envelope those leave behind.
-        """
-        try:
-            attempt.envelope = worker.launch(
-                attempt.request, on_start=lambda started: self._journal_launch(attempt, started))
-            attempt.session_id = attempt.envelope.session_id
-            self.ledger.append_event(TICKET_SESSION, {
-                "ticket": attempt.id, "attempt": attempt.number,
-                "session_id": attempt.session_id, "model": attempt.envelope.model,
-            }, ticket=attempt.id, session_id=attempt.session_id)
-        except Exception as failure:  # carried to the main thread, and raised again there
-            attempt.failure = failure
-
-    def _outcome(self, attempt):
-        """What this attempt came to: `done`, `running` (its jobs outlive it), or `failed`."""
-        if not self._final_result(attempt):
-            return "failed"
-        carried = self._act_on(attempt)
-        if carried != "done":
-            return carried
-        if self._acceptance(attempt) and self._integrate(attempt):
-            self._close(attempt)
-            return "done"
-        return "failed"
+        session_id = model = None
+        if attempt.tail is not None:
+            attempt.tail.read()
+            session_id, model = attempt.tail.session_id, attempt.tail.model
+        if session_id is None and attempt.envelope is not None:
+            session_id, model = attempt.envelope.session_id, attempt.envelope.model
+        if session_id is None:
+            return
+        attempt.session_id, attempt.session_journaled = session_id, True
+        self.ledger.append_event(TICKET_SESSION, {
+            "ticket": attempt.id, "attempt": attempt.number, "session_id": session_id, "model": model,
+        }, ticket=attempt.id, session_id=session_id)
+        self.say("  ticket %d session %s (%s)" % (attempt.id, session_id, model or "an unnamed model"))
 
     def _begin(self, attempt, entry):
         """Everything one launch needs: the role, the tier, the worktree, the prompt, the request.
@@ -544,17 +933,42 @@ class Conductor:
 
     # --- the worker outcome (BRIEF 9.1) ---
 
-    def _final_result(self, attempt):
-        """Validate the result; an invalid one is resumed once with the error, then the ticket fails."""
-        self._journal_result(attempt)
+    def _advance(self, attempt):
+        """Carry a returned session through the outcome (BRIEF 9.1): `done`, `running`, `failed`, or `session`.
+
+        `attempt.stage` is the gate the session answers. A launch's result is validated and acted
+        on, and an invalid one is resumed once with the error; the machine acceptance runs in the
+        worktree, and a failure is resumed once with the output. A session answering one of those
+        resumes continues from its gate, which is also where a restarted conductor picks an attempt
+        up. `session` means a new session started, or waits to, and the attempt stays in flight.
+        """
+        if not attempt.result_journaled:
+            self._journal_result(attempt)
+            attempt.result_journaled = True
         problem = self._invalid(attempt)
-        if problem is None:
-            return True
-        problem = self._resumed_result(attempt, "invalid_result", RESUME_INVALID % problem)
-        if problem is None:
-            return True
-        self._fail(attempt, "the result was still unusable after one resume: %s" % problem, "tier_up")
-        return False
+        if attempt.stage == ACCEPTANCE_FAILED:
+            if problem is not None:
+                self._fail(attempt, "the resumed session returned no usable result: %s" % problem, "tier_up")
+                return "failed"
+            if not self._accept(attempt, "worktree", attempt.worktree)["pass"]:
+                self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", "tier_up")
+                return "failed"
+        else:
+            if problem is not None:
+                if attempt.stage == INVALID_RESULT:
+                    self._fail(attempt, "the result was still unusable after one resume: %s" % problem, "tier_up")
+                    return "failed"
+                return self._want_resume(attempt, INVALID_RESULT, RESUME_INVALID % problem)
+            carried = self._act_on(attempt)
+            if carried != "done":
+                return carried
+            record = self._accept(attempt, "worktree", attempt.worktree)
+            if not record["pass"]:
+                return self._want_resume(attempt, ACCEPTANCE_FAILED, RESUME_ACCEPTANCE % _failures(record["results"]))
+        if self._committed(attempt) and self._integrate(attempt):
+            self._close(attempt)
+            return "done"
+        return "failed"
 
     def _invalid(self, attempt):
         """Why the envelope is not a result the conductor can act on, or None when it is one."""
@@ -576,24 +990,30 @@ class Conductor:
             "permission_denials": envelope.permission_denials, "valid": self._invalid(attempt) is None,
         }, ticket=attempt.id, session_id=attempt.session_id)
 
-    def _resumed_result(self, attempt, reason, message):
-        """Spend the attempt's one resume (BRIEF 9.1); returns why the new result is unusable, or None.
-
-        A ticket whose session left no id to resume is failed here and reported as unusable, so
-        both callers can treat "no usable result" as one answer.
-        """
+    def _want_resume(self, attempt, stage, message):
+        """Spend a gate's one resume (BRIEF 9.1): now, or as soon as the run may start model work."""
         if not attempt.session_id:
             self._fail(attempt, "there is no session id to resume: %s"
                        % "; ".join(attempt.envelope.errors or ["the session never started"]), "tier_up")
-            return "the session left no id to resume"
+            return "failed"
+        attempt.want = (stage, message)
+        self._start_wanted(attempt)
+        return "session"
+
+    def _start_wanted(self, attempt):
+        """Start the resume an attempt waits for, unless the run holds model work; returns whether it did."""
+        if attempt.want is None or self._holds_launches():
+            return False
+        stage, message = attempt.want
+        attempt.want = None
         self.ledger.append_event(TICKET_RESUMED, {
-            "ticket": attempt.id, "attempt": attempt.number,
-            "session_id": attempt.session_id, "reason": reason,
+            "ticket": attempt.id, "attempt": attempt.number, "session_id": attempt.session_id, "reason": stage,
         }, ticket=attempt.id, session_id=attempt.session_id)
-        attempt.envelope = worker.resume(attempt.request, attempt.session_id, message)
-        attempt.resumed = True
-        self._journal_result(attempt)
-        return self._invalid(attempt)
+        if stage in replay.GATES:
+            attempt.stage, attempt.resumed = stage, True
+        self._run_session(attempt, "resume", message)
+        attempt.begun.wait()
+        return True
 
     def _act_on(self, attempt):
         """What the result's own status asks for: `done`, `running`, or `failed` for the wave's count.
@@ -631,19 +1051,126 @@ class Conductor:
                        % (status,), "needs_human")
         return "failed"
 
-    def _acceptance(self, attempt):
-        """The Type-A gates in the worktree; a failure is resumed once with the output."""
-        record = self._accept(attempt, "worktree", attempt.worktree)
-        if record["pass"]:
-            return self._committed(attempt)
-        problem = self._resumed_result(attempt, "acceptance_failed", RESUME_ACCEPTANCE % _failures(record["results"]))
-        if problem is not None:
-            self._fail(attempt, "the resumed session returned no usable result: %s" % problem, "tier_up")
-            return False
-        if not self._accept(attempt, "worktree", attempt.worktree)["pass"]:
-            self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", "tier_up")
-            return False
-        return self._committed(attempt)
+    def _holds_launches(self):
+        """Whether this wave may start no session that needs a model: the owner paused, or the run is stopping."""
+        return self.view.paused_by_owner or self._stop_requested() is not None
+
+    def _stop_requested(self):
+        """`(drain, reason)` while this run is to stop, else None.
+
+        A stop given to this run, or a `switched` that took the project away, which drains: the
+        workers running are waited for and nothing new starts (decision 1, one active project).
+        """
+        stop, switched = self.view.stop, self.view.switched
+        away = bool(switched) and switched.get("from") == str(self.project) and switched.get("to") != str(self.project)
+        if stop is None and not away:
+            return None
+        drain = True if stop is None else stop["drain"]
+        return drain, "switched" if away or (stop or {}).get("switch_to") else "stopped"
+
+    # --- what other processes asked for (decision 5, wave step 1) ---
+
+    def _apply_controls(self, arrived, first):
+        """Take in the control events and feedback the journal gained, and act on the ones that act.
+
+        At the first wave the journal was read from byte zero, so only what arrived after the last
+        run ended is said aloud; what an earlier conductor already said is not said again.
+        """
+        if first:
+            ends = [index for index, event in enumerate(arrived) if event.get("event") == RUN_ENDED]
+            arrived = arrived[ends[-1] + 1:] if ends else arrived
+        for event in arrived:
+            self._say_arrival(event)
+        stopping = self._stop_requested()
+        if stopping is not None and not stopping[0] and self.flight:
+            self._stop_sessions()
+        for identifier in sorted(self.view.cancels):
+            self._end_ticket(identifier, "cancel", self.view.cancels[identifier])
+        for identifier in sorted(self.view.reruns):
+            self._end_ticket(identifier, "rerun", self.view.reruns[identifier])
+        self._apply_answers()
+
+    def _apply_answers(self):
+        """Wave step 4: an answered decision ticket is done, and an answer written in its file is the owner's.
+
+        A `decision` event answers a ticket, from `wayline answer`, the dashboard, or a session. An
+        answer a person wrote into the ticket's `## Answer` section is journaled here as theirs,
+        and it wins over the answer the journal held, because the file is where a person answers
+        (decision 2). Nothing new is journaled for the ticket's closing: the `decision` is the record.
+        """
+        for ticket in tickets.read_tickets(self.project):
+            if ticket["kind"] != tickets.DECISION:
+                continue
+            _, body = tickets.read_ticket(tickets.tickets_dir(self.project) / tickets.filename(ticket))
+            written = tickets.answer_section(body)
+            known = self.view.answers.get(ticket["id"])
+            if written is not None and (known is None or str(known.get("answer") or "").strip() != written):
+                known = self.ledger.append_event(DECISION, {
+                    "ticket": ticket["id"], "answer": written, "decided_by": "human", "rationale": None, "confidence": None,
+                }, ticket=ticket["id"])["payload"]
+                self.say("  ticket %d: the answer written in its file is journaled as the owner's" % ticket["id"])
+            if known is not None and ticket["status"] not in tickets.SATISFIED + ("parked",):
+                self._set_status(ticket["id"], "done")
+                self.say("  ticket %d answered by the %s: %s" % (ticket["id"], known.get("decided_by"), known.get("answer")))
+
+    def _say_arrival(self, event):
+        payload = event.get("payload") or {}
+        name, args = event.get("event"), payload.get("args") if isinstance(payload.get("args"), dict) else {}
+        if name == "feedback":
+            self.say("  feedback %s (%s) waits for the evolve loop" % (payload.get("id"), payload.get("source")))
+        elif name != "control":
+            return
+        elif payload.get("command") in ("pause", "resume"):
+            self.say("  %s by %s" % ("paused" if payload["command"] == "pause" else "resumed", payload.get("by")))
+        elif payload.get("command") == "autonomy":
+            self.say("  autonomy is now %s" % args.get("autonomy"))
+        elif payload.get("command") == "pacing":
+            self.say("  pacing thresholds: %s" % ", ".join("%s %s" % (key, args[key]) for key in ("stop_at", "cheap_at") if key in args))
+        elif payload.get("command") == "stop":
+            self.say("  asked to stop%s" % (" once the running workers return" if args.get("drain") else " now"))
+
+    def _stop_sessions(self):
+        """An immediate stop: end every session in flight and leave their attempts to the next run's take-over."""
+        for attempt in list(self.flight.values()):
+            self._terminate(attempt)
+        self.flight.clear()
+        self.say("  stopped every running worker; the next run resumes them")
+
+    def _terminate(self, attempt):
+        """End one session, this process's child or a re-adopted worker, and wait for its thread."""
+        if attempt.pid is not None and (attempt.adopted or (attempt.thread is not None and attempt.thread.is_alive())):
+            worker.terminate(attempt.pid, self._attempt_dir(attempt))
+        if attempt.thread is not None:
+            attempt.thread.join(STOP_WAIT_S)
+            if attempt.thread.is_alive() and attempt.pid is not None:
+                worker.terminate(attempt.pid, self._attempt_dir(attempt), hard=True)
+                attempt.thread.join(STOP_WAIT_S)
+
+    def _end_ticket(self, identifier, command, by):
+        """A `cancel` parks the ticket and a `rerun` opens it again, ending its running worker first."""
+        attempt = self.flight.get(identifier)
+        try:
+            ticket, _ = self._ticket(identifier)
+        except ConductorError:
+            ticket = None
+        status = ticket["status"] if ticket else None
+        if ticket is None or (command == "cancel" and status in ("done", "accepted", "parked")) \
+                or (command == "rerun" and status == "open" and attempt is None):
+            if (command, identifier) not in self.declined:
+                self.declined.add((command, identifier))
+                self.say("  a %s of ticket %s changes nothing: %s" % (command, identifier, "no such ticket" if ticket is None else "it is %s" % status))
+            return
+        if attempt is not None:
+            self._terminate(attempt)
+            self.flight.pop(identifier, None)
+        if command == "cancel":
+            self.ledger.append_event(TICKET_CANCELLED, {"ticket": identifier, "by": by}, ticket=identifier)
+            self._set_status(identifier, "parked")
+            self.say("  ticket %d cancelled by %s; it is parked" % (identifier, by))
+        else:
+            self.ledger.append_event(TICKET_RERUN, {"ticket": identifier, "by": by}, ticket=identifier)
+            self._set_status(identifier, "open")
+            self.say("  ticket %d rerun by %s; it is open for a new attempt" % (identifier, by))
 
     def _accept(self, attempt, where, cwd):
         """Run the ticket's machine acceptance in `cwd` and journal it under the label `where`."""
@@ -707,8 +1234,9 @@ class Conductor:
             self._fail(attempt, "the machine acceptance failed on main after the fast-forward to %s; main "
                        "carries the commit and a person has to look" % commit[:12], "needs_human")
             return False
-        self.ledger.append_event(INTEGRATED, {"ticket": attempt.id, "commit": commit, "resolved_by": "none"},
-                                 ticket=attempt.id)
+        if self.view.integrated.get(attempt.id) != commit:  # journaled already by a conductor that died after it
+            self.ledger.append_event(INTEGRATED, {"ticket": attempt.id, "commit": commit, "resolved_by": "none"},
+                                     ticket=attempt.id)
         self.say("  integrated %s into main as %s" % (BRANCH % attempt.id, commit[:12]))
         return True
 
@@ -724,8 +1252,11 @@ class Conductor:
                 "provenance": finding["provenance"],
                 "negative": bool(finding.get("negative", False)),
             }
+            if record["id"] in self.view.findings:
+                continue  # filed before a restart
             self.ledger.append_record(FINDINGS, record)
             self.ledger.append_event(FINDING, record, ticket=attempt.id)
+            attempt.findings += 1
         self._write_ticket(attempt, "done", attempt.result)
         self.ledger.append_event(TICKET_DONE, {"ticket": attempt.id}, ticket=attempt.id)
         self._queue_verdicts(attempt)
@@ -903,6 +1434,9 @@ class Conductor:
     def _commit_ledger(self):
         """Commit what the wave wrote under `research/`, so `main` stays clean for the next fast-forward."""
         self._git(self.project, "add", "--", RESEARCH)
+        if self._git(self.project, "diff", "--cached", "--name-only", "--", HEARTBEAT_PATH).stdout.strip():
+            # A project laid out before the heartbeat was ignored: keep the file out of the commit.
+            self._git(self.project, "reset", "-q", "--", HEARTBEAT_PATH)
         if self._git(self.project, "diff", "--cached", "--quiet", "--", RESEARCH, ok=None).returncode == 0:
             return None
         self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH)
@@ -926,6 +1460,164 @@ class Conductor:
 # --- the resume message and the touch set ---------------------------------------------------
 
 
+def control(project, command, args=None, by="cli"):
+    """Journal one `control` event for the running conductor to apply at its next wave (decision 1).
+
+    The verbs `pause`, `resume`, `stop [--drain]`, `cancel <id>`, and `rerun <id>` are this, and so
+    is every dashboard action that steers a run: the journal is the bus, and the conductor is the
+    only process that acts on what it carries.
+    """
+    args = dict(args or {})
+    ticket = args.get("ticket")
+    return Ledger(Path(project).resolve()).append_event(
+        CONTROL, {"command": command, "args": args, "by": by},
+        ticket=ticket if isinstance(ticket, int) and not isinstance(ticket, bool) else None)
+
+
+def answer(project, identifier, text, by="cli"):
+    """Answer a decision ticket (decision 5): `## Answer` in its file, and `decision` with `decided_by: human`.
+
+    The conductor closes the ticket at its next wave. A ticket that is not an open decision ticket,
+    or that is answered already, is refused; rerun a decision ticket to answer it again.
+    """
+    project = Path(project).resolve()
+    ledger = Ledger(project)
+    found = {ticket["id"]: ticket for ticket in tickets.read_tickets(project)}.get(identifier)
+    if found is None:
+        raise ConductorError("%s has no ticket %s" % (project, identifier))
+    if found["kind"] != tickets.DECISION:
+        raise ConductorError("ticket %d is a %s ticket, and only a decision ticket takes an answer" % (identifier, found["kind"]))
+    if found["status"] in tickets.SATISFIED + ("parked",):
+        raise ConductorError("ticket %d is %s; rerun it to answer it again" % (identifier, found["status"]))
+    fields, body = tickets.read_ticket(tickets.tickets_dir(project) / tickets.filename(found))
+    events, _ = ledger.read_events()
+    if identifier in replay.replay(events).answers or tickets.answer_section(body):
+        raise ConductorError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
+    text = str(text).strip()
+    if not text:
+        raise ConductorError("an answer needs some text")
+    tickets.write_ticket(ledger, fields, tickets.with_answer(body, text))
+    return ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": by if by == "decider" else "human",
+                                          "rationale": None, "confidence": None}, ticket=identifier)
+
+
+def _verb_parser(verb, description):
+    parser = argparse.ArgumentParser(prog="wayline %s" % verb, description=description)
+    parser.add_argument("--project", help="the project to steer; the active one by default")
+    return parser
+
+
+def _project_for(verb, options):
+    try:
+        return find_project(options.project)
+    except (ProjectError, OSError) as failure:
+        print("wayline %s: %s" % (verb, failure), file=sys.stderr)
+        return None
+
+
+def pause_command(args):
+    """`wayline pause`: nothing that needs a model launches until `wayline resume`."""
+    return _steer("pause", args, "pause the run: nothing that needs a model launches until wayline resume")
+
+
+def resume_command(args):
+    """`wayline resume`: the paused run launches again."""
+    return _steer("resume", args, "resume a paused run")
+
+
+def _steer(command, args, description):
+    options, code = parse_args(_verb_parser(command, description), args)
+    if options is None:
+        return code
+    project = _project_for(command, options)
+    if project is None:
+        return 1
+    control(project, command)
+    running = conductor_holder(project) is not None
+    print("%s journaled for %s%s" % (command, project, "" if running else "; no conductor is running, and the next run takes it in"))
+    return 0
+
+
+def stop_command(args):
+    """`wayline stop [--drain]`: the running conductor stops now, or once its running workers return."""
+    parser = _verb_parser("stop", "stop the run now, or with --drain once its running workers return")
+    parser.add_argument("--drain", action="store_true", help="launch nothing new and end once the running workers return")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    project = _project_for("stop", options)
+    if project is None:
+        return 1
+    holder = conductor_holder(project)
+    if holder is None:
+        print("no conductor is running on %s; nothing to stop" % project)
+        return 0
+    control(project, "stop", {"drain": bool(options.drain)})
+    print("asked the conductor (pid %s) on %s to stop %s"
+          % (holder.get("pid", "?"), project, "once its running workers return" if options.drain else "now"))
+    return 0
+
+
+def cancel_command(args):
+    """`wayline cancel <id>`: the ticket's worker is ended and the ticket is parked."""
+    return _ticket_verb("cancel", args, "cancel a ticket: its worker is ended and the ticket is parked")
+
+
+def rerun_command(args):
+    """`wayline rerun <id>`: the ticket's worker is ended and the ticket opens for a new attempt."""
+    return _ticket_verb("rerun", args, "rerun a ticket: its worker is ended and the ticket opens for a new attempt")
+
+
+def _ticket_verb(command, args, description):
+    parser = _verb_parser(command, description)
+    parser.add_argument("id", type=int, help="the ticket")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    project = _project_for(command, options)
+    if project is None:
+        return 1
+    try:
+        known = {ticket["id"] for ticket in tickets.read_tickets(project)}
+    except (ValueError, OSError) as failure:
+        print("wayline %s: %s" % (command, failure), file=sys.stderr)
+        return 1
+    if options.id not in known:
+        print("wayline %s: %s has no ticket %d" % (command, project, options.id), file=sys.stderr)
+        return 1
+    control(project, command, {"ticket": options.id})
+    print("%s of ticket %d journaled for %s" % (command, options.id, project))
+    return 0
+
+
+def answer_command(args):
+    """`wayline answer <id> "<text>"`."""
+    parser = _verb_parser("answer", "answer a decision ticket")
+    parser.add_argument("id", type=int, help="the decision ticket")
+    parser.add_argument("text", help="the answer")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    project = _project_for("answer", options)
+    if project is None:
+        return 1
+    try:
+        answer(project, options.id, options.text)
+    except (ConductorError, ValueError, OSError) as failure:
+        print("wayline answer: %s" % failure, file=sys.stderr)
+        return 1
+    print("ticket %d answered; the conductor closes it at its next wave" % options.id)
+    return 0
+
+
+def _read_pid(run_dir):
+    """The pid a backend wrote beside a session's stream, or None."""
+    try:
+        return int((Path(run_dir) / "pid").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def _failures(results):
     """The failing commands of an acceptance record, as the resume message quotes them."""
     failed = ["$ %s\n(exit %d)\n%s" % (result["cmd"], result["exit_code"], (result["tail"] or "").strip())
@@ -947,8 +1639,7 @@ def _in_touch_set(path, touches):
 
 # The flags of decision 1's verb table that later tickets build, named so `run` can say which.
 LATER = (
-    ("resume", "--resume", "ticket 09 (resume, the heartbeat, and the control events)"),
-    ("detach", "--detach", "ticket 09 (the transient wayline-conductor unit)"),
+    ("detach", "--detach", "ticket 13 (the transient wayline-conductor unit)"),
     ("simulate_limit", "--simulate-limit", "ticket 10 (pacing and the pause)"),
     ("simulate_failure", "--simulate-failure", "ticket 38 (the stall and the escalation ladder)"),
 )
@@ -959,8 +1650,8 @@ def run_command(args):
     parser = argparse.ArgumentParser(prog="wayline run",
                                      description="run the conductor over a project until its frontier is empty")
     parser.add_argument("--project", help="the project to run; the active one by default")
-    parser.add_argument("--resume", action="store_true", help="replay the journal and re-adopt live workers (ticket 09)")
-    parser.add_argument("--detach", action="store_true", help="run as the transient unit wayline-conductor (ticket 09)")
+    parser.add_argument("--resume", action="store_true", help="say in run_started that this run resumes one (every run replays the journal)")
+    parser.add_argument("--detach", action="store_true", help="run as the transient unit wayline-conductor (ticket 13)")
     parser.add_argument("--simulate-limit", metavar="S", help="pretend a usage limit was hit (ticket 10)")
     parser.add_argument("--simulate-failure", metavar="ID", help="pretend a ticket failed (ticket 38)")
     parser.add_argument("--max-waves", type=int, metavar="N", help="stop after N waves, whatever the frontier still holds")
@@ -988,7 +1679,7 @@ def run_command(args):
     conductor = Conductor(project)
     print("run      %s (%s, radius %s)" % (project, harness.get("autonomy"), harness.get("radius")))
     try:
-        waves = conductor.run(max_waves=options.max_waves)
+        waves = conductor.run(max_waves=options.max_waves, resume=options.resume)
     except (ConductorError, ValueError, OSError) as failure:
         print("wayline run: %s" % failure, file=sys.stderr)
         return 1

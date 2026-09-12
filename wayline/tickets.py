@@ -28,7 +28,7 @@ __all__ = [
     "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "by_status", "empty_graph", "tickets_dir",
-    "with_result", "with_result_note", "result_notes",
+    "with_result", "with_result_note", "result_notes", "ANSWER_HEADING", "answer_section", "with_answer",
 ]
 
 RESEARCH = "research"
@@ -50,6 +50,8 @@ HARDEST = 5
 
 # The heading the ledger appends an attempt's result under (Implementation Decisions 2).
 RESULT_HEADING = "## Result"
+# The heading an answer to a decision ticket is written under, by a person or by `wayline answer`.
+ANSWER_HEADING = "## Answer"
 
 _FILENAME_RE = re.compile(r"(\d+)-([a-z0-9][a-z0-9-]*)\.md\Z")
 _SLUG_MAX = 48
@@ -201,6 +203,26 @@ def with_result_note(body, lines):
     if "\n" + RESULT_HEADING + "\n" not in text + "\n":
         lines = [RESULT_HEADING, ""] + list(lines)
     return text + "\n\n" + "\n".join(lines) + "\n"
+
+
+def answer_section(body):
+    """The text under a ticket body's `## Answer` heading, up to the next heading of its level; None without one."""
+    lines = body.split("\n")
+    for index, line in enumerate(lines):
+        if line.strip() != ANSWER_HEADING:
+            continue
+        taken = []
+        for rest in lines[index + 1:]:
+            if rest.startswith("## ") or rest.startswith("# "):
+                break
+            taken.append(rest)
+        return "\n".join(taken).strip() or None
+    return None
+
+
+def with_answer(body, text):
+    """The ticket body with `text` appended under an `## Answer` heading (decision 2)."""
+    return body.rstrip("\n") + "\n\n" + ANSWER_HEADING + "\n\n" + text.strip() + "\n"
 
 
 def write_ticket(ledger, fields, body=""):
