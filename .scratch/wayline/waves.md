@@ -92,7 +92,7 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 
 1. One session, one ticket, one git worktree. A new agent created from `claude agents` gets one by default (`worktree.bgIsolation` is `auto`): `.claude/worktrees/<name>` on branch `worktree-<name>`, branched from origin's `master`. From a terminal, `claude -w ticket-NN --model <alias> --effort <effort>` does the same. Give the session `/implement` with the full path of the ticket file (or the issue URL) and ask it to confirm the title back before it starts. The manual route still works: `git worktree add -b ticket/NN .worktrees/NN master` (the `.worktrees/` directory is ignored), then start Claude Code inside it.
 2. When the agent reports done, it has opened a pull request against `master` (`CLAUDE.md` tells every session to: criteria ticked, `Status: done`, `Closes #<issue>` in the body). Read it on GitHub, wait for the `tests` check, and merge it with a merge commit (the repository allows no other kind, so a tag made on the branch stays on `master`'s line; the remote branch is deleted by the merge). The merge closes the issue, so every dependent's blocked-by count updates on its own.
-3. Then locally: `git pull` on `master` (a new worktree branches from origin's `master`, which the merge already updated, but anything you run on `master` itself needs the pull), and run the sweep under "Removing ended sessions" below, which deletes the ended sessions with their worktrees and local branches (`git worktree remove .worktrees/NN` for a manual worktree).
+3. Then locally: `git pull` on `master` (a new worktree branches from origin's `master`, which the merge already updated, but anything you run on `master` itself needs the pull), and run the sweep under "Removing ended sessions" below, which deletes the ended sessions with their worktrees and local branches (`git worktree remove .worktrees/NN` for a manual worktree). If other pull requests are open, also run the script under "Bringing the next pull request up to master": a merge on GitHub re-conflicts every open pull request that touches the same lines, and there are lines every ticket touches.
 4. Never use `git stash` across worktrees; `refs/stash` is shared.
 5. Keep two or three sessions in flight at most: the subscription window is shared by every session, and one ticket typically costs a large part of a window.
 6. Run 01 to 05 one at a time on `master` directly (no worktree needed while nothing else runs): they define the modules everything else edits.
@@ -108,6 +108,16 @@ bash .scratch/wayline/sweep-sessions.sh
 ```
 
 A single session is `claude rm <id>`, the id being the short hex printed when the session started and listed by `claude agents --json --all`. Keep a session until its pull request is merged, so `claude attach <id>` can reopen it for a fix.
+
+### Bringing the next pull request up to master
+
+Every ticket appends to the same lines: the `SHIPPED` list of the schema tests, the changelog's Unreleased section, the verb table. So when several pull requests are open at once, merging one on GitHub re-conflicts the rest. Merge them oldest first, the lowest number, and after each merge run:
+
+```
+bash .scratch/wayline/update-next-pr.sh
+```
+
+It merges origin's `master` into the oldest open pull request's branch in a temporary worktree, pushes, and stops there; the `tests` check runs on the push, and the pull request is ready to merge when that check is green. A conflict resolved once is resolved the same way again by git rerere, from the resolutions recorded in the repository's `.git/rr-cache`; the resolutions for the pull requests open on 2026-09-12 were recorded in their merge order, which is why the script has answers at all. A conflict with no recorded resolution is left alone and named, for a person to resolve in that branch's worktree: `git merge origin/master`, edit, commit, push. A textual merge can still hide a collision of meaning that only the suite reports: a role sidecar written before ticket 27 landed carried fields the registry now refuses, and the merge said nothing. Read the check, not the merge.
 
 ## Sequential alternative
 
@@ -127,4 +137,5 @@ That prints the frontier: open tickets with no open blocker, which is exactly th
 - [ ] pull request read, `tests` check green, merge commit made on GitHub (the merge closes the issue and deletes the remote branch)
 - [ ] the ticket file in the pull request has `Status: done` and every criterion ticked; an unticked one is named in the body, decide whether it blocks
 - [ ] `git pull` on local `master`; the session sweep ("Removing ended sessions")
+- [ ] other pull requests still open: `bash .scratch/wayline/update-next-pr.sh`, then its `tests` check
 - [ ] if it was a milestone demo: `docs/verification/mN.md` in the pull request and the tag pushed (`git push --tags`)
