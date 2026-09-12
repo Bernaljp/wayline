@@ -11,6 +11,7 @@ import dataclasses
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -102,13 +103,22 @@ class InterfaceTest(unittest.TestCase):
     def test_session_dir_and_env_follow_the_launch_line(self):
         run = worker.session_dir("/proj", 3, 2)
         self.assertEqual(run, Path("/proj/research/sessions/3/2"))
-        env = worker.session_env("/proj", 3, 2, ["src/", "tests/test_x.py"])
+        env = worker.session_env("/proj", 3, 2, ["src/", "tests/test_x.py"], harness_root="/harness", path="/usr/bin")
         self.assertEqual(env, {
             "TICKET_TOUCHES": "src/:tests/test_x.py",
             "TICKET_ACCEPTANCE_FILE": "/proj/research/sessions/3/2/acceptance.json",
             "WAYLINE_PROJECT": "/proj", "WAYLINE_TICKET": "3", "WAYLINE_RUN": "/proj/research/sessions/3/2",
+            "PATH": "/harness/bin:/usr/bin",
         })
         self.assertEqual(worker.session_env("/proj", 3, 2, "src/")["TICKET_TOUCHES"], "src/")
+
+    def test_the_worker_reaches_wayline_accept_through_the_harness_bin(self):
+        """The contract tells the worker to run `wayline accept`, so the command has to resolve."""
+        first = worker.session_env("/proj", 3, 2, ["src/"], harness_root="/harness", path="/usr/bin:/bin")
+        self.assertEqual(first["PATH"].split(os.pathsep)[0], "/harness/bin")
+        again = worker.session_env("/proj", 3, 2, ["src/"], harness_root="/harness", path=first["PATH"])
+        self.assertEqual(again["PATH"], first["PATH"])  # composing a launch twice does not stack it
+        self.assertTrue((Path(worker.HARNESS_ROOT) / "bin" / "wayline").exists())
 
     def test_backend_names(self):
         with mock.patch.dict(os.environ, {"WAYLINE_LAUNCHER": "claude_cli"}):
@@ -161,6 +171,79 @@ class ArgvTest(unittest.TestCase):
             "--json-schema", SCHEMA.read_text(encoding="utf-8"),
             "--fallback-model", "sonnet",
         ])
+
+    def test_the_schema_flag_drops_the_meta_schema_reference(self):
+        """The CLI resolves `$schema` against the schemas it holds and refuses one it cannot find.
+
+        Every file under `schemas/` opens with the 2020-12 meta-schema, so the first real worker
+        launch died before its session began: `--json-schema is not a valid JSON Schema: no schema
+        with key or ref "https://json-schema.org/draft/2020-12/schema"` (docs/verification/m0.md).
+        """
+        directory = Path(tempfile.mkdtemp(prefix="wayline-schema-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        path = directory / "result.json"
+        original = json.loads((HARNESS_ROOT / "schemas" / "result.json").read_text(encoding="utf-8"))
+        self.assertIn("$schema", original)  # the file the conductor points the launch at
+        path.write_text(json.dumps(original, indent=2) + "\n", encoding="utf-8")
+
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run, schema_path=path), run)
+        sent = json.loads(argv[argv.index("--json-schema") + 1])
+        self.assertNotIn("$schema", sent)
+        self.assertEqual(sent, {key: value for key, value in original.items() if key != "$schema"})
+
+    def test_a_meta_schema_reference_in_a_subschema_goes_too(self):
+        """The CLI refuses a file over one of those as readily as over the one at the top."""
+        directory = Path(tempfile.mkdtemp(prefix="wayline-schema-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        path = directory / "nested.json"
+        path.write_text(json.dumps({
+            "type": "object",
+            "properties": {"word": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "string"}},
+        }), encoding="utf-8")
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run, schema_path=path), run)
+        sent = json.loads(argv[argv.index("--json-schema") + 1])
+        self.assertEqual(sent, {"type": "object", "properties": {"word": {"type": "string"}}})
+
+    def test_a_property_named_like_the_meta_schema_keyword_survives(self):
+        """The strip is for a keyword, not a name: a field called `$schema` is a field."""
+        directory = Path(tempfile.mkdtemp(prefix="wayline-schema-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        path = directory / "named.json"
+        original = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"$schema": {"type": "string"}, "word": {"type": "string"}},
+            "required": ["$schema"],
+            "additionalProperties": False,
+        }
+        path.write_text(json.dumps(original), encoding="utf-8")
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run, schema_path=path), run)
+        sent = json.loads(argv[argv.index("--json-schema") + 1])
+        self.assertNotIn("$schema", sent)                      # the keyword is gone
+        self.assertIn("$schema", sent["properties"])           # the field is not
+        self.assertEqual(sent["required"], ["$schema"])        # so the schema stays satisfiable
+
+    def test_a_literal_carrying_the_keyword_is_left_alone(self):
+        directory = Path(tempfile.mkdtemp(prefix="wayline-schema-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        path = directory / "literal.json"
+        path.write_text(json.dumps({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"pinned": {"type": "object", "const": {"$schema": "anything"}}},
+        }), encoding="utf-8")
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run, schema_path=path), run)
+        sent = json.loads(argv[argv.index("--json-schema") + 1])
+        self.assertEqual(sent["properties"]["pinned"]["const"], {"$schema": "anything"})
+
+    def test_a_schema_with_no_meta_schema_reference_goes_across_as_it_is(self):
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run), run)
+        self.assertEqual(argv[argv.index("--json-schema") + 1], SCHEMA.read_text(encoding="utf-8"))
 
     def test_resume_argv_repasses_every_flag_and_adds_resume(self):
         run = Path("/proj/research/sessions/3/1")
@@ -949,6 +1032,40 @@ class SeamTest(unittest.TestCase):
 
     def test_the_backend_class_is_named_after_the_spec(self):
         self.assertEqual(worker.ClaudeCli.name, "claude_cli")
+
+    def test_there_is_one_launch_and_one_resume_and_both_live_in_the_launcher(self):
+        """Decision 3's interface, asserted rather than described (M0 criterion 10, ticket 06).
+
+        One free `launch` and one free `resume` over a `LaunchRequest`, one of each per backend,
+        and no third spelling anywhere in the package. A later ticket that gives the conductor a
+        `launch` of its own fails here rather than at a port to another CLI.
+        """
+        found = {}
+        for path, tree in self.modules():
+            owners = {}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    for inner in node.body:
+                        owners[id(inner)] = node.name
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in ("launch", "resume"):
+                    found.setdefault(node.name, set()).add(
+                        (path.relative_to(HARNESS_ROOT).as_posix(), owners.get(id(node))))
+        self.assertEqual(sorted(found), ["launch", "resume"])
+        for name in ("launch", "resume"):
+            with self.subTest(function=name):
+                self.assertEqual(found[name], {
+                    ("wayline/worker.py", None),            # the seam the harness calls
+                    ("wayline/worker.py", "ClaudeCli"),     # the only real backend
+                    ("wayline/worker.py", "FakeLauncher"),  # the one the suite runs on
+                })
+
+    def test_the_seam_carries_every_field_of_the_launch_line(self):
+        """A backend that cannot be handed one of these is not a substitute for the other."""
+        self.assertEqual(
+            [field.name for field in dataclasses.fields(worker.LaunchRequest)],
+            ["role", "model", "effort", "prompt", "agent_json", "allowed_tools", "disallowed_tools",
+             "settings_path", "add_dirs", "cwd", "env", "schema_path", "max_minutes"])
         self.assertEqual(worker.FakeLauncher.name, "fake")
 
 

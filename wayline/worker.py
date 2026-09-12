@@ -544,13 +544,18 @@ class Pack:
 
 @dataclass
 class Prompt:
-    """The assembled prompt, its context size, and what assembling it had to leave out."""
+    """The assembled prompt, its context size, and what assembling it had to leave out.
+
+    `context_chars` is the context pack alone, as the journal has always recorded it;
+    `skill_chars` is what the inlined skill bodies spent beside it, under the same cap.
+    """
 
     text: str
     context_chars: int = 0
     cut: bool = False
     dropped: list = field(default_factory=list)
     problems: list = field(default_factory=list)
+    skill_chars: int = 0
 
     @property
     def sha256(self):
@@ -561,15 +566,17 @@ class Prompt:
 def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX):
     """The worker's prompt, assembled in the order of decision 3.
 
-    One `/wayline-<skill>` line per assigned skill, the ticket restated, the context pack under
-    locator headers cut at the tier's cap with the cut announced, the role protocol, the result
-    schema, and the contract lines. `roots` are the directories a locator resolves against, in
-    order (the worktree and the project); `max_chars` is `policy.context_pack.max_chars` for the
-    tier's model, None for no cap.
+    One `/wayline-<skill>` line per assigned skill, the body of every skill after the first
+    inlined under a heading, the ticket restated, the context pack under locator headers cut at
+    the tier's cap with the cut announced, the role protocol, the result schema, and the contract
+    lines. `roots` are the directories a locator resolves against, in order (the worktree and the
+    project); `max_chars` is `policy.context_pack.max_chars` for the tier's model, None for no cap.
     """
     pack = _context_section(ticket.get("context_pack") or [], roots, max_chars)
+    skills = _skill_section(ticket.get("skills") or [], roots, max_chars)
     parts = [
         "\n".join("/wayline-%s" % skill for skill in (ticket.get("skills") or [])),
+        skills.text,
         _ticket_section(ticket, budget),
         pack.text,
         role.protocol,
@@ -577,7 +584,96 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         _contract_section(ticket, consult_max),
     ]
     text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
-    return Prompt(text, pack.chars, pack.cut, pack.dropped, pack.problems)
+    return Prompt(text, pack.chars, pack.cut or skills.cut, pack.dropped + skills.dropped,
+                  pack.problems + skills.problems, skills.chars)
+
+
+def _skill_path(skill, roots):
+    """Where a ticket's skill lives: `.claude/skills/wayline-<skill>/SKILL.md` under the first root that has it.
+
+    One lookup covers both kinds of skill, because `wayline init` symlinks every harness skill
+    into the project's `.claude/skills/` beside the project's own.
+    """
+    for root in roots:
+        candidate = Path(root) / ".claude" / "skills" / ("wayline-" + str(skill)) / "SKILL.md"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _skill_section(skills, roots, max_chars=None):
+    """The bodies of every skill after the first, inlined under a heading, capped like the pack.
+
+    Only the first `/wayline-<skill>` line of a prompt expands. The live M0 run measured it: of a
+    ticket's two skills, the worker knew the first one's passphrase without ever opening a file
+    and had to read the second one's `SKILL.md` itself to learn the other (`docs/verification/m0.md`).
+    A worker can only do that where the skills happen to be committed in its worktree, so the
+    conductor inlines them instead, which is the path Implementation Decisions 3 names for exactly
+    this finding.
+
+    The first skill is looked up too, though its body is not inlined. Nothing else checks that a
+    ticket's skills exist, so without this a misspelled first skill is a slash-command line that
+    expands into nothing and a worker that never learns it was missing anything.
+    """
+    pack = Pack()
+    if not skills:
+        return pack
+    if _skill_path(skills[0], roots) is None:
+        pack.problems.append("skill %s has no SKILL.md under any of the prompt's roots" % skills[0])
+    if len(skills) < 2:
+        return pack
+    cap = None if max_chars is None else max(0, int(max_chars))
+    rendered = [
+        "# The rest of your skills",
+        "",
+        "Only the first `/wayline-<skill>` line above expands into its skill. The others are "
+        "inlined here, in the ticket's order, and each is to be followed as if it had expanded.",
+    ]
+    for index, skill in enumerate(skills[1:], start=1):
+        if cap is not None and pack.chars >= cap:
+            pack.dropped.extend("/wayline-%s" % name for name in skills[index:])
+            break
+        path = _skill_path(skill, roots)
+        rendered.extend(["", "## /wayline-%s" % skill, ""])
+        if path is None:
+            pack.problems.append("skill %s has no SKILL.md under any of the prompt's roots" % skill)
+            rendered.append("[wayline: this skill's SKILL.md was not found, so its body is missing. "
+                            "Say so in your result rather than guessing what it asked for.]")
+            continue
+        try:
+            body = _skill_body(path)
+        except (OSError, ValueError) as exc:
+            pack.problems.append("skill %s: %s cannot be read: %s" % (skill, path, exc))
+            rendered.append("[wayline: this skill's SKILL.md could not be read, so its body is "
+                            "missing. Say so in your result rather than guessing what it asked for.]")
+            continue
+        note = None
+        if cap is not None and pack.chars + len(body) > cap:
+            left_out = len(body) - (cap - pack.chars)
+            body = body[: cap - pack.chars]
+            note = "[wayline: this skill was cut here at the context cap; %d character(s) are missing. Read its SKILL.md yourself if you need the rest.]" % left_out
+            pack.cut = True
+        pack.chars += len(body)
+        fence = _fence(body)
+        rendered.extend([fence, body.rstrip("\n"), fence])
+        if note:
+            rendered.extend(["", note])
+    if pack.dropped:
+        pack.cut = True
+        rendered.extend(["", "[wayline: the inlined skills reached the context cap of %d characters; %s left out: %s. Read their SKILL.md yourself if you need them.]"
+                         % (cap, "one was" if len(pack.dropped) == 1 else "%d were" % len(pack.dropped), ", ".join(pack.dropped))])
+    pack.text = "\n".join(rendered)
+    return pack
+
+
+def _skill_body(path):
+    """A `SKILL.md` without its frontmatter: the heading above already names the skill."""
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 3)
+        if end != -1:
+            text = text[end + len("\n---\n"):]
+    return text.lstrip("\n")
 
 
 def _ticket_section(ticket, budget):
@@ -703,8 +799,14 @@ def session_dir(project, ticket, attempt):
     return Path(project) / "research" / "sessions" / str(ticket) / str(attempt)
 
 
-def session_env(project, ticket, attempt, touches):
-    """The `TICKET_*` and `WAYLINE_*` variables the launch line exports, as strings."""
+def session_env(project, ticket, attempt, touches, harness_root=HARNESS_ROOT, path=None):
+    """The `TICKET_*`, `WAYLINE_*` and `PATH` variables the launch line exports, as strings.
+
+    The contract line tells the worker to run `wayline accept`, and the stop guard blocks the
+    stop until the file that verb writes exists, so the command has to resolve. The harness
+    `bin/` goes first on the worker's `PATH` for that reason: a project need not install the
+    command, and a worker cannot reach a different checkout's copy of it by accident.
+    """
     run = session_dir(project, ticket, attempt)
     if isinstance(touches, (str, Path)):
         touches = [touches]
@@ -714,7 +816,20 @@ def session_env(project, ticket, attempt, touches):
         "WAYLINE_PROJECT": str(project),
         "WAYLINE_TICKET": str(ticket),
         "WAYLINE_RUN": str(run),
+        "PATH": _path_with_harness_bin(harness_root, path),
     }
+
+
+def _path_with_harness_bin(harness_root, path=None):
+    """`<harness>/bin` first on `PATH`, and only once however often a launch is composed.
+
+    Absolute, because the child runs in the worktree rather than here, and a relative entry on a
+    `PATH` means something different from every directory.
+    """
+    binary = os.path.abspath(str(Path(harness_root) / "bin"))
+    inherited = os.environ.get("PATH", os.defpath) if path is None else path
+    rest = [entry for entry in inherited.split(os.pathsep) if entry and entry != binary]
+    return os.pathsep.join([binary] + rest)
 
 
 def _resume_dir(run_dir):
@@ -744,7 +859,16 @@ def _write_text(path, text):
 
 
 def _load_schema(schema_path):
-    """The schema file's text and parsed object, refused when unreadable or outside the validator's subset."""
+    """The text `--json-schema` is given and the parsed object, refused when the file is unusable.
+
+    The text is not the file byte for byte: the meta-schema reference is dropped first. Every
+    schema under `schemas/` opens with `"$schema": "https://json-schema.org/draft/2020-12/schema"`,
+    and the CLI's own validator resolves `$schema` against the schemas it holds rather than
+    fetching one, so it answers `--json-schema is not a valid JSON Schema: no schema with key or
+    ref ...` and exits before the session starts (`docs/verification/m0.md`, ticket 06). Nothing
+    downstream wants the key either: the harness re-validates the result with `wayline.jsonschema`,
+    whose subset is a 2020-12 subset by construction.
+    """
     try:
         text = Path(schema_path).read_text(encoding="utf-8")
         schema = json.loads(text)
@@ -754,7 +878,63 @@ def _load_schema(schema_path):
         check_schema(schema)
     except SchemaError as exc:
         raise LaunchError("schema %s is outside the validator's subset: %s" % (schema_path, exc))
-    return text, schema
+    return _schema_text(text, schema), schema
+
+
+def _schema_text(text, schema):
+    """The file's own text, or the object without its meta-schema references when it has any.
+
+    A subschema may carry `$schema` too, and the CLI refuses a whole file over one of those as
+    readily as over the one at the top, so the strip goes all the way down. A file that names it
+    nowhere goes across byte for byte, which is what the session directory's copy then shows.
+    """
+    if not _names_meta_schema(schema):
+        return text
+    return json.dumps(_without_meta_schema(schema), indent=2) + "\n"
+
+
+# Where a schema's keys are names rather than keywords, and where its values are literals rather
+# than schemas. A property may legitimately be called `$schema`, and a `const` may carry the word.
+NAMED_SUBSCHEMAS = ("properties", "patternProperties", "$defs", "definitions")
+LITERALS = ("const", "enum", "default", "examples")
+
+
+def _names_meta_schema(schema):
+    """Whether `$schema` appears as a keyword anywhere in the schema, at any depth."""
+    if isinstance(schema, list):
+        return any(_names_meta_schema(item) for item in schema)
+    if not isinstance(schema, dict):
+        return False
+    if "$schema" in schema:
+        return True
+    for key, value in schema.items():
+        if key in LITERALS:
+            continue
+        if key in NAMED_SUBSCHEMAS and isinstance(value, dict):
+            if any(_names_meta_schema(item) for item in value.values()):
+                return True
+        elif _names_meta_schema(value):
+            return True
+    return False
+
+
+def _without_meta_schema(schema):
+    """`schema` with every `$schema` keyword removed, at any depth, and every name left alone."""
+    if isinstance(schema, list):
+        return [_without_meta_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    result = {}
+    for key, value in schema.items():
+        if key == "$schema":
+            continue
+        if key in LITERALS:
+            result[key] = value
+        elif key in NAMED_SUBSCHEMAS and isinstance(value, dict):
+            result[key] = {name: _without_meta_schema(item) for name, item in value.items()}
+        else:
+            result[key] = _without_meta_schema(value)
+    return result
 
 
 def _check_paths(request):

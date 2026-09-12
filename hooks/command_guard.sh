@@ -38,6 +38,7 @@
 #   TICKET_TOUCHES          colon-separated touch set, as in touch_set_guard.sh
 #   WAYLINE_RESULTS         absolute path of the project's results/ (optional)
 #   WAYLINE_ALLOWED_ROOTS   colon-separated extra roots a write may reach (optional)
+#   WAYLINE_HOOK_RECORD     a file every hook input is appended to (optional; records only)
 set -u
 
 MAX_COMMAND_CHARS=20000
@@ -66,6 +67,30 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 INPUT=$(cat)
+
+# Recording, for a milestone's live record and nothing else. With WAYLINE_HOOK_RECORD
+# set, every hook input the guard is handed is appended there as one JSON line, calls
+# made inside an Agent-tool subagent included, which is where the agent_id and
+# agent_type of docs/verification/m0.md come from. It can never change a decision: the
+# whole of it runs in a subshell with its errors dropped, so a path that cannot be
+# written loses the recording rather than the command.
+if [ -n "${WAYLINE_HOOK_RECORD:-}" ]; then
+  # One JSON object per line, whatever arrives: every reader of this file parses it line by
+  # line, so raw multi-line input would lose the whole record rather than the one entry.
+  RECORD_LINE=$(printf '%s' "$INPUT" | jq -c . 2>/dev/null)
+  [ -n "$RECORD_LINE" ] || RECORD_LINE=$(printf '%s' "$INPUT" | jq -Rsc '{raw: .}' 2>/dev/null)
+  [ -n "$RECORD_LINE" ] || RECORD_LINE='{"raw": null}'
+  (
+    if command -v flock >/dev/null 2>&1; then
+      exec 9>>"$WAYLINE_HOOK_RECORD"
+      flock -w 5 9 || true
+      printf '%s\n' "$RECORD_LINE" >&9
+    else
+      printf '%s\n' "$RECORD_LINE" >>"$WAYLINE_HOOK_RECORD"
+    fi
+  ) 2>/dev/null
+fi
+
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty')
 TOOL=$(printf '%s' "$INPUT" | jq -r '.tool_name // "Bash"')
