@@ -288,6 +288,10 @@ def _known_slugs(ledger):
 
 
 def absorb_command(args):
+    if "--code" in args:
+        from wayline.code_dossier import code_command
+
+        return code_command(args)
     parser = argparse.ArgumentParser(prog="wayline absorb", description="build the dossiers for the references")
     parser.add_argument("--level", type=int, default=0, choices=[0, 1, 2], help="the dossier level to build; only level 0 is built so far")
     parser.add_argument("--project", help="the project to absorb into; the active one by default")
