@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "slug": "smith-2019-a-fortran-solver",
+  "source": {"url": "https://example.org/fortran-solver.git", "sha": "not-a-sha"},
+  "language": "fortran",
+  "inventory": {"modules": [], "symbols_total": 0, "note": null},
+  "entry_points": [],
+  "configs": [],
+  "tests": [],
+  "scripts": [],
+  "data_requirements": [],
+  "verified": true,
+  "recipe": {
+    "install_command": "pip install --no-build-isolation git+https://example.org/fortran-solver.git@not-a-sha",
+    "install_exit_code": 0,
+    "checked_path": null,
+    "run_command": null,
+    "exit_code": null,
+    "log": ""
+  },
+  "api_map": [],
+  "created": "2026-09-12T10:05:00.000Z"
+}

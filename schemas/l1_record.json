@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "l1_record",
+  "description": "The structured output of one L1 skim call (Implementation Decisions 9): a short read of the capped input, a line on how it relates to the intent, and the line that says what would earn it a full read. Merged into refs/<slug>/dossier.json at level 1 by code, never written there directly by the model.",
+  "type": "object",
+  "required": ["schema_version", "relation_to_intent", "deserves_l2_if"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "relation_to_intent": {"type": "string", "pattern": "\\S", "description": "one line: how this paper relates to the project's stated intent"},
+    "deserves_l2_if": {"type": "string", "pattern": "\\S", "description": "one line: what would make this paper worth a full read"}
+  }
+}

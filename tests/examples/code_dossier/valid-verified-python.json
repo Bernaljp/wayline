@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "slug": "vaswani-2017-attention-all-you-need",
+  "source": {
+    "url": "https://github.com/tensorflow/tensor2tensor",
+    "sha": "eeaa815f89a84e417c21180e7b600f5a9c52c684",
+    "author_date": "2024-03-01T00:00:00+00:00",
+    "tag": "v0.1.0-2-geeaa815",
+    "submodules": []
+  },
+  "language": "python",
+  "inventory": {
+    "modules": [
+      {
+        "path": "tinypkg/core.py",
+        "all": ["add", "Greeter"],
+        "functions": [
+          {"name": "add", "lineno": 6, "end_lineno": 8, "decorators": [], "docstring": "Add two numbers.", "public": true},
+          {"name": "_helper", "lineno": 11, "end_lineno": 12, "decorators": [], "docstring": null, "public": false}
+        ],
+        "classes": [
+          {"name": "Greeter", "lineno": 15, "end_lineno": 19, "decorators": [], "docstring": "Greets by name.", "public": true}
+        ],
+        "public_symbols": ["add", "Greeter"]
+      }
+    ],
+    "symbols_total": 3,
+    "note": null
+  },
+  "entry_points": [
+    {"name": "tinypkg-greet", "value": "tinypkg.core:Greeter", "group": "console_scripts", "source": "pyproject.toml"}
+  ],
+  "configs": ["configs/example.yaml"],
+  "tests": ["tests/test_core.py"],
+  "scripts": [],
+  "data_requirements": [],
+  "verified": true,
+  "recipe": {
+    "install_command": "pip install --no-build-isolation git+https://github.com/tensorflow/tensor2tensor@eeaa815f89a84e417c21180e7b600f5a9c52c684",
+    "install_exit_code": 0,
+    "checked_path": "tests/test_core.py",
+    "run_command": "python tests/test_core.py",
+    "exit_code": 0,
+    "log": "$ pip install ...\nSuccessfully installed tinypkg-0.1.0\n$ python tests/test_core.py\nPASSED test_add\n"
+  },
+  "api_map": [
+    {"module": "tinypkg/core.py", "good": [], "bad": [], "risky": [], "reusable": [], "how_to_call": null}
+  ],
+  "created": "2026-09-12T10:00:00.000Z"
+}

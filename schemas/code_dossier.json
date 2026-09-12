@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "code_dossier",
+  "description": "research/refs/<slug>/code_dossier.json (Implementation Decisions 9, research-notes 06 Section 4): a paper's code at a pinned commit, its mechanical inventory, and the recipe that was actually run. `verified` is true only when the recipe's install and smallest test or example both exited 0; nothing here is a claim the code was read, only that it was cloned, inventoried, and, when verified, run.",
+  "type": "object",
+  "required": ["schema_version", "slug", "source", "language", "inventory", "entry_points", "configs", "tests", "scripts", "data_requirements", "verified", "recipe", "api_map", "created"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$", "description": "the refs/ directory this code dossier belongs to; the same slug as the paper's dossier.json"},
+    "source": {
+      "type": "object",
+      "required": ["url", "sha"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {"type": "string"},
+        "sha": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+        "author_date": {"type": ["string", "null"]},
+        "tag": {"type": ["string", "null"], "description": "git describe --tags --always"},
+        "submodules": {"type": "array", "items": {"$ref": "#/$defs/submodule"}}
+      }
+    },
+    "language": {"type": "string", "description": "python, or the language a non-Python repository is filed under"},
+    "inventory": {
+      "type": "object",
+      "required": ["modules", "symbols_total"],
+      "additionalProperties": false,
+      "properties": {
+        "modules": {"type": "array", "items": {"$ref": "#/$defs/module"}},
+        "symbols_total": {"type": "integer", "minimum": 0},
+        "note": {"type": ["string", "null"], "description": "set on a non-Python repository: universal-ctags or tree-sitter is not yet wired"}
+      }
+    },
+    "entry_points": {"type": "array", "items": {"$ref": "#/$defs/entry_point"}},
+    "configs": {"type": "array", "items": {"type": "string"}},
+    "tests": {"type": "array", "items": {"type": "string"}},
+    "scripts": {"type": "array", "items": {"type": "string"}},
+    "data_requirements": {"type": "array", "items": {"$ref": "#/$defs/data_requirement"}},
+    "verified": {"type": "boolean"},
+    "recipe": {
+      "type": "object",
+      "required": ["install_command", "install_exit_code", "checked_path", "exit_code", "log"],
+      "additionalProperties": false,
+      "properties": {
+        "install_command": {"type": "string"},
+        "install_exit_code": {"type": ["integer", "null"]},
+        "checked_path": {"type": ["string", "null"], "description": "the smallest test or example the recipe ran, relative to the repository root"},
+        "run_command": {"type": ["string", "null"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "log": {"type": "string", "description": "the install and run output, truncated to a policy limit"}
+      }
+    },
+    "api_map": {
+      "type": "array",
+      "description": "per module: what is good, bad, risky, reusable, and how to call the pieces that matter; the mechanical pass leaves these empty for the consultant to fill",
+      "items": {"$ref": "#/$defs/api_map_entry"}
+    },
+    "created": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"}
+  },
+  "$defs": {
+    "submodule": {
+      "type": "object",
+      "required": ["path", "url", "sha"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string"},
+        "url": {"type": "string"},
+        "sha": {"type": "string"}
+      }
+    },
+    "symbol": {
+      "type": "object",
+      "required": ["name", "lineno", "end_lineno"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "lineno": {"type": "integer", "minimum": 1},
+        "end_lineno": {"type": ["integer", "null"], "minimum": 1},
+        "decorators": {"type": "array", "items": {"type": "string"}},
+        "docstring": {"type": ["string", "null"]},
+        "public": {"type": "boolean"}
+      }
+    },
+    "module": {
+      "type": "object",
+      "required": ["path", "functions", "classes", "public_symbols"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string"},
+        "all": {"type": ["array", "null"], "items": {"type": "string"}},
+        "functions": {"type": "array", "items": {"$ref": "#/$defs/symbol"}},
+        "classes": {"type": "array", "items": {"$ref": "#/$defs/symbol"}},
+        "public_symbols": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "entry_point": {
+      "type": "object",
+      "required": ["name", "value", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "value": {"type": "string"},
+        "group": {"type": ["string", "null"], "description": "console_scripts, or an [project.entry-points.<group>] table name"},
+        "source": {"type": "string", "enum": ["pyproject.toml", "setup.cfg"]}
+      }
+    },
+    "data_requirement": {
+      "type": "object",
+      "required": ["path", "line", "match"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string"},
+        "line": {"type": "integer", "minimum": 1},
+        "match": {"type": "string", "description": "the call or URL pattern that flagged the line"}
+      }
+    },
+    "api_map_entry": {
+      "type": "object",
+      "required": ["module", "good", "bad", "risky", "reusable", "how_to_call"],
+      "additionalProperties": false,
+      "properties": {
+        "module": {"type": "string"},
+        "good": {"type": "array", "items": {"type": "string"}},
+        "bad": {"type": "array", "items": {"type": "string"}},
+        "risky": {"type": "array", "items": {"type": "string"}},
+        "reusable": {"type": "array", "items": {"type": "string"}},
+        "how_to_call": {"type": ["string", "null"]}
+      }
+    }
+  }
+}
