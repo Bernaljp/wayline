@@ -286,7 +286,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   <project>/
     CLAUDE.md                    a short block pointing at research/ and the pinned harness tag
     harness.json                 harness_tag, autonomy, radius, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme
-    .gitignore                   .worktrees/  results/  research/.cache/  research/sessions/*/*/stream.jsonl
+    .gitignore                   .worktrees/  results/  research/.cache/  research/sessions/*/*/stream.jsonl  research/refs/*/source/
     .claude/skills/<name>        symlinks to the harness skills (init creates, upgrade refreshes) and local skills
     .claude/agents/<role>.md     local role overrides
     .claude/workflows/absorb.js  symlink to the harness workflow scripts

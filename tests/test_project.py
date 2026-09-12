@@ -72,7 +72,7 @@ class InitLayoutTest(ProjectTestCase):
         self.assertIn(TAG, text)
         self.assertIn("research/", text)
 
-    def test_gitignore_carries_the_four_entries(self):
+    def test_gitignore_carries_every_entry_including_the_e_print_sources(self):
         lines = (self.project / ".gitignore").read_text(encoding="utf-8").splitlines()
         for entry in GITIGNORE_ENTRIES:
             self.assertIn(entry, lines)

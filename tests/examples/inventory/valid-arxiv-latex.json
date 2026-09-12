@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "slug": "suite-2024-a-tiny-paper",
+  "source_type": "latex",
+  "source": {
+    "kind": "tarball",
+    "url": "https://export.arxiv.org/src/2401.00001",
+    "arxiv_id": "2401.00001",
+    "version": "v2",
+    "etag": "\"sha256:0f0f0f\"",
+    "fetched": "2026-09-12T18:04:11.221Z",
+    "from_cache": false,
+    "bytes": 1616,
+    "files": 6,
+    "main": "ms.tex",
+    "flattened_by": "latexpand-1.7.2",
+    "compiled": true
+  },
+  "provenance": {
+    "sections": "latex",
+    "appendices": "latex",
+    "equations": "aux",
+    "figures": "aux",
+    "tables": "aux",
+    "algorithms": "latex",
+    "theorems": "latex",
+    "references": "latex",
+    "metadata": "latex",
+    "raw_images": "latex",
+    "text_layer": "latex",
+    "page_count": "aux"
+  },
+  "counts": {
+    "sections": 3,
+    "appendices": 1,
+    "section_headings": 4,
+    "equations": 3,
+    "figures": 2,
+    "tables": 1,
+    "algorithms": 1,
+    "theorems": 2,
+    "references": 1,
+    "labels": 12,
+    "captions": 4,
+    "refs": 2,
+    "unresolved_inputs": 0
+  },
+  "environments": {"equation": 1, "align": 1, "align*": 1, "figure": 1, "figure*": 1, "table": 1},
+  "page_count": 3,
+  "text_layer": {"path": "source/flat.tex", "chars": 1743, "provenance": "latex"},
+  "sections": [
+    {"id": "sec-1", "kind": "section", "number": "1", "title": "Introduction", "level": 1,
+     "label": "sec:intro", "page": 1, "locator": "flat.tex:15", "provenance": "aux"}
+  ],
+  "equations": [
+    {"id": "eq-1", "kind": "equation", "environment": "equation", "number": "1", "label": "eq:line",
+     "latex": "\\begin{equation}\n  y = m x + b\n  \\label{eq:line}\n\\end{equation}",
+     "page": 1, "locator": "flat.tex:30", "provenance": "aux"},
+    {"id": "eq-2", "kind": "equation", "environment": "align*", "number": null,
+     "latex": "\\begin{align*}\n  y &= m x + b \\\\\n  0 &= 0\n\\end{align*}",
+     "locator": "flat.tex:35", "provenance": "latex", "confirm": true}
+  ],
+  "figures": [
+    {"id": "fig-1", "kind": "figure", "environment": "figure", "number": "1",
+     "caption": "A plot of nothing against nothing.", "label": "fig:plot",
+     "graphics": ["figures/plot.png"], "file": "figures/fig-1.png",
+     "page": 1, "locator": "flat.tex:19", "provenance": "aux"}
+  ],
+  "tables": [
+    {"id": "tab-1", "kind": "table", "environment": "table", "number": "1",
+     "caption": "One column of numbers and one of letters.", "label": "tab:numbers",
+     "latex": "\\begin{table}\\begin{tabular}{ll}a & 1\\end{tabular}\\end{table}",
+     "page": 2, "locator": "flat.tex:43", "provenance": "aux"}
+  ],
+  "algorithms": [],
+  "theorems": [
+    {"id": "thm-1", "kind": "theorem", "environment": "lemma", "number": "1", "label": "lem:tinier",
+     "latex": "\\begin{lemma}\\label{lem:tinier}Some tiny papers are tinier.\\end{lemma}",
+     "locator": "flat.tex:69", "provenance": "latex", "confirm": true}
+  ],
+  "appendices": [
+    {"id": "app-1", "kind": "appendix", "number": "A", "title": "Proof of the lemma", "level": 1,
+     "label": "app:proof", "page": 3, "locator": "flat.tex:77", "provenance": "aux"}
+  ],
+  "references": [
+    {"id": "ref-1", "key": "knuth1984", "text": "D. E. Knuth. The TeXbook. Addison-Wesley, 1984.",
+     "doi": null, "locator": "flat.tex:80", "provenance": "latex"}
+  ],
+  "raw_images": [
+    {"path": "figures/plot.png", "format": "png", "bytes": 129, "provenance": "latex"},
+    {"path": "figures/diagram.pdf", "format": "pdf", "bytes": 412, "provenance": "latex"}
+  ],
+  "metadata": {
+    "title": "A tiny paper, written for the inventory",
+    "documentclass": "article",
+    "arxiv_id": "2401.00001"
+  },
+  "notes": [],
+  "created": "2026-09-12T18:04:11.221Z"
+}

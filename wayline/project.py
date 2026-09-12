@@ -51,7 +51,9 @@ BLOCK_BEGIN = "<!-- wayline:begin -->"
 BLOCK_END = "<!-- wayline:end -->"
 
 GITIGNORE_HEADER = "# wayline"
-GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl")
+# The four entries of Implementation Decisions 1, plus the e-print sources: arXiv's terms of use
+# forbid re-serving an e-print, so a pushed project never carries the ones its dossiers fetched.
+GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")

@@ -3,22 +3,43 @@
 This module builds level 0, which is the level every reference gets: the scout's verified
 identifiers, the metadata, the abstract, and a knowledge-base node, written to
 `research/refs/<slug>/dossier.json`. Levels 1 and 2 (the skim and the full absorb) are tickets
-21 to 25; the record they extend is the one written here.
+23 to 25; the record they extend is the one written here.
 
 `wayline absorb --level 0` is the verb: it reads the reference list out of `INTAKE.md`, resolves
 each one through the scout, and writes a dossier and a node for every one of them, the
 unresolved included. An L0 pass costs nothing but requests, so it is safe to run again: a
 reference already resolved is answered out of `research/.cache/scout/` without a new request.
+
+The second half of the module is the inventory an L2 absorb reads: for an arXiv paper, the
+e-print source itself. `wayline absorb --inventory <slug>` fetches
+`https://export.arxiv.org/src/<id>` through the fetch seam (one request per 3 s on one
+connection, an ETag cache that never expires), keeps the source under `refs/<slug>/source/`,
+flattens it, and writes `refs/<slug>/inventory.json`: the sections, the numbered equations as
+LaTeX, the figures with their captions and image files, the tables, the algorithms, the
+theorems, and the appendices, each with a locator into the flattened source. The arXiv terms of
+use forbid re-serving an e-print, so `init` gitignores `research/refs/*/source/` and nothing
+here ever publishes what it fetched. A PDF-only submission is kept as a PDF and routed to the
+non-arXiv chain of ticket 22.
 """
 
 import argparse
+import bisect
+import gzip
+import html
+import io
 import json
 import re
+import shutil
+import subprocess
 import sys
+import tarfile
+import tempfile
+from collections import namedtuple
+from html.parser import HTMLParser
 from pathlib import Path
 
 from wayline.cli import parse_args
-from wayline.fetch import caching_fetcher, recording_fetcher
+from wayline.fetch import FetchError, Fetcher, UrllibBackend, caching_fetcher, recording_fetcher
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.kb import ID_MAX, make_node, rebuild_query_pack, slugify, write_node
 from wayline.ledger import ledger_for, now_ts
@@ -28,6 +49,10 @@ from wayline.scout import Reference, Scout, UNRESOLVED, parse_reference
 __all__ = [
     "DossierError", "REFS", "CACHE", "LEVEL_0", "slug_for", "l0_dossier", "write_l0",
     "intake_references", "read_intake", "absorb_level_0", "absorb_command", "scout_fetcher",
+    "ARXIV_SRC", "ARXIV_HTML", "SOURCE", "FIGURES", "INVENTORY", "FLAT", "Fetched",
+    "arxiv_source_url", "fetch_arxiv_source", "extract_source", "main_tex", "flatten",
+    "strip_comments", "environments", "latex_inventory", "aux_numbers", "apply_aux_numbers",
+    "html_inventory", "build_inventory", "source_fetcher",
 ]
 
 REFS = "refs"
@@ -218,6 +243,1351 @@ def read_intake(project):
         return []
 
 
+# --- the arXiv e-print source ---------------------------------------------------------------------
+
+ARXIV_SRC = "https://export.arxiv.org/src/%s"
+ARXIV_HTML = "https://arxiv.org/html/%s"
+SOURCE = "source"
+FIGURES = "figures"
+INVENTORY = "inventory.json"
+FLAT = "flat.tex"
+
+# A gzipped tarball that decompresses to more than this is not a paper; the guard is here because
+# the harness unpacks what a stranger served it.
+SOURCE_MAX_BYTES = 256 * 1024 * 1024
+_TOOL_TIMEOUT_S = 120
+
+# `attachment; filename="arXiv-1706.03762v7.tar.gz"`: the only place the served version appears.
+_DISPOSITION_VERSION = re.compile(r"filename=\"?[^\"]*?(v\d+)\.", re.IGNORECASE)
+_GZIP_MAGIC = b"\x1f\x8b"
+_PDF_MAGIC = b"%PDF"
+
+Fetched = namedtuple("Fetched", "kind payload etag version url status from_cache")
+"""One answer from `/src/<id>`: a tarball, a PDF-only submission, or a 304 that says keep what you have."""
+
+
+def arxiv_source_url(identifier):
+    """`https://export.arxiv.org/src/<id>[vN]`, the e-print endpoint of research-notes 06 Section 2."""
+    return ARXIV_SRC % str(identifier).strip()
+
+
+def fetch_arxiv_source(fetcher, identifier, etag=None):
+    """The e-print source through the fetch seam, with the ETag cache that never expires.
+
+    arXiv's ETag is the source's sha256, and an e-print of a given version never changes, so a
+    cached tarball is good forever: with an `If-None-Match` the answer is a 304 and no bytes move.
+    The seam enforces the one-request-per-3-s single connection the arXiv terms of use ask for.
+    """
+    url = arxiv_source_url(identifier)
+    response = fetcher.fetch(url, {"If-None-Match": etag} if etag else None)
+    if response.status == 304:
+        return Fetched("cached", b"", etag, None, url, 304, True)
+    if not response.ok:
+        raise DossierError("arXiv answered %d for %s" % (response.status, url))
+    version = _served_version(response.headers)
+    kind = "pdf" if _looks_like_pdf(response) else "tarball"
+    return Fetched(kind, response.body, response.headers.get("etag"), version, url, response.status, False)
+
+
+def _served_version(headers):
+    match = _DISPOSITION_VERSION.search(headers.get("content-disposition", "") or "")
+    return match.group(1) if match else None
+
+
+def _looks_like_pdf(response):
+    """A PDF-only submission: arXiv has no source to serve and answers with the paper itself."""
+    kind = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+    return kind == "application/pdf" or response.body[:4] == _PDF_MAGIC
+
+
+def extract_source(payload, target):
+    """The e-print's files under `target`; returns the relative paths written, in sorted order.
+
+    Three shapes come back from `/src/`: a gzipped tar (the usual), a bare tar, and a single
+    gzipped file (the old single-file submissions). A member that would land outside `target`, a
+    symlink, a device, or anything else that is not a plain file is refused rather than written:
+    this is a stranger's archive, unpacked on the owner's machine.
+    """
+    target = Path(target)
+    target.mkdir(parents=True, exist_ok=True)
+    raw = _gunzip(payload) if payload[:2] == _GZIP_MAGIC else payload
+    written = []
+    if _is_tar(raw):
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            total = 0
+            for member in archive.getmembers():
+                if member.isdir():
+                    continue
+                if not member.isfile():
+                    continue  # a symlink, a hard link, a device: never a paper, sometimes an attack
+                relative = _safe_member(member.name)
+                if relative is None:
+                    continue
+                total += member.size
+                if total > SOURCE_MAX_BYTES:
+                    raise DossierError("the e-print unpacks to more than %d bytes; refused" % SOURCE_MAX_BYTES)
+                handle = archive.extractfile(member)
+                if handle is None:
+                    continue
+                path = target / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(handle.read())
+                written.append(relative)
+    else:
+        (target / "main.tex").write_bytes(raw)
+        written.append("main.tex")
+    return sorted(written)
+
+
+def _gunzip(payload):
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(payload)) as handle:
+            return handle.read(SOURCE_MAX_BYTES + 1)
+    except (OSError, EOFError) as failure:
+        raise DossierError("the e-print is not readable gzip: %s" % failure) from None
+
+
+def _is_tar(raw):
+    try:
+        with tarfile.open(fileobj=io.BytesIO(raw)):
+            return True
+    except tarfile.TarError:
+        return False
+
+
+def _safe_member(name):
+    """A member's path relative to the extraction root, or None when it does not stay inside it."""
+    cleaned = str(name).replace("\\", "/").strip()
+    if not cleaned or cleaned.startswith("/"):
+        return None
+    parts = [part for part in cleaned.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    if any(":" in part for part in parts):  # a Windows drive letter is not a relative path
+        return None
+    return "/".join(parts)
+
+
+# --- the main file, the flattening, and the comments ----------------------------------------------
+
+_DOCUMENTCLASS = re.compile(r"(?<!\\)\\documentclass\b")
+_README_TOPLEVEL = re.compile(r"^\s*(\S+)\s+toplevelfile\s*$", re.IGNORECASE | re.MULTILINE)
+_INPUT = re.compile(r"\\(?:input|include|subfile)(?![A-Za-z])")
+_TEX_SUFFIXES = (".tex", ".ltx")
+
+
+def main_tex(root):
+    """The top-level `.tex`: `00README` first, then the `\\documentclass` grep (research-notes 06).
+
+    Newer submissions carry a `00README.json` or `00README.XXX` naming their top-level file, and
+    that name is taken as given. Otherwise every file declaring a `\\documentclass` is a
+    candidate, and the one that inputs the most others wins: a paper whose sections are separate
+    files has one file that pulls them together and several that declare nothing.
+    """
+    root = Path(root)
+    named = _readme_toplevel(root)
+    if named is not None:
+        return named
+    candidates = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in _TEX_SUFFIXES:
+            continue
+        text = strip_comments(_read_text(path))
+        if _DOCUMENTCLASS.search(text) is None:
+            continue
+        candidates.append((path, len(_INPUT.findall(text)), len(str(path.relative_to(root)))))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda entry: (-entry[1], entry[2], str(entry[0])))
+    return candidates[0][0].relative_to(root)
+
+
+def _readme_toplevel(root):
+    """The `<file> toplevelfile` line of a `00README`, as a path that exists."""
+    for path in sorted(root.glob("00README*")):
+        if not path.is_file():
+            continue
+        text = _read_text(path)
+        names = []
+        if path.suffix.lower() == ".json":
+            try:
+                record = json.loads(text)
+            except ValueError:
+                record = None
+            for entry in (record or {}).get("sources", []) if isinstance(record, dict) else []:
+                if isinstance(entry, dict) and str(entry.get("usage", "")).lower() == "toplevelfile":
+                    names.append(str(entry.get("filename") or ""))
+        names.extend(_README_TOPLEVEL.findall(text))
+        for name in names:
+            relative = _safe_member(name)
+            if not relative or Path(relative).suffix.lower() not in _TEX_SUFFIXES:
+                continue  # a `00README` names the compiler's input, which is not always a paper
+            if (root / relative).is_file():
+                return Path(relative)
+    return None
+
+
+def _read_text(path):
+    """A source file as text; LaTeX in the wild is not always UTF-8, and an inventory is not a compiler."""
+    try:
+        return Path(path).read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return Path(path).read_bytes().decode("latin-1", errors="replace")
+    except OSError:
+        return ""
+
+
+def flatten(root, main, use_latexpand=True):
+    """`latexpand main.tex`, or the in-house expander when latexpand is not installed.
+
+    Returns `(text, flattened_by, notes)`. Comments are stripped afterwards rather than by
+    latexpand (`--keep-comments`), because latexpand drops whole comment lines and the line
+    numbers in `flat.tex` are what every locator in the inventory points at.
+    """
+    root, main = Path(root), Path(main)
+    notes = []
+    if use_latexpand and shutil.which("latexpand"):
+        text, failure = _run_latexpand(root, main)
+        if text is not None:
+            return strip_comments(text), "latexpand-%s" % (_latexpand_version() or "unknown"), notes
+        notes.append("latexpand failed (%s); the in-house expander stood in" % failure)
+    elif use_latexpand:
+        notes.append("latexpand is not installed; the in-house expander stood in, which follows \\input and \\include and nothing else")
+    text, missing = expand_inputs(root, main)
+    notes.extend("unresolved \\input: %s" % name for name in missing)
+    return strip_comments(text), "wayline", notes
+
+
+def _run_latexpand(root, main):
+    command = ["latexpand", "--keep-comments", str(main)]
+    bbl = (root / main).with_suffix(".bbl")
+    if bbl.is_file():
+        command[1:1] = ["--expand-bbl", str(bbl.relative_to(root))]
+    try:
+        done = subprocess.run(command, cwd=str(root), capture_output=True, timeout=_TOOL_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError) as failure:
+        return None, str(failure)
+    if done.returncode != 0 or not done.stdout.strip():
+        return None, (done.stderr or b"").decode("utf-8", errors="replace").strip()[:200] or "empty output"
+    return done.stdout.decode("utf-8", errors="replace"), None
+
+
+def _latexpand_version():
+    try:
+        done = subprocess.run(["latexpand", "--version"], capture_output=True, timeout=_TOOL_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"v?([0-9][0-9.]*)", done.stdout.decode("utf-8", errors="replace"))
+    return match.group(1).rstrip(".") if match else None
+
+
+def expand_inputs(root, main, depth=0, seen=None, missing=None):
+    """`\\input` and `\\include` expanded in place; returns `(text, unresolved names)`.
+
+    This is what stands in for latexpand when it is not installed. It follows the two commands
+    that carry a paper's sections and leaves everything else alone, including `\\usepackage`,
+    which is what latexpand does without `--expand-usepackage` too. A file that inputs itself is
+    expanded once.
+    """
+    root, main = Path(root), Path(main)
+    seen = set() if seen is None else seen
+    missing = [] if missing is None else missing
+    text = _read_text(root / main)
+    if depth > 12:
+        return text, missing
+    out, position = [], 0
+    for match in _INPUT.finditer(text):
+        if _is_commented(text, match.start()):
+            continue
+        name, end = _argument(text, match.end())
+        if name is None:
+            name, end = _bare_input_argument(text, match.end())
+        if name is None:
+            continue
+        target = _resolve_input(root, main, name)
+        out.append(text[position:match.start()])
+        position = end
+        if target is None:
+            missing.append(name.strip())
+            out.append(text[match.start():end])
+            continue
+        key = str(target)
+        if key in seen:
+            continue
+        seen.add(key)
+        inner, _ = expand_inputs(root, target, depth + 1, seen, missing)
+        out.append(inner)
+    out.append(text[position:])
+    return "".join(out), missing
+
+
+def _bare_input_argument(text, index):
+    """`\\input file` without braces: the name runs to whitespace."""
+    position = index
+    while position < len(text) and text[position] in " \t":
+        position += 1
+    match = re.compile(r"[^\s{}\\%]+").match(text, position)
+    return (match.group(0), match.end()) if match else (None, index)
+
+
+def _resolve_input(root, main, name):
+    """An `\\input` target against the file that named it, then against the tarball root."""
+    cleaned = _safe_member(name.strip())
+    if not cleaned:
+        return None
+    for base in (Path(main).parent, Path(".")):
+        for spelling in (cleaned, cleaned + ".tex"):  # TeX appends .tex to a name without one
+            relative = Path(str(base / spelling))
+            if (root / relative).is_file():
+                return relative
+    return None
+
+
+def strip_comments(text):
+    """Drop every `%` comment, keeping the line it was on.
+
+    TeX eats the newline after a comment; this does not, because the line numbers of `flat.tex`
+    are the locators the inventory hands a reader. A `%` preceded by an odd number of backslashes
+    is an escaped percent sign and is kept.
+    """
+    out = []
+    for line in str(text or "").split("\n"):
+        position, cut = 0, None
+        while position < len(line):
+            char = line[position]
+            if char == "\\":
+                position += 2
+                continue
+            if char == "%":
+                cut = position
+                break
+            position += 1
+        out.append(line if cut is None else line[:cut])
+    return "\n".join(out)
+
+
+def _is_commented(text, index):
+    """Whether `index` sits after an unescaped `%` on its line (the in-house expander's guard)."""
+    start = text.rfind("\n", 0, index) + 1
+    return len(strip_comments(text[start:index])) < index - start
+
+
+# --- reading LaTeX --------------------------------------------------------------------------------
+
+Environment = namedtuple("Environment", "name starred start end body")
+"""One `\\begin{name}...\\end{name}` span: `start` and `end` bracket it, `body` is what is inside."""
+
+_ENVIRONMENT = re.compile(r"\\(begin|end)\s*\{\s*([A-Za-z][A-Za-z0-9]*\*?)\s*\}")
+_BLANK_LINE = re.compile(r"\n[ \t]*\n")
+
+
+def environments(text, names=None):
+    """Every environment in `text` in document order, nesting of the same name honored.
+
+    `names` is a set of base names (starred and unstarred are the same base): a `\\begin{align*}`
+    is `Environment("align", True, ...)`, because "how many align" and "how many are numbered"
+    are two questions and the second is answered by the star.
+    """
+    stack, found = [], []
+    for match in _ENVIRONMENT.finditer(text):
+        which, raw = match.group(1), match.group(2)
+        base, starred = (raw[:-1], True) if raw.endswith("*") else (raw, False)
+        if which == "begin":
+            stack.append((raw, match.start(), match.end()))
+            continue
+        for index in range(len(stack) - 1, -1, -1):
+            if stack[index][0] != raw:
+                continue
+            _, start, body_start = stack[index]
+            del stack[index:]
+            if names is None or base in names:
+                found.append(Environment(base, starred, start, match.end(), text[body_start:match.start()]))
+            break
+    found.sort(key=lambda item: item.start)
+    return found
+
+
+def _line_starts(text):
+    starts = [0]
+    for position, char in enumerate(text):
+        if char == "\n":
+            starts.append(position + 1)
+    return starts
+
+
+def _line_at(starts, position):
+    return bisect.bisect_right(starts, position)
+
+
+def _balanced(text, index):
+    """The `{...}` group at `index`: `(content, index past it)`, or `(None, index)` when there is none."""
+    if index >= len(text) or text[index] != "{":
+        return None, index
+    depth, position = 0, index
+    while position < len(text):
+        char = text[position]
+        if char == "\\":
+            position += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[index + 1:position], position + 1
+        position += 1
+    return None, index
+
+
+def _skip_optional(text, index):
+    """Past a `[...]` optional argument at `index`, or None when it does not close."""
+    depth, position = 0, index
+    while position < len(text):
+        char = text[position]
+        if char == "\\":
+            position += 2
+            continue
+        if char == "{":
+            _, position = _balanced(text, position)
+            continue
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return position + 1
+        position += 1
+    return None
+
+
+def _argument(text, index):
+    """The `{...}` argument of a command that ends at `index`, past any `[...]` options."""
+    position = index
+    while position < len(text):
+        gap = _BLANK_LINE.match(text, position)
+        if gap is not None:
+            return None, index  # a blank line ends the paragraph; the group after it is not this one
+        if text[position] in " \t\r\n":
+            position += 1
+            continue
+        if text[position] == "[":
+            closed = _skip_optional(text, position)
+            if closed is None:
+                return None, index
+            position = closed
+            continue
+        break
+    content, end = _balanced(text, position)
+    return (content, end) if content is not None else (None, index)
+
+
+def _commands(text, *names):
+    """Every `\\name[opt]{arg}` in document order, as `(name, starred, argument, start, end)`."""
+    pattern = re.compile(r"\\(%s)(\*?)(?![A-Za-z@])" % "|".join(re.escape(name) for name in names))
+    for match in pattern.finditer(text):
+        argument, end = _argument(text, match.end())
+        yield match.group(1), bool(match.group(2)), argument, match.start(), (end if argument is not None else match.end())
+
+
+def _tidy(value, limit=2000):
+    """A LaTeX fragment on one line, for a caption or a title a person reads in a JSON file."""
+    if value is None:
+        return None
+    collapsed = re.sub(r"\s+", " ", value).strip()
+    return collapsed[:limit] if len(collapsed) > limit else collapsed
+
+
+# --- the inventory of a flattened source ------------------------------------------------------------
+
+SECTION_COMMANDS = ("section", "subsection", "subsubsection")
+SECTION_LEVELS = {"section": 1, "subsection": 2, "subsubsection": 3}
+# Environments numbered by the document, and the ones whose rows are numbered one by one.
+EQUATION_ENVIRONMENTS = ("equation", "multline", "eqnarray", "align", "gather", "flalign", "alignat", "displaymath", "dmath")
+MULTI_ROW_EQUATIONS = ("eqnarray", "align", "gather", "flalign", "alignat")
+UNNUMBERED_EQUATIONS = ("displaymath",)
+FIGURE_ENVIRONMENTS = ("figure", "wrapfigure", "sidewaysfigure")
+TABLE_ENVIRONMENTS = ("table", "sidewaystable")
+# `algorithmic` and `algorithmicx` are the body of an `algorithm` float rather than a float of
+# their own, and counting them would count the usual `algorithm` around them twice.
+ALGORITHM_ENVIRONMENTS = ("algorithm", "algorithm2e")
+# The theorem environments a class defines without being asked; `\newtheorem` adds the paper's own.
+THEOREM_ENVIRONMENTS = (
+    "theorem", "lemma", "proposition", "corollary", "definition", "remark", "conjecture",
+    "claim", "example", "assumption", "observation", "fact", "property", "problem", "hypothesis",
+)
+ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+# Where an item of each kind is filed in the inventory.
+_BUCKETS = {"equation": "equations", "figure": "figures", "table": "tables", "algorithm": "algorithms", "theorem": "theorems"}
+# The item lists of the inventory, in the order a reader meets them.
+ITEM_KEYS = ("sections", "appendices", "equations", "figures", "tables", "algorithms", "theorems")
+
+_NEWTHEOREM = re.compile(r"\\newtheorem\*?\s*\{\s*([A-Za-z][A-Za-z0-9]*)\s*\}")
+_NONUMBER = re.compile(r"\\(nonumber|notag)(?![A-Za-z])")
+_ROW_BREAK = re.compile(r"\\\\")
+_GRAPHICSPATH = re.compile(r"\\graphicspath\s*\{")
+_APPENDIX = re.compile(r"(?<!\\)\\appendix(?![A-Za-z])")
+_DOCUMENTCLASS_NAME = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*([^}]*)\s*\}")
+_LATEX = "latex"
+_AUX = "aux"
+_HTML = "html"
+_NONE = "none"
+
+
+def latex_inventory(text, filename=FLAT):
+    """Every item a flattened, comment-stripped source names, numbered in document order.
+
+    This is the fallback numbering of research-notes 06: LaTeX stores no numbers, so numbered
+    environments are counted in the order they appear, `\\nonumber` and `\\notag` skipped and
+    `\\tag` taken as given. A multi-row environment advances the counter once per row, so an
+    `align` of three rows is "3-5" and the equation after it is 6. Every number from here carries
+    `confirm: true`: it is a count, not a compiler's answer, and `apply_aux_numbers` replaces the
+    ones a real compile settled.
+    """
+    text = str(text or "")
+    starts = _line_starts(text)
+    appendix_at = _appendix_position(text)
+    theorem_names = tuple(sorted(set(THEOREM_ENVIRONMENTS) | set(_NEWTHEOREM.findall(text))))
+    wanted = set(EQUATION_ENVIRONMENTS) | set(FIGURE_ENVIRONMENTS) | set(TABLE_ENVIRONMENTS)
+    wanted |= set(ALGORITHM_ENVIRONMENTS) | set(theorem_names) | {"thebibliography"}
+    spans = environments(text, wanted)
+
+    record = {
+        "sections": [], "equations": [], "figures": [], "tables": [],
+        "algorithms": [], "theorems": [], "appendices": [], "references": [],
+    }
+    counters = {"section": [0, 0, 0], "equation": 0, "figure": 0, "table": 0, "algorithm": 0, "appendix": 0}
+    theorem_counters = {}
+    placements = []  # (start, end, item): where each item sits, so a \label finds its owner
+    for position, kind, payload in _events(text, spans, theorem_names):
+        locator = "%s:%d" % (filename, _line_at(starts, position))
+        in_appendix = appendix_at is not None and position > appendix_at
+        if kind == "section":
+            where = "appendices" if in_appendix else "sections"
+            item = _section_item(payload, locator, counters, in_appendix, len(record[where]) + 1)
+            record[where].append(item)
+            placements.append((position, position, item))
+            continue
+        span = payload
+        if kind == "equation":
+            item = _equation_item(span, text, locator, counters, len(record["equations"]) + 1)
+        elif kind == "figure":
+            item = _captioned_item(span, text, locator, "figure", counters, len(record["figures"]) + 1, graphics=True)
+        elif kind == "table":
+            item = _captioned_item(span, text, locator, "table", counters, len(record["tables"]) + 1, latex=True)
+        elif kind == "algorithm":
+            item = _captioned_item(span, text, locator, "algorithm", counters, len(record["algorithms"]) + 1, latex=True)
+        else:
+            item = _theorem_item(span, text, locator, theorem_counters, len(record["theorems"]) + 1)
+        record[_BUCKETS[kind]].append(item)
+        placements.append((span.start, span.end, item))
+    record["references"] = _bibitems(text, starts, filename)
+    _attach_labels(text, placements)
+    record["metadata"] = _latex_metadata(text)
+    record["counts"], record["environments"] = _counts(text, record, spans)
+    record["graphicspath"] = _graphicspath(text)
+    return record
+
+
+def _appendix_position(text):
+    match = _APPENDIX.search(text)
+    return match.start() if match else None
+
+
+def _events(text, spans, theorem_names):
+    """Section commands and environments in one document-ordered stream."""
+    events = []
+    for name, starred, argument, start, _ in _commands(text, *SECTION_COMMANDS):
+        events.append((start, "section", (name, starred, argument)))
+    for span in spans:
+        if span.name in EQUATION_ENVIRONMENTS:
+            events.append((span.start, "equation", span))
+        elif span.name in FIGURE_ENVIRONMENTS:
+            events.append((span.start, "figure", span))
+        elif span.name in TABLE_ENVIRONMENTS:
+            events.append((span.start, "table", span))
+        elif span.name in ALGORITHM_ENVIRONMENTS:
+            events.append((span.start, "algorithm", span))
+        elif span.name in theorem_names:
+            events.append((span.start, "theorem", span))
+    events.sort(key=lambda event: event[0])
+    return events
+
+
+def _section_item(payload, locator, counters, in_appendix, index):
+    """One heading: its level, its title, and the number the count in document order gives it.
+
+    After `\\appendix` the top level is a letter, which is what `article` does to `\\thesection`.
+    """
+    name, starred, argument = payload
+    level = SECTION_LEVELS[name]
+    number = None
+    if not starred:
+        counters["section"][level - 1] += 1
+        for deeper in range(level, 3):
+            counters["section"][deeper] = 0
+        if in_appendix:
+            if level == 1:
+                counters["appendix"] += 1
+            head = ALPHABET[max(0, counters["appendix"] - 1) % len(ALPHABET)]
+        else:
+            head = str(counters["section"][0])
+        number = ".".join([head] + [str(counters["section"][deeper]) for deeper in range(1, level)])
+    kind = "appendix" if in_appendix else "section"
+    return _item("%s-%d" % ("app" if in_appendix else "sec", index), kind, locator, _LATEX,
+                 number=number, title=_tidy(argument), level=level, confirm=number is not None)
+
+
+def _equation_item(span, text, locator, counters, index):
+    """One numbered environment: its source in exact form and the number the count gives it."""
+    body = span.body
+    tag = next((argument for _, _, argument, _, _ in _commands(body, "tag") if argument), None)
+    rows = _numbered_rows(span, body)
+    number = None
+    if tag is not None:
+        number = _tidy(tag)
+    elif rows:
+        first = counters["equation"] + 1
+        counters["equation"] += rows
+        number = str(first) if rows == 1 else "%d-%d" % (first, counters["equation"])
+    return _item("eq-%d" % index, "equation", locator, _LATEX, number=number,
+                 environment=_environment_name(span), latex=text[span.start:span.end], confirm=number is not None)
+
+
+def _numbered_rows(span, body):
+    """How many numbers the document gives this environment: 0 for a starred or `\\nonumber` one."""
+    if span.starred or span.name in UNNUMBERED_EQUATIONS:
+        return 0
+    if span.name not in MULTI_ROW_EQUATIONS:
+        return 0 if _NONUMBER.search(body) else 1
+    return sum(1 for row in _rows(body) if not _NONUMBER.search(row))
+
+
+def _rows(body):
+    """A multi-row environment's rows: `\\\\` at brace depth zero and outside a nested environment."""
+    rows, depth, nested, start, position = [], 0, 0, 0, 0
+    while position < len(body):
+        char = body[position]
+        if char == "\\":
+            if body.startswith("\\begin", position):
+                nested += 1
+            elif body.startswith("\\end", position):
+                nested = max(0, nested - 1)
+            elif body.startswith("\\\\", position) and depth == 0 and nested == 0:
+                rows.append(body[start:position])
+                position += 2
+                start = position
+                continue
+            position += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth = max(0, depth - 1)
+        position += 1
+    tail = body[start:]
+    if tail.strip():
+        rows.append(tail)
+    return rows
+
+
+def _captioned_item(span, text, locator, kind, counters, index, graphics=False, latex=False):
+    """A figure, a table, or an algorithm: its caption, its number, and what it draws."""
+    counters[kind] += 1
+    prefix = {"figure": "fig", "table": "tab", "algorithm": "alg"}[kind]
+    caption = next((argument for _, _, argument, _, _ in _commands(span.body, "caption") if argument), None)
+    targets = [argument for _, _, argument, _, _ in _commands(span.body, "includegraphics") if argument] if graphics else []
+    return _item("%s-%d" % (prefix, index), kind, locator, _LATEX, number=str(counters[kind]),
+                 environment=_environment_name(span), caption=_tidy(caption),
+                 graphics=[target.strip() for target in targets] if graphics else None,
+                 latex=text[span.start:span.end] if latex else None, confirm=True)
+
+
+def _theorem_item(span, text, locator, counters, index):
+    """A theorem and its kin; the number is a per-kind count, which a class can define otherwise."""
+    counters[span.name] = counters.get(span.name, 0) + 1
+    title = None
+    opening = span.body.lstrip()
+    if opening.startswith("["):
+        closed = _skip_optional(opening, 0)
+        if closed is not None:
+            title = opening[1:closed - 1]
+    number = None if span.starred else str(counters[span.name])
+    return _item("thm-%d" % index, "theorem", locator, _LATEX, number=number,
+                 environment=_environment_name(span), title=_tidy(title),
+                 latex=text[span.start:span.end], confirm=True)
+
+
+def _environment_name(span):
+    return span.name + ("*" if span.starred else "")
+
+
+def _item(identifier, kind, locator, provenance, **fields):
+    """One inventory item with the fields the schema names and nothing else."""
+    item = {"id": identifier, "kind": kind, "locator": locator, "provenance": provenance}
+    for key in ("environment", "number", "label", "title", "level", "latex", "caption", "file", "page"):
+        if key in fields and fields[key] is not None:
+            item[key] = fields[key]
+    if fields.get("graphics"):
+        item["graphics"] = fields["graphics"]
+    if fields.get("ocr"):
+        item["ocr"] = True
+    if fields.get("confirm"):
+        item["confirm"] = True
+    return item
+
+
+def _bibitems(text, starts, filename):
+    """The bibliography, when the source carries one (latexpand inlines the `.bbl` with `--expand-bbl`)."""
+    references, spans = [], environments(text, {"thebibliography"})
+    for span in spans:
+        marks = [match for match in re.finditer(r"\\bibitem(?![A-Za-z])", span.body)]
+        for index, match in enumerate(marks):
+            key, end = _argument(span.body, match.end())
+            body = span.body[end:marks[index + 1].start() if index + 1 < len(marks) else len(span.body)]
+            references.append({
+                "id": "ref-%d" % (len(references) + 1),
+                "key": _tidy(key),
+                "text": _tidy(body, 1000),
+                "locator": "%s:%d" % (filename, _line_at(starts, span.start + match.start())),
+                "provenance": _LATEX,
+            })
+    return references
+
+
+def _attach_labels(text, placements):
+    """Every `\\label` to the item that holds it, or, outside them all, to the heading it follows.
+
+    The innermost holder wins, so a `\\label` beside the `\\caption` of a figure inside a section
+    belongs to the figure. A label before the first heading belongs to nothing and is dropped: it
+    is a `\\label` on the title or on a package's own counter, not on an item of the paper.
+    """
+    for _, _, argument, start, _ in _commands(text, "label"):
+        if argument is None:
+            continue
+        holders = [entry for entry in placements if entry[0] <= start <= entry[1] and entry[0] != entry[1]]
+        if holders:
+            owner = min(holders, key=lambda entry: entry[1] - entry[0])[2]
+        else:
+            before = [entry for entry in placements if entry[1] <= start]
+            if not before:
+                continue
+            owner = max(before, key=lambda entry: entry[1])[2]
+        owner.setdefault("label", _tidy(argument))
+
+
+def _latex_metadata(text):
+    metadata = {}
+    title = next((argument for _, _, argument, _, _ in _commands(text, "title") if argument), None)
+    if title:
+        metadata["title"] = _tidy(title)
+    match = _DOCUMENTCLASS_NAME.search(text)
+    if match:
+        metadata["documentclass"] = match.group(1).strip()
+    return metadata
+
+
+def _graphicspath(text):
+    """The directories `\\graphicspath` adds to the search for an `\\includegraphics` target."""
+    match = _GRAPHICSPATH.search(text)
+    if match is None:
+        return []
+    group, _ = _balanced(text, match.end() - 1)
+    return [part.strip() for part in re.findall(r"\{([^{}]*)\}", group or "") if part.strip()]
+
+
+def _counts(text, record, spans):
+    """What was found, for the count-against-a-by-eye-count of the milestone's first criterion."""
+    environment_counts = {}
+    for span in spans:
+        name = _environment_name(span)
+        environment_counts[name] = environment_counts.get(name, 0) + 1
+    counts = {
+        "sections": len(record["sections"]),
+        "appendices": len(record["appendices"]),
+        "section_headings": len(record["sections"]) + len(record["appendices"]),
+        "equations": len(record["equations"]),
+        "figures": len(record["figures"]),
+        "tables": len(record["tables"]),
+        "algorithms": len(record["algorithms"]),
+        "theorems": len(record["theorems"]),
+        "references": len(record["references"]),
+        "labels": len(list(_commands(text, "label"))),
+        "captions": len(list(_commands(text, "caption"))),
+        "refs": len(list(_commands(text, "ref", "eqref"))),
+        "unresolved_inputs": len([match for match in _INPUT.finditer(text)]),
+    }
+    return counts, environment_counts
+
+
+# --- exact numbers from a compile -------------------------------------------------------------------
+
+_NEWLABEL = re.compile(r"\\newlabel\s*\{")
+_OUTPUT_PAGES = re.compile(r"Output written on .*?\((\d+) pages?", re.DOTALL)
+
+
+def aux_numbers(text):
+    """`{label: {"number": n, "page": p}}` from the `\\newlabel` lines of a `.aux`.
+
+    This is the one place a LaTeX document says what its numbers are: LaTeX stores none, but a
+    compile writes every labeled item's printed number and the page it landed on. A label with an
+    `@` in it belongs to a package's own bookkeeping (`cref`, `sub@`), not to an item of the paper.
+    """
+    numbers = {}
+    for match in _NEWLABEL.finditer(str(text or "")):
+        label, position = _balanced(text, match.end() - 1)
+        if not label or "@" in label:
+            continue
+        fields, _ = _balanced(text, position)
+        if not fields:
+            continue
+        number, after = _balanced(fields, 0)
+        page, _ = _balanced(fields, after)
+        if number is None:
+            continue
+        numbers[label.strip()] = {"number": _tidy(number), "page": _page(page)}
+    return numbers
+
+
+def _page(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_aux_numbers(record, numbers):
+    """Replace every counted number with the compiled one, wherever a label ties the two together.
+
+    An item with a label gets the exact number and the page and stops asking a reader to confirm
+    it; an unlabeled one keeps its document-order count and its `confirm`. Returns how many items
+    the compile settled.
+
+    An item the document does not number keeps its lack of one: `\\label` after a `\\section*`
+    records whatever the section counter last reached, so the `.aux` will happily say that an
+    unnumbered appendix is section 7, which is what a `\\ref` to it prints and is not its number.
+    The page from that same line is a fact about where it landed and is taken.
+    """
+    settled = 0
+    for key in ITEM_KEYS:
+        for item in record.get(key) or []:
+            found = numbers.get(item.get("label") or "")
+            if not found:
+                continue
+            if found["number"] and item.get("number"):
+                item["number"] = found["number"]
+            if found["page"]:
+                item["page"] = found["page"]
+            item["provenance"] = _AUX
+            item.pop("confirm", None)
+            settled += 1
+    return settled
+
+
+def compile_once(root, main):
+    """One `pdflatex` run in `root`; returns `(aux text, pages, note)`, all None when it did not run.
+
+    One run, never two: the numbers come from the `.aux` and a second run would only fix the
+    cross-references inside the PDF, which nothing here reads. `-no-shell-escape` because this is
+    a stranger's source, and `-interaction=nonstopmode` without `-halt-on-error` because a source
+    that needs a package this machine does not have still numbers everything it reaches, and half
+    an `.aux` is better than a prompt nobody is there to answer.
+    """
+    if not shutil.which("pdflatex"):
+        return None, None, "pdflatex is not installed; the numbers are counted in document order"
+    root, main = Path(root), Path(main)
+    command = [
+        "pdflatex", "-interaction=nonstopmode", "-no-shell-escape",
+        "-jobname", "wayline-compile", str(main),
+    ]
+    try:
+        subprocess.run(command, cwd=str(root), capture_output=True, timeout=_TOOL_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return None, None, "pdflatex did not finish in %d s; the numbers are counted in document order" % _TOOL_TIMEOUT_S
+    except (OSError, subprocess.SubprocessError) as failure:
+        return None, None, "pdflatex did not run (%s); the numbers are counted in document order" % failure
+    aux = root / "wayline-compile.aux"
+    if not aux.is_file():
+        return None, None, "the source did not compile; the numbers are counted in document order"
+    log = _read_text(root / "wayline-compile.log")
+    match = _OUTPUT_PAGES.search(log)
+    if match is None:
+        # An `.aux` without an "Output written" line is a run that stopped partway, usually on a
+        # class or package this machine does not have. What it wrote is still exact.
+        return _read_text(aux), None, (
+            "pdflatex did not reach the end of the document, so there is no page count and only "
+            "the items it reached carry exact numbers; the rest are counted in document order"
+        )
+    return _read_text(aux), int(match.group(1)), None
+
+
+# --- the second source: the arXiv HTML rendering -------------------------------------------------
+
+_CLASS_KINDS = (
+    ("ltx_theorem", "theorem"), ("ltx_figure", "figure"), ("ltx_table", "table"),
+    ("ltx_equation", "equation"), ("ltx_algorithm", "algorithm"),
+)
+_TITLE_LEVELS = {"ltx_title_section": 1, "ltx_title_subsection": 2, "ltx_title_subsubsection": 3}
+# The number inside a LaTeXML tag ("Figure 1: ", "(1)", "1.1 ", "A.2 "): a letter alone is a word.
+_TAG_NUMBER = re.compile(r"\b([0-9]+(?:\.[0-9]+)*|[A-Z](?:\.[0-9]+)+)\b")
+# The items whose text is their caption; everything else keeps the text of the item itself.
+_CAPTIONED_KINDS = ("figure", "table")
+
+
+class _LatexmlReader(HTMLParser):
+    """The items of an `arxiv.org/html/<id>` page: LaTeXML marks every one of them with a class.
+
+    The MathML carries the LaTeX it was built from in `alttext`, which is the only reason this
+    page is worth reading at all when the tarball will not flatten: the equations come back as
+    LaTeX rather than as a picture of themselves.
+    """
+
+    _VOID = frozenset(["br", "img", "hr", "meta", "link", "input", "source", "col", "area", "base", "wbr"])
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.items = []
+        self._stack = []     # one entry per open element: (tag, item opened here or None, classes)
+        self._title = None
+
+    def handle_starttag(self, tag, attributes):
+        attrs = dict(attributes)
+        classes = frozenset((attrs.get("class") or "").split())
+        item = None
+        level = next((level for name, level in _TITLE_LEVELS.items() if name in classes), None)
+        if level is not None:
+            self._title = {"level": level, "id": attrs.get("id"), "text": [], "tag": []}
+        current = self._current()
+        for name, kind in _CLASS_KINDS:
+            if name not in classes:
+                continue
+            if current is not None and current["kind"] == kind:
+                break  # LaTeXML nests a row of an equation inside the equation; one item is one item
+            item = {"kind": kind, "id": attrs.get("id"), "text": [], "tag": [], "alttext": None}
+            self.items.append(item)
+            break
+        if tag == "math" and current is not None and current["alttext"] is None and attrs.get("alttext"):
+            current["alttext"] = attrs["alttext"]
+        if tag not in self._VOID:
+            self._stack.append((tag, item, classes))
+
+    def handle_startendtag(self, tag, attributes):
+        self.handle_starttag(tag, attributes)
+        if self._stack and self._stack[-1][0] == tag:
+            self._stack.pop()
+
+    def handle_endtag(self, tag):
+        for index in range(len(self._stack) - 1, -1, -1):
+            if self._stack[index][0] == tag:
+                del self._stack[index:]
+                break
+        if self._title is not None and tag.startswith("h"):
+            title, self._title = self._title, None
+            self.items.append({"kind": "section", "id": title["id"], "level": title["level"],
+                               "text": title["text"], "tag": title["tag"], "alttext": None})
+
+    def handle_data(self, data):
+        target = self._title if self._title is not None else self._current()
+        if target is None:
+            return
+        if self._inside("ltx_tag"):
+            target["tag"].append(data)
+        elif target.get("kind") not in _CAPTIONED_KINDS or self._inside("ltx_caption"):
+            target["text"].append(data)
+
+    def _current(self):
+        """The innermost item still open, which is the one the text belongs to."""
+        for _, item, _ in reversed(self._stack):
+            if item is not None:
+                return item
+        return None
+
+    def _inside(self, name):
+        return any(name in classes for _, _, classes in self._stack)
+
+
+def html_inventory(text, url=None):
+    """The inventory of an `arxiv.org/html/<id>` page, the second source of research-notes 06.
+
+    The numbers are the ones LaTeXML printed, so they are exact; the pages are not, because an
+    HTML rendering has none. Coverage is not complete and arXiv itself calls the rendering beta,
+    so every item here says `provenance: html` and the record carries the note.
+    """
+    reader = _LatexmlReader()
+    reader.feed(str(text or ""))
+    record = {key: [] for key in ITEM_KEYS}
+    record["references"] = []
+    counters = {}
+    for raw in reader.items:
+        kind = raw["kind"]
+        bucket = "sections" if kind == "section" else _BUCKETS[kind]
+        counters[bucket] = counters.get(bucket, 0) + 1
+        prefix = {"sections": "sec", "equations": "eq", "figures": "fig", "tables": "tab", "algorithms": "alg", "theorems": "thm"}[bucket]
+        body = _tidy(html.unescape("".join(raw["text"])))
+        tag = _tidy(html.unescape("".join(raw["tag"])))
+        number = _TAG_NUMBER.search(tag).group(1) if tag and _TAG_NUMBER.search(tag) else None
+        locator = "%s#%s" % (url or "html", raw["id"]) if raw.get("id") else (url or "html")
+        item = _item("%s-%d" % (prefix, counters[bucket]), "section" if kind == "section" else kind,
+                     locator, _HTML, number=number,
+                     title=body if kind in ("section", "theorem", "algorithm") else None,
+                     level=raw.get("level"),
+                     latex=_tidy(html.unescape(raw["alttext"])) if raw.get("alttext") else None,
+                     caption=body if kind in _CAPTIONED_KINDS else None,
+                     confirm=True)
+        record[bucket].append(item)
+    record["metadata"] = {}
+    record["counts"] = {
+        "sections": len(record["sections"]), "appendices": 0,
+        "section_headings": len(record["sections"]), "equations": len(record["equations"]),
+        "figures": len(record["figures"]), "tables": len(record["tables"]),
+        "algorithms": len(record["algorithms"]), "theorems": len(record["theorems"]),
+        "references": 0, "labels": 0, "captions": len([item for item in record["figures"] + record["tables"] if item.get("caption")]),
+        "refs": 0, "unresolved_inputs": 0,
+    }
+    record["environments"] = {}
+    record["graphicspath"] = []
+    return record
+
+
+# --- building one reference's inventory ------------------------------------------------------------
+
+# What TeX tries when an `\includegraphics` target carries no extension, in its own order.
+GRAPHICS_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps", ".ps", ".gif", ".svg", ".tif", ".tiff")
+RASTER_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
+IMAGE_EXTENSIONS = GRAPHICS_EXTENSIONS
+_RASTER_DPI = 150
+
+
+def source_fetcher(email=None, tag=None):
+    """The fetcher the e-print fetch runs on: the live seam, paced at arXiv's one request per 3 s.
+
+    Unlike the scout's, this one records nothing. The tarball is its own cache: it is kept under
+    `refs/<slug>/source/` with the ETag arXiv served it with, and a second copy under
+    `research/.cache/` would be the same megabytes twice.
+    """
+    return Fetcher(UrllibBackend(), tag=tag, email=email)
+
+
+def build_inventory(project, slug, fetcher=None, email=None, compile_source=True, rasterize=True):
+    """Fetch one arXiv reference's source, keep it, and write `refs/<slug>/inventory.json`.
+
+    The chain of research-notes 06 Section 2, in order: the e-print from `/src/<id>` through the
+    seam, the main file from `00README` or the `\\documentclass` grep, `latexpand`, the
+    environments by regex, exact numbers from one `pdflatex` run when the source compiles, and
+    `arxiv.org/html/<id>` when the tarball will not flatten. Returns the inventory written.
+    """
+    project = Path(project)
+    ledger = ledger_for(project)
+    record = _read_json(ledger, "%s/%s/dossier.json" % (REFS, slug))
+    if record is None:
+        raise DossierError("refs/%s has no dossier.json; run wayline absorb --level 0 first" % slug)
+    identifier = (record.get("identifiers") or {}).get("arxiv_id")
+    if not identifier:
+        raise DossierError(
+            "refs/%s has no arXiv id, so there is no e-print source to fetch; a PDF goes to the "
+            "non-arXiv chain of ticket 22" % slug
+        )
+    previous = _read_json(ledger, "%s/%s/%s" % (REFS, slug, INVENTORY)) or {}
+    etag = (previous.get("source") or {}).get("etag") if _kept_source(ledger, slug) else None
+    if email is None:
+        email = _email(project)
+    fetcher = fetcher if fetcher is not None else source_fetcher(email=email)
+    fetched = fetch_arxiv_source(fetcher, identifier, etag)
+
+    notes, workspace = [], Path(tempfile.mkdtemp(prefix="wayline-arxiv-"))
+    try:
+        if fetched.kind == "pdf":
+            return _pdf_submission(ledger, slug, identifier, fetched, previous)
+        if fetched.from_cache:
+            files = _restore_source(ledger, slug, workspace)
+            notes.append("arXiv answered 304 Not Modified; the source kept under refs/%s/%s/ is the one it served" % (slug, SOURCE))
+            source = dict(previous.get("source") or {})
+        else:
+            files = extract_source(fetched.payload, workspace)
+            ledger.remove_tree("%s/%s/%s" % (REFS, slug, SOURCE))
+            _keep_source(ledger, slug, workspace, files)
+            source = {"bytes": len(fetched.payload), "version": fetched.version}
+        inventory = _inventory_from_workspace(
+            ledger, slug, identifier, workspace, files, fetcher, notes, compile_source, rasterize,
+        )
+        source.update({
+            "kind": "tarball",  # what was fetched and kept; `source_type` says what was inventoried
+            "url": fetched.url,
+            "arxiv_id": identifier,
+            "etag": fetched.etag,
+            "fetched": now_ts(),
+            "from_cache": bool(fetched.from_cache),
+            "files": len(files),
+        })
+        source.update(inventory.pop("source_extra"))
+        inventory["source"] = source
+        inventory["notes"] = notes + inventory["notes"]
+        inventory["created"] = previous.get("created") or now_ts()
+        if previous:
+            inventory["updated"] = now_ts()
+        check(inventory, load_schema("inventory"), name="refs/%s/%s" % (slug, INVENTORY))
+        ledger.write_json("%s/%s/%s" % (REFS, slug, INVENTORY), inventory, schema="inventory")
+        return inventory
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def _inventory_from_workspace(ledger, slug, identifier, workspace, files, fetcher, notes, compile_source, rasterize):
+    """The LaTeX inventory of an extracted e-print, or the HTML rendering's when it will not flatten."""
+    main = main_tex(workspace)
+    text, flattened_by, pages, settled = None, None, None, 0
+    if main is None:
+        notes.append("no .tex declaring a \\documentclass in the e-print (%d files)" % len(files))
+    else:
+        text, flattened_by, flatten_notes = flatten(workspace, main)
+        notes.extend(flatten_notes)
+        if not text.strip():
+            notes.append("%s flattened to nothing" % main)
+            text = None
+    if text is None:
+        return _html_fallback(slug, identifier, fetcher, notes)
+
+    record = latex_inventory(text, FLAT)
+    graphicspath = record.pop("graphicspath")
+    if compile_source:
+        aux, pages, note = compile_once(workspace, main)
+        if note:
+            notes.append(note)
+        if aux:
+            settled = apply_aux_numbers(record, aux_numbers(aux))
+    else:
+        notes.append("the compile was not run; the numbers are counted in document order")
+    _fill_figures(ledger, slug, workspace, main, record, graphicspath, rasterize, notes)
+    flat_path = ledger.write_markdown("%s/%s/%s/%s" % (REFS, slug, SOURCE, FLAT), text)
+    provenance = {key: _field_provenance(record[key]) for key in ITEM_KEYS}
+    provenance.update({
+        "references": _LATEX if record["references"] else _NONE,
+        "metadata": _LATEX, "raw_images": _LATEX, "text_layer": _LATEX,
+        "page_count": _AUX if pages else _NONE,
+    })
+    inventory = {
+        "schema_version": 1,
+        "slug": slug,
+        "source_type": "latex",
+        "provenance": provenance,
+        "counts": record.pop("counts"),
+        "environments": record.pop("environments"),
+        "page_count": pages,
+        "text_layer": {"path": "%s/%s" % (SOURCE, flat_path.name), "chars": len(text), "provenance": _LATEX},
+        "raw_images": _raw_images(workspace, files),
+        "metadata": dict(record.pop("metadata"), arxiv_id=identifier),
+        "notes": [],
+        "source_extra": {"main": str(main), "flattened_by": flattened_by, "compiled": bool(pages is not None or settled)},
+    }
+    inventory.update(record)
+    return inventory
+
+
+def _field_provenance(items, default=_LATEX):
+    """What filled a whole field: the compile, when it settled any of the field's items.
+
+    Per field rather than per record, because a paper that labels its figures and not its
+    equations gets exact figure numbers and counted equation numbers, and the record has to be
+    able to say so. The per-item `provenance` is the exact answer; this is the summary.
+    """
+    return _AUX if any(item.get("provenance") == _AUX for item in items or []) else default
+
+
+def _html_fallback(slug, identifier, fetcher, notes):
+    """`https://arxiv.org/html/<id>`, the second source when the tarball will not flatten."""
+    url = ARXIV_HTML % identifier
+    notes.append("the tarball would not flatten; the inventory is the arXiv HTML rendering at %s, which arXiv calls beta and which is not complete" % url)
+    response = fetcher.fetch(url)
+    if not response.ok:
+        raise DossierError("the tarball would not flatten and %s answered %d" % (url, response.status))
+    record = html_inventory(response.text(), url)
+    record.pop("graphicspath")
+    return {
+        "schema_version": 1,
+        "slug": slug,
+        "source_type": "html",
+        "provenance": {
+            "sections": _HTML, "appendices": _NONE, "equations": _HTML, "figures": _HTML,
+            "tables": _HTML, "algorithms": _HTML, "theorems": _HTML, "references": _NONE,
+            "metadata": _NONE, "raw_images": _NONE, "text_layer": _NONE, "page_count": _NONE,
+        },
+        "counts": record.pop("counts"),
+        "environments": record.pop("environments"),
+        "page_count": None,
+        "text_layer": None,
+        "raw_images": [],
+        "metadata": dict(record.pop("metadata"), arxiv_id=identifier),
+        "notes": [],
+        "source_extra": {"main": None, "flattened_by": None, "compiled": False},
+        **record,
+    }
+
+
+def _pdf_submission(ledger, slug, identifier, fetched, previous):
+    """A PDF-only submission: arXiv has no source, so the paper is kept and ticket 22 reads it."""
+    name = "%s.pdf" % slugify(identifier)
+    ledger.write_bytes("%s/%s/%s/%s" % (REFS, slug, SOURCE, name), fetched.payload)
+    inventory = {
+        "schema_version": 1,
+        "slug": slug,
+        "source_type": "pdf",
+        "source": {
+            "kind": "pdf", "url": fetched.url, "arxiv_id": identifier, "version": fetched.version,
+            "etag": fetched.etag, "fetched": now_ts(), "from_cache": False,
+            "bytes": len(fetched.payload), "files": 1, "main": "%s/%s" % (SOURCE, name),
+            "flattened_by": None, "compiled": False,
+        },
+        "provenance": {key: _NONE for key in (
+            "sections", "appendices", "equations", "figures", "tables", "algorithms", "theorems",
+            "references", "metadata", "raw_images", "text_layer", "page_count",
+        )},
+        "counts": {},
+        "page_count": None,
+        "text_layer": None,
+        "sections": [], "equations": [], "figures": [], "tables": [], "algorithms": [],
+        "theorems": [], "appendices": [], "references": [], "raw_images": [],
+        "metadata": {"arxiv_id": identifier},
+        "notes": [
+            "arXiv served a PDF, which means the submission has no source; the inventory of a PDF "
+            "is the non-arXiv chain of ticket 22, and the file is kept at refs/%s/%s/%s" % (slug, SOURCE, name)
+        ],
+        "created": previous.get("created") or now_ts(),
+    }
+    if previous:
+        inventory["updated"] = now_ts()
+    check(inventory, load_schema("inventory"), name="refs/%s/%s" % (slug, INVENTORY))
+    ledger.write_json("%s/%s/%s" % (REFS, slug, INVENTORY), inventory, schema="inventory")
+    return inventory
+
+
+def _kept_source(ledger, slug):
+    """Whether the e-print arXiv served last time is still on disk, which is what the ETag is for.
+
+    `flat.tex` does not count: the harness wrote it, and a directory holding only that is a
+    reference whose source was never unpacked, not one worth asking arXiv to confirm.
+    """
+    root = ledger.research / REFS / slug / SOURCE
+    if not root.is_dir():
+        return False
+    return any(path.is_file() and path.relative_to(root).as_posix() != FLAT for path in root.rglob("*"))
+
+
+def _keep_source(ledger, slug, workspace, files):
+    """Every extracted file into `refs/<slug>/source/`, through the ledger like any other write."""
+    for relative in files:
+        ledger.write_bytes("%s/%s/%s/%s" % (REFS, slug, SOURCE, relative), (workspace / relative).read_bytes())
+    return files
+
+
+def _restore_source(ledger, slug, workspace):
+    """The kept source back into a workspace, so a 304 re-inventories without a second download."""
+    root = ledger.research / REFS / slug / SOURCE
+    files = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative == FLAT:
+            continue  # the harness wrote this one; it is not part of what arXiv served
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(path.read_bytes())
+        files.append(relative)
+    return sorted(files)
+
+
+def _fill_figures(ledger, slug, workspace, main, record, graphicspath, rasterize, notes):
+    """Every figure's `\\includegraphics` target resolved against the tarball, and an image file made.
+
+    A raster is copied as it is; a PDF figure is rasterized with `pdftoppm`, which is the one
+    thing research-notes 06 asks for here. Without poppler installed the target is still recorded
+    and the note says no image file was made, because a missing tool is a smaller loss than a
+    missing figure.
+    """
+    searched = graphicspath or []
+    for item in record["figures"]:
+        targets = item.get("graphics") or []
+        resolved = [found for found in (_find_graphics(workspace, main, searched, target) for target in targets) if found]
+        if targets and not resolved:
+            notes.append("%s: no file in the e-print matches %s" % (item["id"], ", ".join(targets)))
+        if resolved:
+            item["graphics"] = resolved
+        made = _figure_file(ledger, slug, workspace, item["id"], resolved, rasterize, notes)
+        if made:
+            item["file"] = made
+
+
+def _find_graphics(workspace, main, graphicspath, target):
+    """An `\\includegraphics` target as a path inside the tarball, the way TeX looks for it."""
+    cleaned = _safe_member(str(target).strip())
+    if not cleaned:
+        return None
+    bases = [Path(main).parent, Path(".")] + [Path(str(entry).strip("/")) for entry in graphicspath]
+    for base in bases:
+        for spelling in (cleaned,) + tuple(cleaned + suffix for suffix in GRAPHICS_EXTENSIONS):
+            candidate = Path(str(base / spelling))
+            if (workspace / candidate).is_file():
+                return candidate.as_posix()
+    return None
+
+
+def _figure_file(ledger, slug, workspace, item_id, resolved, rasterize, notes):
+    """The image a reader is shown for one figure, written under `refs/<slug>/figures/`."""
+    for relative in resolved:
+        suffix = Path(relative).suffix.lower()
+        if suffix in RASTER_EXTENSIONS:
+            name = "%s/%s%s" % (FIGURES, item_id, suffix)
+            ledger.write_bytes("%s/%s/%s" % (REFS, slug, name), (workspace / relative).read_bytes())
+            return name
+        if suffix in (".pdf", ".eps", ".ps"):
+            raster = _rasterize(workspace / relative, workspace) if rasterize and suffix == ".pdf" else None
+            if raster is not None:
+                name = "%s/%s.png" % (FIGURES, item_id)
+                ledger.write_bytes("%s/%s/%s" % (REFS, slug, name), raster)
+                return name
+            notes.append("%s: %s is not a raster and pdftoppm did not turn it into one, so no image file was made" % (item_id, relative))
+    return None
+
+
+def _rasterize(pdf, workspace):
+    """A PDF figure's first page as PNG bytes, with `pdftoppm -r 150` (research-notes 06)."""
+    if not shutil.which("pdftoppm"):
+        return None
+    out = Path(tempfile.mkdtemp(dir=str(workspace), prefix="raster-")) / "page"
+    try:
+        subprocess.run(
+            ["pdftoppm", "-png", "-r", str(_RASTER_DPI), "-f", "1", "-l", "1", str(pdf), str(out)],
+            capture_output=True, timeout=_TOOL_TIMEOUT_S, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    made = sorted(out.parent.glob("page*.png"))
+    return made[0].read_bytes() if made else None
+
+
+def _raw_images(workspace, files):
+    """Every image the e-print carries, whatever the document does with it."""
+    images = []
+    for relative in files:
+        suffix = Path(relative).suffix.lower()
+        if suffix not in IMAGE_EXTENSIONS:
+            continue
+        path = workspace / relative
+        images.append({
+            "path": relative,
+            "format": suffix.lstrip("."),
+            "bytes": path.stat().st_size if path.is_file() else None,
+            "provenance": _LATEX,
+        })
+    return images
+
+
+def _read_json(ledger, relpath):
+    try:
+        return ledger.read_json(relpath)
+    except (OSError, ValueError):
+        return None
+
+
 # --- the verb -----------------------------------------------------------------------------------
 
 
@@ -290,14 +1660,17 @@ def _known_slugs(ledger):
 def absorb_command(args):
     parser = argparse.ArgumentParser(prog="wayline absorb", description="build the dossiers for the references")
     parser.add_argument("--level", type=int, default=0, choices=[0, 1, 2], help="the dossier level to build; only level 0 is built so far")
+    parser.add_argument("--inventory", metavar="SLUG", help="fetch one arXiv reference's e-print source and write refs/<slug>/inventory.json")
     parser.add_argument("--project", help="the project to absorb into; the active one by default")
     parser.add_argument("--fixtures", help="answer every request from this directory of recorded responses instead of the network")
     parser.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.inventory:
+        return _inventory_command(options)
     if options.level != LEVEL_0:
-        print("wayline absorb: level %d needs the inventory and the skim, which tickets 21 to 24 build" % options.level, file=sys.stderr)
+        print("wayline absorb: level %d needs the skim and the absorb, which tickets 23 and 24 build" % options.level, file=sys.stderr)
         return 2
     try:
         project = find_project(options.project)
@@ -311,6 +1684,42 @@ def absorb_command(args):
     else:
         print(_render(report))
     return 1 if report["problems"] else 0
+
+
+def _inventory_command(options):
+    """`wayline absorb --inventory <slug>`: one reference's source fetched, kept, and inventoried."""
+    try:
+        project = find_project(options.project)
+        fetcher = recording_fetcher(options.fixtures, email=_email(project)) if options.fixtures else None
+        inventory = build_inventory(project, options.inventory, fetcher=fetcher)
+    except (DossierError, FetchError, ProjectError, ValidationError, ValueError, OSError) as failure:
+        print("wayline absorb --inventory: %s" % failure, file=sys.stderr)
+        return 1
+    if options.json:
+        print(json.dumps(inventory, ensure_ascii=False, indent=2))
+    else:
+        print(_render_inventory(inventory))
+    return 0
+
+
+def _render_inventory(inventory):
+    source = inventory.get("source") or {}
+    lines = [
+        "%-12s %s  (%s, %s)" % (inventory["slug"], source.get("url", ""), inventory["source_type"], source.get("version") or "no version"),
+        "  source     %s files, main %s, flattened by %s%s" % (
+            source.get("files"), source.get("main"), source.get("flattened_by"),
+            ", compiled" if source.get("compiled") else ", not compiled",
+        ),
+    ]
+    counts = inventory.get("counts") or {}
+    if counts:
+        lines.append("  found      " + ", ".join("%s %d" % (name, counts[name]) for name in sorted(counts) if counts[name]))
+    environments = inventory.get("environments") or {}
+    if environments:
+        lines.append("  latex      " + ", ".join("%s %d" % (name, environments[name]) for name in sorted(environments)))
+    for note in inventory.get("notes") or []:
+        lines.append("  note       %s" % note)
+    return "\n".join(lines)
 
 
 def _email(project):
