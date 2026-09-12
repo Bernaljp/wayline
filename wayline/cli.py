@@ -23,6 +23,7 @@ class Verb:
     help: str
     group: str
     handler: Optional[Handler] = None
+    hidden: bool = False  # registered and runnable, but not in the overview (the smoke verb)
 
 
 def lazy(module, attribute):
@@ -70,6 +71,8 @@ VERBS = [
     Verb("paper", "paper [--venue <slug>]", "draft the paper under a venue's guidelines", "builders"),
     Verb("report", "report", "render REPORT.md from the ledger", "builders"),
     Verb("tools", "tools install", "create the optional converter venv under ~/.wayline/tools/", "tools"),
+    Verb("launch", "launch --smoke [--dir <path>] [--model <alias>] [--effort <effort>]", "one real cheap session through the launcher; prints the envelope and the usage windows", "tools",
+         handler=lazy("wayline.worker", "launch_verb"), hidden=True),
 ]
 
 GROUP_TITLES = {
@@ -110,7 +113,7 @@ def overview():
     if stray:
         raise ValueError("verb(s) %s belong to a group the overview does not print" % ", ".join(stray))
     for group in GROUP_TITLES:
-        members = [verb for verb in VERBS if verb.group == group]
+        members = [verb for verb in VERBS if verb.group == group and not verb.hidden]
         if not members:
             continue
         lines.append(GROUP_TITLES[group] + ":")

@@ -1,6 +1,1068 @@
-"""The worker launcher seam (Implementation Decisions 3): `launch` and `resume` over a `LaunchRequest`, the `claude_cli` and `fake` backends, prompt assembly, stream parsing. Built by ticket 03.
+"""The worker launcher seam (Implementation Decisions 3; Testing Decisions seam 1).
 
-This module is a stub until its ticket lands; importing it is all the package skeleton needs.
+Every model call in the harness goes through `launch(request)` and `resume(request, session_id,
+message)` over a `LaunchRequest`, and comes back as an `Envelope`. Two backends: `claude_cli`,
+the only real one, runs the launch line of decision 3 and parses the `stream-json` output; `fake`
+returns scripted envelopes for tests and demos. `WAYLINE_LAUNCHER=fake` selects the fake.
+Nothing else in the harness starts `claude`: this module is the portability seam, and anything
+that must run the executable for another reason (the tick's `auth status`) is added here as a
+`ClaudeCli` method, never elsewhere.
+
+The session directory is `request.env["WAYLINE_RUN"]`, spelled as the launch line spells it
+(`<project>/research/sessions/<ticket>/<attempt>`); a resume writes into `resume-<k>/` under it so
+the launch's own stream survives. This directory is the one place under `research/` written by
+something other than the ledger: the launch line itself redirects the worker's stream there,
+and the request is written beside it so the run can be reproduced by hand.
+
+Two envelope fields extend the spec's list, each with a reason: `errors` carries the error text
+the conductor puts in its one resume (BRIEF 9.1), and `result_text` carries the plain `result`
+string a session without a schema returns (the tick reads `claude -p "/usage"` through this seam).
+
+`WAYLINE_CLAUDE` names the executable when it is not the `claude` on PATH; the tests point it at
+a recording stand-in, so the real backend is exercised without the network.
 """
 
-__all__ = []
+import argparse
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import uuid
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional, Union
+
+from wayline import HARNESS_ROOT
+from wayline.jsonschema import SchemaError, check_schema, validate
+from wayline.ledger import now_ts
+
+__all__ = [
+    "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
+    "launch", "resume", "pid_alive", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
+    "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
+    "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS",
+]
+
+_log = logging.getLogger("wayline.worker")
+
+TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
+FALLBACK_MODEL = "sonnet"  # `--fallback-model`: overload only, never usage limits (decision 3)
+MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")  # what decision 3 passes as --model; the policy schema's enum
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+# The resolved model name `system/init` reports for each alias, used by the fake backend.
+RESOLVED_MODELS = {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
+    "fable": "claude-fable-5-1",
+}
+
+
+class LaunchError(ValueError):
+    """A request the launcher refuses, a backend it does not have, or a fake with nothing scripted."""
+
+
+# --- the request and the envelope -------------------------------------------------------------
+
+
+@dataclass
+class LaunchRequest:
+    """One model call: the fields of decision 3, in its order.
+
+    `agent_json` is the `--agents` object (a dict, or its JSON text) and must define `role`
+    without a `tools` or `skills` key (decision 3). `settings_path` is copied into the session
+    directory as `settings.json`; None writes `{}`. `schema_path` is passed as `--json-schema`
+    and re-validated in code; None runs the session without a schema. `env` carries the
+    `TICKET_*` and `WAYLINE_*` variables, and `env["WAYLINE_RUN"]` names the session directory.
+    `max_minutes` None means no timeout.
+    """
+
+    role: str
+    model: str
+    effort: str
+    prompt: str
+    agent_json: Union[dict, str]
+    allowed_tools: list = field(default_factory=list)
+    disallowed_tools: list = field(default_factory=list)
+    settings_path: Optional[Union[str, Path]] = None
+    add_dirs: list = field(default_factory=list)
+    cwd: Union[str, Path] = "."
+    env: dict = field(default_factory=dict)
+    schema_path: Optional[Union[str, Path]] = None
+    max_minutes: Optional[float] = None
+
+    @property
+    def run_dir(self):
+        """The session directory: `env["WAYLINE_RUN"]`."""
+        run = self.env.get("WAYLINE_RUN") if isinstance(self.env, dict) else None
+        if not run:
+            raise LaunchError("request.env lacks WAYLINE_RUN, the session directory of the launch line")
+        return Path(run)
+
+    def agent_text(self):
+        """The `--agents` argument: the dict serialized, or the text as given."""
+        return self.agent_json if isinstance(self.agent_json, str) else json.dumps(self.agent_json)
+
+    def check(self):
+        """Refuse a request the launch line cannot carry, before anything starts or is written."""
+        for name in ("role", "model", "effort", "prompt"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise LaunchError("request.%s must be a non-empty string" % name)
+        if self.model not in MODEL_ALIASES:
+            raise LaunchError("request.model must be one of %s, got %r" % (", ".join(MODEL_ALIASES), self.model))
+        if self.effort not in EFFORTS:
+            raise LaunchError("request.effort must be one of %s, got %r" % (", ".join(EFFORTS), self.effort))
+        if isinstance(self.agent_json, str):
+            try:
+                agents = json.loads(self.agent_json)
+            except ValueError as exc:
+                raise LaunchError("request.agent_json is not JSON: %s" % exc)
+        else:
+            agents = self.agent_json
+        if not isinstance(agents, dict) or self.role not in agents or not isinstance(agents[self.role], dict):
+            raise LaunchError("request.agent_json must be an object defining the role %r" % self.role)
+        for key in ("tools", "skills"):
+            if key in agents[self.role]:
+                raise LaunchError("request.agent_json[%r] must not carry %r: an agent tools allowlist removes the StructuredOutput tool and skills are not injected that way (decision 3)" % (self.role, key))
+        for name in ("allowed_tools", "disallowed_tools", "add_dirs"):
+            value = getattr(self, name)
+            if not isinstance(value, (list, tuple)) or not all(isinstance(item, (str, Path)) for item in value):
+                raise LaunchError("request.%s must be a list of strings" % name)
+        if not isinstance(self.env, dict):
+            raise LaunchError("request.env must be a dict of environment variables")
+        if self.max_minutes is not None and (isinstance(self.max_minutes, bool) or not isinstance(self.max_minutes, (int, float)) or self.max_minutes <= 0):
+            raise LaunchError("request.max_minutes must be a positive number or None")
+        return self
+
+
+@dataclass
+class Window:
+    """One usage window of a `rate_limit_event`: utilization as a 0..1 fraction and the reset epoch."""
+
+    utilization: Optional[float]
+    resets_at: Optional[int]
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None or isinstance(data, Window):
+            return data
+        if not isinstance(data, dict):
+            raise LaunchError("a window is an object or null, got %r" % (data,))
+        unknown = sorted(set(data) - {"utilization", "resets_at"})
+        if unknown:
+            raise LaunchError("a window has no field(s) %s" % ", ".join(unknown))
+        return cls(_number(data.get("utilization")), _integer(data.get("resets_at")))
+
+
+@dataclass
+class RateLimitEvent:
+    """One `rate_limit_event` of the stream (decision 3).
+
+    `status`, `resets_at`, and `rate_limit_type` are documented; the `five_hour` and `seven_day`
+    windows come from the observed, undocumented `unifiedWindows` block and are None without it.
+    """
+
+    status: Optional[str]
+    resets_at: Optional[int] = None
+    rate_limit_type: Optional[str] = None
+    five_hour: Optional[Window] = None
+    seven_day: Optional[Window] = None
+
+    @classmethod
+    def from_info(cls, info):
+        """Build from a stream's `rate_limit_info` object; a missing `unifiedWindows` degrades to status alone."""
+        info = info if isinstance(info, dict) else {}
+        windows = info.get("unifiedWindows")
+
+        def window(name):
+            block = windows.get(name) if isinstance(windows, dict) else None
+            if not isinstance(block, dict):
+                return None
+            return Window(_number(block.get("utilization")), _integer(block.get("resetsAt")))
+
+        return cls(
+            status=info.get("status") if isinstance(info.get("status"), str) else None,
+            resets_at=_integer(info.get("resetsAt")),
+            rate_limit_type=info.get("rateLimitType") if isinstance(info.get("rateLimitType"), str) else None,
+            five_hour=window("five_hour"),
+            seven_day=window("seven_day"),
+        )
+
+    @classmethod
+    def from_dict(cls, data):
+        """The inverse of `as_dict`, for scripted envelopes; unknown keys (the stream's own spelling) are refused."""
+        if isinstance(data, RateLimitEvent):
+            return data
+        if not isinstance(data, dict):
+            raise LaunchError("a rate_limit_event is an object, got %r" % (data,))
+        known = {item.name for item in fields(cls)}
+        unknown = sorted(set(data) - known)
+        if unknown:
+            raise LaunchError("a rate_limit_event has no field(s) %s (the fields are %s)" % (", ".join(unknown), ", ".join(sorted(known))))
+        status = data.get("status")
+        if status is not None and not isinstance(status, str):
+            raise LaunchError("rate_limit_event.status is a string or null")
+        return cls(status, _integer(data.get("resets_at")), data.get("rate_limit_type"), Window.from_dict(data.get("five_hour")), Window.from_dict(data.get("seven_day")))
+
+    def as_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class Envelope:
+    """What one model call came back with: the fields of decision 3, in its order, then the two extensions.
+
+    `structured_output` is the object validated in code against the request's schema, or None:
+    a `success` result without the key, a `subtype: error_max_structured_output_retries`, or an
+    object the schema rejects all leave it None with the reason in `errors`. `is_error` is the
+    CLI's flag or the harness's own verdict, whichever is worse. `exit_code` is the process exit
+    status with signals folded the shell way (SIGTERM is 143). `stream_path` is the whole stream.
+    """
+
+    session_id: Optional[str] = None
+    model: Optional[str] = None
+    structured_output: Optional[dict] = None
+    is_error: Optional[bool] = None
+    subtype: Optional[str] = None
+    num_turns: Optional[int] = None
+    duration_ms: Optional[int] = None
+    duration_api_ms: Optional[int] = None
+    usage: Optional[dict] = None
+    model_usage: Optional[dict] = None
+    permission_denials: list = field(default_factory=list)
+    api_error_status: Optional[int] = None
+    rate_limit_events: list = field(default_factory=list)
+    exit_code: Optional[int] = None
+    stream_path: Optional[Path] = None
+    errors: list = field(default_factory=list)
+    result_text: Optional[str] = None
+
+    def __post_init__(self):
+        if self.structured_output is not None and not isinstance(self.structured_output, dict):
+            raise LaunchError("envelope.structured_output is an object or None, got %s" % type(self.structured_output).__name__)
+        for name in ("usage", "model_usage"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, dict):
+                raise LaunchError("envelope.%s is an object or None" % name)
+        for name in ("permission_denials", "errors", "rate_limit_events"):
+            value = getattr(self, name)
+            if value is None:
+                setattr(self, name, [])
+            elif not isinstance(value, list):
+                raise LaunchError("envelope.%s is a list, got %s" % (name, type(value).__name__))
+        if any(not isinstance(item, str) for item in self.errors):
+            raise LaunchError("envelope.errors is a list of strings")
+        self.rate_limit_events = [RateLimitEvent.from_dict(item) for item in self.rate_limit_events]
+        if self.stream_path is not None and not isinstance(self.stream_path, Path):
+            self.stream_path = Path(self.stream_path)
+
+    @property
+    def valid(self):
+        """True when a structured output passed the schema in code."""
+        return self.structured_output is not None
+
+    def last_windows(self):
+        """The five-hour and seven-day utilization of the latest `rate_limit_event`, None when absent."""
+        if not self.rate_limit_events:
+            return (None, None)
+        last = self.rate_limit_events[-1]
+        return (
+            last.five_hour.utilization if last.five_hour else None,
+            last.seven_day.utilization if last.seven_day else None,
+        )
+
+    def as_dict(self):
+        """A JSON-able view (the journal, the smoke verb, the dashboard)."""
+        data = asdict(self)
+        data["stream_path"] = str(self.stream_path) if self.stream_path is not None else None
+        return data
+
+    @classmethod
+    def from_dict(cls, data):
+        """The inverse of `as_dict`; unknown keys are refused so a scripted typo cannot pass silently."""
+        if not isinstance(data, dict):
+            raise LaunchError("an envelope is an object, got %r" % (data,))
+        known = {item.name for item in fields(cls)}
+        unknown = sorted(set(data) - known)
+        if unknown:
+            raise LaunchError("envelope has no field(s) %s" % ", ".join(unknown))
+        return cls(**data)
+
+
+@dataclass
+class Started:
+    """What a backend reports the moment the process exists: its pid, the session directory, the stream."""
+
+    pid: int
+    run_dir: Path
+    stream_path: Path
+
+
+# --- the session directory ----------------------------------------------------------------------
+
+
+def session_dir(project, ticket, attempt):
+    """`<project>/research/sessions/<ticket>/<attempt>`, the RUN of the launch line."""
+    return Path(project) / "research" / "sessions" / str(ticket) / str(attempt)
+
+
+def session_env(project, ticket, attempt, touches):
+    """The `TICKET_*` and `WAYLINE_*` variables the launch line exports, as strings."""
+    run = session_dir(project, ticket, attempt)
+    if isinstance(touches, (str, Path)):
+        touches = [touches]
+    return {
+        "TICKET_TOUCHES": ":".join(str(item) for item in touches),
+        "TICKET_ACCEPTANCE_FILE": str(run / "acceptance.json"),
+        "WAYLINE_PROJECT": str(project),
+        "WAYLINE_TICKET": str(ticket),
+        "WAYLINE_RUN": str(run),
+    }
+
+
+def _resume_dir(run_dir):
+    """The first free `resume-<k>` under the session directory."""
+    number = 1
+    while (run_dir / ("resume-%d" % number)).exists():
+        number += 1
+    return run_dir / ("resume-%d" % number)
+
+
+def _write_text(path, text):
+    """Write a small file durably by write-then-rename, so a reader never sees a torn one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _load_schema(schema_path):
+    """The schema file's text and parsed object, refused when unreadable or outside the validator's subset."""
+    try:
+        text = Path(schema_path).read_text(encoding="utf-8")
+        schema = json.loads(text)
+    except (OSError, ValueError) as exc:
+        raise LaunchError("schema %s cannot be read: %s" % (schema_path, exc))
+    try:
+        check_schema(schema)
+    except SchemaError as exc:
+        raise LaunchError("schema %s is outside the validator's subset: %s" % (schema_path, exc))
+    return text, schema
+
+
+def _check_paths(request):
+    """The filesystem side of `LaunchRequest.check`: the cwd and the files the launch line reads."""
+    cwd = Path(request.cwd)
+    if not cwd.is_dir():
+        raise LaunchError("request.cwd %s is not a directory" % cwd)
+    if request.settings_path is not None and not Path(request.settings_path).is_file():
+        raise LaunchError("request.settings_path %s is not a file" % request.settings_path)
+    return cwd
+
+
+def _write_session(run_dir, request, prompt_text, executable, command, session_id):
+    """Write the request beside where the stream will go: prompt, agent, settings, schema, env.
+
+    A previous run's `result.json` and `pid` are removed first, so a relaunch into a used
+    directory never shows the earlier result next to the new stream.
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for stale in ("result.json", "pid"):
+        try:
+            (run_dir / stale).unlink()
+        except FileNotFoundError:
+            pass
+    _write_text(run_dir / "prompt.md", prompt_text if prompt_text.endswith("\n") else prompt_text + "\n")
+    agents = request.agent_json if isinstance(request.agent_json, dict) else json.loads(request.agent_json)
+    _write_text(run_dir / "agent.json", json.dumps(agents, indent=2) + "\n")
+    if request.settings_path is None:
+        _write_text(run_dir / "settings.json", "{}\n")
+    elif Path(request.settings_path).resolve() != (run_dir / "settings.json").resolve():
+        _write_text(run_dir / "settings.json", Path(request.settings_path).read_text(encoding="utf-8"))
+    if request.schema_path is not None and Path(request.schema_path).resolve() != (run_dir / "schema.json").resolve():
+        _write_text(run_dir / "schema.json", _load_schema(request.schema_path)[0])
+    record = {
+        "executable": executable,
+        "command": command,
+        "stdin": "/dev/null",
+        "cwd": str(request.cwd),
+        "env": {key: str(value) for key, value in request.env.items()},
+        "resume_of": session_id,
+        "started_at": now_ts(),
+    }
+    _write_text(run_dir / "env.json", json.dumps(record, indent=2) + "\n")
+
+
+# --- the launch line ----------------------------------------------------------------------------
+
+
+def build_argv(request, run_dir, session_id=None, message=None):
+    """The argv of the launch line of decision 3 (or of the resume, with `session_id` and `message`).
+
+    The request is checked first and the schema is read and checked here, so a request the
+    line cannot carry is refused before a session is spent.
+    """
+    request.check()
+    if session_id is not None and (not isinstance(message, str) or not message.strip()):
+        raise LaunchError("a resume needs a non-empty message")
+    run_dir = Path(run_dir)
+    prompt = request.prompt if session_id is None else message
+    argv = [ClaudeCli.executable, "-p", prompt]
+    if session_id is not None:
+        argv += ["--resume", session_id]
+    argv += ["--agents", request.agent_text(), "--agent", request.role]
+    argv += ["--model", request.model, "--effort", request.effort]
+    argv += ["--permission-mode", "dontAsk", "--permission-prompts", "none"]
+    if request.allowed_tools:
+        argv += ["--allowedTools", *[str(tool) for tool in request.allowed_tools]]
+    if request.disallowed_tools:
+        argv += ["--disallowedTools", *[str(tool) for tool in request.disallowed_tools]]
+    argv += ["--settings", str(run_dir / "settings.json")]
+    for directory in request.add_dirs:
+        argv += ["--add-dir", str(directory)]
+    argv += ["--output-format", "stream-json", "--verbose"]
+    if request.schema_path is not None:
+        argv += ["--json-schema", _load_schema(request.schema_path)[0]]
+    argv += ["--fallback-model", FALLBACK_MODEL]
+    return argv
+
+
+def spelled_argv(argv, run_dir):
+    """The launch line as the spec writes it: the prompt, the agents, and the schema as `$(cat <file>)`."""
+    run_dir = Path(run_dir)
+    spelled = list(argv)
+    spelled[2] = "$(cat %s)" % (run_dir / "prompt.md")
+    for flag, name in (("--agents", "agent.json"), ("--json-schema", "schema.json")):
+        if flag in spelled[3:]:
+            spelled[spelled.index(flag, 3) + 1] = "$(cat %s)" % (run_dir / name)
+    return spelled
+
+
+# --- the stream -----------------------------------------------------------------------------------
+
+
+@dataclass
+class Parsed:
+    """What `parse_stream` found: the init, every rate limit event, the final result, and the torn lines."""
+
+    session_id: Optional[str] = None
+    model: Optional[str] = None
+    init: Optional[dict] = None
+    rate_limit_events: list = field(default_factory=list)
+    result: Optional[dict] = None
+    torn_lines: int = 0
+    messages: int = 0
+
+
+def parse_stream(path):
+    """Read a `stream.jsonl` whole: `system/init`, every `rate_limit_event`, the final `result`.
+
+    A line that is not a JSON object (the torn tail a killed worker leaves) is counted and skipped.
+    A missing file parses as empty.
+    """
+    parsed = Parsed()
+    path = Path(path)
+    if not path.exists():
+        return parsed
+    with open(path, "rb") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                message = json.loads(line.decode("utf-8"))
+            except ValueError:
+                parsed.torn_lines += 1
+                continue
+            if not isinstance(message, dict):
+                parsed.torn_lines += 1
+                continue
+            parsed.messages += 1
+            kind = message.get("type")
+            if kind == "system" and message.get("subtype") == "init" and parsed.init is None:
+                parsed.init = message
+                parsed.session_id = message.get("session_id") if isinstance(message.get("session_id"), str) else None
+                parsed.model = message.get("model") if isinstance(message.get("model"), str) else None
+            elif kind == "rate_limit_event":
+                parsed.rate_limit_events.append(RateLimitEvent.from_info(message.get("rate_limit_info")))
+            elif kind == "result":
+                parsed.result = message
+    if parsed.torn_lines:
+        _log.warning("%s: skipped %d torn line(s)", path, parsed.torn_lines)
+    return parsed
+
+
+def read_envelope(stream_path, schema_path, exit_code=None, errors=()):
+    """The envelope of a stream on disk, with `structured_output` re-validated against `schema_path`.
+
+    Works for a stream another process wrote (the conductor re-adopting a worker by pid and
+    stream file); `exit_code` is None when the process is not this caller's.
+    """
+    return _envelope_from(parse_stream(stream_path), Path(stream_path), schema_path, exit_code, errors)
+
+
+def _envelope_from(parsed, stream_path, schema_path, exit_code, errors):
+    errors = list(errors)
+    result = parsed.result
+    structured_output = None
+    if result is None:
+        errors.append("no result message in the stream (the worker did not finish)")
+    else:
+        reported = result.get("errors")
+        for item in (reported if isinstance(reported, list) else [reported] if reported else []):
+            errors.append(str(item))
+        subtype = result.get("subtype")
+        if subtype == "error_max_structured_output_retries":
+            errors.append("the result is error_max_structured_output_retries: the worker never returned an output the schema accepts")
+        elif schema_path is not None:
+            if "structured_output" not in result:
+                errors.append("the result carries no structured_output (subtype %s); the worker stopped without returning it" % subtype)
+            elif not isinstance(result["structured_output"], dict):
+                errors.append("structured_output is not an object (got %s)" % type(result["structured_output"]).__name__)
+            else:
+                problems = validate(result["structured_output"], _load_schema(schema_path)[1])
+                if problems:
+                    errors.append("structured_output does not match the schema: " + "; ".join("%s: %s" % (problem.path, problem.message) for problem in problems))
+                else:
+                    structured_output = result["structured_output"]
+    is_error = result is None or bool(result.get("is_error")) or (schema_path is not None and structured_output is None)
+    result = result or {}
+    return Envelope(
+        session_id=parsed.session_id or (result.get("session_id") if isinstance(result.get("session_id"), str) else None),
+        model=parsed.model,
+        structured_output=structured_output,
+        is_error=is_error,
+        subtype=result.get("subtype") if isinstance(result.get("subtype"), str) else None,
+        num_turns=_integer(result.get("num_turns")),
+        duration_ms=_integer(result.get("duration_ms")),
+        duration_api_ms=_integer(result.get("duration_api_ms")),
+        usage=result.get("usage") if isinstance(result.get("usage"), dict) else None,
+        model_usage=result.get("modelUsage") if isinstance(result.get("modelUsage"), dict) else None,
+        permission_denials=list(result["permission_denials"]) if isinstance(result.get("permission_denials"), list) else [],
+        api_error_status=_integer(result.get("api_error_status")),
+        rate_limit_events=list(parsed.rate_limit_events),
+        exit_code=exit_code,
+        stream_path=stream_path,
+        errors=errors,
+        result_text=result.get("result") if isinstance(result.get("result"), str) else None,
+    )
+
+
+def _integer(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _number(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _exit_code(returncode):
+    """Fold a signal death the shell way: -15 becomes 143."""
+    if returncode is None:
+        return None
+    return 128 - returncode if returncode < 0 else returncode
+
+
+# --- the claude_cli backend ---------------------------------------------------------------------
+
+
+class ClaudeCli:
+    """The real backend: the launch line of decision 3 as a subprocess, its stream parsed from disk."""
+
+    name = "claude_cli"
+    executable = "claude"
+
+    def launch(self, request, on_start=None):
+        request.check()
+        return self._run(request, request.run_dir, None, None, on_start)
+
+    def resume(self, request, session_id, message, on_start=None):
+        request.check()
+        if not isinstance(session_id, str) or not session_id:
+            raise LaunchError("resume needs the session id of the launch")
+        return self._run(request, _resume_dir(request.run_dir), session_id, message, on_start)
+
+    def pid_alive(self, pid):
+        """Whether the kernel still knows the pid (a zombie counts until it is reaped)."""
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _executable(self):
+        override = os.environ.get("WAYLINE_CLAUDE")
+        if override:
+            if not (os.path.isfile(override) and os.access(override, os.X_OK)):
+                raise LaunchError("WAYLINE_CLAUDE=%s is not an executable file" % override)
+            return os.path.abspath(override)  # the child runs in another cwd
+        found = shutil.which(self.executable)
+        if found is None:
+            raise LaunchError("%s is not on PATH; install Claude Code or set WAYLINE_CLAUDE to the executable" % self.executable)
+        return found
+
+    def _run(self, request, run_dir, session_id, message, on_start):
+        executable = self._executable()
+        cwd = _check_paths(request)
+        argv = build_argv(request, run_dir, session_id, message)
+        _write_session(run_dir, request, argv[2], executable, spelled_argv(argv, run_dir), session_id)
+        child_env = dict(os.environ)
+        child_env.update({key: str(value) for key, value in request.env.items()})
+        child_env.pop("CLAUDE_CODE_RETRY_WATCHDOG", None)  # workers fail fast; the conductor owns the wait
+        stream_path = run_dir / "stream.jsonl"
+        stderr_path = run_dir / "stderr.txt"
+        errors = []
+        with open(stream_path, "wb") as stream, open(stderr_path, "wb") as stderr:
+            try:
+                process = subprocess.Popen(
+                    [executable] + argv[1:], stdin=subprocess.DEVNULL, stdout=stream, stderr=stderr,
+                    cwd=str(cwd), env=child_env,
+                )
+            except OSError as exc:
+                raise LaunchError("could not start %s: %s" % (executable, exc))
+            _write_text(run_dir / "pid", "%d\n" % process.pid)
+            if on_start is not None:
+                try:
+                    on_start(Started(process.pid, run_dir, stream_path))
+                except BaseException:
+                    process.kill()  # a caller that cannot record the pid must not leave an orphan
+                    process.wait()
+                    raise
+            timeout = request.max_minutes * 60 if request.max_minutes else None
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                errors.append("timeout: no result within %s minute(s); SIGTERM sent" % request.max_minutes)
+                process.terminate()
+                try:
+                    process.wait(timeout=TERM_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    errors.append("the worker ignored SIGTERM for %d s; SIGKILL sent" % TERM_GRACE_SECONDS)
+        parsed = parse_stream(stream_path)
+        if parsed.result is not None:
+            _write_text(run_dir / "result.json", json.dumps(parsed.result, indent=2) + "\n")
+        return _envelope_from(parsed, stream_path, request.schema_path, _exit_code(process.returncode), errors)
+
+
+# --- the fake backend -------------------------------------------------------------------------------
+
+
+@dataclass
+class Patch:
+    """Files the fake writes in the request's cwd before returning, committed there unless `commit` is False.
+
+    Only the patch's own files are staged; a commit is skipped when they leave the tree unchanged.
+    """
+
+    files: dict
+    message: str = "fake worker: scripted patch"
+    commit: bool = True
+
+
+@dataclass
+class Scripted:
+    """One scripted call. `ticket` and `role` restrict which request may take it (parallel launches)."""
+
+    envelope: Envelope
+    patch: Optional[Patch] = None
+    delay: float = 0.0
+    alive: Optional[bool] = None
+    died: bool = False
+    ticket: Optional[str] = None
+    role: Optional[str] = None
+
+    def matches(self, request):
+        if self.ticket is not None and str(request.env.get("WAYLINE_TICKET")) != self.ticket:
+            return False
+        if self.role is not None and request.role != self.role:
+            return False
+        return True
+
+
+@dataclass
+class Call:
+    """One call the fake received, for assertions."""
+
+    kind: str
+    request: LaunchRequest
+    session_id: Optional[str]
+    message: Optional[str]
+    run_dir: Path
+    pid: int
+
+
+class FakeLauncher:
+    """The fake backend: scripted envelopes, written as a stream the same parser reads.
+
+    Script with `script(envelope, patch=, delay=, alive=, died=, ticket=, role=)` in a test, or
+    with the JSON list in `WAYLINE_FAKE_SCRIPT` for a demo (entries `{"envelope": {...}, "patch":
+    {"files": {...}, "message": "...", "commit": true}, "delay": 0, "alive": null, "died": false,
+    "ticket": null, "role": null}`). A call takes the first entry whose `ticket` and `role`
+    match it (an entry with neither matches any call), so parallel launches are keyed by
+    `WAYLINE_TICKET` when the script says so and by order otherwise. Fields left None on a
+    scripted envelope are filled the way a real session would fill them; the scripted
+    `structured_output` is validated against the request's schema exactly as the real backend
+    validates it. `died` cuts the stream after `system/init`, as a killed worker leaves it, and
+    hands the scripted `errors` over as the harness's own (the timeout text). `alive` seeds the
+    pid-alive simulation `pid_alive` answers from; `alive` is a dict a test may edit directly.
+    """
+
+    name = "fake"
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        with self._lock:
+            self.queue = []
+            self.calls = []
+            self.alive = {}
+            self._loaded = None
+            self._next_pid = 100000
+
+    @staticmethod
+    def _scripted(envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None):
+        if not isinstance(envelope, Envelope):
+            envelope = Envelope.from_dict(envelope)
+        if patch is not None and not isinstance(patch, Patch):
+            if not isinstance(patch, dict) or not isinstance(patch.get("files"), dict):
+                raise LaunchError("a patch is {files: {path: content}, message?, commit?}, got %r" % (patch,))
+            unknown = sorted(set(patch) - {"files", "message", "commit"})
+            if unknown:
+                raise LaunchError("patch has no field(s) %s" % ", ".join(unknown))
+            patch = Patch(**patch)
+        if alive is not None and not isinstance(alive, bool):
+            raise LaunchError("alive is true, false, or null, got %r" % (alive,))
+        if delay is None:
+            delay = 0.0
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)) or delay < 0:
+            raise LaunchError("delay is a number of seconds, got %r" % (delay,))
+        if role is not None and not isinstance(role, str):
+            raise LaunchError("role is a string or null")
+        return Scripted(envelope, patch, float(delay), alive, bool(died), None if ticket is None else str(ticket), role)
+
+    def script(self, envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None):
+        entry = self._scripted(envelope, patch, delay, alive, died, ticket, role)
+        with self._lock:
+            self.queue.append(entry)
+        return entry
+
+    @classmethod
+    def _parse_script(cls, path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                entries = json.load(handle)
+        except (OSError, ValueError) as exc:
+            raise LaunchError("fake script %s cannot be read: %s" % (path, exc))
+        if not isinstance(entries, list):
+            raise LaunchError("%s: a fake script is a JSON list of entries" % path)
+        parsed = []
+        for entry in entries:
+            if not isinstance(entry, dict) or "envelope" not in entry:
+                raise LaunchError("%s: every entry is an object with an envelope" % path)
+            unknown = sorted(set(entry) - {"envelope", "patch", "delay", "alive", "died", "ticket", "role"})
+            if unknown:
+                raise LaunchError("%s: entry has no field(s) %s" % (path, ", ".join(unknown)))
+            parsed.append(cls._scripted(entry["envelope"], entry.get("patch"), entry.get("delay"), entry.get("alive"), entry.get("died", False), entry.get("ticket"), entry.get("role")))
+        return parsed
+
+    def load(self, path):
+        """Script from a JSON file in-process (the `WAYLINE_FAKE_SCRIPT` of a demo does this on first use)."""
+        entries = self._parse_script(path)
+        with self._lock:
+            self.queue.extend(entries)
+
+    def launch(self, request, on_start=None):
+        request.check()
+        return self._run("launch", request, request.run_dir, None, None, on_start)
+
+    def resume(self, request, session_id, message, on_start=None):
+        request.check()
+        if not isinstance(session_id, str) or not session_id:
+            raise LaunchError("resume needs the session id of the launch")
+        return self._run("resume", request, _resume_dir(request.run_dir), session_id, message, on_start)
+
+    def pid_alive(self, pid):
+        return bool(self.alive.get(int(pid), False))
+
+    def _take(self, request):
+        with self._lock:
+            script_path = os.environ.get("WAYLINE_FAKE_SCRIPT")
+            if script_path and self._loaded != script_path:
+                self.queue.extend(self._parse_script(script_path))  # a malformed file fails every call, not just the first
+                self._loaded = script_path
+            for index, entry in enumerate(self.queue):
+                if entry.matches(request):
+                    del self.queue[index]
+                    pid = self._next_pid
+                    self._next_pid += 1
+                    return entry, pid
+        raise LaunchError("the fake launcher has no scripted envelope left for role %r, ticket %s" % (request.role, request.env.get("WAYLINE_TICKET")))
+
+    def _run(self, kind, request, run_dir, session_id, message, on_start):
+        _check_paths(request)
+        argv = build_argv(request, run_dir, session_id, message)  # refused before an entry is consumed
+        scripted, pid = self._take(request)
+        _write_session(run_dir, request, request.prompt if session_id is None else message, "fake", spelled_argv(argv, run_dir), session_id)
+        stream_path = run_dir / "stream.jsonl"
+        _write_text(run_dir / "stderr.txt", "")
+        _write_text(run_dir / "pid", "%d\n" % pid)
+        given = scripted.envelope
+        session = given.session_id or session_id or str(uuid.uuid4())
+        model = given.model or RESOLVED_MODELS.get(request.model, request.model)
+        head = [{"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": str(request.cwd),
+                 "permissionMode": "dontAsk", "agents": [request.role], "apiKeySource": "none", "fake": True}]
+        for event in given.rate_limit_events:
+            head.append({"type": "rate_limit_event", "rate_limit_info": _rate_limit_info(event), "session_id": session})
+        _write_text(stream_path, "".join(json.dumps(line) + "\n" for line in head))  # visible while the call runs, as the real stream is
+        if scripted.alive is not None:
+            self.alive[pid] = scripted.alive
+        with self._lock:
+            self.calls.append(Call(kind, request, session_id, message, run_dir, pid))
+        if on_start is not None:
+            on_start(Started(pid, run_dir, stream_path))
+        if scripted.patch is not None:
+            _apply_patch(Path(request.cwd), scripted.patch)
+        if scripted.delay:
+            time.sleep(scripted.delay)
+        exit_code = given.exit_code
+        harness_errors = []
+        if scripted.died:
+            exit_code = 143 if exit_code is None else exit_code
+            harness_errors = list(given.errors)
+        else:
+            subtype = given.subtype or "success"
+            result = {
+                "type": "result", "subtype": subtype,
+                "is_error": bool(given.is_error) if given.is_error is not None else subtype != "success",
+                "num_turns": 1 if given.num_turns is None else given.num_turns,
+                "duration_ms": 1000 if given.duration_ms is None else given.duration_ms,
+                "duration_api_ms": 800 if given.duration_api_ms is None else given.duration_api_ms,
+                "usage": {"input_tokens": 0, "output_tokens": 0} if given.usage is None else given.usage,
+                "modelUsage": {} if given.model_usage is None else given.model_usage,
+                "permission_denials": list(given.permission_denials),
+                "api_error_status": given.api_error_status,
+                "result": given.result_text if given.result_text is not None else (json.dumps(given.structured_output) if given.structured_output is not None else ""),
+                "session_id": session,
+                "fake": True,
+            }
+            if given.structured_output is not None:
+                result["structured_output"] = given.structured_output
+            if given.errors:
+                result["errors"] = list(given.errors)
+            with open(stream_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(result) + "\n")
+            if exit_code is None:
+                exit_code = 1 if result["is_error"] else 0
+        parsed = parse_stream(stream_path)
+        if parsed.result is not None:
+            _write_text(run_dir / "result.json", json.dumps(parsed.result, indent=2) + "\n")
+        return _envelope_from(parsed, stream_path, request.schema_path, exit_code, harness_errors)
+
+
+def _rate_limit_info(event):
+    info = {"status": event.status, "resetsAt": event.resets_at, "rateLimitType": event.rate_limit_type}
+    windows = {}
+    for name in ("five_hour", "seven_day"):
+        window = getattr(event, name)
+        if window is not None:
+            windows[name] = {"utilization": window.utilization, "resetsAt": window.resets_at}
+    if windows:
+        info["unifiedWindows"] = windows
+    return info
+
+
+def _apply_patch(cwd, patch):
+    root = cwd.resolve()
+    written = []
+    for relative, content in patch.files.items():
+        target = cwd / relative
+        if not target.resolve().is_relative_to(root):
+            raise LaunchError("patch path %r leaves the request's cwd" % relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        written.append(str(target.resolve().relative_to(root)))
+    if patch.commit:
+        _git(cwd, "add", "--", *written)
+        staged = _git(cwd, "diff", "--cached", "--quiet", ok=(0, 1))
+        if staged.returncode == 1:
+            _git(cwd, "commit", "-q", "-m", patch.message)
+
+
+def _git(cwd, *args, ok=(0,)):
+    command = ["git", "-C", str(cwd), "-c", "user.name=wayline fake worker", "-c", "user.email=fake@wayline.invalid", *args]
+    done = subprocess.run(command, capture_output=True, text=True)
+    if done.returncode not in ok:
+        raise LaunchError("the fake could not run git %s in %s (exit %d): %s" % (args[0], cwd, done.returncode, (done.stderr or done.stdout).strip()))
+    return done
+
+
+# --- the seam -------------------------------------------------------------------------------------
+
+
+CLAUDE_CLI = ClaudeCli()
+FAKE = FakeLauncher()
+BACKENDS = {ClaudeCli.name: CLAUDE_CLI, FakeLauncher.name: FAKE}
+
+
+def backend():
+    """The backend `WAYLINE_LAUNCHER` selects: `claude_cli` (default) or `fake`."""
+    name = os.environ.get("WAYLINE_LAUNCHER") or ClaudeCli.name
+    try:
+        return BACKENDS[name]
+    except KeyError:
+        raise LaunchError("WAYLINE_LAUNCHER=%s names no backend; the backends are %s" % (name, ", ".join(BACKENDS)))
+
+
+def launch(request, on_start=None):
+    """Run one session and return its envelope; `on_start(Started)` fires when the process exists."""
+    return backend().launch(request, on_start)
+
+
+def resume(request, session_id, message, on_start=None):
+    """Continue a session with `message` and return the envelope of the continuation."""
+    return backend().resume(request, session_id, message, on_start)
+
+
+def pid_alive(pid):
+    """Whether a worker pid is still running, through the selected backend."""
+    return backend().pid_alive(pid)
+
+
+@contextmanager
+def use_fake():
+    """Select the fake for a block (tests) and hand it over for scripting, reset before and after.
+
+    `WAYLINE_FAKE_SCRIPT` is unset for the block, so a script file exported for a demo cannot
+    leak into a scripted test. Not re-entrant.
+    """
+    previous = {name: os.environ.get(name) for name in ("WAYLINE_LAUNCHER", "WAYLINE_FAKE_SCRIPT")}
+    os.environ["WAYLINE_LAUNCHER"] = FakeLauncher.name
+    os.environ.pop("WAYLINE_FAKE_SCRIPT", None)
+    FAKE.reset()
+    try:
+        yield FAKE
+    finally:
+        FAKE.reset()
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+# --- the smoke verb ---------------------------------------------------------------------------------
+
+
+SMOKE_SCHEMA = {
+    "type": "object",
+    "properties": {"word": {"type": "string"}, "cwd": {"type": "string"}},
+    "required": ["word", "cwd"],
+    "additionalProperties": False,
+}
+SMOKE_PROMPT = (
+    "Run exactly one shell command: `pwd`. Then return the structured result: "
+    "word is the string \"wayline\" and cwd is the output of pwd. Do not read any files."
+)
+SMOKE_DISALLOWED = ["Read", "Edit", "Write", "NotebookEdit", "Grep", "Glob", "Agent", "WebFetch", "WebSearch"]
+
+
+def smoke_request(run_dir, model="sonnet", effort="low"):
+    """One cheap session with a two-field schema, through whichever backend is selected."""
+    run_dir = Path(run_dir).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    schema_path = run_dir / "schema.json"
+    _write_text(schema_path, json.dumps(SMOKE_SCHEMA, indent=2) + "\n")
+    agent = {"smoke": {
+        "description": "Smoke-test session for the wayline launcher.",
+        "prompt": "You are a smoke-test session. Run only the one command you are told to run and return the structured result. Never read, cat, grep, or open any file.",
+        "model": model, "effort": effort, "maxTurns": 6, "permissionMode": "dontAsk",
+    }}
+    return LaunchRequest(
+        role="smoke", model=model, effort=effort, prompt=SMOKE_PROMPT, agent_json=agent,
+        allowed_tools=["Bash(pwd)"], disallowed_tools=list(SMOKE_DISALLOWED), settings_path=None,
+        add_dirs=[str(HARNESS_ROOT)], cwd=str(run_dir), env={"WAYLINE_RUN": str(run_dir)},
+        schema_path=str(schema_path), max_minutes=5,
+    )
+
+
+def describe_windows(envelope):
+    """The five-hour and seven-day utilization of the latest rate limit event, as printable lines."""
+    if not envelope.rate_limit_events:
+        return ["usage windows: no rate_limit_event in the stream"]
+    last = envelope.rate_limit_events[-1]
+    lines = ["usage windows (status %s, type %s):" % (last.status, last.rate_limit_type)]
+    for name, window in (("five_hour", last.five_hour), ("seven_day", last.seven_day)):
+        if window is None:
+            lines.append("  %s: unknown (no unifiedWindows block; read /usage instead)" % name)
+        elif window.utilization is None:
+            lines.append("  %s: unknown (the window carries no utilization)" % name)
+        else:
+            lines.append("  %s: %d%% used, resets %s" % (name, round(window.utilization * 100), _epoch(window.resets_at)))
+    return lines
+
+
+def _epoch(value):
+    if value is None:
+        return "unknown"
+    return datetime.fromtimestamp(value, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def launch_verb(args):
+    """`wayline launch --smoke [--dir <path>] [--model <alias>] [--effort <effort>]` (hidden)."""
+    parser = argparse.ArgumentParser(prog="wayline launch", description="one real cheap session through the launcher")
+    parser.add_argument("--smoke", action="store_true", required=True, help="run the smoke session and print the envelope")
+    parser.add_argument("--dir", help="the session directory (default: ~/.wayline/smoke/<timestamp>)")
+    parser.add_argument("--model", default="sonnet", choices=MODEL_ALIASES)
+    parser.add_argument("--effort", default="low", choices=EFFORTS)
+    try:
+        options = parser.parse_args(args)
+    except SystemExit as exc:
+        return int(exc.code or 0)
+    run_dir = Path(options.dir).resolve() if options.dir else Path.home() / ".wayline" / "smoke" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    try:
+        request = smoke_request(run_dir, options.model, options.effort)
+        print("launching the smoke session through the %s backend into %s" % (backend().name, run_dir), flush=True)
+        envelope = launch(request)
+    except (LaunchError, OSError) as exc:
+        print("wayline launch: %s" % exc, file=sys.stderr)
+        return 1
+    print(json.dumps(envelope.as_dict(), indent=2))
+    print()
+    for line in describe_windows(envelope):
+        print(line)
+    print("session directory: %s" % run_dir)
+    if not envelope.valid:
+        print("invalid result: %s" % "; ".join(envelope.errors))
+        return 1
+    return 0

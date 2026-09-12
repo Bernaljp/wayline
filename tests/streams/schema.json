@@ -1,0 +1,1 @@
+{"type":"object","properties":{"skill_token":{"type":"string"},"report":{"type":"string"}},"required":["skill_token","report"],"additionalProperties":false}
