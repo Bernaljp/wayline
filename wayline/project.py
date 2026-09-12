@@ -549,11 +549,14 @@ def _git_init(project):
 # --- status ---------------------------------------------------------------------------------------
 
 
-def status_view(project):
+def status_view(project, refresh=True):
     """Everything `status` prints, as a structure the dashboard can render instead.
 
     A ledger that cannot be read never raises here: what failed lands in `problems`, and the rest
     of the view is still built, because a view that refuses to print is worse than a partial one.
+
+    `refresh=False` computes the graph without writing it, which is what the dashboard passes: its
+    views are polled every few seconds and are read-only in M1.
     """
     project = Path(project).resolve()
     harness = read_harness(project)
@@ -571,7 +574,7 @@ def status_view(project):
     except (ValueError, OSError) as failure:
         problems.append("tickets: %s" % failure)
     try:
-        graph, regenerated = refresh_graph(project, ledger=ledger, events=events)
+        graph, regenerated = refresh_graph(project, ledger=ledger, events=events, write=refresh)
     except (ValueError, OSError) as failure:
         # A ticket file a human broke must not blank the view: the last good graph still prints.
         problems.append("graph.json: %s" % failure)

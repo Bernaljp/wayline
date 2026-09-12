@@ -289,11 +289,15 @@ def read_graph(project):
     return graph
 
 
-def refresh_graph(project, ledger=None, events=None, force=False):
+def refresh_graph(project, ledger=None, events=None, force=False, write=True):
     """Regenerate `graph.json` from `tickets/` when the snapshot or the attempts changed.
 
     Returns `(graph, regenerated)`. Nothing is written when the result would be what is already
     stored, so a status that changes nothing leaves the file byte-identical.
+
+    `write=False` computes the same graph and writes nothing, which is how the dashboard reads a
+    project: a view polled every few seconds must not take the ledger's lock to rewrite a file the
+    conductor owns. `regenerated` then means the stored file is stale, not that it was rewritten.
     """
     ledger = ledger or Ledger(project)
     stored = read_graph(project)
@@ -308,7 +312,8 @@ def refresh_graph(project, ledger=None, events=None, force=False):
     graph = build_graph(read_tickets(project), attempts or {}, current)
     if stored == graph:
         return stored, False
-    ledger.write_json(GRAPH, graph)
+    if write:
+        ledger.write_json(GRAPH, graph)
     return graph, True
 
 
