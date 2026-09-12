@@ -366,7 +366,8 @@ class Conductor:
             settings_path=settings,
             add_dirs=[str(self.harness_root), str(self.project)],
             cwd=attempt.worktree,
-            env=worker.session_env(self.project, attempt.id, attempt.number, attempt.ticket["touches"]),
+            env=worker.session_env(self.project, attempt.id, attempt.number, attempt.ticket["touches"],
+                                   harness_root=self.harness_root),
             schema_path=self.harness_root / "schemas" / ((attempt.role.output_schema or "result") + ".json"),
             max_minutes=attempt.tier.max_minutes,
         )

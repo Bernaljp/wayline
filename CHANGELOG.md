@@ -4,6 +4,57 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+## v0.1.0 (2026-09-12)
+
+M0 Skeleton is live: `wayline init` lays out a project and `wayline run` takes one trivial ticket
+from the frontier to a fast-forwarded `main` through a real `claude -p`, unattended, in one
+command. `docs/verification/m0.md` records the run.
+
+The M0 demo, live and unattended (ticket 06, M0 Skeleton).
+
+- `fixtures/projects/m0-live/` is the project the demo runs on: one trivial `code` ticket whose
+  every step is a probe of the harness rather than work anyone wants done. It writes two files
+  inside its touch set, tries one write outside it, delegates one read to an Agent-tool subagent,
+  and names two skills whose `SKILL.md` each carries a passphrase written nowhere else. The suite
+  runs it with the fake worker; the live run of the same project is the record.
+- Two things the live path needed that nothing had, and that no smoke could have found, because
+  neither ticket 03's nor ticket 04's launches went through the conductor. `--json-schema` refuses
+  a schema carrying the 2020-12 meta-schema reference every file under `schemas/` opens with, so
+  the flag now drops it and the first launch died before its session began until it did. And the
+  contract line tells a worker to run `wayline accept` while nothing put the command on its
+  `PATH`, so the harness `bin/` now goes first there.
+- **Only the first `/wayline-<skill>` line of a prompt expands.** The live run dated it from the
+  stream: the worker knew the first skill's passphrase with no tool result carrying it, and had to
+  open the second skill's `SKILL.md` itself to learn the other. It could only do that because a
+  project's skills are committed in its worktree, which is luck rather than a contract. So the
+  conductor inlines the bodies of every skill after the first under a `# The rest of your skills`
+  heading, which is the path Implementation Decisions 3 names for exactly this finding, and a
+  second live run confirmed both passphrases coming back with no file opened.
+- The guards hold inside an Agent-tool subagent, with `agent_id` and `agent_type` in the hook
+  input, as the documentation says and nothing had shown. `WAYLINE_HOOK_RECORD` is how: the
+  command guard appends every hook input it is handed to that file, for a milestone's record and
+  nothing else. It runs in a subshell with its errors dropped, so a recording that cannot be
+  written loses the recording and never the decision. The other two guards do not record, because
+  they are the research note's scripts carried over byte for byte and a test holds them to it.
+- Ten host tools reached the live worker that the coder's `disallowed_tools` did not name, read
+  off `system/init` rather than guessed at. All ten are now on the list. `Monitor` is the one that
+  mattered: it runs a shell command and it is not the `Bash` tool, so neither the role's
+  `Bash(...)` allowlist nor the command guard's `Bash` matcher sees what it runs.
+- The portability seam of M0 criterion 10 is asserted rather than described: one free `launch` and
+  one free `resume` over a `LaunchRequest`, one of each per backend, one backend named
+  `claude_cli`, and no third spelling anywhere in the package.
+- The order the run settled, worth having written down: a `PreToolUse` hook runs first, and its
+  exit 0 means no decision, after which the normal permission flow refuses a call the role's
+  allowlist does not cover. A hook's silence is not permission.
+- A review pass fixed four defects before the ticket landed: the first of a ticket's skills was
+  never looked up, so a misspelled one was a slash-command line expanding into nothing with no
+  problem recorded; the inlined bodies sat outside the tier's context cap and were counted
+  nowhere, so three large skills could have tripled a prompt with `cut` still false; the
+  meta-schema strip was a blanket recursive delete, which would have taken a result field
+  actually named `$schema` out of `properties` and left it in `required`, a schema no worker can
+  satisfy; and the recorder fell back to raw multi-line stdin when `jq` could not compact it,
+  which costs a reader the whole record file rather than the one entry.
+
 The fetch seam, the scout, L0 records, and the knowledge base (ticket 20, M3 Dossiers).
 
 - `wayline.fetch` is the fifth seam: one `fetch(url, headers) -> Response` over a backend, with `UrllibBackend` for the network and `DirectoryBackend` for a directory of recorded responses at `<host>/<request hash>.json`. With an inner backend it is the scout's self-filling cache under `research/.cache/scout/`; without one it is the suite's `fixtures/fetch/`, where a request nobody recorded raises instead of quietly going out. Every outbound request carries `User-Agent: wayline/<tag> (mailto:<owner_email>)`, and the per-host rate limits of `research-notes/06` are enforced in the seam (Crossref 10 per second, arXiv one per 3 s on one connection, OpenAlex and the galleries once a second), with the clock and the sleep injectable so no test sleeps.

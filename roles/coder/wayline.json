@@ -13,7 +13,9 @@
   ],
   "disallowed_tools": [
     "WebFetch", "WebSearch", "NotebookEdit",
-    "mcp__*", "Workflow", "Skill", "EnterWorktree",
-    "CronCreate", "CronDelete", "CronList"
+    "mcp__*", "Workflow", "Skill", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync"
   ]
 }
