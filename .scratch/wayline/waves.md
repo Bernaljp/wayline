@@ -92,12 +92,22 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 
 1. One session, one ticket, one git worktree. A new agent created from `claude agents` gets one by default (`worktree.bgIsolation` is `auto`): `.claude/worktrees/<name>` on branch `worktree-<name>`, branched from origin's `master`. From a terminal, `claude -w ticket-NN --model <alias> --effort <effort>` does the same. Give the session `/implement` with the full path of the ticket file (or the issue URL) and ask it to confirm the title back before it starts. The manual route still works: `git worktree add -b ticket/NN .worktrees/NN master` (the `.worktrees/` directory is ignored), then start Claude Code inside it.
 2. When the agent reports done, it has opened a pull request against `master` (`CLAUDE.md` tells every session to: criteria ticked, `Status: done`, `Closes #<issue>` in the body). Read it on GitHub, wait for the `tests` check, and merge it with a merge commit (the repository allows no other kind, so a tag made on the branch stays on `master`'s line; the remote branch is deleted by the merge). The merge closes the issue, so every dependent's blocked-by count updates on its own.
-3. Then locally: `git pull` on `master` (a new worktree branches from origin's `master`, which the merge already updated, but anything you run on `master` itself needs the pull), and `claude rm <id>` to delete the ended session and its worktree (`git worktree remove .worktrees/NN` for a manual one).
+3. Then locally: `git pull` on `master` (a new worktree branches from origin's `master`, which the merge already updated, but anything you run on `master` itself needs the pull), and run the sweep under "Removing ended sessions" below, which deletes the ended sessions with their worktrees and local branches (`git worktree remove .worktrees/NN` for a manual worktree).
 4. Never use `git stash` across worktrees; `refs/stash` is shared.
 5. Keep two or three sessions in flight at most: the subscription window is shared by every session, and one ticket typically costs a large part of a window.
 6. Run 01 to 05 one at a time on `master` directly (no worktree needed while nothing else runs): they define the modules everything else edits.
 7. The eight milestone demos (06, 15, 19, 26, 36, 43, 47, 53) are integration points: run each alone, on `master`, with the tree clean, and in milestone order, so that every tag from v0.1.0 to v1.0.0 contains the code of the tags before it (`upgrade` moves a project between tags and prints the changelog between them, which needs a straight line). 19 and 26 therefore wait for 15 (wave 8), and 39 and 29 wait for them; this costs no calendar time, since none of the four is on the critical path. The schedule that follows these rules step by step is the order column of `.scratch/wayline/models.md`.
 8. Same-module pairs: 09 before 08 and 10 (recorded as blocked-by edges, so the frontier query holds 08 and 10 until 09 closes), and 38 before 45 in wave 10 (a note only). Running such a pair together is allowed at the price of one real merge and a suite run on `master` afterwards; if the merge conflicts, start a session at the repo root and use `/resolving-merge-conflicts`.
+
+### Removing ended sessions
+
+No session id to look up: this removes every ended background session that lives in a worktree, with its worktree and local branch. `claude rm` keeps a session whose worktree still holds unpushed commits or uncommitted changes and prints why (and the flag that discards them), so the sweep is safe to run at any time, before or after the pull request is merged.
+
+```
+claude agents --json --all | python3 -c "import json,sys; print('\\n'.join(r['id'] for r in json.load(sys.stdin) if r['state'] != 'working' and '/.claude/worktrees/' in r['cwd']))" | xargs -r -n1 claude rm
+```
+
+A single session is `claude rm <id>`, the id being the short hex printed when the session started and listed by `claude agents --json --all`. Keep a session until its pull request is merged, so `claude attach <id>` can reopen it for a fix.
 
 ## Sequential alternative
 
@@ -116,5 +126,5 @@ That prints the frontier: open tickets with no open blocker, which is exactly th
 
 - [ ] pull request read, `tests` check green, merge commit made on GitHub (the merge closes the issue and deletes the remote branch)
 - [ ] the ticket file in the pull request has `Status: done` and every criterion ticked; an unticked one is named in the body, decide whether it blocks
-- [ ] `git pull` on local `master`; `claude rm <id>`
+- [ ] `git pull` on local `master`; the session sweep ("Removing ended sessions")
 - [ ] if it was a milestone demo: `docs/verification/mN.md` in the pull request and the tag pushed (`git push --tags`)
