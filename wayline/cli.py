@@ -55,7 +55,7 @@ VERBS = [
     Verb("answer", "answer <id> \"<text>\"", "answer a decision ticket from the command line", "views"),
     Verb("switch", "switch <path>", "make another project the active one", "views", lazy("wayline.project", "switch_command")),
     Verb("feedback", "feedback \"<text>\"", "file feedback for the evolve loop", "views"),
-    Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services"),
+    Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services", lazy("wayline.dashboard", "serve_command")),
     Verb("tick", "tick", "the recurrent job that relaunches work after windows, answers, and jobs", "services"),
     Verb("accept", "accept [--where worktree|rebased|main]", "run the ticket's machine acceptance inside a worktree (called by workers)", "worktree", lazy("wayline.gates", "accept")),
     Verb("consult", "consult <slug> \"<question>\"", "ask the consultant one question about one dossier (called by workers)", "worktree"),

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wayline</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>wayline</h1>
+  <nav id="tabs" aria-label="projects"></nav>
+  <p id="transport" class="note"></p>
+</header>
+
+<main>
+  <section id="overview" aria-labelledby="overview-heading">
+    <h2 id="overview-heading">Overview</h2>
+    <div id="overview-body" class="panel">loading...</div>
+  </section>
+
+  <section id="journal" aria-labelledby="journal-heading">
+    <h2 id="journal-heading">Journal</h2>
+    <p id="journal-note" class="note"></p>
+    <ol id="journal-tail" class="tail" reversed></ol>
+  </section>
+</main>
+
+<footer>
+  <p class="note">Read-only in M1. The graph, the ticket pages, and the log tail arrive with ticket 12.</p>
+</footer>
+
+<!-- Pinned, checked in, and served as static assets; never imported by the harness. See vendor/VENDOR.md. -->
+<script src="/vendor/marked.umd.js"></script>
+<script src="/vendor/purify.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
