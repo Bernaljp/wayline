@@ -1,19 +1,21 @@
 {
-  "role": "verifier",
-  "summary": "Answers one Type-B question about one subject from the paths it was given, reading only, and returns the verdict.",
-  "kinds": [],
+  "id": "verifier",
+  "scope_kind": "global",
+  "capability_summary": "Answers one Type-B question about one subject from the paths it was given, reading only, and returns the verdict.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "84a4cf8456849b02ffcdd9ab3e4c0389d544b565c91667fa1fe5a5974bf05915",
   "may_judge": true,
   "output_schema": "verdict",
   "allowed_tools": [
-    "Read", "Glob", "Grep",
-    "Bash(git show*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
+    "Read", "Glob", "Grep", "Bash(git show*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
     "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)"
   ],
   "disallowed_tools": [
-    "Edit", "Write", "NotebookEdit", "Agent", "WebFetch", "WebSearch",
-    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree",
-    "CronCreate", "CronDelete", "CronList",
-    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
-    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync"
+    "Edit", "Write", "NotebookEdit", "Agent", "WebFetch", "WebSearch", "mcp__*", "Workflow", "Skill",
+    "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete", "CronList", "Monitor",
+    "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger", "ScheduleWakeup", "TaskOutput",
+    "TaskStop", "ReportFindings", "DesignSync"
   ]
 }
