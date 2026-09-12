@@ -26,7 +26,9 @@ from wayline import HARNESS_ROOT, POLICY_PATH, TAG
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, atomic_write, now_ts
-from wayline.resources import ResourceError, render_resources, snapshot as resources_snapshot
+from wayline.resources import (
+    LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
+)
 from wayline.tickets import (
     GRAPH, by_status, empty_graph, frontier, open_decisions, read_graph, read_tickets, refresh_graph,
 )
@@ -62,8 +64,8 @@ JOURNAL = "journal.jsonl"
 FINDINGS = "findings.jsonl"
 MANIFEST = "manifest.json"
 
-# The job statuses that mean a job is still on the machine (Implementation Decisions 6).
-LIVE_JOB_STATUSES = ("pending", "running")
+# `LIVE_JOB_STATUSES` (Implementation Decisions 6) is the job runner's, re-exported here because
+# the views were reading it from this module before the runner existed.
 
 _DETECT = object()
 _HERMES_PYTHON = Path(".hermes/hermes-agent/venv/bin/python")
