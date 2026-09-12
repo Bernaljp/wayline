@@ -11,7 +11,16 @@ Figure machine checks, schemas, and the house style (ticket 49, M7 Figures, docs
 - `wayline.figure_checks` runs the 19 Type-A checks of research-notes 11 Section 3 and returns the `checks` block of `figure_result`, one `{id, type: "A", pass, tool, detail}` per check. A tool that is not installed fails its check, since a gate that cannot look cannot pass.
 - The harness stays standard-library. What needs matplotlib runs as `figures/checks/artists.py` in the project's own environment: it wraps `savefig` and writes an artist report with the texts actually drawn (size at the target width, extent, role, halo), the panels, the lines marked `required:` or `optional:`, the structure marked `connector:` or `container:`, and the colormaps with their `quantity:`. The clean-room regeneration runs the generator through that script with `python -I`, in a directory holding only the generator, its declared inputs, and the house style. One run gives the exit status, the regenerated files, and the report.
 - Written here in the standard library because no check that uses them needs a plotting library: a PDF content-stream walk (text sizes through the text and transformation matrices, colors, rasters), a PNG decoder, mean SSIM with scikit-image's defaults, and CIEDE2000 under Machado's protanopia, deuteranopia, and tritanopia simulations. CIEDE2000 is checked against Sharma, Wu and Dalal's published pairs.
-- `fixtures/figures/` holds a sample project (a figure that passes all 19 checks, one that reads an undeclared file, one drawn from unseeded noise) and per-check passing and failing PDFs and PNGs, rebuilt by `fixtures/figures/make.py`.
+- `fixtures/figures/` holds a sample project (a figure that passes all 19 checks, one that reads an undeclared file, one drawn from unseeded noise) and per-check passing and failing PDFs and PNGs, rebuilt by `fixtures/figures/make.py`. The checks that read an artist report or a caption are tested against committed reports that small real generators wrote, so they run where matplotlib is not installed.
+- A review pass fixed six checks that would have been wrong before the ticket landed:
+  - A solid `LineCollection`, which is how networkx draws edges, answers its line style as a dash tuple, so every required edge drawn that way read as dashed.
+  - Every colormapped plot failed the palette check, because forty neighbouring viridis steps were compared pairwise as new hues; a colormapped artist's colors now count as its ramp, which is checked as a ramp.
+  - An axis labelled "x" or a legend entry "y" was taken for a panel.
+  - A caption's "(a) ... and (b) ..." lost its (b).
+  - Mixed data was grouped by run rather than by result artifact, so two files of one run in one panel went undisclosed.
+  - A PDF-only figure drawn from unseeded noise regenerated, since only its text layer was compared; both PDFs are now rasterized and compared by SSIM as well.
+
+  A `verified` result now needs every check to pass, `svg` left the request formats because no check reads it, and an exception while describing a figure no longer stops it being saved.
 
 arXiv e-print sources and the LaTeX inventory (ticket 21, M3 Dossiers).
 

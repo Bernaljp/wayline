@@ -52,7 +52,10 @@ def main(argv=None):
     original = Figure.savefig
 
     def savefig(figure, fname, *args, **kwargs):
-        reports.append(describe(figure, fname, options.width_mm))
+        try:
+            reports.append(describe(figure, fname, options.width_mm))
+        except Exception as failure:  # a report that cannot be written must not stop the figure being saved
+            reports.append({"saved_to": _relative(fname), "error": "%s: %s" % (type(failure).__name__, failure)})
         return original(figure, fname, *args, **kwargs)
 
     Figure.savefig = savefig
@@ -95,16 +98,27 @@ def describe(figure, fname, width_mm):
     width_in = figure.get_figwidth()
     scale = (width_mm / 25.4) / width_in if width_mm else 1.0
 
-    tick_labels = set()
+    tick_labels, axis_labels, legend_texts = set(), set(), set()
     for axes in figure.axes:
         for axis in (axes.xaxis, axes.yaxis):
+            axis_labels.add(axis.label)
             for tick in axis.get_major_ticks() + axis.get_minor_ticks():
                 tick_labels.update((tick.label1, tick.label2))
+    for legend in [axes.get_legend() for axes in figure.axes] + list(figure.legends):
+        if legend is not None:
+            legend_texts.update(legend.get_texts())
+            legend_texts.add(legend.get_title())
 
-    texts, panel_texts = [], []
+    texts, panel_texts, colors = [], [], set()
     for text in drawn:
         content = text.get_text()
-        role = "ticklabel" if text in tick_labels else ("panel_label" if PANEL_TEXT.match(content.strip()) else "text")
+        if text in tick_labels:
+            role = "ticklabel"
+        elif text in axis_labels or text in legend_texts:
+            role = "text"  # an axis named "x" or a legend entry "y" is not a panel
+        else:
+            role = "panel_label" if PANEL_TEXT.match(content.strip()) else "text"
+        colors.add(to_hex(to_rgba(text.get_color()), keep_alpha=False).upper())
         extent = text.get_window_extent(renderer)
         texts.append({
             "text": content,
@@ -126,21 +140,22 @@ def describe(figure, fname, width_mm):
         if axes is not None:
             _add_panel(panels, seen, PANEL_TEXT.match(text.get_text().strip()).group(1), axes, renderer, width_px, height_px)
 
-    marked, structure, mappables, colors = [], [], [], set()
+    marked, structure, mappables = [], [], []
     for artist in figure.findobj():
         if not _shown(artist):
             continue
         gid = artist.get_gid() or ""
         kind = gid.split(":", 1)[0]
         own = _colors(artist, to_rgba, to_hex, Line2D, Patch, Collection)
-        colors.update(own)
+        in_colorbar = getattr(getattr(artist, "axes", None), "_colorbar", None) is not None
+        mapped = isinstance(artist, ScalarMappable) and artist.get_array() is not None
+        if not mapped and not in_colorbar:
+            colors.update(own)  # a colormapped artist's colors are its ramp's, which `mappables` names
         if kind in ("required", "optional"):
             marked.append({"gid": gid, "kind": kind, "linestyle": _linestyle(artist)})
         elif kind in ("connector", "container"):
             structure.append({"gid": gid, "colors": sorted(own)})
-        if isinstance(artist, ScalarMappable) and artist.get_array() is not None:
-            if getattr(getattr(artist, "axes", None), "_colorbar", None) is not None:
-                continue  # a colorbar repeats its mappable's colormap
+        if mapped and not in_colorbar:  # a colorbar repeats its mappable's colormap
             mappables.append({"cmap": artist.get_cmap().name, "quantity": gid.split(":", 1)[1] if kind == "quantity" else None})
 
     return {
@@ -189,11 +204,20 @@ def _nearest_axes(figure, text, renderer):
     return best
 
 
+LINESTYLE_NAMES = {"-": "solid", "--": "dashed", "-.": "dashdot", ":": "dotted", "None": "none", " ": "none", "": "none"}
+
+
 def _linestyle(artist):
+    """solid, dashed, dashdot, dotted, or none. A line or a patch answers with a name; a collection
+    (networkx's edges, `LineCollection`) answers with `[(offset, dashes), ...]`, and no dashes is solid."""
     style = artist.get_linestyle()
     if isinstance(style, str):
-        return {"-": "solid", "--": "dashed", "-.": "dashdot", ":": "dotted", "None": "none", " ": "none", "": "none"}.get(style, style)
-    return "dashed"  # a dash tuple
+        return LINESTYLE_NAMES.get(style, style)
+    if isinstance(style, list):
+        style = style[0] if style else (0, None)
+    if isinstance(style, tuple) and len(style) == 2:
+        return "dashed" if style[1] else "solid"
+    return "dashed"
 
 
 def _colors(artist, to_rgba, to_hex, line_type, patch_type, collection_type):

@@ -84,7 +84,7 @@
         "min_font_pt": {"type": "number", "minimum": 0},
         "min_dpi": {"type": "integer", "minimum": 1},
         "max_words": {"type": ["integer", "null"], "minimum": 1, "description": "the word cap; a graphical abstract must have one"},
-        "formats": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["pdf", "png", "svg"]}},
+        "formats": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["pdf", "png"]}},
         "library": {"type": "string", "pattern": "\\S", "description": "matplotlib, tikz, and so on, from figures/style.json"}
       }
     },

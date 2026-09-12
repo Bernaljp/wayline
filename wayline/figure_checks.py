@@ -53,7 +53,13 @@ __all__ = [
     "FigureContext", "CleanRoom", "PdfFacts", "run_checks", "check_outcome",
     "pdf_facts", "parse_pdffonts", "parse_pdfimages", "png_size", "png_luma", "ssim",
     "hex_to_rgb", "srgb_to_lab", "ciede2000", "simulate_cvd", "CVD_KINDS", "is_grey",
-    "lint_caption", "forbidden_tokens",
+    "lint_caption", "forbidden_tokens", "caption_panels", "run_clean_room", "TOOL",
+    "check_fonts_embedded", "check_journal_width", "check_resolution", "check_min_font_pt",
+    "check_max_words", "check_forbidden_text", "check_caption_panels", "check_caption_lint",
+    "check_generator_clean", "check_regenerates", "check_palette", "check_one_ramp_per_quantity",
+    "check_required_vs_optional_line_style", "check_selection_representativeness",
+    "check_schematic_disclosed", "check_mixed_data_disclosed", "check_crops", "check_text_overlap",
+    "check_provenance",
 ]
 
 CHECK_IDS = (
@@ -186,8 +192,10 @@ class FigureContext:
         self.tools = tools or Tools()
         self.policy = policy if policy is not None else _figures_policy(self.project)
         self.style = style if style is not None else self._read_style()
+        self.artists_error = None  # what the artist script said when it could not describe the figure
         self._artists = artists
         self._clean_room = None
+        self._pdf_facts = {}
 
     @property
     def target(self):
@@ -226,9 +234,24 @@ class FigureContext:
     def artists(self):
         """The artist report of the final figure: given, or written by the clean-room run."""
         if self._artists is None:
-            room = self.clean_room()
-            self._artists = _figure_report(room.report, self.final) or False
+            report = _figure_report(self.clean_room().report, self.final)
+            if report and report.get("error"):
+                self.artists_error, report = report["error"], None
+            self._artists = report or False
         return self._artists or None
+
+    def room_failure(self):
+        """Why the clean-room run failed, or None when it succeeded or has not run."""
+        room = self._clean_room
+        if room is None or room.returncode == 0:
+            return None
+        return room.error or "exit %s" % room.returncode
+
+    def pdf_facts(self, path):
+        """`pdf_facts(path)`, read once however many checks ask."""
+        if path not in self._pdf_facts:
+            self._pdf_facts[path] = pdf_facts(path)
+        return self._pdf_facts[path]
 
     def close(self):
         if self._clean_room is not None and self._clean_room.root is not None:
@@ -859,9 +882,7 @@ _BRITISH = re.compile(
     re.IGNORECASE,
 )
 _FORWARD_REFERENCE = re.compile(r"\bsee(?:\s+also)?\s+(?:Figure|Fig\.)\s*S?\d+", re.IGNORECASE)
-# A panel entry opens the caption or follows a sentence's end: "(a) Held-out AUROC. (b) Runtime",
-# so a unit in parentheses, "Runtime (s)", is not read as panel s.
-_CAPTION_PANEL = re.compile(r"(?:^|[.;:!?*]\s*)\(([a-z])\)(?=\s)", re.MULTILINE)
+_CAPTION_PANEL = re.compile(r"\(([a-z])\)")
 # Without an artist report, a panel letter is a word of one letter on its own in the PDF text.
 _PANEL_TOKEN = re.compile(r"^([a-z])$")
 
@@ -879,6 +900,18 @@ def lint_caption(text, framework=False):
     if framework and not _FORWARD_REFERENCE.search(text):
         problems.append("a framework figure's caption needs a forward reference (see also Figure N)")
     return problems
+
+
+def caption_panels(text):
+    """The panel letters a caption has entries for: its `(a)`, `(b)` markers taken as the unbroken
+    run from a, wherever they stand, so "(a) AUROC and (b) runtime" counts both while a unit in
+    parentheses, "runtime (s)", stays outside the run of a two-panel figure."""
+    letters, run = set(_CAPTION_PANEL.findall(text)), set()
+    for letter in "abcdefghijklmnopqrstuvwxyz":
+        if letter not in letters:
+            break
+        run.add(letter)
+    return run
 
 
 def forbidden_tokens(text, allow=(), genes=(), datasets=()):
@@ -910,6 +943,8 @@ def _pdftotext(context, path, layout=True):
 
 def _needs_pdf(context, check_id):
     """The final PDF, or a failed outcome saying why there is none."""
+    if not context.wants("pdf"):
+        return None, check_outcome(check_id, False, "this check reads the PDF, and the request's formats name none")
     pdf = context.final_file("pdf")
     if pdf is None:
         return None, check_outcome(check_id, False, "final.pdf %r is not on disk" % context.final.get("pdf"))
@@ -917,10 +952,11 @@ def _needs_pdf(context, check_id):
 
 
 def _no_artists(check_id, context):
-    room = context._clean_room
     why = ""
-    if room is not None and room.returncode != 0:
-        why = " (the generator did not run in the clean room: %s)" % (room.error or "exit %s" % room.returncode)
+    if context.artists_error:
+        why = " (the artist script could not describe the figure: %s)" % context.artists_error
+    elif context.room_failure():
+        why = " (the generator did not run in the clean room: %s)" % context.room_failure()
     return check_outcome(check_id, False, "no artist report, which only a matplotlib generator run through figures/checks/artists.py writes%s" % why)
 
 
@@ -1019,7 +1055,7 @@ def check_min_font_pt(context):
     sizes, sources = [], []
     pdf = context.final_file("pdf")
     if pdf is not None:
-        facts = pdf_facts(pdf)
+        facts = context.pdf_facts(pdf)
         if facts.text_sizes and facts.page_width_pt:
             scale = target_pt / facts.page_width_pt
             smallest = min(facts.text_sizes) * scale
@@ -1088,7 +1124,7 @@ def check_caption_panels(context):
     images = [key for key in ("pdf", "png") if context.wants(key) and context.final_file(key) is None]
     if images:
         return check_outcome("caption_panels", False, "the figure's %s is not on disk" % " and ".join(images))
-    in_caption = set(_CAPTION_PANEL.findall(caption))
+    in_caption = caption_panels(caption)
     artists = context.artists()
     if artists:
         in_figure, source = {panel["label"] for panel in artists.get("panels") or []}, "artists"
@@ -1126,17 +1162,17 @@ def check_generator_clean(context):
     if run.returncode != 0:
         lines = [line.replace(str(source), context.final["generator"]) for line in run.stdout.splitlines() if ": F" in line]
         problems.append("ruff: %s" % (_shorten(lines) if lines else _tail(run.stderr or run.stdout, 2)))
-    room = context.clean_room()
-    if room.returncode != 0:
-        problems.append("the generator did not exit 0 in a fresh interpreter: %s" % (room.error or "exit %s" % room.returncode))
+    context.clean_room()
+    if context.room_failure():
+        problems.append("the generator did not exit 0 in a fresh interpreter: %s" % context.room_failure())
     detail = _shorten(problems) if problems else "no unused imports or variables (F401, F841); exits 0 in a fresh interpreter"
     return check_outcome("generator_clean", not problems, detail, tool="ruff+python -I")
 
 
 def check_regenerates(context):
     room = context.clean_room()
-    if room.returncode != 0:
-        return check_outcome("regenerates", False, "the generator did not run from its declared inputs: %s" % (room.error or "exit %s" % room.returncode))
+    if context.room_failure():
+        return check_outcome("regenerates", False, "the generator did not run from its declared inputs: %s" % context.room_failure())
     minimum = float(context.policy.get("ssim_min", DEFAULT_SSIM_MIN))
     parts, problems = [], []
     if context.wants("png"):
@@ -1159,12 +1195,39 @@ def check_regenerates(context):
         again = room.root / context.final.get("pdf", "") if context.final.get("pdf") else None
         if shipped is None or again is None or not again.is_file():
             problems.append("no PDF to compare")
-        elif " ".join(_pdftotext(context, shipped).split()) != " ".join(_pdftotext(context, again).split()):
-            problems.append("the regenerated PDF's text layer differs")
         else:
-            parts.append("text layer identical")
+            if " ".join(_pdftotext(context, shipped).split()) != " ".join(_pdftotext(context, again).split()):
+                problems.append("the regenerated PDF's text layer differs")
+            else:
+                parts.append("text layer identical")
+            # The pixels too: a PDF-only figure drawn from unseeded noise keeps its text layer.
+            score, why = _pdf_ssim(context, shipped, again, room.root / ".wayline")
+            if score is None:
+                problems.append(why)
+            else:
+                parts.append("pdf raster ssim %.4f" % score)
+                if score < minimum:
+                    problems.append("the regenerated PDF's raster ssim %.4f is under %.2f" % (score, minimum))
     detail = "; ".join(parts + problems)
     return check_outcome("regenerates", not problems, detail, tool="clean-room+ssim+pdftotext")
+
+
+REGENERATE_DPI = 100  # enough pixels to see a changed mark, few enough for a standard-library SSIM
+
+
+def _pdf_ssim(context, first, second, work):
+    """SSIM of two PDFs' first pages rasterized in grayscale, or `(None, why)`."""
+    lumas = []
+    for name, pdf in (("shipped", first), ("regenerated", second)):
+        stem = Path(work) / ("raster-" + name)
+        run = context.tools.run("pdftoppm", ["-r", REGENERATE_DPI, "-gray", "-png", "-singlefile", pdf, stem])
+        if run.returncode != 0 or not stem.with_suffix(".png").is_file():
+            return None, "pdftoppm could not rasterize the %s PDF (exit %d)" % (name, run.returncode)
+        lumas.append(png_luma(stem.with_suffix(".png")))
+    (width, height, one), (width_again, height_again, two) = lumas
+    if (width, height) != (width_again, height_again):
+        return None, "the regenerated PDF rasterizes to %dx%d, the shipped one to %dx%d" % (width_again, height_again, width, height)
+    return ssim(one, two, width, height), None
 
 
 def check_palette(context):
@@ -1173,20 +1236,19 @@ def check_palette(context):
         return check_outcome("palette", False, "the house style has no colors (figures/style.json)")
     threshold = float(style.get("cvd_min_delta_e", DEFAULT_CVD_MIN_DELTA_E))
     allowed = _style_colors(style)
-    colors, images = set(), 0
     pdf = context.final_file("pdf")
-    if pdf is not None:
-        facts = pdf_facts(pdf)
-        colors, images = facts.colors, facts.images
     artists = context.artists()
-    if pdf is None and not artists:
-        return check_outcome("palette", False, "neither a final PDF nor an artist report to read colors from")
     if artists:
-        for item in artists.get("structure") or []:
-            colors.update(item.get("colors") or [])
-        colors.update(artists.get("colors") or [])
-    elif images:
-        return check_outcome("palette", False, "the PDF embeds %d raster(s) whose colormap only the artist report names" % images)
+        # The report separates a colormapped artist's colors, which are its ramp's and are checked
+        # as a ramp below, from the colors the figure spends one by one. The PDF cannot.
+        colors = set(artists.get("colors") or [])
+    elif pdf is None:
+        return check_outcome("palette", False, "neither a final PDF nor an artist report to read colors from")
+    else:
+        facts = context.pdf_facts(pdf)
+        if facts.images:
+            return check_outcome("palette", False, "the PDF embeds %d raster(s) whose colormap only the artist report names" % facts.images)
+        colors = set(facts.colors)
     hues = sorted(color.upper() for color in colors if not is_grey(color))
     in_style = [color for color in hues if min(_distance(color, other) for other in allowed) <= IN_STYLE_DELTA_E]
     new = [color for color in hues if color not in in_style]
@@ -1307,13 +1369,13 @@ def check_mixed_data_disclosed(context):
     scopes = {}
     for entry in context.final.get("inputs") or []:
         for panel in entry.get("panels") or ["*"]:
-            scopes.setdefault(panel, set()).add(entry.get("run_id"))
+            scopes.setdefault(panel, set()).add(entry.get("path"))  # an artifact, not a run: one run writes several
     for panel in scopes:
         if panel != "*":
             scopes[panel] |= scopes.get("*", set())
     mixed = {panel: runs for panel, runs in scopes.items() if len(runs) > 1 and (panel != "*" or len(scopes) == 1)}
     if not mixed:
-        return check_outcome("mixed_data_disclosed", True, "no panel draws from more than one result")
+        return check_outcome("mixed_data_disclosed", True, "no panel draws from more than one result artifact")
     where = "; ".join("%s from %s" % ("the figure" if panel == "*" else "panel " + panel, ", ".join(sorted(map(str, runs))))
                       for panel, runs in sorted(mixed.items()))
     caption = context.read_final("caption")
@@ -1328,7 +1390,7 @@ def check_crops(context):
     pdf, missing = _needs_pdf(context, "crops")
     if missing:
         return missing
-    facts = pdf_facts(pdf)
+    facts = context.pdf_facts(pdf)
     if not facts.page_width_pt:
         return check_outcome("crops", False, "the PDF has no MediaBox to crop against")
     dpi = int(context.policy.get("crops_dpi", DEFAULT_CROPS_DPI))

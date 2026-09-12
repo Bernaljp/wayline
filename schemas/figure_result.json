@@ -8,7 +8,7 @@
   "oneOf": [
     {"properties": {"status": {"const": "candidates_ranked"}}, "required": ["candidates"]},
     {"properties": {"status": {"const": "selected"}}, "required": ["candidates", "selected"]},
-    {"properties": {"status": {"const": "verified"}, "honesty_verdict": {"properties": {"verdict": {"const": "pass"}}}}, "required": ["final", "checks", "honesty_verdict"]},
+    {"properties": {"status": {"const": "verified"}, "checks": {"minItems": 1, "items": {"properties": {"pass": {"const": true}}}}, "honesty_verdict": {"properties": {"verdict": {"const": "pass"}}}}, "required": ["final", "checks", "honesty_verdict"]},
     {"properties": {"status": {"const": "failed_checks"}}, "required": ["checks"]},
     {"properties": {"status": {"const": "honesty_failed"}, "honesty_verdict": {"properties": {"verdict": {"const": "fail"}}}}, "required": ["checks", "honesty_verdict"]},
     {"properties": {"status": {"const": "refused"}}, "required": ["refusals"]},

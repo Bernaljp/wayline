@@ -10,7 +10,11 @@ Needs matplotlib and numpy (the suite itself needs neither). What it writes, all
     regenerate in the clean room;
   - `noisy`, whose generator draws unseeded noise, so a regeneration does not match.
   `request.json` is the figure_request the three share.
-- `samples/`: one passing and one failing file per check that reads a PDF or PNG with a tool.
+- `samples/`: one passing and one failing file per check that reads a PDF or PNG with a tool;
+  `samples/artists/`, the artist reports `figures/checks/artists.py` wrote for small generators,
+  for the checks that read one (committed, so those checks are tested where matplotlib is not
+  installed); and the captions, notes, generators, and declared statistics and inputs the
+  caption and disclosure checks read.
 
 Every PDF is saved without a creation date so a rebuild changes no byte that does not matter.
 """
@@ -22,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import matplotlib
@@ -254,6 +259,106 @@ def build_samples():
     page("palette-new-distinct.pdf", 89, 30, lines(["#0072B2", "#882255"]))
     write(SAMPLES / "unused_import.py", "import os\nimport sys\n\n\ndef main():\n    unused = 1\n    return sys.argv\n")
     write(SAMPLES / "clean_generator.py", "import sys\n\n\ndef main():\n    return sys.argv\n")
+    build_artist_reports()
+    build_text_samples()
+
+
+# Each generator saves out.pdf; the artist report written for it is samples/artists/<name>.json.
+ARTIST_GENERATORS = {
+    "ramp-allowed": """
+figure, axes = plt.subplots(figsize=(89 / 25.4, 50 / 25.4))
+values = numpy.linspace(0, 1, 40)
+axes.scatter(values, values ** 2, c=values, cmap="viridis", s=6, gid="quantity:density")
+axes.plot(values, values, color="#E69F00")
+""",
+    "ramp-wrong": """
+figure, axes = plt.subplots(figsize=(89 / 25.4, 50 / 25.4))
+axes.imshow(numpy.arange(16).reshape(4, 4), cmap="magma").set_gid("quantity:density")
+axes.add_patch(Rectangle((0, 0), 2, 2, fill=False, edgecolor="#E69F00", gid="container:stage"))
+""",
+    "lines-good": """
+figure, axes = plt.subplots(figsize=(89 / 25.4, 50 / 25.4))
+axes.add_collection(LineCollection([[(0, 0), (1, 1)], [(0, 1), (1, 0)]], colors="#000000", linestyle="solid", gid="required:edges"))
+axes.plot([0, 1], [0.5, 0.5], "--", color="#808080", gid="optional:feedback")
+axes.add_patch(Rectangle((0.1, 0.1), 0.2, 0.2, fill=False, edgecolor="#808080", gid="container:stage"))
+""",
+    "lines-bad": """
+figure, axes = plt.subplots(figsize=(89 / 25.4, 50 / 25.4))
+axes.plot([0, 1], [0, 1], "--", color="#000000", gid="required:edge")
+axes.add_collection(LineCollection([[(0, 1), (1, 0)]], colors="#000000", linestyle="solid", gid="optional:feedback"))
+""",
+    "text-clear": """
+figure = plt.figure(figsize=(89 / 25.4, 30 / 25.4))
+figure.text(0.1, 0.5, "AUROC", fontsize=7)
+figure.text(0.6, 0.5, "Runtime", fontsize=7)
+""",
+    "text-overlap": """
+figure = plt.figure(figsize=(89 / 25.4, 30 / 25.4))
+figure.text(0.1, 0.5, "AUROC", fontsize=7)
+figure.text(0.13, 0.5, "Runtime", fontsize=7)
+figure.text(0.93, 0.2, "Clipped label", fontsize=7)
+""",
+    "panels-ab": """
+figure, (left, right) = plt.subplots(1, 2, figsize=(89 / 25.4, 45 / 25.4), layout="constrained")
+left.plot([0, 1], [0, 1], label="y", color="#0072B2")
+left.set_xlabel("x")
+left.legend()
+left.set_title("a", loc="left", fontweight="bold")
+right.bar(["X", "A"], [0.9, 0.8], color="#E69F00")
+right.set_title("b", loc="left", fontweight="bold")
+""",
+}
+
+ARTIST_PRELUDE = """import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy
+from matplotlib.collections import LineCollection
+from matplotlib.patches import Rectangle
+matplotlib.rcParams["pdf.fonttype"] = 42
+"""
+
+
+def build_artist_reports():
+    directory = SAMPLES / "artists"
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, body in ARTIST_GENERATORS.items():
+        with tempfile.TemporaryDirectory() as work:
+            write(Path(work) / "gen.py", ARTIST_PRELUDE + body + 'figure.savefig("out.pdf", metadata={"CreationDate": None})\n')
+            subprocess.run([sys.executable, "-I", str(HARNESS / "figures" / "checks" / "artists.py"), "--out", "report.json", "--width-mm", "89", "gen.py"],
+                           cwd=work, check=True, env=dict(os.environ, MPLBACKEND="Agg"))
+            report = json.loads((Path(work) / "report.json").read_text(encoding="utf-8"))
+        write_json(directory / (name + ".json"), report)
+
+
+def build_text_samples():
+    write(SAMPLES / "caption-ab.md", "**Figure 1.** (a) Held-out AUROC of methods X and A and (b) their runtime (s).\n")
+    write(SAMPLES / "caption-a-only.md", "**Figure 1.** (a) Held-out AUROC of methods X and A; runtime (s) is not shown.\n")
+    write(SAMPLES / "caption-abc.md", "**Figure 1.** (a) Held-out AUROC. (b) Runtime. (c) Memory.\n")
+    write(SAMPLES / "caption-clean.md", "**Figure 1.** (a) Held-out AUROC per method, normalized to the baseline color scale.\n")
+    write(SAMPLES / "caption-british.md", "**Figure 1.** (a) Held-out AUROC — normalised, in colour.\n")
+    write(SAMPLES / "caption-framework.md", "**Figure 2.** (a) The pipeline from reads to networks.\n")
+    write(SAMPLES / "caption-framework-referenced.md", "**Figure 2.** (a) The pipeline from reads to networks (see also Figure 3).\n")
+    for name, caption, notes, generator in (
+        ("disclosed", "**Figure 2.** (b) The regulatory motif is schematic.\n", "Panel b draws the regulatory motif by hand.\n",
+         "# schematic: regulatory motif, drawn by hand\nprint('motif')\n"),
+        ("undisclosed", "**Figure 2.** (b) The regulatory motif.\n", "Panel b.\n", "print('motif')\n"),
+    ):
+        write(SAMPLES / "schematic" / name / "caption.md", caption)
+        write(SAMPLES / "schematic" / name / "notes.md", notes)
+        write(SAMPLES / "schematic" / name / "generator.py", generator)
+    write_json(SAMPLES / "selection-within.json", [{"panel": "c", "criterion": "sign_balance", "displayed": 0.55, "global": 0.57, "tolerance": 0.10}])
+    write_json(SAMPLES / "selection-outside.json", [{"panel": "c", "criterion": "sign_balance", "displayed": 0.55, "global": 0.75, "tolerance": 0.10}])
+
+    def inputs(first, second, second_path="results/t8-a1/y.csv"):
+        return [{"path": "results/t7-a1/x.csv", "sha256": "0" * 64, "run_id": "t7-a1", "panels": first},
+                {"path": second_path, "sha256": "0" * 64, "run_id": second_path.split("/")[1], "panels": second}]
+
+    write_json(SAMPLES / "inputs-one-per-panel.json", inputs(["a"], ["b"]))
+    write_json(SAMPLES / "inputs-two-in-a-panel.json", inputs(["a"], ["a"]))
+    write_json(SAMPLES / "inputs-two-artifacts-of-one-run.json", inputs(["a"], ["a"], second_path="results/t7-a1/y.csv"))
+    write(SAMPLES / "caption-mixed.md", "**Figure 1.** (a) Both results [[mixed-data]].\n")
+    write(SAMPLES / "caption-unmixed.md", "**Figure 1.** (a) Both results.\n")
 
 
 if __name__ == "__main__":

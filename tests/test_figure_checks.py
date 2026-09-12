@@ -92,6 +92,16 @@ class FigureCase(unittest.TestCase):
             self.assertIn(fragment, outcome["detail"])
 
 
+def sample_report(name):
+    """The committed artist report `samples/artists/<name>.json`, which `make.py` wrote by running a
+    small generator through `figures/checks/artists.py`: the figure's entry, as a check reads it."""
+    return load(SAMPLES / "artists" / (name + ".json"))["figures"][-1]
+
+
+def sample_text(name):
+    return (SAMPLES / name).read_text(encoding="utf-8")
+
+
 def artists(texts=(), panels=(), marked=(), structure=(), mappables=(), colors=(), width_px=700, height_px=400):
     return {
         "saved_to": "figures/f/f.pdf",
@@ -267,39 +277,47 @@ class CaptionPanelsTest(FigureCase):
     def setUp(self):
         super().setUp()
         self.figure(png="png-300dpi.png")
-        self.report = artists(panels=[{"label": "a", "bbox": [0, 0, 0.5, 1]}, {"label": "b", "bbox": [0.5, 0, 1, 1]}])
+        # Two panels titled a and b, plus an axis labelled "x" and a legend entry "y", which are not panels.
+        self.report = sample_report("panels-ab")
         self.req = request(target={"formats": ["png"]})
 
+    def test_the_artist_report_finds_the_two_panels_and_not_the_axis_label(self):
+        self.assertEqual({panel["label"] for panel in self.report["panels"]}, {"a", "b"})
+
     def test_every_panel_with_a_caption_entry_passes(self):
-        self.figure(caption="**Figure 1.** (a) Held-out AUROC. (b) Runtime (s) against AUROC.\n")
+        self.figure(caption=sample_text("caption-ab.md"))  # "(a) ... and (b) their runtime (s)"
         self.assertPasses(self.check("caption_panels", req=self.req, artists=self.report))
 
     def test_a_panel_without_a_caption_entry_fails(self):
-        self.figure(caption="**Figure 1.** (a) Held-out AUROC.\n")
+        self.figure(caption=sample_text("caption-a-only.md"))
         self.assertFails(self.check("caption_panels", req=self.req, artists=self.report), "panel(s) b have no caption entry")
 
     def test_a_caption_entry_without_a_panel_fails(self):
-        self.figure(caption="**Figure 1.** (a) Held-out AUROC. (b) Runtime. (c) Memory.\n")
+        self.figure(caption=sample_text("caption-abc.md"))
         self.assertFails(self.check("caption_panels", req=self.req, artists=self.report), "caption entries c name no panel")
 
     def test_a_missing_caption_fails(self):
         self.assertFails(self.check("caption_panels", req=self.req, artists=self.report), "is not on disk")
 
+    def test_caption_markers_are_the_unbroken_run_from_a(self):
+        self.assertEqual(fc.caption_panels("(a) AUROC and (b) runtime (s)."), {"a", "b"})
+        self.assertEqual(fc.caption_panels("Runtime (s) of (b)."), set())
+
 
 class CaptionLintTest(FigureCase):
     def test_a_clean_caption_passes(self):
-        self.figure(caption="(a) Held-out AUROC per method, normalized to the baseline color scale.\n")
+        self.figure(caption=sample_text("caption-clean.md"))
         self.assertPasses(self.check("caption_lint"))
 
     def test_an_em_dash_and_british_spelling_fail(self):
-        self.figure(caption="(a) Held-out AUROC — normalised, in colour.\n")
+        self.figure(caption=sample_text("caption-british.md"))
         self.assertFails(self.check("caption_lint"), "1 em dash", "colour, normalised")
 
     def test_a_framework_caption_needs_a_forward_reference(self):
-        self.figure(caption="(a) The pipeline from reads to networks.\n")
+        self.figure(caption=sample_text("caption-framework.md"))
         framework = request(kind="framework", register="conceptual")
         self.assertFails(self.check("caption_lint", req=framework), "forward reference")
-        self.figure(caption="(a) The pipeline from reads to networks (see also Figure 3).\n")
+        self.figure(caption=sample_text("caption-framework-referenced.md"))
         self.assertPasses(self.check("caption_lint", req=framework))
 
     def test_american_words_that_end_like_british_ones_are_not_flagged(self):
@@ -360,6 +378,14 @@ class RegeneratesTest(FixtureProjectCase):
         self.assertFalse(outcome["pass"], outcome["detail"])
         self.assertIn("is under 0.99", outcome["detail"])
 
+    def test_a_pdf_only_figure_is_compared_by_its_pixels_too(self):
+        self.request["target"]["formats"] = ["pdf"]
+        outcome = self.run_checks("noisy", only={"regenerates"})["regenerates"]
+        self.assertFalse(outcome["pass"], outcome["detail"])
+        self.assertIn("text layer identical", outcome["detail"])
+        self.assertIn("raster ssim", outcome["detail"])
+        self.assertTrue(self.run_checks("fig1", only={"regenerates"})["regenerates"]["pass"])
+
     def test_a_generator_reading_an_undeclared_file_does_not_run_in_the_clean_room(self):
         report = self.run_checks("undeclared", only={"regenerates", "generator_clean"})
         self.assertFalse(report["regenerates"]["pass"])
@@ -387,6 +413,12 @@ class PaletteTest(FigureCase):
         self.assertPasses(outcome)
         self.assertIn("1 from the house style, 1 new", outcome["detail"])
 
+    def test_a_colormapped_plot_drawn_with_its_house_ramp_passes(self):
+        # Forty neighbouring viridis steps would fail the pairwise distance; they are the ramp's, not new hues.
+        outcome = self.check("palette", artists=sample_report("ramp-allowed"))
+        self.assertPasses(outcome)
+        self.assertIn("colormaps viridis", outcome["detail"])
+
     def test_a_colormap_outside_the_house_ramps_fails(self):
         self.figure(pdf="palette-okabe-ito.pdf")
         report = artists(mappables=[{"cmap": "jet", "quantity": "density"}])
@@ -403,12 +435,12 @@ class PaletteTest(FigureCase):
 
 class OneRampPerQuantityTest(FigureCase):
     def test_each_quantity_drawn_with_its_own_ramp_passes(self):
-        report = artists(mappables=[{"cmap": "viridis", "quantity": "density"}], structure=[{"gid": "connector:e1", "colors": ["#808080"]}])
-        self.assertPasses(self.check("one_ramp_per_quantity", artists=report))
+        self.assertPasses(self.check("one_ramp_per_quantity", artists=sample_report("ramp-allowed")))
+        self.assertPasses(self.check("one_ramp_per_quantity", artists=sample_report("lines-good")))  # grey structure
 
-    def test_a_quantity_drawn_with_another_ramp_fails(self):
-        report = artists(mappables=[{"cmap": "magma", "quantity": "density"}])
-        self.assertFails(self.check("one_ramp_per_quantity", artists=report), "density is drawn with magma, not its ramp viridis")
+    def test_a_quantity_drawn_with_another_ramp_and_colored_structure_fail(self):
+        self.assertFails(self.check("one_ramp_per_quantity", artists=sample_report("ramp-wrong")),
+                         "density is drawn with magma, not its ramp viridis", "container:stage is colored #E69F00")
 
     def test_one_ramp_spent_on_two_quantities_fails(self):
         style = dict(load(PROJECT / "figures" / "style.json"), ramp_per_quantity={"density": "viridis", "expression": "viridis"})
@@ -419,25 +451,18 @@ class OneRampPerQuantityTest(FigureCase):
     def test_a_colormap_without_a_quantity_fails(self):
         self.assertFails(self.check("one_ramp_per_quantity", artists=artists(mappables=[{"cmap": "viridis", "quantity": None}])), "declares no quantity")
 
-    def test_colored_structure_fails(self):
-        report = artists(structure=[{"gid": "container:stage", "colors": ["#E69F00"]}])
-        self.assertFails(self.check("one_ramp_per_quantity", artists=report), "container:stage is colored #E69F00")
-
     def test_without_an_artist_report_the_check_does_not_pass(self):
         self.assertFails(self.check("one_ramp_per_quantity"), "no artist report")
 
 
 class LineStyleTest(FigureCase):
     def test_required_solid_and_optional_dashed_pass(self):
-        report = artists(marked=[{"gid": "required:e1", "kind": "required", "linestyle": "solid"},
-                                 {"gid": "optional:e2", "kind": "optional", "linestyle": "dashed"}])
-        self.assertPasses(self.check("required_vs_optional_line_style", artists=report))
+        # The required edges are a solid LineCollection, which answers its line style as a dash tuple.
+        self.assertPasses(self.check("required_vs_optional_line_style", artists=sample_report("lines-good")))
 
     def test_a_dashed_required_edge_and_a_solid_optional_edge_fail(self):
-        report = artists(marked=[{"gid": "required:e1", "kind": "required", "linestyle": "dashed"},
-                                 {"gid": "optional:e2", "kind": "optional", "linestyle": "solid"}])
-        self.assertFails(self.check("required_vs_optional_line_style", artists=report),
-                         "required:e1 is required but drawn dashed", "optional:e2 is optional but drawn solid")
+        self.assertFails(self.check("required_vs_optional_line_style", artists=sample_report("lines-bad")),
+                         "required:edge is required but drawn dashed", "optional:feedback is optional but drawn solid")
 
     def test_without_an_artist_report_the_check_does_not_pass(self):
         self.assertFails(self.check("required_vs_optional_line_style"), "no artist report")
@@ -448,45 +473,48 @@ class LineStyleTest(FigureCase):
 
 class SelectionTest(FigureCase):
     def test_a_subset_within_its_tolerance_passes(self):
-        statistics = [{"panel": "c", "criterion": "sign_balance", "displayed": 0.55, "global": 0.57, "tolerance": 0.10}]
-        self.assertPasses(self.check("selection_representativeness", selection_statistics=statistics))
+        self.assertPasses(self.check("selection_representativeness", selection_statistics=load(SAMPLES / "selection-within.json")))
 
     def test_a_subset_outside_its_tolerance_fails(self):
-        statistics = [{"panel": "c", "criterion": "sign_balance", "displayed": 0.55, "global": 0.75, "tolerance": 0.10}]
-        self.assertFails(self.check("selection_representativeness", selection_statistics=statistics), "over the tolerance 0.1")
+        self.assertFails(self.check("selection_representativeness", selection_statistics=load(SAMPLES / "selection-outside.json")),
+                         "over the tolerance 0.1")
 
 
 class SchematicTest(FigureCase):
     elements = [{"panel": "b", "element": "regulatory motif", "reason": "below threshold in all runs", "caption_phrase": "schematic"}]
 
+    def use(self, sample):
+        folder = "schematic/%s/" % sample
+        self.figure(caption=sample_text(folder + "caption.md"), notes=sample_text(folder + "notes.md"), generator=sample_text(folder + "generator.py"))
+
     def test_an_element_named_in_the_caption_notes_and_generator_passes(self):
-        self.figure(caption="(b) The regulatory motif is schematic.\n", notes="Panel b draws the regulatory motif by hand.\n",
-                    generator="# schematic: regulatory motif, drawn by hand\n")
+        self.use("disclosed")
         self.assertPasses(self.check("schematic_disclosed", schematic_elements=self.elements))
 
     def test_an_undisclosed_element_fails(self):
-        self.figure(caption="(b) The regulatory motif.\n", notes="Panel b.\n", generator="print('motif')\n")
+        self.use("undisclosed")
         self.assertFails(self.check("schematic_disclosed", schematic_elements=self.elements),
                          "does not say 'schematic'", "notes do not name regulatory motif", "no '# schematic: regulatory motif'")
 
 
 class MixedDataTest(FigureCase):
-    def inputs(self, first, second):
-        return [{"path": "results/t7-a1/x.csv", "sha256": "0" * 64, "run_id": "t7-a1", "panels": first},
-                {"path": "results/t8-a1/y.csv", "sha256": "0" * 64, "run_id": "t8-a1", "panels": second}]
-
-    def test_one_run_per_panel_passes(self):
-        self.final["inputs"] = self.inputs(["a"], ["b"])
+    def test_one_artifact_per_panel_passes(self):
+        self.final["inputs"] = load(SAMPLES / "inputs-one-per-panel.json")
         self.assertPasses(self.check("mixed_data_disclosed"))
 
-    def test_two_runs_in_one_panel_without_the_marker_fail(self):
-        self.final["inputs"] = self.inputs(["a"], ["a"])
-        self.figure(caption="(a) Both runs.\n")
-        self.assertFails(self.check("mixed_data_disclosed"), "panel a from t7-a1, t8-a1", "does not carry [[mixed-data]]")
+    def test_two_artifacts_in_one_panel_without_the_marker_fail(self):
+        self.final["inputs"] = load(SAMPLES / "inputs-two-in-a-panel.json")
+        self.figure(caption=sample_text("caption-unmixed.md"))
+        self.assertFails(self.check("mixed_data_disclosed"), "panel a from results/t7-a1/x.csv, results/t8-a1/y.csv", "does not carry [[mixed-data]]")
 
-    def test_two_runs_in_one_panel_with_the_marker_pass(self):
-        self.final["inputs"] = self.inputs(["a"], None)
-        self.figure(caption="(a) Both runs [[mixed-data]].\n")
+    def test_two_artifacts_of_one_run_are_still_mixed(self):
+        self.final["inputs"] = load(SAMPLES / "inputs-two-artifacts-of-one-run.json")
+        self.figure(caption=sample_text("caption-unmixed.md"))
+        self.assertFails(self.check("mixed_data_disclosed"), "results/t7-a1/y.csv")
+
+    def test_two_artifacts_in_one_panel_with_the_marker_pass(self):
+        self.final["inputs"] = load(SAMPLES / "inputs-two-in-a-panel.json")
+        self.figure(caption=sample_text("caption-mixed.md"))
         self.assertPasses(self.check("mixed_data_disclosed"))
 
 
@@ -514,19 +542,18 @@ class CropsTest(FigureCase):
     def test_no_pdf_fails(self):
         self.assertFails(self.check("crops"), "is not on disk")
 
+    def test_a_request_for_no_pdf_says_so(self):
+        self.figure(png="png-300dpi.png")
+        self.assertFails(self.check("crops", req=request(target={"formats": ["png"]})), "formats name none")
+
 
 class TextOverlapTest(FigureCase):
     def test_separate_texts_inside_the_figure_pass(self):
-        report = artists(texts=[text("AUROC", (10, 10, 60, 20)), text("Runtime", (100, 10, 160, 20))])
-        self.assertPasses(self.check("text_overlap", artists=report))
+        self.assertPasses(self.check("text_overlap", artists=sample_report("text-clear")))
 
-    def test_overlapping_texts_fail(self):
-        report = artists(texts=[text("AUROC", (10, 10, 60, 20)), text("Runtime", (40, 12, 100, 22))])
-        self.assertFails(self.check("text_overlap", artists=report), "'AUROC' and 'Runtime' overlap")
-
-    def test_text_past_the_figure_edge_fails(self):
-        report = artists(texts=[text("Runtime (s)", (680, 10, 730, 20))], width_px=700)
-        self.assertFails(self.check("text_overlap", artists=report), "clipped at the figure's edge")
+    def test_overlapping_and_clipped_texts_fail(self):
+        self.assertFails(self.check("text_overlap", artists=sample_report("text-overlap")),
+                         "'Clipped label' is clipped at the figure's edge", "'AUROC' and 'Runtime' overlap")
 
     def test_without_an_artist_report_the_check_does_not_pass(self):
         self.assertFails(self.check("text_overlap"), "no artist report")
@@ -610,6 +637,9 @@ image.set_gid("quantity:density")
 figure.colorbar(image, ax=left)
 left.set_xlim(0, 3)
 left.text(0.5, 0.5, "halo", fontsize=5, path_effects=[effects.withStroke(linewidth=2, foreground="w")])
+from matplotlib.collections import LineCollection
+right.add_collection(LineCollection([[(0, 0), (1, 0)]], linestyle="solid", gid="required:e3"))
+left.set_xlabel("x")
 right.plot([0, 1], [0, 1], "--", gid="optional:e1")
 right.plot([0, 1], [1, 0], "-", gid="required:e2", color="#0072B2")
 right.plot([0, 1], [0.5, 0.5], color="#E69F00", gid="connector:c1")
@@ -639,7 +669,9 @@ figure.savefig("out.pdf")
         right_ticks = [item for item in figure["texts"] if item["role"] == "ticklabel" and item["extent"][0] > figure["figure"]["width_px"] * 0.75]
         self.assertEqual(right_ticks, [], "the axis turned off draws no tick labels")
         self.assertEqual({panel["label"] for panel in figure["panels"]}, {"a", "b"})
-        self.assertEqual(sorted((line["gid"], line["linestyle"]) for line in figure["marked_lines"]), [("optional:e1", "dashed"), ("required:e2", "solid")])
+        self.assertEqual(sorted((line["gid"], line["linestyle"]) for line in figure["marked_lines"]),
+                         [("optional:e1", "dashed"), ("required:e2", "solid"), ("required:e3", "solid")])
+        self.assertEqual(texts["x"]["role"], "text")
         self.assertEqual(figure["structure"], [{"gid": "connector:c1", "colors": ["#E69F00"]}])
         self.assertEqual(figure["mappables"], [{"cmap": "viridis", "quantity": "density"}])
         self.assertIn("#0072B2", figure["colors"])
