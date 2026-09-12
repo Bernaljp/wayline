@@ -19,7 +19,7 @@
 
 ## How it was verified
 
-`python -m unittest` from the repository root: 950 tests, all passing, of which `tests/test_inventory.py` is this ticket's 81. They run on `fixtures/arxiv/tiny-paper.tar.gz`, a paper written for the suite, because the arXiv terms of use forbid re-serving an e-print and no real source is committed anywhere in this repository. The two tests that need `pdflatex` and the one that needs `pdftoppm` skip themselves where the tools are absent, which is what CI does; `latexpand` has a test of its own and an in-house expander stands in for it.
+`python -m unittest` from the repository root: 1065 tests after master was merged in, all passing, of which `tests/test_inventory.py` is this ticket's 81. They run on `fixtures/arxiv/tiny-paper.tar.gz`, a paper written for the suite, because the arXiv terms of use forbid re-serving an e-print and no real source is committed anywhere in this repository. The two tests that need `pdflatex` and the one that needs `pdftoppm` skip themselves where the tools are absent, which is what CI does; `latexpand` has a test of its own and an in-house expander stands in for it.
 
 The live run is recorded in `docs/verification/m3.md`: `1706.03762` fetched from the live `export.arxiv.org` into a project outside the repository, one request, 4.6 s for the whole chain, and all eight of the last criterion's counts matching. The e-print was deleted afterwards. A second pass offered `If-None-Match`, took the 304, and re-inventoried the kept source to the same counts without moving a byte.
 
