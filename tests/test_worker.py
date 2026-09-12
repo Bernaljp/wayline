@@ -102,13 +102,22 @@ class InterfaceTest(unittest.TestCase):
     def test_session_dir_and_env_follow_the_launch_line(self):
         run = worker.session_dir("/proj", 3, 2)
         self.assertEqual(run, Path("/proj/research/sessions/3/2"))
-        env = worker.session_env("/proj", 3, 2, ["src/", "tests/test_x.py"])
+        env = worker.session_env("/proj", 3, 2, ["src/", "tests/test_x.py"], harness_root="/harness", path="/usr/bin")
         self.assertEqual(env, {
             "TICKET_TOUCHES": "src/:tests/test_x.py",
             "TICKET_ACCEPTANCE_FILE": "/proj/research/sessions/3/2/acceptance.json",
             "WAYLINE_PROJECT": "/proj", "WAYLINE_TICKET": "3", "WAYLINE_RUN": "/proj/research/sessions/3/2",
+            "PATH": "/harness/bin:/usr/bin",
         })
         self.assertEqual(worker.session_env("/proj", 3, 2, "src/")["TICKET_TOUCHES"], "src/")
+
+    def test_the_worker_reaches_wayline_accept_through_the_harness_bin(self):
+        """The contract tells the worker to run `wayline accept`, so the command has to resolve."""
+        first = worker.session_env("/proj", 3, 2, ["src/"], harness_root="/harness", path="/usr/bin:/bin")
+        self.assertEqual(first["PATH"].split(os.pathsep)[0], "/harness/bin")
+        again = worker.session_env("/proj", 3, 2, ["src/"], harness_root="/harness", path=first["PATH"])
+        self.assertEqual(again["PATH"], first["PATH"])  # composing a launch twice does not stack it
+        self.assertTrue((Path(worker.HARNESS_ROOT) / "bin" / "wayline").exists())
 
     def test_backend_names(self):
         with mock.patch.dict(os.environ, {"WAYLINE_LAUNCHER": "claude_cli"}):
@@ -949,6 +958,40 @@ class SeamTest(unittest.TestCase):
 
     def test_the_backend_class_is_named_after_the_spec(self):
         self.assertEqual(worker.ClaudeCli.name, "claude_cli")
+
+    def test_there_is_one_launch_and_one_resume_and_both_live_in_the_launcher(self):
+        """Decision 3's interface, asserted rather than described (M0 criterion 10, ticket 06).
+
+        One free `launch` and one free `resume` over a `LaunchRequest`, one of each per backend,
+        and no third spelling anywhere in the package. A later ticket that gives the conductor a
+        `launch` of its own fails here rather than at a port to another CLI.
+        """
+        found = {}
+        for path, tree in self.modules():
+            owners = {}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    for inner in node.body:
+                        owners[id(inner)] = node.name
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in ("launch", "resume"):
+                    found.setdefault(node.name, set()).add(
+                        (path.relative_to(HARNESS_ROOT).as_posix(), owners.get(id(node))))
+        self.assertEqual(sorted(found), ["launch", "resume"])
+        for name in ("launch", "resume"):
+            with self.subTest(function=name):
+                self.assertEqual(found[name], {
+                    ("wayline/worker.py", None),            # the seam the harness calls
+                    ("wayline/worker.py", "ClaudeCli"),     # the only real backend
+                    ("wayline/worker.py", "FakeLauncher"),  # the one the suite runs on
+                })
+
+    def test_the_seam_carries_every_field_of_the_launch_line(self):
+        """A backend that cannot be handed one of these is not a substitute for the other."""
+        self.assertEqual(
+            [field.name for field in dataclasses.fields(worker.LaunchRequest)],
+            ["role", "model", "effort", "prompt", "agent_json", "allowed_tools", "disallowed_tools",
+             "settings_path", "add_dirs", "cwd", "env", "schema_path", "max_minutes"])
         self.assertEqual(worker.FakeLauncher.name, "fake")
 
 

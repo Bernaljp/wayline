@@ -25,6 +25,9 @@ HOOKS = HARNESS_ROOT / "hooks"
 ALLOW = 0
 BLOCK = 2
 
+# The spelling the recording tests block on, named once.
+BLOCKED_SPELLING = "git push origin main"
+
 
 def run_guard(script, payload, env=None):
     """Pipe one hook input into a guard; `env` values of None unset the variable."""
@@ -34,6 +37,7 @@ def run_guard(script, payload, env=None):
     environment.pop("CLAUDE_PROJECT_DIR", None)
     environment.pop("WAYLINE_RESULTS", None)
     environment.pop("WAYLINE_ALLOWED_ROOTS", None)
+    environment.pop("WAYLINE_HOOK_RECORD", None)
     for key, value in (env or {}).items():
         if value is None:
             environment.pop(key, None)
@@ -535,6 +539,79 @@ class WorkerSettingsTest(unittest.TestCase):
         with self.assertRaises(GateError) as caught:
             worker_settings(fake)
         self.assertIn("does not exist", str(caught.exception))
+
+
+class HookRecordTest(unittest.TestCase):
+    """`WAYLINE_HOOK_RECORD` keeps what the guard was handed, and never changes what it decides.
+
+    It is how a milestone's live record gets the hook input as seen, `agent_id` and `agent_type`
+    included, without a guard growing a second job (`docs/verification/m0.md`).
+    """
+
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp(prefix="wayline-record-"))
+        self.record = self.directory / "hooks.jsonl"
+        self.worktree = self.directory / "worktree"
+        (self.worktree / "m0").mkdir(parents=True)
+
+    def _run(self, command, extra=None):
+        payload = pretooluse("Bash", {"command": command}, self.worktree)
+        payload.update(extra or {})
+        return run_guard("command_guard.sh", payload, {
+            "CLAUDE_PROJECT_DIR": str(self.worktree),
+            "TICKET_TOUCHES": "m0/",
+            "WAYLINE_HOOK_RECORD": str(self.record),
+        })
+
+    def _lines(self):
+        return [json.loads(line) for line in self.record.read_text(encoding="utf-8").splitlines() if line]
+
+    def test_an_allowed_command_is_recorded_as_one_json_line(self):
+        self.assertEqual(self._run("cat README.md").returncode, ALLOW)
+        [recorded] = self._lines()
+        self.assertEqual(recorded["tool_name"], "Bash")
+        self.assertEqual(recorded["tool_input"]["command"], "cat README.md")
+
+    def test_a_subagent_call_keeps_the_fields_the_record_is_for(self):
+        result = self._run("cat research/INTAKE.md",
+                           {"agent_id": "agent_015x", "agent_type": "general-purpose"})
+        self.assertEqual(result.returncode, ALLOW)
+        [recorded] = self._lines()
+        self.assertEqual(recorded["agent_id"], "agent_015x")
+        self.assertEqual(recorded["agent_type"], "general-purpose")
+
+    def test_a_blocked_command_is_recorded_too_and_still_blocked(self):
+        result = self._run(BLOCKED_SPELLING)
+        self.assertEqual(result.returncode, BLOCK)
+        self.assertIn("command_guard:", result.stderr)
+        self.assertEqual(len(self._lines()), 1)
+
+    def test_every_call_appends_rather_than_replacing(self):
+        for command in ("cat a", "cat b", "cat c"):
+            self._run(command)
+        self.assertEqual([line["tool_input"]["command"] for line in self._lines()],
+                         ["cat a", "cat b", "cat c"])
+
+    def test_a_record_that_cannot_be_written_loses_the_record_not_the_command(self):
+        """Recording is never a reason to block, and never a reason to let something through."""
+        unwritable = self.directory / "no-such-directory" / "hooks.jsonl"
+        payload = pretooluse("Bash", {"command": BLOCKED_SPELLING}, self.worktree)
+        result = run_guard("command_guard.sh", payload, {
+            "CLAUDE_PROJECT_DIR": str(self.worktree),
+            "TICKET_TOUCHES": "m0/",
+            "WAYLINE_HOOK_RECORD": str(unwritable),
+        })
+        self.assertEqual(result.returncode, BLOCK)
+        self.assertNotIn("No such file", result.stderr)
+        self.assertFalse(unwritable.exists())
+
+    def test_nothing_is_written_when_the_variable_is_unset(self):
+        payload = pretooluse("Bash", {"command": "cat README.md"}, self.worktree)
+        result = run_guard("command_guard.sh", payload, {
+            "CLAUDE_PROJECT_DIR": str(self.worktree), "TICKET_TOUCHES": "m0/",
+        })
+        self.assertEqual(result.returncode, ALLOW)
+        self.assertFalse(self.record.exists())
 
 
 if __name__ == "__main__":

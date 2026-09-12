@@ -1,0 +1,36 @@
+[
+  {
+    "envelope": {
+      "structured_output": {
+        "ticket_id": 1,
+        "status": "done",
+        "summary": "Wrote m0/hello.txt and m0/report.md, was refused the one write outside the touch set, delegated one read to a subagent, appended both skill passphrases, ran wayline accept, and committed on the ticket branch.",
+        "outputs_written": ["m0/hello.txt", "m0/report.md", "m0/skills-seen.txt"],
+        "commands_run": ["cat research/INTAKE.md", "wayline accept"],
+        "checks": {"test -f m0/hello.txt": "pass", "grep -qx hello m0/hello.txt": "pass", "test -s m0/report.md": "pass"},
+        "findings": [
+          {
+            "text": "The write to escaped.txt was refused, verbatim: touch_set_guard: Write to escaped.txt is outside the ticket touch set (m0/). Write only under the listed paths, or report that the ticket needs a wider touch set.",
+            "provenance": "research/tickets/01-probe-the-guards-the-skills-and-the-subagent.md#what-to-do"
+          },
+          {
+            "text": "Both /wayline-<skill> lines expanded: m0/skills-seen.txt carries a passphrase from each of the ticket's two skills, and neither passphrase is written anywhere else in the project.",
+            "provenance": "research/tickets/01-probe-the-guards-the-skills-and-the-subagent.md#what-to-do"
+          }
+        ],
+        "cost": {"turns": 12, "minutes": 2}
+      },
+      "num_turns": 12,
+      "duration_ms": 91000,
+      "usage": {"input_tokens": 18, "output_tokens": 640}
+    },
+    "patch": {
+      "files": {
+        "m0/hello.txt": "hello\n",
+        "m0/report.md": "# M0 live probe\n\nProve that the conductor runs one ticket end to end through a real `claude -p`.\n\nThe write to `escaped.txt` was refused by the touch-set hook, which named the ticket's touch set in its reason.\n",
+        "m0/skills-seen.txt": "m0-note: plumbline-4f2a\nm0-tally: sextant-9c7b\n"
+      },
+      "message": "ticket 1: probe the guards, the skills, and the subagent"
+    }
+  }
+]

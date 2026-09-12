@@ -703,8 +703,14 @@ def session_dir(project, ticket, attempt):
     return Path(project) / "research" / "sessions" / str(ticket) / str(attempt)
 
 
-def session_env(project, ticket, attempt, touches):
-    """The `TICKET_*` and `WAYLINE_*` variables the launch line exports, as strings."""
+def session_env(project, ticket, attempt, touches, harness_root=HARNESS_ROOT, path=None):
+    """The `TICKET_*`, `WAYLINE_*` and `PATH` variables the launch line exports, as strings.
+
+    The contract line tells the worker to run `wayline accept`, and the stop guard blocks the
+    stop until the file that verb writes exists, so the command has to resolve. The harness
+    `bin/` goes first on the worker's `PATH` for that reason: a project need not install the
+    command, and a worker cannot reach a different checkout's copy of it by accident.
+    """
     run = session_dir(project, ticket, attempt)
     if isinstance(touches, (str, Path)):
         touches = [touches]
@@ -714,7 +720,16 @@ def session_env(project, ticket, attempt, touches):
         "WAYLINE_PROJECT": str(project),
         "WAYLINE_TICKET": str(ticket),
         "WAYLINE_RUN": str(run),
+        "PATH": _path_with_harness_bin(harness_root, path),
     }
+
+
+def _path_with_harness_bin(harness_root, path=None):
+    """`<harness>/bin` first on `PATH`, and only once however often a launch is composed."""
+    binary = str(Path(harness_root) / "bin")
+    inherited = os.environ.get("PATH", os.defpath) if path is None else path
+    rest = [entry for entry in inherited.split(os.pathsep) if entry and entry != binary]
+    return os.pathsep.join([binary] + rest)
 
 
 def _resume_dir(run_dir):
