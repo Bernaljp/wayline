@@ -317,7 +317,7 @@ class VerbTest(ProjectTestCase):
     def test_a_level_that_is_not_built_yet_exits_2_and_says_which_ticket_builds_it(self):
         code, _, complaint = self.run_verb("absorb", "--level", "2", "--project", str(self.project))
         self.assertEqual(code, 2)
-        self.assertIn("tickets 21 to 24", complaint)
+        self.assertIn("tickets 21, 22, and 24", complaint)
 
     def test_a_level_outside_the_three_is_an_argument_error(self):
         self.assertEqual(self.run_verb("absorb", "--level", "9", "--project", str(self.project))[0], 2)
