@@ -140,10 +140,11 @@ class RoleFileRefusalTest(unittest.TestCase):
 
     def test_a_settings_file_naming_another_role_is_refused(self):
         settings = json.loads(self.settings.read_text(encoding="utf-8"))
-        settings["role"] = "verifier"
+        settings["id"] = "verifier"
         self.rewrite(self.settings, json.dumps(settings))
-        with self.assertRaises(RoleError):
+        with self.assertRaises(RoleError) as caught:
             self.role()
+        self.assertIn("verifier", str(caught.exception))
 
     def test_a_tool_list_that_is_not_a_list_of_strings_is_refused(self):
         settings = json.loads(self.settings.read_text(encoding="utf-8"))

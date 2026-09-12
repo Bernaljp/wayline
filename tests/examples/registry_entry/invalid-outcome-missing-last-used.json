@@ -1,0 +1,13 @@
+{
+  "id": "wayline-plan",
+  "kind": "skill",
+  "scope_kind": "global",
+  "path": "skills/wayline-plan",
+  "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "capability_summary": "Cuts the ticket graph from SPEC.md and assigns a role and skills to every ticket.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": ["skill/wayline-plan"],
+  "outcome": {"assigned": 1, "passed_first_time": 1, "failed": 0},
+  "assignable": true
+}
