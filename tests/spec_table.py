@@ -55,6 +55,23 @@ def spec_verbs(spec_path):
     return verbs
 
 
+_LAUNCH_REQUEST = re.compile(r"`LaunchRequest` with `([^`]+)`")
+_ENVELOPE = re.compile(r"`Envelope` carries `([^`]+)`")
+
+
+def spec_seam_fields(spec_path):
+    """The `LaunchRequest` and `Envelope` field lists of Implementation Decisions 3, in the spec's order."""
+    text = spec_path.read_text(encoding="utf-8")
+
+    def names(pattern):
+        match = pattern.search(text)
+        if match is None:
+            raise LookupError("field list %r not found in the spec" % pattern.pattern)
+        return [part.strip() for part in _PARENTHETICAL.sub("", match.group(1)).split(",")]
+
+    return names(_LAUNCH_REQUEST), names(_ENVELOPE)
+
+
 def spec_journal_vocabulary(spec_path):
     """The journal event vocabulary of Implementation Decisions 2.
 
