@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "policy",
+  "description": "The global defaults in policy.json (Implementation Decisions 14); a project overrides any key in harness.json.policy.",
+  "type": "object",
+  "required": [
+    "difficulty", "budget", "roles", "verifier", "max_parallel_workers", "poll_seconds", "heartbeat_stale_s",
+    "acceptance_timeout_s", "pacing", "context_pack", "escalation", "stall", "proposals", "goal", "absorb",
+    "consultant", "kb", "provenance", "artifacts", "reservations", "jobs", "tick", "dashboard", "fixtures",
+    "figures", "plot_index", "quiet_hours", "per_window_worker_budget"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "difficulty": {
+      "type": "object",
+      "required": ["1", "2", "3", "4", "5"],
+      "additionalProperties": false,
+      "properties": {
+        "1": {"$ref": "#/$defs/tier"}, "2": {"$ref": "#/$defs/tier"}, "3": {"$ref": "#/$defs/tier"},
+        "4": {"$ref": "#/$defs/tier"}, "5": {"$ref": "#/$defs/tier"}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["small", "medium", "large"],
+      "additionalProperties": false,
+      "properties": {
+        "small": {"$ref": "#/$defs/budget"}, "medium": {"$ref": "#/$defs/budget"}, "large": {"$ref": "#/$defs/budget"}
+      }
+    },
+    "roles": {"type": "object", "additionalProperties": {"$ref": "#/$defs/model_effort"}},
+    "verifier": {
+      "type": "object",
+      "description": "the verifier's model and effort by the author's model",
+      "required": ["sonnet", "opus", "fable"],
+      "additionalProperties": false,
+      "properties": {
+        "sonnet": {"$ref": "#/$defs/model_effort"}, "opus": {"$ref": "#/$defs/model_effort"}, "fable": {"$ref": "#/$defs/model_effort"}
+      }
+    },
+    "max_parallel_workers": {"type": "integer", "minimum": 1},
+    "poll_seconds": {"type": "number", "minimum": 1},
+    "heartbeat_stale_s": {"type": "number", "minimum": 1},
+    "acceptance_timeout_s": {"type": "number", "minimum": 1},
+    "pacing": {
+      "type": "object",
+      "required": ["stop_at", "cheap_at"],
+      "additionalProperties": false,
+      "properties": {
+        "stop_at": {"type": "number", "minimum": 0, "maximum": 1},
+        "cheap_at": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "context_pack": {
+      "type": "object",
+      "required": ["max_chars"],
+      "additionalProperties": false,
+      "properties": {
+        "max_chars": {
+          "type": "object",
+          "required": ["sonnet", "opus", "fable"],
+          "additionalProperties": false,
+          "properties": {
+            "sonnet": {"type": "integer", "minimum": 1}, "opus": {"type": "integer", "minimum": 1}, "fable": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "required": ["resume", "tier_up", "then", "raise_after_failures"],
+      "additionalProperties": false,
+      "properties": {
+        "resume": {"type": "integer", "minimum": 0},
+        "tier_up": {"type": "integer", "minimum": 0},
+        "then": {"type": "array", "items": {"type": "string", "enum": ["split", "needs_human"]}},
+        "raise_after_failures": {"type": "integer", "minimum": 1}
+      }
+    },
+    "stall": {
+      "type": "object",
+      "required": ["waves"],
+      "additionalProperties": false,
+      "properties": {"waves": {"type": "integer", "minimum": 1}}
+    },
+    "proposals": {
+      "type": "object",
+      "required": ["cap", "dedup"],
+      "additionalProperties": false,
+      "properties": {
+        "cap": {
+          "type": "object",
+          "required": ["strict", "moderate", "exploratory"],
+          "additionalProperties": false,
+          "properties": {
+            "strict": {"type": "integer", "minimum": 0}, "moderate": {"type": "integer", "minimum": 0}, "exploratory": {"type": "integer", "minimum": 0}
+          }
+        },
+        "dedup": {
+          "type": "object",
+          "required": ["similarity", "judged_between"],
+          "additionalProperties": false,
+          "properties": {
+            "similarity": {"type": "number", "minimum": 0, "maximum": 1},
+            "judged_between": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 2, "maxItems": 2}
+          }
+        }
+      }
+    },
+    "goal": {
+      "type": "object",
+      "required": ["min_seeds", "margin_sd"],
+      "additionalProperties": false,
+      "properties": {
+        "min_seeds": {"type": "integer", "minimum": 1},
+        "margin_sd": {"type": "number", "minimum": 0}
+      }
+    },
+    "absorb": {
+      "type": "object",
+      "required": ["l1_max_chars", "l2_per_phase", "chunk_max_chars", "fanout", "workflow_concurrency"],
+      "additionalProperties": false,
+      "properties": {
+        "l1_max_chars": {"type": "integer", "minimum": 1},
+        "l2_per_phase": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "chunk_max_chars": {"type": "integer", "minimum": 1},
+        "fanout": {"type": "string", "enum": ["workflow", "sequential"]},
+        "workflow_concurrency": {"type": "integer", "minimum": 1}
+      }
+    },
+    "consultant": {
+      "type": "object",
+      "required": ["max_questions_per_ticket"],
+      "additionalProperties": false,
+      "properties": {"max_questions_per_ticket": {"type": "integer", "minimum": 0}}
+    },
+    "kb": {
+      "type": "object",
+      "required": ["query_pack_max_chars"],
+      "additionalProperties": false,
+      "properties": {"query_pack_max_chars": {"type": "integer", "minimum": 1}}
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["sample", "min", "all_difficulty_5"],
+      "additionalProperties": false,
+      "properties": {
+        "sample": {"type": "number", "minimum": 0, "maximum": 1},
+        "min": {"type": "integer", "minimum": 0},
+        "all_difficulty_5": {"type": "boolean"}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["commit_threshold_bytes"],
+      "additionalProperties": false,
+      "properties": {"commit_threshold_bytes": {"type": "integer", "minimum": 0}}
+    },
+    "reservations": {
+      "type": "object",
+      "required": ["gpu", "cores", "ram_gb", "processes"],
+      "additionalProperties": false,
+      "properties": {
+        "gpu": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "cores": {"type": "integer", "minimum": 0},
+        "ram_gb": {"type": "number", "minimum": 0},
+        "processes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "jobs": {
+      "type": "object",
+      "required": ["gpu_util_free_below", "gpu_util_samples", "oom_log_tail_bytes", "host_oom_first_doubles_memory"],
+      "additionalProperties": false,
+      "properties": {
+        "gpu_util_free_below": {"type": "integer", "minimum": 0, "maximum": 100},
+        "gpu_util_samples": {"type": "integer", "minimum": 1},
+        "oom_log_tail_bytes": {"type": "integer", "minimum": 1},
+        "host_oom_first_doubles_memory": {"type": "boolean"}
+      }
+    },
+    "tick": {
+      "type": "object",
+      "required": ["on_calendar", "login_warning_days"],
+      "additionalProperties": false,
+      "properties": {
+        "on_calendar": {"type": "string"},
+        "login_warning_days": {"type": "integer", "minimum": 0}
+      }
+    },
+    "dashboard": {
+      "type": "object",
+      "required": ["port", "poll_journal_s", "poll_views_s", "bind"],
+      "additionalProperties": false,
+      "properties": {
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "poll_journal_s": {"type": "number", "minimum": 0},
+        "poll_views_s": {"type": "number", "minimum": 0},
+        "bind": {"type": "string"}
+      }
+    },
+    "fixtures": {
+      "type": "object",
+      "required": ["sample_size", "at_least", "flake_limit", "stable_runs_to_restore", "max_turns_per_suite", "judge"],
+      "additionalProperties": false,
+      "properties": {
+        "sample_size": {"type": "integer", "minimum": 1},
+        "at_least": {"type": "integer", "minimum": 1},
+        "flake_limit": {"type": "integer", "minimum": 0},
+        "stable_runs_to_restore": {"type": "integer", "minimum": 1},
+        "max_turns_per_suite": {"type": "integer", "minimum": 1},
+        "judge": {"$ref": "#/$defs/model_effort"}
+      }
+    },
+    "figures": {
+      "type": "object",
+      "required": ["candidates", "margin_threshold", "ssim_min", "crops_dpi"],
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "type": "object",
+          "required": ["max"],
+          "additionalProperties": false,
+          "properties": {"max": {"type": "integer", "minimum": 1}}
+        },
+        "margin_threshold": {"type": "number", "minimum": 0},
+        "ssim_min": {"type": "number", "minimum": 0, "maximum": 1},
+        "crops_dpi": {"type": "integer", "minimum": 1}
+      }
+    },
+    "plot_index": {
+      "type": "object",
+      "required": ["crawl_rate_per_s", "liveness", "recrawl"],
+      "additionalProperties": false,
+      "properties": {
+        "crawl_rate_per_s": {"type": "number", "minimum": 0},
+        "liveness": {"type": "string", "enum": ["weekly", "monthly", "quarterly"]},
+        "recrawl": {"type": "string", "enum": ["weekly", "monthly", "quarterly"]}
+      }
+    },
+    "quiet_hours": {"type": "null", "description": "none until a night is measured (Implementation Decisions 14)"},
+    "per_window_worker_budget": {"type": "null", "description": "none until a night is measured (Implementation Decisions 14)"}
+  },
+  "$defs": {
+    "model": {"type": "string", "enum": ["haiku", "sonnet", "opus", "fable"]},
+    "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]},
+    "model_effort": {
+      "type": "object",
+      "required": ["model", "effort"],
+      "additionalProperties": false,
+      "properties": {"model": {"$ref": "#/$defs/model"}, "effort": {"$ref": "#/$defs/effort"}}
+    },
+    "tier": {
+      "type": "object",
+      "required": ["model", "effort", "budget"],
+      "additionalProperties": false,
+      "properties": {
+        "model": {"$ref": "#/$defs/model"},
+        "effort": {"$ref": "#/$defs/effort"},
+        "budget": {"type": "string", "enum": ["small", "medium", "large"]}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["max_turns", "max_minutes"],
+      "additionalProperties": false,
+      "properties": {
+        "max_turns": {"type": "integer", "minimum": 1},
+        "max_minutes": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

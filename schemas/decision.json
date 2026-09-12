@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "decision",
+  "description": "A decision record (BRIEF Appendix A, 6.6): the question, the options, the answer, who decided, and what the record carries for a decision ticket.",
+  "type": "object",
+  "required": ["question", "options", "answer", "rationale", "confidence", "decided_by", "reversible", "timestamp"],
+  "additionalProperties": false,
+  "properties": {
+    "ticket": {"type": ["integer", "null"], "minimum": 1},
+    "question": {"type": "string", "pattern": "\\S"},
+    "options": {"type": "array", "items": {"type": "string"}},
+    "recommended": {"type": ["string", "null"]},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "blocking": {"enum": ["subgraph", "all", null]},
+    "human_only": {"type": "boolean"},
+    "answer": {"type": ["string", "null"]},
+    "rationale": {"type": ["string", "null"]},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "decided_by": {"enum": ["human", "decider", null]},
+    "reversible": {"type": "boolean"},
+    "timestamp": {"type": ["string", "null"]}
+  }
+}

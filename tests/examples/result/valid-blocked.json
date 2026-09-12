@@ -1,0 +1,6 @@
+{
+  "ticket_id": 1,
+  "status": "blocked",
+  "summary": "Needs to write docs/",
+  "blocked_on": "docs/index.md"
+}

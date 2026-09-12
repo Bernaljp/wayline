@@ -1,0 +1,22 @@
+{
+  "ts": "2026-09-12T01:02:03.456Z",
+  "event": "ticket_launched",
+  "ticket": 17,
+  "session_id": null,
+  "job": null,
+  "payload": {
+    "ticket": 17,
+    "attempt": 1,
+    "role": "experimenter",
+    "model": "opus",
+    "effort": "high",
+    "skills": [
+      "sweep-runner"
+    ],
+    "worktree": ".worktrees/17",
+    "pid": 4242,
+    "context_chars": 51200,
+    "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "note": "x"
+}

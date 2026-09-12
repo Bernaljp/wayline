@@ -1,0 +1,38 @@
+{
+  "harness_tag": "0.0.0",
+  "autonomy": "checkpoints",
+  "radius": "moderate",
+  "budgets": {
+    "gpu_hours": 40,
+    "wallclock_hours": 72,
+    "usage_windows": 10
+  },
+  "reservations": {
+    "gpu": [],
+    "cores": 8,
+    "ram_gb": 64,
+    "processes": [
+      "jupyter"
+    ]
+  },
+  "pacing": {
+    "stop_at": 0.9,
+    "cheap_at": 0.8
+  },
+  "notify": {
+    "hermes_python": null
+  },
+  "dashboard": {
+    "port": 8765,
+    "bind": "127.0.0.1",
+    "poll_journal_s": 2,
+    "poll_views_s": 5
+  },
+  "policy": {
+    "max_parallel_workers": 1
+  },
+  "docs": {
+    "theme": "furo"
+  },
+  "owner_email": "owner@example.org"
+}

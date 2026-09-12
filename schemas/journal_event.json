@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "journal_event",
+  "description": "One line of research/journal.jsonl (Implementation Decisions 2). The event names are the vocabulary; the payload keys per event are checked by the ledger module against the same table.",
+  "type": "object",
+  "required": ["ts", "event", "ticket", "session_id", "job", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "description": "ISO 8601, UTC, written by the ledger",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "run_started", "run_ended", "phase", "pacing", "paused", "unpaused",
+        "ticket_created", "ticket_launched", "ticket_session", "ticket_result", "ticket_resumed",
+        "acceptance", "integrated", "ticket_done", "ticket_accepted", "ticket_failed", "ticket_blocked",
+        "ticket_needs_human", "ticket_cancelled", "ticket_rerun", "difficulty_raised",
+        "verdict", "finding", "progress", "discarded", "proposal_admitted", "proposal_parked",
+        "decision_opened", "decision",
+        "job_launched", "job_finished", "job_retried", "job_failed", "job_cancelled", "manifest",
+        "stall", "promoted", "demoted", "absorbed", "consulted", "notified", "control", "switched",
+        "feedback", "change_record", "tagged", "pinned", "report_rendered", "paper_started"
+      ]
+    },
+    "ticket": {"type": ["integer", "null"], "minimum": 1},
+    "session_id": {"type": ["string", "null"]},
+    "job": {"type": ["string", "null"]},
+    "payload": {"type": "object"}
+  }
+}

@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""Run the wayline command from any working directory (a symlink to this file works too)."""
+
+import os
+import sys
+
+HARNESS_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+if HARNESS_ROOT not in sys.path:
+    sys.path.insert(0, HARNESS_ROOT)
+
+from wayline.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

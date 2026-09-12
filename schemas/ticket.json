@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ticket",
+  "description": "The frontmatter of tickets/NN-slug.md (BRIEF 8.2, Implementation Decisions 2), plus pinned_difficulty and retry.",
+  "type": "object",
+  "required": ["id", "title", "kind", "difficulty", "status", "blocked_by", "touches", "role", "acceptance", "proposed_by"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "integer", "minimum": 1},
+    "title": {"type": "string", "pattern": "\\S"},
+    "kind": {"$ref": "#/$defs/kind"},
+    "difficulty": {"$ref": "#/$defs/difficulty"},
+    "status": {"type": "string", "enum": ["open", "running", "done", "accepted", "failed", "blocked", "needs_human", "parked"]},
+    "blocked_by": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+    "blocking": {"enum": ["subgraph", "all", null], "description": "decision tickets only"},
+    "human_only": {"type": "boolean", "description": "decision tickets only"},
+    "touches": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the touch set: paths the ticket may write, enforced by the hook"},
+    "resources": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "gpu": {"type": "integer", "minimum": 0},
+        "cpu": {"type": "integer", "minimum": 1},
+        "ram_gb": {"type": "number", "minimum": 0},
+        "wallclock_minutes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "role": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "skills": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"}},
+    "inputs": {"type": "array", "items": {"type": "string"}},
+    "outputs": {"type": "array", "items": {"type": "string"}},
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "Type-A gates: shell commands that must exit 0"},
+        "quality": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "Type-B gates: questions the verifier answers"}
+      }
+    },
+    "goal_metric": {
+      "type": ["object", "null"],
+      "required": ["reports", "expected_direction"],
+      "additionalProperties": false,
+      "properties": {
+        "reports": {"type": "string"},
+        "expected_direction": {"type": "string", "enum": ["up", "down"]}
+      }
+    },
+    "budget": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "max_turns": {"type": "integer", "minimum": 1},
+        "max_minutes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "context_pack": {"type": "array", "items": {"type": "string"}},
+    "origin": {"type": ["string", "null"]},
+    "proposed_by": {"type": "string", "pattern": "^(planner|worker:[0-9]+|decider|human|evolve)$"},
+    "demo": {"type": ["string", "null"]},
+    "pinned_difficulty": {"oneOf": [{"$ref": "#/$defs/difficulty"}, {"type": "null"}], "description": "set by the human; escalation never changes it"},
+    "retry": {
+      "type": ["object", "null"],
+      "description": "experiment tickets only: the footprint ladders of Implementation Decisions 6",
+      "additionalProperties": false,
+      "properties": {
+        "host_oom": {"type": "array", "items": {"type": "object"}},
+        "gpu_oom": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  },
+  "$defs": {
+    "kind": {"type": "string", "enum": ["dossier", "lit", "code", "docs", "experiment", "analysis", "figure", "writing", "review", "decision", "harness"]},
+    "difficulty": {"type": "integer", "minimum": 1, "maximum": 5}
+  }
+}

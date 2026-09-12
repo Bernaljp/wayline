@@ -1,0 +1,15 @@
+{
+  "id": 3,
+  "title": "Which held-out split defines the goal?",
+  "kind": "decision",
+  "difficulty": 1,
+  "status": "open",
+  "blocked_by": [],
+  "blocking": "subgraph",
+  "human_only": true,
+  "touches": [],
+  "role": "decider",
+  "acceptance": {},
+  "proposed_by": "worker:9",
+  "demo": null
+}

@@ -1,0 +1,67 @@
+{
+  "id": "t17-a1-j1",
+  "ticket": 17,
+  "array": null,
+  "backend": "systemd_run",
+  "unit": "wayline-job-t17-a1-j1",
+  "command": [],
+  "cwd": "/home/owner/project",
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "devices": {
+    "gpu_uuids": [
+      "GPU-aaaa"
+    ],
+    "gpu_indices": [
+      0
+    ],
+    "cores": [
+      8,
+      9,
+      10,
+      11
+    ],
+    "ram_gb": 32
+  },
+  "log": "research/jobs/t17-a1-j1.log",
+  "expected_outputs": [
+    "results/ablation_b/seed1.json"
+  ],
+  "retry": {
+    "host_oom": [],
+    "gpu_oom": [
+      {
+        "--batch-size": 16
+      },
+      {
+        "--batch-size": 8
+      }
+    ]
+  },
+  "attempts": [
+    {
+      "n": 1,
+      "started_at": "2026-09-12T01:00:00Z",
+      "ended_at": "2026-09-12T01:20:00Z",
+      "result": "exit-code",
+      "exit_code": 1,
+      "oom": "gpu",
+      "overrides": {}
+    },
+    {
+      "n": 2,
+      "started_at": "2026-09-12T01:21:00Z",
+      "ended_at": null,
+      "result": null,
+      "exit_code": null,
+      "oom": null,
+      "overrides": {
+        "--batch-size": 16
+      }
+    }
+  ],
+  "status": "running",
+  "wallclock_minutes": 90
+}
