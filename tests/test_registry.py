@@ -264,7 +264,7 @@ class BuildTest(ProjectTestCase):
         self.local_skill("wayline-sweep", kinds=["experiment"], fixtures=["skill/sweep"])
         entry = self.entry(self.build(), "skill", "sweep")
         self.assertFalse(entry["assignable"])
-        self.assertIn("is not in", " ".join(entry["problems"]))
+        self.assertIn("is in none of", " ".join(entry["problems"]))
 
     def test_a_skill_directory_without_the_prefix_is_registered_but_unreachable(self):
         write_skill(self.project / ".claude" / "skills" / "sweep", "sweep", kinds=["experiment"], fixtures=["skill/sweep"])
@@ -289,6 +289,29 @@ class BuildTest(ProjectTestCase):
         entries = [entry for entry in self.build()["entries"] if entry["id"] == "intake"]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["scope_kind"], "global")
+
+    def test_a_relative_symlink_into_the_harness_is_not_a_local_skill_either(self):
+        """A relative target is read against the link's directory, not the process's."""
+        links = self.project / ".claude" / "skills"
+        links.mkdir(parents=True, exist_ok=True)
+        target = os.path.relpath(HARNESS_ROOT / "skills" / "wayline-plan", links)
+        (links / "wayline-plan").symlink_to(target)
+        entries = [entry for entry in self.build()["entries"] if entry["id"] == "plan"]
+        self.assertEqual([entry["scope_kind"] for entry in entries], ["global"])
+
+    def test_a_finding_on_a_local_skill_lands_on_the_local_entry(self):
+        directory = self.local_skill("wayline-sweep", kinds=["experiment"])
+        fake = self.temp / "fake-claude"
+        report = {"success": True, "contents": [{
+            "file": str(directory / "SKILL.md"), "type": "skill",
+            "errors": [{"path": "frontmatter", "message": "the description is empty"}], "warnings": []}]}
+        # The same report comes back for both scope roots; only the local entry's directory holds it.
+        fake.write_text("#!/bin/sh\ncat <<'JSON'\n%s\nJSON\n" % json.dumps(report), encoding="utf-8")
+        fake.chmod(0o755)
+        os.environ["WAYLINE_CLAUDE"] = str(fake)
+        built = self.build()
+        self.assertIn("the description is empty", " ".join(self.entry(built, "skill", "sweep")["problems"]))
+        self.assertNotIn("problems", self.entry(built, "skill", "intake"))
 
     def test_a_local_role_override_keeps_the_harness_role_s_kinds(self):
         agents = self.project / ".claude" / "agents"
@@ -325,7 +348,13 @@ class BuildTest(ProjectTestCase):
         self.assertTrue(entry["assignable"])
         self.assertIn("claude plugin validate", " ".join(entry["problems"]))
 
-    def test_the_stale_sidecar_hash_of_a_local_skill_is_reported(self):
+    def test_a_stale_sidecar_hash_is_reported_and_does_not_unassign_the_skill(self):
+        """An unstamped sidecar says the sidecar was not restamped, not that the skill is broken.
+
+        Anything that changes a skill's files without a restamp lands here: an edited body, a merge
+        leaving a `.orig` beside it, an editor's backup file. None of them is a reason for the
+        librarian to stop assigning a skill the launch path runs perfectly well.
+        """
         directory = self.local_skill("wayline-sweep", kinds=["experiment"], fixtures=["skill/sweep"])
         write_fixture(self.project, "skill/sweep", baseline={"structural": "1/1"})
         sidecar = json.loads((directory / "wayline.json").read_text(encoding="utf-8"))
@@ -334,6 +363,78 @@ class BuildTest(ProjectTestCase):
         entry = self.entry(self.build(), "skill", "sweep")
         self.assertIn("the computed one is registered", " ".join(entry["problems"]))
         self.assertNotEqual(entry["sha256"], "0" * 64)
+        self.assertTrue(entry["assignable"])
+
+    def test_a_stray_file_beside_a_harness_skill_does_not_unassign_it(self):
+        harness = self.temp / "harness"
+        directory = write_skill(harness / "skills" / "wayline-thing", "thing", kinds=["code"])
+        sidecar = json.loads((directory / "wayline.json").read_text(encoding="utf-8"))
+        sidecar["sha256"] = registry.content_sha256(directory)
+        (directory / "wayline.json").write_text(json.dumps(sidecar), encoding="utf-8")
+        (directory / "SKILL.md.orig").write_text("a merge left this here\n", encoding="utf-8")
+        built = registry.build(self.project, harness_root=harness, pre_check=False, write=False)
+        entry = self.entry(built, "skill", "thing")
+        self.assertTrue(entry["assignable"])
+        self.assertIn("the computed one is registered", " ".join(entry["problems"]))
+
+    def test_a_file_that_is_no_artifact_name_is_a_note_and_not_a_failed_build(self):
+        """The registry is rebuilt at every planner launch, so a stray file must not stop it."""
+        agents = self.project / ".claude" / "agents"
+        agents.mkdir(parents=True, exist_ok=True)
+        (agents / "README.md").write_text("notes on the role overrides\n", encoding="utf-8")
+        write_skill(self.project / ".claude" / "skills" / "My_Skill", "sweep")
+        built = self.build()
+        self.assertEqual([entry["id"] for entry in built["entries"] if entry["id"] in ("README", "My_Skill")], [])
+        notes = " ".join(built["notes"])
+        self.assertIn("README.md is not a role name", notes)
+        self.assertIn("My_Skill is not a skill name", notes)
+
+    def test_an_unreadable_file_inside_a_skill_is_that_skill_s_problem(self):
+        directory = self.local_skill("wayline-sweep", kinds=["experiment"], fixtures=["skill/sweep"])
+        write_fixture(self.project, "skill/sweep", baseline={"structural": "1/1"})
+        (directory / "data.csv").symlink_to(self.temp / "gone.csv")
+        built = self.build()
+        entry = self.entry(built, "skill", "sweep")
+        self.assertFalse(entry["assignable"])
+        self.assertIn("data.csv cannot be read", " ".join(entry["problems"]))
+        self.assertTrue(self.entry(built, "skill", "intake")["assignable"], "one broken skill is not the build")
+
+    def test_a_baseline_that_records_no_result_is_not_a_pass(self):
+        self.local_skill("wayline-sweep", kinds=["experiment"], fixtures=["skill/sweep"])
+        for baseline in ({}, {"structural": None, "judged": None}, {"recorded_at": "2026-09-12T10:00:00.000Z"}):
+            with self.subTest(baseline=baseline):
+                write_fixture(self.project, "skill/sweep", baseline=baseline)
+                entry = self.entry(self.build(), "skill", "sweep")
+                self.assertFalse(entry["assignable"])
+                self.assertIn("has no recorded baseline", " ".join(entry["problems"]))
+
+    def test_a_judged_layer_that_did_not_sweep_is_not_a_pass(self):
+        self.local_skill("wayline-sweep", kinds=["experiment"], fixtures=["skill/sweep"])
+        write_fixture(self.project, "skill/sweep", baseline={"structural": "3/3", "judged": "2/3"})
+        self.assertFalse(self.entry(self.build(), "skill", "sweep")["assignable"])
+
+    def test_a_local_skill_whose_fixture_was_recorded_into_the_harness_tree_is_assignable(self):
+        """Decision 12's fixture layout is the harness's tree, so the gate looks in both."""
+        harness = self.temp / "harness"
+        write_fixture(harness, "skill/sweep", baseline={"structural": "3/3"})
+        self.local_skill("wayline-sweep", kinds=["experiment"], fixtures=["skill/sweep"])
+        built = registry.build(self.project, harness_root=harness, pre_check=False, write=False)
+        self.assertTrue(self.entry(built, "skill", "sweep")["assignable"])
+
+    def test_a_local_role_override_is_summarised_by_its_own_description(self):
+        agents = self.project / ".claude" / "agents"
+        agents.mkdir(parents=True, exist_ok=True)
+        (agents / "coder.md").write_text(
+            "---\nname: coder\ndescription: writes Fortran and nothing else\n---\n\nWrite Fortran.\n", encoding="utf-8")
+        entry = self.entry(self.build(), "role", "coder")
+        self.assertEqual(entry["capability_summary"], "writes Fortran and nothing else")
+
+    def test_a_local_role_override_without_a_readable_description_keeps_the_harness_one(self):
+        agents = self.project / ".claude" / "agents"
+        agents.mkdir(parents=True, exist_ok=True)
+        (agents / "coder.md").write_text("no frontmatter at all\n", encoding="utf-8")
+        entry = self.entry(self.build(), "role", "coder")
+        self.assertIn("one code ticket", entry["capability_summary"])
 
     def test_a_build_without_a_project_reads_the_harness_alone(self):
         built = registry.build(project=None, pre_check=False, write=False)

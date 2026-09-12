@@ -11,7 +11,7 @@ The librarian is the step that reads it: given a ticket it returns the role and 
 assign, by the ticket's kind, the applicability tags, and the outcome record, and journals the
 assignment as `assigned`. The planner calls it for every ticket it cuts (ticket 34).
 
-Two rules make the index trustworthy rather than merely long:
+Three rules make the index trustworthy rather than merely long:
 
 - An entry is `assignable: false` when nothing has shown that it works. A local, model-authored
   skill qualifies only with a fixture that passed at its baseline; a local role override with no
@@ -19,6 +19,11 @@ Two rules make the index trustworthy rather than merely long:
 - A skill a ticket cannot name is not assignable either. The prompt builder looks a ticket's skill
   up as `wayline-<skill>`, so a skill directory without that prefix is unreachable however good it
   is, and the entry says so instead of failing at launch.
+- Everything else an entry has to say is a note beside those reasons, not one of them. `problems`
+  holds both, the reasons first; a sidecar whose hash has drifted from the files is worth reading
+  and is no reason to stop assigning a skill the launch path runs. Nothing under either scope stops
+  a build: a broken file is one artifact's problem, and a file whose name is no artifact name at all
+  is one note, because the registry is rebuilt at every planner launch.
 
 `claude plugin validate` runs as a free structural pre-check. It is run once per scope root rather
 than once per skill directory: run on a bare skill directory it reports only that the directory is
@@ -39,6 +44,7 @@ from pathlib import Path
 
 from wayline import HARNESS_ROOT
 from wayline.cli import parse_args
+from wayline.frontmatter import FrontmatterError, load_document
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import (ASSIGNED, K_ATTEMPT, K_ROLE, K_SKILLS, K_TICKET, Ledger, TICKET_DONE,
                             TICKET_FAILED, TICKET_LAUNCHED, ledger_for, now_ts)
@@ -47,7 +53,7 @@ from wayline.project import ProjectError, find_project
 __all__ = [
     "RegistryError", "REGISTRY_JSON", "SIDECAR", "SIDECAR_FIELDS", "ROLE_FIELDS", "SKILL_PREFIX",
     "COST_HINTS", "ticket_kinds", "content_sha256", "read_sidecar", "stamp_sidecars",
-    "scan", "outcomes", "plugin_validate", "build", "read_registry", "librarian", "assign",
+    "scan", "hash_contents", "outcomes", "plugin_validate", "build", "read_registry", "librarian", "assign",
     "build_command",
 ]
 
@@ -91,22 +97,33 @@ def ticket_kinds():
 # --- hashing ------------------------------------------------------------------------------------
 
 
-def content_sha256(directory, skip=(SIDECAR,)):
-    """One hash over every file under `directory`, names and bytes, with `skip` left out.
+def hash_contents(directory, skip=(SIDECAR,)):
+    """`(digest, unreadable)` over every file under `directory`, names and bytes, `skip` left out.
 
     The sidecar is skipped because it carries the hash: including it would make the field
     self-referential. A symlink is hashed as its target's contents, which is what a reader of the
-    skill sees.
+    skill sees. A file that cannot be read (a dangling symlink, a mode nobody can open) is hashed
+    as a marker and named in `unreadable`, so one broken file inside one skill is that skill's
+    problem rather than an exception that takes the whole build down with it.
     """
     directory = Path(directory)
-    digest = hashlib.sha256()
+    digest, unreadable = hashlib.sha256(), []
     for path in sorted(directory.rglob("*"), key=lambda item: str(item.relative_to(directory))):
         relative = path.relative_to(directory)
         if relative.name in skip or path.is_dir():
             continue
         digest.update(str(relative).encode("utf-8") + b"\0")
-        digest.update(path.read_bytes() + b"\0")
-    return digest.hexdigest()
+        try:
+            digest.update(path.read_bytes() + b"\0")
+        except OSError as failure:
+            digest.update(b"<unreadable>\0")
+            unreadable.append("%s cannot be read: %s" % (relative, failure))
+    return digest.hexdigest(), unreadable
+
+
+def content_sha256(directory, skip=(SIDECAR,)):
+    """The hash alone, for a caller with nothing to report to (`stamp_sidecars`, the suite)."""
+    return hash_contents(directory, skip)[0]
 
 
 def stamp_sidecars(root=None):
@@ -211,28 +228,42 @@ def read_sidecar(path, kind, expect_id=None):
 
 
 def scan(harness_root=None, project=None):
-    """Every skill and role of both scopes as registry entries, without outcomes or pre-check notes.
+    """`(entries, notes)`: every skill and role of both scopes, without outcomes or pre-check notes.
 
     Entries are keyed by `(kind, id)` and a local entry wins, because that is what the launch path
-    does: a project's own skill or role override is the one a worker gets.
+    does: a project's own skill or role override is the one a worker gets. A directory or file whose
+    name is no artifact name at all (`.claude/agents/README.md`, `.claude/skills/My_Skill/`) is not
+    an entry and not an error: it becomes one note on the build, because the registry is rebuilt at
+    every planner launch and a stray file beside the real ones must not stop the planner.
     """
     harness_root = Path(harness_root or HARNESS_ROOT).resolve()
-    found = {}
-    for entry in _scan_global(harness_root):
+    found, notes = {}, []
+    for entry in _collect(_scan_global(harness_root), harness_root, notes):
         found[(entry["kind"], entry["id"])] = entry
     if project is not None:
-        for entry in _scan_local(Path(project).resolve(), harness_root, found):
+        project = Path(project).resolve()
+        for entry in _collect(_scan_local(project, harness_root, found), project, notes):
             found[(entry["kind"], entry["id"])] = entry
-    return [found[key] for key in sorted(found, key=lambda key: (key[0], key[1]))]
+    return [found[key] for key in sorted(found, key=lambda key: (key[0], key[1]))], notes
+
+
+def _collect(candidates, root, notes):
+    """Keep the entries whose id is an artifact name; note the rest, which no ticket could name."""
+    kept = []
+    for identifier, entry in candidates:
+        if entry is not None and _NAME_RE.match(entry["id"]):
+            kept.append(entry)
+        else:
+            notes.append("%s is not a %s name (lowercase letters, digits, and dashes), so it is not registered"
+                         % (identifier, "skill" if entry is None or entry["kind"] == "skill" else "role"))
+    return kept
 
 
 def _scan_global(harness_root):
-    entries = []
     for directory in _artifact_dirs(harness_root / HARNESS_SKILLS):
-        entries.append(_skill_entry(directory, harness_root, "global"))
+        yield directory.name, _skill_entry(directory, harness_root, "global", harness_root)
     for directory in _artifact_dirs(harness_root / HARNESS_ROLES):
-        entries.append(_role_entry(directory, harness_root, "global"))
-    return entries
+        yield directory.name, _role_entry(directory, harness_root, "global")
 
 
 def _scan_local(project, harness_root, global_entries):
@@ -241,32 +272,47 @@ def _scan_local(project, harness_root, global_entries):
     A symlink into the harness is `init`'s work, not a local skill: it is already registered as
     global, and registering it again under the project's path would double every harness skill.
     """
-    entries = []
     for directory in _artifact_dirs(project / LOCAL_SKILLS):
         if _links_into(directory, harness_root):
             continue
-        entries.append(_skill_entry(directory, project, "local"))
+        yield directory.name, _skill_entry(directory, project, "local", harness_root)
     roles_dir = project / LOCAL_ROLES
     for path in sorted(roles_dir.glob("*.md")) if roles_dir.is_dir() else []:
-        entries.append(_local_role_entry(path, project, global_entries.get(("role", path.stem))))
-    return entries
+        yield path.name, _local_role_entry(path, project, global_entries.get(("role", path.stem)))
 
 
 def _links_into(path, root):
-    if not Path(path).is_symlink():
+    """Whether `path` is a symlink whose target lies under `root`.
+
+    A relative target is read against the link's own directory rather than the process's, because
+    where the build was started from is not part of what the link means.
+    """
+    path = Path(path)
+    if not path.is_symlink():
         return False
     try:
-        return Path(os.readlink(path)).resolve().is_relative_to(Path(root).resolve())
+        target = Path(os.readlink(path))
+        if not target.is_absolute():
+            target = path.parent / target
+        return target.resolve().is_relative_to(Path(root).resolve())
     except (OSError, ValueError):  # pragma: no cover - a symlink loop
         return False
 
 
-def _entry(identifier, kind, scope_kind, path, root, sidecar, problems):
-    """One entry from a sidecar, with the hash recomputed and `assignable` decided."""
-    computed = content_sha256(path)
+def _entry(identifier, kind, scope_kind, path, root, sidecar, vetoes):
+    """One entry from a sidecar, with the hash recomputed and `assignable` decided.
+
+    `vetoes` are the reasons the librarian must not assign this artifact. A sidecar whose declared
+    hash has drifted from the files is a note beside them rather than one of them: it says the
+    sidecar was not restamped, which is worth reading and is no reason to stop using a skill the
+    launch path is perfectly able to run.
+    """
+    computed, unreadable = hash_contents(path)
+    vetoes = vetoes + unreadable
+    notes = []
     declared = sidecar.get("sha256")
     if declared is not None and declared != computed:
-        problems = problems + ["the sidecar's sha256 was recorded as %s and the files hash to %s; the computed one is registered" % (declared[:12], computed[:12])]
+        notes.append("the sidecar's sha256 was recorded as %s and the files hash to %s; the computed one is registered" % (declared[:12], computed[:12]))
     return {
         "id": identifier,
         "kind": kind,
@@ -278,60 +324,80 @@ def _entry(identifier, kind, scope_kind, path, root, sidecar, problems):
         "cost_hint": sidecar["cost_hint"],
         "fixtures": list(sidecar["fixtures"]),
         "outcome": dict(_ZERO_OUTCOME),
-        "assignable": not problems,
-        "problems": problems,
+        "assignable": not vetoes,
+        "problems": vetoes + notes,
     }
 
 
-def _skill_entry(directory, root, scope_kind):
-    problems = []
+def _skill_entry(directory, root, scope_kind, harness_root):
+    vetoes = []
     name = directory.name
     identifier = name[len(SKILL_PREFIX):] if name.startswith(SKILL_PREFIX) else name
     if not name.startswith(SKILL_PREFIX):
-        problems.append("a ticket names a skill as /%s<skill>, so a directory not called %s%s is one no ticket can reach" % (SKILL_PREFIX, SKILL_PREFIX, identifier))
+        vetoes.append("a ticket names a skill as /%s<skill>, so a directory not called %s%s is one no ticket can reach" % (SKILL_PREFIX, SKILL_PREFIX, identifier))
     if not (directory / SKILL_FILE).is_file():
-        problems.append("no %s, and the body is what the prompt carries" % SKILL_FILE)
+        vetoes.append("no %s, and the body is what the prompt carries" % SKILL_FILE)
     try:
         sidecar = read_sidecar(directory / SIDECAR, "skill", expect_id=identifier)
     except RegistryError as failure:
-        return _unreadable(identifier, "skill", scope_kind, directory, root, problems + [str(failure)])
-    entry = _entry(identifier, "skill", scope_kind, directory, root, sidecar, problems)
+        return _unreadable(identifier, "skill", scope_kind, directory, root, vetoes + [str(failure)])
     if scope_kind == "local":
-        entry["problems"] = entry["problems"] + _fixture_problems(entry["fixtures"], root)
-        entry["assignable"] = not entry["problems"]
-    return entry
+        vetoes = vetoes + _fixture_problems(sidecar["fixtures"], (root, harness_root))
+    return _entry(identifier, "skill", scope_kind, directory, root, sidecar, vetoes)
 
 
 def _role_entry(directory, root, scope_kind):
-    problems = [] if (directory / ROLE_FILE).is_file() else ["no %s, and the body is the role's system prompt" % ROLE_FILE]
+    vetoes = [] if (directory / ROLE_FILE).is_file() else ["no %s, and the body is the role's system prompt" % ROLE_FILE]
     try:
         sidecar = read_sidecar(directory / SIDECAR, "role", expect_id=directory.name)
     except RegistryError as failure:
-        return _unreadable(directory.name, "role", scope_kind, directory, root, problems + [str(failure)])
-    return _entry(directory.name, "role", scope_kind, directory, root, sidecar, problems)
+        return _unreadable(directory.name, "role", scope_kind, directory, root, vetoes + [str(failure)])
+    return _entry(directory.name, "role", scope_kind, directory, root, sidecar, vetoes)
 
 
 def _local_role_entry(path, project, global_entry):
     """A project's `.claude/agents/<role>.md`: its own words for a role the harness still launches.
 
     The tool lists stay the harness's (decision 4), so a local override of a harness role inherits
-    that role's registry fields and only its summary is the project's. An override of a role the
-    harness does not have cannot be launched at all, and the entry says so.
+    that role's registry fields, and its summary is the project's: the description in the local
+    markdown is the one `worker.read_role` launches with, so it is the one the index has to show.
+    An override of a role the harness does not have cannot be launched at all, and the entry says so.
     """
     name = path.stem
     entry = dict(global_entry or {}, id=name, kind="role", scope_kind="local", path=str(path.relative_to(project)))
-    entry["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     entry["outcome"] = dict(_ZERO_OUTCOME)
+    problems = []
+    try:
+        body = path.read_bytes()
+    except OSError as failure:
+        entry["sha256"] = hashlib.sha256(b"<unreadable>").hexdigest()
+        problems.append("%s cannot be read: %s" % (path.name, failure))
+    else:
+        entry["sha256"] = hashlib.sha256(body).hexdigest()
+        described = _description(body)
+        if described:
+            entry["capability_summary"] = described
     if global_entry is None:
         entry.setdefault("capability_summary", "a local role override of %r" % name)
         entry.setdefault("applicability_tags", {dimension: [] for dimension in TAG_DIMENSIONS})
         entry.setdefault("cost_hint", "medium")
         entry.setdefault("fixtures", [])
-        entry["problems"] = ["the harness has no role %r, and a role without the harness's %s has no tool lists to launch with" % (name, SIDECAR)]
+        problems.append("the harness has no role %r, and a role without the harness's %s has no tool lists to launch with" % (name, SIDECAR))
     else:
-        entry["problems"] = list(global_entry.get("problems") or [])
-    entry["assignable"] = not entry["problems"]
+        problems.extend(global_entry.get("problems") or [])
+    entry["problems"] = problems
+    entry["assignable"] = not problems
     return entry
+
+
+def _description(body):
+    """The `description` of a role markdown's frontmatter, or None when it has none to read."""
+    try:
+        frontmatter, _ = load_document(body.decode("utf-8"))
+    except (UnicodeDecodeError, FrontmatterError):
+        return None
+    described = frontmatter.get("description")
+    return described.strip() if isinstance(described, str) and described.strip() else None
 
 
 def _unreadable(identifier, kind, scope_kind, path, root, problems):
@@ -352,29 +418,38 @@ def _unreadable(identifier, kind, scope_kind, path, root, problems):
     }
 
 
-def _fixture_problems(fixtures, root):
+def _fixture_problems(fixtures, roots):
     """Whether a local skill has a fixture that passed, which is what makes it assignable.
 
+    A fixture id is looked for under each of `roots` in turn, the project first and the harness
+    second: decision 12's layout is the harness's `fixtures/<kind>/<slug>/`, and a fixture recorded
+    for a local skill may be written into either tree, so a gate that looked in one of them would
+    hold a working skill back forever.
+
     Until ticket 44's runner exists the evidence is the baseline the recorder wrote: a fixture with
-    no baseline has never run, and one whose baseline is not a clean sweep did not pass.
+    no baseline, or with a baseline that records no result, has never passed, and one whose recorded
+    layers are not a clean sweep did not pass.
     """
     if not fixtures:
         return ["a local skill names no fixture, so nothing has shown that it works"]
     problems = []
     for identifier in fixtures:
-        directory = Path(root) / "fixtures" / identifier
-        record = directory / "fixture.json"
-        if not record.is_file():
-            problems.append("the fixture %s is not in %s" % (identifier, directory))
+        looked = [Path(root) / "fixtures" / identifier for root in roots]
+        found = [directory for directory in looked if (directory / "fixture.json").is_file()]
+        if not found:
+            problems.append("the fixture %s is in none of %s" % (identifier, ", ".join(str(where) for where in looked)))
             continue
+        record = found[0] / "fixture.json"
         try:
             baseline = (json.loads(record.read_text(encoding="utf-8")) or {}).get("baseline")
-        except ValueError as failure:
-            problems.append("the fixture %s is not readable JSON: %s" % (identifier, failure))
+        except (OSError, ValueError) as failure:
+            problems.append("the fixture %s is not readable: %s" % (identifier, failure))
             continue
-        if not isinstance(baseline, dict):
+        scores = [baseline[layer] for layer in ("structural", "judged")
+                  if isinstance(baseline, dict) and baseline.get(layer) is not None]
+        if not scores:
             problems.append("the fixture %s has no recorded baseline, so it has never passed" % identifier)
-        elif not all(_full_pass(baseline.get(layer)) for layer in ("structural", "judged") if baseline.get(layer) is not None):
+        elif not all(_full_pass(score) for score in scores):
             problems.append("the fixture %s did not pass at its baseline (%s)" % (identifier, baseline))
     return problems
 
@@ -443,21 +518,27 @@ def plugin_validate(scope_root, timeout=60):
 
 
 def _attach_pre_check(entries, roots):
-    """Hang each scope's validator findings on the entry whose directory holds the file."""
+    """Hang each scope's validator findings on the entry whose directory holds the file.
+
+    An entry's `path` is relative to the scope root it was found under, so only that scope's
+    entries are candidates for a scope's findings: the same relative path under the other root
+    would name a different directory, or none.
+    """
     notes = []
-    for root, scope_root in roots:
+    for scope_kind, root, scope_root in roots:
         problems, note = plugin_validate(scope_root)
         if note:
             notes.append(note)
             continue
+        candidates = [(entry, (Path(root) / entry["path"]).resolve())
+                      for entry in entries if entry["scope_kind"] == scope_kind]
         for path, lines in sorted(problems.items()):
-            for entry in entries:
-                directory = (Path(root) / entry["path"]).resolve()
-                try:
-                    inside = Path(path).resolve().is_relative_to(directory)
-                except (OSError, ValueError):  # pragma: no cover - an unreadable path
-                    inside = False
-                if inside:
+            try:
+                reported = Path(path).resolve()
+            except (OSError, ValueError):  # pragma: no cover - an unreadable path
+                continue
+            for entry, directory in candidates:
+                if reported.is_relative_to(directory):
                     entry["problems"] = entry["problems"] + list(lines)
     return notes
 
@@ -474,7 +555,7 @@ def build(project=None, harness_root=None, events=None, write=True, pre_check=Tr
     """
     harness_root = Path(harness_root or HARNESS_ROOT).resolve()
     project = Path(project).resolve() if project is not None else None
-    entries = scan(harness_root, project)
+    entries, notes = scan(harness_root, project)
     ledger = Ledger(project) if project is not None else None
     if events is None and ledger is not None:
         events, _ = ledger.read_events()
@@ -485,9 +566,10 @@ def build(project=None, harness_root=None, events=None, write=True, pre_check=Tr
     # `assignable` is decided by the scan, before the pre-check: a validator finding is a note on
     # the entry, not a veto, because the harness's launch path rather than the plugin loader is
     # what has to accept a skill.
-    notes = []
     if pre_check:
-        roots = [(harness_root, harness_root)] + ([(project, project / ".claude")] if project is not None else [])
+        roots = [("global", harness_root, harness_root)]
+        if project is not None:
+            roots.append(("local", project, project / ".claude"))
         notes.extend(_attach_pre_check(entries, roots))
     for entry in entries:
         if not entry["problems"]:
