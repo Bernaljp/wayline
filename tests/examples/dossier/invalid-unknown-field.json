@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "slug": "vaswani-2017-attention-all-you-need",
+  "level": 0,
+  "existence": "verified",
+  "resolved_by": "arxiv",
+  "query": {
+    "kind": "arxiv",
+    "value": "1706.03762",
+    "raw": "arXiv:1706.03762"
+  },
+  "identifiers": {
+    "arxiv_id": "1706.03762",
+    "url": "http://arxiv.org/abs/1706.03762v7"
+  },
+  "metadata": {
+    "title": "Attention Is All You Need",
+    "authors": [
+      "Ashish Vaswani",
+      "Noam Shazeer",
+      "Niki Parmar",
+      "Jakob Uszkoreit",
+      "Llion Jones",
+      "Aidan N. Gomez",
+      "Lukasz Kaiser",
+      "Illia Polosukhin"
+    ],
+    "year": 2017,
+    "container": "arXiv",
+    "type": "cs.CL",
+    "version": "7"
+  },
+  "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks in an encoder-decoder configuration. The best performing models also connect the encoder and decoder through an attention mechanism. W [...]",
+  "open_access": {
+    "pdf_url": "https://arxiv.org/pdf/1706.03762v7",
+    "is_oa": true
+  },
+  "attempts": [
+    {
+      "source": "arxiv",
+      "url": "https://export.arxiv.org/api/query?id_list=1706.03762&max_results=1",
+      "status": 200,
+      "outcome": "hit",
+      "note": null
+    }
+  ],
+  "created": "2026-09-12T10:00:00.000Z",
+  "notes": "what the reader thought"
+}

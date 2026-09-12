@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.crossref.org/works?query.bibliographic=Attention+Is+All+You+Need&rows=3&select=DOI%2Ctitle%2Cauthor%2Cissued%2Cscore%2Ctype%2Ccontainer-title%2Cabstract&mailto=%3Cowner%3E",
+    "hash": "7face13b9f699a5060ca0ae58b46fb92acc5647a3e410566925093700676b539"
+  },
+  "response": {
+    "url": "https://api.crossref.org/works?query.bibliographic=Attention+Is+All+You+Need&rows=3&select=DOI%2Ctitle%2Cauthor%2Cissued%2Cscore%2Ctype%2Ccontainer-title%2Cabstract&mailto=%3Cowner%3E",
+    "status": 200,
+    "headers": {
+      "date": "Sat, 12 Sep 2026 13:54:48 GMT",
+      "content-type": "application/json",
+      "transfer-encoding": "chunked",
+      "connection": "close",
+      "access-control-expose-headers": "Link",
+      "access-control-allow-headers": "X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language, Accept-Ranges, Cache-Control",
+      "access-control-allow-origin": "*",
+      "server": "Jetty(9.4.40.v20210413)",
+      "x-rate-limit-limit": "3",
+      "x-rate-limit-interval": "1s",
+      "x-concurrency-limit": "3",
+      "x-api-pool": "polite-array",
+      "permissions-policy": "interest-cohort=()"
+    },
+    "encoding": "utf-8",
+    "body": "{\"status\":\"ok\",\"message-type\":\"work-list\",\"message-version\":\"1.0.0\",\"message\":{\"facets\":{},\"total-results\":1235681,\"items\":[{\"DOI\":\"10.1007\\/978-3-031-84300-6_13\",\"title\":[\"Is Attention All You Need?\"],\"author\":[{\"ORCID\":\"https:\\/\\/orcid.org\\/0000-0001-5519-842X\",\"authenticated-orcid\":false,\"given\":\"Patrick\",\"family\":\"Mineault\",\"sequence\":\"first\",\"affiliation\":[],\"role\":[{\"vocabulary\":\"crossref\",\"role\":\"author\"}]}],\"issued\":{\"date-parts\":[[2025]]},\"score\":33.218792,\"type\":\"book-chapter\",\"container-title\":[\"From Human Attention to Computational Attention\"]},{\"DOI\":\"10.2139\\/ssrn.4993784\",\"title\":[\"Attention Is All You Need: An Analysis Of The Valuation Of Artificial Intelligence Tokens\"],\"author\":[{\"ORCID\":\"https:\\/\\/orcid.org\\/0000-0002-8470-5723\",\"authenticated-orcid\":true,\"given\":\"Mfon\",\"family\":\"Akpan\",\"sequence\":\"first\",\"affiliation\":[],\"role\":[{\"vocabulary\":\"crossref\",\"role\":\"author\"}]}],\"issued\":{\"date-parts\":[[2024]]},\"score\":31.369148,\"type\":\"posted-content\",\"abstract\":\"<jats:p>This study discusses the parameters that define the value of artificial intelligence (AI) tokens based on user interaction, their pricing mechanism, and their correlation with the predicted value thus evaluating AI token valuation based on user engagement, pricing, and website visits. This study tests hypotheses that examine the factors that influence the value of AI tokens. Using data from ten AI tokens, the study employs correlation and regression analyses to examine these relationships. The results show that monthly active users (MAU) and website visits significantly predict valuation, while pricing shows a marginal effect. This research provides insights for stakeholders in understanding economic factors affecting AI token values, emphasizing user engagement and pricing strategies.&amp;nbsp;<\\/jats:p>\"},{\"DOI\":\"10.2139\\/ssrn.5967774\",\"title\":[\"Attention is All You Need... Unless You Are a CISO: The Inherent Incompatibility Between Transformer Architectures and Zero-Trust Environments\"],\"author\":[{\"given\":\"Giuseppe\",\"family\":\"Canale\",\"sequence\":\"first\",\"affiliation\":[],\"role\":[{\"role\":\"author\",\"vocabulary\":\"crossref\"}]}],\"issued\":{\"date-parts\":[[2026]]},\"score\":31.092058,\"type\":\"posted-content\"}],\"items-per-page\":3,\"query\":{\"start-index\":0,\"search-terms\":null}}}"
+  }
+}

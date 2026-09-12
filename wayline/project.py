@@ -31,7 +31,7 @@ from wayline.tickets import GRAPH, by_status, empty_graph, frontier, read_graph,
 __all__ = [
     "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
     "home", "projects_path", "active_path", "read_active", "set_active", "read_projects",
-    "register", "default_harness", "detect_hermes", "read_harness", "find_project", "is_project", "policy_for",
+    "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
     "init_project", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
 ]
@@ -182,7 +182,22 @@ def detect_hermes():
     return str(candidate) if candidate.exists() else None
 
 
-def default_harness(harness_tag=TAG, policy=None, hermes_python=_DETECT):
+def detect_email(project=None):
+    """The address git is configured with, which is the one `init` offers the owner.
+
+    The polite pools of Crossref, Unpaywall, and their kin want a real address, and the owner
+    already gave git one; asking for it again is a question with an obvious answer.
+    """
+    where = Path(project) if project is not None else Path.home()
+    try:
+        done = _git(where, "config", "--get", "user.email", check_exit=False)
+    except (OSError, ProjectError):
+        return None
+    address = done.stdout.strip()
+    return address if "@" in address else None
+
+
+def default_harness(harness_tag=TAG, policy=None, hermes_python=_DETECT, owner_email=None):
     """`harness.json` as `init` writes it: the pin and the defaults of Implementation Decisions 14."""
     policy = policy if policy is not None else _policy()
     reservations = policy.get("reservations", {})
@@ -206,6 +221,7 @@ def default_harness(harness_tag=TAG, policy=None, hermes_python=_DETECT):
             "poll_views_s": dashboard.get("poll_views_s", 5),
         },
         "notify": {"hermes_python": detect_hermes() if hermes_python is _DETECT else hermes_python},
+        "owner_email": owner_email or None,
         "policy": {},
     }
     check(value, load_schema("harness"), name=HARNESS_JSON)
@@ -250,7 +266,7 @@ def find_project(explicit=None):
 # --- init ---------------------------------------------------------------------------------------
 
 
-def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_python=_DETECT):
+def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_python=_DETECT, owner_email=_DETECT):
     """Lay out a project at `path`, register it, and make it active. Returns a report.
 
     The report is `{"project", "changes", "created", "displaced", "notes"}`: `changes` names every
@@ -270,10 +286,13 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
     # harness.json: written once. `upgrade` moves the pin; `init` never rewrites an owner's file.
     harness_path = project / HARNESS_JSON
     if not harness_path.exists():
-        defaults = default_harness(harness_tag, policy=_policy(harness_root), hermes_python=hermes_python)
+        address = detect_email(project) if owner_email is _DETECT else owner_email
+        defaults = default_harness(harness_tag, policy=_policy(harness_root), hermes_python=hermes_python, owner_email=address)
         atomic_write(harness_path, json.dumps(defaults, ensure_ascii=False, indent=2) + "\n")
         mark(HARNESS_JSON)
         pinned_tag = harness_tag
+        if not address:
+            notes.append("no owner address; the scout's requests will carry no mailto, which the polite pools ask for (wayline init --email <address> on a fresh project, or add owner_email to harness.json)")
     else:
         pinned_tag = read_harness(project).get("harness_tag", harness_tag)
 
@@ -850,10 +869,31 @@ def _parse(parser, args):
         return None, (stop.code if isinstance(stop.code, int) else 2)
 
 
+def ask_email(given, path, stream=None):
+    """The address `init` stores: the flag, else the owner's answer at a terminal, else git's.
+
+    Away from a terminal (the suite, the tick, a script) nothing is asked and git's address
+    stands, so `init` stays the non-interactive command every other caller relies on.
+    """
+    if given:
+        return given
+    suggestion = detect_email(path if Path(path).is_dir() else None)
+    stream = stream if stream is not None else sys.stdin
+    if not (hasattr(stream, "isatty") and stream.isatty()):
+        return suggestion
+    print("owner address for the polite pools (Crossref, Unpaywall)%s: " % (" [%s]" % suggestion if suggestion else ""), end="", flush=True)
+    try:
+        answer = (stream.readline() or "").strip()
+    except (OSError, ValueError, KeyboardInterrupt):
+        answer = ""
+    return answer or suggestion
+
+
 def init_command(args):
     parser = argparse.ArgumentParser(prog="wayline init", description="lay out a project, register it, make it active")
     parser.add_argument("path", help="the project directory; it is created when it does not exist")
     parser.add_argument("--no-git", action="store_true", help="do not run git init even when the directory is not a repository")
+    parser.add_argument("--email", help="the owner address the scout sends to the polite pools; git's is offered when this is omitted")
     parser.add_argument("--uninstall-units", action="store_true", help="remove the user units (ticket 14 installs them)")
     options, code = _parse(parser, args)
     if options is None:
@@ -862,7 +902,7 @@ def init_command(args):
         print("wayline init: --uninstall-units needs the user units, which ticket 14 (the tick) installs", file=sys.stderr)
         return 2
     try:
-        report = init_project(options.path, git=not options.no_git)
+        report = init_project(options.path, git=not options.no_git, owner_email=ask_email(options.email, options.path))
     except (ProjectError, ValidationError, OSError) as failure:
         print("wayline init: %s" % failure, file=sys.stderr)
         return 1

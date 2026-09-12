@@ -1,0 +1,5 @@
+# wayline
+.worktrees/
+results/
+research/.cache/
+research/sessions/*/*/stream.jsonl

@@ -1,0 +1,26 @@
+{
+  "harness_tag": "v0.0.0",
+  "autonomy": "checkpoints",
+  "radius": "moderate",
+  "reservations": {
+    "gpu": [],
+    "cores": 8,
+    "ram_gb": 64,
+    "processes": []
+  },
+  "pacing": {
+    "stop_at": 0.9,
+    "cheap_at": 0.8
+  },
+  "dashboard": {
+    "port": 8765,
+    "bind": "127.0.0.1",
+    "poll_journal_s": 2,
+    "poll_views_s": 5
+  },
+  "notify": {
+    "hermes_python": null
+  },
+  "policy": {},
+  "owner_email": "owner@example.org"
+}

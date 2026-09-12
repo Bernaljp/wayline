@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dossier",
+  "description": "One reference's record (Implementation Decisions 9). Level 0 is what the scout can verify at near-zero cost: the question that was asked, the identifiers and metadata a keyless service answered with, an abstract, and whether the reference resolved at all. Levels 1 and 2 are added by the tickets that build the skim and the full absorb; a reference that resolves nowhere is existence: unresolved, and nothing here ever says fabricated.",
+  "type": "object",
+  "required": ["schema_version", "slug", "level", "existence", "query", "identifiers", "metadata", "created"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$", "description": "the directory under research/refs/ that holds this reference"},
+    "level": {"type": "integer", "minimum": 0, "maximum": 2},
+    "existence": {"type": "string", "enum": ["verified", "unresolved"]},
+    "resolved_by": {
+      "type": ["string", "null"],
+      "enum": ["crossref", "openalex", "unpaywall", "europepmc", "arxiv", "biorxiv", "medrxiv", null],
+      "description": "the service whose answer established that the work exists; null when none did"
+    },
+    "query": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "enum": ["doi", "arxiv", "title", "url"]},
+        "value": {"type": "string"},
+        "raw": {"type": "string", "description": "the reference line as the owner wrote it"}
+      }
+    },
+    "identifiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "doi": {"type": "string"},
+        "arxiv_id": {"type": "string"},
+        "pmid": {"type": "string"},
+        "pmcid": {"type": "string"},
+        "openalex": {"type": "string"},
+        "published_doi": {"type": "string", "description": "the journal DOI a preprint record names once it is published"},
+        "url": {"type": "string"}
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {"type": "string"},
+        "authors": {"type": "array", "items": {"type": "string"}},
+        "year": {"type": ["integer", "null"], "minimum": 1500, "maximum": 2200},
+        "container": {"type": "string", "description": "journal, conference, or preprint server"},
+        "type": {"type": "string"},
+        "version": {"type": "string"}
+      }
+    },
+    "abstract": {"type": ["string", "null"]},
+    "open_access": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "is_oa": {"type": ["boolean", "null"]},
+        "pdf_url": {"type": "string"},
+        "license": {"type": "string"},
+        "status": {"type": "string"}
+      }
+    },
+    "attempts": {
+      "type": "array",
+      "description": "every lookup the scout made, in order, whatever it answered; this is the audit trail behind existence",
+      "items": {
+        "type": "object",
+        "required": ["source", "url", "outcome"],
+        "additionalProperties": false,
+        "properties": {
+          "source": {"type": "string", "enum": ["crossref", "openalex", "unpaywall", "europepmc", "arxiv", "biorxiv", "medrxiv", "none"]},
+          "url": {"type": "string"},
+          "status": {"type": ["integer", "null"]},
+          "outcome": {"type": "string", "enum": ["hit", "miss", "error", "skipped"]},
+          "note": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "created": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+    "updated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"}
+  }
+}

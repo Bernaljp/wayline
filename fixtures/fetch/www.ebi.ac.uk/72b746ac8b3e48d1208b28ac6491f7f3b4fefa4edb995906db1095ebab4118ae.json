@@ -1,0 +1,24 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=TITLE%3A%22A+comprehensive+taxonomy+of+interpretive+marmalade+in+high-dimensional+sponge+topology%22&format=json&resultType=core&pageSize=3",
+    "hash": "72b746ac8b3e48d1208b28ac6491f7f3b4fefa4edb995906db1095ebab4118ae"
+  },
+  "response": {
+    "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=TITLE%3A%22A+comprehensive+taxonomy+of+interpretive+marmalade+in+high-dimensional+sponge+topology%22&format=json&resultType=core&pageSize=3",
+    "status": 200,
+    "headers": {
+      "content-type": "application/json;charset=UTF-8",
+      "strict-transport-security": "max-age=300; includeSubDomains",
+      "date": "Sat, 12 Sep 2026 13:54:56 GMT",
+      "access-control-max-age": "3600",
+      "transfer-encoding": "chunked",
+      "access-control-allow-origin": "*",
+      "connection": "close",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-headers": "Content-Type,X-Requested-With,accept,Origin,Access-Control-Request-Method,Access-Control-Request-Headers"
+    },
+    "encoding": "utf-8",
+    "body": "{\"version\":\"6.9\",\"hitCount\":0,\"request\":{\"queryString\":\"TITLE:\\\"A comprehensive taxonomy of interpretive marmalade in high-dimensional sponge topology\\\"\",\"resultType\":\"core\",\"cursorMark\":\"*\",\"pageSize\":3,\"sort\":\"\",\"synonym\":false},\"resultList\":{\"result\":[]}}"
+  }
+}

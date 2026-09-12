@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.crossref.org/works?query.bibliographic=Highly+accurate+protein+structure+prediction+with+AlphaFold&rows=3&select=DOI%2Ctitle%2Cauthor%2Cissued%2Cscore%2Ctype%2Ccontainer-title%2Cabstract&mailto=%3Cowner%3E",
+    "hash": "e4dbcff3019ab02d3db392707de151fddce663fbf79c131963a35f6a8aa123cc"
+  },
+  "response": {
+    "url": "https://api.crossref.org/works?query.bibliographic=Highly+accurate+protein+structure+prediction+with+AlphaFold&rows=3&select=DOI%2Ctitle%2Cauthor%2Cissued%2Cscore%2Ctype%2Ccontainer-title%2Cabstract&mailto=%3Cowner%3E",
+    "status": 200,
+    "headers": {
+      "date": "Sat, 12 Sep 2026 14:01:47 GMT",
+      "content-type": "application/json",
+      "transfer-encoding": "chunked",
+      "connection": "close",
+      "access-control-expose-headers": "Link",
+      "access-control-allow-headers": "X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language, Accept-Ranges, Cache-Control",
+      "access-control-allow-origin": "*",
+      "server": "Jetty(9.4.40.v20210413)",
+      "x-rate-limit-limit": "3",
+      "x-rate-limit-interval": "1s",
+      "x-concurrency-limit": "3",
+      "x-api-pool": "polite-array",
+      "permissions-policy": "interest-cohort=()"
+    },
+    "encoding": "utf-8",
+    "body": "{\"status\":\"ok\",\"message-type\":\"work-list\",\"message-version\":\"1.0.0\",\"message\":{\"facets\":{},\"total-results\":4414257,\"items\":[{\"DOI\":\"10.3410\\/f.740477161.793588722\",\"title\":[\"Faculty Opinions recommendation of Highly accurate protein structure prediction with AlphaFold.\"],\"author\":[{\"ORCID\":\"https:\\/\\/orcid.org\\/0000-0001-7049-6900\",\"authenticated-orcid\":true,\"given\":\"Yann\",\"family\":\"Herault\",\"sequence\":\"first\",\"affiliation\":[{\"name\":\"Institute of Genetics and Molecular and Cellular Biology (IGBMC), France\"}],\"role\":[{\"role\":\"author\",\"vocabulary\":\"crossref\"}]}],\"issued\":{\"date-parts\":[[2021,9,22]]},\"score\":45.169735,\"type\":\"dataset\",\"container-title\":[\"Faculty Opinions \\u2013 Post-Publication Peer Review of the Biomedical Literature\"]},{\"DOI\":\"10.3410\\/f.740477161.793588825\",\"title\":[\"Faculty Opinions recommendation of Highly accurate protein structure prediction with AlphaFold.\"],\"author\":[{\"ORCID\":\"https:\\/\\/orcid.org\\/0000-0003-0019-1735\",\"authenticated-orcid\":true,\"given\":\"Toni\",\"family\":\"Gabald\\u00f3n\",\"sequence\":\"first\",\"affiliation\":[{\"name\":\"Bioinformatics and Genomics Programme, Barcelona Supercomputing Centre (BSC) and Institute for Research in Biomedicine (IRB), Spain\"}],\"role\":[{\"role\":\"author\",\"vocabulary\":\"crossref\"}]}],\"issued\":{\"date-parts\":[[2021,9,27]]},\"score\":45.13222,\"type\":\"dataset\",\"container-title\":[\"Faculty Opinions \\u2013 Post-Publication Peer Review of the Biomedical Literature\"]},{\"DOI\":\"10.3410\\/f.740477161.793596551\",\"title\":[\"Faculty Opinions recommendation of Highly accurate protein structure prediction with AlphaFold.\"],\"author\":[{\"ORCID\":\"https:\\/\\/orcid.org\\/0000-0003-1702-0692\",\"authenticated-orcid\":true,\"given\":\"Benoit\",\"family\":\"Coulombe\",\"sequence\":\"first\",\"affiliation\":[{\"name\":\"Laboratory of Gene Transcription and Proteomics, Montreal Clinical Research Institute, Canada\"}],\"role\":[{\"role\":\"author\",\"vocabulary\":\"crossref\"}]}],\"issued\":{\"date-parts\":[[2022,11,16]]},\"score\":44.99066,\"type\":\"dataset\",\"container-title\":[\"Faculty Opinions \\u2013 Post-Publication Peer Review of the Biomedical Literature\"]}],\"items-per-page\":3,\"query\":{\"start-index\":0,\"search-terms\":null}}}"
+  }
+}

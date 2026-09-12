@@ -1,6 +1,330 @@
-"""Dossiers at L0, L1, and L2 (Implementation Decisions 9): inventories, skims, the absorb workflow, code dossiers. Built by tickets 21 to 25.
+"""Dossiers at L0, L1, and L2 (Implementation Decisions 9): what a reference becomes on disk.
 
-This module is a stub until its ticket lands; importing it is all the package skeleton needs.
+This module builds level 0, which is the level every reference gets: the scout's verified
+identifiers, the metadata, the abstract, and a knowledge-base node, written to
+`research/refs/<slug>/dossier.json`. Levels 1 and 2 (the skim and the full absorb) are tickets
+21 to 25; the record they extend is the one written here.
+
+`wayline absorb --level 0` is the verb: it reads the reference list out of `INTAKE.md`, resolves
+each one through the scout, and writes a dossier and a node for every one of them, the
+unresolved included. An L0 pass costs nothing but requests, so it is safe to run again: a
+reference already resolved is answered out of `research/.cache/scout/` without a new request.
 """
 
-__all__ = []
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+from wayline.fetch import caching_fetcher, recording_fetcher
+from wayline.jsonschema import ValidationError, check, load_schema
+from wayline.kb import make_node, rebuild_query_pack, write_node
+from wayline.ledger import Ledger, now_ts
+from wayline.scout import Reference, Scout, UNRESOLVED, parse_reference
+
+__all__ = [
+    "DossierError", "REFS", "CACHE", "LEVEL_0", "slug_for", "l0_dossier", "write_l0",
+    "intake_references", "read_intake", "absorb_level_0", "absorb_command", "scout_fetcher",
+]
+
+REFS = "refs"
+CACHE = ".cache/scout"
+LEVEL_0 = 0
+INTAKE = "INTAKE.md"
+
+# Words a slug drops: they carry no identity and eat the character budget.
+_STOPWORDS = frozenset("a an the of for and or to in on with by via using is are at from".split())
+_NOT_SLUG = re.compile(r"[^a-z0-9]+")
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+_REFERENCES_HEADING = re.compile(r"^references?\b", re.IGNORECASE)
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+_EMPTY_ANSWER = frozenset(["none", "n/a", "na", "nothing", "tbd", "todo", "-", "none."])
+_ALNUM = re.compile(r"[a-z0-9]", re.IGNORECASE)
+_DOI_OR_ID = re.compile(r"\b10\.\d{4,9}/|arxiv|https?://", re.IGNORECASE)
+
+
+class DossierError(ValueError):
+    """A dossier the harness will not write, or an intake it cannot read a reference out of."""
+
+
+# --- the slug -----------------------------------------------------------------------------------
+
+
+def slug_for(record, taken=()):
+    """`<family name>-<year>-<first title words>` for a resolved reference, the query for the rest.
+
+    The slug is a directory name a person reads in a file tree, so it is built from what a
+    person recognizes. A reference that resolved nowhere still gets one, out of what the owner
+    wrote, because an unresolved reference is a record like any other and has to live somewhere.
+    """
+    metadata = record.get("metadata") or {}
+    identifiers = record.get("identifiers") or {}
+    parts = []
+    authors = metadata.get("authors") or []
+    if authors:
+        parts.append(_slugify(_family_name(authors[0])))
+    if metadata.get("year"):
+        parts.append(str(metadata["year"]))
+    words = [word for word in _slugify(metadata.get("title") or "").split("-") if word and word not in _STOPWORDS]
+    parts.extend(words[:5])
+    stem = "-".join(part for part in parts if part).strip("-")
+    if not stem:
+        stem = _slugify(identifiers.get("arxiv_id") or identifiers.get("doi") or (record.get("query") or {}).get("value") or "reference")
+    stem = stem[:70].strip("-") or "reference"
+    candidate, suffix = stem, 1
+    while candidate in taken:
+        suffix += 1
+        candidate = "%s-%d" % (stem[:70 - len(str(suffix)) - 1], suffix)
+    return candidate
+
+
+def _family_name(author):
+    """The name a person is filed under, from either spelling a service uses.
+
+    Crossref and OpenAlex give "Ashish Vaswani"; the preprint servers give "Gordon, David E.".
+    Taking the last word of the second form would file the paper under an initial.
+    """
+    name = str(author or "").strip()
+    if "," in name:
+        return name.split(",", 1)[0].strip()
+    words = [word for word in name.split() if word.strip(".")]
+    return words[-1] if words else ""
+
+
+def _slugify(text):
+    return _NOT_SLUG.sub("-", str(text or "").lower()).strip("-")
+
+
+# --- the record ---------------------------------------------------------------------------------
+
+
+def l0_dossier(scout_record, slug, created=None):
+    """The scout's answer as a validated level 0 dossier."""
+    dossier = {
+        "schema_version": 1,
+        "slug": slug,
+        "level": LEVEL_0,
+        "existence": scout_record["existence"],
+        "resolved_by": scout_record.get("resolved_by"),
+        "query": dict(scout_record["query"]),
+        "identifiers": dict(scout_record.get("identifiers") or {}),
+        "metadata": dict(scout_record.get("metadata") or {}),
+        "abstract": scout_record.get("abstract"),
+        "open_access": dict(scout_record.get("open_access") or {}),
+        "attempts": list(scout_record.get("attempts") or []),
+        "created": created or now_ts(),
+    }
+    check(dossier, load_schema("dossier"), name="refs/%s/dossier.json" % slug)
+    return dossier
+
+
+def write_l0(project_or_ledger, dossier):
+    """Write `refs/<slug>/dossier.json` and the knowledge-base node that points at it.
+
+    The node is written whether or not the reference resolved: the graph has to be able to say
+    that a reference was named and did not resolve, which is a fact about the project.
+    """
+    ledger = project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
+    check(dossier, load_schema("dossier"), name="refs/%s/dossier.json" % dossier.get("slug"))
+    path = ledger.write_json("%s/%s/dossier.json" % (REFS, dossier["slug"]), dossier)
+    node = make_node(
+        dossier["slug"],
+        "paper",
+        (dossier["metadata"].get("title") or dossier["query"].get("raw") or dossier["query"]["value"]),
+        identifiers=dossier["identifiers"] or None,
+        year=dossier["metadata"].get("year"),
+        level=dossier["level"],
+        existence=dossier["existence"],
+        source=dossier.get("resolved_by"),
+        created=dossier["created"],
+    )
+    write_node(ledger, node)
+    ledger.append_event("absorbed", {"slug": dossier["slug"], "level": LEVEL_0})
+    return path
+
+
+# --- the intake ---------------------------------------------------------------------------------
+
+
+def intake_references(text):
+    """The reference lines of an `INTAKE.md`, parsed.
+
+    The references live under a `## References` heading. When anything under it is a list item,
+    the list items are the references and the prose around them is prose, which is what keeps a
+    sentence introducing the list from being looked up as a paper. When nothing is a list item,
+    every line is taken, because a bare list of DOIs is a list too. A line that only says the
+    owner has none is never looked up: resolving the word "None" is a request spent on nothing.
+    """
+    lines, collecting, found, listed = str(text or "").splitlines(), False, [], []
+    for line in lines:
+        heading = _HEADING.match(line)
+        if heading is not None:
+            collecting = bool(_REFERENCES_HEADING.match(heading.group(1).strip()))
+            continue
+        if not collecting:
+            continue
+        stripped = line.strip()
+        if not stripped or not _ALNUM.search(stripped):
+            continue
+        if _says_none(stripped):
+            continue
+        found.append(stripped)
+        if _LIST_ITEM.match(stripped):
+            listed.append(stripped)
+    found = listed or found
+    references, seen = [], set()
+    for line in found:
+        try:
+            reference = parse_reference(line)
+        except ValueError:
+            continue
+        key = (reference.kind, reference.value.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        references.append(reference)
+    return references
+
+
+def _says_none(line):
+    """Whether a line under the heading is the owner saying there are no references.
+
+    "None." and "None. A fixture that needed a dossier would not be a fixture." are both that
+    answer; a line carrying an identifier never is, whatever word it opens with.
+    """
+    if _DOI_OR_ID.search(line):
+        return False
+    first = _NOT_SLUG.sub("", line.split()[0].lower()) if line.split() else ""
+    return line.lower().rstrip(".").strip() in _EMPTY_ANSWER or first in _EMPTY_ANSWER
+
+
+def read_intake(project):
+    """The references named in the project's `INTAKE.md`; an absent file means no references."""
+    path = Path(project) / "research" / INTAKE
+    try:
+        return intake_references(path.read_text(encoding="utf-8"))
+    except OSError:
+        return []
+
+
+# --- the verb -----------------------------------------------------------------------------------
+
+
+def scout_fetcher(project, email=None, fixtures=None):
+    """The fetcher the scout runs on: the project's cache, or a directory of recorded responses."""
+    if fixtures is not None:
+        return recording_fetcher(fixtures, email=email)
+    return caching_fetcher(Path(project) / "research" / CACHE, email=email)
+
+
+def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=None):
+    """Resolve every reference and write its L0 dossier, node, and the query pack. Returns a report.
+
+    A reference already on disk is resolved again and its dossier replaced, because the cache
+    makes that free and a reference that was unresolved last week may resolve today. The slug of
+    a dossier that already exists is kept, so a re-run never leaves two directories for one work.
+    """
+    from wayline.project import policy_for
+
+    project = Path(project)
+    ledger = ledger or Ledger(project)
+    if email is None:
+        email = _email(project)
+    fetcher = fetcher if fetcher is not None else scout_fetcher(project, email=email)
+    references = references if references is not None else read_intake(project)
+    scout = Scout(fetcher, email)
+
+    known = _known_slugs(ledger)
+    taken = set(known.values())
+    report = {"project": str(project), "references": len(references), "written": [], "verified": 0, "unresolved": 0, "problems": []}
+    for reference in references:
+        if not isinstance(reference, Reference):
+            reference = parse_reference(reference)
+        key = (reference.kind, reference.value.lower())
+        try:
+            resolved = scout.resolve(reference)
+            slug = known.get(key) or slug_for(resolved, taken)
+            dossier = l0_dossier(resolved, slug)
+            write_l0(ledger, dossier)
+        except (ValidationError, ValueError, OSError) as failure:
+            report["problems"].append({"reference": reference.raw, "problem": str(failure)})
+            continue
+        known[key] = slug
+        taken.add(slug)
+        report["written"].append({"slug": slug, "existence": dossier["existence"], "resolved_by": dossier["resolved_by"], "reference": reference.raw})
+        report["verified" if dossier["existence"] != UNRESOLVED else "unresolved"] += 1
+    rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", 20000))
+    return report
+
+
+def _known_slugs(ledger):
+    """The slug each already-written dossier was filed under, by the question it answered."""
+    known = {}
+    directory = ledger.research / REFS
+    if not directory.is_dir():
+        return known
+    for path in sorted(directory.glob("*/dossier.json")):
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            query = existing["query"]
+            known[(query["kind"], str(query["value"]).lower())] = existing["slug"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return known
+
+
+def absorb_command(args):
+    parser = argparse.ArgumentParser(prog="wayline absorb", description="build the dossiers for the references")
+    parser.add_argument("--level", type=int, default=0, choices=[0, 1, 2], help="the dossier level to build; only level 0 is built so far")
+    parser.add_argument("--project", help="the project to absorb into; the active one by default")
+    parser.add_argument("--fixtures", help="answer every request from this directory of recorded responses instead of the network")
+    parser.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
+    options, code = _parse(parser, args)
+    if options is None:
+        return code
+    if options.level != LEVEL_0:
+        print("wayline absorb: level %d needs the inventory and the skim, which tickets 21 to 24 build" % options.level, file=sys.stderr)
+        return 2
+    from wayline.project import ProjectError, find_project
+
+    try:
+        project = find_project(options.project)
+        fetcher = scout_fetcher(project, email=_email(project), fixtures=options.fixtures) if options.fixtures else None
+        report = absorb_level_0(project, fetcher=fetcher)
+    except (ProjectError, ValidationError, ValueError, OSError) as failure:
+        print("wayline absorb: %s" % failure, file=sys.stderr)
+        return 1
+    if options.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(_render(report))
+    return 1 if report["problems"] else 0
+
+
+def _email(project):
+    """The address the polite pools are told about, from the project's `harness.json`."""
+    from wayline.project import ProjectError, read_harness
+
+    try:
+        return read_harness(project).get("owner_email")
+    except (ProjectError, OSError, ValueError):
+        return None
+
+
+def _render(report):
+    lines = ["references  %d  (%d verified, %d unresolved)" % (report["references"], report["verified"], report["unresolved"])]
+    for written in report["written"]:
+        lines.append("  %-10s %-50s %s" % (written["existence"], written["slug"], written["resolved_by"] or ""))
+    for problem in report["problems"]:
+        lines.append("  problem    %s: %s" % (problem["reference"], problem["problem"]))
+    if not report["written"] and not report["problems"]:
+        lines.append("  nothing to absorb; INTAKE.md names no references")
+    return "\n".join(lines)
+
+
+def _parse(parser, args):
+    try:
+        return parser.parse_args(args), None
+    except SystemExit as stop:
+        return None, (stop.code if isinstance(stop.code, int) else 2)

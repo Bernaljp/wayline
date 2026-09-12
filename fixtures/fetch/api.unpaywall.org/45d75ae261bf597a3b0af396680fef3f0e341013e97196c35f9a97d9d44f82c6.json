@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.unpaywall.org/v2/10.1038%2Fnbt.4096?email=%3Cowner%3E",
+    "hash": "45d75ae261bf597a3b0af396680fef3f0e341013e97196c35f9a97d9d44f82c6"
+  },
+  "response": {
+    "url": "https://api.unpaywall.org/v2/10.1038%2Fnbt.4096?email=%3Cowner%3E",
+    "status": 200,
+    "headers": {
+      "access-control-allow-headers": "origin, content-type, accept, x-requested-with",
+      "access-control-allow-methods": "POST, GET, OPTIONS, PUT, DELETE, PATCH",
+      "access-control-allow-origin": "*",
+      "content-length": "3136",
+      "content-type": "application/json",
+      "date": "Sat, 12 Sep 2026 14:01:51 GMT",
+      "nel": "{\"report_to\":\"heroku-nel\",\"response_headers\":[\"Via\"],\"max_age\":3600,\"success_fraction\":0.01,\"failure_fraction\":0.1}",
+      "report-to": "{\"group\":\"heroku-nel\",\"endpoints\":[{\"url\":\"https://nel.heroku.com/reports?s=z2MB7VnHEnLo4n8s8o1W6lDupVqeJXxTTj4C7ncPq5U%3D\\u0026sid=c46efe9b-d3d2-4a0c-8c76-bfafa16c5add\\u0026ts=1789221711\"}],\"max_age\":3600}",
+      "reporting-endpoints": "heroku-nel=\"https://nel.heroku.com/reports?s=z2MB7VnHEnLo4n8s8o1W6lDupVqeJXxTTj4C7ncPq5U%3D&sid=c46efe9b-d3d2-4a0c-8c76-bfafa16c5add&ts=1789221711\"",
+      "server": "Heroku",
+      "vary": "Accept-Encoding",
+      "via": "1.1 heroku-router",
+      "connection": "close"
+    },
+    "encoding": "utf-8",
+    "body": "{\"best_oa_location\":{\"endpoint_id\":\"ac9de7698155b820de7\",\"evidence\":\"deprecated\",\"host_type\":\"repository\",\"is_best\":true,\"license\":null,\"oa_date\":\"2018-04-02\",\"pmh_id\":\"oai:pubmedcentral.nih.gov:6700744\",\"repository_institution\":\"National Institutes of Health\",\"updated\":\"deprecated\",\"url\":\"https://www.ncbi.nlm.nih.gov/pmc/articles/6700744\",\"url_for_landing_page\":\"https://www.ncbi.nlm.nih.gov/pmc/articles/6700744\",\"url_for_pdf\":null,\"version\":\"submittedVersion\"},\"data_standard\":2,\"doi\":\"10.1038/nbt.4096\",\"doi_url\":\"https://doi.org/10.1038/nbt.4096\",\"first_oa_location\":{\"endpoint_id\":\"ac9de7698155b820de7\",\"evidence\":\"deprecated\",\"host_type\":\"repository\",\"is_best\":true,\"license\":null,\"oa_date\":\"2018-04-02\",\"pmh_id\":\"oai:pubmedcentral.nih.gov:6700744\",\"repository_institution\":\"National Institutes of Health\",\"updated\":\"deprecated\",\"url\":\"https://www.ncbi.nlm.nih.gov/pmc/articles/6700744\",\"url_for_landing_page\":\"https://www.ncbi.nlm.nih.gov/pmc/articles/6700744\",\"url_for_pdf\":null,\"version\":\"submittedVersion\"},\"genre\":\"journal-article\",\"has_repository_copy\":true,\"is_oa\":true,\"is_paratext\":false,\"journal_is_in_doaj\":false,\"journal_is_oa\":false,\"journal_issn_l\":\"0733-222X\",\"journal_issns\":\"0733-222X,1087-0156,1546-1696,2331-3684\",\"journal_name\":\"Nature Biotechnology\",\"oa_locations\":[{\"endpoint_id\":\"ac9de7698155b820de7\",\"evidence\":\"deprecated\",\"host_type\":\"repository\",\"is_best\":true,\"license\":null,\"oa_date\":\"2018-04-02\",\"pmh_id\":\"oai:pubmedcentral.nih.gov:6700744\",\"repository_institution\":\"National Institutes of Health\",\"updated\":\"deprecated\",\"url\":\"https://www.ncbi.nlm.nih.gov/pmc/articles/6700744\",\"url_for_landing_page\":\"https://www.ncbi.nlm.nih.gov/pmc/articles/6700744\",\"url_for_pdf\":null,\"version\":\"submittedVersion\"}],\"oa_locations_embargoed\":[],\"oa_status\":\"green\",\"published_date\":\"2018-04-02\",\"publisher\":\"Springer Science and Business Media LLC\",\"title\":\"Integrating single-cell transcriptomic data across different conditions, technologies, and species\",\"updated\":\"2026-07-28T14:02:58Z\",\"year\":2018,\"z_authors\":[{\"author_position\":\"first\",\"is_corresponding\":false,\"raw_affiliation_strings\":[\"Center for Genomics and Systems Biology, New York University, New York, New York, USA\",\"New York Genome Center, New York, New York, USA\"],\"raw_author_name\":\"Andrew Butler\"},{\"author_position\":\"middle\",\"is_corresponding\":false,\"raw_affiliation_strings\":[\"New York Genome Center, New York, New York, USA\"],\"raw_author_name\":\"Paul Hoffman\"},{\"author_position\":\"middle\",\"is_corresponding\":false,\"raw_affiliation_strings\":[\"New York Genome Center, New York, New York, USA\"],\"raw_author_name\":\"Peter Smibert\"},{\"author_position\":\"middle\",\"is_corresponding\":false,\"raw_affiliation_strings\":[\"Center for Genomics and Systems Biology, New York University, New York, New York, USA\",\"New York Genome Center, New York, New York, USA\"],\"raw_author_name\":\"Efthymia Papalexi\"},{\"author_position\":\"last\",\"is_corresponding\":true,\"raw_affiliation_strings\":[\"Center for Genomics and Systems Biology, New York University, New York, New York, USA\",\"New York Genome Center, New York, New York, USA\"],\"raw_author_name\":\"Rahul Satija\"}]}\n"
+  }
+}
