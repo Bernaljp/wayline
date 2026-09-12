@@ -1,0 +1,3 @@
+- arXiv:1706.03762
+- https://doi.org/10.1038/s41592-019-0686-2
+- Highly accurate protein structure prediction with AlphaFold

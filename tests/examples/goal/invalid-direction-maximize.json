@@ -1,0 +1,18 @@
+{
+  "metric": "auroc",
+  "direction": "maximize",
+  "target": 0.9,
+  "dataset_or_split": "synthetic two-class set",
+  "held_out_split": "split_b",
+  "eval_command": "python -m toy.eval --predictions {artifact}",
+  "baseline": {
+    "value": 0.81,
+    "source": "results/baseline/seed-1.log"
+  },
+  "budget": {
+    "gpu_hours": 4,
+    "wallclock": 24,
+    "usage_windows": 3
+  },
+  "stop_when": "goal_reached"
+}

@@ -15,7 +15,7 @@
     "session_id": null,
     "journal_ts": null,
     "change_record": null,
-    "reason": "seed: ticket 27 registered the five interactive skills; ticket 28 records the intake this fixture replays and the section checks on INTAKE.md"
+    "reason": "seed: ticket 27 registered the five interactive skills; ticket 28 recorded the intake under recorded/ and wrote the checks on the files it wrote"
   },
   "launch": {
     "model": "opus",
@@ -24,7 +24,13 @@
     "max_turns": 100,
     "output_format": "stream-json",
     "json_schema": null,
-    "fallback_model": "opus"
+    "fallback_model": "opus",
+    "tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(wayline intake*)"
+    ]
   },
   "input": {
     "prompt": "input/prompt.md",
@@ -35,14 +41,41 @@
   "structural": [
     {
       "check": "file_exists",
-      "path": "research/INTAKE.md"
+      "path": "research/INTAKE.md",
+      "in": "worktree"
     },
     {
       "check": "file_absent",
-      "path": "research/GOAL.json"
+      "path": "research/GOAL.json",
+      "in": "worktree"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline intake"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "intake_has_every_section"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "references_reach_absorb"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "data_pointer_is_listed"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "harness_records_the_intake"
     }
   ],
-  "note": "The recorded intake states no quantitative goal, so GOAL.json must not be written: a goal nobody asked for is the failure this fixture exists to catch.",
+  "note": "The session runs in a project laid out by wayline init with input/context/ copied into its root. The owner states no quantitative goal, so GOAL.json must not be written: a goal nobody asked for is the failure this fixture exists to catch. The skill writes through `wayline intake`, never into research/ itself, which tool_used checks on the trace. recorded/ holds what the session left: research/INTAKE.md, harness.json, the result envelope, and the trace with system/init reduced to the session id and the model.",
   "baseline": null,
   "quarantine": {
     "status": "active",

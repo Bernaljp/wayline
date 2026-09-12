@@ -9,6 +9,11 @@
     "harness_tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
     "autonomy": {"type": "string", "enum": ["interactive", "checkpoints", "autonomous"]},
     "radius": {"type": "string", "enum": ["strict", "moderate", "exploratory"]},
+    "human_only": {
+      "type": "array",
+      "description": "the decision classes the decider never resolves (Implementation Decisions 4): goal and data always, plus the classes the owner added at intake",
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"}
+    },
     "budgets": {
       "type": "object",
       "additionalProperties": false,
