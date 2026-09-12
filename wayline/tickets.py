@@ -23,7 +23,8 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger
 
 __all__ = [
-    "TicketError", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED", "RESULT_HEADING",
+    "TicketError", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED", "DECISION",
+    "HARDEST", "RESULT_HEADING",
     "slug", "filename", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "by_status", "empty_graph", "tickets_dir", "with_result", "result_notes",
@@ -41,6 +42,9 @@ SCHEDULING_FIELDS = (
 STATUSES = ("open", "running", "done", "accepted", "failed", "blocked", "needs_human", "parked")
 # A blocker stops holding its dependents when it is done or accepted (the glossary's frontier).
 SATISFIED = ("done", "accepted")
+# The kind whose open tickets pause their subgraph, and the difficulty whose blockers need a verdict.
+DECISION = "decision"
+HARDEST = 5
 
 # The heading the ledger appends an attempt's result under (Implementation Decisions 2).
 RESULT_HEADING = "## Result"
@@ -334,12 +338,57 @@ def by_status(graph):
 
 
 def frontier(graph):
-    """Open tickets whose blockers are done or accepted (the glossary's frontier), by id."""
-    status = {entry["id"]: entry["status"] for entry in graph["tickets"]}
-    ready = []
-    for entry in graph["tickets"]:
-        if entry["status"] != "open":
-            continue
-        if all(status.get(blocker) in SATISFIED for blocker in entry["blocked_by"]):
-            ready.append(entry)
+    """Open tickets whose blockers are done or accepted (the glossary's frontier), by id.
+
+    Wave step 7 of Implementation Decisions 5 states the two rules that narrow it further:
+
+    - A difficulty-5 blocker counts only when it is `accepted`, not merely `done` (BRIEF 8.4: the
+      hardest work is depended on only after a verifier has passed it, never on its own say-so).
+      The difficulty read is the graph's effective one, so a `pinned_difficulty` of 5 counts too.
+    - An open decision ticket pauses what it holds: with `blocking: subgraph` every ticket that
+      waits on it, however far down the blocking edges; with `blocking: all` everything. Both
+      leave the decision tickets themselves in the frontier, because a paused project must still
+      be able to answer the question that paused it (the decider of ticket 35 is launched for one
+      like any other ticket). A decision ticket is open until it is `done`, `accepted`, or
+      `parked`; the answer paths that close one arrive with ticket 35.
+    """
+    entries = graph["tickets"]
+    by_id = {entry["id"]: entry for entry in entries}
+    ready = [entry for entry in entries
+             if entry["status"] == "open"
+             and all(_blocker_satisfied(by_id.get(blocker)) for blocker in entry["blocked_by"])]
+    pending = [entry for entry in entries if _is_open_decision(entry)]
+    if any(entry.get("blocking") == "all" for entry in pending):
+        ready = [entry for entry in ready if entry["kind"] == DECISION]
+    else:
+        paused = _paused_by(entries, [entry for entry in pending if entry.get("blocking") == "subgraph"])
+        ready = [entry for entry in ready if entry["id"] not in paused or entry["kind"] == DECISION]
     return sorted(ready, key=lambda entry: entry["id"])
+
+
+def _blocker_satisfied(blocker):
+    """Whether a blocker holds its dependents no longer; an unknown id holds them (read_tickets refuses one)."""
+    if blocker is None:
+        return False
+    if blocker.get("difficulty") == HARDEST:
+        return blocker["status"] == "accepted"
+    return blocker["status"] in SATISFIED
+
+
+def _is_open_decision(entry):
+    return entry["kind"] == DECISION and entry["status"] not in SATISFIED + ("parked",)
+
+
+def _paused_by(entries, decisions):
+    """The ids that wait on any of these decision tickets, down the blocking edges, transitively."""
+    dependents = {}
+    for entry in entries:
+        for blocker in entry["blocked_by"]:
+            dependents.setdefault(blocker, []).append(entry["id"])
+    paused, stack = set(), [entry["id"] for entry in decisions]
+    while stack:
+        for identifier in dependents.get(stack.pop(), ()):
+            if identifier not in paused:
+                paused.add(identifier)
+                stack.append(identifier)
+    return paused

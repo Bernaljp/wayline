@@ -1,25 +1,30 @@
 """The conductor (Implementation Decisions 5, Testing Decisions seam 4): the wave, end to end.
 
 `wayline run` is one process over one project. A wave is one pass of its loop: regenerate
-`graph.json`, compute the frontier, add a worktree for the ticket it picks, assemble the prompt,
-launch the worker through the launcher seam, validate what comes back, run the machine acceptance
-in the worktree, rebase onto `main`, run the acceptance again, fast-forward `main`, run it once
-more there, write the findings and the status through the ledger, journal every step, and remove
-the worktree. The run ends when the frontier is empty.
+`graph.json`, compute the frontier, cut it down to what can be launched now, add a worktree for
+each ticket it picks, assemble the prompts, launch the workers through the launcher seam,
+validate what comes back, run the machine acceptance in the worktree, rebase onto `main`, run the
+acceptance again, fast-forward `main`, run it once more there, write the findings and the status
+through the ledger, journal every step, and remove the worktree. The run ends when the frontier
+is empty.
 
-What M0 builds, and what it leaves to the tickets that extend it:
+What M0 and M1 build here, and what they leave to the tickets that extend them:
 
-- One worker per wave, launched and waited for, so the whole path runs in the suite in seconds
-  and no test sleeps. Ticket 07 makes the launch asynchronous, adds the launchable filter (touch
-  sets and resources) and the pick order, and runs two workers at once.
+- Up to `policy.max_parallel_workers` workers per wave (ticket 07), launched together and waited
+  for, and their outcomes carried one at a time in pick order, because the integration protocol
+  is one rebase and one fast-forward at a time. The wave is still as long as its slowest worker:
+  the poll of step 3, which lets a wave start work while another worker is still running, is
+  ticket 09's, and so is re-adopting a worker that outlives the process.
 - One resume per attempt, for an invalid result or a failed acceptance (BRIEF 9.1). The rest of
   the escalation ladder (a tier up, a split ticket, `needs_human`) is named in the `next` of the
   `ticket_failed` event and built by ticket 38.
 - The conflict-free integration. A rebase conflict fails the ticket with `next: split`; the
   integrator role that resolves one arrives with ticket 08.
 - No heartbeat, no lock on `research/conductor.json`, no `control` events and no replay: ticket
-  09. No pacing and no pause: ticket 10. No job poller, so an experiment ticket whose jobs
-  outlive its worker stays `running` and this run ends with nothing left that it can advance.
+  09. No pacing and no pause: ticket 10 computes the action the pick order already reads, and
+  decides what an action refuses to launch. No job poller, so an experiment ticket whose jobs
+  outlive its worker stays `running`, holds its touch set against the frontier, and this run ends
+  with nothing left that it can advance.
 - A result's `proposals`, `decision_requests` and `goal_progress` are written into the ticket's
   `## Result` section so the owner sees them, and nothing else: admission is ticket 37, decision
   tickets are ticket 35, and keep-if-better is ticket 39.
@@ -33,11 +38,12 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from wayline import HARNESS_ROOT, gates, tickets, worker
+from wayline import HARNESS_ROOT, gates, schedule, tickets, worker
 from wayline.ledger import (
     ACCEPTANCE, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_BLOCKED, TICKET_DONE,
     TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, TICKET_RESUMED,
@@ -185,6 +191,8 @@ def tier_for(policy, difficulty, ticket_budget=None):
 class WaveResult:
     """One pass of the loop, as the `run` verb and the tests read it.
 
+    `launched` holds the tickets this wave picked and handed to the launcher, in pick order; the
+    journal's `ticket_launched` is the narrower record of the ones whose process actually started.
     `failed` holds the tickets that were launched, did not reach `done`, and are not still
     running, whatever the reason: a failure, a block, or a question for a person. The journal
     says which.
@@ -215,10 +223,14 @@ class _Attempt:
     worktree: Path
     role: Optional[worker.Role] = None
     tier: Optional[Tier] = None
+    prompt: Optional[worker.Prompt] = None
     request: Optional[worker.LaunchRequest] = None
     envelope: Optional[worker.Envelope] = None
     session_id: Optional[str] = None
     resumed: bool = False
+    # What the launch raised, when it did: a thread cannot fail its own wave, so the failure is
+    # carried back to the main thread and the ticket is failed there, in pick order, like any other.
+    failure: Optional[BaseException] = None
 
     @property
     def id(self):
@@ -244,6 +256,11 @@ class Conductor:
         self.number = 0
         self.out = sys.stdout if out is None else out
         self._who_args = None
+        # The pacing action of wave step 8 and the resource answer of step 7, both seams the pick
+        # order already reads: ticket 10 computes the action from the windows, and the job poller
+        # replaces `resources_free` with the free-slot rule of `wayline.resources`.
+        self.action = schedule.NORMAL
+        self.resources_free = schedule.everything_free
 
     def say(self, message):
         print(message, file=self.out, flush=True)
@@ -254,9 +271,9 @@ class Conductor:
         """One pass of the loop (decision 5), called directly by tests."""
         self.number += 1
         result = WaveResult(self.number)
-        ready = tickets.frontier(self._graph())
-        if ready:
-            self._work(ready[0], result)
+        picks = self._picks(self._graph())
+        if picks:
+            self._work(picks, result)
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         if not tickets.frontier(graph) and not running:
@@ -294,20 +311,110 @@ class Conductor:
         graph, _ = tickets.refresh_graph(self.project, ledger=self.ledger, events=events)
         return graph
 
-    # --- one ticket, one attempt ---
+    # --- what this wave launches (decision 5, wave steps 7 to 9) ---
 
-    def _work(self, entry, result):
-        """One ticket from launch to `done`, or to whatever stopped it; nothing here raises out."""
-        ticket, body = self._ticket(entry["id"])
-        attempt = _Attempt(ticket, body, int(entry.get("attempt") or 0) + 1, self._worktree(entry["id"]))
+    def _picks(self, graph):
+        """The tickets to launch now: the launchable subset of the frontier, in pick order.
+
+        A ticket left `running` by jobs that outlived their worker holds its touch set against the
+        frontier but occupies no worker slot, because `max_parallel_workers` counts workers and
+        that ticket has none.
+        """
+        running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
+        return schedule.pick(
+            graph, running=running, slots=self._slots(), action=self.action,
+            root=self.project, free=self.resources_free, goal_tickets=self._goal_tickets(),
+        )
+
+    def _slots(self):
+        """`policy.max_parallel_workers`: how many workers this conductor runs at once."""
+        slots = self.policy.get("max_parallel_workers", 1)
+        if isinstance(slots, bool) or not isinstance(slots, int) or slots < 1:
+            raise ConductorError("policy.max_parallel_workers is %r; it is a whole number of workers, at least 1"
+                                 % (slots,))
+        return slots
+
+    def _goal_tickets(self):
+        """The ids of the tickets that report a goal metric, which the pick order prefers.
+
+        `graph.json` carries the scheduling fields of decision 2 and `goal_metric` is not one of
+        them, so the ticket files answer this; the conductor reads them for every launch anyway.
+        """
+        return {ticket["id"] for ticket in tickets.read_tickets(self.project) if ticket.get("goal_metric")}
+
+    # --- the tickets of one wave ---
+
+    def _work(self, picks, result):
+        """Launch every pick at once, then carry their outcomes one at a time, in pick order.
+
+        The launches overlap because that is the point of `max_parallel_workers`; the outcomes do
+        not, because the integration protocol is one rebase and one fast-forward at a time, and
+        because the second of two tickets that would conflict is never in the same wave anyway.
+        """
+        attempts = []
+        for entry in picks:
+            ticket, body = self._ticket(entry["id"])
+            attempt = _Attempt(ticket, body, int(entry.get("attempt") or 0) + 1, self._worktree(entry["id"]))
+            try:
+                self._begin(attempt, entry)
+            except (ValueError, OSError) as failure:  # a role, a prompt, a settings file, or a git step
+                self._fail(attempt, str(failure), "needs_human")
+                result.failed.append(attempt.id)
+                continue
+            attempts.append(attempt)
+            result.launched.append(attempt.id)
+        self._launch(attempts)
+        for attempt in attempts:
+            self._carry(attempt, result)
+
+    def _carry(self, attempt, result):
+        """What one launched attempt came to, counted into the wave; nothing here raises out."""
         outcome = "failed"
         try:
-            self._begin(attempt, entry)
-            result.launched.append(attempt.id)
+            if attempt.failure is not None:
+                raise attempt.failure
             outcome = self._outcome(attempt)
-        except (ValueError, OSError) as failure:  # a launch, a role, a ticket file, or a git step
+        except (ValueError, OSError) as failure:  # a launch, a ticket file, or a git step
             self._fail(attempt, str(failure), "needs_human")
         {"done": result.done, "running": result.running}.get(outcome, result.failed).append(attempt.id)
+
+    def _launch(self, attempts):
+        """Run every prepared attempt's worker, together, and return once they have all stopped.
+
+        One thread per worker: the launcher seam blocks on its child process, so a thread spends
+        its life in `wait()`, and the two things it writes are the run directory of its own
+        session and the journal, whose appends are serialized by the ledger's lock. Ticket 09
+        replaces the join with the poll of wave step 3.
+        """
+        if len(attempts) < 2:
+            for attempt in attempts:
+                self._launch_one(attempt)
+            return
+        threads = [threading.Thread(target=self._launch_one, args=(attempt,),
+                                    name="wayline-ticket-%d" % attempt.id) for attempt in attempts]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    def _launch_one(self, attempt):
+        """One worker, launched and waited for; what it raises is carried, not thrown at the wave.
+
+        Every exception is carried, not only the two the wave knows how to fail a ticket on: an
+        exception left to a thread would be printed to stderr and lost, and the wave would go on
+        to read an envelope nobody ever set. Carried, it is raised again on the main thread, where
+        a launch failure fails its ticket and anything else still ends the run.
+        """
+        try:
+            attempt.envelope = worker.launch(
+                attempt.request, on_start=lambda started: self._journal_launch(attempt, started))
+            attempt.session_id = attempt.envelope.session_id
+            self.ledger.append_event(TICKET_SESSION, {
+                "ticket": attempt.id, "attempt": attempt.number,
+                "session_id": attempt.session_id, "model": attempt.envelope.model,
+            }, ticket=attempt.id, session_id=attempt.session_id)
+        except Exception as failure:  # carried to the main thread, and raised again there
+            attempt.failure = failure
 
     def _outcome(self, attempt):
         """What this attempt came to: `done`, `running` (its jobs outlive it), or `failed`."""
@@ -322,24 +429,22 @@ class Conductor:
         return "failed"
 
     def _begin(self, attempt, entry):
-        """The worktree, the prompt, and the launch; returns once the worker has finished."""
+        """Everything one launch needs: the role, the tier, the worktree, the prompt, the request.
+
+        This is the serial half of a launch. Two workers may run at once but their worktrees are
+        added one after another, because `git worktree add` writes the repository the other
+        launches are reading, and both say their line in pick order rather than interleaved.
+        """
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         attempt.tier = tier_for(self.policy, entry.get("difficulty", attempt.ticket["difficulty"]),
                                 attempt.ticket.get("budget"))
         self._add_worktree(attempt)
         self._write_ticket(attempt, "running")
-        prompt = self._prompt(attempt)
-        attempt.request = self._request(attempt, prompt)
+        attempt.prompt = self._prompt(attempt)
+        attempt.request = self._request(attempt, attempt.prompt)
         self.say("wave %d: ticket %d %s (%s, %s %s, attempt %d)" % (
             self.number, attempt.id, attempt.ticket["title"], attempt.role.name,
             attempt.tier.model, attempt.tier.effort, attempt.number))
-        attempt.envelope = worker.launch(
-            attempt.request, on_start=lambda started: self._journal_launch(attempt, prompt, started))
-        attempt.session_id = attempt.envelope.session_id
-        self.ledger.append_event(TICKET_SESSION, {
-            "ticket": attempt.id, "attempt": attempt.number,
-            "session_id": attempt.session_id, "model": attempt.envelope.model,
-        }, ticket=attempt.id, session_id=attempt.session_id)
 
     def _prompt(self, attempt):
         """The prompt of decision 3; a locator resolves in the worktree first, then in the project."""
@@ -371,13 +476,13 @@ class Conductor:
             max_minutes=attempt.tier.max_minutes,
         )
 
-    def _journal_launch(self, attempt, prompt, started):
+    def _journal_launch(self, attempt, started):
         self.ledger.append_event(TICKET_LAUNCHED, {
             "ticket": attempt.id, "attempt": attempt.number, "role": attempt.role.name,
             "model": attempt.tier.model, "effort": attempt.tier.effort,
             "skills": list(attempt.ticket.get("skills") or []),
             "worktree": str(attempt.worktree), "pid": started.pid,
-            "context_chars": prompt.context_chars, "prompt_sha256": prompt.sha256,
+            "context_chars": attempt.prompt.context_chars, "prompt_sha256": attempt.prompt.sha256,
         }, ticket=attempt.id)
 
     # --- the worker outcome (BRIEF 9.1) ---
