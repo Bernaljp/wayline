@@ -85,9 +85,11 @@ class NotYetImplementedTest(unittest.TestCase):
         self.assertIn("frobnicate", done.stderr)
 
     def test_main_returns_the_exit_code_in_process(self):
+        unbuilt = [verb for verb in cli.VERBS if verb.handler is None]
+        self.assertTrue(unbuilt, "every verb is built; drop this test")
         buffer = io.StringIO()
         with redirect_stderr(buffer):
-            code = cli.main(["run"])
+            code = cli.main([unbuilt[0].name])
         self.assertEqual(code, 2)
         self.assertIn("not yet implemented", buffer.getvalue())
 

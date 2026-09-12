@@ -23,10 +23,10 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger
 
 __all__ = [
-    "TicketError", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED",
+    "TicketError", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED", "RESULT_HEADING",
     "slug", "filename", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
-    "frontier", "by_status", "empty_graph", "tickets_dir",
+    "frontier", "by_status", "empty_graph", "tickets_dir", "with_result", "result_notes",
 ]
 
 TICKETS = "tickets"
@@ -41,6 +41,9 @@ SCHEDULING_FIELDS = (
 STATUSES = ("open", "running", "done", "accepted", "failed", "blocked", "needs_human", "parked")
 # A blocker stops holding its dependents when it is done or accepted (the glossary's frontier).
 SATISFIED = ("done", "accepted")
+
+# The heading the ledger appends an attempt's result under (Implementation Decisions 2).
+RESULT_HEADING = "## Result"
 
 _FILENAME_RE = re.compile(r"(\d+)-([a-z0-9][a-z0-9-]*)\.md\Z")
 _SLUG_MAX = 48
@@ -119,6 +122,44 @@ def read_tickets(project):
             if blocker not in tickets:
                 raise TicketError("ticket %d is blocked by %d, which does not exist" % (ticket["id"], blocker))
     return [tickets[key] for key in sorted(tickets)]
+
+
+def result_notes(result):
+    """The lines of a result that no code reads yet, one short sentence each, or an empty list.
+
+    A worker may return proposals, decision requests, and goal progress before the tickets that
+    act on them exist (37, 35, and 39). They are written into the ticket body and said aloud
+    rather than dropped, because a proposal nobody ever sees is worse than one that waits.
+    """
+    notes = []
+    progress = result.get("goal_progress")
+    if progress:
+        notes.append("reported %s = %s" % (progress.get("metric"), progress.get("value")))
+    proposals = result.get("proposals") or []
+    if proposals:
+        notes.append("proposed %s (ticket 37 admits proposals)"
+                     % ", ".join("%s (%s)" % (item.get("title"), item.get("kind")) for item in proposals))
+    requests = result.get("decision_requests") or []
+    if requests:
+        notes.append("asked %s (ticket 35 opens decision tickets)"
+                     % "; ".join(item.get("question", "") for item in requests))
+    return notes
+
+
+def with_result(body, attempt, result):
+    """The ticket body with this attempt's `## Result` section appended (Implementation Decisions 2)."""
+    lines = ["### Attempt %d" % attempt, "",
+             (result.get("summary") or "").strip() or "(the result carried no summary)"]
+    for key, label in (("outputs_written", "Wrote"), ("commands_run", "Ran"), ("jobs", "Jobs")):
+        items = result.get(key) or []
+        if items:
+            lines.extend(["", "%s: %s" % (label, ", ".join("`%s`" % item for item in items))])
+    for note in result_notes(result):
+        lines.extend(["", note[0].upper() + note[1:] + "."])
+    text = body.rstrip("\n")
+    if "\n" + RESULT_HEADING + "\n" not in text + "\n":
+        lines = [RESULT_HEADING, ""] + lines
+    return text + "\n\n" + "\n".join(lines) + "\n"
 
 
 def write_ticket(ledger, fields, body=""):

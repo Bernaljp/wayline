@@ -452,6 +452,15 @@ class Ledger:
                 os.close(fd)
         return target
 
+    def append_record(self, relpath, value):
+        """Append one JSON object to a line file (`findings.jsonl`), spelled as the journal spells its own.
+
+        The journal is not the only line file of structured records, and a second spelling of
+        "one object per line" would be a second set of escaping rules to get wrong.
+        """
+        self.append_line(relpath, _escape_line_breaks(_dumps(value, separators=(",", ":"))))
+        return value
+
     def append_event(self, event, payload=None, ticket=None, session_id=None, job=None, ts=None):
         """Validate and append one journal event; returns the record written.
 
