@@ -15,12 +15,13 @@ git config rerere.enabled true
 git config rerere.autoUpdate true
 git fetch -q --prune origin || { echo "fetch failed; nothing done"; exit 1; }
 
-read -r number branch < <(gh pr list --state open --base master --json number,headRefName \
-    --jq 'sort_by(.number) | .[0] | "\(.number) \(.headRefName)"')
-if [ -z "${number:-}" ]; then
+oldest=$(gh pr list --state open --base master --json number,headRefName \
+    --jq 'sort_by(.number) | .[0] // empty | "\(.number) \(.headRefName)"') || { echo "gh failed; nothing done"; exit 1; }
+if [ -z "$oldest" ]; then
     echo "no open pull request"
     exit 0
 fi
+read -r number branch <<< "$oldest"
 if git merge-base --is-ancestor origin/master "origin/$branch"; then
     echo "#$number ($branch) already holds origin/master: merge it on GitHub"
     exit 0
