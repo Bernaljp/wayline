@@ -22,6 +22,9 @@ const state = {
   tags: {},
   since: null, // null means "the tail has not read this project yet": ask by line count, not offset
 
+  ticket: null, // the ticket id whose page is open, or null when the graph is showing
+  log: null, // { kind, id, since } of the log tail that is open, or null
+
   pollJournal: 2,
   pollViews: 5,
   stream: null,
@@ -45,6 +48,21 @@ async function get(path, key) {
   const etag = response.headers.get('ETag');
   if (etag) state.tags[cache] = etag;
   return response.json();
+}
+
+// Like `get`, but for the graph's SVG body, which is not JSON.
+async function getText(path, key) {
+  const cache = key || path;
+  const headers = {};
+  if (TOKEN) headers['X-Wayline-Token'] = TOKEN;
+  const tag = state.tags[cache];
+  if (tag) headers['If-None-Match'] = tag;
+  const response = await fetch(path, { cache: 'no-store', headers });
+  if (response.status === 304) return null;
+  if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
+  const etag = response.headers.get('ETag');
+  if (etag) state.tags[cache] = etag;
+  return response.text();
 }
 
 function every(name, seconds, run) {
@@ -138,6 +156,8 @@ function select(id) {
     tab.setAttribute('aria-current', String(tab.dataset.id === id));
   }
   every('overview', state.pollViews, loadOverview);
+  every('graph', state.pollViews, loadGraph);
+  showGraph();
   startTail();
 }
 
@@ -195,6 +215,151 @@ function renderOverview(view) {
   }
   replace(document.getElementById('overview-body'), parts);
 }
+
+// --- the graph ------------------------------------------------------------------------------------
+
+// The graph section, the ticket page, and the log tail share one area of the page and show one at
+// a time: a click on a graph node opens the ticket it names, and a click on one of its logs opens
+// the tail. Each "back" reveals the view underneath it.
+function showGraph() {
+  document.getElementById('graph').hidden = false;
+  document.getElementById('ticket').hidden = true;
+  document.getElementById('logs').hidden = true;
+  stopLog();
+  state.ticket = null;
+}
+
+function showTicket() {
+  document.getElementById('graph').hidden = true;
+  document.getElementById('ticket').hidden = false;
+  document.getElementById('logs').hidden = true;
+  stopLog();
+}
+
+async function loadGraph() {
+  if (!state.project) return;
+  try {
+    const svg = await getText(`/api/projects/${encodeURIComponent(state.project)}/graph.svg`, 'graph');
+    if (svg !== null) document.getElementById('graph-body').innerHTML = svg;
+  } catch (failure) {
+    replace(document.getElementById('graph-body'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+  }
+}
+
+// The SVG's `<a href="#ticket/<id>">` is not meant to navigate: this is a single-page app, so a
+// click on it is caught here and turned into `openTicket` instead. The listener is on the
+// container, not the links, because `innerHTML` replaces the links themselves on every poll.
+document.getElementById('graph-body').addEventListener('click', (event) => {
+  const link = event.target.closest('a[href^="#ticket/"]');
+  if (!link) return;
+  event.preventDefault();
+  openTicket(link.getAttribute('href').slice('#ticket/'.length));
+});
+
+// --- the ticket page ------------------------------------------------------------------------------
+
+async function openTicket(id) {
+  if (!state.project) return;
+  state.ticket = id;
+  showTicket();
+  try {
+    const view = await get(`/api/projects/${encodeURIComponent(state.project)}/tickets/${encodeURIComponent(id)}`);
+    // A second click before this one's fetch returned must not let the first ticket's view land
+    // on the page after the page has already moved on to another ticket.
+    if (view && state.ticket === id) renderTicket(view);
+  } catch (failure) {
+    if (state.ticket === id) replace(document.getElementById('ticket-body'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+  }
+}
+
+function renderTicket(view) {
+  const f = view.fields || {};
+  const parts = [
+    fields([
+      ['id', f.id],
+      ['title', f.title],
+      ['kind', f.kind],
+      ['status', f.status],
+      ['difficulty', f.difficulty],
+      ['role', f.role],
+      ['blocked by', (f.blocked_by || []).length ? f.blocked_by.join(', ') : 'nothing'],
+    ]),
+    el('h3', { text: 'body' }),
+    renderMarkdown(view.body),
+    el('h3', { text: `context pack (${(view.context_pack || []).length})` }),
+    listOrNone(view.context_pack, (path) => el('li', { text: path })),
+    el('h3', { text: 'latest result' }),
+    view.result ? resultFields(view.result) : el('p', { class: 'note', text: 'no attempt has returned a result yet' }),
+    el('h3', { text: `findings (${(view.findings || []).length})` }),
+    listOrNone(view.findings, (finding) => el('li', { text: finding.text })),
+    el('h3', { text: 'session logs' }),
+    logList(view.sessions, 'session', (entry) => `attempt ${entry.attempt}${entry.resume ? ` (${entry.resume})` : ''}`),
+    el('h3', { text: 'job logs' }),
+    logList(view.jobs, 'job', (entry) => `${entry.id} (${entry.status})`),
+  ];
+  replace(document.getElementById('ticket-body'), parts);
+}
+
+function resultFields(result) {
+  return fields(Object.entries(result).map(([key, value]) => [key, short(value)]));
+}
+
+function listOrNone(items, render) {
+  return (items || []).length ? el('ul', {}, items.map(render)) : el('p', { class: 'note', text: 'none' });
+}
+
+function logList(entries, kind, label) {
+  return listOrNone(entries, (entry) => {
+    const button = el('button', { type: 'button', class: 'tab', text: label(entry) });
+    button.addEventListener('click', () => openLog(kind, entry.id));
+    return el('li', {}, [button]);
+  });
+}
+
+// --- the log tail -----------------------------------------------------------------------------------
+
+function stopLog() {
+  if (state.timers.logs) {
+    clearInterval(state.timers.logs);
+    delete state.timers.logs;
+  }
+  state.log = null;
+}
+
+function openLog(kind, id) {
+  if (!state.project) return;
+  document.getElementById('graph').hidden = true;
+  document.getElementById('ticket').hidden = true;
+  document.getElementById('logs').hidden = false;
+  state.log = { kind, id, since: null };
+  document.getElementById('logs-tail').textContent = '';
+  document.getElementById('logs-note').textContent = `${kind} ${id}`;
+  every('logs', state.pollJournal, pollLog);
+}
+
+async function pollLog() {
+  const current = state.log;
+  if (!current) return;
+  const since = current.since === null ? 0 : current.since;
+  // Not `encodeURIComponent`: a session id like `3/1/resume-1` must reach the route with its
+  // slashes literal, since the server matches the path itself rather than a decoded one.
+  const path = `/api/projects/${encodeURIComponent(state.project)}/logs/${current.kind}/${current.id}?since=${since}`;
+  let tail;
+  try {
+    tail = await get(path, `log:${current.kind}:${current.id}`);
+  } catch (failure) {
+    document.getElementById('logs-note').textContent = String(failure.message || failure);
+    return;
+  }
+  if (!tail || current !== state.log) return;
+  if (tail.truncated) document.getElementById('logs-tail').textContent = '';
+  current.since = tail.next;
+  if (tail.text) document.getElementById('logs-tail').textContent += tail.text;
+  document.getElementById('logs-note').textContent = `${current.kind} ${current.id} — ${tail.exists ? `${tail.size} bytes` : 'nothing written yet'}`;
+}
+
+document.getElementById('ticket-back').addEventListener('click', showGraph);
+document.getElementById('logs-back').addEventListener('click', () => (state.ticket ? openTicket(state.ticket) : showGraph()));
 
 // --- the journal tail ---------------------------------------------------------------------------
 

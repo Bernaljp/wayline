@@ -13,11 +13,13 @@ import http.client
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import stat
 import threading
 import unittest
+import xml.etree.ElementTree as ET
 from http.cookies import SimpleCookie
 from pathlib import Path
 
@@ -27,13 +29,14 @@ from wayline import TAG
 from wayline.dashboard import (
     DashboardError, DashboardHandler, IDLE_TIMEOUT_S, LOOPBACK, READINGS_TTL_S, SSE_RETRY_MS,
     TOKEN_COOKIE, TOKEN_HEADER, TAIL_LINES_MAX,
-    dashboard_path, dashboard_url, etag, journal_tail, ledger_snapshot, make_server,
-    overview_view, phase_from_events, project_ids, projects_view, read_settings, record_settings,
-    requires_token, serve_lines, static_file, tunnel_line,
+    dashboard_path, dashboard_url, etag, graph_svg, journal_tail, ledger_snapshot, log_path,
+    log_tail, make_server, overview_view, phase_from_events, project_ids, projects_view,
+    read_settings, record_settings, requires_token, serve_lines, static_file, ticket_view,
+    tickets_view, tunnel_line,
 )
 from wayline.ledger import Ledger
-from wayline.project import register, set_active
-from wayline.tickets import GRAPH
+from wayline.project import home, register, set_active
+from wayline.tickets import GRAPH, frontier, read_tickets, refresh_graph
 
 STATIC = HARNESS_ROOT / "dashboard"
 
@@ -404,6 +407,187 @@ class JournalTailTest(DashboardTestCase):
         (empty / "research").mkdir(parents=True)
         tail = journal_tail(empty)
         self.assertEqual(tail, {"since": 0, "next": 0, "size": 0, "truncated": False, "events": []})
+
+
+# --- the graph endpoint --------------------------------------------------------------------------------
+
+
+class GraphEndpointTest(DashboardTestCase):
+    def test_it_returns_well_formed_svg_with_one_rect_per_ticket_and_one_line_per_edge(self):
+        response = self.api("/graph.svg")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers.get("content-type"), "image/svg+xml")
+        tickets = read_tickets(self.project)
+        edges = sum(len(fields["blocked_by"]) for fields in tickets)
+        root = ET.fromstring(response.text)
+        ns = "{http://www.w3.org/2000/svg}"
+        self.assertEqual(len(root.findall(".//%srect" % ns)), len(tickets))
+        self.assertEqual(len(root.findall(".//%sline" % ns)), edges)
+
+    def test_the_frontier_is_highlighted(self):
+        svg = graph_svg(self.project)
+        graph, _ = refresh_graph(self.project, write=False)
+        frontier_ids = {entry["id"] for entry in frontier(graph)}
+        self.assertTrue(frontier_ids)
+        # Every frontier node's rect carries the frontier fill and no other node does.
+        rects = re.findall(r'<rect[^>]*fill="([^"]+)"[^>]*/><text[^>]*>(\d+)</text>', svg)
+        by_id = {int(node_id): fill for fill, node_id in rects}
+        for entry in graph["tickets"]:
+            expected = "#8ecae6" if entry["id"] in frontier_ids else None
+            if expected:
+                self.assertEqual(by_id[entry["id"]], expected)
+            else:
+                self.assertNotEqual(by_id[entry["id"]], "#8ecae6")
+
+    def test_an_unchanged_ledger_answers_304(self):
+        first = self.api("/graph.svg")
+        self.assertEqual(self.api("/graph.svg", {"If-None-Match": first.etag}).status, 304)
+        self.append("unpaused")
+        self.assertEqual(self.api("/graph.svg", {"If-None-Match": first.etag}).status, 200)
+
+    def test_graph_svg_of_a_project_with_no_tickets_is_an_empty_canvas(self):
+        empty = self.temp / "no-tickets"
+        (empty / "research" / "tickets").mkdir(parents=True)
+        self.assertIn("<svg", graph_svg(empty))
+
+
+# --- the tickets endpoints ------------------------------------------------------------------------------
+
+
+class TicketsEndpointTest(DashboardTestCase):
+    def test_it_lists_every_ticket_by_id(self):
+        view = self.api("/tickets").json
+        self.assertEqual([fields["id"] for fields in view], list(range(1, 12)))
+        self.assertEqual(view[0]["title"], "Scaffold the analysis package")
+
+    def test_an_unchanged_ledger_answers_304(self):
+        first = self.api("/tickets")
+        self.assertEqual(self.api("/tickets", {"If-None-Match": first.etag}).status, 304)
+
+
+class TicketEndpointTest(DashboardTestCase):
+    def test_it_carries_the_frontmatter_the_body_and_the_context_pack(self):
+        view = self.api("/tickets/2").json
+        self.assertEqual(view["fields"]["id"], 2)
+        self.assertEqual(view["fields"]["title"], "Build the feature table")
+        self.assertIn("One summary file with a row count and the feature names.", view["body"])
+        self.assertEqual(view["context_pack"], [])
+
+    def test_the_latest_result_is_the_most_recent_attempts_result_json(self):
+        view = self.api("/tickets/2").json
+        self.assertEqual(view["result"]["status"], "done")
+        self.assertEqual(view["result"]["summary"], "Wrote the feature table and its summary.")
+
+    def test_a_ticket_with_no_attempts_has_no_result(self):
+        self.assertIsNone(self.api("/tickets/1").json["result"])
+
+    def test_the_findings_are_filtered_by_ticket(self):
+        view = self.api("/tickets/2").json
+        self.assertEqual([entry["id"] for entry in view["findings"]], ["f-0001"])
+        self.assertEqual(self.api("/tickets/1").json["findings"], [])
+
+    def test_the_session_and_job_logs_are_named(self):
+        view = self.api("/tickets/2").json
+        self.assertEqual([entry["id"] for entry in view["sessions"]], ["2/1", "2/1/resume-1"])
+        self.assertEqual(view["jobs"], [])
+
+    def test_a_running_tickets_jobs_are_named(self):
+        view = self.api("/tickets/3").json
+        self.assertEqual([entry["id"] for entry in view["sessions"]], ["3/1"])
+        self.assertEqual(sorted(job["id"] for job in view["jobs"]), ["j-0001", "j-0002"])
+
+    def test_a_ticket_with_no_sessions_or_jobs_has_empty_lists(self):
+        view = self.api("/tickets/1").json
+        self.assertEqual(view["sessions"], [])
+        self.assertEqual(view["jobs"], [])
+
+    def test_an_unknown_ticket_id_is_a_bad_request(self):
+        response = self.api("/tickets/999")
+        self.assertEqual(response.status, 400)
+        self.assertIn("no such ticket", response.text)
+
+    def test_an_unchanged_ledger_answers_304(self):
+        first = self.api("/tickets/2")
+        self.assertEqual(self.api("/tickets/2", {"If-None-Match": first.etag}).status, 304)
+
+    def test_a_new_resume_moves_the_tag_though_it_never_touches_the_ticket_file(self):
+        """A resume writes into `resume-<k>/` without changing the ticket's status or file.
+
+        `ledger_snapshot` alone would miss it, and a client that cached the tag before the resume
+        was written would keep being told 304 forever: the session list `ticket_view` carries would
+        be stale exactly where a page open on a running ticket needs it freshest.
+        """
+        first = self.api("/tickets/2")
+        resume_dir = self.project / "research" / "sessions" / "2" / "1" / "resume-2"
+        resume_dir.mkdir()
+        (resume_dir / "stream.jsonl").write_text('{"type": "system"}\n', encoding="utf-8")
+        changed = self.api("/tickets/2", {"If-None-Match": first.etag})
+        self.assertEqual(changed.status, 200)
+        self.assertNotEqual(changed.etag, first.etag)
+        self.assertIn("2/1/resume-2", [entry["id"] for entry in changed.json["sessions"]])
+
+
+# --- the logs endpoint ----------------------------------------------------------------------------------
+
+
+class LogTailEndpointTest(DashboardTestCase):
+    def test_a_session_log_tails_by_byte_offset(self):
+        whole = (self.project / "research" / "sessions" / "2" / "1" / "stream.jsonl").read_bytes()
+        first = self.api("/logs/session/2/1?since=0").json
+        self.assertTrue(first["exists"])
+        self.assertEqual(first["text"].encode("utf-8"), whole)
+        self.assertEqual(first["next"], len(whole))
+        again = self.api("/logs/session/2/1?since=%d" % first["next"]).json
+        self.assertEqual(again["text"], "")
+
+    def test_a_resume_log_is_addressed_by_its_own_id(self):
+        view = self.api("/logs/session/2/1/resume-1?since=0").json
+        self.assertTrue(view["exists"])
+        self.assertIn("Resuming", view["text"])
+
+    def test_a_job_log_tails_the_jobs_own_log_file(self):
+        view = self.api("/logs/job/j-0001?since=0").json
+        self.assertTrue(view["exists"])
+        self.assertIn("epoch 1", view["text"])
+
+    def test_an_unknown_job_id_answers_exists_false_rather_than_failing(self):
+        view = self.api("/logs/job/j-9999?since=0").json
+        self.assertFalse(view["exists"])
+
+    def test_the_tick_log_is_read_from_the_per_machine_home_not_the_project(self):
+        (home() / "tick.log").write_text("tick 1\n", encoding="utf-8")
+        view = self.api("/logs/tick/tick?since=0").json
+        self.assertTrue(view["exists"])
+        self.assertEqual(view["text"], "tick 1\n")
+
+    def test_a_log_that_does_not_exist_yet_answers_exists_false(self):
+        view = self.api("/logs/session/2/9?since=0").json
+        self.assertEqual(view, {"since": 0, "next": 0, "size": 0, "truncated": False, "text": "", "exists": False})
+
+    def test_a_bad_session_id_is_a_bad_request(self):
+        response = self.api("/logs/session/not-a-ticket?since=0")
+        self.assertEqual(response.status, 400)
+
+    def test_a_session_id_cannot_escape_the_sessions_directory(self):
+        with self.assertRaises(DashboardError):
+            log_path(self.project, "session", "../../../etc/passwd")
+        response = self.api("/logs/session/../../../etc/passwd?since=0")
+        self.assertEqual(response.status, 400)
+
+    def test_a_job_log_field_cannot_escape_the_project_directory(self):
+        jobs = self.project / "research" / "jobs"
+        escaping = json.loads((jobs / "j-0001.json").read_text(encoding="utf-8"))
+        escaping["id"], escaping["log"] = "j-escape", "../outside.log"
+        (jobs / "j-escape.json").write_text(json.dumps(escaping), encoding="utf-8")
+        self.assertIsNone(log_path(self.project, "job", "j-escape"))
+
+    def test_an_unknown_log_kind_is_a_bad_request(self):
+        response = self.api("/logs/nonsense/2/1?since=0")
+        self.assertEqual(response.status, 400)
+
+    def test_an_unchanged_log_answers_304(self):
+        first = self.api("/logs/session/2/1?since=0")
+        self.assertEqual(self.api("/logs/session/2/1?since=0", {"If-None-Match": first.etag}).status, 304)
 
 
 # --- server-sent events, the alternative behind ?transport=sse ---------------------------------------
