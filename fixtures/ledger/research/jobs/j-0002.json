@@ -1,0 +1,58 @@
+{
+  "id": "j-0002",
+  "ticket": 3,
+  "array": "baseline-seeds",
+  "backend": "systemd_run",
+  "unit": "wayline-job-j-0002.service",
+  "command": [
+    "python",
+    "-m",
+    "toy.train",
+    "--seed",
+    "2"
+  ],
+  "cwd": "/projects/toy",
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "1"
+  },
+  "devices": {
+    "gpu_uuids": [
+      "GPU-2f9c1b7e-0000-0000-0000-000000000002"
+    ],
+    "gpu_indices": [
+      1
+    ],
+    "cores": [
+      4,
+      5,
+      6,
+      7
+    ],
+    "ram_gb": 32
+  },
+  "log": "results/baseline/seed-2.log",
+  "expected_outputs": [
+    "results/baseline/seed-2/summary.json"
+  ],
+  "retry": {
+    "host_oom": [],
+    "gpu_oom": [
+      {
+        "--batch-size": 16
+      }
+    ]
+  },
+  "attempts": [
+    {
+      "n": 1,
+      "started_at": "2026-09-11T13:02:00Z",
+      "ended_at": "2026-09-11T13:44:00Z",
+      "result": "success",
+      "exit_code": 0,
+      "oom": null,
+      "overrides": {}
+    }
+  ],
+  "status": "exited",
+  "wallclock_minutes": 90
+}
