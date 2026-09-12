@@ -582,7 +582,7 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
     return Prompt(text, pack.chars, pack.cut, pack.dropped, pack.problems + skills.problems)
 
 
-def skill_path(skill, roots):
+def _skill_path(skill, roots):
     """Where a ticket's skill lives: `.claude/skills/wayline-<skill>/SKILL.md` under the first root that has it.
 
     One lookup covers both kinds of skill, because `wayline init` symlinks every harness skill
@@ -615,7 +615,7 @@ def _skill_section(skills, roots):
         "inlined here, in the ticket's order, and each is to be followed as if it had expanded.",
     ]
     for skill in skills[1:]:
-        path = skill_path(skill, roots)
+        path = _skill_path(skill, roots)
         rendered.extend(["", "## /wayline-%s" % skill, ""])
         if path is None:
             pack.problems.append("skill %s has no SKILL.md under any of the prompt's roots" % skill)
@@ -790,8 +790,12 @@ def session_env(project, ticket, attempt, touches, harness_root=HARNESS_ROOT, pa
 
 
 def _path_with_harness_bin(harness_root, path=None):
-    """`<harness>/bin` first on `PATH`, and only once however often a launch is composed."""
-    binary = str(Path(harness_root) / "bin")
+    """`<harness>/bin` first on `PATH`, and only once however often a launch is composed.
+
+    Absolute, because the child runs in the worktree rather than here, and a relative entry on a
+    `PATH` means something different from every directory.
+    """
+    binary = os.path.abspath(str(Path(harness_root) / "bin"))
     inherited = os.environ.get("PATH", os.defpath) if path is None else path
     rest = [entry for entry in inherited.split(os.pathsep) if entry and entry != binary]
     return os.pathsep.join([binary] + rest)
@@ -847,11 +851,33 @@ def _load_schema(schema_path):
 
 
 def _schema_text(text, schema):
-    """The file's own text, or the object without its meta-schema reference when it has one."""
-    if not (isinstance(schema, dict) and "$schema" in schema):
+    """The file's own text, or the object without its meta-schema references when it has any.
+
+    A subschema may carry `$schema` too, and the CLI refuses a whole file over one of those as
+    readily as over the one at the top, so the strip goes all the way down. A file that names it
+    nowhere goes across byte for byte, which is what the session directory's copy then shows.
+    """
+    if not _names_meta_schema(schema):
         return text
-    without = {key: value for key, value in schema.items() if key != "$schema"}
-    return json.dumps(without, indent=2) + "\n"
+    return json.dumps(_without_meta_schema(schema), indent=2) + "\n"
+
+
+def _names_meta_schema(value):
+    """Whether `$schema` appears anywhere in the schema, at any depth."""
+    if isinstance(value, dict):
+        return "$schema" in value or any(_names_meta_schema(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_names_meta_schema(item) for item in value)
+    return False
+
+
+def _without_meta_schema(value):
+    """`value` with every `$schema` key removed, at any depth."""
+    if isinstance(value, dict):
+        return {key: _without_meta_schema(item) for key, item in value.items() if key != "$schema"}
+    if isinstance(value, list):
+        return [_without_meta_schema(item) for item in value]
+    return value
 
 
 def _check_paths(request):

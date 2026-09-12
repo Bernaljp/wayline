@@ -80,7 +80,7 @@ if [ -n "${WAYLINE_HOOK_RECORD:-}" ]; then
   (
     if command -v flock >/dev/null 2>&1; then
       exec 9>>"$WAYLINE_HOOK_RECORD"
-      flock 9
+      flock -w 5 9 || true
       printf '%s\n' "$RECORD_LINE" >&9
     else
       printf '%s\n' "$RECORD_LINE" >>"$WAYLINE_HOOK_RECORD"

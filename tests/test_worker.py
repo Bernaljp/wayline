@@ -192,6 +192,20 @@ class ArgvTest(unittest.TestCase):
         self.assertNotIn("$schema", sent)
         self.assertEqual(sent, {key: value for key, value in original.items() if key != "$schema"})
 
+    def test_a_meta_schema_reference_in_a_subschema_goes_too(self):
+        """The CLI refuses a file over one of those as readily as over the one at the top."""
+        directory = Path(tempfile.mkdtemp(prefix="wayline-schema-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        path = directory / "nested.json"
+        path.write_text(json.dumps({
+            "type": "object",
+            "properties": {"word": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "string"}},
+        }), encoding="utf-8")
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run, schema_path=path), run)
+        sent = json.loads(argv[argv.index("--json-schema") + 1])
+        self.assertEqual(sent, {"type": "object", "properties": {"word": {"type": "string"}}})
+
     def test_a_schema_with_no_meta_schema_reference_goes_across_as_it_is(self):
         run = Path("/proj/research/sessions/3/1")
         argv = worker.build_argv(make_request(run), run)
