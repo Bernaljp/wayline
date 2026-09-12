@@ -40,7 +40,7 @@ def lazy(module, attribute):
 VERBS = [
     Verb("init", "init <path> [--email <address>] [--uninstall-units]", "lay out a project, register it, make it the active one (the user units arrive with the tick)", "project", lazy("wayline.project", "init_command")),
     Verb("intake", "intake [--goal]", "phase P0: take what the owner has and write INTAKE.md (also a skill)", "phases"),
-    Verb("absorb", "absorb [--level 0] [--code <slug> <url>@<sha>] [--inventory <slug>]", "phase P1: build the dossiers for the references, and one reference's inventory from its arXiv source", "phases", lazy("wayline.dossier", "absorb_command")),
+    Verb("absorb", "absorb [--level 0] [--code <slug> <url>@<sha>] [--inventory <slug> [--pdf <path>]]", "phase P1: build the dossiers for the references, and one reference's inventory from its arXiv source or a PDF", "phases", lazy("wayline.dossier", "absorb_command")),
     Verb("position", "position", "phase P2: write the position memo", "phases"),
     Verb("grill", "grill", "phase P2: ask the frontier of open questions in tiers (also a skill)", "phases"),
     Verb("specify", "specify", "phase P3: write SPEC.md with claims, experiments, and seams", "phases"),
@@ -70,7 +70,8 @@ VERBS = [
     Verb("docs", "docs build", "build the documentation site", "builders"),
     Verb("paper", "paper [--venue <slug>]", "draft the paper under a venue's guidelines", "builders"),
     Verb("report", "report", "render REPORT.md from the ledger", "builders"),
-    Verb("tools", "tools install", "create the optional converter venv under ~/.wayline/tools/", "tools"),
+    Verb("tools", "tools install|show [--marker] [--mineru] [--grobid] [--dry-run]", "create the optional converter venv under ~/.wayline/tools/ (docling; marker, MinerU, GROBID on request)", "tools",
+         lazy("wayline.tools", "tools_command")),
     Verb("launch", "launch --smoke [--dir <path>] [--model <alias>] [--effort <effort>]", "one real cheap session through the launcher; prints the envelope and the usage windows", "tools",
          handler=lazy("wayline.worker", "launch_verb"), hidden=True),
 ]

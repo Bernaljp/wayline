@@ -1,0 +1,8 @@
+[
+  {"type": "text", "text": "1 Introduction", "text_level": 1, "page_idx": 0, "bbox": [117, 412, 302, 428]},
+  {"type": "text", "text": "Lemma 1. Some tiny papers are tinier than others.", "page_idx": 0, "bbox": [508, 546, 881, 557]},
+  {"type": "equation", "text": "$$\ny = m x + b \\tag{1}\n$$", "text_format": "latex", "page_idx": 0, "bbox": [261, 685, 491, 696]},
+  {"type": "image", "img_path": "images/figure-1.png", "image_caption": ["Figure 1: A signal that rises from left to right."], "image_footnote": [], "page_idx": 0, "bbox": [523, 281, 864, 431]},
+  {"type": "table", "img_path": "images/table-1.png", "table_caption": ["Table 1: Numbers the method produced."], "table_footnote": [], "table_body": "<html><body><table><tr><td>Run</td><td>Output</td></tr><tr><td>first</td><td>0</td></tr></table></body></html>", "page_idx": 1, "bbox": [204, 385, 404, 448]},
+  {"type": "text", "text": "Appendix A. Proofs", "text_level": 1, "page_idx": 1, "bbox": [117, 510, 320, 526]}
+]

@@ -29,6 +29,7 @@ from wayline.dossier import (
 from wayline.fetch import Backend, FetchError, RATE_LIMITS, Fetcher, Request, Response, user_agent
 from wayline.jsonschema import load_schema, validate
 from wayline.ledger import Ledger
+from wayline.pdf_inventory import Run, Tools
 from wayline.project import init_project
 
 ARXIV_FIXTURES = FIXTURES_DIR / "arxiv"
@@ -630,19 +631,24 @@ class BuildInventoryTest(ProjectTestCase):
         self.assertFalse(stale.exists())
         self.assertTrue(self.ref(FIGURES, "fig-1.png").is_file())
 
-    def test_a_pdf_only_submission_is_kept_and_routed_to_the_pdf_chain(self):
+    def no_tools(self):
+        """The PDF chain's seams on a machine with nothing installed: no tools venv, and every tool answers 127."""
+        return {"tools": Tools(self.temp / "no-tools", {}), "run": lambda argv, cwd=None, timeout=None: Run(127, b"", b"not installed")}
+
+    def test_a_pdf_only_submission_is_kept_and_inventoried_by_the_pdf_chain(self):
         payload = b"%PDF-1.4\n%%EOF\n"
         answers = {arxiv_source_url(IDENTIFIER): (200, {"content-type": "application/pdf", "etag": ETAG}, payload)}
-        inventory, _ = self.build(answers)
+        inventory, _ = self.build(answers, **self.no_tools())
         self.assertEqual(inventory["source_type"], "pdf")
-        self.assertEqual(inventory["source"]["kind"], "pdf")
+        self.assertEqual((inventory["source"]["kind"], inventory["source"]["arxiv_id"], inventory["source"]["etag"]), ("pdf", IDENTIFIER, ETAG))
+        self.assertEqual(inventory["source"]["main"], "source/2401-00001.pdf")
         self.assertEqual(self.ref(SOURCE, "2401-00001.pdf").read_bytes(), payload)
-        self.assertEqual(inventory["figures"], [])
-        self.assertTrue(any("ticket 22" in note for note in inventory["notes"]))
+        self.assertEqual((inventory["source"]["converter"], inventory["provenance"]["figures"]), ("none", "none"))
+        self.assertTrue(any("PDF chain" in note for note in inventory["notes"]))
         self.assertEqual(validate(inventory, load_schema("inventory")), [])
 
     def test_a_pdf_only_submission_survives_a_second_pass(self):
-        """A 304 on a submission with no source has no tarball to flatten and no HTML to fall back to."""
+        """A 304 on a submission with no source has no tarball to flatten; the kept PDF is read again."""
         payload = b"%PDF-1.4\n%%EOF\n"
 
         def answer(request):
@@ -650,13 +656,14 @@ class BuildInventoryTest(ProjectTestCase):
                 return Response(request.url, 304, {"etag": ETAG}, b"")
             return Response(request.url, 200, {"content-type": "application/pdf", "etag": ETAG}, payload)
 
-        first, _ = self.build({arxiv_source_url(IDENTIFIER): answer})
-        second, fetcher = self.build({arxiv_source_url(IDENTIFIER): answer})
+        first, _ = self.build({arxiv_source_url(IDENTIFIER): answer}, **self.no_tools())
+        second, fetcher = self.build({arxiv_source_url(IDENTIFIER): answer}, **self.no_tools())
         self.assertEqual(fetcher.backend.sent[0].headers.get("If-None-Match"), ETAG)
         self.assertEqual(second["source_type"], "pdf")
         self.assertTrue(second["source"]["from_cache"])
+        self.assertEqual(second["source"]["arxiv_id"], IDENTIFIER)
         self.assertEqual(second["created"], first["created"])
-        self.assertTrue(any("ticket 22" in note for note in second["notes"]))
+        self.assertTrue(any("304" in note for note in second["notes"]))
         self.assertEqual(self.ref(SOURCE, "2401-00001.pdf").read_bytes(), payload)
 
     def test_a_tarball_that_will_not_flatten_falls_back_to_the_arxiv_html(self):
@@ -669,15 +676,16 @@ class BuildInventoryTest(ProjectTestCase):
         self.assertTrue(any("beta" in note for note in inventory["notes"]))
         self.assertEqual(validate(inventory, load_schema("inventory")), [])
 
-    def test_a_reference_with_no_arxiv_id_is_sent_to_the_pdf_chain_rather_than_guessed_at(self):
+    def test_a_reference_with_no_arxiv_id_and_no_pdf_asks_for_one_rather_than_guessing(self):
         write_l0(self.ledger, l0_dossier({
             "existence": "verified", "resolved_by": "crossref",
             "query": {"kind": "doi", "value": "10.1000/x"}, "identifiers": {"doi": "10.1000/x"},
             "metadata": {"title": "A journal paper"}, "abstract": None, "open_access": {}, "attempts": [],
         }, "journal-2024-a-paper"))
         with self.assertRaises(ValueError) as caught:
-            build_inventory(self.project, "journal-2024-a-paper", fetcher=served({}), email=EMAIL)
-        self.assertIn("ticket 22", str(caught.exception))
+            build_inventory(self.project, "journal-2024-a-paper", fetcher=served({}), email=EMAIL, **self.no_tools())
+        self.assertIn("--pdf", str(caught.exception))
+        self.assertEqual(served({}).backend.sent, [], "nothing was fetched for a reference with nowhere to fetch from")
 
     def test_a_reference_with_no_dossier_is_an_error_that_names_the_pass_to_run(self):
         with self.assertRaises(ValueError) as caught:

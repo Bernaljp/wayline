@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "slug": "suite-2026-tiny-two-column-paper",
+  "source_type": "pdf",
+  "source": {
+    "kind": "pdf",
+    "url": "file:///tmp/tiny-paper.pdf",
+    "arxiv_id": null,
+    "version": null,
+    "etag": null,
+    "fetched": "2026-09-12T21:02:11.369Z",
+    "from_cache": false,
+    "files": 1,
+    "flattened_by": null,
+    "compiled": false,
+    "bytes": 132255,
+    "main": "source/paper.pdf",
+    "sha256": "44b757cbacafa49b830b8fd03e9ad7cc346530c845999855a0f05b9b22319f24",
+    "converter": "docling-2.126.0",
+    "references_by": "grobid-0.9.1",
+    "formula_enrichment": true
+  },
+  "provenance": {
+    "sections": "docling-2.126.0",
+    "appendices": "docling-2.126.0",
+    "equations": "docling-2.126.0",
+    "figures": "docling-2.126.0",
+    "tables": "docling-2.126.0",
+    "algorithms": "pdftotext-24.02.0",
+    "theorems": "docling-2.126.0",
+    "metadata": "grobid-0.9.1",
+    "references": "grobid-0.9.1",
+    "page_count": "pdfinfo-24.02.0",
+    "text_layer": "pdftotext-24.02.0",
+    "raw_images": "pdfimages-24.02.0",
+    "boxes": "pdfplumber-0.11.10"
+  },
+  "counts": {"pages": 2, "sections": 1, "equations": 1, "figures": 1, "tables": 1, "algorithms": 1, "theorems": 1, "references": 1, "raw_images": 1},
+  "page_count": 2,
+  "text_layer": {"path": "text.txt", "chars": 2858, "provenance": "pdftotext-24.02.0"},
+  "boxes": {"path": "source/boxes.json", "pages": 2, "words": 312, "chars": 1369, "ruled_tables": 1, "provenance": "pdfplumber-0.11.10"},
+  "sections": [
+    {"id": "sec-1", "kind": "section", "number": "1.1", "title": "Scope", "level": 2, "page": 1,
+     "bbox": [72.0, 413.6, 136.8, 424.1], "locator": "source/paper.pdf#page=1", "provenance": "docling-2.126.0"}
+  ],
+  "equations": [
+    {"id": "eq-1", "kind": "equation", "number": "2-3", "latex": "a & = \\sum _ { i = 1 } ^ { n } b _ { i } , \\\\ c & = \\sqrt { a ^ { 2 } + d ^ { 2 } } .",
+     "page": 1, "bbox": [154.9, 628.2, 217.7, 674.6], "locator": "source/paper.pdf#page=1", "provenance": "docling-2.126.0",
+     "ocr": true, "confirm": true, "confirm_fields": ["latex", "number"]}
+  ],
+  "figures": [
+    {"id": "fig-1", "kind": "figure", "number": "1", "caption": "Figure 1: A signal that rises from left to right and means nothing.",
+     "file": "figures/fig-1.png", "page": 1, "bbox": [320.3, 222.7, 528.8, 341.2], "locator": "source/paper.pdf#page=1",
+     "provenance": "docling-2.126.0", "confirm": true, "confirm_fields": ["caption", "meaning"]}
+  ],
+  "tables": [
+    {"id": "tab-1", "kind": "table", "number": "1", "caption": "Table 1: Numbers the method produced.",
+     "cells": [["Run", "Input", "Output"], ["first", "1", "0"]], "file": "figures/tab-1.png", "page": 2,
+     "bbox": [125.2, 305.2, 247.5, 354.5], "locator": "source/paper.pdf#page=2", "provenance": "docling-2.126.0"}
+  ],
+  "algorithms": [
+    {"id": "alg-1", "kind": "algorithm", "environment": "algorithm", "number": "1", "title": "Algorithm 1 Do nothing, carefully",
+     "page": 1, "locator": "text.txt:22", "provenance": "pdftotext-24.02.0", "confirm": true, "confirm_fields": ["boundary"]}
+  ],
+  "theorems": [
+    {"id": "thm-1", "kind": "theorem", "environment": "lemma", "number": "1", "title": "Lemma 1. Some tiny papers are tinier than others.",
+     "page": 1, "bbox": [310.6, 432.8, 539.2, 441.5], "locator": "source/paper.pdf#page=1", "provenance": "docling-2.126.0",
+     "confirm": true, "confirm_fields": ["boundary"]}
+  ],
+  "appendices": [],
+  "references": [
+    {"id": "ref-1", "key": "b0", "text": "D. E. Knuth. The TEXbook. Addison-Wesley, 1984.", "title": "The TeXbook",
+     "authors": ["D E Knuth"], "year": "1984", "doi": null, "page": 2, "locator": "source/paper.pdf#page=2", "provenance": "grobid-0.9.1"}
+  ],
+  "raw_images": [
+    {"path": "source/paper.pdf#page=1&image=0", "format": "image", "bytes": 756, "page": 1, "width": 320, "height": 180, "ppi": 112, "provenance": "pdfimages-24.02.0"}
+  ],
+  "metadata": {"title": "A tiny two-column paper, written for the PDF inventory", "authors": ["The Suite"], "doi": "10.0000/tiny.2026.1"},
+  "notes": ["the reader pass confirms: boundary on 2 item(s), caption on 1 item(s), latex on 1 item(s), meaning on 1 item(s), number on 1 item(s)"],
+  "created": "2026-09-12T21:02:11.369Z"
+}

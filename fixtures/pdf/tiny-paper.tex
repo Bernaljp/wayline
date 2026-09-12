@@ -1,0 +1,118 @@
+\documentclass[twocolumn]{article}
+\pdfinfoomitdate=1
+\pdftrailerid{}
+\pdfsuppressptexinfo=-1
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\title{A tiny two-column paper, written for the PDF inventory}
+\author{The Wayline Suite}
+\date{}
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This paper exists so that a PDF inventory has something to count. It has two columns,
+three numbered equations, two figures, one ruled table, one algorithm, a theorem, a lemma,
+an appendix, and two references.
+\end{abstract}
+
+\section{Introduction}
+A tiny paper needs a tiny introduction. The method of Section~\ref{sec:method} is one
+line, and Figure~\ref{fig:signal} shows it doing nothing in particular. Earlier work on
+nothing includes Knuth~\cite{knuth1984} and Lamport~\cite{lamport1994}.
+
+\subsection{Scope}
+Nothing at all is in scope, which is the point. The two columns of this page are there to
+see whether a converter reads the left column to the bottom before it starts on the right.
+
+\section{Method}
+\label{sec:method}
+The method is one numbered equation,
+\begin{equation}
+  y = m x + b ,
+  \label{eq:line}
+\end{equation}
+followed by a display that carries no number,
+\[
+  \int_0^1 x^2 \, dx = \frac{1}{3} ,
+\]
+and an aligned pair that is numbered twice:
+\begin{align}
+  a &= \sum_{i=1}^{n} b_i , \label{eq:sum} \\
+  c &= \sqrt{a^2 + d^2} . \label{eq:root}
+\end{align}
+
+\begin{theorem}[Tininess]
+\label{thm:tiny}
+Every tiny paper is tiny.
+\end{theorem}
+
+\begin{proof}
+By inspection of this page.
+\end{proof}
+
+\begin{lemma}
+\label{lem:tinier}
+Some tiny papers are tinier than others.
+\end{lemma}
+
+\begin{algorithm}
+\caption{Do nothing, carefully}
+\label{alg:nothing}
+\begin{algorithmic}
+\STATE $x \gets 0$
+\FOR{$i = 1$ to $n$}
+  \STATE $x \gets x + 0$
+\ENDFOR
+\RETURN $x$
+\end{algorithmic}
+\end{algorithm}
+
+\section{Results}
+Table~\ref{tab:numbers} lists the numbers the method produced, and
+Figure~\ref{fig:panels} puts them side by side.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.9\columnwidth]{signal.png}
+  \caption{A signal that rises from left to right and means nothing.}
+  \label{fig:signal}
+\end{figure}
+
+\begin{table}
+  \centering
+  \caption{Numbers the method produced.}
+  \label{tab:numbers}
+  \begin{tabular}{|l|r|r|}
+    \hline
+    Run & Input & Output \\
+    \hline
+    first & 1 & 0 \\
+    second & 2 & 0 \\
+    third & 3 & 0 \\
+    \hline
+  \end{tabular}
+\end{table}
+
+\begin{figure*}
+  \centering
+  \includegraphics[width=0.8\textwidth]{panels.png}
+  \caption{Two panels that span both columns, so the caption sits under the whole page width.}
+  \label{fig:panels}
+\end{figure*}
+
+\appendix
+\section{Proof of the lemma}
+\label{app:proof}
+The proof of Lemma~\ref{lem:tinier} is left to the reader, who is the point of the inventory.
+
+\begin{thebibliography}{2}
+\bibitem{knuth1984} D. E. Knuth. The \TeX book. Addison-Wesley, 1984.
+\bibitem{lamport1994} L. Lamport. \LaTeX: A Document Preparation System. Addison-Wesley, 1994.
+\end{thebibliography}
+\end{document}

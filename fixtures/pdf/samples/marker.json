@@ -1,0 +1,35 @@
+{
+  "block_type": "Document",
+  "children": [
+    {
+      "block_type": "Page",
+      "id": "/page/0/Page/0",
+      "bbox": [0, 0, 612, 792],
+      "children": [
+        {"block_type": "SectionHeader", "id": "/page/0/SectionHeader/1", "html": "<h1>1 Introduction</h1>", "bbox": [72.0, 326.9, 185.0, 339.5]},
+        {"block_type": "Text", "id": "/page/0/Text/2", "html": "<p>The method of Section 2 is one line.</p>", "bbox": [72.0, 345.0, 301.0, 390.0]},
+        {"block_type": "Text", "id": "/page/0/Text/3", "html": "<p>Theorem 1 (Tininess). Every tiny paper is tiny.</p>", "bbox": [310.6, 396.4, 526.9, 422.3]},
+        {"block_type": "Equation", "id": "/page/0/Equation/4", "html": "<p><math display=\"block\">y = m x + b \\tag{1}</math></p>", "bbox": [160.2, 542.8, 300.6, 551.5]},
+        {
+          "block_type": "FigureGroup",
+          "id": "/page/0/FigureGroup/5",
+          "children": [
+            {"block_type": "Figure", "id": "/page/0/Figure/6", "html": "", "bbox": [320.3, 222.7, 528.8, 341.2]},
+            {"block_type": "Caption", "id": "/page/0/Caption/7", "html": "<p>Figure 1: A signal that rises from left to right.</p>", "bbox": [311.0, 355.0, 539.0, 376.0]}
+          ]
+        }
+      ]
+    },
+    {
+      "block_type": "Page",
+      "id": "/page/1/Page/0",
+      "bbox": [0, 0, 612, 792],
+      "children": [
+        {"block_type": "Caption", "id": "/page/1/Caption/1", "html": "<p>Table 1: Numbers the method produced.</p>", "bbox": [97.0, 295.0, 275.0, 304.0]},
+        {"block_type": "Table", "id": "/page/1/Table/2", "html": "<table><tr><th>Run</th><th>Output</th></tr><tr><td>first</td><td>0</td></tr></table>", "bbox": [125.2, 305.2, 247.5, 354.5]},
+        {"block_type": "SectionHeader", "id": "/page/1/SectionHeader/3", "html": "<h2>A Proof of the lemma</h2>", "bbox": [72.0, 400.0, 250.0, 412.0]},
+        {"block_type": "Code", "id": "/page/1/Code/4", "html": "<pre>Algorithm 1 Do nothing, carefully</pre>", "bbox": [72.0, 420.0, 250.0, 480.0]}
+      ]
+    }
+  ]
+}
