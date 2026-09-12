@@ -51,6 +51,8 @@
       }
     },
     "abstract": {"type": ["string", "null"]},
+    "relation_to_intent": {"type": "string", "description": "level 1 and up: one line, from the L1 record, on how the paper relates to the project's intent"},
+    "deserves_l2_if": {"type": "string", "description": "level 1 and up: one line, from the L1 record, on what would earn the paper a full read"},
     "open_access": {
       "type": "object",
       "additionalProperties": false,

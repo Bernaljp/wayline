@@ -1,0 +1,17 @@
+{
+  "role": "reader",
+  "summary": "Reads a capped input (an L1 skim, or one absorb chunk) with no tools and returns a short structured record.",
+  "kinds": ["dossier"],
+  "may_judge": false,
+  "output_schema": "l1_record",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent",
+    "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}
