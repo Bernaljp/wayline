@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "venue": "genome-biology",
+  "display_name": "Genome Biology",
+  "guidelines_url": "https://genomebiology.biomedcentral.com/submission-guidelines",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": null,
+    "page_count": null,
+    "abstract_word_count": 250,
+    "notes": "No length limit is stated for the main text. The abstract is capped at 250 words and is split into Background, Results and Conclusions. Three to ten keywords.",
+    "excluded_sections": [
+      "References",
+      "Declarations"
+    ]
+  },
+  "required_structure": [
+    "Title page",
+    "Abstract",
+    "Keywords",
+    "Background",
+    "Results",
+    "Discussion",
+    "Conclusions",
+    "Methods",
+    "Abbreviations",
+    "Declarations",
+    "Ethics approval and consent to participate",
+    "Consent for publication",
+    "Availability of data and materials",
+    "Competing interests",
+    "Funding",
+    "Authors' contributions",
+    "Acknowledgements",
+    "References"
+  ],
+  "structure_flexible": false,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "Not stated on the pages reached."
+  },
+  "reference_style": {
+    "style": "Vancouver, numbered; footnotes rather than endnotes are asked for where notes are needed.",
+    "max_count": null,
+    "citation": "numbered"
+  },
+  "reporting_checklists": [
+    {
+      "name": "BioMed Central Minimum Standards of Reporting Checklist",
+      "required": true,
+      "study_types": [],
+      "url": null,
+      "cached_as": null
+    }
+  ],
+  "submission_steps": [
+    "submit through the journal's own online system; only an author of the manuscript may submit",
+    "confirm at submission that the minimum reporting standards are met, or say why not",
+    "include a Declarations section carrying every subheading, writing 'Not applicable' where one does not apply"
+  ],
+  "template": {
+    "latex_or_word_no_login": null,
+    "url": null,
+    "notes": "Not stated on the pages reached.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "Springer Nature Link's own terms cover the page; the journal publishes open access.",
+    "url": "https://link.springer.com/journal/13059/submission-guidelines"
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "length_limits",
+      "required_structure",
+      "reference_style",
+      "reporting_checklists",
+      "submission_steps"
+    ],
+    "unverified_fields": [
+      "figure_spec",
+      "template",
+      "license_of_summary_source"
+    ]
+  }
+}

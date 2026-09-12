@@ -18,6 +18,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import stat
 import threading
 import uuid
@@ -27,7 +28,7 @@ from pathlib import Path
 
 from wayline.jsonschema import check, load_schema
 
-__all__ = ["Ledger", "LedgerError", "ledger_for", "make_event", "now_ts", "atomic_write", "EVENTS", "PAYLOAD_ENUMS", "JOURNAL", "LOCK"]
+__all__ = ["Ledger", "LedgerError", "ledger_for", "make_event", "now_ts", "atomic_write", "atomic_bytes", "EVENTS", "PAYLOAD_ENUMS", "JOURNAL", "LOCK"]
 
 JOURNAL = "journal.jsonl"
 LOCK = ".lock"
@@ -403,6 +404,32 @@ class Ledger:
             atomic_write(target, text)
         return target
 
+    def write_bytes(self, relpath, data):
+        """Write a binary file atomically: the e-print source a dossier keeps, a figure a reader looks at.
+
+        The ledger is the only code that writes under `research/`, and a dossier's `source/` and
+        `figures/` are files nobody can spell as text, so binary is a write like any other and
+        takes the same lock and the same temp-then-rename.
+        """
+        target = self.path(relpath, replacing=True)
+        with self.lock():
+            atomic_bytes(target, data)
+        return target
+
+    def remove_tree(self, relpath):
+        """Remove a directory under `research/` and everything in it; returns whether it was there.
+
+        A removal is a write, so it takes the lock and the path checks like any other. What needs
+        it: the `source/` of a dossier whose e-print was refetched at a new version, where leaving
+        the old version's files beside the new ones would leave a tree that is neither.
+        """
+        target = self.path(relpath)
+        with self.lock():
+            if not target.is_dir():
+                return False
+            shutil.rmtree(target)
+            return True
+
     def write_markdown(self, relpath, text):
         """Write a markdown (or any text) file atomically."""
         target = self.path(relpath, replacing=True)
@@ -531,7 +558,12 @@ def _escape_line_breaks(text):
 
 
 def atomic_write(target, text):
-    """Write `text` to a temp file next to `target`, fsync, and rename it into place.
+    """Write `text` to a temp file next to `target`, fsync, and rename it into place."""
+    return atomic_bytes(target, text.encode("utf-8"))
+
+
+def atomic_bytes(target, data):
+    """Write `data` to a temp file next to `target`, fsync, and rename it into place.
 
     The new file gets the mode of the file it replaces, else 0666 under the umask, so a rewrite
     never narrows who can read a ledger file.
@@ -544,10 +576,10 @@ def atomic_write(target, text):
     temp = target.parent / (".%s.%s.tmp" % (target.name, uuid.uuid4().hex))
     fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "wb") as handle:
             if mode is not None:
                 os.fchmod(handle.fileno(), mode)
-            handle.write(text)
+            handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp, target)

@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "venue": "nature-methods",
+  "display_name": "Nature Methods",
+  "guidelines_url": "https://www.nature.com/nmeth/submission-guidelines",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": 3000,
+    "page_count": null,
+    "abstract_word_count": 150,
+    "notes": "Main text 3,000 words, up to 5,000 with editorial discretion, excluding abstract, Methods, references and figure legends. The abstract is up to 150 words and unreferenced. About 50 references is guidance rather than a cap.",
+    "excluded_sections": [
+      "Abstract",
+      "Methods",
+      "Online Methods",
+      "References",
+      "Figure legends"
+    ]
+  },
+  "required_structure": [
+    "Title",
+    "Authors",
+    "Abstract",
+    "Introduction",
+    "Results",
+    "Discussion",
+    "Online Methods"
+  ],
+  "structure_flexible": false,
+  "figure_spec": {
+    "max_count": 6,
+    "formats": [],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "Up to 6 figures and tables together in an Article; Extended Data is optional and capped at 10 items. Resolution, format and colour mode are not stated on the pages fetched."
+  },
+  "reference_style": {
+    "style": "Numbered, Nature Portfolio house style; about 50 references as guidance.",
+    "max_count": null,
+    "citation": "numbered"
+  },
+  "reporting_checklists": [
+    {
+      "name": "Reporting Summary",
+      "required": true,
+      "study_types": [
+        "life-sciences",
+        "behavioural"
+      ],
+      "url": "https://www.nature.com/documents/nr-reporting-summary-flat.pdf",
+      "cached_as": "checklist/nature-reporting-summary.pdf"
+    }
+  ],
+  "submission_steps": [
+    "submit through the Manuscript Tracking System at https://mts-nmeth.nature.com/, which requires an account",
+    "supply a cover letter explaining the advance"
+  ],
+  "template": {
+    "latex_or_word_no_login": null,
+    "url": null,
+    "notes": "No Nature Methods template was found on the journal's own pages.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "(c) 2026 Springer Nature Limited, under the nature.com Terms and Conditions.",
+    "url": "https://www.nature.com/info/terms-and-conditions"
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "length_limits",
+      "required_structure",
+      "reference_style",
+      "submission_steps",
+      "license_of_summary_source"
+    ],
+    "unverified_fields": [
+      "figure_spec.formats",
+      "figure_spec.min_dpi",
+      "figure_spec.color_mode",
+      "reporting_checklists",
+      "template"
+    ]
+  }
+}

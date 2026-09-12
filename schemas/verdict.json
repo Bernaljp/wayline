@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "verdict",
+  "description": "One Type-B verdict (Implementation Decisions 11): what one verifier session answered about one subject. pass, findings and question_limit are the session's; session_id and model are filled in by code from the envelope, because a session knows neither.",
+  "type": "object",
+  "required": ["pass", "findings", "question_limit"],
+  "additionalProperties": false,
+  "properties": {
+    "pass": {
+      "type": "boolean",
+      "description": "true when the subject answers the question; false carries at least one finding"
+    },
+    "findings": {
+      "type": "array",
+      "description": "what is wrong, each at the path and locator it was read at; empty on a pass",
+      "items": {
+        "type": "object",
+        "required": ["text", "locator", "severity"],
+        "additionalProperties": false,
+        "properties": {
+          "text": {"type": "string", "pattern": "\\S", "description": "what is wrong, in one or two sentences"},
+          "locator": {"type": "string", "pattern": "\\S", "description": "the path, with the line or the heading in it, the finding was read at"},
+          "severity": {"type": "string", "enum": ["blocker", "major", "minor"], "description": "blocker fails the subject on its own; major and minor are worth fixing"}
+        }
+      }
+    },
+    "question_limit": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "the one question this verdict answers, restated in your own words; a verdict that answers a wider question is out of its scope"
+    },
+    "session_id": {
+      "type": ["string", "null"],
+      "description": "written by the harness from the session's envelope; leave it out"
+    },
+    "model": {
+      "type": ["string", "null"],
+      "description": "written by the harness from the session's envelope; leave it out"
+    }
+  }
+}

@@ -40,7 +40,7 @@ def lazy(module, attribute):
 VERBS = [
     Verb("init", "init <path> [--email <address>] [--uninstall-units]", "lay out a project, register it, make it the active one (the user units arrive with the tick)", "project", lazy("wayline.project", "init_command")),
     Verb("intake", "intake [--goal]", "phase P0: take what the owner has and write INTAKE.md (also a skill)", "phases"),
-    Verb("absorb", "absorb [--level 0]", "phase P1: build the dossiers for the references", "phases", lazy("wayline.dossier", "absorb_command")),
+    Verb("absorb", "absorb [--level 0] [--code <slug> <url>@<sha>] [--inventory <slug>]", "phase P1: build the dossiers for the references, and one reference's inventory from its arXiv source", "phases", lazy("wayline.dossier", "absorb_command")),
     Verb("position", "position", "phase P2: write the position memo", "phases"),
     Verb("grill", "grill", "phase P2: ask the frontier of open questions in tiers (also a skill)", "phases"),
     Verb("specify", "specify", "phase P3: write SPEC.md with claims, experiments, and seams", "phases"),
@@ -66,7 +66,7 @@ VERBS = [
     Verb("fixture", "fixture record|run", "record or run the model-behavior fixtures", "evolve"),
     Verb("registry", "registry build", "build the index of skills and roles", "builders", lazy("wayline.registry", "build_command")),
     Verb("figures", "figures build-index|refresh", "build or refresh the plot index", "builders", lazy("wayline.figures", "figures_command")),
-    Verb("guidelines", "guidelines build", "build the venue guidelines", "builders"),
+    Verb("guidelines", "guidelines build|check", "build the venue guidelines, or run the seven checks on a draft", "builders", lazy("wayline.guidelines", "build_command")),
     Verb("docs", "docs build", "build the documentation site", "builders"),
     Verb("paper", "paper [--venue <slug>]", "draft the paper under a venue's guidelines", "builders"),
     Verb("report", "report", "render REPORT.md from the ledger", "builders"),

@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "venue": "icml",
+  "display_name": "ICML 2026",
+  "guidelines_url": "https://icml.cc/Conferences/2026/CallForPapers",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": null,
+    "page_count": 8,
+    "abstract_word_count": null,
+    "notes": "Eight pages of main paper at submission and nine at camera-ready; references, the impact statement and appendices are unlimited. The submission PDF is capped at 50 MB and the camera-ready at 20 MB.",
+    "excluded_sections": [
+      "References",
+      "Impact Statement",
+      "Acknowledgements",
+      "Acknowledgments",
+      "Appendix"
+    ]
+  },
+  "required_structure": [
+    "Impact Statement"
+  ],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [
+      "EPS",
+      "PDF"
+    ],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": 50,
+    "legend_max_words": null,
+    "notes": "Vector graphics are preferred for plots; bitmaps are permitted only for illustrations that cannot be vectorised. The size cap is the whole submission PDF, not one figure."
+  },
+  "reference_style": {
+    "style": "Not stated; the guidance is about content, replacing arXiv citations with peer-reviewed versions and fixing bibliographic capitalisation.",
+    "max_count": null,
+    "citation": "unknown"
+  },
+  "reporting_checklists": [],
+  "submission_steps": [
+    "submit through OpenReview at https://openreview.net/group?id=ICML.cc/2026/Conference",
+    "abstracts were due 23 January 2026 and full papers 28 January 2026, anywhere on Earth",
+    "anonymise for double-blind review",
+    "add a lay summary and a conflict-of-interest paragraph at camera-ready",
+    "accepted papers publish through PMLR under its publication agreement"
+  ],
+  "template": {
+    "latex_or_word_no_login": true,
+    "url": "https://media.icml.cc/Conferences/ICML2026/Styles/icml2026.zip",
+    "notes": "A style-file zip downloads without a login. Linked, never stored.",
+    "document_class": "icml2026"
+  },
+  "license_of_summary_source": {
+    "statement": "No copyright or licence statement appears on the page; it links a privacy policy and a code of conduct.",
+    "url": null
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "length_limits",
+      "required_structure",
+      "reporting_checklists",
+      "submission_steps",
+      "license_of_summary_source"
+    ],
+    "unverified_fields": [
+      "figure_spec.color_mode",
+      "reference_style",
+      "template.document_class"
+    ]
+  }
+}

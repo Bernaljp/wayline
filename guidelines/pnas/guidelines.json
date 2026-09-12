@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "venue": "pnas",
+  "display_name": "PNAS",
+  "guidelines_url": "https://www.pnas.org/author-center/submitting-your-manuscript",
+  "date_checked": "2026-09-11",
+  "length_limits": {
+    "word_count": 4000,
+    "page_count": 6,
+    "abstract_word_count": 250,
+    "notes": "Research Reports are preferred at 6 pages, about 4,000 words with about 50 references and 4 medium graphical elements, and capped at 12. Brief Reports are 3 pages, about 1,600 words and up to 15 references. The significance statement is up to 120 words.",
+    "excluded_sections": [
+      "References",
+      "Acknowledgments",
+      "Figure legends"
+    ]
+  },
+  "required_structure": [
+    "Title page",
+    "Abstract",
+    "Significance statement",
+    "Introduction",
+    "Results",
+    "Discussion",
+    "Materials and Methods",
+    "Acknowledgments",
+    "References",
+    "Figure legends"
+  ],
+  "structure_flexible": false,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [
+      "TIFF",
+      "EPS",
+      "PDF",
+      "PPT"
+    ],
+    "min_dpi": 300,
+    "max_dpi": 1200,
+    "color_mode": [
+      "RGB"
+    ],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "Size classes: small about 9x6 cm, medium about 11x11 cm, large about 18x22 cm. Raster at 300 ppi without text, 600-900 with text, 1,000-1,200 for line art. 3D figures as PRC or U3D."
+  },
+  "reference_style": {
+    "style": "Numbered in order of first citation, following the CSE Manual (8th edition); more than five authors are listed as the first author and 'et al.'; the LaTeX bibliography style is pnas-new.bst.",
+    "max_count": null,
+    "citation": "numbered"
+  },
+  "reporting_checklists": [
+    {
+      "name": "ARRIVE",
+      "required": true,
+      "study_types": [
+        "animal"
+      ],
+      "url": null,
+      "cached_as": null
+    },
+    {
+      "name": "MIAME",
+      "required": true,
+      "study_types": [
+        "microarray"
+      ],
+      "url": null,
+      "cached_as": null
+    }
+  ],
+  "submission_steps": [
+    "submit through PNAS's own tracking system at https://www.pnascentral.org/cgi-bin/main.plex; no email submissions",
+    "the journal is format-neutral at initial submission",
+    "supply a data-sharing plan and funding information",
+    "suggest at least three reviewers, Editorial Board members or NAS members"
+  ],
+  "template": {
+    "latex_or_word_no_login": true,
+    "url": "https://www.pnas.org/pb-assets/authors/PNASTemplateforMainManuscript-1755285180130.docx",
+    "notes": "Word templates for the research article, Brief Report and SI Appendix, and LaTeX templates with a class, style and bibliography file plus Overleaf versions, all reachable without a login from the author centre; the URL is the main-manuscript Word file. Linked, never stored.",
+    "document_class": "pnas-new"
+  },
+  "license_of_summary_source": {
+    "statement": "Copyright (c) 2026 National Academy of Sciences; the page links its Terms and Privacy Policy.",
+    "url": "https://www.pnas.org/author-center/submitting-your-manuscript"
+  },
+  "verification": {
+    "fully_verified_fields": [],
+    "unverified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reference_style",
+      "reporting_checklists",
+      "submission_steps",
+      "template",
+      "license_of_summary_source"
+    ]
+  }
+}

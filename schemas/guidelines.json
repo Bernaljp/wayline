@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "guidelines",
+  "description": "One venue's author guidelines as the writer's mechanical checks need them (Implementation Decisions 13). Every field was read off a page the build fetched or off the research note that recorded that page, and verification says which: a field is in fully_verified_fields only when the note verified it and the build reached its source again and found the wording the note read still there. Everything else is in unverified_fields, and source.md says why. Three fields the spec's list does not name are here because a check the spec asks for cannot run without them: length_limits.excluded_sections, reference_style.citation, and template.document_class.",
+  "type": "object",
+  "required": ["schema_version", "venue", "display_name", "guidelines_url", "date_checked", "length_limits", "required_structure", "structure_flexible", "figure_spec", "reference_style", "reporting_checklists", "submission_steps", "template", "license_of_summary_source", "verification"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "venue": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$", "description": "the directory under guidelines/ that holds this venue"},
+    "display_name": {"type": "string"},
+    "guidelines_url": {"type": "string", "description": "the page a human reads; the supporting pages the build also fetched are in source.md"},
+    "date_checked": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "the day the guidelines_url was last reached: the build's day when it reached it, the research note's day when it did not"},
+    "length_limits": {
+      "type": "object",
+      "required": ["word_count", "page_count", "abstract_word_count", "notes", "excluded_sections"],
+      "additionalProperties": false,
+      "properties": {
+        "word_count": {"type": ["integer", "null"], "minimum": 0, "description": "the main text's cap in words, null where the venue sets none"},
+        "page_count": {"type": ["integer", "null"], "minimum": 0},
+        "abstract_word_count": {"type": ["integer", "null"], "minimum": 0},
+        "notes": {"type": "string", "description": "what the cap means in the venue's own terms: article types, soft limits, editorial discretion"},
+        "excluded_sections": {
+          "type": "array",
+          "description": "the sections the venue leaves out of its own count, as headings to match; the word-count check subtracts them",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "required_structure": {
+      "type": "array",
+      "description": "the sections the venue asks for, in the order it asks for them",
+      "items": {"type": "string"}
+    },
+    "structure_flexible": {"type": "boolean", "description": "true where the venue names no mandatory section list; the section check is a warning rather than a failure"},
+    "figure_spec": {
+      "type": "object",
+      "required": ["max_count", "formats", "min_dpi", "max_dpi", "color_mode", "max_file_size_mb", "legend_max_words", "notes"],
+      "additionalProperties": false,
+      "properties": {
+        "max_count": {"type": ["integer", "null"], "minimum": 0, "description": "display items (figures and tables) where the venue counts them together"},
+        "formats": {"type": "array", "items": {"type": "string"}, "description": "upper-case extensions the venue accepts, empty where it names none"},
+        "min_dpi": {"type": ["integer", "null"], "minimum": 0},
+        "max_dpi": {"type": ["integer", "null"], "minimum": 0},
+        "color_mode": {"type": "array", "items": {"type": "string", "enum": ["RGB", "CMYK", "grayscale", "bitonal"]}},
+        "max_file_size_mb": {"type": ["number", "null"], "minimum": 0},
+        "legend_max_words": {"type": ["integer", "null"], "minimum": 0},
+        "notes": {"type": "string", "description": "the figure facts that are none of the above: physical widths, fonts, colour advice, per-article-type counts"}
+      }
+    },
+    "reference_style": {
+      "type": "object",
+      "required": ["style", "max_count", "citation"],
+      "additionalProperties": false,
+      "properties": {
+        "style": {"type": "string", "description": "the style in the venue's words, for a human"},
+        "max_count": {"type": ["integer", "null"], "minimum": 0},
+        "citation": {
+          "type": "string",
+          "enum": ["numbered", "author-date", "any", "unknown"],
+          "description": "the in-text citation form the check detects; any where the venue accepts what the author uses, unknown where nothing said"
+        }
+      }
+    },
+    "reporting_checklists": {
+      "type": "array",
+      "description": "the forms the venue asks for, each with the study types that trigger it; a form with no study type is asked of every submission",
+      "items": {
+        "type": "object",
+        "required": ["name", "required", "study_types"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "required": {"type": "boolean", "description": "false where the venue recommends rather than requires it"},
+          "study_types": {
+            "type": "array",
+            "description": "empty means every submission; otherwise the study types of STUDY_TYPES the manuscript is scanned for",
+            "items": {"type": "string"}
+          },
+          "url": {"type": ["string", "null"], "description": "where the blank form is; null where the venue links none"},
+          "cached_as": {"type": ["string", "null"], "description": "the file under checklist/ the build cached, null when it cached none"}
+        }
+      }
+    },
+    "submission_steps": {"type": "array", "items": {"type": "string"}},
+    "template": {
+      "type": "object",
+      "required": ["latex_or_word_no_login", "url", "notes", "document_class"],
+      "additionalProperties": false,
+      "properties": {
+        "latex_or_word_no_login": {"type": ["boolean", "null"], "description": "null where nobody could confirm either way"},
+        "url": {"type": ["string", "null"], "description": "the template is linked, never stored: no build writes a manuscript template to disk"},
+        "notes": {"type": "string"},
+        "document_class": {"type": ["string", "null"], "description": "the LaTeX class the template defines, which the conformance check compares a draft's \\documentclass against"}
+      }
+    },
+    "license_of_summary_source": {
+      "type": "object",
+      "required": ["statement", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "statement": {"type": "string", "description": "what the fetched page says about reuse of its own text, in its words where it has one"},
+        "url": {"type": ["string", "null"]}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": ["fully_verified_fields", "unverified_fields"],
+      "additionalProperties": false,
+      "properties": {
+        "fully_verified_fields": {"type": "array", "items": {"type": "string"}},
+        "unverified_fields": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

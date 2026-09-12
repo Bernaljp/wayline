@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "venue": "plos-compbiol",
+  "display_name": "PLOS Computational Biology",
+  "guidelines_url": "https://journals.plos.org/ploscompbiol/s/submission-guidelines",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": null,
+    "page_count": null,
+    "abstract_word_count": 300,
+    "notes": "Manuscripts can be any length: no restriction on word count, figure count, or supporting information. Software articles are under 3,500 words. The author summary is 150 to 200 words.",
+    "excluded_sections": []
+  },
+  "required_structure": [
+    "Title",
+    "Authors",
+    "Affiliations",
+    "Abstract",
+    "Author summary",
+    "Introduction",
+    "Results",
+    "Discussion",
+    "Materials and Methods",
+    "Acknowledgments",
+    "References",
+    "Supporting Information captions"
+  ],
+  "structure_flexible": false,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [
+      "TIFF",
+      "EPS"
+    ],
+    "min_dpi": 300,
+    "max_dpi": 600,
+    "color_mode": [
+      "RGB",
+      "sepia"
+    ],
+    "max_file_size_mb": 10,
+    "legend_max_words": null,
+    "notes": "Width 789 to 2,250 pixels and height at most 2,625 pixels, both at 300 dpi. Text inside a figure is Arial, Times or Symbol at 8 to 12 point."
+  },
+  "reference_style": {
+    "style": "Vancouver (ICMJE), numbered in citation-sequence order, in-text numbers in square brackets",
+    "max_count": null,
+    "citation": "numbered"
+  },
+  "reporting_checklists": [
+    {
+      "name": "ARRIVE",
+      "required": true,
+      "study_types": [
+        "animal"
+      ],
+      "url": "https://arriveguidelines.org/arrive-guidelines",
+      "cached_as": null
+    },
+    {
+      "name": "PRISMA",
+      "required": true,
+      "study_types": [
+        "systematic-review"
+      ],
+      "url": null,
+      "cached_as": null
+    },
+    {
+      "name": "STROBE",
+      "required": true,
+      "study_types": [
+        "observational"
+      ],
+      "url": null,
+      "cached_as": null
+    }
+  ],
+  "submission_steps": [
+    "one compiled PDF of text and figures at initial submission",
+    "a cover letter uploaded separately, addressing suitability and impact",
+    "at least four suggested reviewers",
+    "an Academic Editor may be suggested",
+    "bioRxiv direct transfer is available"
+  ],
+  "template": {
+    "latex_or_word_no_login": false,
+    "url": null,
+    "notes": "Sample formatting PDFs only; no fillable Word or LaTeX manuscript template was found.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "PLOS is a nonprofit 501(c)(3) corporation; the page links its Privacy Policy and Terms of Use and references the CC BY publishing policy, whose exact footer wording was not captured.",
+    "url": "https://journals.plos.org/ploscompbiol/s/submission-guidelines"
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reference_style",
+      "reporting_checklists",
+      "submission_steps"
+    ],
+    "unverified_fields": [
+      "template",
+      "license_of_summary_source"
+    ]
+  }
+}

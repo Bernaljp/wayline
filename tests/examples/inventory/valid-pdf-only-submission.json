@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "slug": "someone-1998-a-pdf-only-submission",
+  "source_type": "pdf",
+  "source": {
+    "kind": "pdf",
+    "url": "https://export.arxiv.org/src/hep-th/9901001",
+    "arxiv_id": "hep-th/9901001",
+    "version": null,
+    "etag": "\"sha256:aaaaaa\"",
+    "fetched": "2026-09-12T18:09:02.010Z",
+    "from_cache": false,
+    "bytes": 240113,
+    "files": 1,
+    "main": "source/hep-th-9901001.pdf",
+    "flattened_by": null,
+    "compiled": false
+  },
+  "provenance": {
+    "sections": "none",
+    "appendices": "none",
+    "equations": "none",
+    "figures": "none",
+    "tables": "none",
+    "algorithms": "none",
+    "theorems": "none",
+    "references": "none",
+    "metadata": "none",
+    "raw_images": "none",
+    "text_layer": "none",
+    "page_count": "none"
+  },
+  "counts": {},
+  "page_count": null,
+  "text_layer": null,
+  "sections": [],
+  "equations": [],
+  "figures": [],
+  "tables": [],
+  "algorithms": [],
+  "theorems": [],
+  "appendices": [],
+  "references": [],
+  "raw_images": [],
+  "metadata": {"arxiv_id": "hep-th/9901001"},
+  "notes": [
+    "arXiv served a PDF, which means the submission has no source; the inventory of a PDF is the non-arXiv chain of ticket 22"
+  ],
+  "created": "2026-09-12T18:09:02.010Z"
+}

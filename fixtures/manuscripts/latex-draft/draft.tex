@@ -1,0 +1,48 @@
+% A sample LaTeX draft for the guidelines checks. A fixture, not a paper: it loads a conference
+% style package so the template check has something to compare against, carries a compiled PDF
+% beside it so the page count can be read without a compiler, and cites author-date so a venue
+% that wants numbered citations has something to complain about.
+\documentclass{article}
+\usepackage{iclr2027_conference}
+\usepackage{graphicx}
+\usepackage{natbib}
+
+\title{A sample LaTeX draft for the guidelines checks}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A short abstract, present so that the section check can find one and the word count can leave it
+out of the main text.
+\end{abstract}
+
+\section{Introduction}
+Venue guidelines differ, and the mechanical half of conforming to them is a page count, a section
+list, a style package and a citation form \citep{sample2026}.
+
+\section{Method}
+Nothing is measured here. The draft exists so that the checks have LaTeX to read: a figure
+environment with a caption, a bibliography, and a preamble that loads a conference style.
+
+\begin{figure}
+\includegraphics{figures/fig1.png}
+\caption{A grey square at 300 dpi, standing in for a panel.}
+\label{fig:one}
+\end{figure}
+
+\section{Results}
+The draft compiles to three pages, which is what \texttt{draft.pdf} beside it says
+\citep{sample2026,other2026}.
+
+\section{Reproducibility Statement}
+Everything in this fixture is deterministic.
+
+\section{AI-use statement}
+This fixture was written by a model under a ticket, which is the sort of thing this statement is
+for.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

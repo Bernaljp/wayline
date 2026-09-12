@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "venue": "nature",
+  "display_name": "Nature",
+  "guidelines_url": "https://www.nature.com/nature/for-authors/formatting-guide",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": 4300,
+    "page_count": 8,
+    "abstract_word_count": 200,
+    "notes": "A typical 8-page biological, clinical or social-sciences Article is about 4300 words with 5-6 display items; a 6-page physical-sciences Article about 2,500 words with 4. The Methods section does not typically exceed 3,000 words. The opening summary paragraph is up to 200 words.",
+    "excluded_sections": [
+      "Methods",
+      "References",
+      "Figure legends",
+      "Extended Data",
+      "Supplementary Information"
+    ]
+  },
+  "required_structure": [
+    "Title",
+    "Authors",
+    "Affiliations",
+    "Summary paragraph",
+    "Main text",
+    "References",
+    "Tables",
+    "Figure legends",
+    "Methods",
+    "Acknowledgements",
+    "Funding statement",
+    "Author contributions",
+    "Competing interests",
+    "Additional information"
+  ],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": 6,
+    "formats": [],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "Standard figure sizes are 90 mm (single column) and 180 mm (double column); the full depth of the page is 170 mm. JPEGs are acceptable at initial submission and high-resolution files are required only on acceptance. Extended Data is capped at 10 display items."
+  },
+  "reference_style": {
+    "style": "Numbered, superscript in the text; surname and initials, journal title italic and abbreviated, volume bold.",
+    "max_count": 50,
+    "citation": "numbered"
+  },
+  "reporting_checklists": [
+    {
+      "name": "Reporting Summary",
+      "required": true,
+      "study_types": [
+        "life-sciences",
+        "behavioural"
+      ],
+      "url": "https://www.nature.com/documents/nr-reporting-summary-flat.pdf",
+      "cached_as": "checklist/nature-reporting-summary.pdf"
+    }
+  ],
+  "submission_steps": [
+    "submit through the online system as a single Word or PDF file of up to 30 MB",
+    "figures may be placed in the text at initial submission",
+    "supply high-resolution figures only on acceptance"
+  ],
+  "template": {
+    "latex_or_word_no_login": true,
+    "url": "https://www.springernature.com/gp/authors/campaigns/latex-author-support/see-where-our-services-will-take-you/18782940",
+    "notes": "There is no Nature-specific manuscript template; the journal is format-flexible at submission by design. The link is the generic Springer Nature LaTeX and Word package, downloadable without a login.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "(c) 2026 Springer Nature Limited; the page links nature.com's Terms and Conditions.",
+    "url": "https://www.nature.com/info/terms-and-conditions"
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "length_limits",
+      "required_structure",
+      "reference_style",
+      "reporting_checklists",
+      "template",
+      "license_of_summary_source"
+    ],
+    "unverified_fields": [
+      "figure_spec.color_mode",
+      "submission_steps"
+    ]
+  }
+}

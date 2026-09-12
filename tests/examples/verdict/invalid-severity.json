@@ -1,0 +1,11 @@
+{
+  "pass": false,
+  "findings": [
+    {
+      "text": "The empty-input case raises.",
+      "locator": "src/tokenizer.py#L42",
+      "severity": "critical"
+    }
+  ],
+  "question_limit": "Whether the tokenizer handles an empty input without raising."
+}

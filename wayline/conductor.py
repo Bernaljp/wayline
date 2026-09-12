@@ -28,9 +28,14 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
 - A result's `proposals`, `decision_requests` and `goal_progress` are written into the ticket's
   `## Result` section so the owner sees them, and nothing else: admission is ticket 37, decision
   tickets are ticket 35, and keep-if-better is ticket 39.
+- The Type-B gate of decision 11 (ticket 32): a done ticket's verdicts are queued and drained
+  later in the same wave, and the ticket is `accepted` when every one of them passed. The queue
+  lives in this process, so a conductor that dies with one in it leaves the ticket done and
+  unaccepted rather than losing the ticket; finding those again on a resume is ticket 09's.
 
 The conductor never trusts the worker's own acceptance file. It runs the ticket's commands itself,
-three times, and the ticket is `done` only once they passed on `main`.
+three times, and the ticket is `done` only once they passed on `main`. Nor does it trust the
+worker's own account of its quality: `accepted` comes from a verifier on another model.
 """
 
 import argparse
@@ -45,8 +50,8 @@ from typing import Optional
 
 from wayline import HARNESS_ROOT, gates, schedule, tickets, worker
 from wayline.ledger import (
-    ACCEPTANCE, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_BLOCKED, TICKET_DONE,
-    TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, TICKET_RESUMED,
+    ACCEPTANCE, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, TICKET_BLOCKED,
+    TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, TICKET_RESUMED,
     TICKET_SESSION, Ledger,
 )
 from wayline.project import ProjectError, find_project, policy_for, read_harness
@@ -76,6 +81,9 @@ RESUME_ACCEPTANCE = (
     "itself after you stopped:\n\n%s\n\n"
     "Fix what failed, run `wayline accept` again, commit on the ticket branch, and return the "
     "structured result."
+)
+REJECTED = (
+    "the %s verdict failed: a fresh %s session that did not write this read it and found\n\n%s"
 )
 
 
@@ -203,14 +211,36 @@ class WaveResult:
     done: list = field(default_factory=list)
     failed: list = field(default_factory=list)
     running: list = field(default_factory=list)
+    accepted: list = field(default_factory=list)
+    rejected: list = field(default_factory=list)
     ended: bool = False
     reason: Optional[str] = None
     ledger_commit: Optional[str] = None
 
     @property
     def touched(self):
-        """Whether this wave moved anything at all; a wave that did not cannot be repeated usefully."""
-        return bool(self.launched or self.done or self.failed or self.running)
+        """Whether this wave moved anything at all; a wave that did not cannot be repeated usefully.
+
+        A wave that only drained the verdict queue moved something: the tickets it accepted
+        released whatever waited on them, so the next wave has work the last one did not.
+        """
+        return bool(self.launched or self.done or self.failed or self.running
+                    or self.accepted or self.rejected)
+
+
+@dataclass
+class _Queued:
+    """One done ticket's Type-B gate: every verdict it earned, and the attempt that earned it.
+
+    The queue lives on the conductor for the length of the run. A process that dies with a
+    verdict still queued loses it and leaves the ticket `done` and unaccepted, which is what
+    `wayline status` and `schedule.held_back` then say; replaying the journal to find them again
+    is part of the resume ticket 09 builds.
+    """
+
+    ticket: int
+    attempt: int
+    asks: list
 
 
 @dataclass
@@ -228,6 +258,10 @@ class _Attempt:
     envelope: Optional[worker.Envelope] = None
     session_id: Optional[str] = None
     resumed: bool = False
+    # The commit `main` was fast-forwarded to, which is what a verdict on the diff reads.
+    commit: Optional[str] = None
+    # The graph's effective difficulty, which is the ticket's unless the human pinned one.
+    difficulty: Optional[int] = None
     # Whether a worker process actually started, which is when `ticket_launched` is journaled.
     started: bool = False
     # What the launch raised, when it did: a thread cannot fail its own wave, so the failure is
@@ -258,6 +292,9 @@ class Conductor:
         self.number = 0
         self.out = sys.stdout if out is None else out
         self._who_args = None
+        # The Type-B queue of decision 11: what each done ticket earned, drained later in the wave
+        # because a verdict is model work like any other and is paced like any other.
+        self.verdicts = []
         # The pacing action of wave step 8 and the resource answer of step 7, both seams the pick
         # order already reads: ticket 10 computes the action from the windows, and the job poller
         # replaces `resources_free` with the free-slot rule of `wayline.resources`.
@@ -276,6 +313,7 @@ class Conductor:
         picks = self._picks(self._graph())
         if picks:
             self._work(picks, result)
+        self._drain_verdicts(result)
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         if not tickets.frontier(graph) and not running:
@@ -453,8 +491,8 @@ class Conductor:
         launches are reading, and both say their line in pick order rather than interleaved.
         """
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
-        attempt.tier = tier_for(self.policy, entry.get("difficulty", attempt.ticket["difficulty"]),
-                                attempt.ticket.get("budget"))
+        attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
+        attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
         self._add_worktree(attempt)
         self._write_ticket(attempt, "running")
         attempt.prompt = self._prompt(attempt)
@@ -664,7 +702,7 @@ class Conductor:
             self._fail(attempt, "main could not be fast-forwarded to %s: %s"
                        % (BRANCH % attempt.id, (merge.stderr or merge.stdout).strip()), "split")
             return False
-        commit = self._head(self.project)
+        commit = attempt.commit = self._head(self.project)
         if not self._accept(attempt, "main", self.project)["pass"]:
             self._fail(attempt, "the machine acceptance failed on main after the fast-forward to %s; main "
                        "carries the commit and a person has to look" % commit[:12], "needs_human")
@@ -690,8 +728,111 @@ class Conductor:
             self.ledger.append_event(FINDING, record, ticket=attempt.id)
         self._write_ticket(attempt, "done", attempt.result)
         self.ledger.append_event(TICKET_DONE, {"ticket": attempt.id}, ticket=attempt.id)
+        self._queue_verdicts(attempt)
         self._remove_worktree(attempt.id)
         self.say("  ticket %d done" % attempt.id)
+
+    # --- the Type-B gate (decision 11) ---
+
+    def _queue_verdicts(self, attempt):
+        """Queue the verdicts this done ticket earned; nothing is launched from here.
+
+        The queue is drained later in the wave, once every worker's outcome has been carried,
+        because a verdict is model work like any other: it is paced with the rest, and it must not
+        hold the integration of the tickets behind it.
+        """
+        outputs = attempt.result.get("outputs_written") or attempt.ticket.get("outputs") or []
+        asks = gates.ticket_asks(
+            attempt.ticket, attempt.difficulty, attempt.tier.model,
+            tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs,
+        )
+        if not asks:
+            return
+        self.verdicts.append(_Queued(attempt.id, attempt.number, asks))
+        self.say("  ticket %d earned %d verdict(s): %s"
+                 % (attempt.id, len(asks), ", ".join(ask.verdict_type for ask in asks)))
+
+    def _drain_verdicts(self, result):
+        """Take every queued verdict, ticket by ticket, and accept or fail each ticket.
+
+        Pacing holds the whole queue rather than part of it: a ticket whose first verdict passed
+        and whose second was never taken is neither accepted nor failed, and leaving one in that
+        state across a window boundary is worse than leaving both for the next wave.
+        """
+        if not self.verdicts:
+            return
+        if schedule.holds_model_work(self.action):
+            self.say("  %d ticket(s) wait for a verdict; pacing says %s"
+                     % (len(self.verdicts), self.action))
+            return
+        queued, self.verdicts = self.verdicts, []
+        for entry in queued:
+            self._gate(entry, result)
+
+    def _gate(self, entry, result):
+        """One done ticket's verdicts, in order; every one of them has to pass before it is accepted."""
+        for ask in entry.asks:
+            try:
+                verdict = gates.verdict_for(ask, project=self.project, harness_root=self.harness_root,
+                                            policy=self.policy, ledger=self.ledger)
+            except (ValueError, OSError) as failure:
+                # A verdict nobody could take is not a verdict against the ticket. It keeps the
+                # `done` its machine gates earned and is not accepted, which is what `wayline
+                # status` shows and what holds any dependent of a difficulty-5 ticket.
+                self.say("  ticket %d: the %s verdict could not be taken (%s); the ticket stays "
+                         "done and unaccepted" % (entry.ticket, ask.verdict_type, failure))
+                return
+            self.say("  ticket %d: the %s verdict %s on %s (session %s)"
+                     % (entry.ticket, ask.verdict_type, "passed" if verdict.passed else "failed",
+                        verdict.model or "an unnamed model", verdict.session_id or "unknown"))
+            if not verdict.passed:
+                self._reject(entry, verdict)
+                result.rejected.append(entry.ticket)
+                return
+        self._accept_ticket(entry, verdict)
+        result.accepted.append(entry.ticket)
+
+    def _accept_ticket(self, entry, verdict):
+        """`done` to `accepted`: the one transition a passing quality verdict makes (decision 2)."""
+        self._set_status(entry.ticket, "accepted", self._verdict_note(verdict))
+        self.ledger.append_event(TICKET_ACCEPTED, {"ticket": entry.ticket}, ticket=entry.ticket)
+        self.say("  ticket %d accepted" % entry.ticket)
+
+    def _reject(self, entry, verdict):
+        """A failed verdict: the ticket is failed with the findings as its failure output."""
+        reason = REJECTED % (verdict.verdict_type, verdict.model or "verifier",
+                             gates.findings_text(verdict.findings))
+        self._set_status(entry.ticket, "failed", self._verdict_note(verdict))
+        self.ledger.append_event(TICKET_FAILED, {
+            "ticket": entry.ticket, "attempt": entry.attempt, "reason": reason, "next": "resume",
+        }, ticket=entry.ticket, session_id=verdict.session_id)
+        self.say("  ticket %d failed its %s verdict (next: resume)"
+                 % (entry.ticket, verdict.verdict_type))
+
+    def _verdict_note(self, verdict):
+        """What a verdict has to say in the ticket file: who read it, on what, and what they found.
+
+        The journal carries the same thing, but the ticket file is where a person looks and where
+        the next attempt's prompt comes from, so a verdict that reached only the journal would
+        have reached neither.
+        """
+        lines = ["**Verdict (%s): %s** by %s, session `%s`."
+                 % (verdict.verdict_type, "passed" if verdict.passed else "failed",
+                    verdict.model or "an unnamed model", verdict.session_id or "unknown")]
+        if verdict.findings:
+            lines.extend(["", gates.findings_text(verdict.findings)])
+        return lines
+
+    def _set_status(self, identifier, status, note=()):
+        """Write one ticket's status, and any note, through the ledger, outside any attempt at it.
+
+        The Type-B gate runs after the attempt was carried and its worktree removed, so there is
+        no `_Attempt` left to write from and no new result to append.
+        """
+        ticket, body = self._ticket(identifier)
+        if note:
+            body = tickets.with_result_note(body, note)
+        tickets.write_ticket(self.ledger, dict(ticket, status=status), body)
 
     def _next_step(self, attempt):
         """The rung of the escalation ladder this failure lands on: the one resume, if it is unspent."""
@@ -854,9 +995,17 @@ def run_command(args):
     done = [identifier for wave in waves for identifier in wave.done]
     failed = [identifier for wave in waves for identifier in wave.failed]
     running = [identifier for wave in waves for identifier in wave.running]
-    print("%d wave(s), %d ticket(s) done, %d unfinished%s"
-          % (len(waves), len(done), len(failed), "; " + waves[-1].reason if waves and waves[-1].reason else ""))
+    accepted = [identifier for wave in waves for identifier in wave.accepted]
+    rejected = [identifier for wave in waves for identifier in wave.rejected]
+    print("%d wave(s), %d ticket(s) done, %d accepted, %d unfinished%s"
+          % (len(waves), len(done), len(accepted), len(failed) + len(rejected),
+             "; " + waves[-1].reason if waves and waves[-1].reason else ""))
+    if rejected:
+        # A rejected ticket reached `done` and was failed afterwards by its verdict, so it is in
+        # neither the frontier nor the running set and nothing else here would mention it.
+        print("ticket(s) %s were done and failed their quality verdict; the journal carries the findings"
+              % ", ".join(str(identifier) for identifier in rejected))
     if running:
         print("ticket(s) %s left jobs running; nothing here can advance them until the job poller lands"
               % ", ".join(str(identifier) for identifier in running))
-    return 1 if failed else 0
+    return 1 if failed or rejected else 0
