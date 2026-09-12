@@ -1,0 +1,14 @@
+{
+  "id": "sweep-runner",
+  "kind": "skill",
+  "scope_kind": "local",
+  "path": ".claude/skills/wayline-sweep-runner",
+  "sha256": "f9e8d7c6b5a40312f9e8d7c6b5a40312f9e8d7c6b5a40312f9e8d7c6b5a40312",
+  "capability_summary": "Runs one regulariser sweep and writes the per-seed metrics where the analysis ticket reads them.",
+  "applicability_tags": {"kinds": ["experiment", "analysis"], "data_types": ["tabular"], "libraries": ["numpy"], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "outcome": {"assigned": 3, "passed_first_time": 1, "failed": 1, "last_used": "2026-09-12T09:14:02.118Z"},
+  "assignable": false,
+  "problems": ["a local skill names no fixture, so nothing has shown that it works"]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "intake",
+  "scope_kind": "global",
+  "capability_summary": "Phase P0: turns whatever the owner has into research/INTAKE.md, records autonomy, radius, budgets, and the human-only decision classes, and writes GOAL.json only when a script can measure the goal.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": ["skill/wayline-intake"],
+  "sha256": "d552881a3394b7feb5756f5ce579484bfb77186f9707f3c67187aa94e4d1781d"
+}
