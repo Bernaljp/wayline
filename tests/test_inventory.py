@@ -15,10 +15,12 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.paths import FIXTURES_DIR
 from tests.projects import ProjectTestCase
 from wayline import TAG, cli
+from wayline import dossier
 from wayline.dossier import (
     ARXIV_HTML, FIGURES, FLAT, INVENTORY, REFS, SOURCE, apply_aux_numbers, arxiv_source_url, aux_numbers,
     build_inventory, environments, extract_source, fetch_arxiv_source, flatten,
@@ -174,6 +176,15 @@ class ExtractTest(unittest.TestCase):
         self.assertEqual(extract_source(payload, self.temp), ["main.tex"])
         self.assertIn("old", (self.temp / "main.tex").read_text(encoding="utf-8"))
 
+    def test_a_source_that_unpacks_past_the_cap_is_refused_rather_than_truncated(self):
+        """A few kilobytes of gzip can be gigabytes of nothing; a truncated tarball is worse than none."""
+        payload = gzip.compress(b"x" * 8192)
+        with mock.patch.object(dossier, "SOURCE_MAX_BYTES", 1024):
+            with self.assertRaises(ValueError) as caught:
+                extract_source(payload, self.temp)
+        self.assertIn("1024", str(caught.exception))
+        self.assertFalse(any(self.temp.iterdir()))
+
     def test_an_uncompressed_tar_is_unpacked_too(self):
         self.assertEqual(extract_source(tar_bytes([("ok.tex", b"x")], gzipped=False), self.temp), ["ok.tex"])
 
@@ -246,10 +257,19 @@ class FlattenTest(unittest.TestCase):
         self.assertTrue(any("missing" in note for note in notes))
         self.assertEqual(latex_inventory(text)["counts"]["unresolved_inputs"], 1)
 
-    def test_a_file_that_inputs_itself_is_expanded_once(self):
+    def test_a_file_that_inputs_itself_is_left_as_the_command_it_is(self):
         (self.temp / "ms.tex").write_text("\\documentclass{article}\\input{ms}\n", encoding="utf-8")
+        text, _, notes = flatten(self.temp, "ms.tex", use_latexpand=False)
+        self.assertEqual(text.count("documentclass"), 1)
+        self.assertIn("\\input{ms}", text)
+        self.assertTrue(any("ms" in note for note in notes))
+
+    def test_a_file_input_twice_is_expanded_twice(self):
+        """A paper that inputs one fragment in two places prints it twice, so the inventory counts two."""
+        (self.temp / "frag.tex").write_text("\\begin{equation}x\\end{equation}\n", encoding="utf-8")
+        (self.temp / "ms.tex").write_text("\\documentclass{article}\\input{frag}\ntext\n\\input{frag}\n", encoding="utf-8")
         text, _, _ = flatten(self.temp, "ms.tex", use_latexpand=False)
-        self.assertEqual(text.count("documentclass"), 2)
+        self.assertEqual(latex_inventory(text)["counts"]["equations"], 2)
 
     @unittest.skipUnless(shutil.which("latexpand"), "latexpand is not installed")
     def test_latexpand_and_the_in_house_expander_inventory_the_same_paper(self):
@@ -334,6 +354,14 @@ class LatexInventoryTest(unittest.TestCase):
         numbers = [item.get("number") for item in latex_inventory(text)["equations"]]
         self.assertEqual(numbers, ["$\\star$", "1"])
 
+    def test_a_tag_takes_one_row_out_of_the_count_and_leaves_the_others_counting(self):
+        """amsmath steps the counter for every row but the tagged one, and so does this."""
+        text = ("\\begin{equation}a\\end{equation}\n"
+                "\\begin{align}\nb &= 1 \\\\\nc &= 2 \\tag{$\\dagger$} \\\\\nd &= 3\n\\end{align}\n"
+                "\\begin{equation}e\\end{equation}")
+        numbers = [item.get("number") for item in latex_inventory(text)["equations"]]
+        self.assertEqual(numbers, ["1", "2, $\\dagger$, 3", "4"])
+
     def test_every_number_counted_here_asks_a_reader_to_confirm_it(self):
         for item in self.record["equations"] + self.record["figures"]:
             if item.get("number"):
@@ -367,6 +395,11 @@ class LatexInventoryTest(unittest.TestCase):
     def test_the_bibliography_becomes_the_references(self):
         self.assertEqual(self.record["references"][0]["key"], "knuth1984")
         self.assertIn("Knuth", self.record["references"][0]["text"])
+
+    def test_a_reference_points_at_the_line_its_bibitem_is_on(self):
+        lines = self.text.split("\n")
+        line = lines[int(self.record["references"][0]["locator"].split(":")[1]) - 1]
+        self.assertIn("\\bibitem", line)
 
     def test_the_title_and_the_document_class_are_read_off_the_preamble(self):
         self.assertEqual(self.record["metadata"]["documentclass"], "article")
@@ -529,6 +562,8 @@ class BuildInventoryTest(ProjectTestCase):
         self.assertEqual(first["file"], "figures/fig-1.png")
         self.assertEqual(first["graphics"], ["figures/plot.png"])
         self.assertTrue(self.ref("figures", "fig-1.png").is_file())
+        self.assertEqual([note for note in inventory["notes"] if first["id"] in note], [],
+                         "a figure that got its image file is not something to complain about")
 
     @unittest.skipUnless(shutil.which("pdftoppm"), "poppler is not installed")
     def test_a_pdf_figure_is_rasterized_with_pdftoppm(self):
@@ -605,6 +640,24 @@ class BuildInventoryTest(ProjectTestCase):
         self.assertEqual(inventory["figures"], [])
         self.assertTrue(any("ticket 22" in note for note in inventory["notes"]))
         self.assertEqual(validate(inventory, load_schema("inventory")), [])
+
+    def test_a_pdf_only_submission_survives_a_second_pass(self):
+        """A 304 on a submission with no source has no tarball to flatten and no HTML to fall back to."""
+        payload = b"%PDF-1.4\n%%EOF\n"
+
+        def answer(request):
+            if request.headers.get("If-None-Match") == ETAG:
+                return Response(request.url, 304, {"etag": ETAG}, b"")
+            return Response(request.url, 200, {"content-type": "application/pdf", "etag": ETAG}, payload)
+
+        first, _ = self.build({arxiv_source_url(IDENTIFIER): answer})
+        second, fetcher = self.build({arxiv_source_url(IDENTIFIER): answer})
+        self.assertEqual(fetcher.backend.sent[0].headers.get("If-None-Match"), ETAG)
+        self.assertEqual(second["source_type"], "pdf")
+        self.assertTrue(second["source"]["from_cache"])
+        self.assertEqual(second["created"], first["created"])
+        self.assertTrue(any("ticket 22" in note for note in second["notes"]))
+        self.assertEqual(self.ref(SOURCE, "2401-00001.pdf").read_bytes(), payload)
 
     def test_a_tarball_that_will_not_flatten_falls_back_to_the_arxiv_html(self):
         answers = tarball_answers(payload=NO_LATEX.read_bytes(), html_page=LATEXML.read_bytes())

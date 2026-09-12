@@ -311,6 +311,8 @@ def extract_source(payload, target):
     target = Path(target)
     target.mkdir(parents=True, exist_ok=True)
     raw = _gunzip(payload) if payload[:2] == _GZIP_MAGIC else payload
+    if len(raw) > SOURCE_MAX_BYTES:
+        raise DossierError("the e-print unpacks to more than %d bytes; refused" % SOURCE_MAX_BYTES)
     written = []
     if _is_tar(raw):
         with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
@@ -340,6 +342,7 @@ def extract_source(payload, target):
 
 
 def _gunzip(payload):
+    """The gzip stream, read one byte past the cap so a bomb is refused rather than truncated."""
     try:
         with gzip.GzipFile(fileobj=io.BytesIO(payload)) as handle:
             return handle.read(SOURCE_MAX_BYTES + 1)
@@ -481,16 +484,18 @@ def _latexpand_version():
     return match.group(1).rstrip(".") if match else None
 
 
-def expand_inputs(root, main, depth=0, seen=None, missing=None):
+def expand_inputs(root, main, depth=0, ancestors=(), missing=None):
     """`\\input` and `\\include` expanded in place; returns `(text, unresolved names)`.
 
     This is what stands in for latexpand when it is not installed. It follows the two commands
     that carry a paper's sections and leaves everything else alone, including `\\usepackage`,
-    which is what latexpand does without `--expand-usepackage` too. A file that inputs itself is
-    expanded once.
+    which is what latexpand does without `--expand-usepackage` too. A file input twice is
+    expanded twice, because a paper that inputs one table fragment in two places prints it twice
+    and an inventory that dropped the second would be counting a paper nobody wrote; only a file
+    that inputs itself, directly or through a ring, is left as the command it is.
     """
     root, main = Path(root), Path(main)
-    seen = set() if seen is None else seen
+    ancestors = tuple(ancestors) or (str(Path(main)),)
     missing = [] if missing is None else missing
     text = _read_text(root / main)
     if depth > 12:
@@ -507,15 +512,11 @@ def expand_inputs(root, main, depth=0, seen=None, missing=None):
         target = _resolve_input(root, main, name)
         out.append(text[position:match.start()])
         position = end
-        if target is None:
+        if target is None or str(target) in ancestors:
             missing.append(name.strip())
             out.append(text[match.start():end])
             continue
-        key = str(target)
-        if key in seen:
-            continue
-        seen.add(key)
-        inner, _ = expand_inputs(root, target, depth + 1, seen, missing)
+        inner, _ = expand_inputs(root, target, depth + 1, ancestors + (str(target),), missing)
         out.append(inner)
     out.append(text[position:])
     return "".join(out), missing
@@ -574,8 +575,9 @@ def _is_commented(text, index):
 
 # --- reading LaTeX --------------------------------------------------------------------------------
 
-Environment = namedtuple("Environment", "name starred start end body")
-"""One `\\begin{name}...\\end{name}` span: `start` and `end` bracket it, `body` is what is inside."""
+Environment = namedtuple("Environment", "name starred start end body_start body")
+"""One `\\begin{name}...\\end{name}` span: `start` and `end` bracket it, `body` is what is inside,
+and `body_start` is where the body sits in the text the span was found in."""
 
 _ENVIRONMENT = re.compile(r"\\(begin|end)\s*\{\s*([A-Za-z][A-Za-z0-9]*\*?)\s*\}")
 _BLANK_LINE = re.compile(r"\n[ \t]*\n")
@@ -601,7 +603,7 @@ def environments(text, names=None):
             _, start, body_start = stack[index]
             del stack[index:]
             if names is None or base in names:
-                found.append(Environment(base, starred, start, match.end(), text[body_start:match.start()]))
+                found.append(Environment(base, starred, start, match.end(), body_start, text[body_start:match.start()]))
             break
     found.sort(key=lambda item: item.start)
     return found
@@ -839,27 +841,44 @@ def _section_item(payload, locator, counters, in_appendix, index):
 
 def _equation_item(span, text, locator, counters, index):
     """One numbered environment: its source in exact form and the number the count gives it."""
-    body = span.body
-    tag = next((argument for _, _, argument, _, _ in _commands(body, "tag") if argument), None)
-    rows = _numbered_rows(span, body)
-    number = None
-    if tag is not None:
-        number = _tidy(tag)
-    elif rows:
-        first = counters["equation"] + 1
-        counters["equation"] += rows
-        number = str(first) if rows == 1 else "%d-%d" % (first, counters["equation"])
-    return _item("eq-%d" % index, "equation", locator, _LATEX, number=number,
-                 environment=_environment_name(span), latex=text[span.start:span.end], confirm=number is not None)
+    numbers = _row_numbers(span, counters)
+    return _item("eq-%d" % index, "equation", locator, _LATEX, number=_join_numbers(numbers),
+                 environment=_environment_name(span), latex=text[span.start:span.end], confirm=bool(numbers))
 
 
-def _numbered_rows(span, body):
-    """How many numbers the document gives this environment: 0 for a starred or `\\nonumber` one."""
+def _row_numbers(span, counters):
+    """Every number the document prints for this environment, row by row.
+
+    A starred environment and a `displaymath` print none. `\\nonumber` and `\\notag` take a row
+    out, and `\\tag` gives that one row a number of its own without stepping the counter, which
+    is what amsmath does: the rows around it go on counting as if it were not there.
+    """
     if span.starred or span.name in UNNUMBERED_EQUATIONS:
-        return 0
-    if span.name not in MULTI_ROW_EQUATIONS:
-        return 0 if _NONUMBER.search(body) else 1
-    return sum(1 for row in _rows(body) if not _NONUMBER.search(row))
+        return []
+    rows = _rows(span.body) if span.name in MULTI_ROW_EQUATIONS else [span.body]
+    numbers = []
+    for row in rows:
+        if _NONUMBER.search(row):
+            continue
+        tag = next((argument for _, _, argument, _, _ in _commands(row, "tag") if argument), None)
+        if tag is not None:
+            numbers.append(_tidy(tag))
+            continue
+        counters["equation"] += 1
+        numbers.append(str(counters["equation"]))
+    return numbers
+
+
+def _join_numbers(numbers):
+    """One string for what may be several numbers: a range when they run, a list when they do not."""
+    if not numbers:
+        return None
+    if len(numbers) == 1:
+        return numbers[0]
+    digits = [number for number in numbers if number.isdigit()]
+    if len(digits) == len(numbers) and int(digits[-1]) - int(digits[0]) == len(digits) - 1:
+        return "%s-%s" % (digits[0], digits[-1])
+    return ", ".join(numbers)
 
 
 def _rows(body):
@@ -948,7 +967,7 @@ def _bibitems(text, starts, filename):
                 "id": "ref-%d" % (len(references) + 1),
                 "key": _tidy(key),
                 "text": _tidy(body, 1000),
-                "locator": "%s:%d" % (filename, _line_at(starts, span.start + match.start())),
+                "locator": "%s:%d" % (filename, _line_at(starts, span.body_start + match.start())),
                 "provenance": _LATEX,
             })
     return references
@@ -1297,6 +1316,10 @@ def build_inventory(project, slug, fetcher=None, email=None, compile_source=True
     try:
         if fetched.kind == "pdf":
             return _pdf_submission(ledger, slug, identifier, fetched, previous)
+        if fetched.from_cache and previous.get("source_type") == "pdf":
+            # A 304 says nothing has changed, and what did not change is a PDF: there is no
+            # tarball to flatten and no HTML rendering to fall back to. The record stands.
+            return _pdf_unchanged(ledger, slug, fetched, previous)
         if fetched.from_cache:
             files = _restore_source(ledger, slug, workspace)
             notes.append("arXiv answered 304 Not Modified; the source kept under refs/%s/%s/ is the one it served" % (slug, SOURCE))
@@ -1462,6 +1485,16 @@ def _pdf_submission(ledger, slug, identifier, fetched, previous):
     return inventory
 
 
+def _pdf_unchanged(ledger, slug, fetched, previous):
+    """The record of a PDF-only submission arXiv has just said is still the one on disk."""
+    inventory = dict(previous)
+    inventory["source"] = dict(previous.get("source") or {}, fetched=now_ts(), from_cache=True, etag=fetched.etag)
+    inventory["updated"] = now_ts()
+    check(inventory, load_schema("inventory"), name="refs/%s/%s" % (slug, INVENTORY))
+    ledger.write_json("%s/%s/%s" % (REFS, slug, INVENTORY), inventory, schema="inventory")
+    return inventory
+
+
 def _kept_source(ledger, slug):
     """Whether the e-print arXiv served last time is still on disk, which is what the ETag is for.
 
@@ -1534,20 +1567,28 @@ def _find_graphics(workspace, main, graphicspath, target):
 
 
 def _figure_file(ledger, slug, workspace, item_id, resolved, rasterize, notes):
-    """The image a reader is shown for one figure, written under `refs/<slug>/figures/`."""
+    """The image a reader is shown for one figure, written under `refs/<slug>/figures/`.
+
+    The first target that can become an image wins, and only a figure that yields none at all is
+    noted: a paper that gives both an `.eps` and a `.png` of the same picture has an image file,
+    and saying otherwise would be a complaint about nothing.
+    """
     for relative in resolved:
         suffix = Path(relative).suffix.lower()
         if suffix in RASTER_EXTENSIONS:
             name = "%s/%s%s" % (FIGURES, item_id, suffix)
             ledger.write_bytes("%s/%s/%s" % (REFS, slug, name), (workspace / relative).read_bytes())
             return name
-        if suffix in (".pdf", ".eps", ".ps"):
-            raster = _rasterize(workspace / relative, workspace) if rasterize and suffix == ".pdf" else None
-            if raster is not None:
-                name = "%s/%s.png" % (FIGURES, item_id)
-                ledger.write_bytes("%s/%s/%s" % (REFS, slug, name), raster)
-                return name
-            notes.append("%s: %s is not a raster and pdftoppm did not turn it into one, so no image file was made" % (item_id, relative))
+        raster = _rasterize(workspace / relative, workspace) if rasterize and suffix == ".pdf" else None
+        if raster is not None:
+            name = "%s/%s.png" % (FIGURES, item_id)
+            ledger.write_bytes("%s/%s/%s" % (REFS, slug, name), raster)
+            return name
+    if resolved:
+        notes.append(
+            "%s: no image file was made from %s; a raster is copied as it is and a PDF is rasterized "
+            "with pdftoppm, and neither applied here" % (item_id, ", ".join(resolved))
+        )
     return None
 
 
