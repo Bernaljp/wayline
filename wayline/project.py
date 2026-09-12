@@ -141,8 +141,13 @@ def register(project, harness_tag):
 # --- harness.json ------------------------------------------------------------------------------
 
 
-def _policy(policy_path=None):
-    return json.loads(Path(policy_path or POLICY_PATH).read_text(encoding="utf-8"))
+def _policy(harness_root=None):
+    """The global defaults of a harness checkout: its own `policy.json`, else the shipped one."""
+    if harness_root is not None:
+        candidate = Path(harness_root) / "policy.json"
+        if candidate.is_file():
+            return json.loads(candidate.read_text(encoding="utf-8"))
+    return json.loads(Path(POLICY_PATH).read_text(encoding="utf-8"))
 
 
 def detect_hermes():
@@ -239,15 +244,19 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
     # harness.json: written once. `upgrade` moves the pin; `init` never rewrites an owner's file.
     harness_path = project / HARNESS_JSON
     if not harness_path.exists():
-        atomic_write(harness_path, json.dumps(default_harness(harness_tag, hermes_python=hermes_python), ensure_ascii=False, indent=2) + "\n")
+        defaults = default_harness(harness_tag, policy=_policy(harness_root), hermes_python=hermes_python)
+        atomic_write(harness_path, json.dumps(defaults, ensure_ascii=False, indent=2) + "\n")
         mark(HARNESS_JSON)
         pinned_tag = harness_tag
     else:
         pinned_tag = read_harness(project).get("harness_tag", harness_tag)
 
     # CLAUDE.md: the block is appended to whatever is there, and refreshed in place afterwards.
-    if _write_claude_block(project, harness_root, pinned_tag):
+    changed, note = _write_claude_block(project, harness_root, pinned_tag)
+    if changed:
         mark(CLAUDE_MD)
+    if note:
+        notes.append(note)
 
     # .gitignore: the four entries of Implementation Decisions 1, appended once.
     if _write_gitignore(project):
@@ -267,8 +276,11 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
     changes.extend(symlink_changes)
     notes.extend(symlink_notes)
 
-    # git: a repository to branch worktrees from, when the directory is not one already.
+    # git: a repository to branch worktrees from, when the project root is not one already.
     if git and not _is_repository(project):
+        enclosing = _enclosing_repository(project)
+        if enclosing is not None:
+            notes.append("%s lies inside the repository %s; the project gets its own" % (project.name, enclosing))
         _git_init(project)
         mark(".git/")
 
@@ -289,40 +301,59 @@ def _block(harness_root, harness_tag):
 
 
 def _write_claude_block(project, harness_root, harness_tag):
-    """Append the wayline block to CLAUDE.md, or refresh it in place; never overwrite the file."""
+    """Append the wayline block to CLAUDE.md, or refresh it in place; never overwrite the file.
+
+    A begin marker with no end marker is a block a crash cut short: everything from it to the end
+    of the file is that half-written block and is replaced, so one run repairs the file instead of
+    appending a second copy next to the ruin. Returns whether the file changed, and a note when it
+    repaired something.
+    """
     path = project / CLAUDE_MD
     block = _block(harness_root, harness_tag)
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     start = existing.find(BLOCK_BEGIN)
-    end = existing.find(BLOCK_END)
+    end = existing.find(BLOCK_END, start + len(BLOCK_BEGIN)) if start != -1 else -1
+    note = None
     if start != -1 and end > start:
         current = existing[start:end + len(BLOCK_END)] + "\n"
         if current == block:
-            return False
+            return False, None
         text = existing[:start] + block + existing[end + len(BLOCK_END):].lstrip("\n")
+    elif start != -1:
+        note = "%s carried a wayline block with no closing marker; it was rewritten" % CLAUDE_MD
+        text = existing[:start] + block
     elif existing.strip():
         text = existing if existing.endswith("\n") else existing + "\n"
         text = text + "\n" + block
     else:
         text = block
     atomic_write(path, text)
-    return True
+    return True, note
 
 
 def _write_gitignore(project):
+    """Add the missing entries of Implementation Decisions 1 under the `# wayline` header.
+
+    An entry an owner deleted comes back under the header it belongs to, not at the end of the
+    file under whatever section happens to be last.
+    """
     path = project / ".gitignore"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    present = {line.strip() for line in existing.splitlines()}
+    lines = existing.splitlines()
+    present = {line.strip() for line in lines}
     missing = [entry for entry in GITIGNORE_ENTRIES if entry not in present]
     if not missing:
         return False
-    text = existing
-    if text and not text.endswith("\n"):
-        text += "\n"
-    if GITIGNORE_HEADER not in present:
-        text += "\n" if text else ""
-        text += GITIGNORE_HEADER + "\n"
-    text += "".join(entry + "\n" for entry in missing)
+    if GITIGNORE_HEADER in present:
+        where = [line.strip() for line in lines].index(GITIGNORE_HEADER) + 1
+        lines[where:where] = missing
+        text = "".join(line + "\n" for line in lines)
+    else:
+        text = existing
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += ("\n" if text else "") + GITIGNORE_HEADER + "\n"
+        text += "".join(entry + "\n" for entry in missing)
     atomic_write(path, text)
     return True
 
@@ -432,9 +463,28 @@ def _git(project, *args, check_exit=True):
     return done
 
 
+def _toplevel(project):
+    """The root of the work tree `project` lies in, or None when it lies in none."""
+    done = _git(project, "rev-parse", "--show-toplevel", check_exit=False)
+    if done.returncode != 0 or not done.stdout.strip():
+        return None
+    return Path(done.stdout.strip()).resolve()
+
+
 def _is_repository(project):
-    done = _git(project, "rev-parse", "--is-inside-work-tree", check_exit=False)
-    return done.returncode == 0 and done.stdout.strip() == "true"
+    """Whether the project directory is itself the root of a work tree.
+
+    A directory that merely lies inside someone else's repository is not one: the conductor's
+    worktrees branch from the project's own `main`, so a nested project needs its own repository
+    rather than the enclosing one's history.
+    """
+    return _toplevel(project) == Path(project).resolve()
+
+
+def _enclosing_repository(project):
+    """The repository `project` lies inside, when it is not its own; None otherwise."""
+    top = _toplevel(project)
+    return None if top is None or top == Path(project).resolve() else top
 
 
 def _git_init(project):
@@ -633,7 +683,9 @@ def render_status(view):
         lines.append("problems (%d)" % len(view["problems"]))
         for problem in view["problems"]:
             lines.append("  " + problem)
-    return "\n".join(lines)
+    # The column padding above is how the eye finds a field; it must not survive to the end of a
+    # line, where it is only invisible noise in a terminal, a diff, and a copied paste.
+    return "\n".join(line.rstrip() for line in lines)
 
 
 def _events_heading(count):

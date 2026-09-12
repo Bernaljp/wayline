@@ -15,7 +15,7 @@ from tests.paths import HARNESS_ROOT, LEDGER_FIXTURE
 from tests.projects import ProjectTestCase
 from wayline.jsonschema import check, load_schema
 from wayline.ledger import EVENTS, Ledger, make_event
-from wayline.project import GITIGNORE_ENTRIES, init_project, read_jobs, render_status, status_view, switch_project
+from wayline.project import init_project, read_jobs, render_status, status_view, switch_project
 from wayline.tickets import GRAPH, STATUSES, read_tickets
 
 
@@ -37,6 +37,11 @@ class FixtureLedgerTest(unittest.TestCase):
         self.assertTrue(decisions)
         self.assertEqual(decisions[0]["status"], "open")
         self.assertTrue(decisions[0]["human_only"])
+
+    def test_the_journal_is_in_timestamp_order(self):
+        events, _ = Ledger(LEDGER_FIXTURE).read_events()
+        stamps = [event["ts"] for event in events]
+        self.assertEqual(stamps, sorted(stamps), "the ledger writes file order and ts order together")
 
     def test_every_journal_line_is_a_valid_event_of_the_vocabulary(self):
         events, offset = Ledger(LEDGER_FIXTURE).read_events()
@@ -186,6 +191,17 @@ class StatusGraphTest(ProjectTestCase):
         self.assertTrue(any(problem.startswith("graph.json:") for problem in view["problems"]))
         self.assertEqual([entry["id"] for entry in view["frontier"]], [entry["id"] for entry in good["frontier"]])
 
+    def test_a_malformed_graph_file_is_regenerated_rather_than_indexed(self):
+        for broken in ('{"snapshot": {}, "tickets": [{"kind": "code"}]}', '{"snapshot": {}, "tickets": [1, 2]}',
+                       '{"tickets": "none"}', 'not json at all'):
+            with self.subTest(graph=broken):
+                project = self.ledger_fixture(name="fixture-" + str(abs(hash(broken))))
+                (project / "research" / GRAPH).write_text(broken + "\n", encoding="utf-8")
+                view = status_view(project)
+                self.assertEqual(view["problems"], [])
+                self.assertTrue(view["graph_regenerated"])
+                self.assertEqual([entry["id"] for entry in view["frontier"]], [5, 10])
+
     def test_a_broken_job_file_becomes_a_problem(self):
         project = self.ledger_fixture()
         (project / "research" / "jobs" / "j-0003.json").write_text("{\"id\": \"j-0003\"}\n", encoding="utf-8")
@@ -197,7 +213,8 @@ class StatusGraphTest(ProjectTestCase):
 class RenderStatusTest(ProjectTestCase):
     def setUp(self):
         super().setUp()
-        self.text = render_status(status_view(self.ledger_fixture()))
+        self.project = self.ledger_fixture()
+        self.text = render_status(status_view(self.project))
 
     def test_the_text_names_every_section(self):
         for heading in ("project", "harness", "frontier (2)", "running tickets (1)", "running jobs (1)",
@@ -218,6 +235,29 @@ class RenderStatusTest(ProjectTestCase):
 
     def test_no_line_of_the_text_is_blank_padded_nonsense(self):
         for line in self.text.splitlines():
+            self.assertEqual(line, line.rstrip(), "a rendered line carries trailing spaces")
+
+    def test_an_event_with_nothing_to_show_still_renders_a_clean_line(self):
+        ledger = Ledger(self.project)
+        ledger.append_event("unpaused")
+        ledger.append_event("ticket_done", {"ticket": 3}, ticket=3)
+        text = render_status(status_view(self.project))
+        self.assertIn("unpaused", text)
+        for line in text.splitlines():
+            self.assertEqual(line, line.rstrip(), "a rendered line carries trailing spaces")
+
+    def test_a_graph_entry_with_no_ticket_file_still_renders_a_clean_line(self):
+        graph = json.loads((self.project / "research" / GRAPH).read_text(encoding="utf-8"))
+        graph["tickets"].append({
+            "id": 99, "kind": "code", "status": "open", "difficulty": 1, "blocked_by": [],
+            "blocking": None, "human_only": False, "touches": [], "resources": None,
+            "role": "coder", "skills": [], "attempt": 0,
+        })
+        # The snapshot is left as it is, so the graph is not regenerated over the entry.
+        (self.project / "research" / GRAPH).write_text(json.dumps(graph) + "\n", encoding="utf-8")
+        text = render_status(status_view(self.project))
+        self.assertIn("#99", text)
+        for line in text.splitlines():
             self.assertEqual(line, line.rstrip(), "a rendered line carries trailing spaces")
 
 
@@ -261,9 +301,6 @@ class StatusCommandTest(ProjectTestCase):
         done = self.run_cli("status", "--project", str(project))
         self.assertEqual(done.returncode, 1)
         self.assertIn("problems (1)", done.stdout)
-
-    def test_the_fixture_gitignore_entries_are_the_ones_init_writes(self):
-        self.assertEqual(GITIGNORE_ENTRIES, (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl"))
 
 
 if __name__ == "__main__":

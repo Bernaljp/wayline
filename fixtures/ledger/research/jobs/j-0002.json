@@ -45,8 +45,8 @@
   "attempts": [
     {
       "n": 1,
-      "started_at": "2026-09-11T13:02:00Z",
-      "ended_at": "2026-09-11T13:44:00Z",
+      "started_at": "2026-09-11T14:31:00Z",
+      "ended_at": "2026-09-11T14:52:00Z",
       "result": "success",
       "exit_code": 0,
       "oom": null,

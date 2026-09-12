@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.paths import LEDGER_FIXTURE, TEMPLATES_DIR
+from tests.paths import HARNESS_ROOT, LEDGER_FIXTURE, TEMPLATES_DIR
 
 SKILLS = ("wayline-absorb", "wayline-figure")
 WORKFLOWS = ("absorb.js", "panel.js")
@@ -36,11 +36,12 @@ class ProjectTestCase(unittest.TestCase):
             os.environ["WAYLINE_HOME"] = previous
 
     def fake_harness(self, skills=SKILLS, workflows=WORKFLOWS, name="harness"):
-        """A harness checkout with the real templates and a few skills and workflow scripts."""
+        """A harness checkout with the real templates and policy and a few skills and workflow scripts."""
         root = self.temp / name
         (root / "skills").mkdir(parents=True, exist_ok=True)
         (root / "workflows").mkdir(parents=True, exist_ok=True)
         shutil.copytree(TEMPLATES_DIR, root / "templates" / "project", dirs_exist_ok=True)
+        shutil.copy(HARNESS_ROOT / "policy.json", root / "policy.json")
         for skill in skills:
             directory = root / "skills" / skill
             directory.mkdir(exist_ok=True)

@@ -221,14 +221,30 @@ def _check_acyclic(entries):
                 stack.pop()
 
 
+# What every reader of a stored graph indexes without looking first; an entry missing one of
+# these is not a graph entry, however well-formed the JSON around it is.
+_REQUIRED_ENTRY_FIELDS = ("id", "kind", "status", "blocked_by")
+
+
 def read_graph(project):
-    """The stored `graph.json`, or None when it is missing or not a graph."""
+    """The stored `graph.json`, or None when it is missing, unreadable, or not a graph.
+
+    A file a hand or a crash left half-written must not reach the frontier computation, which
+    indexes these fields: None here means "regenerate", and every caller handles it.
+    """
     try:
         graph = Ledger(project).read_json(GRAPH)
     except (OSError, ValueError):
         return None
     if not isinstance(graph, dict) or not isinstance(graph.get("tickets"), list):
         return None
+    if not isinstance(graph.get("snapshot", {}), dict):
+        return None
+    for entry in graph["tickets"]:
+        if not isinstance(entry, dict) or any(field not in entry for field in _REQUIRED_ENTRY_FIELDS):
+            return None
+        if not isinstance(entry["id"], int) or not isinstance(entry["blocked_by"], list):
+            return None
     return graph
 
 

@@ -8,6 +8,7 @@ import json
 import unittest
 
 from tests.projects import ProjectTestCase
+from wayline.jsonschema import ValidationError
 from wayline.ledger import Ledger
 from wayline.project import init_project
 from wayline.tickets import (
@@ -64,8 +65,10 @@ class TicketFileTest(ProjectTestCase):
         self.assertIn("file name says ticket 8", str(caught.exception))
 
     def test_frontmatter_outside_the_schema_is_refused(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValidationError):
             write_ticket(self.ledger, ticket(1, status="finished"))
+        with self.assertRaises(ValidationError):
+            write_ticket(self.ledger, ticket(1, difficulty=6))
 
     def test_two_tickets_with_one_id_are_refused(self):
         write_ticket(self.ledger, ticket(4, "First title"))
@@ -179,6 +182,19 @@ class GraphTest(ProjectTestCase):
         first, _ = refresh_graph(self.project, ledger=self.ledger)
         second, _ = refresh_graph(self.project, ledger=self.ledger, force=True)
         self.assertEqual(first, second)
+
+    def test_a_graph_file_that_is_not_a_graph_reads_as_none_and_is_rebuilt(self):
+        write_ticket(self.ledger, ticket(1))
+        refresh_graph(self.project, ledger=self.ledger)
+        path = self.project / "research" / GRAPH
+        for broken in ('{"snapshot": {}, "tickets": [{"kind": "code"}]}', '{"snapshot": {}, "tickets": [1]}',
+                       '{"snapshot": [], "tickets": []}', '{"tickets": {}}', "half a file"):
+            with self.subTest(graph=broken):
+                path.write_text(broken + "\n", encoding="utf-8")
+                self.assertIsNone(read_graph(self.project))
+                graph, regenerated = refresh_graph(self.project, ledger=self.ledger)
+                self.assertTrue(regenerated)
+                self.assertEqual([entry["id"] for entry in graph["tickets"]], [1])
 
     def test_the_graph_is_valid_json_the_ledger_wrote(self):
         write_ticket(self.ledger, ticket(1))

@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase, tree_hash
@@ -49,6 +50,18 @@ class InitLayoutTest(ProjectTestCase):
         self.assertEqual(harness["reservations"], policy["reservations"])
         self.assertEqual(harness["pacing"], policy["pacing"])
         self.assertEqual(harness["dashboard"], policy["dashboard"])
+
+    def test_harness_json_reads_the_policy_of_the_checkout_it_is_laid_out_from(self):
+        harness = self.fake_harness(name="other-harness")
+        policy = json.loads((harness / "policy.json").read_text(encoding="utf-8"))
+        policy["reservations"]["cores"] = 2
+        policy["dashboard"]["port"] = 9100
+        (harness / "policy.json").write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+        project = self.temp / "pinned"
+        init_project(project, harness_root=harness)
+        written = read_harness(project)
+        self.assertEqual(written["reservations"]["cores"], 2)
+        self.assertEqual(written["dashboard"]["port"], 9100)
 
     def test_claude_md_carries_the_block_with_the_tag(self):
         text = (self.project / "CLAUDE.md").read_text(encoding="utf-8")
@@ -140,6 +153,23 @@ class InitIdempotenceTest(ProjectTestCase):
         self.assertEqual(read_projects()[0]["created"], created)
         self.assertEqual(len(read_projects()), 1)
 
+    def test_a_project_inside_another_repository_gets_its_own(self):
+        outer = self.temp / "outer"
+        outer.mkdir()
+        subprocess.run(["git", "-C", str(outer), "init", "-b", "main"], capture_output=True)
+        project = outer / "study"
+        report = init_project(project, harness_root=self.fake_harness())
+        self.assertTrue((project / ".git").exists(), "the conductor branches worktrees from the project's own main")
+        top = subprocess.run(["git", "-C", str(project), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        self.assertEqual(Path(top.stdout.strip()).resolve(), project.resolve())
+        self.assertTrue(any("lies inside the repository" in note for note in report["notes"]))
+
+    def test_no_git_leaves_the_directory_without_a_repository(self):
+        project = self.temp / "study"
+        init_project(project, harness_root=self.fake_harness(), git=False)
+        self.assertFalse((project / ".git").exists())
+        self.assertTrue((project / HARNESS_JSON).is_file())
+
     def test_init_leaves_an_existing_repository_and_its_history_alone(self):
         project = self.temp / "existing"
         project.mkdir()
@@ -196,6 +226,34 @@ class InitIdempotenceTest(ProjectTestCase):
         self.assertEqual(lines.count("results/"), 1)
         for entry in GITIGNORE_ENTRIES:
             self.assertIn(entry, lines)
+
+    def test_a_deleted_gitignore_entry_comes_back_under_its_own_header(self):
+        project = self.temp / "existing"
+        project.mkdir()
+        (project / ".gitignore").write_text("# wayline\n.worktrees/\nresults/\n\n# mine\n*.pyc\n", encoding="utf-8")
+        init_project(project, harness_root=self.fake_harness())
+        lines = (project / ".gitignore").read_text(encoding="utf-8").splitlines()
+        header = lines.index("# wayline")
+        mine = lines.index("# mine")
+        for entry in GITIGNORE_ENTRIES:
+            self.assertTrue(header < lines.index(entry) < mine, "%s landed outside the wayline block" % entry)
+        self.assertEqual(lines[-1], "*.pyc")
+
+    def test_a_claude_md_block_with_no_closing_marker_is_repaired_in_one_run(self):
+        harness = self.fake_harness()
+        project = self.temp / "existing"
+        project.mkdir()
+        (project / "CLAUDE.md").write_text("# Mine\n\n<!-- wayline:begin -->\nhalf a block", encoding="utf-8")
+        report = init_project(project, harness_root=harness)
+        text = (project / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertEqual(text.count(BLOCK_BEGIN), 1)
+        self.assertEqual(text.count(BLOCK_END), 1)
+        self.assertNotIn("half a block", text)
+        self.assertTrue(text.startswith("# Mine"))
+        self.assertTrue(any("closing marker" in note for note in report["notes"]))
+        before = tree_hash(project)
+        init_project(project, harness_root=harness)
+        self.assertEqual(tree_hash(project), before)
 
 
 class SymlinkRefreshTest(ProjectTestCase):
