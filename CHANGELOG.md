@@ -4,6 +4,13 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+The manifest and findings provenance (ticket 18, M2 Hardware).
+
+- `wayline.provenance.register_artifact(project_or_ledger, path, job, run_id, ticket)` hashes a result artifact (sha256, in chunks) into `research/manifest.json` and journals `manifest`; a second registration of the same path replaces its entry instead of appending a stale sibling, and the read-hash-write happens under the ledger's lock so two workers registering at once cannot lose an entry. `run_id` must be `t<ticket>-a<attempt>`; a bad entry (a ticket outside the schema's range, say) never reaches the manifest.
+- `add_finding(project_or_ledger, text, provenance, ticket, negative=False)` refuses (raises `ProvenanceError`, writing nothing) when a provenance locator has no `<path>#<locator>` shape or its path half is not in `manifest.json`; an accepted finding gets a sequential id (`f-0001`, ...) in `findings.jsonl`, journals `finding`, and re-renders `findings.md`. `provenance` takes one locator or several, so one finding may cite more than one artifact.
+- `render_findings` writes `findings.md` from `findings.jsonl`, grouped by ticket in ticket order, negative results marked; `add_finding` calls it after every change so the two files never drift.
+- `oversized_tracked_files(project)` warns (never refuses) about a git-tracked file heavier than `policy.artifacts.commit_threshold_bytes` (a project's `harness.json` may override the shipped default), naming the manifest as the alternative to committing it; `results/` is already git-ignored by `init` (ticket 02), so this only ever catches a file someone chose to commit.
+
 `init` lays out a project and `status` reads it (ticket 02, M0 Skeleton).
 
 - `wayline init <path>` lays out the project of Implementation Decisions 1: the `CLAUDE.md` block (appended between markers, never overwriting an existing file, refreshed when the pin moves), `harness.json` with the pin and the defaults of Implementation Decisions 14, the `research/` tree with the `INTAKE.md` template and empty `journal.jsonl`, `findings.jsonl`, `manifest.json`, and `graph.json`, the four `.gitignore` entries, `.claude/` symlinks to the harness skills and workflow scripts, a fresh git repository on `main` with a first commit when the project directory is not itself the root of a work tree, an entry in `~/.wayline/projects.json`, and `~/.wayline/active`. A project laid out inside someone else's repository gets its own and is told so, because the conductor's worktrees branch from the project's own `main`.
