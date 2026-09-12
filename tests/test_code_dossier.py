@@ -9,6 +9,7 @@ pip, entirely offline too.
 """
 
 import contextlib
+import importlib.util
 import io
 import json
 import shutil
@@ -33,6 +34,15 @@ REPO = FIXTURES_DIR / "code" / "tiny-pkg.git"
 REPO_URL = "file://%s" % REPO  # pip's git+<url> needs a scheme; plain git clone accepts the bare path either way
 SHA = "eeaa815f89a84e417c21180e7b600f5a9c52c684"
 TAG = "v0.1.0-2-geeaa815"
+
+# The fixture builds with setuptools, and the recipe installs it without build isolation so that
+# nothing is downloaded: a verified recipe needs setuptools already importable by this Python. The
+# Python 3.12 that GitHub's check runs on ships pip without it, so the tests that need a real
+# install skip there and say why; on that Python the recipe reports `verified: false` with pip's log.
+NEEDS_SETUPTOOLS = unittest.skipUnless(
+    importlib.util.find_spec("setuptools") is not None,
+    "the fixture's build backend is setuptools, which this Python does not have",
+)
 
 
 class ReferenceTest(unittest.TestCase):
@@ -170,6 +180,7 @@ class RecordTest(unittest.TestCase):
     def test_the_dossier_validates(self):
         self.assertEqual(validate(self.dossier, load_schema("code_dossier")), [])
 
+    @NEEDS_SETUPTOOLS
     def test_the_pinned_commit_installs_and_the_smallest_test_runs(self):
         self.assertTrue(self.dossier["verified"], self.dossier["recipe"]["log"])
         self.assertEqual(self.dossier["recipe"]["install_exit_code"], 0)
@@ -219,12 +230,14 @@ class VerbTest(ProjectTestCase):
             code = cli.main(list(args))
         return code, out.getvalue(), err.getvalue()
 
+    @NEEDS_SETUPTOOLS
     def test_the_code_verb_builds_and_prints_a_verified_dossier(self):
         code, printed, _ = self.run_verb("absorb", "--code", "vaswani-2017-attention", "%s@%s" % (REPO_URL, SHA), "--project", str(self.project))
         self.assertEqual(code, 0)
         self.assertIn("verified       True", printed)
         self.assertTrue((self.project / "research" / "refs" / "vaswani-2017-attention" / "code_dossier.json").is_file())
 
+    @NEEDS_SETUPTOOLS
     def test_the_report_comes_back_as_json_when_it_is_asked_for(self):
         code, printed, _ = self.run_verb("absorb", "--code", "vaswani-2017-attention", "%s@%s" % (REPO_URL, SHA), "--project", str(self.project), "--json")
         self.assertEqual(code, 0)
