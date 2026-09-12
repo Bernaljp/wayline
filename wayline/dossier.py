@@ -1501,7 +1501,7 @@ def _pdf_submission(ledger, slug, identifier, fetched, workspace, tools, run):
     downloaded.write_bytes(fetched.payload)
     source = {"name": name, "url": fetched.url, "arxiv_id": identifier, "version": fetched.version,
               "etag": fetched.etag, "from_cache": False}
-    inventory = build_pdf_inventory(ledger, slug, downloaded, **_pdf_seams(tools, run, source=source))
+    inventory = build_pdf_inventory(ledger, slug, downloaded, tools=tools, run=run, source=source)
     return _with_note(ledger, slug, inventory, _ARXIV_PDF_NOTE)
 
 
@@ -1516,17 +1516,8 @@ def _pdf_unchanged(ledger, slug, fetched, previous, tools, run):
                            % (slug, SOURCE, INVENTORY))
     source = {key: kept.get(key) for key in ("url", "arxiv_id", "version") if kept.get(key)}
     source.update({"name": path.name, "etag": fetched.etag, "from_cache": True})
-    inventory = build_pdf_inventory(ledger, slug, path, **_pdf_seams(tools, run, source=source))
+    inventory = build_pdf_inventory(ledger, slug, path, tools=tools, run=run, source=source)
     return _with_note(ledger, slug, inventory, "%s; arXiv answered 304 Not Modified, so the kept PDF was read again" % _ARXIV_PDF_NOTE)
-
-
-def _pdf_seams(tools, run, **options):
-    """The PDF chain's keyword arguments, leaving out a seam the caller did not replace."""
-    if tools is not None:
-        options["tools"] = tools
-    if run is not None:
-        options["run"] = run
-    return options
 
 
 def _with_note(ledger, slug, inventory, note):
@@ -1540,7 +1531,7 @@ def _pdf_inventory(ledger, slug, record, pdf, fetcher, email, tools, run):
     from wayline.pdf_inventory import PDF_NAME, build_pdf_inventory
 
     if pdf is not None:
-        return build_pdf_inventory(ledger, slug, Path(pdf), **_pdf_seams(tools, run))
+        return build_pdf_inventory(ledger, slug, Path(pdf), tools=tools, run=run)
     previous = _read_json(ledger, "%s/%s/%s" % (REFS, slug, INVENTORY)) or {}
     kept_main = (previous.get("source") or {}).get("main")
     kept = ledger.research / REFS / slug / kept_main if kept_main else ledger.research / REFS / slug / SOURCE / PDF_NAME
@@ -1548,7 +1539,7 @@ def _pdf_inventory(ledger, slug, record, pdf, fetcher, email, tools, run):
         source = {key: value for key, value in (previous.get("source") or {}).items()
                   if key in ("url", "arxiv_id", "version", "etag")}
         source["name"] = kept.name
-        return build_pdf_inventory(ledger, slug, kept, **_pdf_seams(tools, run, source=source))
+        return build_pdf_inventory(ledger, slug, kept, tools=tools, run=run, source=source)
     url = (record.get("open_access") or {}).get("pdf_url")
     if not url:
         raise DossierError(
@@ -1566,7 +1557,7 @@ def _pdf_inventory(ledger, slug, record, pdf, fetcher, email, tools, run):
     try:
         downloaded = workspace / PDF_NAME
         downloaded.write_bytes(response.body)
-        return build_pdf_inventory(ledger, slug, downloaded, **_pdf_seams(tools, run, source={"url": url}))
+        return build_pdf_inventory(ledger, slug, downloaded, tools=tools, run=run, source={"url": url})
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

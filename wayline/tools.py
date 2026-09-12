@@ -5,8 +5,8 @@ Python packages with models behind them (docling and pdfplumber by default, mark
 request), so they live in a venv of their own that the owner installs once, and the harness only
 ever runs them as subprocesses through the helper scripts in `converters/`. GROBID is a Docker
 image and is pulled on request. What was installed, at which version, and whether torch can see
-the GPU is recorded in `~/.wayline/tools/tools.json`, which `wayline.pdf_inventory.Tools` reads:
-a converter's provenance names the version recorded here.
+the GPU is recorded in `~/.wayline/tools/tools.json`, which `Tools` reads: a converter's
+provenance names the version recorded here.
 
 Torch is installed before the converters, from the PyTorch index that matches the machine. The
 default PyPI wheel is built for the newest CUDA, and a driver older than that wheel leaves torch
@@ -14,6 +14,9 @@ unable to see the GPU at all (`torch 2.14.0+cu130` on a 535 driver, which speaks
 the case this box hit): CUDA 12 drivers take the `cu126` wheels, which CUDA's minor-version
 compatibility lets any 12.x driver run, and a machine with no GPU takes the CPU wheels, which
 are a tenth of the size.
+
+This module also holds the one subprocess seam the PDF chain and the install share, `run_tool`,
+which tests replace with a runner that answers from recordings.
 """
 
 import argparse
@@ -21,18 +24,25 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
+from collections import namedtuple
 from pathlib import Path
 
 from wayline.cli import parse_args
 from wayline.ledger import now_ts
-from wayline.pdf_inventory import TOOLS_JSON, VENV, run_tool, tools_home
 
 __all__ = [
-    "ToolsError", "PACKAGES", "EXTRAS", "GROBID_IMAGE", "TORCH_INDEX", "driver_cuda", "torch_index",
+    "ToolsError", "ToolOutput", "run_tool", "failure_line", "read_json_file", "TOOLS", "TOOLS_JSON", "VENV",
+    "tools_home", "Tools", "PACKAGES", "EXTRAS", "GROBID_IMAGE", "TORCH_INDEX", "driver_cuda", "torch_index",
     "install_steps", "install", "tools_command",
 ]
+
+TOOLS = "tools"
+TOOLS_JSON = "tools.json"
+VENV = "venv"
+TOOL_TIMEOUT_S = 120
 
 # The distributions each converter name installs, and the distribution whose version is recorded.
 PACKAGES = {
@@ -51,6 +61,82 @@ _CUDA_VERSION = re.compile(r"CUDA Version:\s*(\d+)\.(\d+)")
 
 class ToolsError(RuntimeError):
     """An install step that failed; the message names the step and what it printed last."""
+
+
+# --- the subprocess seam ----------------------------------------------------------------------------
+
+ToolOutput = namedtuple("ToolOutput", "returncode stdout stderr")
+"""What one tool left: the exit code and its two streams as bytes. 127 is "not found"."""
+
+
+def run_tool(argv, cwd=None, timeout=TOOL_TIMEOUT_S):
+    """The one place the PDF chain and the install start a tool; tests replace it with a recorded runner."""
+    try:
+        done = subprocess.run([str(part) for part in argv], cwd=str(cwd) if cwd else None,
+                              capture_output=True, timeout=timeout, check=False)
+    except FileNotFoundError as failure:
+        return ToolOutput(127, b"", str(failure).encode("utf-8"))
+    except subprocess.TimeoutExpired:
+        return ToolOutput(124, b"", ("%s did not finish in %d s" % (Path(str(argv[0])).name, timeout)).encode("utf-8"))
+    except (OSError, subprocess.SubprocessError) as failure:
+        return ToolOutput(126, b"", str(failure).encode("utf-8"))
+    return ToolOutput(done.returncode, done.stdout, done.stderr)
+
+
+def failure_line(output):
+    """One line saying why a tool failed, for a note or an error: the exit code and the last line it printed."""
+    streams = (output.stderr or b"") + (output.stdout or b"")
+    lines = [line.strip() for line in streams.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    return "exit %d%s" % (output.returncode, (": " + lines[-1][:240]) if lines else "")
+
+
+def read_json_file(path):
+    """A JSON object from a file outside the ledger (a tool's output, `tools.json`); None when it is not one."""
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+# --- the tools venv ---------------------------------------------------------------------------------
+
+
+def tools_home():
+    """`~/.wayline/tools/`, moved with `WAYLINE_HOME` like every per-machine pointer."""
+    from wayline.project import home
+
+    return home() / TOOLS
+
+
+class Tools:
+    """What `wayline tools install` put on this machine, read from `~/.wayline/tools/tools.json`.
+
+    The record is the authority on versions: a converter's provenance names the version the
+    install recorded, and the venv's Python is what runs the helper scripts in `converters/`.
+    """
+
+    def __init__(self, root=None, record=None):
+        self.root = Path(root) if root is not None else tools_home()
+        self.record = record if record is not None else (read_json_file(self.root / TOOLS_JSON) or {})
+
+    @property
+    def python(self):
+        """The venv's interpreter, or None when there is no venv that still runs."""
+        path = self.root / VENV / "bin" / "python"
+        return path if self.record and path.exists() else None
+
+    def version(self, package):
+        return (self.record.get("packages") or {}).get(package)
+
+    def has(self, package):
+        return self.python is not None and bool(self.version(package))
+
+    def docker_image(self, name):
+        return (self.record.get("docker_images") or {}).get(name)
+
+
+# --- the install ------------------------------------------------------------------------------------
 
 
 def driver_cuda(run=run_tool):
@@ -140,7 +226,7 @@ def install(extras=(), grobid=False, root=None, run=run_tool, python=None, uv=No
         echo("%s: %s" % (name, " ".join(str(part) for part in argv)))
         done = run(argv, timeout=INSTALL_TIMEOUT_S)
         if done.returncode != 0:
-            raise ToolsError("the %s step failed (exit %d): %s" % (name, done.returncode, _tail(done)))
+            raise ToolsError("the %s step failed (%s)" % (name, failure_line(done)))
 
     wanted = {short: dist for short, (_, dist) in PACKAGES.items()}
     wanted["torch"] = "torch"
@@ -148,7 +234,7 @@ def install(extras=(), grobid=False, root=None, run=run_tool, python=None, uv=No
     try:
         found = json.loads(probe.stdout.decode("utf-8", errors="replace").strip().splitlines()[-1])
     except (ValueError, IndexError):
-        raise ToolsError("the venv was built but reading its versions failed: %s" % _tail(probe)) from None
+        raise ToolsError("the venv was built but reading its versions failed (%s)" % failure_line(probe)) from None
 
     record = {
         "schema_version": 1,
@@ -173,14 +259,9 @@ def install(extras=(), grobid=False, root=None, run=run_tool, python=None, uv=No
         if pulled.returncode == 0:
             record["docker_images"]["grobid"] = GROBID_IMAGE
         else:
-            record["notes"].append("docker pull %s failed (%s); references and metadata stay converter: none" % (GROBID_IMAGE, _tail(pulled)))
+            record["notes"].append("docker pull %s failed (%s); references and metadata stay converter: none" % (GROBID_IMAGE, failure_line(pulled)))
     _write_record(root / TOOLS_JSON, record)
     return record
-
-
-def _tail(done):
-    lines = [line.strip() for line in (done.stderr + done.stdout).decode("utf-8", errors="replace").splitlines() if line.strip()]
-    return lines[-1][:300] if lines else "no output"
 
 
 def _write_record(path, record):

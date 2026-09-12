@@ -29,7 +29,7 @@ from wayline.dossier import (
 from wayline.fetch import Backend, FetchError, RATE_LIMITS, Fetcher, Request, Response, user_agent
 from wayline.jsonschema import load_schema, validate
 from wayline.ledger import Ledger
-from wayline.pdf_inventory import Run, Tools
+from wayline.tools import ToolOutput, Tools
 from wayline.project import init_project
 
 ARXIV_FIXTURES = FIXTURES_DIR / "arxiv"
@@ -633,7 +633,7 @@ class BuildInventoryTest(ProjectTestCase):
 
     def no_tools(self):
         """The PDF chain's seams on a machine with nothing installed: no tools venv, and every tool answers 127."""
-        return {"tools": Tools(self.temp / "no-tools", {}), "run": lambda argv, cwd=None, timeout=None: Run(127, b"", b"not installed")}
+        return {"tools": Tools(self.temp / "no-tools", {}), "run": lambda argv, cwd=None, timeout=None: ToolOutput(127, b"", b"not installed")}
 
     def test_a_pdf_only_submission_is_kept_and_inventoried_by_the_pdf_chain(self):
         payload = b"%PDF-1.4\n%%EOF\n"

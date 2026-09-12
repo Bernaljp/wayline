@@ -4,7 +4,7 @@
   "source_type": "pdf",
   "source": {
     "kind": "pdf",
-    "url": "file:///tmp/tiny-paper.pdf",
+    "url": "file:tiny-paper.pdf",
     "arxiv_id": null,
     "version": null,
     "etag": null,

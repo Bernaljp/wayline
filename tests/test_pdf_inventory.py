@@ -25,13 +25,13 @@ from wayline.dossier import REFS, build_inventory, l0_dossier, write_l0
 from wayline.jsonschema import load_schema, validate
 from wayline.ledger import Ledger
 from wayline.pdf_inventory import (
-    CONVERTERS_DIR, Run, TOOLS_JSON, Tools, caption_number, docling_items, environment_heading,
+    CONVERTERS_DIR, Headings, caption_number, docling_items, environment_heading,
     equation_number, grobid_references, grobid_tei, heading_number, html_cells, is_appendix_heading, latex_equation_numbers,
     marker_items, mineru_items, parse_pdfimages_list, parse_pdfinfo, record_tool_outputs,
     recorded_runner, split_pages, text_layer_environments,
 )
 from wayline.project import init_project
-from wayline.tools import ToolsError, driver_cuda, install, install_steps, torch_index
+from wayline.tools import TOOLS_JSON, ToolOutput, Tools, ToolsError, driver_cuda, install, install_steps, torch_index
 
 PDF_FIXTURES = FIXTURES_DIR / "pdf"
 PDF = PDF_FIXTURES / "tiny-paper.pdf"
@@ -113,6 +113,18 @@ class RegexTest(unittest.TestCase):
         self.assertEqual(heading_number("A Simple Model"), (None, "A Simple Model"))
         self.assertEqual(heading_number("B Proofs", in_appendix=True), ("B", "Proofs"))
         self.assertEqual(heading_number("A. Proofs"), ("A", "Proofs"))
+
+    def test_roman_numbered_sections_are_sections_and_the_letters_under_them_subsections(self):
+        """An IEEE-style paper: "I. Introduction" is section one, not appendix I, and "C. Results" is not section 100."""
+        headings = Headings()
+        read = [headings.read(text) for text in (
+            "I. Introduction", "II. Related Work", "A. Datasets", "B. Metrics", "C. Results", "III. Method",
+            "IV. Conclusion", "References", "Appendix", "A. Proofs",
+        )]
+        self.assertEqual([(item["number"], item["level"], item["appendix"]) for item in read], [
+            ("I", 1, False), ("II", 1, False), ("A", 2, False), ("B", 2, False), ("C", 2, False), ("III", 1, False),
+            ("IV", 1, False), (None, 1, False), (None, 1, True), ("A", 1, True),
+        ])
 
     def test_the_appendix_is_found_by_its_header(self):
         self.assertTrue(is_appendix_heading("Appendix A: Proofs"))
@@ -393,6 +405,7 @@ class GrobidTest(unittest.TestCase):
                          [("b0", "The TeXbook", "1984"), ("b1", "A Document Preparation System", "1994")])
         self.assertEqual(references[0]["authors"], ["D E Knuth"])
         self.assertEqual((references[1]["doi"], references[1]["page"], references[1]["locator"]), ("10.0000/latex.1994", 2, "source/paper.pdf#page=2"))
+        self.assertEqual(references[0]["bbox"], [72.0, 380.1, 301.0, 400.1], "GROBID's page,x,y,w,h becomes a bbox from the top left")
         self.assertEqual({item["provenance"] for item in references}, {"grobid-0.9.1"})
 
     def grobid_runner(self, alive_after=0, calls=None):
@@ -403,15 +416,15 @@ class GrobidTest(unittest.TestCase):
             argv = [str(part) for part in argv]
             calls.append(argv)
             if argv[0] == "docker":
-                return Run(0, b"container\n", b"")
+                return ToolOutput(0, b"container\n", b"")
             if argv[-1].endswith("/api/isalive"):
                 state["checks"] += 1
-                return Run(0 if state["checks"] > alive_after else 7, b"true", b"")
+                return ToolOutput(0 if state["checks"] > alive_after else 7, b"true", b"")
             if argv[-1].endswith("/api/version"):
-                return Run(0, b"0.9.1", b"")
+                return ToolOutput(0, b"0.9.1", b"")
             if argv[-1].endswith("/api/processFulltextDocument"):
-                return Run(0, self.TEI.encode("utf-8"), b"")
-            return Run(127, b"", b"")
+                return ToolOutput(0, self.TEI.encode("utf-8"), b"")
+            return ToolOutput(127, b"", b"")
 
         return run, calls
 
@@ -422,7 +435,16 @@ class GrobidTest(unittest.TestCase):
         posted = [argv for argv in calls if argv[-1].endswith("processFulltextDocument")][0]
         self.assertEqual(posted[0], "curl")
         self.assertIn("input=@/tmp/paper.pdf", posted)
+        self.assertIn("consolidateCitations=1", posted)
         self.assertFalse(any(argv[0] == "docker" for argv in calls))
+
+    def test_the_container_publishes_the_port_the_url_names(self):
+        run, calls = self.grobid_runner(alive_after=1)
+        tools = Tools("/nonexistent", {"docker_images": {"grobid": "grobid/grobid:0.9.1-crf"}})
+        grobid_references("/tmp/paper.pdf", tools, run, sleep=lambda s: None, url="http://localhost:9090")
+        started = [argv for argv in calls if argv[:2] == ["docker", "run"]][0]
+        self.assertIn("9090:8070", started)
+        self.assertTrue(all(argv[-1].startswith("http://localhost:9090/") for argv in calls if argv[0] == "curl"))
 
     def test_an_installed_image_is_started_for_the_document_and_stopped_after(self):
         run, calls = self.grobid_runner(alive_after=2)
@@ -504,6 +526,7 @@ class PdfChainTest(ProjectTestCase):
         inventory = self.build()
         self.assertEqual(self.ref("source", "paper.pdf").read_bytes(), PDF.read_bytes())
         self.assertEqual(inventory["source"]["main"], "source/paper.pdf")
+        self.assertEqual(inventory["source"]["url"], "file:tiny-paper.pdf", "where the owner keeps the PDF is not committed")
         self.assertIn("research/refs/*/source/", (self.project / ".gitignore").read_text(encoding="utf-8").splitlines())
 
     def test_the_text_layer_and_the_boxes_are_written_beside_it(self):
@@ -588,8 +611,8 @@ class PdfChainTest(ProjectTestCase):
             argv = [str(part) for part in argv]
             if argv[0] == "curl":
                 if argv[-1].endswith("/api/version"):
-                    return Run(0, b"0.9.1", b"")
-                return Run(0, tei if argv[-1].endswith("processFulltextDocument") else b"true", b"")
+                    return ToolOutput(0, b"0.9.1", b"")
+                return ToolOutput(0, tei if argv[-1].endswith("processFulltextDocument") else b"true", b"")
             return replay(argv, cwd, timeout)
 
         inventory = build_inventory(self.project, SLUG, pdf=PDF, tools=self.tools, run=run, email=EMAIL)
@@ -631,7 +654,7 @@ class PdfChainTest(ProjectTestCase):
         self.assertIn("--pdf", str(caught.exception))
 
     def test_a_heading_that_is_the_pdfs_own_title_is_not_a_section(self):
-        from wayline.pdf_inventory import _assemble, new_record
+        from wayline.pdf_inventory import Conversion, Grobid, _assemble, new_record
 
         layer = {"poppler": POPPLER, "info": {"title": "Deep learning enables accurate clustering with batch effect removal", "pages": 1},
                  "text": "x", "pages": ["x"], "images": [], "boxes": None, "plumber_version": None, "notes": []}
@@ -641,7 +664,7 @@ class PdfChainTest(ProjectTestCase):
             {"id": "sec-1", "kind": "section", "title": "Deep learning enables accurate clustering with batch", "page": 1, "locator": "p", "provenance": DOCLING},
             {"id": "sec-2", "kind": "section", "number": "1", "title": "Results", "page": 2, "locator": "p", "provenance": DOCLING},
         ]
-        inventory = _assemble(self.ledger, SLUG, layer, record, DOCLING, None, {}, [], "none", "source/paper.pdf")
+        inventory = _assemble(self.ledger, SLUG, layer, Conversion(record, DOCLING, None, [], True), Grobid({}, [], "none", []), "source/paper.pdf")
         self.assertEqual([(item["id"], item["title"]) for item in inventory["sections"]], [("sec-1", "Results")])
         self.assertEqual(inventory["metadata"]["title"], layer["info"]["title"])
 
@@ -676,12 +699,12 @@ class ToolsInstallTest(ProjectTestCase):
             argv = [str(part) for part in argv]
             calls.append(argv)
             if argv[0] == "nvidia-smi":
-                return Run(0, ("| NVIDIA-SMI 535.309.01   Driver Version: 535.309.01   CUDA Version: %s |" % cuda).encode(), b"") if cuda else Run(127, b"", b"")
+                return ToolOutput(0, ("| NVIDIA-SMI 535.309.01   Driver Version: 535.309.01   CUDA Version: %s |" % cuda).encode(), b"") if cuda else ToolOutput(127, b"", b"")
             if fail and fail(argv):
-                return Run(1, b"", b"ERROR: no matching distribution")
+                return ToolOutput(1, b"", b"ERROR: no matching distribution")
             if len(argv) > 1 and argv[1] == "-c":
-                return Run(0, (json.dumps(probe) + "\n").encode(), b"")
-            return Run(0, b"", b"")
+                return ToolOutput(0, (json.dumps(probe) + "\n").encode(), b"")
+            return ToolOutput(0, b"", b"")
 
         return run, calls
 

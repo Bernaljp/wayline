@@ -98,6 +98,7 @@
           "authors": {"type": "array", "items": {"type": "string"}},
           "year": {"type": ["string", "null"]},
           "page": {"type": ["integer", "null"], "minimum": 1},
+          "bbox": {"type": ["array", "null"], "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
           "locator": {"type": ["string", "null"]},
           "provenance": {"$ref": "#/$defs/provenance"}
         }
