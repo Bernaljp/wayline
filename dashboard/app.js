@@ -20,7 +20,8 @@ const state = {
   projects: [],
   project: null,
   tags: {},
-  since: 0,
+  since: null, // null means "the tail has not read this project yet": ask by line count, not offset
+
   pollJournal: 2,
   pollViews: 5,
   stream: null,
@@ -29,16 +30,20 @@ const state = {
 
 // --- the transport ------------------------------------------------------------------------------
 
-async function get(path) {
+// `key` is what the ETag is remembered under. It is not the URL: the tail's URL carries a `since`
+// that changes on every append, so keying by URL would grow a dead entry per event for the life of
+// the page. The server folds the cursor into the tag, so one key per endpoint is safe.
+async function get(path, key) {
+  const cache = key || path;
   const headers = {};
   if (TOKEN) headers['X-Wayline-Token'] = TOKEN;
-  const tag = state.tags[path];
+  const tag = state.tags[cache];
   if (tag) headers['If-None-Match'] = tag;
   const response = await fetch(path, { cache: 'no-store', headers });
   if (response.status === 304) return null;
   if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
   const etag = response.headers.get('ETag');
-  if (etag) state.tags[path] = etag;
+  if (etag) state.tags[cache] = etag;
   return response.json();
 }
 
@@ -126,7 +131,7 @@ async function loadProjects() {
 function select(id) {
   if (state.project === id) return;
   state.project = id;
-  state.since = 0;
+  state.since = null;
   state.tags = {};
   document.getElementById('journal-tail').replaceChildren();
   for (const tab of document.querySelectorAll('button.tab')) {
@@ -214,10 +219,13 @@ function startTail() {
 
 async function pollJournal() {
   if (!state.project) return;
-  const path = `/api/projects/${encodeURIComponent(state.project)}/journal?since=${state.since}`;
+  const base = `/api/projects/${encodeURIComponent(state.project)}/journal`;
+  // The first read of a project asks for the last screenful by line count, not for the whole
+  // journal, which on a mature project is the largest file in the ledger. After that it is offsets.
+  const path = state.since === null ? `${base}?tail=${TAIL_LINES}` : `${base}?since=${state.since}`;
   let tail;
   try {
-    tail = await get(path);
+    tail = await get(path, base);
   } catch (failure) {
     document.getElementById('journal-note').textContent = String(failure.message || failure);
     return;
@@ -230,7 +238,7 @@ async function pollJournal() {
 }
 
 function startStream() {
-  const query = new URLSearchParams({ transport: 'sse', since: String(state.since) });
+  const query = new URLSearchParams({ transport: 'sse', since: String(state.since ?? 0) });
   if (TOKEN) query.set('token', TOKEN);
   const stream = new EventSource(`/api/projects/${encodeURIComponent(state.project)}/journal?${query}`);
   stream.addEventListener('message', (message) => {

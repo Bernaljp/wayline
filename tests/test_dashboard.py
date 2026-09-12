@@ -13,20 +13,23 @@ import http.client
 import io
 import json
 import os
+import shutil
 import socket
 import stat
 import threading
 import unittest
+from http.cookies import SimpleCookie
 from pathlib import Path
 
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from wayline import TAG
 from wayline.dashboard import (
-    DashboardError, LOOPBACK, SSE_RETRY_MS, TOKEN_HEADER, dashboard_path, dashboard_url, etag,
-    journal_tail, ledger_snapshot, make_server, overview_view, phase_from_events, project_ids,
-    projects_view, read_settings, record_settings, requires_token, serve_lines, static_file,
-    tunnel_line,
+    DashboardError, DashboardHandler, IDLE_TIMEOUT_S, LOOPBACK, READINGS_TTL_S, SSE_RETRY_MS,
+    TOKEN_COOKIE, TOKEN_HEADER, TAIL_LINES_MAX,
+    dashboard_path, dashboard_url, etag, journal_tail, ledger_snapshot, make_server,
+    overview_view, phase_from_events, project_ids, projects_view, read_settings, record_settings,
+    requires_token, serve_lines, static_file, tunnel_line,
 )
 from wayline.ledger import Ledger
 from wayline.project import register, set_active
@@ -69,6 +72,9 @@ class DashboardTestCase(ProjectTestCase):
     bind = LOOPBACK
     token = None
     sse_tick_s = 0.02
+    # A long readings window, so a 304 in a test means "nothing changed" rather than "the machine's
+    # loadavg happened to hold still"; `ReadingsFreshnessTest` is the one that sets it to zero.
+    readings_ttl_s = 3600
 
     def setUp(self):
         super().setUp()
@@ -76,10 +82,7 @@ class DashboardTestCase(ProjectTestCase):
         register(self.project, TAG)
         set_active(self.project)
         self.ledger = Ledger(self.project)
-        self.server = make_server(
-            self.bind, 0, token=self.token, require_token=self.require_token,
-            static_root=STATIC, sse_tick_s=self.sse_tick_s, memo_ttl=0.0,
-        )
+        self.server = self.make()
         # Cleanups run last in first out, so these read backwards: shutdown, then join, then close.
         self.addCleanup(self.server.server_close)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -88,6 +91,13 @@ class DashboardTestCase(ProjectTestCase):
         self.thread.start()
         self.host, self.port = self.server.server_address[:2]
         self.project_id = self.project.name
+
+    def make(self):
+        """The server under test; a subclass overrides this to change how it is built."""
+        return make_server(
+            self.bind, 0, token=self.token, require_token=self.require_token, static_root=STATIC,
+            sse_tick_s=self.sse_tick_s, memo_ttl=0.0, readings_ttl_s=self.readings_ttl_s,
+        )
 
     def get(self, path, headers=None):
         connection = http.client.HTTPConnection(self.host, self.port, timeout=10)
@@ -130,6 +140,26 @@ class ProjectsEndpointTest(DashboardTestCase):
         projects = {project["id"]: project for project in self.get("/api/projects").json["projects"]}
         self.assertFalse(projects["removed"]["readable"])
         self.assertTrue(projects[self.project_id]["readable"])
+
+    def test_a_project_directory_that_disappears_moves_the_etag(self):
+        second = self.temp / "second"
+        shutil.copytree(self.project, second)
+        register(second, TAG)
+        first = self.get("/api/projects")
+        self.assertTrue(all(project["readable"] for project in first.json["projects"]))
+        shutil.rmtree(second)
+        changed = self.get("/api/projects", {"If-None-Match": first.etag})
+        self.assertEqual(changed.status, 200, "a tab whose path is gone has to reach the page")
+        self.assertFalse({project["id"]: project["readable"] for project in changed.json["projects"]}["second"])
+
+    def test_editing_the_poll_intervals_moves_the_etag(self):
+        first = self.get("/api/projects")
+        harness = json.loads((self.project / "harness.json").read_text(encoding="utf-8"))
+        harness["dashboard"]["poll_journal_s"] = 4
+        (self.project / "harness.json").write_text(json.dumps(harness), encoding="utf-8")
+        changed = self.get("/api/projects", {"If-None-Match": first.etag})
+        self.assertEqual(changed.status, 200)
+        self.assertEqual(changed.json["settings"]["poll_journal_s"], 4)
 
     def test_an_unchanged_pointer_answers_304(self):
         first = self.get("/api/projects")
@@ -212,6 +242,33 @@ class OverviewEndpointTest(DashboardTestCase):
         self.assertEqual(changed.status, 200)
         self.assertNotEqual(changed.etag, first.etag)
 
+    def test_the_shipped_readings_window_matches_the_views_poll_interval(self):
+        policy = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
+        self.assertEqual(READINGS_TTL_S, policy["dashboard"]["poll_views_s"], "a reading is at most one poll old")
+
+    def test_the_tag_covers_the_whole_view_and_not_only_the_ledger(self):
+        """A value no ledger file's mtime reports must still move the tag.
+
+        The overview carries the machine's live readings and whether this project is the active
+        one, none of which the `os.scandir` snapshot sees. The active pointer is the one such value
+        a test can move on purpose, and moving it must not leave the page on a 304 forever.
+        """
+        first = self.api("/overview")
+        self.assertTrue(first.json["active"])
+        snapshot = ledger_snapshot(self.project)
+        set_active(self.temp / "elsewhere")
+        self.assertEqual(ledger_snapshot(self.project), snapshot, "the ledger did not move")
+        changed = self.api("/overview", {"If-None-Match": first.etag})
+        self.assertEqual(changed.status, 200, "the view changed, so the tag had to")
+        self.assertFalse(changed.json["active"])
+
+    def test_the_live_readings_are_in_the_view(self):
+        resources = self.api("/overview").json["resources"]
+        if resources is None:
+            self.skipTest("this machine cannot produce a resource reading")
+        for key in ("cpu", "ram", "gpus", "reservation"):
+            self.assertIn(key, resources)
+
     def test_a_broken_ticket_file_becomes_a_problem_and_not_a_failure(self):
         (self.project / "research" / "tickets" / "01-scaffold-the-analysis-package.md").write_text("not frontmatter\n", encoding="utf-8")
         view = self.api("/overview").json
@@ -232,6 +289,19 @@ class OverviewEndpointTest(DashboardTestCase):
 
 
 # --- the journal tail ----------------------------------------------------------------------------------
+
+
+class ReadingsFreshnessTest(DashboardTestCase):
+    """With no readings window, the overview refuses to answer 304 from a stale reading."""
+
+    readings_ttl_s = 0
+
+    def test_every_poll_is_answered_with_a_fresh_view(self):
+        first = self.api("/overview")
+        for _ in range(3):
+            again = self.api("/overview", {"If-None-Match": first.etag})
+            self.assertEqual(again.status, 200, "a live reading must never be served from a 304")
+            self.assertNotEqual(again.etag, first.etag)
 
 
 class JournalTailTest(DashboardTestCase):
@@ -263,6 +333,11 @@ class JournalTailTest(DashboardTestCase):
         self.append("unpaused")
         self.assertEqual(self.api("/journal?since=0", {"If-None-Match": first.etag}).status, 200)
 
+    def test_the_tag_of_one_offset_is_not_the_tag_of_another(self):
+        first = self.api("/journal?since=0")
+        other = self.api("/journal?since=%d" % first.json["next"], {"If-None-Match": first.etag})
+        self.assertEqual(other.status, 200, "a tag belongs to the offset it was issued for")
+
     def test_an_offset_past_the_end_is_reported_and_read_from_zero(self):
         tail = self.api("/journal?since=%d" % (self.journal_size() + 10_000)).json
         self.assertTrue(tail["truncated"])
@@ -290,6 +365,36 @@ class JournalTailTest(DashboardTestCase):
         tail = self.api("/journal?since=%d" % whole["next"]).json
         self.assertEqual(tail["events"], [])
         self.assertEqual(tail["next"], whole["next"])
+
+    def test_tail_by_line_count_answers_with_the_last_lines_and_their_offset(self):
+        whole = self.api("/journal?since=0").json
+        for lines in (1, 3, 10, len(whole["events"]), len(whole["events"]) + 50):
+            with self.subTest(lines=lines):
+                tail = self.api("/journal?tail=%d" % lines).json
+                expected = whole["events"][-lines:]
+                self.assertEqual(tail["events"], expected)
+                self.assertEqual(tail["next"], whole["next"], "a tail read ends where the journal does")
+
+    def test_a_tail_read_crosses_the_block_boundary(self):
+        """The backwards read steps in blocks; a journal longer than one block must still be right."""
+        while self.journal_size() <= (1 << 16):
+            self.append("unpaused", {}, ticket=None)
+        whole, _ = self.ledger.read_events()
+        tail = self.api("/journal?tail=5").json
+        self.assertEqual(tail["events"], whole[-5:])
+
+    def test_a_tail_larger_than_the_cap_reads_the_journal_from_the_start(self):
+        asked = self.api("/journal?tail=%d" % (TAIL_LINES_MAX * 10)).json
+        whole = self.api("/journal?since=0").json
+        self.assertEqual(asked["events"], whole["events"])
+        self.assertEqual(asked["since"], 0)
+
+    def test_a_tail_that_is_not_a_line_count_is_a_bad_request(self):
+        for value in ("0", "-2", "many"):
+            with self.subTest(tail=value):
+                response = self.api("/journal?tail=%s" % value)
+                self.assertEqual(response.status, 400)
+                self.assertIn("tail", response.text)
 
     def test_journal_tail_of_a_project_with_no_journal_is_empty(self):
         empty = self.temp / "empty"
@@ -495,6 +600,36 @@ class TokenRuleTest(DashboardTestCase):
         self.assertEqual(self.get("/api/projects", {TOKEN_HEADER: self.token}).status, 200)
         self.assertEqual(self.get("/api/projects?token=%s" % self.token).status, 200)
 
+    def test_the_page_and_its_assets_load_the_way_a_browser_asks_for_them(self):
+        """The URL `serve` prints has to give a working page, assets included.
+
+        A browser attaches neither the header nor the query to a `<link>` or a `<script>`, so the
+        page's own subresources arrive with nothing but the cookie the first response set. Without
+        that the owner would get an unstyled page with no tabs and no explanation.
+        """
+        page = self.get("/?token=%s" % self.token)
+        self.assertEqual(page.status, 200)
+        cookie = SimpleCookie(page.headers["set-cookie"])
+        self.assertEqual(cookie[TOKEN_COOKIE].value, self.token)
+        self.assertEqual(cookie[TOKEN_COOKIE]["samesite"], "Strict")
+        self.assertTrue(cookie[TOKEN_COOKIE]["httponly"])
+        carried = {"Cookie": "%s=%s" % (TOKEN_COOKIE, self.token)}
+        for path in ("/style.css", "/app.js", "/vendor/marked.umd.js", "/vendor/purify.min.js",
+                     "/api/projects", "/api/projects/%s/overview" % self.project_id,
+                     "/api/projects/%s/journal?since=0" % self.project_id):
+            with self.subTest(path=path):
+                self.assertEqual(self.get(path).status, 403, "nothing is served without the token")
+                self.assertEqual(self.get(path, carried).status, 200)
+
+    def test_a_response_to_a_header_or_cookie_request_sets_no_cookie(self):
+        for headers in ({TOKEN_HEADER: self.token}, {"Cookie": "%s=%s" % (TOKEN_COOKIE, self.token)}):
+            with self.subTest(headers=sorted(headers)):
+                self.assertNotIn("set-cookie", self.get("/api/projects", headers).headers)
+
+    def test_a_wrong_cookie_is_refused(self):
+        self.assertEqual(self.get("/api/projects", {"Cookie": "%s=wrong" % TOKEN_COOKIE}).status, 403)
+        self.assertEqual(self.get("/api/projects", {"Cookie": "unrelated=1"}).status, 403)
+
     def test_a_wrong_token_is_refused_everywhere_including_the_page_and_the_stream(self):
         for path in ("/", "/app.js", "/api/projects", "/api/projects/%s/overview" % self.project_id,
                      "/api/projects/%s/journal?since=0" % self.project_id,
@@ -508,6 +643,39 @@ class TokenRuleTest(DashboardTestCase):
     def test_a_wide_server_without_a_token_is_refused_at_construction(self):
         with self.assertRaises(DashboardError):
             make_server("0.0.0.0", 0, token=None)
+
+    def test_the_shipped_idle_timeout_is_longer_than_a_poll_and_shorter_than_a_tab(self):
+        self.assertEqual(DashboardHandler.timeout, IDLE_TIMEOUT_S)
+        self.assertGreater(IDLE_TIMEOUT_S, 5)
+        self.assertLessEqual(IDLE_TIMEOUT_S, 60)
+
+
+class IdleConnectionTest(DashboardTestCase):
+    """An idle peer must not hold a thread: the token is only checked once a request has arrived."""
+
+    handler = None  # set in setUp to a handler with a timeout a test can wait for
+
+    def setUp(self):
+        class Impatient(DashboardHandler):
+            timeout = 0.2
+
+        type(self).handler = Impatient
+        super().setUp()
+
+    def make(self):
+        return make_server(self.bind, 0, token=self.token, require_token=self.require_token,
+                           static_root=STATIC, sse_tick_s=self.sse_tick_s, memo_ttl=0.0, handler=self.handler)
+
+    def test_a_connection_that_sends_nothing_is_closed(self):
+        client = socket.create_connection((self.host, self.port), timeout=10)
+        self.addCleanup(client.close)
+        self.assertEqual(client.recv(1), b"", "the server closed an idle connection instead of waiting on it")
+
+    def test_a_request_that_stops_mid_headers_is_closed(self):
+        client = socket.create_connection((self.host, self.port), timeout=10)
+        self.addCleanup(client.close)
+        client.sendall(b"GET /api/projects HTTP/1.1\r\nHost: x\r\n")  # no blank line: never finished
+        self.assertEqual(client.recv(1), b"")
 
 
 # --- the settings, the ETag helper, and the snapshot ---------------------------------------------------------

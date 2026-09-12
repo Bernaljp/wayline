@@ -25,9 +25,13 @@ they were measured rather than guessed:
 
 The token: bound to loopback the views need none (whoever reaches the port is already on the
 machine or through the owner's tunnel). Bound wider, every request needs the random token from
-`~/.wayline/dashboard.json`, which `serve` prints inside the URL. The actions of Implementation
-Decisions 8 will always require the token as a header, whatever the bind, because a page open on
-the laptop could otherwise POST to the forwarded port; they arrive with ticket 35.
+`~/.wayline/dashboard.json`, which `serve` prints inside the URL. A browser attaches nothing of its
+own to a `<link>` or a `<script>`, so the first request that presents the token in the URL is
+answered with it in a `SameSite=Strict` cookie, and the page's own assets and polls carry that: the
+rule stays "every request needs the token" rather than "the page loads and its stylesheet does
+not". The actions of Implementation Decisions 8 will always require the token in the header,
+whatever the bind, because a page open on the laptop could otherwise POST to the forwarded port,
+and a cookie alone must never be enough to act; they arrive with ticket 35.
 """
 
 import argparse
@@ -42,6 +46,7 @@ import sys
 import threading
 import time
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -49,12 +54,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 from wayline import HARNESS_ROOT, TAG
 from wayline.ledger import Ledger, atomic_write
 from wayline.project import (
-    HARNESS_JSON, RESEARCH, ProjectError, home, is_project, policy_for, read_active, read_harness,
-    read_projects, status_view,
+    HARNESS_JSON, RESEARCH, ProjectError, active_path, home, is_project, policy_for, read_active,
+    read_harness, read_projects, status_view,
 )
 
 __all__ = [
-    "DashboardError", "STATIC_ROOT", "LOOPBACK", "TOKEN_HEADER", "SSE_RETRY_MS",
+    "DashboardError", "STATIC_ROOT", "LOOPBACK", "TOKEN_HEADER", "TOKEN_COOKIE", "SSE_RETRY_MS",
+    "READINGS_TTL_S", "IDLE_TIMEOUT_S", "TAIL_LINES_MAX", "DashboardHandler", "DashboardServer",
     "dashboard_path", "read_settings", "record_settings", "project_ids", "projects_view", "find_dashboard_project",
     "ledger_snapshot", "etag", "overview_view", "journal_tail", "phase_from_events",
     "static_file", "tunnel_line", "serve_lines", "make_server", "serve", "serve_command",
@@ -65,6 +71,7 @@ LOOPBACK = "127.0.0.1"
 DASHBOARD_JSON = "dashboard.json"
 TOKEN_HEADER = "X-Wayline-Token"
 TOKEN_QUERY = "token"
+TOKEN_COOKIE = "wayline_token"
 
 # The measured defaults of research-notes 08; a project's harness.json may move the poll intervals.
 SNAPSHOT_MEMO_S = 1.0
@@ -73,6 +80,14 @@ SSE_PING_S = 15.0
 SSE_TICK_S = 0.5
 # socketserver's default is 5; a wider bind takes more than one client (research-notes 08, loose ends).
 WIDE_QUEUE_SIZE = 16
+# How long the overview may reuse a live machine reading before it must take a fresh one; the
+# page's own views poll at this cadence, so a reading is never more than one poll old.
+READINGS_TTL_S = 5
+# How long a kept-alive connection may sit idle before the server closes it and frees its thread.
+IDLE_TIMEOUT_S = 30
+# How far back a `tail=<lines>` read steps at a time, and the most lines it will answer with.
+_TAIL_BLOCK_BYTES = 1 << 16
+TAIL_LINES_MAX = 2000
 
 # The phases of BRIEF Section 6, as the journal's `phase` events name them.
 PHASES = ("P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8")
@@ -163,14 +178,21 @@ def _dashboard_defaults(project):
 
 
 def _store_settings(path, settings, stored):
-    """Write the port, the bind, and the token back, 0600, when any of them changed."""
+    """Write the port, the bind, and the token back, 0600, when any of them changed.
+
+    The file is created empty at 0600 before anything is written to it, because it holds a bearer
+    credential: `atomic_write` gives its temp file the mode of the file it replaces, so a target
+    that already exists at 0600 is never briefly world-readable, while chmod'ing afterwards leaves
+    the token readable to every local account for the length of the write.
+    """
     value = {"port": settings["port"], "bind": settings["bind"], "token": settings["token"]}
     if all(stored.get(key) == item for key, item in value.items()):
         return
-    text = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, text)
+    if not path.exists():
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600))
     os.chmod(path, 0o600)
+    atomic_write(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
 def _port(*candidates):
@@ -383,21 +405,54 @@ def overview_view(project, project_id=None):
     return view
 
 
-def journal_tail(project, since=0):
+def journal_tail(project, since=0, tail=None):
     """The journal events appended after byte `since`, and the offset to ask for next.
 
     The journal is the version of itself: `size` is what the tail compares against and `next` is
     the cursor to send back. A `since` past the end of the file (a journal replaced by a shorter
     one, which only a hand ever does) is reported as `truncated` and read from zero, so the tail
     recovers instead of sitting on an offset that will never arrive.
+
+    `tail=<lines>` is how a page that has just opened finds its first offset: it answers with the
+    last few whole lines instead of the whole journal, which on a mature project is the largest
+    file in the ledger and would be transferred in full only to be trimmed to the last screenful.
+    Every poll after that one is a byte offset.
     """
     ledger = Ledger(Path(project))
     size = _journal_size(ledger)
     since = max(int(since), 0)
     truncated = since > size
     start = 0 if truncated else since
+    if tail:
+        start = _tail_offset(ledger, size, int(tail))
     events, offset = ledger.read_events(start)
     return {"since": start, "next": offset, "size": size, "truncated": truncated, "events": events}
+
+
+def _tail_offset(ledger, size, lines):
+    """The offset where the last `lines` whole lines of the journal begin.
+
+    Read backwards in 64 KiB blocks and stop as soon as enough line breaks have been seen, rather
+    than reading a file that may be megabytes to show a screenful. A journal with fewer whole lines
+    than asked for is read from the start.
+    """
+    if lines <= 0 or size == 0:
+        return size
+    base, tail, breaks = size, b"", []
+    try:
+        with open(ledger.journal_path, "rb") as handle:
+            while base > 0 and len(breaks) <= lines:
+                step = min(_TAIL_BLOCK_BYTES, base)
+                base -= step
+                handle.seek(base)
+                tail = handle.read(step) + tail
+                breaks = [index for index, byte in enumerate(tail) if byte == 0x0A]
+    except OSError:
+        return 0
+    if len(breaks) <= lines:
+        return 0
+    # The line after the (lines + 1)-th break from the end is the first one to keep.
+    return base + breaks[-(lines + 1)] + 1
 
 
 def _journal_size(ledger):
@@ -499,13 +554,14 @@ class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, token=None, require_token=False, static_root=None, sse_tick_s=SSE_TICK_S, memo_ttl=SNAPSHOT_MEMO_S):
+    def __init__(self, address, handler, token=None, require_token=False, static_root=None, sse_tick_s=SSE_TICK_S, memo_ttl=SNAPSHOT_MEMO_S, readings_ttl_s=READINGS_TTL_S):
         if require_token:
             self.request_queue_size = WIDE_QUEUE_SIZE
         self.token = token
         self.require_token = bool(require_token)
         self.static_root = Path(static_root or STATIC_ROOT)
         self.sse_tick_s = sse_tick_s
+        self.readings_ttl_s = readings_ttl_s
         self.memo = Memo(ttl=memo_ttl)
         self.stopping = threading.Event()
         super().__init__(address, handler)
@@ -521,6 +577,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "wayline/" + TAG
     sys_version = ""
+    # A kept-alive connection with no timeout blocks its thread in `rfile.readline()` for as long
+    # as the peer likes, and the token is only checked once a request line has arrived, so without
+    # this a stranger on a wide bind could hold threads without presenting anything. 30 s is far
+    # longer than the 5 s view poll, so the page's own connections are never cut mid-use.
+    timeout = IDLE_TIMEOUT_S
 
     # The routes, in the order they are tried; the first match wins.
     ROUTES = (
@@ -537,6 +598,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
+        self.carry_token = False
         if not self._authorized(query):
             return self._text(HTTPStatus.FORBIDDEN, "this dashboard is bound to %s; every request needs the token from %s\n" % (self.server.server_address[0], dashboard_path()))
         for pattern, name in self.ROUTES:
@@ -557,13 +619,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self._text(HTTPStatus.INTERNAL_SERVER_ERROR, "%s\n" % failure)
 
     def _authorized(self, query):
+        """Whether this request may be answered: the token in the header, the URL, or the cookie.
+
+        The URL is how the owner arrives (it is the link `serve` prints) and the cookie is how the
+        page's own stylesheet, scripts and polls carry the token afterwards, since a browser
+        attaches neither a header nor a query of its own to a subresource. A request that presented
+        the token in the URL is answered with `Set-Cookie`, which is what `carry_token` records.
+        """
         if not getattr(self.server, "require_token", False):
             return True
         token = (self.server.token or "").encode("utf-8")
-        offered = self.headers.get(TOKEN_HEADER) or (query.get(TOKEN_QUERY) or [""])[0]
+        if not token:
+            return False
+        from_url = (query.get(TOKEN_QUERY) or [""])[0]
+        cookie = SimpleCookie(self.headers.get("Cookie") or "")
+        offered = self.headers.get(TOKEN_HEADER) or from_url or (cookie[TOKEN_COOKIE].value if TOKEN_COOKIE in cookie else "")
         # Bytes, not text: `compare_digest` refuses a str carrying anything outside ASCII, and the
         # value comes from a URL a stranger wrote.
-        return bool(token) and secrets.compare_digest(offered.encode("utf-8", "replace"), token)
+        if not secrets.compare_digest(offered.encode("utf-8", "replace"), token):
+            return False
+        self.carry_token = bool(from_url) and offered == from_url
+        return True
 
     # --- the endpoints ---
 
@@ -580,8 +656,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self._json(projects_view(active=active, entries=entries, settings=settings), tag)
 
     def api_overview(self, query, project):
+        """The overview, tagged by the ledger, the active pointer, and the age of its readings.
+
+        The ledger snapshot alone is not this view's version. The overview also carries which
+        project is active, which lives in `~/.wayline/active` and not in the ledger, and the
+        machine's live readings (loadavg, memory, GPU utilization, the free slots), which move
+        without any file the snapshot sees moving. Tagged by the snapshot alone, a project with a
+        quiet ledger and a long job running would poll every 5 s, be told 304 every time, and show
+        slots frozen at whatever they were when the ledger last changed.
+
+        So the pointer is stat'ed into the tag, and the readings get an age: the tag also carries
+        which `readings_ttl_s` window the request falls in, which bounds how stale a reading can be
+        at one interval while still letting two polls inside one window share a 304 without the
+        view being built at all.
+        """
         path = self._project(project)
-        tag = etag("overview", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        tag = etag(
+            "overview", project,
+            self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
+            _active_version(), _readings_window(getattr(self.server, "readings_ttl_s", READINGS_TTL_S)),
+        )
         if self._not_modified(tag):
             return None
         return self._json(overview_view(path, project_id=project), tag)
@@ -589,13 +683,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def api_journal(self, query, project):
         path = self._project(project)
         since = _offset(query.get("since", ["0"])[0])
+        tail = _tail_lines(query.get("tail", [""])[0])
         if (query.get("transport") or [""])[0] == "sse":
             return self._journal_stream(path, since)
         ledger = Ledger(path)
-        tag = etag("journal", project, _journal_version(ledger))
+        # The cursor is part of the tag as well as the journal's version: a client that sent back
+        # the tag of one offset while asking for another must not be told "nothing new".
+        tag = etag("journal", project, since, tail, _journal_version(ledger))
         if self._not_modified(tag):
             return None
-        return self._json(journal_tail(path, since), tag)
+        return self._json(journal_tail(path, since, tail=tail), tag)
 
     def _journal_stream(self, project, since):
         """The server-sent-events alternative of OPEN-20, kept for the comparison through the tunnel.
@@ -675,6 +772,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         if ctype:
             self.send_header("Content-Type", ctype)
+        if getattr(self, "carry_token", False):
+            self.send_header("Set-Cookie", "%s=%s; Path=/; HttpOnly; SameSite=Strict" % (TOKEN_COOKIE, self.server.token))
         for name, value in headers:
             self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
@@ -695,11 +794,41 @@ def _poll(project, key, default):
 
 
 def _pointer_snapshot():
-    """The version of `/api/projects`: the two per-machine pointers it is built from."""
+    """The version of `/api/projects`: everything the tabs are built from, not only the pointers.
+
+    The two per-machine pointers are most of it, but the view also says whether each project's
+    directory is still there and carries the active project's poll intervals, so a project the
+    owner deleted or a `harness.json` they edited has to move the tag. Without these a revalidating
+    page would keep an enabled tab for a path that is gone, which is the one thing `readable` is
+    for.
+    """
     values = {}
     _stat_into(values, home() / "projects.json", "projects.json")
     _stat_into(values, home() / "active", "active")
+    active = read_active()
+    for entry in read_projects():
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            continue
+        values["readable:" + entry["path"]] = is_project(Path(entry["path"]))
+    if active is not None:
+        _stat_into(values, Path(active) / HARNESS_JSON, "active:" + HARNESS_JSON)
     return values
+
+
+def _active_version():
+    """`(mtime_ns, size)` of the active pointer: the overview says whether it names this project."""
+    values = {}
+    _stat_into(values, active_path(), "active")
+    return values
+
+
+def _readings_window(ttl_s):
+    """Which window of `ttl_s` seconds this request falls in, so a live reading cannot freeze.
+
+    A zero or negative ttl means a reading is never reused: every request gets its own window, and
+    so its own tag. That is what a test asks for when it wants to see the readings move.
+    """
+    return time.time_ns() if not ttl_s or ttl_s <= 0 else int(time.time() // ttl_s)
 
 
 def _journal_version(ledger):
@@ -737,6 +866,19 @@ def _journal_lines(ledger, position):
     return lines, offset
 
 
+def _tail_lines(value):
+    """The `tail=<lines>` parameter: None when absent, capped so one request cannot ask for a book."""
+    if value in (None, ""):
+        return None
+    try:
+        lines = int(value)
+    except (TypeError, ValueError):
+        raise DashboardError("tail takes a number of lines, got %r" % (value,)) from None
+    if lines <= 0:
+        raise DashboardError("tail takes a number of lines above zero, got %d" % lines)
+    return min(lines, TAIL_LINES_MAX)
+
+
 def _offset(value):
     try:
         offset = int(value)
@@ -747,15 +889,15 @@ def _offset(value):
     return offset
 
 
-def make_server(bind=LOOPBACK, port=0, token=None, require_token=None, static_root=None, sse_tick_s=SSE_TICK_S, memo_ttl=SNAPSHOT_MEMO_S):
+def make_server(bind=LOOPBACK, port=0, token=None, require_token=None, static_root=None, sse_tick_s=SSE_TICK_S, memo_ttl=SNAPSHOT_MEMO_S, readings_ttl_s=READINGS_TTL_S, handler=None):
     """A bound, unstarted dashboard server. `port=0` takes a free port, which the tests use."""
     if require_token is None:
         require_token = requires_token(bind)
     if require_token and not token:
         raise DashboardError("a dashboard bound to %s needs a token; %s holds one" % (bind, dashboard_path()))
     return DashboardServer(
-        (bind, port), DashboardHandler, token=token, require_token=require_token,
-        static_root=static_root, sse_tick_s=sse_tick_s, memo_ttl=memo_ttl,
+        (bind, port), handler or DashboardHandler, token=token, require_token=require_token,
+        static_root=static_root, sse_tick_s=sse_tick_s, memo_ttl=memo_ttl, readings_ttl_s=readings_ttl_s,
     )
 
 
@@ -792,6 +934,11 @@ def serve_command(args):
         options = parser.parse_args(args)
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else 2
+    # A port outside the range is a typo, not a preference: substituting 8765 for it would print a
+    # URL and a tunnel line for a port the owner never asked for.
+    if options.port is not None and not 0 <= options.port <= 65535:
+        print("wayline serve: --port takes a port from 0 to 65535, got %d" % options.port, file=sys.stderr)
+        return 2
     project = None
     if options.project is not None:
         project = Path(options.project).expanduser()
