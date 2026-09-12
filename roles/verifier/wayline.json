@@ -1,0 +1,19 @@
+{
+  "role": "verifier",
+  "summary": "Answers one Type-B question about one subject from the paths it was given, reading only, and returns the verdict.",
+  "kinds": [],
+  "may_judge": true,
+  "output_schema": "verdict",
+  "allowed_tools": [
+    "Read", "Glob", "Grep",
+    "Bash(git show*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
+    "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)"
+  ],
+  "disallowed_tools": [
+    "Edit", "Write", "NotebookEdit", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync"
+  ]
+}

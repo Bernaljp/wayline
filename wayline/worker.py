@@ -52,6 +52,7 @@ __all__ = [
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "read_locator", "CONSULT_MAX",
+    "schema_bullets",
 ]
 
 _log = logging.getLogger("wayline.worker")
@@ -736,6 +737,22 @@ def _fence(text):
     return "`" * max(3, longest + 1)
 
 
+def schema_bullets(schema):
+    """One bullet per property of a schema: the name, the type phrase, and the description.
+
+    Every prompt that asks a session for a structured result lists the fields this way, so the
+    prompt and the schema cannot drift: the words a session reads are the schema's own.
+    """
+    required = set(schema.get("required") or ())
+    lines = []
+    for field_name, definition in (schema.get("properties") or {}).items():
+        line = "- `%s` (%s%s)" % (field_name, _type_phrase(definition), ", required" if field_name in required else "")
+        if definition.get("description"):
+            line += ": " + definition["description"]
+        lines.append(line)
+    return lines
+
+
 def _result_section(ticket, role):
     name = role.output_schema or "result"
     schema = load_schema(name)
@@ -745,12 +762,7 @@ def _result_section(ticket, role):
         "Return it through the structured output, once, before you stop. The launch passes the `%s` schema to this session, and the conductor validates what comes back against it again:" % name,
         "",
     ]
-    required = set(schema.get("required") or ())
-    for field_name, definition in (schema.get("properties") or {}).items():
-        line = "- `%s` (%s%s)" % (field_name, _type_phrase(definition), ", required" if field_name in required else "")
-        if definition.get("description"):
-            line += ": " + definition["description"]
-        lines.append(line)
+    lines.extend(schema_bullets(schema))
     lines.extend([
         "",
         "`ticket_id` is %s. `status` is `done` only when the acceptance commands pass. Give every "

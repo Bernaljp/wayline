@@ -25,7 +25,7 @@ from wayline.ledger import Ledger
 __all__ = [
     "TicketError", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED", "DECISION",
     "HARDEST", "RESULT_HEADING",
-    "slug", "filename", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
+    "slug", "filename", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "by_status", "empty_graph", "tickets_dir", "with_result", "result_notes",
 ]
@@ -126,6 +126,22 @@ def read_tickets(project):
             if blocker not in tickets:
                 raise TicketError("ticket %d is blocked by %d, which does not exist" % (ticket["id"], blocker))
     return [tickets[key] for key in sorted(tickets)]
+
+
+def next_id(project):
+    """The lowest free ticket id: one past the highest `NN` under `tickets/`, or 1 when there is none.
+
+    The file names answer this rather than the frontmatters, because a ticket a planner left
+    half-written still holds its number, and two tickets given one id is not recoverable.
+    """
+    highest = 0
+    directory = tickets_dir(project)
+    if directory.is_dir():
+        for path in directory.glob("*.md"):
+            match = _FILENAME_RE.match(path.name)
+            if match:
+                highest = max(highest, int(match.group(1)))
+    return highest + 1
 
 
 def result_notes(result):

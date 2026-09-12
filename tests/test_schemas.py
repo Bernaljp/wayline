@@ -9,7 +9,8 @@ from wayline import POLICY_PATH
 from wayline.jsonschema import check, check_schema, load_schema, validate
 
 # The schemas this ticket ships; later tickets add the rest of Implementation Decisions 2's list.
-SHIPPED = ["journal_event", "ticket", "result", "harness", "policy", "job", "manifest", "decision", "dossier"]
+SHIPPED = ["journal_event", "ticket", "result", "harness", "policy", "job", "manifest", "decision",
+           "dossier", "verdict"]
 
 
 def load(path):
