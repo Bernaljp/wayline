@@ -19,6 +19,23 @@
     <div id="overview-body" class="panel">loading...</div>
   </section>
 
+  <section id="graph" aria-labelledby="graph-heading">
+    <h2 id="graph-heading">Graph</h2>
+    <div id="graph-body" class="panel graph">loading...</div>
+  </section>
+
+  <section id="ticket" aria-labelledby="ticket-heading" hidden>
+    <h2 id="ticket-heading">Ticket</h2>
+    <p><button type="button" id="ticket-back">&larr; back to the graph</button></p>
+    <div id="ticket-body" class="panel"></div>
+  </section>
+
+  <section id="logs" aria-labelledby="logs-heading" hidden>
+    <h2 id="logs-heading">Log</h2>
+    <p><button type="button" id="logs-back">&larr; back</button> <span id="logs-note" class="note"></span></p>
+    <pre id="logs-tail" class="tail log-tail"></pre>
+  </section>
+
   <section id="journal" aria-labelledby="journal-heading">
     <h2 id="journal-heading">Journal</h2>
     <p id="journal-note" class="note"></p>
@@ -27,7 +44,7 @@
 </main>
 
 <footer>
-  <p class="note">Read-only in M1. The graph, the ticket pages, and the log tail arrive with ticket 12.</p>
+  <p class="note">Read-only in M1.</p>
 </footer>
 
 <!-- Pinned, checked in, and served as static assets; never imported by the harness. See vendor/VENDOR.md. -->

@@ -64,7 +64,7 @@ VERBS = [
     Verb("promote", "promote skill|role|policy <name>", "move a local skill, role, or policy into the harness", "evolve"),
     Verb("upgrade", "upgrade [--to <tag>]", "move the project to another harness tag", "evolve"),
     Verb("fixture", "fixture record|run", "record or run the model-behavior fixtures", "evolve"),
-    Verb("registry", "registry build", "build the index of skills and roles", "builders"),
+    Verb("registry", "registry build", "build the index of skills and roles", "builders", lazy("wayline.registry", "build_command")),
     Verb("figures", "figures build-index|refresh", "build or refresh the plot index", "builders"),
     Verb("guidelines", "guidelines build|check", "build the venue guidelines, or run the seven checks on a draft", "builders", lazy("wayline.guidelines", "build_command")),
     Verb("docs", "docs build", "build the documentation site", "builders"),
