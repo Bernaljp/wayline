@@ -8,5 +8,6 @@
    tag is a claim you leave out.
 4. Definitions, transitions, and method descriptions need no tag. When in doubt whether a
    sentence is a claim, it is one, and it needs its tag.
-5. Return the prose through the structured output. The harness writes it into the ledger; you
-   write no file under `research/`.
+5. Return the structured result your launch asks for. Nothing under `research/` is yours to
+   write: prose meant for the report or the ledger reaches it through that result, and a file a
+   writing ticket asks for is written inside the ticket's touch set.

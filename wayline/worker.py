@@ -39,7 +39,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 from wayline import HARNESS_ROOT, registry
 from wayline.frontmatter import FrontmatterError, load_document
@@ -1272,7 +1272,7 @@ class Scripted:
     died: bool = False
     ticket: Optional[str] = None
     role: Optional[str] = None
-    respond: Optional[object] = None  # `respond(request, message) -> Envelope`, in place of `envelope`
+    respond: Optional[Callable] = None  # `respond(request, message) -> Envelope`, in place of `envelope`
 
     def matches(self, request):
         if self.ticket is not None and str(request.env.get("WAYLINE_TICKET")) != self.ticket:

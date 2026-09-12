@@ -27,6 +27,7 @@ import subprocess
 import sys
 from collections import Counter, namedtuple
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, tickets, worker
@@ -42,7 +43,7 @@ __all__ = [
     "commit_threshold_bytes", "oversized_tracked_files",
     "TAG_RE", "RES_TAG_RE", "REF_TAG_RE", "Sentence", "sentences", "parse_tag", "strip_tags",
     "REPORT", "CLAIMS_CACHE", "PROSE_CACHE", "SECTIONS", "SENTENCE_CLASSES", "RECORDS_BEGIN", "RECORDS_END",
-    "Lint", "Claim", "Rendered", "prose_sentences", "sentence_hash", "render_citations", "restore_tags",
+    "UsageLimited", "Lint", "Claim", "Rendered", "prose_sentences", "sentence_hash", "render_citations", "restore_tags",
     "read_claims_cache", "classify", "lint", "lint_report", "tagged_claims", "sample_size", "sample_claims",
     "claim_subject", "claim_paths", "verify_claims", "report_evidence", "draft_prose", "finding_tags",
     "tagged_text", "render_report", "report_command",
@@ -76,6 +77,10 @@ _HASH_CHUNK = 1 << 20  # 1 MiB
 
 class ProvenanceError(ValueError):
     """A finding whose provenance does not resolve, or an artifact that cannot be manifested."""
+
+
+class UsageLimited(ProvenanceError):
+    """A session the usage limit refused: a closed window rather than a bad answer, so never resumed."""
 
 
 def _ledger(project_or_ledger):
@@ -639,9 +644,11 @@ class _Resolver:
         self.manifested = {(entry.get("run_id"), entry.get("path")) for entry in entries}
 
     def problem(self, tag):
+        if tag.startswith("res:unmanifested/"):
+            return UNRESOLVED_RES, "%s is not in manifest.json" % tag[len("res:unmanifested/"):].partition("#")[0]
         kind, parts = parse_tag(tag)
         if kind is None or parts is None:
-            return MALFORMED_TAG, "{%s} is neither {res:<run-id>/<artifact>#<locator>} nor {ref:<slug>#<locator>}" % tag
+            return MALFORMED_TAG, "`%s` is neither `res:<run-id>/<artifact>#<locator>` nor `ref:<slug>#<locator>`" % tag
         if kind == "res":
             if (parts["run_id"], parts["artifact"]) in self.manifested:
                 return None
@@ -817,7 +824,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
         from_finding = claim.digest in authors
         taken = gates.verdict(
             CLAIM, subject, CLAIM_QUESTION % _inline(claim.text), claim_paths(claim), CLAIM_SCOPE,
-            project=project, author_model=(authors.get(claim.digest) or writer_model) if from_finding else writer_model,
+            project=project, author_model=authors.get(claim.digest) or writer_model,
             verdict_type=gates.CLAIM_SUPPORT, harness_root=harness_root, policy=policy, ledger=book,
         )
         verdicted.add(subject)
@@ -851,9 +858,11 @@ def _claim_ticket(project, book, claim, subject, taken, from_finding):
             return None
     paths = claim_paths(claim)
     remedy = ("The sentence is a finding as its ticket recorded it, and the report renders findings as "
-              "recorded, so the correction is a finding that says what the artifact does support."
+              "recorded. Return in the result a finding that says only what the artifact supports, with its "
+              "provenance; the ledger records it and the next render reads it."
               if from_finding else
-              "The sentence is the writer's prose: scope it down, or cite the artifact that does support it.")
+              "The sentence is the writer's prose. Return in the result, as a finding with its provenance, "
+              "what the artifacts do support; the prose is redrafted from the findings when they change.")
     body = "\n".join([
         "## The claim the verifier could not support",
         "",
@@ -869,7 +878,9 @@ def _claim_ticket(project, book, claim, subject, taken, from_finding):
         "",
     ] + ["- `%s`" % path for path in paths])
     return gates.file_writing_ticket(
-        project, book, title=CLAIM_TITLE, touches=[REPORT_PATH], inputs=[REPORT_PATH] + paths,
+        # No touch set: REPORT.md and the ledger are written by code, so the correction travels in
+        # the result, never as an edit a later render would overwrite.
+        project, book, title=CLAIM_TITLE, touches=[], inputs=[REPORT_PATH] + paths,
         quality=["Does every claim sentence the verifier could not support now say only what its cited artifacts do?"],
         origin=subject, demo="wayline report --verify reads this claim again and its verdict passes.", body=body,
     )
@@ -916,13 +927,16 @@ def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, of
         return cached["prose"], None
     if offline:
         return None, ("the writer's prose is from findings that have changed since, so it is left out; "
-                      "this render launched no session" if cached else
-                      "the writer's prose has not been drafted; this render launched no session")
+                      "no writer session was launched" if cached else
+                      "the writer's prose has not been drafted; no writer session was launched")
     policy = policy_for(project, harness_root) if policy is None else policy
     role = worker.read_role(WRITER, harness_root, project)
     request = _request(project, role, policy, harness_root, _writer_prompt(role, evidence), PROSE_SCHEMA, "medium",
                        _session_dir(project, WRITER), read_only=True)
-    envelope = _launch_structured(request, lambda answer: _schema_problem(answer, PROSE_SCHEMA), "writer")
+    try:
+        envelope = _launch_structured(request, lambda answer: _schema_problem(answer, PROSE_SCHEMA), "writer")
+    except UsageLimited as refused:
+        return None, "%s, so the report is rendered without the writer's prose" % refused
     returned = envelope.structured_output
     named = {group["group"] for group in evidence["groups"]}
     prose = {
@@ -968,6 +982,7 @@ def _writer_prompt(role, evidence):
             lines.append("  tags: %s" % " ".join("`{%s}`" % tag for tag in item["tags"]))
     else:
         lines.append("None was recorded: return the empty string for `negative_results`.")
+    lines.extend(["", "Return the paragraphs through the structured output; the harness writes them into the report."])
     return _joined("\n".join(lines), role.protocol, worker.schema_section("# The prose", PROSE_SCHEMA))
 
 
@@ -1330,7 +1345,10 @@ def _banner(context, result, notes):
     ]
     if result.problems:
         lines.extend(["", "The linter failed on these sentences; the report does not pass until each one ends with a tag that resolves, or is rewritten:", ""])
-        lines.extend("- `%s` %s (%s)" % (problem["problem"], _inline(problem["sentence"]), problem["detail"])
+        # Tags are taken off the sentence and the tag is named without its braces, so that a tag
+        # the linter refused is not rendered as a citation in the report that refused it.
+        lines.extend("- `%s` %s (%s%s)" % (problem["problem"], _inline(strip_tags(problem["sentence"])),
+                                           "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
                      for problem in result.problems)
     if context.notes or notes:
         lines.append("")
@@ -1373,7 +1391,11 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
         notes.append(note)
     body = _body(context, prose)
     texts = [sentence.text for sentence in prose_sentences(body)]
-    classes = classify(project, texts, harness_root=harness_root, policy=policy, offline=offline)
+    try:
+        classes = classify(project, texts, harness_root=harness_root, policy=policy, offline=offline)
+    except UsageLimited as refused:
+        classes = read_claims_cache(book)
+        notes.append("%s; the sentences it did not reach are unclassified" % refused)
     result = lint(project, body, classes)
     path = book.write_markdown(REPORT, render_citations(_banner(context, result, notes) + body))
     digest = sha256_of(path)
@@ -1530,13 +1552,35 @@ def _request(project, role, policy, harness_root, prompt, schema, budget, run_di
 def _launch_structured(request, problem_of, what):
     """Launch, check the answer, resume once with the reason when it is unusable, and raise when it still is."""
     envelope = worker.launch(request)
+    _raise_if_refused(envelope, what)
     problem = problem_of(envelope)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_STRUCTURED % problem)
+        _raise_if_refused(envelope, what)
         problem = problem_of(envelope)
     if problem is not None:
         raise ProvenanceError("the %s's answer could not be used: %s" % (what, problem))
     return envelope
+
+
+def _raise_if_refused(envelope, what):
+    """Raise `UsageLimited` for a session that returned nothing because a usage window refused it.
+
+    docs/verification/m5.md: the live writer on fable came back after one turn with
+    `status: rejected` on the `seven_day_overage_included` window and no structured output. A
+    resume would be refused the same way, and the message the answer "could not be used" would
+    send the owner looking for a bug in a prompt.
+    """
+    if envelope.valid:
+        return
+    refused = [event for event in envelope.rate_limit_events if event.status == "rejected"]
+    if not refused:
+        return
+    last = refused[-1]
+    until = (datetime.fromtimestamp(last.resets_at, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+             if last.resets_at else "an unknown time")
+    raise UsageLimited("the %s was refused by the usage limit on the %s window until %s"
+                       % (what, last.rate_limit_type or "unknown", until))
 
 
 def _schema_problem(envelope, schema):
