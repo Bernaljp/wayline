@@ -1,0 +1,28 @@
+[
+  {
+    "envelope": {
+      "structured_output": {
+        "ticket_id": 1,
+        "status": "done",
+        "summary": "Wrote hello.txt holding the single line hello, ran the ticket's two acceptance commands, and committed on the ticket branch.",
+        "outputs_written": ["hello.txt"],
+        "commands_run": ["wayline accept"],
+        "checks": {"test -f hello.txt": "pass", "grep -qx hello hello.txt": "pass"},
+        "findings": [
+          {
+            "text": "The fixture project carries no test framework, so its Type-A gates are two shell commands.",
+            "provenance": "research/tickets/01-write-the-hello-file.md#acceptance"
+          }
+        ],
+        "cost": {"turns": 4, "minutes": 1}
+      },
+      "num_turns": 4,
+      "duration_ms": 5200,
+      "usage": {"input_tokens": 12, "output_tokens": 180}
+    },
+    "patch": {
+      "files": {"hello.txt": "hello\n"},
+      "message": "ticket 1: write hello.txt"
+    }
+  }
+]

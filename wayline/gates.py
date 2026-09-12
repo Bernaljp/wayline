@@ -28,8 +28,9 @@ import sys
 import time
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, POLICY_PATH
+from wayline import HARNESS_ROOT
 from wayline.ledger import now_ts
+from wayline.project import policy_for
 from wayline.tickets import read_ticket, tickets_dir
 
 __all__ = [
@@ -171,18 +172,8 @@ def ticket_by_id(project, ticket_id):
 
 
 def _policy_value(project, key, fallback):
-    """A policy value: `policy.json`, overridden by the project's `harness.json` `policy` block."""
-    value = fallback
-    for path, section in ((POLICY_PATH, None), (Path(project) / "harness.json", "policy")):
-        try:
-            loaded = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if section is not None:
-            loaded = loaded.get(section) or {}
-        if key in loaded:
-            value = loaded[key]
-    return value
+    """A policy value: the harness defaults under the project's `harness.json` `policy` overrides."""
+    return policy_for(project).get(key, fallback)
 
 
 # --- running the machine acceptance --------------------------------------------------------------
