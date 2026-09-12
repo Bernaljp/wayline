@@ -96,6 +96,14 @@ class TouchSetTest(ProjectTestCase):
         self.assertTrue(schedule.touch_sets_collide(["notes"], ["notes/alpha.md"], root=self.temp))
         self.assertFalse(schedule.touch_sets_collide(["notes"], ["notes/alpha.md"]))
 
+    def test_two_spellings_of_one_path_collide_the_way_the_guard_resolves_them(self):
+        """The guard runs `realpath -m` on every entry, so `./notes/` and `notes/` are one path."""
+        self.assertTrue(schedule.touch_sets_collide(["./notes/"], ["notes/alpha.md"]))
+        self.assertTrue(schedule.touch_sets_collide(["reports/../notes/"], ["notes/alpha.md"]))
+        self.assertTrue(schedule.touch_sets_collide([str(self.temp / "notes") + "/"], ["notes/alpha.md"],
+                                                    root=self.temp))
+        self.assertTrue(schedule.touch_sets_collide(["notes//alpha.md"], ["./notes/alpha.md"]))
+
     def test_one_entry_in_common_is_enough_to_collide(self):
         self.assertTrue(schedule.touch_sets_collide(["a.py", "b.py"], ["c.py", "b.py"]))
         self.assertFalse(schedule.touch_sets_collide(["a.py", "b.py"], ["c.py", "d.py"]))
@@ -165,3 +173,32 @@ class PickTest(unittest.TestCase):
 
     def test_an_empty_frontier_picks_nothing(self):
         self.assertEqual(schedule.pick(graph(entry(1, status="done")), slots=2), [])
+
+
+class HeldBackTest(unittest.TestCase):
+    """Why the frontier is empty, when open tickets are left: what the conductor says before it stops."""
+
+    def test_a_frontier_that_holds_nothing_back_says_nothing(self):
+        self.assertEqual(schedule.held_back(graph(entry(1), entry(2, status="done"))), [])
+
+    def test_a_difficulty_five_blocker_that_is_done_and_not_accepted_is_named(self):
+        lines = schedule.held_back(graph(entry(1, difficulty=5, status="done"), entry(2, blocked_by=[1])))
+        self.assertEqual(len(lines), 2)
+        self.assertIn("ticket 2 waits on ticket 1", lines[1])
+        self.assertIn("not accepted", lines[1])
+
+    def test_a_decision_ticket_that_pauses_everything_is_named_even_when_its_own_attempt_failed(self):
+        built = graph(entry(1, kind="decision", blocking="all", status="failed"), entry(2), entry(3))
+        lines = schedule.held_back(built)
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(all("decision ticket 1" in line for line in lines[1:]), lines)
+
+    def test_a_paused_subgraph_names_the_decision_it_waits_on(self):
+        built = graph(entry(1, kind="decision", blocking="subgraph"),
+                      entry(2, blocked_by=[1], status="done"), entry(3, blocked_by=[2]))
+        lines = schedule.held_back(built)
+        self.assertIn("ticket 3 waits on the open decision ticket 1", lines[1])
+
+    def test_an_ordinary_unfinished_blocker_is_named_with_its_status(self):
+        lines = schedule.held_back(graph(entry(1, status="failed"), entry(2, blocked_by=[1])))
+        self.assertIn("ticket(s) 1 (failed)", lines[1])

@@ -27,7 +27,7 @@ __all__ = [
     "HARDEST", "RESULT_HEADING",
     "slug", "filename", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
-    "frontier", "by_status", "empty_graph", "tickets_dir", "with_result", "result_notes",
+    "frontier", "open_decisions", "is_open_decision", "by_status", "empty_graph", "tickets_dir", "with_result", "result_notes",
 ]
 
 TICKETS = "tickets"
@@ -357,7 +357,7 @@ def frontier(graph):
     ready = [entry for entry in entries
              if entry["status"] == "open"
              and all(_blocker_satisfied(by_id.get(blocker)) for blocker in entry["blocked_by"])]
-    pending = [entry for entry in entries if _is_open_decision(entry)]
+    pending = [entry for entry in entries if is_open_decision(entry)]
     if any(entry.get("blocking") == "all" for entry in pending):
         ready = [entry for entry in ready if entry["kind"] == DECISION]
     else:
@@ -375,7 +375,19 @@ def _blocker_satisfied(blocker):
     return blocker["status"] in SATISFIED
 
 
-def _is_open_decision(entry):
+def open_decisions(graph):
+    """The decision tickets still waiting for an answer, by id: the ones that pause the frontier.
+
+    Open is every status but `done`, `accepted`, and `parked`: a decision whose decider failed or
+    that is waiting on a person holds its subgraph exactly as an untouched one does, and a view
+    that left it out would be a view that cannot say why a project stopped.
+    """
+    return sorted((entry for entry in graph["tickets"] if is_open_decision(entry)),
+                  key=lambda entry: entry["id"])
+
+
+def is_open_decision(entry):
+    """Whether this graph entry is a decision ticket still waiting for an answer."""
     return entry["kind"] == DECISION and entry["status"] not in SATISFIED + ("parked",)
 
 

@@ -191,9 +191,9 @@ def tier_for(policy, difficulty, ticket_budget=None):
 class WaveResult:
     """One pass of the loop, as the `run` verb and the tests read it.
 
-    `launched` holds the tickets this wave picked and handed to the launcher, in pick order; the
-    journal's `ticket_launched` is the narrower record of the ones whose process actually started.
-    `failed` holds the tickets that were launched, did not reach `done`, and are not still
+    `launched` holds the tickets whose worker process started, in pick order: the same tickets the
+    journal's `ticket_launched` events name, so a pick the launcher refused is counted as failed
+    and nothing else. `failed` holds the tickets that were launched, did not reach `done`, and are not still
     running, whatever the reason: a failure, a block, or a question for a person. The journal
     says which.
     """
@@ -228,6 +228,8 @@ class _Attempt:
     envelope: Optional[worker.Envelope] = None
     session_id: Optional[str] = None
     resumed: bool = False
+    # Whether a worker process actually started, which is when `ticket_launched` is journaled.
+    started: bool = False
     # What the launch raised, when it did: a thread cannot fail its own wave, so the failure is
     # carried back to the main thread and the ticket is failed there, in pick order, like any other.
     failure: Optional[BaseException] = None
@@ -277,6 +279,8 @@ class Conductor:
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         if not tickets.frontier(graph) and not running:
+            for line in schedule.held_back(graph):
+                self.say(line)
             self.ledger.append_event(RUN_ENDED, {"reason": "frontier_empty"})
             result.ended, result.reason = True, "frontier_empty"
         result.ledger_commit = self._commit_ledger()
@@ -362,17 +366,28 @@ class Conductor:
                 result.failed.append(attempt.id)
                 continue
             attempts.append(attempt)
-            result.launched.append(attempt.id)
         self._launch(attempts)
+        result.launched.extend(attempt.id for attempt in attempts if attempt.started)
+        escaped = None
         for attempt in attempts:
-            self._carry(attempt, result)
+            try:
+                self._carry(attempt, result)
+            except Exception as failure:  # not one of the two a ticket can be failed on
+                # The other workers have finished and committed; leaving them uncarried would
+                # leave their tickets `running`, holding their touch sets against every wave to
+                # come with no poller to release them. They are carried, then this is raised.
+                escaped = failure if escaped is None else escaped
+        if escaped is not None:
+            raise escaped
 
     def _carry(self, attempt, result):
-        """What one launched attempt came to, counted into the wave; nothing here raises out."""
+        """What one launched attempt came to, counted into the wave; nothing expected raises out."""
         outcome = "failed"
         try:
             if attempt.failure is not None:
                 raise attempt.failure
+            if attempt.envelope is None:
+                raise ConductorError("the worker thread ended without a result and without an error")
             outcome = self._outcome(attempt)
         except (ValueError, OSError) as failure:  # a launch, a ticket file, or a git step
             self._fail(attempt, str(failure), "needs_human")
@@ -400,10 +415,12 @@ class Conductor:
     def _launch_one(self, attempt):
         """One worker, launched and waited for; what it raises is carried, not thrown at the wave.
 
-        Every exception is carried, not only the two the wave knows how to fail a ticket on: an
-        exception left to a thread would be printed to stderr and lost, and the wave would go on
-        to read an envelope nobody ever set. Carried, it is raised again on the main thread, where
-        a launch failure fails its ticket and anything else still ends the run.
+        Every `Exception` is carried, not only the two the wave knows how to fail a ticket on: one
+        left to a thread would be printed to stderr and lost, and the wave would go on to read an
+        envelope nobody ever set. Carried, it is raised again on the main thread, where a launch
+        failure fails its ticket and anything else still ends the run. What is left uncaught is
+        what must not be turned into a ticket outcome at all (`KeyboardInterrupt`, `SystemExit`);
+        `_carry` fails the ticket for the missing envelope those leave behind.
         """
         try:
             attempt.envelope = worker.launch(
@@ -477,6 +494,7 @@ class Conductor:
         )
 
     def _journal_launch(self, attempt, started):
+        attempt.started = True
         self.ledger.append_event(TICKET_LAUNCHED, {
             "ticket": attempt.id, "attempt": attempt.number, "role": attempt.role.name,
             "model": attempt.tier.model, "effort": attempt.tier.effort,

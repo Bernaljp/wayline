@@ -518,12 +518,17 @@ class RunLoopTest(ConductorCase):
 class FiveTicketsCase(ProjectTestCase):
     """A laid-out copy of the five-ticket fixture, run with the fake worker it ships with."""
 
-    def conduct(self, name="five-tickets", policy=None):
-        """Copy the fixture, lay it out, and run the conductor over it to the end."""
+    def lay_out(self, name="five-tickets"):
+        """A copy of the fixture, laid out by `init`, with its ledger."""
         self.project = self.temp / name
         shutil.copytree(FIVE_TICKETS, self.project)
         project.init_project(self.project)
         self.ledger = Ledger(self.project)
+        return self.project
+
+    def conduct(self, name="five-tickets", policy=None):
+        """Copy the fixture, lay it out, and run the conductor over it to the end."""
+        self.lay_out(name)
         with worker.use_fake() as fake:
             fake.load(FIVE_TICKETS / "fake-worker.json")
             self.waves = Conductor(self.project, policy=policy, out=io.StringIO()).run()
@@ -532,6 +537,17 @@ class FiveTicketsCase(ProjectTestCase):
 
     def launched(self):
         return [wave.launched for wave in self.waves]
+
+    def read_journal(self):
+        self.journal, _ = self.ledger.read_events()
+        return self.journal
+
+    def at_payload(self, name, identifier):
+        """The payload of this ticket's last event of this name."""
+        found = [event["payload"] for event in self.read_journal()
+                 if event["event"] == name and event["ticket"] == identifier]
+        self.assertTrue(found, "ticket %d has no %s event" % (identifier, name))
+        return found[-1]
 
     def at(self, name, identifier):
         """Where in the journal this ticket's one event of this name is."""
@@ -598,13 +614,45 @@ class SlotsTest(FiveTicketsCase):
         self.assertEqual(set(self.statuses().values()), {"done"})
 
     def test_a_policy_that_names_no_usable_number_of_workers_is_refused(self):
-        self.project = self.temp / "five-tickets"
-        shutil.copytree(FIVE_TICKETS, self.project)
-        project.init_project(self.project)
+        self.lay_out()
         policy = dict(project.policy_for(self.project, HARNESS_ROOT), max_parallel_workers=0)
         with self.assertRaises(ConductorError) as caught:
             Conductor(self.project, policy=policy, out=io.StringIO()).wave()
         self.assertIn("max_parallel_workers", str(caught.exception))
+
+
+class ParallelOutcomeTest(FiveTicketsCase):
+    """What one worker's trouble does to the other worker of the same wave."""
+
+    def test_a_launch_the_backend_refuses_is_not_counted_as_launched(self):
+        """`wave.launched` names the tickets whose process started, as `ticket_launched` does."""
+        self.lay_out()
+        with worker.use_fake() as fake:
+            fake.script(done(ticket_id=2), patch=patch({"reports/beta.md": "beta\n"}, "ticket 2"), ticket="2")
+            wave = Conductor(self.project, out=io.StringIO()).wave()
+        self.assertEqual(wave.launched, [2])
+        self.assertEqual(sorted(wave.failed), [1])
+        self.assertEqual(sorted(wave.done), [2])
+        self.assertIn("no scripted envelope", self.at_payload("ticket_failed", 1)["reason"])
+        self.assertEqual([event["payload"]["ticket"] for event in self.read_journal()
+                          if event["event"] == "ticket_launched"], [2])
+
+    def test_an_unexpected_failure_on_one_ticket_still_carries_the_other(self):
+        """Both workers have already committed; an uncarried one would be left `running` forever."""
+        class Exploding(Conductor):
+            def _outcome(self, attempt):
+                if attempt.id == 1:
+                    raise RuntimeError("something no wave step accounts for")
+                return super()._outcome(attempt)
+
+        self.lay_out()
+        with worker.use_fake() as fake:
+            fake.load(FIVE_TICKETS / "fake-worker.json")
+            with self.assertRaises(RuntimeError):
+                Exploding(self.project, out=io.StringIO()).wave()
+        self.assertEqual(self.statuses()[2], "done")
+        self.assertEqual(self.read("reports/beta.md"), "beta\n")
+        self.assertIn("integrated", [event["event"] for event in self.read_journal() if event["ticket"] == 2])
 
 
 class ShellRunTest(ProjectTestCase):

@@ -10,14 +10,15 @@ graph, the running set, and the policy, so a wave's scheduling can be tested wit
 and the conductor is left with the launching.
 """
 
+import os
 from pathlib import Path
 
-from wayline.tickets import frontier
+from wayline.tickets import DECISION, HARDEST, SATISFIED, frontier, is_open_decision, open_decisions
 
 __all__ = [
     "NORMAL", "CHEAP_ONLY", "STOP",
-    "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
-    "everything_free", "launchable", "order_key", "pick",
+    "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
+    "everything_free", "launchable", "order_key", "pick", "held_back",
 ]
 
 # The pacing actions of decision 5. `cheap_only` changes the pick order here; which tickets an
@@ -30,6 +31,20 @@ STOP = "stop"
 # --- touch sets ------------------------------------------------------------------------------
 
 
+def normalize(entry, root=None):
+    """One touch-set entry as a path to compare: `(path, names_a_directory)`.
+
+    The guard resolves every entry with `realpath -m` against the project, so `./notes/`,
+    `a/../notes/`, and `<project>/notes/` are one path and have to compare as one here too.
+    An entry outside `root`, or absolute with no `root` to resolve against, keeps the spelling it
+    came with: it can then only collide with the same spelling, which is the safe way to be wrong.
+    """
+    text = str(entry).strip()
+    if os.path.isabs(text) and root is not None:
+        text = os.path.relpath(text, str(Path(root)))
+    return os.path.normpath(text), str(entry).strip().endswith("/")
+
+
 def is_directory_entry(entry, root=None):
     """Whether a touch-set entry names a directory, as `hooks/touch_set_guard.sh` decides it.
 
@@ -37,10 +52,8 @@ def is_directory_entry(entry, root=None):
     conductor schedules tickets whose worktrees do not exist yet, so `root` (the project) is where
     existence is asked about, and an entry with a trailing slash needs no `root` at all.
     """
-    text = str(entry)
-    if text.endswith("/"):
-        return True
-    return root is not None and (Path(root) / text).is_dir()
+    path, trailing = normalize(entry, root)
+    return trailing or (root is not None and (Path(root) / path).is_dir())
 
 
 def entries_collide(one, other, root=None):
@@ -49,7 +62,7 @@ def entries_collide(one, other, root=None):
     A directory entry matches everything below it, a file entry matches itself and nothing else,
     which is the guard's rule read for two touch sets rather than for one path against one set.
     """
-    left, right = str(one).rstrip("/"), str(other).rstrip("/")
+    left, right = normalize(one, root)[0], normalize(other, root)[0]
     if left == right:
         return True
     if is_directory_entry(one, root) and right.startswith(left + "/"):
@@ -145,6 +158,62 @@ def order_key(entry, lengths, action=NORMAL, goal_tickets=()):
         -difficulty,
         entry["id"],
     )
+
+
+def held_back(graph):
+    """Why each open ticket is outside the frontier, one line each, or `[]` when none is.
+
+    An empty frontier with open tickets left is not the end of the work, and `run_ended` can say
+    only `frontier_empty` (its reasons are the spec's closed list), so the conductor says this
+    aloud before it stops. Two of the frontier's rules can empty it with work still to do: a
+    decision ticket nobody has answered, and a difficulty-5 blocker that is `done` and has no
+    quality verdict yet, which is a wait with no end until ticket 32 builds the verdict that
+    writes `accepted`.
+    """
+    entries = {entry["id"]: entry for entry in graph["tickets"]}
+    ready = {entry["id"] for entry in frontier(graph)}
+    waiting = [entry for entry in graph["tickets"] if entry["status"] == "open" and entry["id"] not in ready]
+    if not waiting:
+        return []
+    lines = ["%d open ticket(s) are outside the frontier:" % len(waiting)]
+    lines.extend("  ticket %d waits on %s" % (entry["id"], _waits_on(entry, entries, graph)) for entry in waiting)
+    return lines
+
+
+def _waits_on(entry, entries, graph):
+    """The one sentence that says what is holding this open ticket out of the frontier."""
+    everything = [item for item in open_decisions(graph) if item.get("blocking") == "all"]
+    if everything and entry["kind"] != DECISION:
+        return ("the open decision ticket %d, which pauses every other ticket until it is answered"
+                % everything[0]["id"])
+    decision = _decision_above(entry, entries)
+    if decision is not None:
+        return "the open decision ticket %d, which pauses its subgraph" % decision["id"]
+    hardest = [identifier for identifier in entry["blocked_by"]
+               if (entries.get(identifier) or {}).get("difficulty") == HARDEST
+               and (entries.get(identifier) or {}).get("status") == "done"]
+    if hardest:
+        return ("ticket %d, which is done and not accepted: a difficulty-5 blocker holds its "
+                "dependents until a quality verdict passes it, and the verdict arrives with ticket 32"
+                % hardest[0])
+    unmet = ["%d (%s)" % (identifier, (entries.get(identifier) or {}).get("status", "missing"))
+             for identifier in entry["blocked_by"]
+             if (entries.get(identifier) or {}).get("status") not in SATISFIED]
+    return "ticket(s) %s" % ", ".join(unmet) if unmet else "nothing this conductor can name"
+
+
+def _decision_above(entry, entries):
+    """The nearest open decision ticket this one waits on, up the blocking edges; None when there is none."""
+    seen, stack = set(), list(entry["blocked_by"])
+    while stack:
+        blocker = entries.get(stack.pop())
+        if blocker is None or blocker["id"] in seen:
+            continue
+        seen.add(blocker["id"])
+        if is_open_decision(blocker):
+            return blocker
+        stack.extend(blocker["blocked_by"])
+    return None
 
 
 def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_free, goal_tickets=()):

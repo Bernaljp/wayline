@@ -27,7 +27,9 @@ from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, atomic_write, now_ts
 from wayline.resources import ResourceError, render_resources, snapshot as resources_snapshot
-from wayline.tickets import GRAPH, by_status, empty_graph, frontier, read_graph, read_tickets, refresh_graph
+from wayline.tickets import (
+    GRAPH, by_status, empty_graph, frontier, open_decisions, read_graph, read_tickets, refresh_graph,
+)
 
 __all__ = [
     "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
@@ -629,7 +631,8 @@ def _with_status(graph, status):
 
 
 def _open_decisions(graph):
-    return [entry for entry in graph["tickets"] if entry["kind"] == "decision" and entry["status"] == "open"]
+    """The decision tickets `status` lists: the same ones the frontier is paused by (`tickets`)."""
+    return open_decisions(graph)
 
 
 def _ticket_line(entry, tickets):
