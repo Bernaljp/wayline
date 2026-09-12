@@ -1,0 +1,12 @@
+{
+  "ticket_id": 2,
+  "status": "done",
+  "summary": "Wrote the feature table and its summary.",
+  "outputs_written": ["results/features/summary.json"],
+  "findings": [
+    {
+      "text": "The two label sources disagree on 3.1 percent of the held-out rows.",
+      "provenance": "results/features/summary.json#label_disagreement"
+    }
+  ]
+}
