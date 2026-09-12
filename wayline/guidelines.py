@@ -8,7 +8,7 @@ checks a writer runs on a draft, and they read `guidelines.json` and nothing els
 note, no model call, no network.
 
 **What the build verifies, and what it cannot.** Nothing here extracts a word count out of
-HTML. Seventeen publisher layouts would need seventeen parsers and each one would rot. Instead
+HTML. Fifteen publisher layouts would need fifteen parsers and each one would rot. Instead
 every field carries the short strings the note read it off (`evidence`), and the build re-fetches
 the page and looks for them. A field is `fully_verified` only when the note verified it, its
 pages were reached, and every one of its strings is still there. Everything else lands in
@@ -43,6 +43,7 @@ import json
 import re
 import sys
 from collections import namedtuple
+from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
@@ -1275,15 +1276,15 @@ def _fetch(fetcher, url):
 
 def _reach(fetcher, source):
     """A source's URL, then its alternates in order; every try recorded, the first hit kept."""
-    attempts, text, reached = [], "", None
+    attempts, text = [], ""
     for url in (source["url"],) + tuple(source.get("alternates") or ()):
         status, body, note = _fetch(fetcher, url)
         outcome = "hit" if body else ("error" if status is None else "miss")
         attempts.append({"url": url, "status": status, "outcome": outcome, "note": note})
         if body:
-            text, reached = body, url
+            text = body
             break
-    return attempts, text, reached
+    return attempts, text
 
 
 def _unverified_paths(seed, field):
@@ -1365,7 +1366,7 @@ def build_venue(seed, fetcher, root=None, today=None, cache_checklists=True):
     attempts, texts, unreachable = [], [], {}
     primary_reached = False
     for index, source in enumerate(seed["sources"]):
-        tried, text, reached = _reach(fetcher, source)
+        tried, text = _reach(fetcher, source)
         attempts.extend(tried)
         if text:
             texts.append(text)
@@ -1386,11 +1387,13 @@ def build_venue(seed, fetcher, root=None, today=None, cache_checklists=True):
         "guidelines_url": seed["sources"][0]["url"],
         "date_checked": (today or date.today().isoformat()) if primary_reached else NOTE_DATE,
     }
-    for field in ("length_limits", "required_structure", "structure_flexible", "figure_spec", "reference_style"):
-        guidelines[field] = json.loads(json.dumps(seed["guidelines"][field]))
-    guidelines["reporting_checklists"] = checklists
-    for field in ("submission_steps", "template", "license_of_summary_source"):
-        guidelines[field] = json.loads(json.dumps(seed["guidelines"][field]))
+    # In the spec's order, so a reader of one venue's file finds the same field in the same place
+    # in every other. The checklists are the build's rather than the seed's: they are the only
+    # field that carries what the build did (what it cached) as well as what the note recorded.
+    for field in ("length_limits", "required_structure", "structure_flexible", "figure_spec",
+                  "reference_style", "reporting_checklists", "submission_steps", "template",
+                  "license_of_summary_source"):
+        guidelines[field] = checklists if field == "reporting_checklists" else deepcopy(seed["guidelines"][field])
     guidelines["verification"] = {"fully_verified_fields": verified, "unverified_fields": unverified}
     check(guidelines, load_schema("guidelines"), name="guidelines/%s/%s" % (seed["venue"], GUIDELINES_JSON))
 
@@ -1570,6 +1573,7 @@ class Manuscript:
             raise GuidelinesError("%s holds no .md or .tex file" % path)
         self.sources = {path: path.read_text(encoding="utf-8", errors="replace") for path in self.files}
         self.kind = "latex" if any(path.suffix.lower() == ".tex" for path in self.files) else "markdown"
+        self._prose = None
         self.all_files = sorted(self._walk()) if self.root.is_dir() else list(self.files)
 
     def _walk(self):
@@ -1586,9 +1590,15 @@ class Manuscript:
     # --- prose ---
 
     def prose(self, text=None):
-        """Markup stripped down to the words a person reads, for counting and for sentences."""
+        """Markup stripped down to the words a person reads, for counting and for sentences.
+
+        The whole draft's prose is asked for by several checks at once, so it is stripped once and
+        kept; a caller that passes its own text (one section, one legend) is not worth caching.
+        """
         if text is None:
-            return "\n\n".join(self.prose(body) for body in self.sources.values())
+            if self._prose is None:
+                self._prose = "\n\n".join(self.prose(body) for body in self.sources.values())
+            return self._prose
         if self.kind == "latex":
             body = _TEX_COMMENT.sub("", text)
             body = body.split(r"\begin{document}", 1)[-1]
@@ -1902,43 +1912,39 @@ Finding = namedtuple("Finding", "check level message")
 LEVEL_ORDER = {"ok": 0, "skipped": 0, "warn": 1, "fail": 2}
 
 
-def _finding(check_name, level, message):
-    return Finding(check_name, level, message)
-
-
 def check_length(manuscript, guidelines):
     """1. Word or page count, with the venue's own exclusions."""
     limits = guidelines["length_limits"]
     findings = []
     words = manuscript.body_words(limits["excluded_sections"])
     if limits["word_count"] is None:
-        findings.append(_finding("length", "ok" if limits["page_count"] else "skipped",
+        findings.append(Finding("length", "ok" if limits["page_count"] else "skipped",
                                  "%s sets no word limit; the main text is %d words." % (guidelines["display_name"], words)))
     elif words > limits["word_count"]:
-        findings.append(_finding("length", "fail", "the main text is %d words, over the %d %s allows%s."
+        findings.append(Finding("length", "fail", "the main text is %d words, over the %d %s allows%s."
                                  % (words, limits["word_count"], guidelines["display_name"],
                                     " (excluding %s)" % ", ".join(limits["excluded_sections"]) if limits["excluded_sections"] else "")))
     else:
-        findings.append(_finding("length", "ok", "the main text is %d words, within %d." % (words, limits["word_count"])))
+        findings.append(Finding("length", "ok", "the main text is %d words, within %d." % (words, limits["word_count"])))
 
     abstract = manuscript.abstract_words()
     if limits["abstract_word_count"] is not None and abstract is not None:
         level = "fail" if abstract > limits["abstract_word_count"] else "ok"
-        findings.append(_finding("length", level, "the abstract is %d words against a limit of %d."
+        findings.append(Finding("length", level, "the abstract is %d words against a limit of %d."
                                  % (abstract, limits["abstract_word_count"])))
     elif limits["abstract_word_count"] is not None:
-        findings.append(_finding("length", "warn", "no Abstract section was found, and %s caps it at %d words."
+        findings.append(Finding("length", "warn", "no Abstract section was found, and %s caps it at %d words."
                                  % (guidelines["display_name"], limits["abstract_word_count"])))
 
     if limits["page_count"] is not None:
         pages = manuscript.pdf_pages()
         if pages is None:
-            findings.append(_finding("length", "skipped",
+            findings.append(Finding("length", "skipped",
                                      "%s counts pages (%d), and nothing here compiles LaTeX; put the built PDF beside the "
                                      "source and the check reads its page count." % (guidelines["display_name"], limits["page_count"])))
         else:
             level = "fail" if pages > limits["page_count"] else "ok"
-            findings.append(_finding("length", level, "the compiled PDF is %d pages against a limit of %d." % (pages, limits["page_count"])))
+            findings.append(Finding("length", level, "the compiled PDF is %d pages against a limit of %d." % (pages, limits["page_count"])))
     return findings
 
 
@@ -1949,7 +1955,6 @@ _SPELLINGS = {
     "summarise": "summarize",
     "behavioural": "behavioral",
     "randomised": "randomized",
-    "authors'": "authors",
 }
 
 
@@ -1977,7 +1982,7 @@ def check_structure(manuscript, guidelines):
     """2. Section presence, a warning rather than a failure where the venue is flexible."""
     required = guidelines["required_structure"]
     if not required:
-        return [_finding("structure", "skipped", "%s names no required sections." % guidelines["display_name"])]
+        return [Finding("structure", "skipped", "%s names no required sections." % guidelines["display_name"])]
     headings = manuscript.section_names()
     title = manuscript.title()
     missing = [
@@ -1986,9 +1991,9 @@ def check_structure(manuscript, guidelines):
         and not (title and _normalize(name) in ("title", "titlepage"))
     ]
     if not missing:
-        return [_finding("structure", "ok", "every one of the %d section(s) %s asks for is present." % (len(required), guidelines["display_name"]))]
+        return [Finding("structure", "ok", "every one of the %d section(s) %s asks for is present." % (len(required), guidelines["display_name"]))]
     level = "warn" if guidelines["structure_flexible"] else "fail"
-    return [_finding("structure", level, "%s: %s%s" % (
+    return [Finding("structure", level, "%s: %s%s" % (
         "missing section" if len(missing) == 1 else "missing sections",
         ", ".join(missing),
         "; %s is structure-flexible, so this is a warning" % guidelines["display_name"] if level == "warn" else "",
@@ -2004,44 +2009,44 @@ def check_figures(manuscript, guidelines):
     if spec["max_count"] is not None:
         items = len(figures) + manuscript.tables()
         level = "fail" if items > spec["max_count"] else "ok"
-        findings.append(_finding("figures", level, "%d display item(s) against a limit of %d." % (items, spec["max_count"])))
+        findings.append(Finding("figures", level, "%d display item(s) against a limit of %d." % (items, spec["max_count"])))
     else:
-        findings.append(_finding("figures", "ok", "%d figure(s); %s caps none." % (len(figures), guidelines["display_name"])))
+        findings.append(Finding("figures", "ok", "%d figure(s); %s caps none." % (len(figures), guidelines["display_name"])))
 
     accepted = {name.upper().lstrip(".") for name in spec["formats"]}
     for figure in figures:
         path = figure["file"]
         if path is None or not Path(path).exists():
-            findings.append(_finding("figures", "warn", "a figure points at %s, which is not on disk."
+            findings.append(Finding("figures", "warn", "a figure points at %s, which is not on disk."
                                      % (figure["file"].name if figure["file"] else "no file")))
             continue
         facts = image_facts(path)
         name = Path(path).name
         if accepted and facts["format"] not in accepted:
-            findings.append(_finding("figures", "fail", "%s is %s; %s accepts %s."
+            findings.append(Finding("figures", "fail", "%s is %s; %s accepts %s."
                                      % (name, facts["format"], guidelines["display_name"], ", ".join(sorted(accepted)))))
         if spec["min_dpi"] is not None and not facts["vector"]:
             if facts["dpi"] is None:
-                findings.append(_finding("figures", "warn", "%s carries no resolution in its header, and %s asks for at least %d dpi."
+                findings.append(Finding("figures", "warn", "%s carries no resolution in its header, and %s asks for at least %d dpi."
                                          % (name, guidelines["display_name"], spec["min_dpi"])))
             elif facts["dpi"] < spec["min_dpi"]:
-                findings.append(_finding("figures", "fail", "%s is %d dpi, under the %d %s asks for."
+                findings.append(Finding("figures", "fail", "%s is %d dpi, under the %d %s asks for."
                                          % (name, facts["dpi"], spec["min_dpi"], guidelines["display_name"])))
         if spec["max_dpi"] is not None and facts["dpi"] is not None and facts["dpi"] > spec["max_dpi"]:
-            findings.append(_finding("figures", "warn", "%s is %d dpi, over the %d %s asks for."
+            findings.append(Finding("figures", "warn", "%s is %d dpi, over the %d %s asks for."
                                      % (name, facts["dpi"], spec["max_dpi"], guidelines["display_name"])))
         if spec["color_mode"] and facts["color_mode"] and facts["color_mode"] not in spec["color_mode"]:
-            findings.append(_finding("figures", "fail", "%s is %s; %s takes %s."
+            findings.append(Finding("figures", "fail", "%s is %s; %s takes %s."
                                      % (name, facts["color_mode"], guidelines["display_name"], ", ".join(spec["color_mode"]))))
         if spec["max_file_size_mb"] is not None and facts["size_mb"] is not None and facts["size_mb"] > spec["max_file_size_mb"]:
-            findings.append(_finding("figures", "fail", "%s is %.1f MB, over the %s MB limit."
+            findings.append(Finding("figures", "fail", "%s is %.1f MB, over the %s MB limit."
                                      % (name, facts["size_mb"], spec["max_file_size_mb"])))
 
     if spec["legend_max_words"] is not None:
         for index, figure in enumerate(figures, start=1):
             count = _words(figure["legend"])
             if count > spec["legend_max_words"]:
-                findings.append(_finding("figures", "fail", "the legend of figure %d is %d words, over %d."
+                findings.append(Finding("figures", "fail", "the legend of figure %d is %d words, over %d."
                                          % (index, count, spec["legend_max_words"])))
     return findings
 
@@ -2053,29 +2058,44 @@ def check_references(manuscript, guidelines):
     findings = []
     if style["citation"] in ("numbered", "author-date"):
         if form == "unknown":
-            findings.append(_finding("references", "warn", "no in-text citation was recognised; %s wants %s."
+            findings.append(Finding("references", "warn", "no in-text citation was recognised; %s wants %s."
                                      % (guidelines["display_name"], style["citation"])))
         elif form != style["citation"]:
-            findings.append(_finding("references", "fail", "the draft cites %s; %s wants %s."
+            findings.append(Finding("references", "fail", "the draft cites %s; %s wants %s."
                                      % (form, guidelines["display_name"], style["citation"])))
         else:
-            findings.append(_finding("references", "ok", "%s citations, as %s wants." % (form, guidelines["display_name"])))
+            findings.append(Finding("references", "ok", "%s citations, as %s wants." % (form, guidelines["display_name"])))
     else:
-        findings.append(_finding("references", "skipped", "%s sets no citation form (%s)."
+        findings.append(Finding("references", "skipped", "%s sets no citation form (%s)."
                                  % (guidelines["display_name"], style["style"])))
     if style["max_count"] is not None:
         level = "fail" if count > style["max_count"] else "ok"
-        findings.append(_finding("references", level, "%d reference(s) against a limit of %d." % (count, style["max_count"])))
+        findings.append(Finding("references", level, "%d reference(s) against a limit of %d." % (count, style["max_count"])))
     elif count:
-        findings.append(_finding("references", "ok", "%d reference(s); %s caps none." % (count, guidelines["display_name"])))
+        findings.append(Finding("references", "ok", "%d reference(s); %s caps none." % (count, guidelines["display_name"])))
     return findings
+
+
+def _checklist_keys(name):
+    """What a file has to be called to count as this checklist: its whole name, or its acronym.
+
+    A form named by an acronym (ARRIVE, PRISMA, MDAR, STROBE-MR) is filed under the acronym, so
+    that is a key. Everything else has to carry the whole name, because matching a form's first
+    word alone would let `reporting-notes.md` pass for a Reporting Summary, and a checklist the
+    package does not have is the one thing this check must not say it has.
+    """
+    keys = [_normalize(name)]
+    head = _normalize(name.split()[0]) if name.split() else ""
+    if name.split() and name.split()[0].isupper() and len(head) >= 4 and head not in keys:
+        keys.append(head)
+    return keys
 
 
 def check_reporting_checklists(manuscript, guidelines):
     """5. Reporting-checklist presence, by the study type the draft's own words claim."""
     forms = guidelines["reporting_checklists"]
     if not forms:
-        return [_finding("reporting_checklists", "skipped", "%s names no reporting checklist." % guidelines["display_name"])]
+        return [Finding("reporting_checklists", "skipped", "%s names no reporting checklist." % guidelines["display_name"])]
     kinds = set(manuscript.study_types())
     names = [_normalize(name) for name in manuscript.file_names()]
     findings = []
@@ -2083,16 +2103,16 @@ def check_reporting_checklists(manuscript, guidelines):
         wanted = not form["study_types"] or bool(kinds.intersection(form["study_types"]))
         if not wanted:
             continue
-        present = any(_normalize(form["name"]) in name or _normalize(form["name"].split()[0]) in name for name in names)
+        present = any(key in name for key in _checklist_keys(form["name"]) for name in names)
         because = "every submission" if not form["study_types"] else "the draft reads as %s" % ", ".join(
             sorted(kinds.intersection(form["study_types"])))
         if present:
-            findings.append(_finding("reporting_checklists", "ok", "%s is in the package (%s)." % (form["name"], because)))
+            findings.append(Finding("reporting_checklists", "ok", "%s is in the package (%s)." % (form["name"], because)))
         else:
-            findings.append(_finding("reporting_checklists", "fail" if form["required"] else "warn",
+            findings.append(Finding("reporting_checklists", "fail" if form["required"] else "warn",
                                      "%s is %s and no file in the package looks like it (%s)."
                                      % (form["name"], "required" if form["required"] else "recommended", because)))
-    return findings or [_finding("reporting_checklists", "ok", "no checklist applies to this study type.")]
+    return findings or [Finding("reporting_checklists", "ok", "no checklist applies to this study type.")]
 
 
 def check_template(manuscript, guidelines):
@@ -2100,15 +2120,15 @@ def check_template(manuscript, guidelines):
     template = guidelines["template"]
     wanted = template["document_class"]
     if not wanted:
-        return [_finding("template", "skipped", "%s names no document class%s."
+        return [Finding("template", "skipped", "%s names no document class%s."
                          % (guidelines["display_name"], " and links no no-login template" if not template["url"] else ""))]
     if manuscript.kind != "latex":
-        return [_finding("template", "skipped", "the draft is not LaTeX; %s's class (%s) cannot be checked."
+        return [Finding("template", "skipped", "the draft is not LaTeX; %s's class (%s) cannot be checked."
                          % (guidelines["display_name"], wanted))]
     loaded = manuscript.document_classes()
     if wanted in loaded:
-        return [_finding("template", "ok", "the draft loads %s." % wanted)]
-    return [_finding("template", "fail", "the draft loads %s; %s's template is %s."
+        return [Finding("template", "ok", "the draft loads %s." % wanted)]
+    return [Finding("template", "fail", "the draft loads %s; %s's template is %s."
                      % (", ".join(loaded) or "no class or style", guidelines["display_name"], wanted))]
 
 
@@ -2138,10 +2158,10 @@ def check_provenance(manuscript, guidelines, project=None):
             elif project is not None and kind == "ref" and parts["slug"] not in known_refs:
                 unresolved.append(tag)
     if malformed:
-        findings.append(_finding("provenance", "fail", "malformed provenance tag(s): %s." % ", ".join(sorted(set(malformed)))))
+        findings.append(Finding("provenance", "fail", "malformed provenance tag(s): %s." % ", ".join(sorted(set(malformed)))))
     if unresolved:
-        findings.append(_finding("provenance", "fail", "provenance tag(s) that resolve to nothing: %s." % ", ".join(sorted(set(unresolved)))))
-    findings.append(_finding("provenance", "ok", "%d of %d sentence(s) carry a provenance tag; the linter's classifier decides which of the other %d are claims."
+        findings.append(Finding("provenance", "fail", "provenance tag(s) that resolve to nothing: %s." % ", ".join(sorted(set(unresolved)))))
+    findings.append(Finding("provenance", "ok", "%d of %d sentence(s) carry a provenance tag; the linter's classifier decides which of the other %d are claims."
                              % (len(tagged), len(pass_), len(pass_) - len(tagged))))
     return findings
 

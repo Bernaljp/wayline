@@ -409,6 +409,21 @@ class ChecksTest(unittest.TestCase):
         findings = self.by_check(venue.run_checks(draft, self.guidelines["nature-communications"]), "figures")
         self.assertTrue(any(finding.level == "fail" and "legend" in finding.message for finding in findings))
 
+    def test_a_checklist_is_matched_by_its_acronym_or_its_whole_name_and_nothing_looser(self):
+        self.assertEqual(venue._checklist_keys("ARRIVE"), ["arrive"])
+        self.assertEqual(venue._checklist_keys("STROBE-MR"), ["strobemr"])
+        self.assertEqual(venue._checklist_keys("Reporting Summary"), ["reportingsummary"])
+        self.assertEqual(venue._checklist_keys("NeurIPS Paper Checklist"), ["neuripspaperchecklist"])
+
+    def test_a_file_that_merely_shares_a_word_is_not_the_checklist(self):
+        draft = Path(tempfile.mkdtemp(prefix="wayline-checklist-"))
+        self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
+        (draft / "paper.md").write_text(
+            "# Draft\n\n## Methods\n\nSequencing libraries were prepared from mouse tissue.\n", encoding="utf-8")
+        (draft / "reporting-notes.md").write_text("not a Reporting Summary\n", encoding="utf-8")
+        findings = self.by_check(venue.run_checks(draft, self.guidelines["nature"]), "reporting_checklists")
+        self.assertEqual(venue.worst(findings), "fail")
+
     def test_a_malformed_provenance_tag_fails_the_cross_check(self):
         draft = Path(tempfile.mkdtemp(prefix="wayline-tags-"))
         self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
