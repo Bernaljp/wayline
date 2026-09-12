@@ -1,0 +1,19 @@
+{
+  "role": "coder",
+  "summary": "Implements one code ticket in its worktree and returns the structured result.",
+  "kinds": ["code", "docs", "harness"],
+  "may_judge": false,
+  "output_schema": "result",
+  "allowed_tools": [
+    "Read", "Edit", "Write", "Glob", "Grep", "Agent",
+    "Bash(python *)", "Bash(python3 *)", "Bash(pytest*)", "Bash(ruff *)",
+    "Bash(git add *)", "Bash(git commit *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)",
+    "Bash(ls *)", "Bash(cat *)",
+    "Bash(wayline accept*)", "Bash(wayline consult *)"
+  ],
+  "disallowed_tools": [
+    "WebFetch", "WebSearch", "NotebookEdit",
+    "mcp__*", "Workflow", "Skill", "EnterWorktree",
+    "CronCreate", "CronDelete", "CronList"
+  ]
+}
