@@ -622,8 +622,13 @@ def _skill_section(skills, roots):
             rendered.append("[wayline: this skill's SKILL.md was not found, so its body is missing. "
                             "Say so in your result rather than guessing what it asked for.]")
             continue
-        body = _skill_body(path)
-        pack.chars += len(body)
+        try:
+            body = _skill_body(path)
+        except (OSError, ValueError) as exc:
+            pack.problems.append("skill %s: %s cannot be read: %s" % (skill, path, exc))
+            rendered.append("[wayline: this skill's SKILL.md could not be read, so its body is "
+                            "missing. Say so in your result rather than guessing what it asked for.]")
+            continue
         fence = _fence(body)
         rendered.extend([fence, body.rstrip("\n"), fence])
     pack.text = "\n".join(rendered)

@@ -431,6 +431,16 @@ class InlinedSkillTest(unittest.TestCase):
         self.assertIn("was not found", prompt.text)
         self.assertEqual(prompt.problems, ["skill missing has no SKILL.md under any of the prompt's roots"])
 
+    def test_a_skill_that_cannot_be_read_is_announced_rather_than_crashing_the_wave(self):
+        """A locator the pack cannot read is announced; a skill body is no different."""
+        self.write_skill("alpha", "body\n")
+        self.write_skill("beta", "the beta instruction\n")
+        (self.root / ".claude" / "skills" / "wayline-beta" / "SKILL.md").write_bytes(b"\xff\xfe not utf-8")
+        prompt = self.assemble(["alpha", "beta"])
+        self.assertIn("could not be read", prompt.text)
+        self.assertEqual(len(prompt.problems), 1, prompt.problems)
+        self.assertIn("skill beta", prompt.problems[0])
+
     def test_one_skill_or_none_gets_no_section(self):
         self.write_skill("alpha", "body\n")
         for skills in ([], ["alpha"]):
