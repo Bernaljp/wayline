@@ -40,7 +40,7 @@ from typing import Optional
 from wayline import HARNESS_ROOT
 from wayline import worker
 from wayline.jsonschema import ValidationError, check, load_schema
-from wayline.ledger import TICKET_CREATED, VERDICT, ledger_for, now_ts
+from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
 from wayline.project import policy_for
 from wayline.tickets import next_id, read_ticket, tickets_dir, write_ticket
 
@@ -59,10 +59,13 @@ __all__ = [
     "VERIFIER",
     "VERDICT_TYPES",
     "SEVERITIES",
+    "SUBJECT_KINDS",
     "findings_text",
     "kill_argument",
+    "take_verdict",
     "ticket_asks",
     "verdict",
+    "verdict_for",
     "verdict_dir",
     "verdict_env",
     "verdict_prompt",
@@ -383,6 +386,10 @@ VERDICTS = "verdicts"          # <project>/research/sessions/verdicts/<subject>/
 # The severities a finding carries, worst first; `blocker` fails a subject on its own.
 SEVERITIES = ("blocker", "major", "minor")
 
+# What a verdict can be about, read off the journal's own enum so the gate cannot ask for a
+# verdict it would then be unable to journal, after the session had been spent.
+SUBJECT_KINDS = PAYLOAD_ENUMS[(VERDICT, K_SUBJECT_KIND)]
+
 # `verdict_type`: which of the spec's Type-B questions a verdict answered. The spec's "what gets
 # a verdict" list is longer than this; each remaining entry arrives with the ticket that builds
 # the gate asking it (the spec, the dossier depth spot-check, sampled claims, figures, the docs).
@@ -444,17 +451,6 @@ class Verdict:
     session_id: Optional[str] = None
     model: Optional[str] = None
     ticket: Optional[int] = None
-
-    @property
-    def record(self):
-        """The verdict as its schema spells it, which is what a caller stores or re-validates."""
-        return {
-            "pass": self.passed,
-            "findings": [dict(finding) for finding in self.findings],
-            "question_limit": self.question_limit,
-            "session_id": self.session_id,
-            "model": self.model,
-        }
 
     @property
     def payload(self):
@@ -532,7 +528,7 @@ def verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cw
         "",
         "- subject: the %s `%s`" % (subject_kind, subject),
         "- the question: %s" % question.strip().replace("\n", "\n  "),
-        "- your scope: %s" % scope_limit.strip().replace("\n", "\n  "),
+        "- your scope limit: %s" % scope_limit.strip().replace("\n", "\n  "),
         "",
         "You did not write this and you are not being asked to fix it. Answer the question above "
         "from the paths below, and answer nothing wider.",
@@ -552,7 +548,7 @@ def verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cw
     if not paths:
         lines.append("- [wayline: no path was given with this question. Say so as a finding rather than answering it.]")
     parts = ["\n".join(lines)]
-    if memo:
+    if memo is not None:
         parts.append("\n".join([
             "# The rejection memo to adjudicate",
             "",
@@ -560,26 +556,12 @@ def verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cw
             "point the artifacts answer does not stand, a point they do not answer stands and is "
             "your finding, at the locator you read it at.",
             "",
-        ] + _memo_lines(memo)))
+            findings_text(memo, empty="[wayline: the memo session found no case to make against "
+                                      "these paths, so there is nothing here to adjudicate.]"),
+        ]))
     parts.append(role.protocol)
-    name = role.output_schema or VERDICT_SCHEMA
-    parts.append("\n".join([
-        "# The verdict",
-        "",
-        "Return it through the structured output, once, before you stop. The launch passes the "
-        "`%s` schema to this session, and the harness validates what comes back against it again:" % name,
-        "",
-    ] + worker.schema_bullets(load_schema(name))))
+    parts.append(worker.schema_section("# The verdict", role.output_schema or VERDICT_SCHEMA))
     return "\n\n".join(part.strip("\n") for part in parts if part and part.strip()) + "\n"
-
-
-def _memo_lines(memo):
-    """One numbered point per memo finding, with its locator and the severity it was given."""
-    lines = ["%d. [%s] %s (read at `%s`)" % (number, finding.get("severity", "?"),
-                                             (finding.get("text") or "").strip(),
-                                             finding.get("locator", "?"))
-             for number, finding in enumerate(memo, start=1)]
-    return lines or ["1. [wayline: the memo session named no point. Say so as a finding.]"]
 
 
 def _exists_under(root, entry):
@@ -591,10 +573,15 @@ def _exists_under(root, entry):
     return (candidate if candidate.is_absolute() else root / candidate).exists()
 
 
-def findings_text(findings):
-    """A failing verdict's findings as the failure output the next attempt is handed, worst first."""
+def findings_text(findings, empty="no finding was named"):
+    """Findings as one block of text, worst first: the failure output, and the memo's own points.
+
+    One renderer for both, because they are the same three fields and a reader who has learned
+    to read one should not have to learn the other. `empty` is what stands in for no finding at
+    all, which means something different to each caller.
+    """
     if not findings:
-        return "the verdict failed and named no finding, which is a finding about the verdict"
+        return empty
     order = {name: index for index, name in enumerate(SEVERITIES)}
     ranked = sorted(findings, key=lambda finding: order.get(finding.get("severity"), len(SEVERITIES)))
     return "\n".join("- [%s] %s (%s)" % (finding.get("severity", "?"), (finding.get("text") or "").strip(),
@@ -604,19 +591,58 @@ def findings_text(findings):
 def verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
             verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None, ledger=None,
             cwd=None, memo=None, run_dir=None):
-    """One Type-B verdict: launch a fresh verifier, validate what it returns, journal it, return it.
+    """One Type-B verdict, journaled: every verdict in the harness comes through here.
+
+    A verdict is journaled because its session id and its model are the whole of what makes it
+    worth anything later: a record that says the work passed, without saying who read it and on
+    what, is the author's word again.
+    """
+    taken = take_verdict(subject_kind, subject, question, paths, scope_limit, project=project,
+                         author_model=author_model, verdict_type=verdict_type, ticket=ticket,
+                         harness_root=harness_root, policy=policy, cwd=cwd, memo=memo,
+                         run_dir=run_dir)
+    ledger_for(ledger or Path(project).resolve()).append_event(
+        VERDICT, taken.payload, ticket=taken.ticket, session_id=taken.session_id)
+    return taken
+
+
+def verdict_for(ask, **context):
+    """The verdict one `Ask` asks for: `verdict`, with the ask's own five values and its author.
+
+    The conductor's queue holds asks rather than argument lists, so this is where an ask is
+    turned back into the call of the gate; `context` is the project, the policy, the ledger, and
+    the harness root, which belong to the caller rather than to the ask.
+    """
+    return verdict(ask.subject_kind, ask.subject, ask.question, ask.paths, ask.scope_limit,
+                   author_model=ask.author_model, verdict_type=ask.verdict_type,
+                   ticket=ask.ticket, **context)
+
+
+def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
+                 verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None,
+                 cwd=None, memo=None, run_dir=None):
+    """One verifier session, validated but not journaled; `verdict` is this plus the journal.
 
     The verifier runs on the model and effort `policy.verifier` gives for `author_model`, never on
     the author's own model. The session is given the paths and the one question; a session that
     returns something the `verdict` schema refuses is resumed once with the reason, and a second
     unusable answer raises rather than counting as a fail. A verdict nobody could take is not a
     verdict against the subject.
+
+    The one caller that stops here rather than going through `verdict` is the kill argument's
+    first thread: a rejection memo is one thread's case against the work, not a judgment of it,
+    and journaling it as a `verdict` would leave a failing Type-B verdict in the ledger against
+    a paper the second thread went on to clear.
     """
     if verdict_type not in VERDICT_TYPES:
         raise GateError("verdict_type is one of %s, got %r" % (", ".join(VERDICT_TYPES), verdict_type))
+    if subject_kind not in SUBJECT_KINDS:
+        raise GateError("subject_kind is one of %s, got %r" % (", ".join(SUBJECT_KINDS), subject_kind))
+    if not str(subject or "").strip() or not str(question or "").strip() or not str(scope_limit or "").strip():
+        raise GateError("a verdict needs a subject, a question, and a scope limit; got %r, %r, %r"
+                        % (subject, question, scope_limit))
     project = Path(project).resolve()
     policy = policy_for(project, harness_root) if policy is None else policy
-    ledger = ledger_for(ledger or project)
     model, effort = verifier_tier(policy, author_model)
     role = worker.read_role(VERIFIER, harness_root, project)
     if role.may_judge is not True:
@@ -646,14 +672,12 @@ def verdict(subject_kind, subject, question, paths, scope_limit, *, project, aut
         raise GateError("the %s verdict on the %s %s could not be taken: %s"
                         % (verdict_type, subject_kind, subject, problem))
     returned = envelope.structured_output
-    taken = Verdict(
+    return Verdict(
         subject_kind=subject_kind, subject=str(subject), verdict_type=verdict_type,
         passed=bool(returned["pass"]), question_limit=returned["question_limit"],
         findings=list(returned.get("findings") or []),
         session_id=envelope.session_id, model=envelope.model, ticket=ticket,
     )
-    ledger.append_event(VERDICT, taken.payload, ticket=ticket, session_id=taken.session_id)
-    return taken
 
 
 def _budget(policy, key):
@@ -748,9 +772,10 @@ MEMO_QUESTION = "What is the single strongest case for rejecting this work?"
 MEMO_SCOPE = (
     "Write the rejection a hostile reviewer would write, from the paths below and nothing else. "
     "Every objection is a finding at the path and the locator you read it at, at the severity you "
-    "would defend; `pass` is false, because this thread is the case against the work. Do not "
-    "soften it, and do not invent an objection the paths do not support: an objection that turns "
-    "out to be answered costs the memo its credibility, not the work its claim."
+    "would defend. `pass` is false when you have a case to make, and true only when the paths "
+    "leave you nothing to argue against. Do not soften the case, and do not invent an objection "
+    "the paths do not support: an objection that turns out to be answered costs the memo its "
+    "credibility, not the work its claim."
 )
 ADJUDICATION_QUESTION = "Does the rejection memo hold, point by point, against the artifacts?"
 ADJUDICATION_SCOPE = (
@@ -765,33 +790,39 @@ WRITING_DIFFICULTY = 3
 
 
 def kill_argument(paths, *, project, author_model, subject_kind="paper", subject=None,
-                  harness_root=HARNESS_ROOT, policy=None, ledger=None, cwd=None, file_ticket=True):
+                  harness_root=HARNESS_ROOT, policy=None, ledger=None, cwd=None):
     """The two-thread gate: one session writes the memo, a second adjudicates it, one verdict comes back.
 
     Both threads are the verifier role on separate sessions, on the model `policy.verifier` gives
-    for the author's, so neither is the author and neither is the other. Both are journaled, since
-    a verdict's session id is the only way back to what was actually read, and the adjudication is
-    the verdict the gate returns. Its fail scopes the claims down rather than blocking forever: a
-    `writing` ticket is filed with the points that still stand, and the writer takes it from there.
+    for the author's, so neither is the author and neither is the other. The adjudication is the
+    one verdict: the memo is the case against the work rather than a judgment of it, and it is
+    not journaled as a verdict, though its session is on disk in `memo/` beside the
+    adjudication's. A fail scopes the claims down rather than blocking forever: a `writing`
+    ticket is filed with the points that still stand, and the writer takes it from there.
+
+    A memo that finds nothing is an answer, not a failure. Its `pass` is then true, the
+    adjudicating thread is told the memo had no case, and the gate passes, because the strongest
+    rejection anyone could write against these paths was empty.
     """
     paths = [str(item) for item in (paths or [])]
     if not paths:
         raise GateError("a kill argument is run against paths; none were given")
+    project = Path(project).resolve()
     subject = str(subject or paths[0])
     run_dir = verdict_dir(project, subject_kind, subject)
     common = dict(project=project, author_model=author_model, harness_root=harness_root,
-                  policy=policy, ledger=ledger, cwd=cwd)
-    memo = verdict(subject_kind, subject, MEMO_QUESTION, paths, MEMO_SCOPE,
-                   verdict_type=KILL_MEMO, run_dir=run_dir / "memo", **common)
+                  policy=policy, cwd=cwd)
+    memo = take_verdict(subject_kind, subject, MEMO_QUESTION, paths, MEMO_SCOPE,
+                        verdict_type=KILL_MEMO, run_dir=run_dir / "memo", **common)
     adjudication = verdict(subject_kind, subject, ADJUDICATION_QUESTION, paths, ADJUDICATION_SCOPE,
                            verdict_type=KILL_ARGUMENT, run_dir=run_dir / "adjudication",
-                           memo=memo.findings, **common)
-    if not adjudication.passed and file_ticket:
-        _file_writing_ticket(project, ledger, adjudication, paths)
+                           memo=memo.findings, ledger=ledger, **common)
+    if not adjudication.passed:
+        _file_writing_ticket(project, ledger, adjudication, paths, memo)
     return adjudication
 
 
-def _file_writing_ticket(project, ledger, adjudication, paths):
+def _file_writing_ticket(project, ledger, adjudication, paths, memo):
     """File the `writing` ticket a failed kill argument scopes the claims down with; returns its id.
 
     The touch set is the subject itself, because scoping a claim down is an edit to the document
@@ -830,14 +861,15 @@ def _file_writing_ticket(project, ledger, adjudication, paths):
         "",
         "## What the kill argument left standing",
         "",
-        "The adjudicating verifier session `%s` (%s) read the paths below, and these points still "
-        "stand. Scope the claims to what the artifacts support, or add the evidence the point asks "
-        "for; do not answer a point by asserting it away."
-        % (adjudication.session_id, adjudication.model),
+        "The rejection memo was written by verifier session `%s` (%s) and adjudicated by verifier "
+        "session `%s` (%s), which read the paths below and found that these points still stand. "
+        "Scope the claims to what the artifacts support, or add the evidence the point asks for; "
+        "do not answer a point by asserting it away."
+        % (memo.session_id, memo.model, adjudication.session_id, adjudication.model),
         "",
         findings_text(adjudication.findings),
         "",
-        "## The paths it read",
+        "## The paths both threads read",
         "",
     ] + ["- `%s`" % item for item in paths]) + "\n"
     write_ticket(ledger, fields, body)

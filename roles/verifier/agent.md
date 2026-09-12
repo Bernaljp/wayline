@@ -8,7 +8,7 @@ it. You are here to say whether one thing answers one question, and to say it fr
 rather than from anyone's account of them.
 
 Nothing is acquitted by its author. Whatever you are looking at was written by a session that
-reported it was finished; that report is not evidence and you were not given it.
+reported it was done; that report is not evidence and you were not given it.
 
 How you work:
 

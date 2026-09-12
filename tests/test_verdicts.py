@@ -11,6 +11,7 @@ import io
 import json
 import shutil
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from tests.paths import HARNESS_ROOT
@@ -214,12 +215,18 @@ class VerdictPromptTest(unittest.TestCase):
     def test_a_question_with_no_path_says_so_rather_than_asking_it_anyway(self):
         self.assertIn("no path was given", self.prompt(paths=[]))
 
-    def test_the_memo_reaches_the_adjudicating_thread_as_numbered_points(self):
+    def test_the_memo_reaches_the_adjudicating_thread_with_its_locators(self):
         text = self.prompt(memo=[{"text": "The baseline is not the one the field uses.",
                                   "locator": "research/REPORT.md#L40", "severity": "major"}])
-        self.assertIn("1. [major] The baseline is not the one the field uses.", text)
+        self.assertIn("[major] The baseline is not the one the field uses.", text)
         self.assertIn("research/REPORT.md#L40", text)
         self.assertIn("point by point", text)
+
+    def test_a_memo_with_no_case_is_said_to_have_none_rather_than_left_out(self):
+        """An empty memo is an answer; an adjudicator told nothing would invent something."""
+        text = self.prompt(memo=[])
+        self.assertIn("found no case to make", text)
+        self.assertNotIn("rejection memo to adjudicate", self.prompt(memo=None))
 
 
 class GateCase(ProjectTestCase):
@@ -239,15 +246,18 @@ class GateCase(ProjectTestCase):
         did not spend is half of what the refusal is worth.
         """
         self.calls = []
+        asked = dict(subject_kind="ticket", subject=TICKET_FILE, question="Is it right?",
+                     paths=[TICKET_FILE], scope_limit="Only that.")
+        options = dict(project=self.project, author_model="sonnet",
+                       verdict_type=gates.QUALITY, ticket=1)
+        for key, value in kwargs.items():
+            (asked if key in asked else options)[key] = value
         with worker.use_fake() as fake:
             for envelope in scripted:
                 fake.script(envelope)
-            options = dict(project=self.project, author_model="sonnet",
-                           verdict_type=gates.QUALITY, ticket=1)
-            options.update(kwargs)
             try:
-                return gates.verdict("ticket", TICKET_FILE, "Is it right?", [TICKET_FILE],
-                                     "Only that.", **options)
+                return gates.verdict(asked["subject_kind"], asked["subject"], asked["question"],
+                                     asked["paths"], asked["scope_limit"], **options)
             finally:
                 self.calls = list(fake.calls)
 
@@ -366,6 +376,25 @@ class VerdictGateTest(GateCase):
         self.assertIn("vibes", str(caught.exception))
         self.assertEqual(self.calls, [])
 
+    def test_a_subject_kind_the_journal_could_not_carry_is_refused_before_a_session_is_spent(self):
+        """The gate must not spend a session on a verdict it would then be unable to journal."""
+        with self.assertRaises(GateError) as caught:
+            self.take(passing(), subject_kind="notebook")
+        self.assertIn("notebook", str(caught.exception))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(gates.SUBJECT_KINDS,
+                         ("ticket", "claim", "figure", "spec", "dossier", "paper"))
+
+    def test_a_verdict_with_no_question_is_refused_before_a_session_is_spent(self):
+        for empty in ({"question": "  "}, {"scope_limit": ""}, {"subject": ""}):
+            with self.subTest(**empty):
+                options = {"question": "Is it right?", "scope_limit": "Only that.",
+                           "subject": TICKET_FILE}
+                options.update(empty)
+                with self.assertRaises(GateError):
+                    self.take(passing(), **options)
+                self.assertEqual(self.calls, [])
+
 
 class KillArgumentTest(GateCase):
     """`gates.kill_argument`: two threads, one verdict, and the `writing` ticket a fail files."""
@@ -390,12 +419,33 @@ class KillArgumentTest(GateCase):
         self.assertEqual(taken.verdict_type, gates.KILL_ARGUMENT)
         self.assertTrue(taken.passed)
 
-    def test_both_threads_are_journaled_and_neither_is_the_other(self):
-        self.run_gate(self.memo(), passing())
+    def test_only_the_adjudication_is_journaled_as_a_verdict(self):
+        """The memo is the case against the work, not a judgment of it.
+
+        Journaling it would leave a failing Type-B verdict in the ledger against a paper the
+        second thread went on to clear, and the report renders the ledger.
+        """
+        taken = self.run_gate(self.memo(), passing())
         payloads = [event["payload"] for event in self.events("verdict")]
-        self.assertEqual([item["verdict_type"] for item in payloads],
-                         [gates.KILL_MEMO, gates.KILL_ARGUMENT])
-        self.assertNotEqual(payloads[0]["session_id"], payloads[1]["session_id"])
+        self.assertEqual([item["verdict_type"] for item in payloads], [gates.KILL_ARGUMENT])
+        self.assertTrue(payloads[0]["pass"])
+        self.assertEqual(payloads[0]["session_id"], taken.session_id)
+
+    def test_the_memos_session_is_on_disk_beside_the_adjudications(self):
+        self.run_gate(self.memo(), passing())
+        memo, adjudication = (call.run_dir for call in self.calls)
+        self.assertTrue((memo / "stream.jsonl").is_file())
+        self.assertTrue((adjudication / "stream.jsonl").is_file())
+        self.assertNotEqual(memo, adjudication)
+
+    def test_a_memo_that_finds_no_case_passes_the_gate_rather_than_raising(self):
+        """`pass` means one thing in both threads, so an empty memo is an answer, not a failure."""
+        taken = self.run_gate(passing(question_limit="I can make no case against these paths."),
+                              passing())
+        self.assertTrue(taken.passed)
+        self.assertEqual(len(self.calls), 2)
+        self.assertIn("found no case to make", self.calls[1].request.prompt)
+        self.assertEqual([item["id"] for item in tickets.read_tickets(self.project)], [1])
 
     def test_the_verifier_is_never_the_author_in_either_thread(self):
         self.run_gate(self.memo(), passing(), author_model="fable")
@@ -444,6 +494,9 @@ class KillArgumentTest(GateCase):
         self.assertIn("research/REPORT.md#L12", body)
         self.assertIn("[blocker]", body)
         self.assertIn(self.payload("verdict")["session_id"], body)
+        memo_session = [call for call in self.calls][0]
+        self.assertIn("rejection memo was written by verifier session", body)
+        self.assertTrue(memo_session.run_dir.name == "memo")
 
     def test_a_gate_with_no_paths_is_refused_before_a_session_is_spent(self):
         with worker.use_fake() as fake:
@@ -516,6 +569,23 @@ class ConductorVerdictTest(ConductorCase):
         self.assertIn("hello.txt#L2", payload["reason"])
         self.assertEqual(result.rejected, [1])
 
+    def test_the_findings_reach_the_ticket_file_the_next_attempt_is_assembled_from(self):
+        self.quality()
+        self.conduct_with([failing()])
+        body = self.body()
+        self.assertIn("**Verdict (quality): failed**", body)
+        self.assertIn("hello.txt holds two lines", body)
+        self.assertIn("hello.txt#L2", body)
+        self.assertIn(self.payload("verdict")["session_id"], body)
+
+    def test_an_accepted_ticket_says_who_acquitted_it_and_on_what(self):
+        self.quality()
+        self.conduct_with([passing()])
+        body = self.body()
+        self.assertIn("**Verdict (quality): passed**", body)
+        self.assertIn("claude-opus-5", body)
+        self.assertEqual(body.count("## Result"), 1, "the verdict goes under the attempt's own section")
+
     def test_a_hard_ticket_earns_two_verdicts_and_both_have_to_pass(self):
         self.quality(difficulty=4)
         self.conduct_with([passing(), passing()])
@@ -555,6 +625,19 @@ class ConductorVerdictTest(ConductorCase):
         self.assertEqual(self.ticket()["status"], "accepted")
         self.assertEqual((first.accepted, second.accepted), ([], [1]))
         self.assertTrue(first.touched and second.touched)
+
+    def test_the_verb_exits_nonzero_and_names_the_ticket_its_verdict_failed(self):
+        """A rejected ticket is in neither the frontier nor the running set, so the verb says it."""
+        self.quality()
+        out, err = io.StringIO(), io.StringIO()
+        with worker.use_fake() as fake:
+            fake.script(done(), patch=patch(), ticket=1)
+            fake.script(failing(), role=gates.VERIFIER)
+            with redirect_stdout(out), redirect_stderr(err):
+                code = conductor.run_command(["--project", str(self.project)])
+        self.assertEqual(code, 1, out.getvalue() + err.getvalue())
+        self.assertIn("failed their quality verdict", out.getvalue())
+        self.assertEqual(self.ticket()["status"], "failed")
 
     def test_a_verdict_nobody_could_take_leaves_the_ticket_done_and_unaccepted(self):
         self.quality()

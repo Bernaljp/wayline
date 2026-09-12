@@ -744,8 +744,7 @@ class Conductor:
         outputs = attempt.result.get("outputs_written") or attempt.ticket.get("outputs") or []
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
-            "%s/%s/%s" % (RESEARCH, tickets.TICKETS, tickets.filename(attempt.ticket)),
-            commit=attempt.commit, outputs=outputs,
+            tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs,
         )
         if not asks:
             return
@@ -774,11 +773,8 @@ class Conductor:
         """One done ticket's verdicts, in order; every one of them has to pass before it is accepted."""
         for ask in entry.asks:
             try:
-                verdict = gates.verdict(
-                    ask.subject_kind, ask.subject, ask.question, ask.paths, ask.scope_limit,
-                    project=self.project, author_model=ask.author_model,
-                    verdict_type=ask.verdict_type, ticket=entry.ticket,
-                    harness_root=self.harness_root, policy=self.policy, ledger=self.ledger)
+                verdict = gates.verdict_for(ask, project=self.project, harness_root=self.harness_root,
+                                            policy=self.policy, ledger=self.ledger)
             except (ValueError, OSError) as failure:
                 # A verdict nobody could take is not a verdict against the ticket. It keeps the
                 # `done` its machine gates earned and is not accepted, which is what `wayline
@@ -790,35 +786,52 @@ class Conductor:
                      % (entry.ticket, ask.verdict_type, "passed" if verdict.passed else "failed",
                         verdict.model or "an unnamed model", verdict.session_id or "unknown"))
             if not verdict.passed:
-                self._reject(entry, ask, verdict)
+                self._reject(entry, verdict)
                 result.rejected.append(entry.ticket)
                 return
-        self._accept_ticket(entry)
+        self._accept_ticket(entry, verdict)
         result.accepted.append(entry.ticket)
 
-    def _accept_ticket(self, entry):
+    def _accept_ticket(self, entry, verdict):
         """`done` to `accepted`: the one transition a passing quality verdict makes (decision 2)."""
-        self._set_status(entry.ticket, "accepted")
+        self._set_status(entry.ticket, "accepted", self._verdict_note(verdict))
         self.ledger.append_event(TICKET_ACCEPTED, {"ticket": entry.ticket}, ticket=entry.ticket)
         self.say("  ticket %d accepted" % entry.ticket)
 
-    def _reject(self, entry, ask, verdict):
+    def _reject(self, entry, verdict):
         """A failed verdict: the ticket is failed with the findings as its failure output."""
-        reason = REJECTED % (ask.verdict_type, verdict.model or "verifier",
+        reason = REJECTED % (verdict.verdict_type, verdict.model or "verifier",
                              gates.findings_text(verdict.findings))
-        self._set_status(entry.ticket, "failed")
+        self._set_status(entry.ticket, "failed", self._verdict_note(verdict))
         self.ledger.append_event(TICKET_FAILED, {
             "ticket": entry.ticket, "attempt": entry.attempt, "reason": reason, "next": "resume",
         }, ticket=entry.ticket, session_id=verdict.session_id)
-        self.say("  ticket %d failed its %s verdict (next: resume)" % (entry.ticket, ask.verdict_type))
+        self.say("  ticket %d failed its %s verdict (next: resume)"
+                 % (entry.ticket, verdict.verdict_type))
 
-    def _set_status(self, identifier, status):
-        """Write one ticket's status through the ledger, outside any attempt at it.
+    def _verdict_note(self, verdict):
+        """What a verdict has to say in the ticket file: who read it, on what, and what they found.
+
+        The journal carries the same thing, but the ticket file is where a person looks and where
+        the next attempt's prompt comes from, so a verdict that reached only the journal would
+        have reached neither.
+        """
+        lines = ["**Verdict (%s): %s** by %s, session `%s`."
+                 % (verdict.verdict_type, "passed" if verdict.passed else "failed",
+                    verdict.model or "an unnamed model", verdict.session_id or "unknown")]
+        if verdict.findings:
+            lines.extend(["", gates.findings_text(verdict.findings)])
+        return lines
+
+    def _set_status(self, identifier, status, note=()):
+        """Write one ticket's status, and any note, through the ledger, outside any attempt at it.
 
         The Type-B gate runs after the attempt was carried and its worktree removed, so there is
-        no `_Attempt` left to write from and no new result to append: only the status changes.
+        no `_Attempt` left to write from and no new result to append.
         """
         ticket, body = self._ticket(identifier)
+        if note:
+            body = tickets.with_result_note(body, note)
         tickets.write_ticket(self.ledger, dict(ticket, status=status), body)
 
     def _next_step(self, attempt):
@@ -983,10 +996,16 @@ def run_command(args):
     failed = [identifier for wave in waves for identifier in wave.failed]
     running = [identifier for wave in waves for identifier in wave.running]
     accepted = [identifier for wave in waves for identifier in wave.accepted]
+    rejected = [identifier for wave in waves for identifier in wave.rejected]
     print("%d wave(s), %d ticket(s) done, %d accepted, %d unfinished%s"
-          % (len(waves), len(done), len(accepted), len(failed),
+          % (len(waves), len(done), len(accepted), len(failed) + len(rejected),
              "; " + waves[-1].reason if waves and waves[-1].reason else ""))
+    if rejected:
+        # A rejected ticket reached `done` and was failed afterwards by its verdict, so it is in
+        # neither the frontier nor the running set and nothing else here would mention it.
+        print("ticket(s) %s were done and failed their quality verdict; the journal carries the findings"
+              % ", ".join(str(identifier) for identifier in rejected))
     if running:
         print("ticket(s) %s left jobs running; nothing here can advance them until the job poller lands"
               % ", ".join(str(identifier) for identifier in running))
-    return 1 if failed else 0
+    return 1 if failed or rejected else 0

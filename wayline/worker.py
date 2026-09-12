@@ -52,7 +52,7 @@ __all__ = [
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "read_locator", "CONSULT_MAX",
-    "schema_bullets",
+    "schema_bullets", "schema_section",
 ]
 
 _log = logging.getLogger("wayline.worker")
@@ -753,23 +753,32 @@ def schema_bullets(schema):
     return lines
 
 
-def _result_section(ticket, role):
-    name = role.output_schema or "result"
-    schema = load_schema(name)
+def schema_section(heading, name, closing=()):
+    """The block that asks a session for a structured result: the heading, the sentence, the fields.
+
+    Every launch in the harness ends its prompt with one of these, so the sentence is written
+    once here rather than once per gate: two copies of it drift, and a session reading the stale
+    one is told something about its own launch that is not true.
+    """
     lines = [
-        "# The result",
+        heading,
         "",
-        "Return it through the structured output, once, before you stop. The launch passes the `%s` schema to this session, and the conductor validates what comes back against it again:" % name,
+        "Return it through the structured output, once, before you stop. The launch passes the "
+        "`%s` schema to this session, and the harness validates what comes back against it again:" % name,
         "",
     ]
-    lines.extend(schema_bullets(schema))
-    lines.extend([
+    lines.extend(schema_bullets(load_schema(name)))
+    lines.extend(closing)
+    return "\n".join(lines)
+
+
+def _result_section(ticket, role):
+    return schema_section("# The result", role.output_schema or "result", closing=[
         "",
         "`ticket_id` is %s. `status` is `done` only when the acceptance commands pass. Give every "
         "finding the path and the locator it came from: a finding a reader cannot follow back to a "
         "file is worth nothing." % ticket["id"],
     ])
-    return "\n".join(lines)
 
 
 def _type_phrase(definition):

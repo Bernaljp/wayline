@@ -23,13 +23,15 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger
 
 __all__ = [
-    "TicketError", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED", "DECISION",
-    "HARDEST", "RESULT_HEADING",
-    "slug", "filename", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
+    "TicketError", "RESEARCH", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED",
+    "DECISION", "HARDEST", "RESULT_HEADING",
+    "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
-    "frontier", "open_decisions", "is_open_decision", "by_status", "empty_graph", "tickets_dir", "with_result", "result_notes",
+    "frontier", "open_decisions", "is_open_decision", "by_status", "empty_graph", "tickets_dir",
+    "with_result", "with_result_note", "result_notes",
 ]
 
+RESEARCH = "research"
 TICKETS = "tickets"
 GRAPH = "graph.json"
 
@@ -106,7 +108,16 @@ def read_ticket(path):
 
 def tickets_dir(project):
     """`<project>/research/tickets`."""
-    return Path(project) / "research" / TICKETS
+    return Path(project) / RESEARCH / TICKETS
+
+
+def relative_path(ticket):
+    """`research/tickets/NN-slug.md`: where one ticket lives, relative to its project.
+
+    The layout is this module's, so its spelling is too. A caller that needs the path to put in
+    a prompt or a record should not have to rebuild it out of the pieces.
+    """
+    return "%s/%s/%s" % (RESEARCH, TICKETS, filename(ticket))
 
 
 def read_tickets(project):
@@ -176,9 +187,19 @@ def with_result(body, attempt, result):
             lines.extend(["", "%s: %s" % (label, ", ".join("`%s`" % item for item in items))])
     for note in result_notes(result):
         lines.extend(["", note[0].upper() + note[1:] + "."])
+    return with_result_note(body, lines)
+
+
+def with_result_note(body, lines):
+    """The ticket body with `lines` appended under its `## Result` section, the heading added once.
+
+    What a verdict has to say about an attempt belongs here and not only in the journal: this
+    file is the human view of the ticket, and the prompt of the attempt that follows is
+    assembled from it.
+    """
     text = body.rstrip("\n")
     if "\n" + RESULT_HEADING + "\n" not in text + "\n":
-        lines = [RESULT_HEADING, ""] + lines
+        lines = [RESULT_HEADING, ""] + list(lines)
     return text + "\n\n" + "\n".join(lines) + "\n"
 
 
