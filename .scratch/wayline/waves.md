@@ -91,8 +91,8 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 `implement` commits to the current branch of the checkout it runs in. It creates no branch, opens no pull request, and closes nothing. Two `implement` sessions in one checkout share one index and one HEAD and corrupt each other (the skill's own docs report amended commits landing on the wrong session and vanished stashes). So:
 
 1. One session, one ticket, one git worktree. A new agent created from `claude agents` gets one by default (`worktree.bgIsolation` is `auto`): `.claude/worktrees/<name>` on branch `worktree-<name>`, branched from origin's `master`. From a terminal, `claude -w ticket-NN --model <alias> --effort <effort>` does the same. Give the session `/implement` with the full path of the ticket file (or the issue URL) and ask it to confirm the title back before it starts. The manual route still works: `git worktree add -b ticket/NN .worktrees/NN master` (the `.worktrees/` directory is ignored), then start Claude Code inside it.
-2. When the agent reports done: from the harness root, `git merge --ff-only worktree-<name>` (a plain `git merge` once other tickets or close-out commits landed on `master` first, which is the normal case with several agents in flight), run `python -m unittest`, push `master` (the next worktree branches from origin's `master`, so push before creating the agents that depend on this ticket), then `claude rm <id>` to delete the ended session and its worktree (`git worktree remove .worktrees/NN` for a manual one).
-3. Close out by hand: set the ticket file's `Status:` to `done`, tick its criteria, close the GitHub issue (`gh issue close <n>`); the parent's progress bar and every dependent's blocked-by count update on their own.
+2. When the agent reports done, it has opened a pull request against `master` (`CLAUDE.md` tells every session to: criteria ticked, `Status: done`, `Closes #<issue>` in the body). Read it on GitHub, wait for the `tests` check, and merge it with a merge commit (the repository allows no other kind, so a tag made on the branch stays on `master`'s line; the remote branch is deleted by the merge). The merge closes the issue, so every dependent's blocked-by count updates on its own.
+3. Then locally: `git pull` on `master` (a new worktree branches from origin's `master`, which the merge already updated, but anything you run on `master` itself needs the pull), and `claude rm <id>` to delete the ended session and its worktree (`git worktree remove .worktrees/NN` for a manual one).
 4. Never use `git stash` across worktrees; `refs/stash` is shared.
 5. Keep two or three sessions in flight at most: the subscription window is shared by every session, and one ticket typically costs a large part of a window.
 6. Run 01 to 05 one at a time on `master` directly (no worktree needed while nothing else runs): they define the modules everything else edits.
@@ -114,7 +114,7 @@ That prints the frontier: open tickets with no open blocker, which is exactly th
 
 ## Close-out checklist per ticket
 
-- [ ] commit on `master`, suite green, pushed
-- [ ] local `Status:` set to `done`, criteria ticked in the file
-- [ ] GitHub issue closed
-- [ ] if it was a milestone demo: `docs/verification/mN.md` committed and the tag pushed (`git push --tags`)
+- [ ] pull request read, `tests` check green, merge commit made on GitHub (the merge closes the issue and deletes the remote branch)
+- [ ] the ticket file in the pull request has `Status: done` and every criterion ticked; an unticked one is named in the body, decide whether it blocks
+- [ ] `git pull` on local `master`; `claude rm <id>`
+- [ ] if it was a milestone demo: `docs/verification/mN.md` in the pull request and the tag pushed (`git push --tags`)

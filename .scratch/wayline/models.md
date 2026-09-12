@@ -32,7 +32,7 @@ claude -w ticket-03 --model fable --effort xhigh
 /implement .scratch/wayline/issues/03-worker-launcher-seam.md
 ```
 
-Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`medium`, `high`, `xhigh`, `max`) from the table. Push `master` after each merge: the next worktree branches from origin's `master`, not from your local one. Follow-up fixes to a ticket already on `master` rarely need its grade: `/clear` and relaunch one tier down.
+Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`medium`, `high`, `xhigh`, `max`) from the table. Merge on GitHub and `git pull` afterwards: the next worktree branches from origin's `master`, which the merge updates, while your local `master` lags until the pull. Follow-up fixes to a ticket already on `master` rarely need its grade: `/clear` and relaunch one tier down.
 
 ## By wave
 
@@ -117,7 +117,7 @@ Waves are the earliest start from `.scratch/wayline/waves.md`. The order column 
 - Fable at `xhigh` or `max` uses the five-hour window fastest. Run one Fable session at a time and pair it with the sonnet-grade tickets of the same wave; start a `max` ticket (05, 09, 34) at the top of a window.
 - The critical path (01, 02, 05, 27, 28, 30, 31, 33, 34, 36, 43, 50, 53) carries 8 of the 13 Fable tickets, so the Fable budget mostly goes to the chain that sets the calendar. Fill around it with opus and sonnet tickets.
 - Escalation, the harness's own rule: a ticket that fails its acceptance twice at its grade is rerun one tier up in a fresh session (sonnet medium to opus high, opus high to fable xhigh). A ticket that sailed through is not a reason to lower the next one.
-- A verdict before merging, the harness's own rule too: for difficulty 4 and 5 tickets, have a different model read the diff before `git merge --ff-only` (for example `/code-review` in a fresh opus session). The harness's verifier table pairs a fable author with an opus reader.
+- A verdict before merging, the harness's own rule too: for difficulty 4 and 5 tickets, have a different model read the diff before you merge the pull request (for example `/code-review` in a fresh opus session). The harness's verifier table pairs a fable author with an opus reader.
 - Live demo tickets (06, 15, 19, 26, 36, 43, 47, 53) need the owner nearby for the tunnel, the phone, and the GPU; the model grade covers the diagnosis, the wallclock is the demo.
 
 ## What is ready right now, with its grade
