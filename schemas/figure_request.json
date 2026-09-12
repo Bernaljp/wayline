@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "figure_request",
+  "description": "What a figure ticket asks the figure role for (Implementation Decisions 13; research-notes 11 Section 4.2). A framework figure and a graphical abstract are always in the conceptual register, and a guided revision always names the figure it revises and what to change; both rules are enforced here, not left to the role.",
+  "type": "object",
+  "required": ["schema", "ticket", "figure_id", "mode", "kind", "register", "claim", "data", "target"],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "description": "a result figure: either register",
+      "properties": {"kind": {"const": "result"}},
+      "$ref": "#/$defs/mode_rule"
+    },
+    {
+      "description": "a framework figure or a graphical abstract: the conceptual register, forced",
+      "properties": {
+        "kind": {"enum": ["framework", "graphical_abstract"]},
+        "register": {"const": "conceptual"}
+      },
+      "$ref": "#/$defs/mode_rule"
+    }
+  ],
+  "$defs": {
+    "mode_rule": {
+      "oneOf": [
+        {
+          "description": "unguided: the role proposes ranked candidates",
+          "properties": {"mode": {"const": "unguided"}}
+        },
+        {
+          "description": "guided: entered at the styling step, so it must say what it revises and what to change",
+          "required": ["revision_of", "change_requests"],
+          "properties": {
+            "mode": {"const": "guided"},
+            "revision_of": {"type": "string", "pattern": "\\S"},
+            "change_requests": {"type": "array", "minItems": 1}
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "schema": {"const": "figure_request/1"},
+    "ticket": {"type": "string", "pattern": "\\S", "description": "the figure ticket's id"},
+    "figure_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$", "description": "names the figure's directory, figures/<figure_id>/"},
+    "mode": {"type": "string", "enum": ["unguided", "guided"]},
+    "kind": {"type": "string", "enum": ["result", "framework", "graphical_abstract"]},
+    "register": {"type": "string", "enum": ["quantitative", "conceptual"]},
+    "claim": {
+      "type": "object",
+      "required": ["claim_id", "text", "claim_type"],
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {"type": "string", "pattern": "\\S"},
+        "text": {"type": "string", "pattern": "\\S", "description": "the one sentence the figure has to carry"},
+        "claim_type": {"type": "string", "pattern": "\\S", "description": "comparison, trend, mechanism, and so on; the candidate filter maps it to chart families"},
+        "evidence": {"type": "array", "items": {"type": "string", "pattern": "\\S"}}
+      }
+    },
+    "data": {
+      "type": "array",
+      "description": "the result artifacts the figure draws; for a framework figure or a graphical abstract, the panels' sources",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "pattern": "\\S", "description": "relative to the project"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "run_id": {"type": ["string", "null"]},
+          "shape": {"type": "object", "description": "the data shape as classified in code: rows, columns with type and cardinality, grouping, paired"}
+        }
+      }
+    },
+    "style": {"type": "string", "pattern": "\\S", "description": "the project's color budget, figures/style.json unless a request names another"},
+    "target": {
+      "type": "object",
+      "required": ["width_mm", "min_font_pt", "min_dpi", "formats", "library"],
+      "additionalProperties": false,
+      "properties": {
+        "venue": {"type": ["string", "null"]},
+        "width_mm": {"type": "number", "minimum": 1},
+        "max_height_mm": {"type": ["number", "null"], "minimum": 1},
+        "min_font_pt": {"type": "number", "minimum": 0},
+        "min_dpi": {"type": "integer", "minimum": 1},
+        "max_words": {"type": ["integer", "null"], "minimum": 1, "description": "the word cap; a graphical abstract must have one"},
+        "formats": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["pdf", "png", "svg"]}},
+        "library": {"type": "string", "pattern": "\\S", "description": "matplotlib, tikz, and so on, from figures/style.json"}
+      }
+    },
+    "candidates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max": {"type": "integer", "minimum": 1},
+        "families": {
+          "type": ["array", "null"],
+          "items": {"type": "string", "enum": ["distribution", "correlation", "ranking", "part_of_a_whole", "evolution", "flow", "map", "network", "multi_dimensional"]}
+        },
+        "exclude_index_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "comparables": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+    "forbidden_text": {
+      "type": "object",
+      "description": "what the forbidden_text check reads in the conceptual register",
+      "additionalProperties": false,
+      "properties": {
+        "gene_names": {"type": ["string", "null"], "description": "a file of names, one per line, relative to the project"},
+        "dataset_names": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+        "allow_regex": {"type": "array", "items": {"type": "string"}, "description": "a token matching one of these in full is allowed (panel letters, exponents)"}
+      }
+    },
+    "revision_of": {"type": ["string", "null"], "description": "the figure_result or final PDF a guided revision starts from"},
+    "change_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "from"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "\\S"},
+          "text": {"type": "string", "pattern": "\\S"},
+          "from": {"type": "string", "enum": ["human", "critic"]},
+          "session": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "render_seconds": {"type": "integer", "minimum": 1},
+        "critic_sessions": {"type": "integer", "minimum": 0},
+        "verifier_sessions": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

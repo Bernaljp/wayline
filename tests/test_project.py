@@ -65,6 +65,19 @@ class InitLayoutTest(ProjectTestCase):
         self.assertEqual(written["reservations"]["cores"], 2)
         self.assertEqual(written["dashboard"]["port"], 9100)
 
+    def test_init_copies_the_default_house_style(self):
+        default = json.loads((self.harness / "figures" / "style.default.json").read_text(encoding="utf-8"))
+        style = json.loads((self.project / "figures" / "style.json").read_text(encoding="utf-8"))
+        self.assertEqual(style, default)
+        self.assertIn("figures/style.json", self.report["changes"])
+
+    def test_a_second_init_keeps_an_owner_edited_house_style(self):
+        path = self.project / "figures" / "style.json"
+        path.write_text('{"categorical": ["#123456"]}\n', encoding="utf-8")
+        report = init_project(self.project, harness_root=self.harness)
+        self.assertEqual(path.read_text(encoding="utf-8"), '{"categorical": ["#123456"]}\n')
+        self.assertNotIn("figures/style.json", report["changes"])
+
     def test_claude_md_carries_the_block_with_the_tag(self):
         text = (self.project / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn(BLOCK_BEGIN, text)

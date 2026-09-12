@@ -1,0 +1,37 @@
+{
+  "schema": "figure_result/1",
+  "ticket": "49",
+  "figure_id": "undeclared",
+  "status": "selected",
+  "candidates": [
+    {
+      "rank": 1,
+      "index_id": "ranking/bar/matplotlib",
+      "rendered": true
+    }
+  ],
+  "selected": {
+    "rank": 1,
+    "by": "decider",
+    "margin": 3,
+    "margin_low": false
+  },
+  "final": {
+    "generator": "figures/undeclared/undeclared.py",
+    "pdf": "figures/undeclared/undeclared.pdf",
+    "png": "figures/undeclared/undeclared.png",
+    "caption": "figures/undeclared/caption.md",
+    "notes": "figures/undeclared/notes.md",
+    "crops": [],
+    "inputs": [
+      {
+        "path": "results/t7-a1/scores.csv",
+        "sha256": "7c3f3b2774664a8e09e2a7934bce648fef8d676f079531f6eb03991f9415553e",
+        "run_id": "t7-a1",
+        "panels": [
+          "a"
+        ]
+      }
+    ]
+  }
+}

@@ -4,6 +4,15 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+Figure machine checks, schemas, and the house style (ticket 49, M7 Figures, docs, paper).
+
+- New schemas `figure_request` and `figure_result`. A framework figure and a graphical abstract are forced into the conceptual register, and a guided request must name `revision_of` and at least one change request. Each result status carries the block that justifies it: `verified` needs its final files, its checks, and a passing honesty verdict; an unrendered candidate needs its error.
+- `init` copies the harness's `figures/style.default.json` into the project as `figures/style.json` once, and never overwrites an owner's edits. `figures.default_style()` reads the same file, so the palette lives in one place. The default gained `library`, `diverging.cmap` (the ramp the diverging pair is drawn with), and `cvd_min_delta_e`.
+- `wayline.figure_checks` runs the 19 Type-A checks of research-notes 11 Section 3 and returns the `checks` block of `figure_result`, one `{id, type: "A", pass, tool, detail}` per check. A tool that is not installed fails its check, since a gate that cannot look cannot pass.
+- The harness stays standard-library. What needs matplotlib runs as `figures/checks/artists.py` in the project's own environment: it wraps `savefig` and writes an artist report with the texts actually drawn (size at the target width, extent, role, halo), the panels, the lines marked `required:` or `optional:`, the structure marked `connector:` or `container:`, and the colormaps with their `quantity:`. The clean-room regeneration runs the generator through that script with `python -I`, in a directory holding only the generator, its declared inputs, and the house style. One run gives the exit status, the regenerated files, and the report.
+- Written here in the standard library because no check that uses them needs a plotting library: a PDF content-stream walk (text sizes through the text and transformation matrices, colors, rasters), a PNG decoder, mean SSIM with scikit-image's defaults, and CIEDE2000 under Machado's protanopia, deuteranopia, and tritanopia simulations. CIEDE2000 is checked against Sharma, Wu and Dalal's published pairs.
+- `fixtures/figures/` holds a sample project (a figure that passes all 19 checks, one that reads an undeclared file, one drawn from unseeded noise) and per-check passing and failing PDFs and PNGs, rebuilt by `fixtures/figures/make.py`.
+
 arXiv e-print sources and the LaTeX inventory (ticket 21, M3 Dossiers).
 
 - `wayline absorb --inventory <slug>` is the arXiv half of the dossier inventory: it fetches `https://export.arxiv.org/src/<id>` through the fetch seam (one request per 3 s on one connection, as the terms of use ask), keeps the source under `refs/<slug>/source/`, flattens it, and writes `refs/<slug>/inventory.json` with the sections, the numbered equations as LaTeX, the figures with their captions and image files, the tables, the algorithms, the theorems, the appendices, and the bibliography, each with a locator of the form `flat.tex:<line>`.

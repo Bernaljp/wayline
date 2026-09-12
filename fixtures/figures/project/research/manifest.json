@@ -1,0 +1,22 @@
+{
+  "entries": [
+    {
+      "path": "results/t7-a1/scores.csv",
+      "size": 38,
+      "sha256": "7c3f3b2774664a8e09e2a7934bce648fef8d676f079531f6eb03991f9415553e",
+      "job": null,
+      "run_id": "t7-a1",
+      "ticket": "7",
+      "ts": "2026-09-12T00:00:00Z"
+    },
+    {
+      "path": "results/t8-a1/timing.csv",
+      "size": 54,
+      "sha256": "f44004a41e8b1403177bfd964867be03caeabbae662a16240aeea34b26a13b4f",
+      "job": null,
+      "run_id": "t8-a1",
+      "ticket": "8",
+      "ts": "2026-09-12T00:00:00Z"
+    }
+  ]
+}
