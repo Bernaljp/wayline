@@ -1033,12 +1033,16 @@ class SeamTest(unittest.TestCase):
     def test_the_backend_class_is_named_after_the_spec(self):
         self.assertEqual(worker.ClaudeCli.name, "claude_cli")
 
-    def test_there_is_one_launch_and_one_resume_and_both_live_in_the_launcher(self):
+    def test_there_is_one_launch_and_one_resume_per_backend_of_each_seam(self):
         """Decision 3's interface, asserted rather than described (M0 criterion 10, ticket 06).
 
         One free `launch` and one free `resume` over a `LaunchRequest`, one of each per backend,
         and no third spelling anywhere in the package. A later ticket that gives the conductor a
         `launch` of its own fails here rather than at a port to another CLI.
+
+        Seam 2's job runner (ticket 17) launches hardware rather than a model, so its `launch` is
+        listed too: what this guards is that a launch belongs to a backend of a named seam, not
+        that the word appears once in the harness.
         """
         found = {}
         for path, tree in self.modules():
@@ -1052,13 +1056,20 @@ class SeamTest(unittest.TestCase):
                     found.setdefault(node.name, set()).add(
                         (path.relative_to(HARNESS_ROOT).as_posix(), owners.get(id(node))))
         self.assertEqual(sorted(found), ["launch", "resume"])
-        for name in ("launch", "resume"):
-            with self.subTest(function=name):
-                self.assertEqual(found[name], {
-                    ("wayline/worker.py", None),            # the seam the harness calls
-                    ("wayline/worker.py", "ClaudeCli"),     # the only real backend
-                    ("wayline/worker.py", "FakeLauncher"),  # the one the suite runs on
-                })
+        self.assertEqual(found["resume"], {
+            ("wayline/worker.py", None),            # the seam the harness calls
+            ("wayline/worker.py", "ClaudeCli"),     # the only real backend
+            ("wayline/worker.py", "FakeLauncher"),  # the one the suite runs on
+        })
+        self.assertEqual(found["launch"], {
+            ("wayline/worker.py", None),
+            ("wayline/worker.py", "ClaudeCli"),
+            ("wayline/worker.py", "FakeLauncher"),
+            ("wayline/resources.py", "JobRunner"),   # seam 2: the runner the conductor calls
+            ("wayline/resources.py", "SystemdRun"),  # its real backend
+            ("wayline/resources.py", "Setsid"),      # its fallback
+            ("wayline/resources.py", "FakeJobs"),    # the one the suite runs on
+        })
 
     def test_the_seam_carries_every_field_of_the_launch_line(self):
         """A backend that cannot be handed one of these is not a substitute for the other."""

@@ -59,7 +59,7 @@ VERBS = [
     Verb("tick", "tick", "the recurrent job that relaunches work after windows, answers, and jobs", "services"),
     Verb("accept", "accept [--where worktree|rebased|main]", "run the ticket's machine acceptance inside a worktree (called by workers)", "worktree", lazy("wayline.gates", "accept")),
     Verb("consult", "consult <slug> \"<question>\"", "ask the consultant one question about one dossier (called by workers)", "worktree"),
-    Verb("job", "job add <file>", "write a job file for the runner (called by experiment workers)", "worktree"),
+    Verb("job", "job add [<file>]", "write a job file for the runner from a JSON spec on stdin (called by experiment workers)", "worktree", lazy("wayline.resources", "job_command")),
     Verb("evolve", "evolve [\"<text>\"]", "turn feedback into change records, harness tickets, and fixtures", "evolve"),
     Verb("promote", "promote skill|role|policy <name>", "move a local skill, role, or policy into the harness", "evolve"),
     Verb("upgrade", "upgrade [--to <tag>]", "move the project to another harness tag", "evolve"),
