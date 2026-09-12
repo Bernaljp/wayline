@@ -340,7 +340,8 @@ class ChecksTest(unittest.TestCase):
         venue.build(root=cls.directory, fetcher=offline(), today=RECORDED_ON, cache_checklists=False)
         cls.guidelines = {
             slug: venue.read_guidelines(cls.directory, slug)
-            for slug in ("plos-compbiol", "nature", "iclr", "icml", "nature-communications")
+            for slug in ("plos-compbiol", "nature", "iclr", "icml", "nature-communications",
+                         "neurips", "genome-biology")
         }
 
     @classmethod
@@ -409,11 +410,32 @@ class ChecksTest(unittest.TestCase):
         findings = self.by_check(venue.run_checks(draft, self.guidelines["nature-communications"]), "figures")
         self.assertTrue(any(finding.level == "fail" and "legend" in finding.message for finding in findings))
 
-    def test_a_checklist_is_matched_by_its_acronym_or_its_whole_name_and_nothing_looser(self):
+    def test_a_checklist_is_matched_by_its_acronym_its_whole_name_or_what_it_is_called_in_practice(self):
         self.assertEqual(venue._checklist_keys("ARRIVE"), ["arrive"])
         self.assertEqual(venue._checklist_keys("STROBE-MR"), ["strobemr"])
-        self.assertEqual(venue._checklist_keys("Reporting Summary"), ["reportingsummary"])
-        self.assertEqual(venue._checklist_keys("NeurIPS Paper Checklist"), ["neuripspaperchecklist"])
+        self.assertIn("paperchecklist", venue._checklist_keys("NeurIPS Paper Checklist"))
+        self.assertIn("minimumstandardsofreporting",
+                      venue._checklist_keys("BioMed Central Minimum Standards of Reporting Checklist"))
+
+    def test_every_checklist_a_venue_requires_can_be_matched_by_a_name_someone_would_use(self):
+        """A required form no file name could ever match is a check the author cannot pass."""
+        for seed in venue.VENUES:
+            for form in seed["guidelines"]["reporting_checklists"]:
+                if not form["required"]:
+                    continue
+                with self.subTest(venue=seed["venue"], form=form["name"]):
+                    shortest = min(venue._checklist_keys(form["name"]), key=len)
+                    self.assertLessEqual(len(shortest), 30, "%r can only be matched by its full title" % form["name"])
+
+    def test_a_checklist_the_draft_carries_as_a_section_counts(self):
+        draft = Path(tempfile.mkdtemp(prefix="wayline-embedded-"))
+        self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
+        (draft / "paper.md").write_text(
+            "# Draft\n\n## Results\n\nNothing.\n\n## NeurIPS Paper Checklist\n\nAnswered in full.\n",
+            encoding="utf-8")
+        findings = self.by_check(venue.run_checks(draft, self.guidelines["neurips"]), "reporting_checklists")
+        self.assertEqual(venue.worst(findings), "ok")
+        self.assertTrue(any("in the draft" in finding.message for finding in findings))
 
     def test_a_file_that_merely_shares_a_word_is_not_the_checklist(self):
         draft = Path(tempfile.mkdtemp(prefix="wayline-checklist-"))
@@ -423,6 +445,67 @@ class ChecksTest(unittest.TestCase):
         (draft / "reporting-notes.md").write_text("not a Reporting Summary\n", encoding="utf-8")
         findings = self.by_check(venue.run_checks(draft, self.guidelines["nature"]), "reporting_checklists")
         self.assertEqual(venue.worst(findings), "fail")
+
+    def test_a_venue_that_spells_a_format_tif_accepts_a_file_named_tiff(self):
+        """Nature Communications writes TIF and JPG where a file is named .tiff and .jpeg."""
+        findings = self.by_check(self.findings(MARKDOWN_DRAFT, "nature-communications"), "figures")
+        self.assertFalse(any("fig1.tif is TIFF" in finding.message for finding in findings), findings)
+        self.assertEqual(venue._format_name(".tif"), venue._format_name("TIFF"))
+        self.assertEqual(venue._format_name(".jpg"), venue._format_name("JPEG"))
+
+    def test_a_latex_table_is_one_display_item_and_not_a_figure(self):
+        draft = Path(tempfile.mkdtemp(prefix="wayline-table-"))
+        self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
+        (draft / "figures").mkdir()
+        shutil.copy(LATEX_DRAFT / "figures" / "fig1.png", draft / "figures" / "fig1.png")
+        (draft / "draft.tex").write_text(
+            "\\documentclass{article}\n\\begin{document}\n\\section{Results}\n"
+            "\\begin{figure}\\includegraphics{figures/fig1.png}\\caption{A panel.}\\end{figure}\n"
+            "\\begin{table}\\caption{A table.}\\end{table}\n\\end{document}\n", encoding="utf-8")
+        manuscript = venue.Manuscript(draft)
+        self.assertEqual(len(manuscript.figures()), 1)
+        self.assertEqual(manuscript.tables(), 1)
+        findings = self.by_check(venue.run_checks(manuscript, self.guidelines["nature-communications"]), "figures")
+        self.assertTrue(any("2 display item(s)" in finding.message for finding in findings), findings)
+        self.assertFalse(any("not on disk" in finding.message for finding in findings), findings)
+
+    def test_provenance_tags_are_markup_and_not_words(self):
+        draft = Path(tempfile.mkdtemp(prefix="wayline-tagwords-"))
+        self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
+        (draft / "paper.md").write_text(
+            "# Tagged\n\n## Results\n\nThe signal held {res:t52-a1/results/metrics.json#auroc}. "
+            "It held again {ref:smith-2020#p3}.\n", encoding="utf-8")
+        self.assertEqual(venue.Manuscript(draft).body_words(), 6)  # the two sentences, not the tags
+
+    def test_a_draft_given_by_a_relative_path_reads_the_same_files(self):
+        here = Path.cwd()
+        relative = venue.Manuscript(LATEX_DRAFT.relative_to(here)) if LATEX_DRAFT.is_relative_to(here) else None
+        if relative is None:
+            self.skipTest("the fixtures are not under the working directory")
+        absolute = venue.Manuscript(LATEX_DRAFT)
+        self.assertEqual(relative.pdf_pages(), absolute.pdf_pages())
+        self.assertEqual(relative.figures()[0]["file"], absolute.figures()[0]["file"])
+
+    def test_a_single_file_draft_carries_no_package(self):
+        """`check paper.md` must not drag every .bib and PDF under its directory into the count."""
+        draft = venue.Manuscript(MARKDOWN_DRAFT / "paper.md")
+        self.assertEqual(draft.file_names(), ["paper.md"])
+        self.assertIsNone(draft.pdf_pages())
+
+    def test_an_outline_count_is_not_a_page_count(self):
+        draft = Path(tempfile.mkdtemp(prefix="wayline-outline-"))
+        self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
+        (draft / "draft.tex").write_text(
+            "\\documentclass{article}\n\\begin{document}\\section{One}\\end{document}\n", encoding="utf-8")
+        (draft / "draft.pdf").write_text(
+            "%PDF-1.5\n"
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 9 0 R >>\nendobj\n"
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n"
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n"
+            "4 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n"
+            "9 0 obj\n<< /Type /Outlines /Count 17 >>\nendobj\n"
+            "trailer\n<< /Root 1 0 R >>\n%%EOF\n", encoding="ascii")
+        self.assertEqual(venue.Manuscript(draft).pdf_pages(), 2)
 
     def test_a_malformed_provenance_tag_fails_the_cross_check(self):
         draft = Path(tempfile.mkdtemp(prefix="wayline-tags-"))
@@ -474,6 +557,11 @@ class SentencePassTest(unittest.TestCase):
         found = sentences("Fig. 1 shows the curve. The curve is flat.")
         self.assertEqual([sentence.text for sentence in found],
                          ["Fig. 1 shows the curve.", "The curve is flat."])
+
+    def test_nothing_at_all_is_no_sentences_rather_than_a_crash(self):
+        """A section body that comes back empty is normal; the linter must not die on it."""
+        self.assertEqual(sentences(None), [])
+        self.assertEqual(sentences(""), [])
 
     def test_a_tag_is_parsed_or_refused(self):
         self.assertEqual(parse_tag("ref:smith-2020#p3"), ("ref", {"slug": "smith-2020", "locator": "p3"}))

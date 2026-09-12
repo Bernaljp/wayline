@@ -234,8 +234,9 @@ def sentences(text):
     while it is counting words anyway). A sentence with no tag carries an empty tuple, which is
     what the linter's classifier is handed and what the mechanical cross-check counts.
     """
+    text = str(text or "")
     found, start = [], 0
-    for boundary in _BOUNDARY.finditer(str(text or "")):
+    for boundary in _BOUNDARY.finditer(text):
         found.append(text[start:boundary.end()])
         start = boundary.end()
     found.append(text[start:])

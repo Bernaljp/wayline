@@ -51,7 +51,7 @@ from wayline import HARNESS_ROOT
 from wayline.cli import parse_args
 from wayline.fetch import FetchError, Fetcher, recording_fetcher
 from wayline.jsonschema import check, load_schema
-from wayline.provenance import manifest_paths, parse_tag, read_manifest, sentences
+from wayline.provenance import manifest_paths, parse_tag, read_manifest, sentences, strip_tags
 
 __all__ = [
     "GuidelinesError", "GUIDELINES_DIR", "GUIDELINES_JSON", "SOURCE_MD", "CHECKLIST_DIR",
@@ -1537,7 +1537,12 @@ _PARAGRAPH = re.compile(r"\n\s*\n")
 
 
 def _words(text):
-    return len(_WORD.findall(text or ""))
+    """Words a reader reads. A provenance tag is markup, not six words, so it comes off first.
+
+    Every count in this module goes through here, which is why the tags are stripped here rather
+    than in `Manuscript.prose`: the sentence pass reads the same prose and needs the tags kept.
+    """
+    return len(_WORD.findall(strip_tags(text)))
 
 
 def _normalize(name):
@@ -1554,19 +1559,25 @@ class Manuscript:
     """
 
     def __init__(self, path):
-        self.root = Path(path)
+        # Resolved, because a figure a draft points at is resolved too, and the two are compared:
+        # a relative `research/paper` and an absolute one have to describe the same package.
+        self.root = Path(path).resolve()
         if self.root.is_file():
-            self.files = [self.root]
-            self.root = self.root.parent
+            # One file is one draft and no package. Its directory is not walked: a `paper.md` at a
+            # project root would otherwise drag every `.bib` and every PDF in the repository into
+            # the reference count and the page count.
+            self.files, self.root = [self.root], self.root.parent
+            self.all_files = list(self.files)
         elif self.root.is_dir():
             # `checklist/` holds the forms a submission carries, not the draft: a completed ARRIVE
             # form is part of the package the checklist check looks through and no part of the
             # word count, the section list or the sentences.
-            self.files = sorted(
-                found for found in self._walk()
+            self.all_files = sorted(self._walk())
+            self.files = [
+                found for found in self.all_files
                 if found.suffix.lower() in TEXT_SUFFIXES
                 and CHECKLIST_DIR not in found.relative_to(self.root).parts
-            )
+            ]
         else:
             raise GuidelinesError("no manuscript at %s" % path)
         if not self.files:
@@ -1574,7 +1585,7 @@ class Manuscript:
         self.sources = {path: path.read_text(encoding="utf-8", errors="replace") for path in self.files}
         self.kind = "latex" if any(path.suffix.lower() == ".tex" for path in self.files) else "markdown"
         self._prose = None
-        self.all_files = sorted(self._walk()) if self.root.is_dir() else list(self.files)
+        self._figures = None
 
     def _walk(self):
         """Every file under the draft's directory, skipping what a dot-directory holds.
@@ -1680,11 +1691,20 @@ class Manuscript:
     # --- display items ---
 
     def figures(self):
-        """Every figure: the file it points at (when it names one) and its legend."""
+        """Every figure: the file it points at (when it names one) and its legend.
+
+        Figures only. A LaTeX `table` environment is a display item too, and `tables` counts it,
+        but it is no figure: it points at no file and has no format, resolution or colour mode for
+        the figure check to read.
+        """
+        if self._figures is not None:
+            return self._figures
         found = []
         for path, text in self.sources.items():
             if self.kind == "latex":
                 for kind, block in _TEX_FIGURE.findall(text):
+                    if kind != "figure":
+                        continue
                     caption = _TEX_CAPTION.search(block)
                     legend = self.prose(caption.group(1)) if caption else ""
                     for target in _TEX_GRAPHIC.findall(block) or [None]:
@@ -1696,6 +1716,7 @@ class Manuscript:
                         following = paragraphs[index + 1].strip() if index + 1 < len(paragraphs) else ""
                         legend = following if _LEGEND.match(following) else alt
                         found.append({"kind": "figure", "file": self._resolve(path, target), "legend": self.prose(legend).strip()})
+        self._figures = found
         return found
 
     def tables(self):
@@ -1764,14 +1785,24 @@ class Manuscript:
         return found
 
     def pdf_pages(self):
-        """The page count of a compiled PDF sitting beside the source, or None when there is none."""
+        """The page count of a compiled PDF sitting beside the source, or None when there is none.
+
+        The root of the page tree is the object that is a `/Pages` with no `/Parent`, and its
+        `/Count` is the page count. Any `/Count` would be the wrong thing to read: a PDF built with
+        hyperref carries an outline tree whose `/Count` is the number of bookmarks, which is
+        usually larger than the number of pages and would fail a nine-page paper for being
+        seventeen. Where no such object is found, the `/Type /Page` objects are counted instead.
+        """
         for path in self.all_files:
             if path.suffix.lower() != ".pdf" or self._is_figure(path):
                 continue
             body = path.read_bytes()
-            counts = [int(found) for found in re.findall(rb"/Count\s+(\d+)", body)]
-            if counts:
-                return max(counts)
+            for block in re.findall(rb"\bobj\b(.*?)\bendobj\b", body, re.DOTALL):
+                if not re.search(rb"/Type\s*/Pages\b", block) or re.search(rb"/Parent\b", block):
+                    continue
+                count = re.search(rb"/Count\s+(\d+)", block)
+                if count:
+                    return int(count.group(1))
             pages = len(re.findall(rb"/Type\s*/Page[^s]", body))
             if pages:
                 return pages
@@ -1801,6 +1832,17 @@ class Manuscript:
 # --- image metadata, without a third-party imaging library -----------------------------------------
 
 
+# One spelling per format, because a venue writes TIF where a file is named .tiff and JPG where
+# another venue writes JPEG. Both sides of the format check are folded through this, so a draft is
+# never told its .tif is the wrong format at a venue whose own list says TIF.
+_FORMAT_NAMES = {"TIF": "TIFF", "JPG": "JPEG", "PS": "PS", "EPS": "EPS", "PPT": "PPT", "PPTX": "PPT"}
+
+
+def _format_name(suffix_or_name):
+    name = str(suffix_or_name or "").strip().lstrip(".").upper()
+    return _FORMAT_NAMES.get(name, name)
+
+
 def image_facts(path):
     """Format, resolution, colour mode and size of one figure file, read from its own header.
 
@@ -1811,7 +1853,7 @@ def image_facts(path):
     """
     path = Path(path)
     facts = {
-        "format": path.suffix.lower().lstrip(".").upper() or None,
+        "format": _format_name(path.suffix) or None,
         "dpi": None,
         "color_mode": None,
         "size_mb": None,
@@ -1822,10 +1864,6 @@ def image_facts(path):
         head = path.read_bytes()
     except OSError:
         return facts
-    if facts["format"] == "JPG":
-        facts["format"] = "JPEG"
-    if facts["format"] == "TIF":
-        facts["format"] = "TIFF"
     if head[:8] == b"\x89PNG\r\n\x1a\n":
         _png_facts(head, facts)
     elif head[:2] == b"\xff\xd8":
@@ -2013,7 +2051,7 @@ def check_figures(manuscript, guidelines):
     else:
         findings.append(Finding("figures", "ok", "%d figure(s); %s caps none." % (len(figures), guidelines["display_name"])))
 
-    accepted = {name.upper().lstrip(".") for name in spec["formats"]}
+    accepted = {_format_name(name) for name in spec["formats"]}
     for figure in figures:
         path = figure["file"]
         if path is None or not Path(path).exists():
@@ -2076,18 +2114,44 @@ def check_references(manuscript, guidelines):
     return findings
 
 
-def _checklist_keys(name):
-    """What a file has to be called to count as this checklist: its whole name, or its acronym.
+# What a long-named form is called in practice. A key has to be distinctive enough that no
+# ordinary file name carries it by accident, which is why these are phrases rather than words:
+# matching a form's first word alone would let `reporting-notes.md` pass for a Reporting Summary,
+# and a checklist the package does not have is the one thing this check must not say it has. The
+# names on the left are `guidelines.json`'s, so a venue built from another seed needs no entry
+# here unless its form is filed under something shorter than its title.
+CHECKLIST_ALIASES = {
+    "BioMed Central Minimum Standards of Reporting Checklist": (
+        "minimum standards of reporting", "bmc checklist", "bmc minimum standards",
+    ),
+    "NeurIPS Paper Checklist": ("neurips checklist", "paper checklist"),
+    "Reporting Summary": ("reporting summary",),
+    "Key Resources Table": ("key resources",),
+    "Inclusion in Global Research form": ("inclusion in global research",),
+    "Editorial policy checklist": ("editorial policy",),
+    "Code and software submission checklist": ("code and software",),
+    "Cell Press reporting checklists": ("cell press checklist",),
+    "Clinical trial checklist": ("clinical trial checklist",),
+}
 
-    A form named by an acronym (ARRIVE, PRISMA, MDAR, STROBE-MR) is filed under the acronym, so
-    that is a key. Everything else has to carry the whole name, because matching a form's first
-    word alone would let `reporting-notes.md` pass for a Reporting Summary, and a checklist the
-    package does not have is the one thing this check must not say it has.
+
+def _checklist_keys(name):
+    """What a file or a section has to be called to count as this checklist.
+
+    Three kinds of key: the whole name, the acronym where the form has one (ARRIVE, PRISMA, MDAR,
+    STROBE-MR are filed under it), and the phrases `CHECKLIST_ALIASES` records for the forms whose
+    full title nobody types. Without the third, Genome Biology's "BioMed Central Minimum Standards
+    of Reporting Checklist" could be matched by no file a person would ever name, and every draft
+    for that venue failed a check it could not pass.
     """
     keys = [_normalize(name)]
-    head = _normalize(name.split()[0]) if name.split() else ""
-    if name.split() and name.split()[0].isupper() and len(head) >= 4 and head not in keys:
+    words = name.split()
+    head = _normalize(words[0]) if words else ""
+    if words and words[0].isupper() and len(head) >= 4 and head not in keys:
         keys.append(head)
+    for alias in CHECKLIST_ALIASES.get(name, ()):
+        if _normalize(alias) not in keys:
+            keys.append(_normalize(alias))
     return keys
 
 
@@ -2097,17 +2161,22 @@ def check_reporting_checklists(manuscript, guidelines):
     if not forms:
         return [Finding("reporting_checklists", "skipped", "%s names no reporting checklist." % guidelines["display_name"])]
     kinds = set(manuscript.study_types())
-    names = [_normalize(name) for name in manuscript.file_names()]
+    # A form is in the package when a file carries its name, and also when the draft itself does:
+    # a conference checklist lives inside the manuscript as a section rather than beside it as a
+    # form, and asking for a file that no submission has would be a check nobody can pass.
+    places = [(_normalize(name), "the package") for name in manuscript.file_names()]
+    places += [(_normalize(name), "the draft") for name in manuscript.section_names()]
     findings = []
     for form in forms:
         wanted = not form["study_types"] or bool(kinds.intersection(form["study_types"]))
         if not wanted:
             continue
-        present = any(key in name for key in _checklist_keys(form["name"]) for name in names)
+        keys = _checklist_keys(form["name"])
+        where = next((place for name, place in places if any(key in name for key in keys)), None)
         because = "every submission" if not form["study_types"] else "the draft reads as %s" % ", ".join(
             sorted(kinds.intersection(form["study_types"])))
-        if present:
-            findings.append(Finding("reporting_checklists", "ok", "%s is in the package (%s)." % (form["name"], because)))
+        if where is not None:
+            findings.append(Finding("reporting_checklists", "ok", "%s is in %s (%s)." % (form["name"], where, because)))
         else:
             findings.append(Finding("reporting_checklists", "fail" if form["required"] else "warn",
                                      "%s is %s and no file in the package looks like it (%s)."
