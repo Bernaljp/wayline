@@ -73,6 +73,9 @@ class ConductorCase(ProjectTestCase):
     def ticket(self, identifier=1):
         return {fields["id"]: fields for fields in tickets.read_tickets(self.project)}[identifier]
 
+    def body(self):
+        return (tickets.tickets_dir(self.project) / "01-write-the-hello-file.md").read_text(encoding="utf-8")
+
     def git(self, *args, cwd=None):
         done_process = subprocess.run(["git", "-C", str(cwd or self.project), *args], capture_output=True, text=True)
         self.assertEqual(done_process.returncode, 0, done_process.stderr)
@@ -336,8 +339,9 @@ class UncommittedWorkTest(ConductorCase):
         self.conduct((done(), patch(commit=False)))
         self.assertIn("uncommitted", self.payload("ticket_failed")["reason"])
         self.assertIn("hello.txt", self.payload("ticket_failed")["reason"])
-        self.assertEqual(self.payload("ticket_failed")["next"], "tier_up")
+        self.assertEqual(self.payload("ticket_failed")["next"], "resume")
         self.assertNotIn("integrated", self.sequence())
+        self.assertFalse((self.project / "hello.txt").exists(), "main must not move on it")
 
     def test_untracked_noise_outside_the_touch_set_is_not_held_against_the_worker(self):
         self.widen_acceptance()
@@ -374,7 +378,7 @@ class ResultStatusTest(ConductorCase):
         envelope.structured_output.update({"status": "failed", "summary": "the library does not exist"})
         self.conduct((envelope, None))
         self.assertEqual(self.payload("ticket_failed")["reason"], "the library does not exist")
-        self.assertEqual(self.payload("ticket_failed")["next"], "tier_up")
+        self.assertEqual(self.ticket()["status"], "failed")
 
     def test_needs_human_asks_the_question_the_worker_left(self):
         envelope = done()
@@ -383,19 +387,46 @@ class ResultStatusTest(ConductorCase):
         self.assertEqual(self.payload("ticket_needs_human")["question"], "which split is held out?")
         self.assertEqual(self.ticket()["status"], "needs_human")
 
-    def test_a_running_result_waits_for_the_job_poller(self):
+    def test_a_running_result_records_its_jobs_and_leaves_the_ticket_running(self):
+        """Decision 5: a running result records the job ids and leaves the ticket for the poller."""
         envelope = done()
         envelope.structured_output.update({"status": "running", "jobs": ["j-0001"]})
+        result = self.conduct((envelope, None))[0]
+        self.assertEqual(self.ticket()["status"], "running")
+        self.assertEqual((result.running, result.failed, result.done), ([1], [], []))
+        self.assertFalse(result.ended, "a ticket is still running, so the run is not over")
+        self.assertNotIn("acceptance", self.sequence())
+        self.assertIn("Jobs: `j-0001`", self.body())
+
+    def test_what_no_ticket_reads_yet_is_written_into_the_ticket_rather_than_dropped(self):
+        self.conduct((done(
+            proposals=[{"title": "Try the graph variant", "kind": "experiment", "why": "the residuals cluster"}],
+            decision_requests=[{"question": "which split is held out?", "options": ["a", "b"], "recommended": "a"}],
+            goal_progress={"metric": "auroc", "value": 0.81},
+        ), patch()))
+        body = self.body()
+        self.assertIn("Try the graph variant", body)
+        self.assertIn("which split is held out?", body)
+        self.assertIn("auroc = 0.81", body)
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_the_next_rung_is_the_resume_while_it_is_unspent(self):
+        envelope = done()
+        envelope.structured_output.update({"status": "failed", "summary": "no"})
         self.conduct((envelope, None))
-        self.assertIn("j-0001", self.payload("ticket_needs_human")["question"])
-        self.assertIn("ticket 17", self.payload("ticket_needs_human")["question"])
+        self.assertEqual(self.payload("ticket_failed")["next"], "resume")
 
 
 class RefuseToStartTest(ConductorCase):
-    """`wayline run` refuses a project it would integrate into badly, and says what to do."""
+    """`wayline run` refuses a project it would integrate into badly, and says what to do.
 
-    def problems(self, harness_root=HARNESS_ROOT):
-        return conductor.refuse_to_start(self.project, harness_root)[0]
+    The other refusal decision 5 names, a harness checkout whose tag is not the project's pin, is
+    ticket 46's: it arrives with the tagging and the `upgrade` command that fixes a mismatch. The
+    harness this suite runs from is on no tag, and these tests show that does not stop a run.
+    """
+
+    def problems(self):
+        return conductor.refuse_to_start(self.project)
 
     def test_a_clean_project_on_main_has_nothing_against_it(self):
         self.assertEqual(self.problems(), [])
@@ -421,21 +452,6 @@ class RefuseToStartTest(ConductorCase):
         problems = self.problems()
         self.assertIn("elsewhere", problems[0])
         self.assertIn("git -C", problems[0])
-
-    def test_a_tagged_harness_that_is_not_the_pin_refuses_the_run(self):
-        other = self.temp / "other-harness"
-        other.mkdir()
-        for args in (["init", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "one"], ["tag", "v9.9.9"]):
-            subprocess.run(["git", "-C", str(other), *args], capture_output=True, text=True, check=True)
-        problems = self.problems(harness_root=other)
-        self.assertIn("v9.9.9", problems[0])
-        self.assertIn("v0.0.0", problems[0])
-
-    def test_an_untagged_harness_is_a_note_and_not_a_refusal(self):
-        problems, notes = conductor.refuse_to_start(self.project, HARNESS_ROOT)
-        self.assertEqual(problems, [])
-        self.assertEqual(len(notes), 1)
-        self.assertIn("v0.0.0", notes[0])
 
     def test_the_verb_exits_2_and_prints_what_to_do(self):
         (self.project / "stray.txt").write_text("mine\n", encoding="utf-8")
@@ -464,13 +480,14 @@ def run_verb(arguments):
 class RunLoopTest(ConductorCase):
     """`Conductor.run`, the loop both the verb and the dashboard call."""
 
-    def never(self, seconds):
-        self.fail("the run slept %s seconds; a wave that did work must not sleep" % seconds)
+    def conduct_run(self, *scripted, **options):
+        with worker.use_fake() as fake:
+            for envelope in scripted:
+                fake.script(envelope, patch=patch() if envelope.structured_output.get("status") == "done" else None)
+            return Conductor(self.project, out=io.StringIO()).run(**options)
 
     def test_the_run_journals_its_start_and_stops_when_the_frontier_empties(self):
-        with worker.use_fake() as fake:
-            fake.script(done(), patch=patch())
-            waves = Conductor(self.project, out=io.StringIO()).run(sleep=self.never)
+        waves = self.conduct_run(done())
         self.assertEqual(len(waves), 1)
         self.assertTrue(waves[-1].ended)
         self.assertEqual(self.sequence()[0], "run_started")
@@ -479,9 +496,19 @@ class RunLoopTest(ConductorCase):
         self.assertEqual(started["resume"], False)
         self.assertEqual(started["pid"], os.getpid())
 
+    def test_a_wave_that_can_move_nothing_ends_the_loop(self):
+        """M0 has no poller, no tick and no control event, so waiting for one would never end."""
+        envelope = done()
+        envelope.structured_output.update({"status": "running", "jobs": ["j-0001"]})
+        waves = self.conduct_run(envelope)
+        self.assertEqual(len(waves), 2)
+        self.assertFalse(waves[-1].touched)
+        self.assertFalse(waves[-1].ended)
+        self.assertNotIn("run_ended", self.sequence())
+        self.assertEqual(self.ticket()["status"], "running")
+
     def test_max_waves_stops_the_loop_whatever_the_frontier_holds(self):
-        with worker.use_fake() as fake:
-            waves = Conductor(self.project, out=io.StringIO()).run(max_waves=1, sleep=self.never)
+        waves = self.conduct_run(max_waves=1)
         self.assertEqual(len(waves), 1)
         self.assertEqual(self.ticket()["status"], "failed")  # the fake had nothing scripted
         self.assertIn("no scripted envelope", self.payload("ticket_failed")["reason"])

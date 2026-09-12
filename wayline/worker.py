@@ -51,7 +51,7 @@ __all__ = [
     "launch", "resume", "pid_alive", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS",
-    "Role", "RoleError", "Prompt", "read_role", "assemble_prompt", "read_locator", "CONSULT_MAX",
+    "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "read_locator", "CONSULT_MAX",
 ]
 
 _log = logging.getLogger("wayline.worker")
@@ -532,6 +532,17 @@ def _slug(text):
 
 
 @dataclass
+class Pack:
+    """A rendered context pack: the text, what it spent, and what it had to leave out."""
+
+    text: str = ""
+    chars: int = 0
+    cut: bool = False
+    dropped: list = field(default_factory=list)
+    problems: list = field(default_factory=list)
+
+
+@dataclass
 class Prompt:
     """The assembled prompt, its context size, and what assembling it had to leave out."""
 
@@ -566,7 +577,7 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         _contract_section(ticket, consult_max),
     ]
     text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
-    return Prompt(text, pack.context_chars, pack.cut, pack.dropped, pack.problems)
+    return Prompt(text, pack.chars, pack.cut, pack.dropped, pack.problems)
 
 
 def _ticket_section(ticket, budget):
@@ -586,12 +597,8 @@ def _ticket_section(ticket, budget):
 
 
 def _context_section(locators, roots, max_chars):
-    """The pack rendered under locator headers, cut at `max_chars` with every cut announced.
-
-    It comes back in a `Prompt`, whose fields are exactly what a pack has to report: the text, the
-    characters it spent, whether it was cut, what was dropped, and what could not be read.
-    """
-    pack = Prompt("")
+    """The pack rendered under locator headers, cut at `max_chars` with every cut announced."""
+    pack = Pack()
     if not locators:
         return pack
     cap = None if max_chars is None else max(0, int(max_chars))
@@ -623,7 +630,7 @@ def _context_section(locators, roots, max_chars):
         rendered.extend(["", "[wayline: the context pack reached its cap of %d characters; %s left out: %s. Ask the consultant for what you need from them.]"
                          % (cap, "one entry was" if len(pack.dropped) == 1 else "%d entries were" % len(pack.dropped), ", ".join(pack.dropped))])
     pack.text = "\n".join(rendered)
-    pack.context_chars = used
+    pack.chars = used
     return pack
 
 
@@ -650,9 +657,9 @@ def _result_section(ticket, role):
         lines.append(line)
     lines.extend([
         "",
-        "`ticket_id` is %s. `status` is `done` only when the acceptance commands pass. A finding "
-        "without a provenance the manifest can resolve is refused by the ledger, so give the path "
-        "and the locator it came from." % ticket["id"],
+        "`ticket_id` is %s. `status` is `done` only when the acceptance commands pass. Give every "
+        "finding the path and the locator it came from: a finding a reader cannot follow back to a "
+        "file is worth nothing." % ticket["id"],
     ])
     return "\n".join(lines)
 
@@ -838,7 +845,7 @@ def spelled_argv(argv, run_dir):
     return spelled
 
 
-# --- the stream -----------------------------------------------------------------------------------
+# --- the stream ----------------------------------------------------------------------------------
 
 
 @dataclass
@@ -1054,7 +1061,7 @@ class ClaudeCli:
         return _envelope_from(parsed, stream_path, request.schema_path, _exit_code(process.returncode), errors)
 
 
-# --- the fake backend -------------------------------------------------------------------------------
+# --- the fake backend ----------------------------------------------------------------------------
 
 
 @dataclass
@@ -1308,7 +1315,7 @@ def _git(cwd, *args, ok=(0,)):
     return done
 
 
-# --- the seam -------------------------------------------------------------------------------------
+# --- the seam ------------------------------------------------------------------------------------
 
 
 CLAUDE_CLI = ClaudeCli()
@@ -1362,7 +1369,7 @@ def use_fake():
                 os.environ[name] = value
 
 
-# --- the smoke verb ---------------------------------------------------------------------------------
+# --- the smoke verb ------------------------------------------------------------------------------
 
 
 SMOKE_SCHEMA = {

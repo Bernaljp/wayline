@@ -9,7 +9,7 @@
    the worktree root. It writes the file the stop guard waits for, whether the commands passed or
    failed, and prints what failed.
 5. Fix what failed and run `wayline accept` again. Repeat until it passes or you are sure it
-   cannot pass in this ticket's scope.
+   cannot pass within this ticket's touch set.
 6. `git add` the files you changed and `git commit` on the branch you are on. Leave nothing
    uncommitted: the conductor integrates the branch, not the working tree.
 7. Return the structured result. It is the only thing that reaches the ledger, so anything worth
