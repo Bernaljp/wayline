@@ -1,0 +1,7 @@
+{
+  "pass": true,
+  "findings": [],
+  "question_limit": "Whether the tokenizer handles an empty input without raising, and nothing else.",
+  "session_id": "3f0c9a1e-0000-4000-8000-000000000001",
+  "model": "claude-opus-5"
+}

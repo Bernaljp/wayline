@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "relation_to_intent": "Proposes the attention mechanism the intent's method is built on.",
+  "deserves_l2_if": "The project needs the exact multi-head attention formulation, not just the idea of it."
+}

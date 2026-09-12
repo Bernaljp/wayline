@@ -1,0 +1,10 @@
+{
+  "pass": false,
+  "findings": [
+    {
+      "text": "The empty-input case raises.",
+      "severity": "blocker"
+    }
+  ],
+  "question_limit": "Whether the tokenizer handles an empty input without raising."
+}
