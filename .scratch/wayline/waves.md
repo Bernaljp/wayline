@@ -101,10 +101,10 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 
 ### Removing ended sessions
 
-No session id to look up: this removes every ended background session that lives in a worktree, with its worktree and local branch. `claude rm` keeps a session whose worktree still holds unpushed commits or uncommitted changes and prints why (and the flag that discards them), so the sweep is safe to run at any time, before or after the pull request is merged.
+No session id to look up: `bash .scratch/wayline/sweep-sessions.sh` fetches, then removes every ended background session of this repository whose worktree branch is merged into origin's `master`, with its worktree and local branch. It keeps and names everything else: a session still working; a branch not yet merged (its pull request is open, and `claude attach <id>` can still reopen the session for a fix); a worktree with uncommitted changes or unpushed commits (`claude rm` refuses those itself and prints the flag that discards them). An ended session that is still open in a terminal, or was cleared with `/clear`, is removed like any other. Run it after merging, from anywhere in the repository:
 
 ```
-claude agents --json --all | python3 -c "import json,sys; print('\\n'.join(r['id'] for r in json.load(sys.stdin) if r['state'] != 'working' and '/.claude/worktrees/' in r['cwd']))" | xargs -r -n1 claude rm
+bash .scratch/wayline/sweep-sessions.sh
 ```
 
 A single session is `claude rm <id>`, the id being the short hex printed when the session started and listed by `claude agents --json --all`. Keep a session until its pull request is merged, so `claude attach <id>` can reopen it for a fix.
