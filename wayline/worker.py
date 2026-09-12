@@ -544,13 +544,18 @@ class Pack:
 
 @dataclass
 class Prompt:
-    """The assembled prompt, its context size, and what assembling it had to leave out."""
+    """The assembled prompt, its context size, and what assembling it had to leave out.
+
+    `context_chars` is the context pack alone, as the journal has always recorded it;
+    `skill_chars` is what the inlined skill bodies spent beside it, under the same cap.
+    """
 
     text: str
     context_chars: int = 0
     cut: bool = False
     dropped: list = field(default_factory=list)
     problems: list = field(default_factory=list)
+    skill_chars: int = 0
 
     @property
     def sha256(self):
@@ -568,7 +573,7 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
     project); `max_chars` is `policy.context_pack.max_chars` for the tier's model, None for no cap.
     """
     pack = _context_section(ticket.get("context_pack") or [], roots, max_chars)
-    skills = _skill_section(ticket.get("skills") or [], roots)
+    skills = _skill_section(ticket.get("skills") or [], roots, max_chars)
     parts = [
         "\n".join("/wayline-%s" % skill for skill in (ticket.get("skills") or [])),
         skills.text,
@@ -579,7 +584,8 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         _contract_section(ticket, consult_max),
     ]
     text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
-    return Prompt(text, pack.chars, pack.cut, pack.dropped, pack.problems + skills.problems)
+    return Prompt(text, pack.chars, pack.cut or skills.cut, pack.dropped + skills.dropped,
+                  pack.problems + skills.problems, skills.chars)
 
 
 def _skill_path(skill, roots):
@@ -595,8 +601,8 @@ def _skill_path(skill, roots):
     return None
 
 
-def _skill_section(skills, roots):
-    """The bodies of every skill after the first, inlined under a heading.
+def _skill_section(skills, roots, max_chars=None):
+    """The bodies of every skill after the first, inlined under a heading, capped like the pack.
 
     Only the first `/wayline-<skill>` line of a prompt expands. The live M0 run measured it: of a
     ticket's two skills, the worker knew the first one's passphrase without ever opening a file
@@ -604,17 +610,29 @@ def _skill_section(skills, roots):
     A worker can only do that where the skills happen to be committed in its worktree, so the
     conductor inlines them instead, which is the path Implementation Decisions 3 names for exactly
     this finding.
+
+    The first skill is looked up too, though its body is not inlined. Nothing else checks that a
+    ticket's skills exist, so without this a misspelled first skill is a slash-command line that
+    expands into nothing and a worker that never learns it was missing anything.
     """
     pack = Pack()
+    if not skills:
+        return pack
+    if _skill_path(skills[0], roots) is None:
+        pack.problems.append("skill %s has no SKILL.md under any of the prompt's roots" % skills[0])
     if len(skills) < 2:
         return pack
+    cap = None if max_chars is None else max(0, int(max_chars))
     rendered = [
         "# The rest of your skills",
         "",
         "Only the first `/wayline-<skill>` line above expands into its skill. The others are "
         "inlined here, in the ticket's order, and each is to be followed as if it had expanded.",
     ]
-    for skill in skills[1:]:
+    for index, skill in enumerate(skills[1:], start=1):
+        if cap is not None and pack.chars >= cap:
+            pack.dropped.extend("/wayline-%s" % name for name in skills[index:])
+            break
         path = _skill_path(skill, roots)
         rendered.extend(["", "## /wayline-%s" % skill, ""])
         if path is None:
@@ -629,8 +647,21 @@ def _skill_section(skills, roots):
             rendered.append("[wayline: this skill's SKILL.md could not be read, so its body is "
                             "missing. Say so in your result rather than guessing what it asked for.]")
             continue
+        note = None
+        if cap is not None and pack.chars + len(body) > cap:
+            left_out = len(body) - (cap - pack.chars)
+            body = body[: cap - pack.chars]
+            note = "[wayline: this skill was cut here at the context cap; %d character(s) are missing. Read its SKILL.md yourself if you need the rest.]" % left_out
+            pack.cut = True
+        pack.chars += len(body)
         fence = _fence(body)
         rendered.extend([fence, body.rstrip("\n"), fence])
+        if note:
+            rendered.extend(["", note])
+    if pack.dropped:
+        pack.cut = True
+        rendered.extend(["", "[wayline: the inlined skills reached the context cap of %d characters; %s left out: %s. Read their SKILL.md yourself if you need them.]"
+                         % (cap, "one was" if len(pack.dropped) == 1 else "%d were" % len(pack.dropped), ", ".join(pack.dropped))])
     pack.text = "\n".join(rendered)
     return pack
 
@@ -862,22 +893,48 @@ def _schema_text(text, schema):
     return json.dumps(_without_meta_schema(schema), indent=2) + "\n"
 
 
-def _names_meta_schema(value):
-    """Whether `$schema` appears anywhere in the schema, at any depth."""
-    if isinstance(value, dict):
-        return "$schema" in value or any(_names_meta_schema(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_names_meta_schema(item) for item in value)
+# Where a schema's keys are names rather than keywords, and where its values are literals rather
+# than schemas. A property may legitimately be called `$schema`, and a `const` may carry the word.
+NAMED_SUBSCHEMAS = ("properties", "patternProperties", "$defs", "definitions")
+LITERALS = ("const", "enum", "default", "examples")
+
+
+def _names_meta_schema(schema):
+    """Whether `$schema` appears as a keyword anywhere in the schema, at any depth."""
+    if isinstance(schema, list):
+        return any(_names_meta_schema(item) for item in schema)
+    if not isinstance(schema, dict):
+        return False
+    if "$schema" in schema:
+        return True
+    for key, value in schema.items():
+        if key in LITERALS:
+            continue
+        if key in NAMED_SUBSCHEMAS and isinstance(value, dict):
+            if any(_names_meta_schema(item) for item in value.values()):
+                return True
+        elif _names_meta_schema(value):
+            return True
     return False
 
 
-def _without_meta_schema(value):
-    """`value` with every `$schema` key removed, at any depth."""
-    if isinstance(value, dict):
-        return {key: _without_meta_schema(item) for key, item in value.items() if key != "$schema"}
-    if isinstance(value, list):
-        return [_without_meta_schema(item) for item in value]
-    return value
+def _without_meta_schema(schema):
+    """`schema` with every `$schema` keyword removed, at any depth, and every name left alone."""
+    if isinstance(schema, list):
+        return [_without_meta_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    result = {}
+    for key, value in schema.items():
+        if key == "$schema":
+            continue
+        if key in LITERALS:
+            result[key] = value
+        elif key in NAMED_SUBSCHEMAS and isinstance(value, dict):
+            result[key] = {name: _without_meta_schema(item) for name, item in value.items()}
+        else:
+            result[key] = _without_meta_schema(value)
+    return result
 
 
 def _check_paths(request):

@@ -206,6 +206,40 @@ class ArgvTest(unittest.TestCase):
         sent = json.loads(argv[argv.index("--json-schema") + 1])
         self.assertEqual(sent, {"type": "object", "properties": {"word": {"type": "string"}}})
 
+    def test_a_property_named_like_the_meta_schema_keyword_survives(self):
+        """The strip is for a keyword, not a name: a field called `$schema` is a field."""
+        directory = Path(tempfile.mkdtemp(prefix="wayline-schema-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        path = directory / "named.json"
+        original = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"$schema": {"type": "string"}, "word": {"type": "string"}},
+            "required": ["$schema"],
+            "additionalProperties": False,
+        }
+        path.write_text(json.dumps(original), encoding="utf-8")
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run, schema_path=path), run)
+        sent = json.loads(argv[argv.index("--json-schema") + 1])
+        self.assertNotIn("$schema", sent)                      # the keyword is gone
+        self.assertIn("$schema", sent["properties"])           # the field is not
+        self.assertEqual(sent["required"], ["$schema"])        # so the schema stays satisfiable
+
+    def test_a_literal_carrying_the_keyword_is_left_alone(self):
+        directory = Path(tempfile.mkdtemp(prefix="wayline-schema-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        path = directory / "literal.json"
+        path.write_text(json.dumps({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"pinned": {"type": "object", "const": {"$schema": "anything"}}},
+        }), encoding="utf-8")
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run, schema_path=path), run)
+        sent = json.loads(argv[argv.index("--json-schema") + 1])
+        self.assertEqual(sent["properties"]["pinned"]["const"], {"$schema": "anything"})
+
     def test_a_schema_with_no_meta_schema_reference_goes_across_as_it_is(self):
         run = Path("/proj/research/sessions/3/1")
         argv = worker.build_argv(make_request(run), run)

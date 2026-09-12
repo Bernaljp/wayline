@@ -605,6 +605,17 @@ class HookRecordTest(unittest.TestCase):
         self.assertNotIn("No such file", result.stderr)
         self.assertFalse(unwritable.exists())
 
+    def test_input_the_recorder_cannot_compact_still_lands_on_one_line(self):
+        """Every reader parses this file line by line, so a raw multi-line entry loses all of it."""
+        result = subprocess.run(
+            [str(HOOKS / "command_guard.sh")], input="not json at all\nover two lines\n",
+            capture_output=True, text=True, timeout=60,
+            env=dict(os.environ, CLAUDE_PROJECT_DIR=str(self.worktree), TICKET_TOUCHES="m0/",
+                     WAYLINE_HOOK_RECORD=str(self.record)))
+        self.assertEqual(result.returncode, BLOCK)  # no command to read: the guard fails closed
+        [recorded] = self._lines()
+        self.assertEqual(recorded, {"raw": "not json at all\nover two lines"})  # $(cat) drops the last newline
+
     def test_nothing_is_written_when_the_variable_is_unset(self):
         payload = pretooluse("Bash", {"command": "cat README.md"}, self.worktree)
         result = run_guard("command_guard.sh", payload, {

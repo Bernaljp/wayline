@@ -441,6 +441,50 @@ class InlinedSkillTest(unittest.TestCase):
         self.assertEqual(len(prompt.problems), 1, prompt.problems)
         self.assertIn("skill beta", prompt.problems[0])
 
+    def test_the_first_skill_is_looked_up_even_though_its_body_is_not_inlined(self):
+        """Nothing else checks that a ticket's skills exist, and its line is the one that expands.
+
+        A misspelled first skill would otherwise be a slash-command line expanding into nothing,
+        with no problem recorded and a worker that never learns it was missing anything.
+        """
+        self.write_skill("beta", "the beta instruction\n")
+        prompt = self.assemble(["missing", "beta"])
+        self.assertEqual(prompt.problems, ["skill missing has no SKILL.md under any of the prompt's roots"])
+        self.assertIn("the beta instruction", prompt.text)  # the rest are inlined regardless
+
+    def test_a_lone_skill_that_is_nowhere_is_reported_too(self):
+        prompt = self.assemble(["missing"])
+        self.assertEqual(prompt.problems, ["skill missing has no SKILL.md under any of the prompt's roots"])
+        self.assertNotIn("# The rest of your skills", prompt.text)
+
+    def test_an_inlined_body_is_cut_at_the_cap_and_says_where(self):
+        self.write_skill("alpha", "body\n")
+        self.write_skill("beta", "B" * 500)
+        prompt = worker.assemble_prompt(ticket(skills=["alpha", "beta"], context_pack=[]), self.role,
+                                        roots=[self.root], max_chars=40)
+        self.assertTrue(prompt.cut)
+        self.assertEqual(prompt.skill_chars, 40)
+        self.assertIn("cut here at the context cap", prompt.text)
+        self.assertNotIn("B" * 41, prompt.text)
+
+    def test_a_skill_past_the_cap_is_named_rather_than_silently_gone(self):
+        self.write_skill("alpha", "body\n")
+        self.write_skill("beta", "B" * 60)
+        self.write_skill("gamma", "the gamma instruction\n")
+        prompt = worker.assemble_prompt(ticket(skills=["alpha", "beta", "gamma"], context_pack=[]),
+                                        self.role, roots=[self.root], max_chars=40)
+        self.assertEqual(prompt.dropped, ["/wayline-gamma"])
+        self.assertIn("reached the context cap", prompt.text)
+        self.assertNotIn("the gamma instruction", prompt.text)
+
+    def test_the_pack_and_the_skills_are_counted_apart(self):
+        """The journal has always recorded the pack's size; the skills are beside it, not inside."""
+        self.write_skill("alpha", "body\n")
+        self.write_skill("beta", "the beta instruction\n")
+        prompt = self.assemble(["alpha", "beta"])
+        self.assertEqual(prompt.context_chars, 0)  # this ticket packs nothing
+        self.assertEqual(prompt.skill_chars, len("the beta instruction\n"))
+
     def test_one_skill_or_none_gets_no_section(self):
         self.write_skill("alpha", "body\n")
         for skills in ([], ["alpha"]):

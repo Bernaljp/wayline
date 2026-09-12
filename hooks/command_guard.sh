@@ -75,8 +75,11 @@ INPUT=$(cat)
 # whole of it runs in a subshell with its errors dropped, so a path that cannot be
 # written loses the recording rather than the command.
 if [ -n "${WAYLINE_HOOK_RECORD:-}" ]; then
+  # One JSON object per line, whatever arrives: every reader of this file parses it line by
+  # line, so raw multi-line input would lose the whole record rather than the one entry.
   RECORD_LINE=$(printf '%s' "$INPUT" | jq -c . 2>/dev/null)
-  [ -n "$RECORD_LINE" ] || RECORD_LINE=$INPUT
+  [ -n "$RECORD_LINE" ] || RECORD_LINE=$(printf '%s' "$INPUT" | jq -Rsc '{raw: .}' 2>/dev/null)
+  [ -n "$RECORD_LINE" ] || RECORD_LINE='{"raw": null}'
   (
     if command -v flock >/dev/null 2>&1; then
       exec 9>>"$WAYLINE_HOOK_RECORD"
