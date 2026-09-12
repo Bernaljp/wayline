@@ -25,6 +25,7 @@ from string import Template
 from wayline import HARNESS_ROOT, POLICY_PATH, TAG
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, atomic_write, now_ts
+from wayline.resources import ResourceError, render_resources, snapshot as resources_snapshot
 from wayline.tickets import GRAPH, by_status, empty_graph, frontier, read_graph, read_tickets, refresh_graph
 
 __all__ = [
@@ -560,6 +561,10 @@ def status_view(project):
 
     jobs, job_problems = read_jobs(project)
     problems.extend(job_problems)
+    live_jobs = [job for job in jobs if job["status"] in LIVE_JOB_STATUSES]
+    resources, resource_problem = _resources_view(project, harness, live_jobs)
+    if resource_problem:
+        problems.append(resource_problem)
     active = read_active()
     return {
         "project": str(project),
@@ -570,16 +575,30 @@ def status_view(project):
         "radius": harness.get("radius"),
         "frontier": [_ticket_line(entry, tickets) for entry in frontier(graph)],
         "running": [_ticket_line(entry, tickets) for entry in _with_status(graph, "running")],
-        "jobs": [job for job in jobs if job["status"] in LIVE_JOB_STATUSES],
+        "jobs": live_jobs,
         "decisions": [_ticket_line(entry, tickets) for entry in _open_decisions(graph)],
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
         "window": window_status(events, harness),
         "goal": goal_progress(project, events),
+        "resources": resources,
         "events": events[-10:],
         "offset": offset,
         "graph_regenerated": regenerated,
         "problems": problems,
     }
+
+
+def _resources_view(project, harness, live_jobs):
+    """The machine's slots and reservation for `status`; a reading the box cannot produce is a problem, not a crash."""
+    policy = policy_for(project).get("jobs", {})
+    try:
+        return resources_snapshot(
+            harness, live_jobs,
+            gpu_util_free_below=policy.get("gpu_util_free_below", 20),
+            gpu_util_samples=policy.get("gpu_util_samples", 2),
+        ), None
+    except (ResourceError, OSError) as failure:
+        return None, "resources: %s" % failure
 
 
 def _with_status(graph, status):
@@ -697,6 +716,9 @@ def render_status(view):
     lines.extend(_render_decisions(view["decisions"]))
     lines.append(_render_window(view["window"]))
     lines.append(_render_goal(view["goal"]))
+    if view.get("resources") is not None:
+        lines.extend(render_resources(view["resources"]))
+    lines.append("")
     counts = "   ".join("%s %d" % (status, count) for status, count in view["counts"].items() if count)
     lines.append("tickets  " + (counts or "none"))
     lines.append("")
