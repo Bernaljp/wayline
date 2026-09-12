@@ -109,12 +109,22 @@ class PromptTest(ProjectTestCase):
                 self.assertFalse(directory.is_symlink())
 
     def test_the_worktree_the_worker_starts_in_carries_the_skills(self):
-        """A worktree is checked out from `main`, so a skill reaches the worker only if it is committed."""
-        tracked = subprocess.run(["git", "-C", str(self.project), "ls-files", ".claude/skills"],
+        """A worktree is checked out from `main`, so a skill reaches the worker only if it is committed.
+
+        The project's own two skills are committed as files; the harness's are the symlinks `init`
+        laid down, which resolve from a worktree because they name the harness by absolute path.
+        """
+        tracked = subprocess.run(["git", "-C", str(self.project), "ls-files", "-s", ".claude/skills"],
                                  capture_output=True, text=True, timeout=60)
         self.assertEqual(tracked.returncode, 0, tracked.stderr)
-        self.assertEqual(sorted(tracked.stdout.split()),
-                         [".claude/skills/%s/SKILL.md" % skill for skill in sorted(PASSPHRASES)])
+        rows = [line.split("\t", 1) for line in tracked.stdout.splitlines()]
+        files = sorted(path for mode, path in rows if not mode.startswith("120000"))
+        links = sorted(path for mode, path in rows if mode.startswith("120000"))
+        self.assertEqual(files, [".claude/skills/%s/SKILL.md" % skill for skill in sorted(PASSPHRASES)])
+        self.assertTrue(links, "init links the harness skills in, and a worktree carries only what is committed")
+        for link in links:
+            with self.subTest(link=link):
+                self.assertEqual(Path(os.readlink(self.project / link)).parent, HARNESS_ROOT / "skills")
 
 
 class ShellRunTest(ProjectTestCase):

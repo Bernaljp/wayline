@@ -1,0 +1,14 @@
+{
+  "id": "coder",
+  "kind": "role",
+  "scope_kind": "global",
+  "path": "roles/coder",
+  "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "capability_summary": "Implements one code ticket in its worktree and returns the structured result.",
+  "applicability_tags": {"kinds": ["code", "docs", "harness"], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": ["role/worker-smoke-test-ticket"],
+  "outcome": {"assigned": 12, "passed_first_time": 9, "failed": 2, "last_used": "2026-09-12T18:40:11.004Z"},
+  "assignable": true,
+  "problems": []
+}

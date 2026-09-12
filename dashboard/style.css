@@ -99,6 +99,13 @@ th { color: var(--dim); font-weight: 600; }
 .markdown :is(h1, h2, h3) { font-size: 14px; }
 .markdown pre { overflow-x: auto; }
 
+.graph { overflow-x: auto; }
+.graph svg { display: block; max-width: 100%; height: auto; }
+.graph svg text { fill: var(--ink); }
+.graph svg a rect:hover { stroke-width: 2; cursor: pointer; }
+
+.log-tail { white-space: pre-wrap; word-break: break-word; }
+
 @media (max-width: 560px) {
   dl.fields { grid-template-columns: 1fr; }
   dl.fields dt { margin-top: 8px; }

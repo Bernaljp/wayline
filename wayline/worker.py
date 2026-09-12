@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Union
 
-from wayline import HARNESS_ROOT
+from wayline import HARNESS_ROOT, registry
 from wayline.frontmatter import FrontmatterError, load_document
 from wayline.jsonschema import SchemaError, check_schema, load_schema, validate
 from wayline.ledger import now_ts
@@ -325,8 +325,11 @@ FORBIDDEN_AGENT_KEYS = {
     "skills": "`skills` in `--agents` does not inject when the agent runs as the main session; a skill reaches the worker as a /wayline-<skill> line in the prompt",
 }
 
-# The fields `roles/<role>/wayline.json` may carry; anything else is a typo, not a setting.
-ROLE_SETTINGS = ("role", "summary", "kinds", "may_judge", "output_schema", "allowed_tools", "disallowed_tools")
+# `roles/<role>/wayline.json` is the registry sidecar of decision 10 (`id`, `scope_kind`,
+# `capability_summary`, `applicability_tags`, `cost_hint`, `fixtures`, `sha256`) plus the four
+# fields a role adds, and `wayline.registry` is the one reader of it, so the index the librarian
+# assigns from and the file the conductor launches from cannot disagree about a role.
+ROLE_SETTINGS = registry.SIDECAR_FIELDS + registry.ROLE_FIELDS
 
 # `policy.consultant.max_questions_per_ticket`, restated in the contract lines.
 CONSULT_MAX = 5
@@ -392,7 +395,8 @@ def read_role(name, harness_root=HARNESS_ROOT, project=None):
         name=name, description=description, system_prompt=system_prompt,
         allowed_tools=settings["allowed_tools"], disallowed_tools=settings["disallowed_tools"],
         output_schema=settings["output_schema"], may_judge=settings["may_judge"],
-        summary=settings["summary"], kinds=settings["kinds"], protocol=protocol, source=source,
+        summary=settings["capability_summary"], kinds=settings["applicability_tags"]["kinds"],
+        protocol=protocol, source=source,
     )
 
 
@@ -420,31 +424,11 @@ def _role_markdown(path, name):
 
 
 def _role_settings(path, name):
-    """`wayline.json`: the tool lists and the registry fields, with every value checked."""
+    """`wayline.json`: the registry sidecar and the tool lists, read by the module that registers it."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as failure:
-        raise RoleError("the role %r has no readable %s: %s" % (name, path, failure)) from None
-    except ValueError as failure:
-        raise RoleError("%s is not readable JSON: %s" % (path, failure)) from None
-    if not isinstance(value, dict):
-        raise RoleError("%s holds an object of role settings, got %s" % (path, type(value).__name__))
-    unknown = sorted(set(value) - set(ROLE_SETTINGS))
-    if unknown:
-        raise RoleError("%s has no field(s) %s (the fields are %s)" % (path, ", ".join(unknown), ", ".join(ROLE_SETTINGS)))
-    if value.get("role", name) != name:
-        raise RoleError("%s names the role %r but lives under %r" % (path, value.get("role"), name))
-    for key in ("allowed_tools", "disallowed_tools", "kinds"):
-        items = value.setdefault(key, [])
-        if not isinstance(items, list) or not all(isinstance(item, str) and item.strip() for item in items):
-            raise RoleError("%s: %s is a list of non-empty strings" % (path, key))
-    if not isinstance(value.setdefault("may_judge", False), bool):
-        raise RoleError("%s: may_judge is true or false" % path)
-    if value.setdefault("output_schema", None) is not None and not isinstance(value["output_schema"], str):
-        raise RoleError("%s: output_schema names a shipped schema, or is null" % path)
-    if not isinstance(value.setdefault("summary", ""), str):
-        raise RoleError("%s: summary is a string" % path)
-    return value
+        return registry.read_sidecar(path, "role", expect_id=name)
+    except registry.RegistryError as failure:
+        raise RoleError(str(failure)) from None
 
 
 # --- context pack locators -----------------------------------------------------------------------
@@ -1546,6 +1530,51 @@ def resume(request, session_id, message, on_start=None):
 def pid_alive(pid):
     """Whether a worker pid is still running, through the selected backend."""
     return backend().pid_alive(pid)
+
+
+# --- the free structural pre-check (decision 10) --------------------------------------------------
+
+# The CLI's own reader of a skill directory. It lives here because this module is the only one that
+# knows how the executable is spelled and found (seam 1), and the registry asks for it by name.
+PRE_CHECK_ARGV = ("plugin", "validate")
+PRE_CHECK_LABEL = "%s %s" % (ClaudeCli.executable, " ".join(PRE_CHECK_ARGV))
+
+
+def validate_plugin(path, timeout=60):
+    """Run the CLI's validator over `path` and return `(findings, note)`.
+
+    `findings` maps the absolute path of each file the validator complained about to its lines,
+    already labelled with the command that produced them; `note` says why nothing was checked, when
+    that is the case. This is the free layer of decision 10, so a validator that is absent, slow, or
+    broken is a note and never a failure.
+
+    `path` is the directory that *holds* `skills/`, not a skill directory: run on a skill directory
+    the validator reports only that the directory is not a plugin, while run on the directory above
+    it it reads every `SKILL.md` under it and reports the ones with problems. The real backend
+    resolves the executable even under `WAYLINE_LAUNCHER=fake`, because there is nothing to fake
+    about a structural check that costs no tokens.
+    """
+    try:
+        executable = CLAUDE_CLI._executable()
+    except LaunchError as failure:
+        return {}, "%s did not run: %s" % (PRE_CHECK_LABEL, failure)
+    argv = [executable, *PRE_CHECK_ARGV, str(path), "--json"]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as failure:
+        return {}, "%s did not run: %s" % (PRE_CHECK_LABEL, failure)
+    try:
+        report = json.loads(done.stdout)
+    except ValueError:
+        return {}, "%s printed no JSON report (exit %d)" % (PRE_CHECK_LABEL, done.returncode)
+    findings = {}
+    for item in report.get("contents") or []:
+        lines = ["%s: %s: %s" % (PRE_CHECK_LABEL, finding.get("path") or "validate", finding.get("message"))
+                 for key in ("errors", "warnings")
+                 for finding in (item.get(key) or [])]
+        if lines:
+            findings[str(item.get("file"))] = lines
+    return findings, None
 
 
 @contextmanager
