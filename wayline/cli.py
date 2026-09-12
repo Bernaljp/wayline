@@ -66,7 +66,7 @@ VERBS = [
     Verb("fixture", "fixture record|run", "record or run the model-behavior fixtures", "evolve"),
     Verb("registry", "registry build", "build the index of skills and roles", "builders"),
     Verb("figures", "figures build-index|refresh", "build or refresh the plot index", "builders"),
-    Verb("guidelines", "guidelines build", "build the venue guidelines", "builders"),
+    Verb("guidelines", "guidelines build|check", "build the venue guidelines, or run the seven checks on a draft", "builders", lazy("wayline.guidelines", "build_command")),
     Verb("docs", "docs build", "build the documentation site", "builders"),
     Verb("paper", "paper [--venue <slug>]", "draft the paper under a venue's guidelines", "builders"),
     Verb("report", "report", "render REPORT.md from the ledger", "builders"),

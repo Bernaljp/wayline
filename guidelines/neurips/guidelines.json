@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "venue": "neurips",
+  "display_name": "NeurIPS 2026",
+  "guidelines_url": "https://neurips.cc/Conferences/2026/CallForPapers",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": null,
+    "page_count": 9,
+    "abstract_word_count": null,
+    "notes": "Nine pages of main text including figures; acknowledgements, references, the paper checklist and optional appendices do not count. The figure is from the style file rather than from the call for papers.",
+    "excluded_sections": [
+      "Acknowledgements",
+      "Acknowledgments",
+      "References",
+      "Checklist",
+      "Appendix"
+    ]
+  },
+  "required_structure": [
+    "NeurIPS Paper Checklist"
+  ],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "Not stated on either page fetched."
+  },
+  "reference_style": {
+    "style": "Set by the style file; neither page states one.",
+    "max_count": null,
+    "citation": "unknown"
+  },
+  "reporting_checklists": [
+    {
+      "name": "NeurIPS Paper Checklist",
+      "required": true,
+      "study_types": [],
+      "url": "https://neurips.cc/public/guides/PaperChecklist",
+      "cached_as": null
+    }
+  ],
+  "submission_steps": [
+    "submit through OpenReview at https://openreview.net/group?id=NeurIPS.cc/2026/Conference",
+    "abstracts were due 4 May 2026 and full papers 6 May 2026, anywhere on Earth; notification 24 September 2026",
+    "every author needs an OpenReview profile at abstract submission",
+    "the paper checklist is mandatory and omitting it is grounds for desk rejection",
+    "tracks do not accept switches and a paper may not be submitted to more than one"
+  ],
+  "template": {
+    "latex_or_word_no_login": true,
+    "url": "https://media.neurips.cc/Conferences/NeurIPS2026/Formatting_Instructions_For_NeurIPS_2026.zip",
+    "notes": "A style-file zip downloads without a login and carries the checklist. Linked, never stored.",
+    "document_class": "neurips_2026"
+  },
+  "license_of_summary_source": {
+    "statement": "No copyright or licence notice appears on the page, only a cookie disclaimer.",
+    "url": null
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "reporting_checklists",
+      "submission_steps",
+      "license_of_summary_source"
+    ],
+    "unverified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reference_style",
+      "template.document_class"
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "venue": "iclr",
+  "display_name": "ICLR 2027",
+  "guidelines_url": "https://iclr.cc/Conferences/2027/AuthorGuidelines",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": null,
+    "page_count": 9,
+    "abstract_word_count": null,
+    "notes": "Nine pages of main text at submission, rising to ten for the discussion phase and camera-ready. References are unlimited and do not count. Appendices follow the bibliography and may be any length, though reviewers need not read them.",
+    "excluded_sections": [
+      "References",
+      "Ethics Statement",
+      "Reproducibility Statement",
+      "Appendix",
+      "Acknowledgements",
+      "Acknowledgments"
+    ]
+  },
+  "required_structure": [
+    "AI-use statement"
+  ],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "Not stated on the page."
+  },
+  "reference_style": {
+    "style": "Not stated on the page; the style file sets it. Self-citations are written in the third person.",
+    "max_count": null,
+    "citation": "unknown"
+  },
+  "reporting_checklists": [],
+  "submission_steps": [
+    "submit through OpenReview at https://openreview.net/group?id=ICLR.cc/2027/Conference",
+    "submit the paper and any supplementary material as a single file",
+    "include the mandatory AI-use statement, which does not count toward the page limit",
+    "an ethics statement of up to one page and a reproducibility statement are optional and uncounted",
+    "the cycle caps an author at 20 papers and ties reviewing quotas to submissions"
+  ],
+  "template": {
+    "latex_or_word_no_login": true,
+    "url": "https://media.iclr.cc/Conferences/ICLR2027/iclr-2027-style-files.zip",
+    "notes": "A style-file zip downloads without a login; no Word template is mentioned. Linked, never stored.",
+    "document_class": "iclr2027_conference"
+  },
+  "license_of_summary_source": {
+    "statement": "No copyright or terms-of-use statement was found on the page.",
+    "url": null
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "length_limits",
+      "required_structure",
+      "reporting_checklists",
+      "submission_steps"
+    ],
+    "unverified_fields": [
+      "figure_spec",
+      "reference_style",
+      "template.document_class",
+      "license_of_summary_source"
+    ]
+  }
+}

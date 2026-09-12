@@ -8,13 +8,15 @@ from them, grouped by ticket, negative results marked, and `add_finding` calls i
 change so the two files never drift.
 
 The claim linter of Implementation Decisions 11 (`{res:...}` / `{ref:...}` tags in REPORT.md)
-is ticket 40's; this module only owns the manifest and the findings ledger it resolves against.
+is ticket 40's; this module owns the manifest, the findings ledger it resolves against, and the
+sentence pass both the linter and the guidelines checks walk a draft with.
 """
 
 import hashlib
 import json
 import re
 import subprocess
+from collections import namedtuple
 from pathlib import Path
 
 from wayline import POLICY_PATH
@@ -25,6 +27,7 @@ __all__ = [
     "sha256_of", "read_manifest", "manifest_paths", "register_artifact",
     "read_findings", "add_finding", "render_findings",
     "commit_threshold_bytes", "oversized_tracked_files",
+    "TAG_RE", "RES_TAG_RE", "REF_TAG_RE", "Sentence", "sentences", "parse_tag", "strip_tags",
 ]
 
 MANIFEST = "manifest.json"
@@ -32,6 +35,23 @@ FINDINGS = "findings.jsonl"
 FINDINGS_MD = "findings.md"
 
 RUN_ID_RE = re.compile(r"^t[0-9]+-a[0-9]+$")
+
+# The provenance markup of Implementation Decisions 11: a claim sentence ends with one or more
+# `{res:<run-id>/<artifact>#<locator>}` or `{ref:<slug>#<locator>}`.
+TAG_RE = re.compile(r"\{(res|ref):([^{}]+)\}")
+RES_TAG_RE = re.compile(r"^(?P<run_id>t[0-9]+-a[0-9]+)/(?P<artifact>[^#]+)#(?P<locator>.+)$")
+REF_TAG_RE = re.compile(r"^(?P<slug>[a-z0-9][a-z0-9._-]*)#(?P<locator>.+)$")
+
+# Where one sentence ends: a full stop, question mark or exclamation mark, then any closing
+# quotes, then the provenance tags that belong to the sentence just ended, and then either the
+# start of the next sentence or the end of the text. Requiring a capital (or a quote or a bracket)
+# after the space is what keeps "Fig. 1", "e.g. the" and "0.5" from each becoming two sentences;
+# it is a heuristic, and a draft that opens a sentence with a lowercase symbol name joins the one
+# before it. The linter classifies sentences and this decides what a sentence is, so both halves
+# of the provenance work see exactly the same units.
+_BOUNDARY = re.compile(r"""[.!?]["')\]]*(?:\s*\{(?:res|ref):[^{}]+\})*(?=\s+["'(\[A-Z]|\s*$)""")
+
+Sentence = namedtuple("Sentence", "text tags")
 
 _HASH_CHUNK = 1 << 20  # 1 MiB
 
@@ -197,6 +217,54 @@ def render_findings(project_or_ledger):
                 lines.append("- `%s`%s %s (%s)" % (finding["id"], mark, finding["text"], locators))
             lines.append("")
     return book.write_markdown(FINDINGS_MD, "\n".join(lines))
+
+
+# --- the sentence pass -------------------------------------------------------------------------
+#
+# One walk over a draft's prose, shared by the claim linter of Implementation Decisions 11 and by
+# the guidelines checks of decision 13, so a sentence means the same thing to both and a draft is
+# read once rather than twice. Nothing here classifies a sentence: that is one model call per
+# batch and it is the linter's, not this module's.
+
+
+def sentences(text):
+    """The prose of `text` as `Sentence(text, tags)`, each sentence carrying the tags it ends with.
+
+    `text` is prose, not markup: strip the LaTeX or Markdown first (the guidelines module does it
+    while it is counting words anyway). A sentence with no tag carries an empty tuple, which is
+    what the linter's classifier is handed and what the mechanical cross-check counts.
+    """
+    found, start = [], 0
+    for boundary in _BOUNDARY.finditer(str(text or "")):
+        found.append(text[start:boundary.end()])
+        start = boundary.end()
+    found.append(text[start:])
+    result = []
+    for chunk in found:
+        body = chunk.strip()
+        if body:
+            result.append(Sentence(body, tuple("%s:%s" % (kind, rest) for kind, rest in TAG_RE.findall(body))))
+    return result
+
+
+def parse_tag(tag):
+    """One tag as `(kind, parts)`, or `(kind, None)` when it is malformed; `(None, None)` for a non-tag.
+
+    `parts` is the named groups of the tag's shape: a `res` tag resolves to a run id, an artifact
+    and a locator, a `ref` tag to a slug and a locator. A tag whose halves are there but empty is
+    malformed, which is the case the linter refuses and the guidelines check reports.
+    """
+    kind, _, rest = str(tag or "").partition(":")
+    if kind not in ("res", "ref") or not rest:
+        return None, None
+    pattern = RES_TAG_RE if kind == "res" else REF_TAG_RE
+    found = pattern.match(rest)
+    return kind, (found.groupdict() if found else None)
+
+
+def strip_tags(text):
+    """`text` with its provenance tags taken off, for a word count that does not count markup."""
+    return TAG_RE.sub("", str(text or "")).strip()
 
 
 # --- the commit-threshold check ---------------------------------------------------------------

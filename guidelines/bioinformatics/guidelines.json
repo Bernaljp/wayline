@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "venue": "bioinformatics",
+  "display_name": "Bioinformatics (Oxford University Press)",
+  "guidelines_url": "https://academic.oup.com/bioinformatics/pages/author-guidelines",
+  "date_checked": "2026-09-11",
+  "length_limits": {
+    "word_count": 5000,
+    "page_count": 7,
+    "abstract_word_count": null,
+    "notes": "Original Papers up to 7 pages, about 5,000 words excluding figures. Application Notes up to 4 pages, about 2,600 words, or 2,000 words plus one figure. Reviews 3 to 8 pages. A manuscript 20 percent or more over its limit is typically returned without review.",
+    "excluded_sections": [
+      "References",
+      "Figure legends"
+    ]
+  },
+  "required_structure": [
+    "Availability and implementation",
+    "Data availability"
+  ],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "No figure count, resolution, format or colour-mode requirement was found on the pages fetched."
+  },
+  "reference_style": {
+    "style": "Not stated on the pages fetched; only dataset citations are specified, following the DataCite recommendations.",
+    "max_count": null,
+    "citation": "unknown"
+  },
+  "reporting_checklists": [],
+  "submission_steps": [
+    "submit through ScholarOne at http://mc.manuscriptcentral.com/bioinformatics, which requires an account",
+    "a cover letter is mandatory and must justify the fit, disclose related publications and preprints, and say how this differs from them",
+    "machine-learning papers need a subsection describing the composition of the training dataset",
+    "software papers need an Availability and Implementation section",
+    "every paper needs a data availability statement"
+  ],
+  "template": {
+    "latex_or_word_no_login": null,
+    "url": null,
+    "notes": "The guidelines reference a journal template and accept Word or LaTeX on acceptance, but no direct no-login download link was found.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "The page states that published papers are made available under CC BY through open-access agreements; that is a publishing licence, not a statement about reusing the guidelines text.",
+    "url": "https://academic.oup.com/bioinformatics/pages/author-guidelines"
+  },
+  "verification": {
+    "fully_verified_fields": [],
+    "unverified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reference_style",
+      "reporting_checklists",
+      "submission_steps",
+      "template",
+      "license_of_summary_source"
+    ]
+  }
+}

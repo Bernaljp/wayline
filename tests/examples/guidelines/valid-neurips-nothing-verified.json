@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "venue": "neurips",
+  "display_name": "NeurIPS 2026",
+  "guidelines_url": "https://neurips.cc/Conferences/2026/CallForPapers",
+  "date_checked": "2026-09-11",
+  "length_limits": {
+    "word_count": null,
+    "page_count": 9,
+    "abstract_word_count": null,
+    "notes": "Nine pages of main text; acknowledgements, references, the paper checklist, and appendices do not count. The figure is from the style file's formatting instructions, not from the call for papers.",
+    "excluded_sections": [
+      "Acknowledgements",
+      "References",
+      "NeurIPS Paper Checklist",
+      "Appendix"
+    ]
+  },
+  "required_structure": [],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "Not stated on either page fetched."
+  },
+  "reference_style": {
+    "style": "set by the style file; the call for papers names none",
+    "max_count": null,
+    "citation": "unknown"
+  },
+  "reporting_checklists": [
+    {
+      "name": "NeurIPS Paper Checklist",
+      "required": true,
+      "study_types": [],
+      "url": "https://neurips.cc/public/guides/PaperChecklist",
+      "cached_as": null
+    }
+  ],
+  "submission_steps": [
+    "OpenReview",
+    "abstract deadline before the full paper deadline"
+  ],
+  "template": {
+    "latex_or_word_no_login": true,
+    "url": "https://media.neurips.cc/Conferences/NeurIPS2026/Formatting_Instructions_For_NeurIPS_2026.zip",
+    "notes": "Linked, never stored.",
+    "document_class": "neurips_2026"
+  },
+  "license_of_summary_source": {
+    "statement": "No copyright or licence notice was found on the page.",
+    "url": null
+  },
+  "verification": {
+    "fully_verified_fields": [],
+    "unverified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reference_style",
+      "reporting_checklists",
+      "submission_steps",
+      "template",
+      "license_of_summary_source"
+    ]
+  }
+}
