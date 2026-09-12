@@ -14,16 +14,24 @@
 #   git push (any spelling), git reset --hard, git clean -f, git branch -D,
 #   git worktree remove, rm outside the touch set, find -delete, chmod -R,
 #   truncate, dd of=, an upload flag on curl or wget, twine, pip upload,
-#   gh pr, gh release, and any write target resolving outside the worktree
-#   and results/.
+#   gh pr, gh release, and any write target resolving outside the worktree,
+#   results/ and the temporary directory.
 #
 # Exit codes (https://code.claude.com/docs/en/hooks#exit-code-output):
 #   0  no decision; the normal permission flow applies
 #   2  block the tool call; stderr is shown to Claude as the denial reason
 #
-# The guard fails closed: a missing jq, a missing command, a target path hidden
-# behind a variable, an unset TICKET_TOUCHES on a deletion, or a command too long
-# or too deeply nested to analyse all block.
+# The guard fails closed wherever it cannot see: a missing jq, a missing command, a
+# target path hidden behind a variable, an unset TICKET_TOUCHES on a deletion, an
+# `rm` whose targets arrive on stdin, a pipe or a here-string into a shell, a `cd`
+# out of the worktree, and a command too long, too deeply nested, or too expensive
+# to lex.
+#
+# Known limit, and the spec's own (Implementation Decisions 4, quoting the
+# permissions documentation): a rule cannot see inside a program. `python3 -c`,
+# `perl -e`, an `ssh` command line and a container run are analysed as the
+# invocation they are, not as the code they carry. The layers that hold there are
+# the role's tool allowlist and the absence of network tools, not this guard.
 #
 # Environment (exported by the conductor at launch):
 #   CLAUDE_PROJECT_DIR      the worktree root; the session starts there
@@ -34,6 +42,10 @@ set -u
 
 MAX_COMMAND_CHARS=20000
 MAX_UNITS=64
+# A timed-out PreToolUse hook does NOT block, so the guard must finish well inside the
+# 30 second handler timeout. Lexing costs about one step per special character and each
+# step costs time proportional to the length, so the budget is on their product.
+MAX_LEX_COST=40000000
 SUBMARK=$'\002'
 
 # Character classes for the lexer, as ERE bracket expressions. Inside brackets a
@@ -65,12 +77,26 @@ if [ ${#COMMAND} -gt $MAX_COMMAND_CHARS ]; then
   deny "the command is ${#COMMAND} characters, more than the $MAX_COMMAND_CHARS the guard will analyse; split it into smaller commands"
 fi
 
+MAX_STEPS=$((MAX_LEX_COST / (${#COMMAND} + 1)))
+STEPS=0
+
+step() {
+  STEPS=$((STEPS + 1))
+  if [ $STEPS -gt $MAX_STEPS ]; then
+    deny "the command needs more lexing than the guard will spend on a $((${#COMMAND})) character command; a timed-out hook does not block, so it is blocked here. Write it as several plainer commands."
+  fi
+}
+
 # The root for relative paths: the project root where the session started
 # (CLAUDE_PROJECT_DIR), then the hook's cwd, then the shell cwd.
 ROOT="${CLAUDE_PROJECT_DIR:-${CWD:-$PWD}}"
 ROOT=$(realpath -m "$ROOT")
 
-WRITE_ROOTS=("$ROOT" "$(realpath -m "$ROOT/results")")
+# Where a write may land. The worktree and results/ are the spec's two; the temporary
+# directory is added here because scratch output (`2>/dev/null`, `> $TMPDIR/x`) is
+# routine and a temporary file is not data, so losing one is not irreversible.
+TEMP_ROOT=$(realpath -m "${TMPDIR:-/tmp}")
+WRITE_ROOTS=("$ROOT" "$(realpath -m "$ROOT/results")" "$TEMP_ROOT")
 if [ -n "${WAYLINE_RESULTS:-}" ]; then
   WRITE_ROOTS+=("$(realpath -m "$WAYLINE_RESULTS")")
 fi
@@ -100,6 +126,14 @@ resolve() {
   esac
 }
 
+hidden_by() {
+  # How a word hides its target, for the denial reason.
+  case "$1" in
+    *"$SUBMARK"*|*'`'*) printf 'a command substitution' ;;
+    *) printf 'a variable' ;;
+  esac
+}
+
 under() {
   local path="$1"
   shift
@@ -114,8 +148,8 @@ under() {
 }
 
 in_touch_set() {
-  # The touch-set rule of touch_set_guard.sh: a directory entry matches below it,
-  # a file entry matches exactly.
+  # The touch-set rule of touch_set_guard.sh, plus the entry itself: `rm -rf build` is
+  # inside the touch set `build/`, because the touch set is what the ticket may write.
   local path="$1" entry prefix
   local -a entries
   IFS=':' read -r -a entries <<< "${TICKET_TOUCHES:-}"
@@ -125,12 +159,11 @@ in_touch_set() {
       /*) prefix=$(realpath -m "$entry") ;;
       *) prefix=$(realpath -m "$ROOT/$entry") ;;
     esac
+    [ "$path" = "$prefix" ] && return 0
     if [ "${entry%/}" != "$entry" ] || [ -d "$prefix" ]; then
       case "$path" in
         "$prefix"/*) return 0 ;;
       esac
-    else
-      [ "$path" = "$prefix" ] && return 0
     fi
   done
   return 1
@@ -138,40 +171,43 @@ in_touch_set() {
 
 check_write_target() {
   local raw="$1" what="$2" abs
+  [ -n "$raw" ] || return 0
   case "$raw" in
     -|/dev/null|/dev/zero|/dev/full|/dev/stdout|/dev/stderr|/dev/tty|/dev/fd/*|/proc/self/fd/*) return 0 ;;
   esac
   if ! abs=$(resolve "$raw"); then
-    deny "$what '$raw' hides its target behind a variable or a command substitution; the guard cannot resolve it, so it is blocked. Write to a literal path inside the worktree."
+    deny "$what '$raw' hides its target behind $(hidden_by "$raw"); the guard cannot resolve it, so it is blocked. Write to a literal path inside the worktree."
   fi
   if ! under "$abs" "${WRITE_ROOTS[@]}"; then
-    deny "$what '$raw' resolves to $abs, outside the worktree ($ROOT) and results/. A worker writes only inside its worktree; report that the ticket needs a wider scope."
+    deny "$what '$raw' resolves to $abs, outside the worktree ($ROOT), results/ and $TEMP_ROOT. A worker writes only inside its worktree; report that the ticket needs a wider touch set."
   fi
 }
 
 check_delete_target() {
   local raw="$1" what="$2" abs
   if ! abs=$(resolve "$raw"); then
-    deny "$what '$raw' hides its target behind a variable or a command substitution; deleting an unresolved path is blocked."
+    deny "$what '$raw' hides its target behind $(hidden_by "$raw"); deleting an unresolved path is blocked."
   fi
   if [ -z "${TICKET_TOUCHES:-}" ]; then
     deny "TICKET_TOUCHES is not set; no deletion is allowed in this session ($what '$raw')"
   fi
   if ! in_touch_set "$abs"; then
-    deny "$what '$raw' resolves to $abs, outside the ticket touch set (${TICKET_TOUCHES}). Deleting files is on the irreversible list; delete only under the listed paths."
+    deny "$what '$raw' resolves to $abs, outside the ticket touch set (${TICKET_TOUCHES}). Deleting files is on the irreversible list; delete only the listed paths and what is under them."
   fi
 }
 
 # --- the lexer ---------------------------------------------------------------------------------
 # Tokens land in KIND/TEXT: 'w' a word, 'o' an operator (a segment boundary), 'r' a
-# redirection whose next word is a write target, 'x' a redirection whose next word is
-# not (a read, a here-string, a file-descriptor duplication). Command substitutions,
-# backticks, process substitutions and `sh -c` bodies are pushed onto QUEUE and
-# analysed as commands of their own.
+# redirection whose next word is a write target, 'h' a here-string whose next word is the
+# text fed to the command, 'x' a redirection whose next word is neither (a read, a
+# file-descriptor duplication). Command substitutions, backticks, process substitutions,
+# `sh -c` bodies and `eval` arguments are pushed onto QUEUE and analysed as commands of
+# their own; a heredoc body is kept aside and analysed only when a shell is what reads it.
 
 KIND=()
 TEXT=()
 QUEUE=("$COMMAND")
+HEREDOC_BODIES=()
 
 flush_word() {
   if [ "$have" -eq 1 ]; then
@@ -188,6 +224,7 @@ take_paren() {
   local body="" depth=1 char seg
   rest="${rest:2}"
   while [ -n "$rest" ]; do
+    step
     if [[ $rest =~ $PAREN_RE ]]; then
       body+="${BASH_REMATCH[0]}"
       rest="${rest#"${BASH_REMATCH[0]}"}"
@@ -220,6 +257,7 @@ take_paren() {
         body+='"'
         rest="${rest:1}"
         while [ -n "$rest" ]; do
+          step
           if [[ $rest =~ $INNER_DQ_RE ]]; then
             body+="${BASH_REMATCH[0]}"
             rest="${rest#"${BASH_REMATCH[0]}"}"
@@ -260,6 +298,7 @@ skip_arithmetic() {
   local depth=0 char
   rest="${rest:1}"
   while [ -n "$rest" ]; do
+    step
     if [[ $rest =~ ^[^()]+ ]]; then
       rest="${rest#"${BASH_REMATCH[0]}"}"
       continue
@@ -278,6 +317,7 @@ take_heredoc_delimiter() {
   local delim="" quote seg
   while [ -n "$rest" ] && [[ ${rest:0:1} == [[:blank:]] ]]; do rest="${rest:1}"; done
   while [ -n "$rest" ]; do
+    step
     case "${rest:0:1}" in
       "'"|'"')
         quote="${rest:0:1}"
@@ -305,13 +345,16 @@ take_heredoc_delimiter() {
 }
 
 cut_heredoc_bodies() {
-  # Called once the newline after the redirection is reached: a heredoc body is
-  # data, never a command, so it is dropped before lexing continues.
-  local delim line trimmed
+  # Called once the newline after the redirection is reached. A heredoc body is data to
+  # whatever reads it, so it leaves the token stream; it is kept in HEREDOC_BODIES because
+  # `bash <<EOF` reads it as a command.
+  local delim line trimmed body
   while [ ${#HEREDOCS[@]} -gt 0 ]; do
     delim="${HEREDOCS[0]}"
     HEREDOCS=(${HEREDOCS[@]+"${HEREDOCS[@]:1}"})
+    body=""
     while [ -n "$rest" ]; do
+      step
       if [[ $rest == *$'\n'* ]]; then
         line="${rest%%$'\n'*}"
         rest="${rest#*$'\n'}"
@@ -322,7 +365,9 @@ cut_heredoc_bodies() {
       trimmed="$line"
       while [ "${trimmed:0:1}" = $'\t' ]; do trimmed="${trimmed:1}"; done
       [ "$trimmed" = "$delim" ] && break
+      body+="$line"$'\n'
     done
+    HEREDOC_BODIES+=("$body")
   done
 }
 
@@ -332,7 +377,9 @@ lex() {
   local -a HEREDOCS=()
   KIND=()
   TEXT=()
+  HEREDOC_BODIES=()
   while [ -n "$rest" ]; do
+    step
     if [[ $rest =~ $ORD_RE ]]; then
       word+="${BASH_REMATCH[0]}"
       have=1
@@ -390,6 +437,7 @@ lex() {
         rest="${rest:1}"
         have=1
         while [ -n "$rest" ]; do
+          step
           if [[ $rest =~ $DQ_RE ]]; then
             word+="${BASH_REMATCH[0]}"
             rest="${rest#"${BASH_REMATCH[0]}"}"
@@ -424,9 +472,16 @@ lex() {
         if [ "${rest:1:1}" = '(' ]; then
           if [ "${rest:2:1}" = '(' ]; then skip_arithmetic; else take_paren; fi
         else
-          word+='$'
+          # A run of '$' that starts no substitution is ordinary text; take it whole so a
+          # command full of them costs one step, not one per character.
+          [[ $rest =~ ^[$]+ ]]
+          run="${BASH_REMATCH[0]}"
+          if [ "${rest:${#run}:1}" = '(' ]; then
+            run="${run:1}"
+          fi
+          word+="$run"
           have=1
-          rest="${rest:1}"
+          rest="${rest:${#run}}"
         fi ;;
       '`') take_backtick ;;
       '(')
@@ -467,7 +522,7 @@ lex() {
         fi
         if [ "${rest:1:2}" = '<<' ]; then
           rest="${rest:3}"
-          KIND+=(x); TEXT+=('<<<')
+          KIND+=(h); TEXT+=('<<<')
           continue
         fi
         if [ "${rest:1:1}" = '<' ]; then
@@ -514,7 +569,9 @@ lex() {
 # --- normalizing one segment --------------------------------------------------------------------
 
 strip_wrappers() {
-  # Drop leading `VAR=` assignments and the wrappers that hide the real program.
+  # Drop leading `VAR=` assignments, the shell's own reserved words, and the wrappers that
+  # hide the real program. A reserved word is a word like any other, so without this
+  # `if true; then git push; fi` would dispatch on `then` and match no rule at all.
   local head
   while [ ${#a[@]} -gt 0 ]; do
     if [[ ${a[0]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
@@ -523,11 +580,26 @@ strip_wrappers() {
     fi
     head="${a[0]##*/}"
     case "$head" in
+      if|then|elif|else|fi|do|done|while|until|for|select|case|esac|in|function|coproc|'!'|'{'|'}')
+        a=(${a[@]+"${a[@]:1}"}) ;;
       env)
         a=(${a[@]+"${a[@]:1}"})
         while [ ${#a[@]} -gt 0 ]; do
           case "${a[0]}" in
-            -u|--unset|-C|--chdir|-S|--split-string) a=(${a[@]+"${a[@]:2}"}) ;;
+            -S|--split-string)
+              # `env -S "rm -rf /"` carries the whole command in one argument.
+              [ ${#a[@]} -ge 2 ] && QUEUE+=("${a[1]}")
+              a=()
+              return 0 ;;
+            --split-string=*)
+              QUEUE+=("${a[0]#*=}")
+              a=()
+              return 0 ;;
+            -S*)
+              QUEUE+=("${a[0]#-S}")
+              a=()
+              return 0 ;;
+            -u|--unset|-C|--chdir) a=(${a[@]+"${a[@]:2}"}) ;;
             -*) a=(${a[@]+"${a[@]:1}"}) ;;
             *=*) a=(${a[@]+"${a[@]:1}"}) ;;
             *) break ;;
@@ -581,7 +653,20 @@ strip_wrappers() {
           esac
         done
         [ ${#a[@]} -gt 0 ] && a=(${a[@]+"${a[@]:1}"}) ;;
-      nohup|stdbuf|time|command|builtin|exec|setsid|unbuffer)
+      command|builtin)
+        # `command -v rm` asks where rm is; it runs nothing.
+        if has_arg "-v" ${a[@]+"${a[@]}"} || has_arg "-V" ${a[@]+"${a[@]}"}; then
+          a=()
+          return 0
+        fi
+        a=(${a[@]+"${a[@]:1}"})
+        while [ ${#a[@]} -gt 0 ]; do
+          case "${a[0]}" in
+            -*) a=(${a[@]+"${a[@]:1}"}) ;;
+            *) break ;;
+          esac
+        done ;;
+      nohup|stdbuf|time|exec|setsid|unbuffer)
         a=(${a[@]+"${a[@]:1}"})
         while [ ${#a[@]} -gt 0 ]; do
           case "${a[0]}" in
@@ -625,6 +710,51 @@ has_arg() {
   return 1
 }
 
+has_abbrev() {
+  # git's parse-options accepts any unambiguous abbreviation of a long option, so
+  # `git reset --har` is `--hard`. Match "--" plus any non-empty prefix of the name.
+  local full="$1" item given
+  shift
+  for item in "$@"; do
+    case "$item" in
+      --*)
+        given="${item%%=*}"
+        given="${given#--}"
+        [ -n "$given" ] || continue
+        case "$full" in "$given"*) return 0 ;; esac ;;
+    esac
+  done
+  return 1
+}
+
+has_short() {
+  # A short flag cluster containing one of the letters in $1 (`-fd` holds f and d).
+  local letters="$1" item index letter
+  shift
+  for item in "$@"; do
+    case "$item" in
+      --*|-) continue ;;
+      -*) ;;
+      *) continue ;;
+    esac
+    for ((index = 0; index < ${#letters}; index++)); do
+      letter="${letters:index:1}"
+      case "${item#-}" in *"$letter"*) return 0 ;; esac
+    done
+  done
+  return 1
+}
+
+# --- one rule per program -------------------------------------------------------------------------
+
+git_reads_only() {
+  case "$1" in
+    log|status|diff|show|rev-parse|rev-list|ls-files|ls-tree|ls-remote|cat-file|describe|blame|shortlog|grep|whatchanged|reflog|var|symbolic-ref|name-rev|for-each-ref|count-objects|check-ignore|diff-tree|diff-index|show-ref|version|help)
+      return 0 ;;
+  esac
+  return 1
+}
+
 rule_git() {
   local index=0 sub="" dir="" item
   local -a tail=()
@@ -636,24 +766,22 @@ rule_git() {
       *) sub="${args[index]}"; tail=(${args[@]+"${args[@]:index+1}"}); break ;;
     esac
   done
-  if [ -n "$dir" ]; then
+  # A read-only `git -C <elsewhere> log` is how a worker reads the main checkout, which
+  # the launch shares with --add-dir; only a writing subcommand needs the directory checked.
+  if [ -n "$dir" ] && ! git_reads_only "$sub"; then
     check_write_target "$dir" "the git -C directory"
   fi
   case "$sub" in
-    push)
-      deny "git push is on the irreversible list: a worker commits on its branch and the conductor integrates. Blocked (spelling: git ${args[*]})." ;;
+    push|send-pack)
+      deny "git $sub is a push, and pushing is on the irreversible list: a worker commits on its branch and the conductor integrates. Blocked (spelling: git ${args[*]})." ;;
     reset)
-      if has_arg "--hard" ${tail[@]+"${tail[@]}"}; then
+      if has_abbrev hard ${tail[@]+"${tail[@]}"}; then
         deny "git reset --hard discards committed work and is on the irreversible list. Use git reset --soft or git revert."
       fi ;;
     clean)
-      for item in ${tail[@]+"${tail[@]}"}; do
-        case "$item" in
-          --force) deny "git clean --force deletes untracked files and is on the irreversible list." ;;
-          --*) ;;
-          -*f*|-*F*) deny "git clean $item deletes untracked files and is on the irreversible list." ;;
-        esac
-      done ;;
+      if has_short fF ${tail[@]+"${tail[@]}"} || has_abbrev force ${tail[@]+"${tail[@]}"}; then
+        deny "git clean with a force flag deletes untracked files and is on the irreversible list."
+      fi ;;
     branch)
       for item in ${tail[@]+"${tail[@]}"}; do
         case "$item" in
@@ -661,8 +789,10 @@ rule_git() {
           -*D*) deny "git branch $item force-deletes a branch and is on the irreversible list." ;;
         esac
       done
-      if has_arg "--delete" ${tail[@]+"${tail[@]}"} && has_arg "--force" ${tail[@]+"${tail[@]}"}; then
-        deny "git branch --delete --force force-deletes a branch and is on the irreversible list."
+      if has_short d ${tail[@]+"${tail[@]}"} || has_abbrev delete ${tail[@]+"${tail[@]}"}; then
+        if has_short f ${tail[@]+"${tail[@]}"} || has_abbrev force ${tail[@]+"${tail[@]}"}; then
+          deny "git branch deleting with a force flag is the same as -D and is on the irreversible list."
+        fi
       fi ;;
     worktree)
       case "${tail[0]:-}" in
@@ -683,6 +813,7 @@ rule_rm() {
       case "$item" in
         --) endopts=1; continue ;;
         --recursive|--dir) recursive=1; continue ;;
+        --help|--version) return 0 ;;
         --*) continue ;;
         -*) case "$item" in *r*|*R*) recursive=1 ;; esac; continue ;;
       esac
@@ -690,12 +821,9 @@ rule_rm() {
     targets+=("$item")
   done
   if [ ${#targets[@]} -eq 0 ]; then
-    if has_arg "--help" ${args[@]+"${args[@]}"} || has_arg "--version" ${args[@]+"${args[@]}"}; then
-      return 0
-    fi
     deny "$prog names no target, so its targets come from stdin (an xargs pipeline, say) where the guard cannot see them. Name the paths to delete."
   fi
-  for item in ${targets[@]+"${targets[@]}"}; do
+  for item in "${targets[@]}"; do
     [ -z "$item" ] && continue
     if [ $recursive -eq 1 ]; then
       check_delete_target "$item" "the recursive $prog target"
@@ -746,37 +874,58 @@ rule_dd() {
   local item
   for item in ${args[@]+"${args[@]}"}; do
     case "$item" in
-      of=/dev/null) continue ;;
-      of=*) deny "dd $item writes over a file or a device; it is on the irreversible list." ;;
+      of=*) check_write_target "${item#of=}" "the dd output file (of=)" ;;
     esac
   done
 }
 
-rule_transfer() {
-  local index item
+rule_curl() {
+  local index item method
   for ((index = 0; index < ${#args[@]}; index++)); do
     item="${args[index]}"
     case "$item" in
-      -T|--upload-file|-d|--data|-F|--form|--post-data|--post-file|--body-data|--data-raw|--data-binary|--data-urlencode|--form-string)
-        deny "$prog $item uploads data; a network write is on the irreversible list. Fetching sources is the scout's job, in code." ;;
-      --data=*|--data-raw=*|--data-binary=*|--data-urlencode=*|--post-data=*|--post-file=*|--upload-file=*|--body-data=*|--form=*)
-        deny "$prog ${item%%=*} uploads data; a network write is on the irreversible list." ;;
-      --method=*)
-        case "${item#--method=}" in
-          POST|PUT|DELETE|PATCH) deny "$prog $item is a network write; it is on the irreversible list." ;;
+      --data*|--form*|--upload-file*|--json*|--body-data*)
+        deny "curl ${item%%=*} uploads data; a network write is on the irreversible list. Fetching sources is the scout's job, in code." ;;
+      --request|--request=*|-X*)
+        case "$item" in
+          --request) method="${args[index+1]:-}" ;;
+          --request=*) method="${item#--request=}" ;;
+          -X) method="${args[index+1]:-}" ;;
+          *) method="${item#-X}" ;;
+        esac
+        case "$method" in
+          POST|PUT|DELETE|PATCH|post|put|delete|patch)
+            deny "curl $item $method is a network write; it is on the irreversible list." ;;
         esac ;;
-      -X|--request)
-        case "${args[index+1]:-}" in
-          POST|PUT|DELETE|PATCH) deny "$prog $item ${args[index+1]} is a network write; it is on the irreversible list." ;;
-        esac ;;
-      -o|--output|--output-document)
-        check_write_target "${args[index+1]:-}" "the $prog output file" ;;
-      -O)
-        if [ "$prog" = wget ]; then
-          check_write_target "${args[index+1]:-}" "the $prog output file"
+      -o|--output) check_write_target "${args[index+1]:-}" "the curl output file" ;;
+      --*) ;;
+      -*)
+        # A short cluster carrying an upload flag: -T, -d, -F (and -XPOST above).
+        if has_short dFT "$item"; then
+          deny "curl $item carries an upload flag; a network write is on the irreversible list."
         fi ;;
-      -P|--directory-prefix)
-        check_write_target "${args[index+1]:-}" "the $prog output directory" ;;
+    esac
+  done
+}
+
+rule_wget() {
+  local index item method
+  for ((index = 0; index < ${#args[@]}; index++)); do
+    item="${args[index]}"
+    case "$item" in
+      --post-data*|--post-file*|--body-data*|--body-file*)
+        deny "wget ${item%%=*} uploads data; a network write is on the irreversible list." ;;
+      --method|--method=*)
+        case "$item" in
+          --method) method="${args[index+1]:-}" ;;
+          *) method="${item#--method=}" ;;
+        esac
+        case "$method" in
+          POST|PUT|DELETE|PATCH|post|put|delete|patch)
+            deny "wget --method $method is a network write; it is on the irreversible list." ;;
+        esac ;;
+      -O|--output-document) check_write_target "${args[index+1]:-}" "the wget output file" ;;
+      -P|--directory-prefix) check_write_target "${args[index+1]:-}" "the wget output directory" ;;
     esac
   done
 }
@@ -810,15 +959,107 @@ rule_python() {
   done
 }
 
+rule_packager() {
+  # uv, uvx, pipx, poetry and hatch are other spellings of twine and pip upload.
+  local item previous=""
+  for item in ${args[@]+"${args[@]}"}; do
+    case "$item" in
+      twine) deny "$prog $item publishes a package; a network write is on the irreversible list." ;;
+      publish) deny "$prog publish uploads a package; a network write is on the irreversible list." ;;
+      upload)
+        if [ "$previous" = "pip" ]; then
+          deny "$prog pip upload publishes a package; a network write is on the irreversible list."
+        fi ;;
+    esac
+    previous="$item"
+  done
+}
+
 rule_gh() {
-  local item
+  local item index sub="" method
   for item in ${args[@]+"${args[@]}"}; do
     case "$item" in
       -*) continue ;;
       pr|release) deny "gh $item writes to GitHub; a network write is on the irreversible list. The owner opens the pull request." ;;
-      *) return 0 ;;
+      *) sub="$item"; break ;;
     esac
   done
+  [ "$sub" = "api" ] || return 0
+  for ((index = 0; index < ${#args[@]}; index++)); do
+    case "${args[index]}" in
+      -X|--method) method="${args[index+1]:-}" ;;
+      --method=*) method="${args[index]#--method=}" ;;
+      *) continue ;;
+    esac
+    case "$method" in
+      POST|PUT|DELETE|PATCH|post|put|delete|patch)
+        deny "gh api with $method writes to GitHub; a network write is on the irreversible list." ;;
+    esac
+  done
+}
+
+rule_cd() {
+  # The guard resolves every relative path against the worktree root. A `cd` that leaves
+  # the worktree would make that base wrong, so `cd /etc && rm -rf build` would look like
+  # a deletion inside the touch set while deleting something else.
+  local item target="" abs
+  for item in ${args[@]+"${args[@]}"}; do
+    case "$item" in
+      -*) continue ;;
+    esac
+    target="$item"
+    break
+  done
+  if [ -z "$target" ]; then
+    deny "$prog with no directory goes home, outside the worktree; the guard resolves later relative paths against the worktree ($ROOT), so it could not check them. Stay in the worktree."
+  fi
+  if [ "$target" = "-" ]; then
+    deny "$prog - returns to a directory the guard did not see; it resolves later relative paths against the worktree ($ROOT), so it could not check them. Name the directory."
+  fi
+  if ! abs=$(resolve "$target"); then
+    deny "$prog '$target' hides its directory behind $(hidden_by "$target"); the guard cannot resolve it, and every later relative path with it."
+  fi
+  if ! under "$abs" "$ROOT"; then
+    deny "$prog '$target' leaves the worktree ($ROOT) for $abs; the guard resolves later relative paths against the worktree, so it could not check them."
+  fi
+}
+
+rule_extract() {
+  # An archive extracted outside the worktree is a write outside the worktree.
+  local index
+  for ((index = 0; index < ${#args[@]}; index++)); do
+    case "${args[index]}" in
+      -C|--directory|--target-directory) check_write_target "${args[index+1]:-}" "the $prog output directory" ;;
+      --directory=*|--target-directory=*) check_write_target "${args[index]#*=}" "the $prog output directory" ;;
+      -d)
+        if [ "$prog" = unzip ]; then
+          check_write_target "${args[index+1]:-}" "the $prog output directory"
+        fi ;;
+    esac
+  done
+}
+
+rule_rsync() {
+  local item deletes=0
+  local -a positional=()
+  for item in ${args[@]+"${args[@]}"}; do
+    case "$item" in
+      --delete*) deletes=1; continue ;;
+      -*) continue ;;
+    esac
+    positional+=("$item")
+  done
+  [ ${#positional[@]} -gt 0 ] || return 0
+  local destination="${positional[${#positional[@]}-1]}"
+  case "$destination" in
+    *:*)
+      deny "rsync to '$destination' writes to another host; a network write is on the irreversible list." ;;
+  esac
+  if [ $deletes -eq 1 ]; then
+    check_delete_target "$destination" "the rsync --delete destination"
+  else
+    check_write_target "$destination" "the rsync destination"
+  fi
 }
 
 rule_write_args() {
@@ -844,56 +1085,31 @@ rule_write_args() {
   esac
 }
 
-rule_cd() {
-  # The guard resolves every relative path against the worktree root. A `cd` that leaves the
-  # worktree would make that base wrong, so `cd /etc && rm -rf build` could look like a
-  # deletion inside the touch set while deleting something else.
-  local item target=""
-  for item in ${args[@]+"${args[@]}"}; do
-    case "$item" in
-      -*) continue ;;
-    esac
-    target="$item"
-    break
-  done
-  if [ -z "$target" ] || [ "$target" = "-" ]; then
-    deny "$prog with no directory goes home, outside the worktree; the guard resolves later relative paths against the worktree ($ROOT), so it could not check them. Stay in the worktree."
-  fi
-  local abs
-  if ! abs=$(resolve "$target"); then
-    deny "$prog '$target' hides its directory behind a variable or a command substitution; the guard cannot resolve it."
-  fi
-  if ! under "$abs" "${WRITE_ROOTS[@]}"; then
-    deny "$prog '$target' leaves the worktree ($ROOT) for $abs; the guard resolves later relative paths against the worktree, so it could not check them."
-  fi
-}
-
-rule_extract() {
-  # An archive extracted outside the worktree is a write outside the worktree.
-  local index
-  for ((index = 0; index < ${#args[@]}; index++)); do
-    case "${args[index]}" in
-      -C|--directory|--target-directory) check_write_target "${args[index+1]:-}" "the $prog output directory" ;;
-      --directory=*|--target-directory=*) check_write_target "${args[index]#*=}" "the $prog output directory" ;;
-      -d)
-        if [ "$prog" = unzip ]; then
-          check_write_target "${args[index+1]:-}" "the $prog output directory"
-        fi ;;
-    esac
-  done
-}
-
 rule_sed() {
-  local item inplace=0
+  local item inplace=0 scripted=0 endopts=0
+  local -a targets=()
   for item in ${args[@]+"${args[@]}"}; do
-    case "$item" in
-      --in-place|--in-place=*) inplace=1 ;;
-      --*) ;;
-      -*i*) inplace=1 ;;
-    esac
+    if [ $endopts -eq 0 ]; then
+      case "$item" in
+        --) endopts=1; continue ;;
+        --in-place|--in-place=*) inplace=1; continue ;;
+        -e|-f|--expression|--file|--expression=*|--file=*) scripted=1; continue ;;
+        --*) continue ;;
+        -*i*) inplace=1; continue ;;
+        -*) continue ;;
+      esac
+    fi
+    targets+=("$item")
   done
   [ $inplace -eq 1 ] || return 0
-  rule_write_args
+  # Without -e or -f the first positional argument is the script, not a file. It often
+  # holds a '$' anchor, which would otherwise read as an unresolvable path.
+  if [ $scripted -eq 0 ] && [ ${#targets[@]} -gt 0 ]; then
+    targets=(${targets[@]+"${targets[@]:1}"})
+  fi
+  for item in ${targets[@]+"${targets[@]}"}; do
+    check_write_target "$item" "the sed -i target"
+  done
 }
 
 check_segment() {
@@ -903,7 +1119,7 @@ check_segment() {
   [ ${#a[@]} -gt 0 ] || return 0
 
   local prog="${a[0]##*/}"
-  local index
+  local index body
 
   case "$prog" in
     sh|bash|zsh|dash|ksh|mksh|ash)
@@ -920,6 +1136,14 @@ check_segment() {
           *) break ;;
         esac
       done
+      # No -c: the shell reads its commands from somewhere. A here-string or a heredoc is
+      # text the guard has; a pipe is text it does not.
+      if [ -n "$HERESTRING" ]; then
+        QUEUE+=("$HERESTRING")
+      fi
+      for body in ${HEREDOC_BODIES[@]+"${HEREDOC_BODIES[@]}"}; do
+        QUEUE+=("$body")
+      done
       if [ "${PIPED:-0}" = 1 ]; then
         deny "a pipe into $prog hides the command it runs; the guard cannot check it. Run the command directly."
       fi ;;
@@ -934,12 +1158,15 @@ check_segment() {
     chmod|chown|chgrp) rule_chmod ;;
     truncate) deny "truncate rewrites a file in place and is on the irreversible list." ;;
     dd) rule_dd ;;
-    curl|wget) rule_transfer ;;
+    curl) rule_curl ;;
+    wget) rule_wget ;;
     twine) deny "twine publishes a package; a network write is on the irreversible list." ;;
     pip|pip3) rule_pip ;;
     python|python3|python3.12|python3.13) rule_python ;;
+    uv|uvx|pipx|poetry|hatch|flit) rule_packager ;;
     gh) rule_gh ;;
     mv|cp|install|ln|tee|touch|mkdir|rmdir|patch) rule_write_args ;;
+    rsync) rule_rsync ;;
     tar|unzip|bsdtar) rule_extract ;;
     cd|pushd) rule_cd ;;
     sed) rule_sed ;;
@@ -951,25 +1178,26 @@ analyse() {
   local -a words=()
   local index kind text mode=""
   PIPED=0
+  HERESTRING=""
   for ((index = 0; index < ${#KIND[@]}; index++)); do
     kind="${KIND[index]}"
     text="${TEXT[index]}"
     case "$kind" in
       w)
-        if [ "$mode" = write ]; then
-          check_write_target "$text" "the redirection target"
-          mode=""
-        elif [ "$mode" = skip ]; then
-          mode=""
-        else
-          words+=("$text")
-        fi ;;
+        case "$mode" in
+          write) check_write_target "$text" "the redirection target"; mode="" ;;
+          here) HERESTRING="$text"; mode="" ;;
+          skip) mode="" ;;
+          *) words+=("$text") ;;
+        esac ;;
       r) mode=write ;;
+      h) mode=here ;;
       x) mode=skip ;;
       o)
         check_segment ${words[@]+"${words[@]}"}
         words=()
         mode=""
+        HERESTRING=""
         # The next segment reads this one's stdout, so its input is invisible here.
         case "$text" in
           '|'|'|&') PIPED=1 ;;

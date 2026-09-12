@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -99,6 +100,15 @@ class RunMachineAcceptanceTest(unittest.TestCase):
         self.assertEqual(results[0]["exit_code"], 124)
         self.assertIn("killed", results[0]["tail"])
         self.assertLess(results[0]["seconds"], 20)
+
+    def test_a_command_that_leaves_a_process_behind_still_returns(self):
+        # `setsid` puts a child outside the group the timeout kills, and that child keeps
+        # the output pipe open. Reading it to the end would hang wayline accept forever.
+        started = time.monotonic()
+        results = run_machine_acceptance(["setsid sleep 45 & sleep 30"], self.worktree, 1)
+        elapsed = time.monotonic() - started
+        self.assertEqual(results[0]["exit_code"], 124)
+        self.assertLess(elapsed, 20, "run_machine_acceptance took %.1fs" % elapsed)
 
     def test_the_record_passes_only_when_every_command_passed(self):
         passing = acceptance_file_record(run_machine_acceptance(["true", "true"], self.worktree, 60), "worktree")
@@ -192,6 +202,30 @@ class AcceptVerbTest(unittest.TestCase):
                 self.assertEqual(done.returncode, 2)
                 self.assertIn(name, done.stderr)
                 self.assertEqual(done.stdout, "")
+
+    def test_the_project_can_shorten_the_acceptance_timeout(self):
+        # Implementation Decisions 4 runs each command under policy.acceptance_timeout_s,
+        # and harness.json overrides policy.json.
+        slow = dict(SAMPLE_TICKET, id=10, acceptance={"machine": ["sleep 60"]})
+        write_project(self.project, extra_tickets=[("10-slow.md", slow)])
+        (self.project / "harness.json").write_text(
+            json.dumps({"harness_tag": "v0.0.0", "autonomy": "checkpoints", "radius": "moderate",
+                        "policy": {"acceptance_timeout_s": 1}}),
+            encoding="utf-8",
+        )
+        started = time.monotonic()
+        done = self.run_accept(env={"WAYLINE_TICKET": "10"})
+        elapsed = time.monotonic() - started
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertLess(elapsed, 30, "the override was ignored; accept took %.1fs" % elapsed)
+        record = json.loads(self.acceptance.read_text(encoding="utf-8"))
+        self.assertEqual(record["results"][0]["exit_code"], 124)
+
+    def test_the_acceptance_file_is_written_by_rename(self):
+        (self.worktree / "made-by-the-worker.txt").write_text("done\n", encoding="utf-8")
+        self.run_accept()
+        leftovers = [path.name for path in self.acceptance.parent.iterdir() if path.name.startswith(".")]
+        self.assertEqual(leftovers, [], "a temporary file was left next to the acceptance file")
 
     def test_an_unwritable_acceptance_file_exits_2_rather_than_crashing(self):
         blocked = self.root / "not-a-directory"

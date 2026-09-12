@@ -60,6 +60,9 @@ TAIL_CHARS = 4000
 # The exit code a killed-after-timeout command reports, as `timeout(1)` reports it.
 TIMEOUT_EXIT_CODE = 124
 
+# How long to wait for a killed command's output before giving up on it.
+DRAIN_SECONDS = 5
+
 
 class GateError(ValueError):
     """A gate that cannot be run or a settings template that cannot be rendered."""
@@ -114,15 +117,26 @@ def _check_handlers(settings, template):
     missing = [guard for guard in GUARDS if guard not in registered]
     if missing:
         raise GateError("%s: the guard(s) %s are not registered" % (template, ", ".join(missing)))
+    deny = (settings.get("permissions") or {}).get("deny")
+    if not deny:
+        raise GateError("%s: permissions.deny is the cheap first layer and must not be empty" % template)
 
 
 def write_worker_settings(path, harness_root=HARNESS_ROOT):
     """Write the per-launch `settings.json` for one worker launch; returns the path."""
-    settings = worker_settings(harness_root)
+    return _write_json(path, worker_settings(harness_root))
+
+
+def _write_json(path, value):
+    """Write JSON by temp file and rename, so no reader ever sees a half-written file.
+
+    The stop guard only tests that the acceptance file exists, so a torn write would let a
+    worker stop while the conductor later read nothing it could parse.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.parent / ("." + target.name + ".tmp")
-    temporary.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     os.replace(temporary, target)
     return target
 
@@ -203,8 +217,8 @@ def _run_one(command, cwd, timeout_s):
         exit_code = process.returncode
     except subprocess.TimeoutExpired:
         _kill_group(process)
-        output, _ = process.communicate()
-        output = (output or "") + "\nwayline accept: killed after %s seconds.\n" % timeout_s
+        output, note = _drain(process)
+        output = output + "\nwayline accept: killed after %s seconds.%s\n" % (timeout_s, note)
         exit_code = TIMEOUT_EXIT_CODE
     return {
         "cmd": command,
@@ -219,6 +233,31 @@ def _kill_group(process):
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         process.kill()
+
+
+def _drain(process):
+    """What the killed command already wrote, without waiting on a process that outlived it.
+
+    A command that starts something with `setsid` or `nohup` leaves a process outside the
+    group the timeout kills, and that process still holds the pipe. Reading it to the end
+    would hang `wayline accept` forever, the acceptance file would never be written, and
+    the stop guard would keep refusing the stop. So the read is bounded and the pipe is
+    dropped; the record says the output was lost.
+    """
+    try:
+        return (process.communicate(timeout=DRAIN_SECONDS)[0] or ""), ""
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        process.stdout.close()
+    except (OSError, AttributeError):
+        pass
+    process.kill()
+    try:
+        process.wait(timeout=DRAIN_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    return "", " A process outlived the command and held its output open; the output was dropped."
 
 
 def _tail(text):
@@ -286,8 +325,7 @@ def accept(args):
     record = acceptance_file_record(results, where)
 
     try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _write_json(destination, record)
     except OSError as failure:
         return _fail("TICKET_ACCEPTANCE_FILE %s cannot be written: %s" % (destination, failure))
 
