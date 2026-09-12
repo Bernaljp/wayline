@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "venue": "arxiv",
+  "display_name": "arXiv",
+  "guidelines_url": "https://info.arxiv.org/help/submit/index.html",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": null,
+    "page_count": null,
+    "abstract_word_count": null,
+    "notes": "No length limit: submissions must be topical, refereeable scientific contributions following accepted standards of scholarly communication.",
+    "excluded_sections": []
+  },
+  "required_structure": [
+    "Title",
+    "Abstract"
+  ],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [
+      "PS",
+      "EPS",
+      "JPEG",
+      "GIF",
+      "PNG",
+      "PDF"
+    ],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "PostScript and EPS need LaTeX processing; JPEG, GIF, PNG and PDF need pdfLaTeX. Formats may not be mixed within one submission, and figures must be embedded rather than linked."
+  },
+  "reference_style": {
+    "style": "None: arXiv has no house citation style and leaves it to the author or the target journal.",
+    "max_count": null,
+    "citation": "any"
+  },
+  "reporting_checklists": [],
+  "submission_steps": [
+    "upload the files individually or as a zip or tar.gz through arXiv's own submission system",
+    "select the compiler and the top-level TeX file, which must carry a \\documentclass directive",
+    "review the auto-detected file issues and preview the compiled PDF",
+    "fill the metadata page, then submit",
+    "submissions received by 14:00 US Eastern are generally public around 20:00 the same day",
+    "every submission is moderated for topicality; a new user or a new category may need an endorsement"
+  ],
+  "template": {
+    "latex_or_word_no_login": null,
+    "url": null,
+    "notes": "No template is linked from the submission help page.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "Authors choose CC BY 4.0, CC BY-SA 4.0, CC BY-NC-SA 4.0, CC BY-NC-ND 4.0, arXiv's own perpetual non-exclusive licence 1.0, or CC0, and grant arXiv an irrevocable distribution licence either way; article metadata is separately CC0 1.0.",
+    "url": "https://info.arxiv.org/help/license/index.html"
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reporting_checklists",
+      "submission_steps",
+      "license_of_summary_source"
+    ],
+    "unverified_fields": [
+      "reference_style",
+      "template"
+    ]
+  }
+}

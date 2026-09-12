@@ -18,7 +18,7 @@ from wayline.tickets import DECISION, HARDEST, SATISFIED, frontier, is_open_deci
 __all__ = [
     "NORMAL", "CHEAP_ONLY", "STOP",
     "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
-    "everything_free", "launchable", "order_key", "pick", "held_back",
+    "everything_free", "launchable", "order_key", "pick", "held_back", "holds_model_work",
 ]
 
 # The pacing actions of decision 5. `cheap_only` changes the pick order here; which tickets an
@@ -26,6 +26,16 @@ __all__ = [
 NORMAL = "normal"
 CHEAP_ONLY = "cheap_only"
 STOP = "stop"
+
+
+def holds_model_work(action):
+    """Whether this pacing action stops the conductor launching a model at all.
+
+    Only `stop` does. Whether `cheap_only` should hold back the expensive end of the queue as
+    well (a verdict runs a tier above the work it judges) is ticket 10's to decide, with the
+    windows in front of it; until then `cheap_only` reorders and refuses nothing.
+    """
+    return action == STOP
 
 
 # --- touch sets ------------------------------------------------------------------------------
@@ -166,9 +176,8 @@ def held_back(graph):
     An empty frontier with open tickets left is not the end of the work, and `run_ended` can say
     only `frontier_empty` (its reasons are the spec's closed list), so the conductor says this
     aloud before it stops. Two of the frontier's rules can empty it with work still to do: a
-    decision ticket nobody has answered, and a difficulty-5 blocker that is `done` and has no
-    quality verdict yet, which is a wait with no end until ticket 32 builds the verdict that
-    writes `accepted`.
+    decision ticket nobody has answered, and a difficulty-5 blocker that is `done` and whose
+    quality verdict has not passed, which happens when the verdict could not be taken at all.
     """
     entries = {entry["id"]: entry for entry in graph["tickets"]}
     ready = {entry["id"] for entry in frontier(graph)}
@@ -194,8 +203,7 @@ def _waits_on(entry, entries, graph):
                and (entries.get(identifier) or {}).get("status") == "done"]
     if hardest:
         return ("ticket %d, which is done and not accepted: a difficulty-5 blocker holds its "
-                "dependents until a quality verdict passes it, and the verdict arrives with ticket 32"
-                % hardest[0])
+                "dependents until a quality verdict passes it, and no verdict has" % hardest[0])
     unmet = ["%d (%s)" % (identifier, (entries.get(identifier) or {}).get("status", "missing"))
              for identifier in entry["blocked_by"]
              if (entries.get(identifier) or {}).get("status") not in SATISFIED]

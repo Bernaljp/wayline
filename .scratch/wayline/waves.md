@@ -91,7 +91,7 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 `implement` commits to the current branch of the checkout it runs in. It creates no branch, opens no pull request, and closes nothing. Two `implement` sessions in one checkout share one index and one HEAD and corrupt each other (the skill's own docs report amended commits landing on the wrong session and vanished stashes). So:
 
 1. One session, one ticket, one git worktree. A new agent created from `claude agents` gets one by default (`worktree.bgIsolation` is `auto`): `.claude/worktrees/<name>` on branch `worktree-<name>`, branched from origin's `master`. From a terminal, `claude -w ticket-NN --model <alias> --effort <effort>` does the same. Give the session `/implement` with the full path of the ticket file (or the issue URL) and ask it to confirm the title back before it starts. The manual route still works: `git worktree add -b ticket/NN .worktrees/NN master` (the `.worktrees/` directory is ignored), then start Claude Code inside it.
-2. When the agent reports done, it has opened a pull request against `master` (`CLAUDE.md` tells every session to: criteria ticked, `Status: done`, `Closes #<issue>` in the body). Read it on GitHub, wait for the `tests` check, and merge it with a merge commit (the repository allows no other kind, so a tag made on the branch stays on `master`'s line; the remote branch is deleted by the merge). The merge closes the issue, so every dependent's blocked-by count updates on its own.
+2. When the agent reports done, it has opened a pull request against `master` (`CLAUDE.md` tells every session to: criteria ticked, `Status: done`, `Closes #<issue>` in the body). Read it on GitHub, wait for the `tests` check, and merge it with a merge commit (the repository allows no other kind, so a tag made on the branch stays on `master`'s line; the remote branch is deleted by the merge). The merge closes the issue, so every dependent's blocked-by count updates on its own. When more than one pull request is open, stack them first, as "Merging pull requests that are open together" below says, and merge them in number order.
 3. Then locally: `git pull` on `master` (a new worktree branches from origin's `master`, which the merge already updated, but anything you run on `master` itself needs the pull), and run the sweep under "Removing ended sessions" below, which deletes the ended sessions with their worktrees and local branches (`git worktree remove .worktrees/NN` for a manual worktree).
 4. Never use `git stash` across worktrees; `refs/stash` is shared.
 5. Keep two or three sessions in flight at most: the subscription window is shared by every session, and one ticket typically costs a large part of a window.
@@ -109,6 +109,18 @@ bash .scratch/wayline/sweep-sessions.sh
 
 A single session is `claude rm <id>`, the id being the short hex printed when the session started and listed by `claude agents --json --all`. Keep a session until its pull request is merged, so `claude attach <id>` can reopen it for a fix.
 
+### Merging pull requests that are open together
+
+Every ticket appends to the same lines: the `SHIPPED` list of the schema tests, the changelog's Unreleased section, the verb table. So pull requests open at the same time conflict with each other as soon as one of them is merged. Before merging any of them, stack them:
+
+```
+bash .scratch/wayline/stack-open-prs.sh
+```
+
+It merges origin's `master` into the lowest-numbered open pull request, then that result into the next one, and so on, and pushes each branch it changes. Every pull request then holds `master` and the ones numbered below it, so they merge one after another with no conflict. Merge them in number order, each once its `tests` check is green: a later one merged first lands the earlier ones with it, unread. Until the one below it is merged, a stacked pull request's diff on GitHub also shows the changes below it. A draft pull request stays out of the stack, which is how to hold one back. Run the script again when a new pull request opens; a branch that already holds everything below it is left as it is.
+
+A conflict resolved once is resolved the same way again by git rerere, from the resolutions recorded in this clone's `.git/rr-cache`. At a conflict with no recorded resolution the script stops and names the files, with the pull requests below it already pushed: merge by hand in a worktree of that branch, or ask a session to, then push and run the script again. A textual merge can still hide a collision of meaning that only the suite reports: a role sidecar written before ticket 27 landed carried fields the registry now refuses, and the merge said nothing. Read the check, not the merge.
+
 ## Sequential alternative
 
 If you would rather not manage worktrees, work the waves top to bottom on `master`, one `/implement` per fresh session with `/clear` between, closing each issue as it lands. Nothing is lost except calendar time.
@@ -124,6 +136,7 @@ That prints the frontier: open tickets with no open blocker, which is exactly th
 
 ## Close-out checklist per ticket
 
+- [ ] more than one pull request open: stacked with `bash .scratch/wayline/stack-open-prs.sh`, merged in number order
 - [ ] pull request read, `tests` check green, merge commit made on GitHub (the merge closes the issue and deletes the remote branch)
 - [ ] the ticket file in the pull request has `Status: done` and every criterion ticked; an unticked one is named in the body, decide whether it blocks
 - [ ] `git pull` on local `master`; the session sweep ("Removing ended sessions")

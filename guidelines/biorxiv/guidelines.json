@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "venue": "biorxiv",
+  "display_name": "bioRxiv",
+  "guidelines_url": "https://www.biorxiv.org/submit-a-manuscript",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": null,
+    "page_count": null,
+    "abstract_word_count": null,
+    "notes": "No length limit is stated on the submission page.",
+    "excluded_sections": []
+  },
+  "required_structure": [
+    "Title",
+    "Abstract",
+    "Authors",
+    "Affiliations"
+  ],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": null,
+    "formats": [
+      "JPEG",
+      "TIFF",
+      "EPS",
+      "PPT"
+    ],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "PICT, BMP, Excel and PSD files are not accepted and must be converted to PDF or an accepted format first."
+  },
+  "reference_style": {
+    "style": "Not addressed on the submission page.",
+    "max_count": null,
+    "citation": "any"
+  },
+  "reporting_checklists": [],
+  "submission_steps": [
+    "register on the site and supply an institutional affiliation",
+    "upload one PDF of text and figures, or a Word file plus separate figure files, at submit.biorxiv.org",
+    "supply the full author list with affiliations, corresponding-author contact details, funding sources and a competing-interests declaration",
+    "expect basic screening for non-scientific content and health or biosecurity risk"
+  ],
+  "template": {
+    "latex_or_word_no_login": false,
+    "url": null,
+    "notes": "No Word or LaTeX template is mentioned on the page.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "Authors choose a posting licence from CC BY, CC BY-NC, CC BY-ND, CC BY-NC-ND, CC0 or no reuse, and keep copyright in every case; the page states no licence for its own text.",
+    "url": "https://www.biorxiv.org/submit-a-manuscript"
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "required_structure",
+      "figure_spec",
+      "reporting_checklists",
+      "submission_steps",
+      "template"
+    ],
+    "unverified_fields": [
+      "length_limits",
+      "reference_style",
+      "license_of_summary_source"
+    ]
+  }
+}

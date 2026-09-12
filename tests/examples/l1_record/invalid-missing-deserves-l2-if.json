@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "relation_to_intent": "Proposes the attention mechanism the intent's method is built on."
+}

@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "venue": "cell-systems",
+  "display_name": "Cell Systems",
+  "guidelines_url": "https://www.cell.com/cell-systems/information-for-authors",
+  "date_checked": "2026-09-11",
+  "length_limits": {
+    "word_count": null,
+    "page_count": null,
+    "abstract_word_count": 150,
+    "notes": "No explicit word cap: long enough to convey the work, short enough to read in one sitting. Title up to about 145 characters, summary up to 150 words. Figure and table counts by article type: Articles 7, Reports 4, Brief Reports 2, Methods 7, Methods in Brief 2.",
+    "excluded_sections": [
+      "STAR Methods",
+      "References",
+      "Supplemental information"
+    ]
+  },
+  "required_structure": [
+    "Title",
+    "Authors",
+    "Affiliations",
+    "Contact information",
+    "Summary",
+    "Keywords",
+    "Introduction",
+    "Results",
+    "Discussion",
+    "Resource availability",
+    "Acknowledgments",
+    "Author contributions",
+    "Declaration of interests",
+    "Supplemental information",
+    "Figure titles and legends",
+    "Tables",
+    "STAR Methods",
+    "References"
+  ],
+  "structure_flexible": false,
+  "figure_spec": {
+    "max_count": 7,
+    "formats": [
+      "TIFF",
+      "PDF",
+      "EPS",
+      "JPEG"
+    ],
+    "min_dpi": 300,
+    "max_dpi": null,
+    "color_mode": [
+      "RGB"
+    ],
+    "max_file_size_mb": 20,
+    "legend_max_words": null,
+    "notes": "Colour and greyscale at 300 dpi, black and white at 500 dpi, line art at 1,000 dpi, all at final print size. Arial, fonts embedded."
+  },
+  "reference_style": {
+    "style": "Numbered in order of first citation, superscript in the text; 'et al.' only after 10 authors.",
+    "max_count": null,
+    "citation": "numbered"
+  },
+  "reporting_checklists": [
+    {
+      "name": "Cell Press reporting checklists",
+      "required": false,
+      "study_types": [],
+      "url": null,
+      "cached_as": null
+    },
+    {
+      "name": "ARRIVE",
+      "required": false,
+      "study_types": [
+        "animal"
+      ],
+      "url": null,
+      "cached_as": null
+    },
+    {
+      "name": "Clinical trial checklist",
+      "required": false,
+      "study_types": [
+        "clinical-trial"
+      ],
+      "url": null,
+      "cached_as": null
+    }
+  ],
+  "submission_steps": [
+    "submit through Editorial Manager at editorialmanager.com/cell-systems",
+    "initial submission as a PDF, or Word plus separate files; LaTeX needs an accompanying PDF",
+    "keep files to 1-2 MB each and 20 MB in total",
+    "a cover letter is required: background, conceptual advance, significance, consortium status, reviewer suggestions",
+    "the Cell Press Multi-Journal Submission option is available"
+  ],
+  "template": {
+    "latex_or_word_no_login": true,
+    "url": "https://www.cell.com/information-for-authors/article-templates",
+    "notes": "Word templates and a Cell Press LaTeX zip (.tex, .bib, .bst, .sty) download without a login. Linked, never stored.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "Copyright (c) 2026 Elsevier Inc., its licensors and contributors.",
+    "url": "https://www.cell.com/terms-and-conditions"
+  },
+  "verification": {
+    "fully_verified_fields": [],
+    "unverified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reference_style",
+      "reporting_checklists",
+      "submission_steps",
+      "template",
+      "license_of_summary_source"
+    ]
+  }
+}

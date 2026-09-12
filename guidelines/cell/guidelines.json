@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "venue": "cell",
+  "display_name": "Cell",
+  "guidelines_url": "https://www.cell.com/cell/information-for-authors",
+  "date_checked": "2026-09-11",
+  "length_limits": {
+    "word_count": 7000,
+    "page_count": null,
+    "abstract_word_count": null,
+    "notes": "Articles are capped at 7,000 words including main figure legends but excluding STAR Methods text, supplemental legends and references.",
+    "excluded_sections": [
+      "STAR Methods",
+      "References",
+      "Supplemental information"
+    ]
+  },
+  "required_structure": [
+    "Title",
+    "Authors",
+    "Summary",
+    "Introduction",
+    "Results",
+    "Discussion",
+    "STAR Methods",
+    "References"
+  ],
+  "structure_flexible": true,
+  "figure_spec": {
+    "max_count": 7,
+    "formats": [],
+    "min_dpi": null,
+    "max_dpi": null,
+    "color_mode": [],
+    "max_file_size_mb": null,
+    "legend_max_words": null,
+    "notes": "No more than 7 figures and tables together. Resolution, format and colour mode did not surface in any snippet."
+  },
+  "reference_style": {
+    "style": "Cell Press house style since October 2022: numbered, superscript in the text, 'et al.' only after 10 authors.",
+    "max_count": null,
+    "citation": "numbered"
+  },
+  "reporting_checklists": [],
+  "submission_steps": [
+    "an optional presubmission inquiry to cellms@cell.com",
+    "or the Cell Press Multi-Journal Submission for cross-journal consideration",
+    "formatting need not be finalised at initial submission"
+  ],
+  "template": {
+    "latex_or_word_no_login": null,
+    "url": null,
+    "notes": "Unverified: both candidate pages were unreachable.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "Copyright (c) 2026 Elsevier Inc., its licensors and contributors, reserving text and data mining and AI training rights; the Terms and Conditions permit personal, non-commercial download only.",
+    "url": "https://www.cell.com/terms-and-conditions"
+  },
+  "verification": {
+    "fully_verified_fields": [],
+    "unverified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reference_style",
+      "reporting_checklists",
+      "submission_steps",
+      "template",
+      "license_of_summary_source"
+    ]
+  }
+}

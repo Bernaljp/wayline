@@ -326,8 +326,8 @@ class BuildTest(ProjectTestCase):
     def test_a_local_role_the_harness_does_not_have_cannot_be_launched(self):
         agents = self.project / ".claude" / "agents"
         agents.mkdir(parents=True, exist_ok=True)
-        (agents / "verifier.md").write_text("---\nname: verifier\ndescription: judges\n---\n\nJudge.\n", encoding="utf-8")
-        entry = self.entry(self.build(), "role", "verifier")
+        (agents / "scribe.md").write_text("---\nname: scribe\ndescription: judges\n---\n\nJudge.\n", encoding="utf-8")
+        entry = self.entry(self.build(), "role", "scribe")
         self.assertFalse(entry["assignable"])
         self.assertIn("tool lists", " ".join(entry["problems"]))
 

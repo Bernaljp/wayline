@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "venue": "nature-communications",
+  "display_name": "Nature Communications",
+  "guidelines_url": "https://www.nature.com/ncomms/submit/guide-to-authors",
+  "date_checked": "2026-09-12",
+  "length_limits": {
+    "word_count": 5000,
+    "page_count": null,
+    "abstract_word_count": 150,
+    "notes": "Main text up to 5,000 words, Methods typically under 3,000, abstract about 150 words and unreferenced, title up to 15 words. Up to 70 references as a guideline.",
+    "excluded_sections": [
+      "Abstract",
+      "Methods",
+      "References",
+      "Figure legends"
+    ]
+  },
+  "required_structure": [
+    "Title",
+    "Authors",
+    "Abstract",
+    "Results",
+    "Methods",
+    "Data availability",
+    "Code availability",
+    "References",
+    "Acknowledgements",
+    "Author contributions",
+    "Competing interests",
+    "Materials and Correspondence",
+    "Tables",
+    "Figures"
+  ],
+  "structure_flexible": false,
+  "figure_spec": {
+    "max_count": 10,
+    "formats": [
+      "AI",
+      "EPS",
+      "PDF",
+      "PS",
+      "SVG",
+      "PSD",
+      "TIF",
+      "PNG",
+      "JPG"
+    ],
+    "min_dpi": 300,
+    "max_dpi": null,
+    "color_mode": [
+      "RGB"
+    ],
+    "max_file_size_mb": null,
+    "legend_max_words": 350,
+    "notes": "Up to 10 display items, figures and tables together. Arial or Helvetica; avoid red-green contrast and rainbow scales in favour of colourblind-safe palettes. High resolution is not required at initial submission."
+  },
+  "reference_style": {
+    "style": "Numbered, one publication per reference number, each carrying the cited title.",
+    "max_count": 70,
+    "citation": "numbered"
+  },
+  "reporting_checklists": [
+    {
+      "name": "Reporting Summary",
+      "required": true,
+      "study_types": [
+        "life-sciences",
+        "behavioural"
+      ],
+      "url": "https://www.nature.com/documents/nr-reporting-summary-flat.pdf",
+      "cached_as": "checklist/nature-reporting-summary.pdf"
+    },
+    {
+      "name": "Editorial policy checklist",
+      "required": true,
+      "study_types": [],
+      "url": null,
+      "cached_as": null
+    },
+    {
+      "name": "Code and software submission checklist",
+      "required": false,
+      "study_types": [
+        "custom-code"
+      ],
+      "url": null,
+      "cached_as": null
+    }
+  ],
+  "submission_steps": [
+    "submit through the Manuscript Tracking System at https://mts-ncomms.nature.com/, which requires an account",
+    "a cover letter is optional and is used only for information not shared with referees",
+    "open the checklist forms in Adobe Reader so their fields are fillable"
+  ],
+  "template": {
+    "latex_or_word_no_login": true,
+    "url": "https://www.springernature.com/gp/authors/campaigns/latex-author-support/see-where-our-services-will-take-you/18782940",
+    "notes": "No Nature Communications template exists; the generic Springer Nature package is the only no-login option.",
+    "document_class": null
+  },
+  "license_of_summary_source": {
+    "statement": "(c) 2026 Springer Nature Limited; the journal's own articles have been open access under CC BY 4.0 since January 2016.",
+    "url": "https://www.nature.com/info/terms-and-conditions"
+  },
+  "verification": {
+    "fully_verified_fields": [
+      "template",
+      "license_of_summary_source"
+    ],
+    "unverified_fields": [
+      "length_limits",
+      "required_structure",
+      "figure_spec",
+      "reference_style",
+      "reporting_checklists",
+      "submission_steps"
+    ]
+  }
+}

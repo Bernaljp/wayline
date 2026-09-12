@@ -1,0 +1,16 @@
+{
+  "pass": false,
+  "findings": [
+    {
+      "text": "The empty-input case raises IndexError rather than returning an empty list.",
+      "locator": "src/tokenizer.py#L42",
+      "severity": "blocker"
+    },
+    {
+      "text": "The docstring still describes the two-argument signature the ticket replaced.",
+      "locator": "src/tokenizer.py#L7",
+      "severity": "minor"
+    }
+  ],
+  "question_limit": "Whether the tokenizer handles an empty input without raising, and nothing else."
+}
