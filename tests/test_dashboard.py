@@ -204,7 +204,10 @@ class OverviewEndpointTest(DashboardTestCase):
         self.assertEqual(view["id"], self.project_id)
         self.assertEqual(view["autonomy"], "checkpoints")
         self.assertEqual(view["radius"], "moderate")
-        self.assertEqual(view["harness_tag"], TAG)
+        # The project's own pin, not the checkout's tag: the two differ from the moment a tag
+        # moves until `wayline upgrade` is run, and the overview shows what the project pins.
+        pinned = json.loads((self.project / "harness.json").read_text(encoding="utf-8"))["harness_tag"]
+        self.assertEqual(view["harness_tag"], pinned)
         self.assertEqual(view["offset"], self.journal_size())
 
     def test_the_last_events_are_the_tail_of_the_journal(self):

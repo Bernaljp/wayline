@@ -14,7 +14,7 @@
             "provenance": "research/tickets/01-probe-the-guards-the-skills-and-the-subagent.md#what-to-do"
           },
           {
-            "text": "Both /wayline-<skill> lines expanded: m0/skills-seen.txt carries a passphrase from each of the ticket's two skills, and neither passphrase is written anywhere else in the project.",
+            "text": "Both skills reached the worker: m0/skills-seen.txt carries a passphrase from each. The first came from the /wayline-m0-note line, which expanded; the second from the body the prompt inlined under a heading, since only the first line expands.",
             "provenance": "research/tickets/01-probe-the-guards-the-skills-and-the-subagent.md#what-to-do"
           }
         ],

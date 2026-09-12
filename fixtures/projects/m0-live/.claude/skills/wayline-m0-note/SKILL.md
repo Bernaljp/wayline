@@ -5,10 +5,10 @@ description: The first of the two test skills of the M0 live run. It carries one
 
 # The note skill
 
-This skill exists to answer one question: does a `/wayline-<skill>` line at the top of a worker's
-prompt expand into the skill's body? It carries a passphrase for that, and nothing else. The
-passphrase is written here and nowhere else in the project, so a worker that reports it read this
-file, and a worker that cannot report it did not.
+This skill is the first `/wayline-<skill>` line in the prompt, which is the one that expands. It
+carries a passphrase for that, and nothing else. The passphrase is written here and nowhere else
+in the project, and the prompt itself never carries it, so a worker that reports it had this body
+in front of it and a worker that cannot report it did not.
 
 While you are working on a ticket that names this skill, append this line, exactly, to
 `m0/skills-seen.txt` in the worktree (create the file if it is not there yet):

@@ -4,13 +4,13 @@
 
 **Blocked by:** 05 (The conductor's M0 path with the fake worker)
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#7](https://github.com/Bernaljp/wayline/issues/7) (mirror; the local file is the source)
 
 **Milestone:** M0 Skeleton. **Spec:** milestone M0 criteria 1, 7, 8, 10; Implementation Decisions 3, 4.
 
-- [ ] Carried verbatim from the closed prototype ticket 16 (Prototype: the M0 worker launch):
+- [x] Carried verbatim from the closed prototype ticket 16 (Prototype: the M0 worker launch):
 
   > What is the exact launch that works end to end? Build a throwaway script that:
   >
@@ -22,7 +22,7 @@
   > Record the exact command, the raw envelope, the hook stdin as seen, turns, duration, and every flag that behaved differently from the notes. The answer is the launch shape M0 implements. Keep the script under `.scratch/proto/worker-launch/` and mark it throwaway.
 
   The real `wayline init` and `wayline run` stand in for the throwaway script; the records go to `docs/verification/m0.md`.
-- [ ] The live run re-verifies OPEN-5 as decided: `dontAsk` with `--permission-prompts none`, the role's `--allowedTools` and `--disallowedTools`, the `permissions.deny` first layer, and the hooks, including inside a `--agents` subagent (the trivial ticket asks the worker to delegate one read to an Agent-tool subagent; the hook stdin's `agent_id` and `agent_type` are recorded).
-- [ ] The prompt carries two `/wayline-<skill>` lines (a second test skill is added for this); the record says whether both expanded; if only the first did, the conductor inlines the remaining skills' bodies under a heading and the record says that path is in use.
-- [ ] The launcher's portability seam is confirmed by inspection: one `launch`, one `resume`, one backend named `claude_cli`, and no other place that starts `claude`.
-- [ ] `wayline status` after the run shows the closed ticket and the last events; the repository is tagged `v0.1.0` with a changelog entry.
+- [x] The live run re-verifies OPEN-5 as decided: `dontAsk` with `--permission-prompts none`, the role's `--allowedTools` and `--disallowedTools`, the `permissions.deny` first layer, and the hooks, including inside a `--agents` subagent (the trivial ticket asks the worker to delegate one read to an Agent-tool subagent; the hook stdin's `agent_id` and `agent_type` are recorded).
+- [x] The prompt carries two `/wayline-<skill>` lines (a second test skill is added for this); the record says whether both expanded; if only the first did, the conductor inlines the remaining skills' bodies under a heading and the record says that path is in use.
+- [x] The launcher's portability seam is confirmed by inspection: one `launch`, one `resume`, one backend named `claude_cli`, and no other place that starts `claude`.
+- [x] `wayline status` after the run shows the closed ticket and the last events; the repository is tagged `v0.1.0` with a changelog entry.

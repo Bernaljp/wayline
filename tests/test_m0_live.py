@@ -87,11 +87,15 @@ class PromptTest(ProjectTestCase):
             with self.subTest(step=step):
                 self.assertIn(step, self.prompt.text)
 
-    def test_the_prompt_never_carries_a_passphrase(self):
-        """A worker that reports one read the skill; a prompt that leaked one would prove nothing."""
-        for passphrase in PASSPHRASES.values():
-            with self.subTest(passphrase=passphrase):
-                self.assertNotIn(passphrase, self.prompt.text)
+    def test_each_skill_reaches_the_worker_by_the_route_the_live_run_measured(self):
+        """The first line expands; the rest are inlined (`docs/verification/m0.md`).
+
+        So the first skill's passphrase must not be in the prompt at all, or its coming back would
+        prove nothing, and the second's must be, because nothing else would carry it.
+        """
+        self.assertNotIn(PASSPHRASES["wayline-m0-note"], self.prompt.text)
+        self.assertIn(PASSPHRASES["wayline-m0-tally"], self.prompt.text)
+        self.assertIn("## /wayline-m0-tally", self.prompt.text)
 
     def test_the_pack_read_every_entry_it_was_given(self):
         self.assertEqual(self.prompt.problems, [])

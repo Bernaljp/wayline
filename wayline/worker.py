@@ -561,15 +561,17 @@ class Prompt:
 def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX):
     """The worker's prompt, assembled in the order of decision 3.
 
-    One `/wayline-<skill>` line per assigned skill, the ticket restated, the context pack under
-    locator headers cut at the tier's cap with the cut announced, the role protocol, the result
-    schema, and the contract lines. `roots` are the directories a locator resolves against, in
-    order (the worktree and the project); `max_chars` is `policy.context_pack.max_chars` for the
-    tier's model, None for no cap.
+    One `/wayline-<skill>` line per assigned skill, the body of every skill after the first
+    inlined under a heading, the ticket restated, the context pack under locator headers cut at
+    the tier's cap with the cut announced, the role protocol, the result schema, and the contract
+    lines. `roots` are the directories a locator resolves against, in order (the worktree and the
+    project); `max_chars` is `policy.context_pack.max_chars` for the tier's model, None for no cap.
     """
     pack = _context_section(ticket.get("context_pack") or [], roots, max_chars)
+    skills = _skill_section(ticket.get("skills") or [], roots)
     parts = [
         "\n".join("/wayline-%s" % skill for skill in (ticket.get("skills") or [])),
+        skills.text,
         _ticket_section(ticket, budget),
         pack.text,
         role.protocol,
@@ -577,7 +579,65 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         _contract_section(ticket, consult_max),
     ]
     text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
-    return Prompt(text, pack.chars, pack.cut, pack.dropped, pack.problems)
+    return Prompt(text, pack.chars, pack.cut, pack.dropped, pack.problems + skills.problems)
+
+
+def skill_path(skill, roots):
+    """Where a ticket's skill lives: `.claude/skills/wayline-<skill>/SKILL.md` under the first root that has it.
+
+    One lookup covers both kinds of skill, because `wayline init` symlinks every harness skill
+    into the project's `.claude/skills/` beside the project's own.
+    """
+    for root in roots:
+        candidate = Path(root) / ".claude" / "skills" / ("wayline-" + str(skill)) / "SKILL.md"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _skill_section(skills, roots):
+    """The bodies of every skill after the first, inlined under a heading.
+
+    Only the first `/wayline-<skill>` line of a prompt expands. The live M0 run measured it: of a
+    ticket's two skills, the worker knew the first one's passphrase without ever opening a file
+    and had to read the second one's `SKILL.md` itself to learn the other (`docs/verification/m0.md`).
+    A worker can only do that where the skills happen to be committed in its worktree, so the
+    conductor inlines them instead, which is the path Implementation Decisions 3 names for exactly
+    this finding.
+    """
+    pack = Pack()
+    if len(skills) < 2:
+        return pack
+    rendered = [
+        "# The rest of your skills",
+        "",
+        "Only the first `/wayline-<skill>` line above expands into its skill. The others are "
+        "inlined here, in the ticket's order, and each is to be followed as if it had expanded.",
+    ]
+    for skill in skills[1:]:
+        path = skill_path(skill, roots)
+        rendered.extend(["", "## /wayline-%s" % skill, ""])
+        if path is None:
+            pack.problems.append("skill %s has no SKILL.md under any of the prompt's roots" % skill)
+            rendered.append("[wayline: this skill's SKILL.md was not found, so its body is missing. "
+                            "Say so in your result rather than guessing what it asked for.]")
+            continue
+        body = _skill_body(path)
+        pack.chars += len(body)
+        fence = _fence(body)
+        rendered.extend([fence, body.rstrip("\n"), fence])
+    pack.text = "\n".join(rendered)
+    return pack
+
+
+def _skill_body(path):
+    """A `SKILL.md` without its frontmatter: the heading above already names the skill."""
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 3)
+        if end != -1:
+            text = text[end + len("\n---\n"):]
+    return text.lstrip("\n")
 
 
 def _ticket_section(ticket, budget):
@@ -759,7 +819,16 @@ def _write_text(path, text):
 
 
 def _load_schema(schema_path):
-    """The schema file's text and parsed object, refused when unreadable or outside the validator's subset."""
+    """The text `--json-schema` is given and the parsed object, refused when the file is unusable.
+
+    The text is not the file byte for byte: the meta-schema reference is dropped first. Every
+    schema under `schemas/` opens with `"$schema": "https://json-schema.org/draft/2020-12/schema"`,
+    and the CLI's own validator resolves `$schema` against the schemas it holds rather than
+    fetching one, so it answers `--json-schema is not a valid JSON Schema: no schema with key or
+    ref ...` and exits before the session starts (`docs/verification/m0.md`, ticket 06). Nothing
+    downstream wants the key either: the harness re-validates the result with `wayline.jsonschema`,
+    whose subset is a 2020-12 subset by construction.
+    """
     try:
         text = Path(schema_path).read_text(encoding="utf-8")
         schema = json.loads(text)
@@ -769,7 +838,15 @@ def _load_schema(schema_path):
         check_schema(schema)
     except SchemaError as exc:
         raise LaunchError("schema %s is outside the validator's subset: %s" % (schema_path, exc))
-    return text, schema
+    return _schema_text(text, schema), schema
+
+
+def _schema_text(text, schema):
+    """The file's own text, or the object without its meta-schema reference when it has one."""
+    if not (isinstance(schema, dict) and "$schema" in schema):
+        return text
+    without = {key: value for key, value in schema.items() if key != "$schema"}
+    return json.dumps(without, indent=2) + "\n"
 
 
 def _check_paths(request):

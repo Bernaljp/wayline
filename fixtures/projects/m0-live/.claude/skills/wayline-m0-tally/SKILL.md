@@ -6,8 +6,9 @@ description: The second of the two test skills of the M0 live run. It carries th
 # The tally skill
 
 This skill is the second `/wayline-<skill>` line in the prompt, which is the whole reason it
-exists. Implementation Decisions 3 leaves open whether more than one such line expands; if only
-the first does, this skill's body never reaches the worker and its passphrase never appears.
+exists. Only the first such line expands, as the live run of 2026-09-12 measured, so this body
+reaches a worker by the other route: the conductor inlines it under a heading in the prompt
+(`docs/verification/m0.md`). Its passphrase arriving is what says that route still works.
 
 While you are working on a ticket that names this skill, append this line, exactly, to
 `m0/skills-seen.txt` in the worktree (create the file if it is not there yet):

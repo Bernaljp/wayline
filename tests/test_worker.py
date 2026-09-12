@@ -11,6 +11,7 @@ import dataclasses
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -170,6 +171,31 @@ class ArgvTest(unittest.TestCase):
             "--json-schema", SCHEMA.read_text(encoding="utf-8"),
             "--fallback-model", "sonnet",
         ])
+
+    def test_the_schema_flag_drops_the_meta_schema_reference(self):
+        """The CLI resolves `$schema` against the schemas it holds and refuses one it cannot find.
+
+        Every file under `schemas/` opens with the 2020-12 meta-schema, so the first real worker
+        launch died before its session began: `--json-schema is not a valid JSON Schema: no schema
+        with key or ref "https://json-schema.org/draft/2020-12/schema"` (docs/verification/m0.md).
+        """
+        directory = Path(tempfile.mkdtemp(prefix="wayline-schema-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        path = directory / "result.json"
+        original = json.loads((HARNESS_ROOT / "schemas" / "result.json").read_text(encoding="utf-8"))
+        self.assertIn("$schema", original)  # the file the conductor points the launch at
+        path.write_text(json.dumps(original, indent=2) + "\n", encoding="utf-8")
+
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run, schema_path=path), run)
+        sent = json.loads(argv[argv.index("--json-schema") + 1])
+        self.assertNotIn("$schema", sent)
+        self.assertEqual(sent, {key: value for key, value in original.items() if key != "$schema"})
+
+    def test_a_schema_with_no_meta_schema_reference_goes_across_as_it_is(self):
+        run = Path("/proj/research/sessions/3/1")
+        argv = worker.build_argv(make_request(run), run)
+        self.assertEqual(argv[argv.index("--json-schema") + 1], SCHEMA.read_text(encoding="utf-8"))
 
     def test_resume_argv_repasses_every_flag_and_adds_resume(self):
         run = Path("/proj/research/sessions/3/1")

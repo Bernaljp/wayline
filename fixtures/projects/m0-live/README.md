@@ -10,8 +10,10 @@ probe of the harness rather than work anyone wants done.
 the fake worker, and this one is also what `docs/verification/m0.md` records live.
 
 The two skills carry one passphrase each, written in their `SKILL.md` and nowhere else in the
-project. A worker that appends both passphrases to `m0/skills-seen.txt` had both skill bodies in
-front of it; a worker that appends only the first had only the first.
+project. They reach the worker by different routes, which is the point of there being two: the
+first through the `/wayline-m0-note` line, which expands, and the second through the body the
+prompt inlines under a heading, because only the first line expands. A worker that appends both
+passphrases to `m0/skills-seen.txt` was reached both ways.
 
 `fake-worker.json` is the script the fake worker follows: one call, which writes the three files,
 commits them on the ticket branch, and returns a `done` result whose findings carry the refusal the

@@ -56,10 +56,18 @@ class RoleFileTest(unittest.TestCase):
         self.assertFalse([tool for tool in role.allowed_tools if tool.startswith("Bash(git push")])
 
     def test_the_host_tools_a_worker_inherits_are_disallowed(self):
-        """docs/verification/m0.md: --settings adds to the owner's configuration, it does not replace it."""
+        """docs/verification/m0.md: --settings adds to the owner's configuration, it does not replace it.
+
+        The live M0 run read the tool list off `system/init` rather than guessing at it, and found
+        ten host tools the first denylist did not name. `Monitor` is the one that matters most: it
+        runs a shell command, and it is not the `Bash` tool, so neither the role's `Bash(...)`
+        allowlist nor the command guard's `Bash` matcher sees what it runs.
+        """
         role = worker.read_role("coder")
-        for tool in ("mcp__*", "Workflow", "Skill"):
-            self.assertIn(tool, role.disallowed_tools)
+        for tool in ("mcp__*", "Workflow", "Skill", "Monitor", "PushNotification", "SendMessage",
+                     "RemoteTrigger", "ScheduleWakeup", "EnterWorktree", "ExitWorktree"):
+            with self.subTest(tool=tool):
+                self.assertIn(tool, role.disallowed_tools)
 
     def test_the_protocol_comes_from_prompts(self):
         role = worker.read_role("coder")
@@ -274,7 +282,8 @@ class PromptTest(unittest.TestCase):
 
     def test_the_sections_come_in_the_order_decision_3_fixes(self):
         text = self.assemble().text
-        self.assertEqual(self.sections(text), ["# Ticket 7: Add the tokenizer", "# Context pack", "# Protocol", "# The result", "# The contract"])
+        self.assertEqual(self.sections(text), ["# The rest of your skills", "# Ticket 7: Add the tokenizer",
+                                               "# Context pack", "# Protocol", "# The result", "# The contract"])
         self.assertTrue(text.startswith("/wayline-python-package\n/wayline-profiling\n"))
 
     def test_one_skill_line_per_assigned_skill_and_none_without(self):
@@ -304,7 +313,8 @@ class PromptTest(unittest.TestCase):
         prompt = self.assemble(ticket(context_pack=["gone.md", "notes.md"]))
         self.assertIn("could not be read", prompt.text)
         self.assertIn("what the planner packed", prompt.text)
-        self.assertEqual(len(prompt.problems), 1)
+        packing = [problem for problem in prompt.problems if problem.startswith("gone.md")]
+        self.assertEqual(len(packing), 1, prompt.problems)
 
     def test_an_entry_over_the_cap_is_cut_where_it_runs_out(self):
         prompt = self.assemble(max_chars=40)
@@ -363,6 +373,90 @@ class PromptTest(unittest.TestCase):
         text = self.assemble().text
         self.assertTrue(text.endswith("\n"))
         self.assertFalse(text.endswith("\n\n"))
+
+
+class InlinedSkillTest(unittest.TestCase):
+    """The skills after the first, inlined under a heading (M0 criterion 8, ticket 06).
+
+    The live run measured which of a ticket's `/wayline-<skill>` lines expand: the first one, and
+    only the first (`docs/verification/m0.md`). So the conductor carries the rest itself rather
+    than leaving a worker to find them, which it can only do where they happen to be committed in
+    its worktree.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="wayline-skills-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.role = worker.read_role("coder")
+
+    def write_skill(self, name, body, frontmatter=True):
+        directory = self.root / ".claude" / "skills" / ("wayline-" + name)
+        directory.mkdir(parents=True, exist_ok=True)
+        head = "---\nname: wayline-%s\ndescription: the %s skill\n---\n\n" % (name, name) if frontmatter else ""
+        (directory / "SKILL.md").write_text(head + body, encoding="utf-8")
+
+    def assemble(self, skills):
+        return worker.assemble_prompt(ticket(skills=skills, context_pack=[]), self.role, roots=[self.root])
+
+    def test_the_first_skill_is_left_to_the_line_that_expands(self):
+        self.write_skill("alpha", "# Alpha\n\nThe alpha instruction.\n")
+        self.write_skill("beta", "# Beta\n\nThe beta instruction.\n")
+        text = self.assemble(["alpha", "beta"]).text
+        self.assertIn("The beta instruction.", text)
+        self.assertNotIn("The alpha instruction.", text)
+
+    def test_the_rest_come_in_the_ticket_s_order_under_their_own_headings(self):
+        for name in ("alpha", "beta", "gamma"):
+            self.write_skill(name, "# %s\n\nThe %s instruction.\n" % (name.title(), name))
+        text = self.assemble(["alpha", "beta", "gamma"]).text
+        self.assertLess(text.index("## /wayline-beta"), text.index("## /wayline-gamma"))
+        self.assertLess(text.index("# The rest of your skills"), text.index("# Ticket 7"))
+
+    def test_the_frontmatter_is_left_behind(self):
+        self.write_skill("alpha", "body\n")
+        self.write_skill("beta", "# Beta\n\nThe beta instruction.\n")
+        text = self.assemble(["alpha", "beta"]).text
+        self.assertNotIn("description: the beta skill", text)
+        self.assertIn("The beta instruction.", text)
+
+    def test_a_skill_with_no_frontmatter_survives_whole(self):
+        self.write_skill("alpha", "body\n")
+        self.write_skill("beta", "# Beta\n\nThe beta instruction.\n", frontmatter=False)
+        self.assertIn("The beta instruction.", self.assemble(["alpha", "beta"]).text)
+
+    def test_a_skill_that_is_nowhere_is_announced_rather_than_guessed_at(self):
+        self.write_skill("alpha", "body\n")
+        prompt = self.assemble(["alpha", "missing"])
+        self.assertIn("## /wayline-missing", prompt.text)
+        self.assertIn("was not found", prompt.text)
+        self.assertEqual(prompt.problems, ["skill missing has no SKILL.md under any of the prompt's roots"])
+
+    def test_one_skill_or_none_gets_no_section(self):
+        self.write_skill("alpha", "body\n")
+        for skills in ([], ["alpha"]):
+            with self.subTest(skills=skills):
+                self.assertNotIn("# The rest of your skills", self.assemble(skills).text)
+
+    def test_the_first_root_that_has_the_skill_wins(self):
+        """The worktree's copy stands in for the project's, as it does for a context-pack locator."""
+        other = Path(tempfile.mkdtemp(prefix="wayline-skills-other-"))
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        self.write_skill("alpha", "body\n")
+        self.write_skill("beta", "the worktree copy\n")
+        directory = other / ".claude" / "skills" / "wayline-beta"
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text("the project copy\n", encoding="utf-8")
+        text = worker.assemble_prompt(ticket(skills=["alpha", "beta"], context_pack=[]), self.role,
+                                      roots=[self.root, other]).text
+        self.assertIn("the worktree copy", text)
+        self.assertNotIn("the project copy", text)
+
+    def test_a_body_that_carries_backticks_is_fenced_longer_than_they_are(self):
+        self.write_skill("alpha", "body\n")
+        self.write_skill("beta", "Run this:\n\n```\nwayline accept\n```\n")
+        text = self.assemble(["alpha", "beta"]).text
+        self.assertIn("````", text)
+        self.assertIn("wayline accept", text)
 
 
 if __name__ == "__main__":
