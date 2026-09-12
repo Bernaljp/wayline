@@ -20,7 +20,7 @@ from tests.paths import FIXTURES_DIR
 from tests.projects import ProjectTestCase
 from wayline import TAG, cli
 from wayline.dossier import (
-    ARXIV_HTML, FLAT, INVENTORY, REFS, SOURCE, apply_aux_numbers, arxiv_source_url, aux_numbers,
+    ARXIV_HTML, FIGURES, FLAT, INVENTORY, REFS, SOURCE, apply_aux_numbers, arxiv_source_url, aux_numbers,
     build_inventory, environments, extract_source, fetch_arxiv_source, flatten,
     html_inventory, l0_dossier, latex_inventory, main_tex, strip_comments, write_l0,
 )
@@ -586,6 +586,14 @@ class BuildInventoryTest(ProjectTestCase):
         self.assertTrue(any("304" in note for note in inventory["notes"]))
         self.assertEqual(inventory["counts"]["section_headings"], 4, "the kept source inventories the same paper")
         self.assertIn("updated", inventory)
+
+    def test_a_figure_file_no_item_names_any_more_does_not_survive_a_rebuild(self):
+        self.build(compile_source=False)
+        stale = self.ref(FIGURES, "fig-9.png")
+        stale.write_bytes(b"\x89PNG\r\n\x1a\n")
+        self.build(compile_source=False)
+        self.assertFalse(stale.exists())
+        self.assertTrue(self.ref(FIGURES, "fig-1.png").is_file())
 
     def test_a_pdf_only_submission_is_kept_and_routed_to_the_pdf_chain(self):
         payload = b"%PDF-1.4\n%%EOF\n"

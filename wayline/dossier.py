@@ -1306,6 +1306,9 @@ def build_inventory(project, slug, fetcher=None, email=None, compile_source=True
             ledger.remove_tree("%s/%s/%s" % (REFS, slug, SOURCE))
             _keep_source(ledger, slug, workspace, files)
             source = {"bytes": len(fetched.payload), "version": fetched.version}
+        # Every run remakes the figure files, so a paper that lost a figure between versions does
+        # not leave one behind that no inventory item names.
+        ledger.remove_tree("%s/%s/%s" % (REFS, slug, FIGURES))
         inventory = _inventory_from_workspace(
             ledger, slug, identifier, workspace, files, fetcher, notes, compile_source, rasterize,
         )
