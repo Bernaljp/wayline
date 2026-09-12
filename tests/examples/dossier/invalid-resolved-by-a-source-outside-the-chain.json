@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "slug": "a-comprehensive-taxonomy-of-interpretive-marmalade",
+  "level": 0,
+  "existence": "unresolved",
+  "resolved_by": "semanticscholar",
+  "query": {
+    "kind": "title",
+    "value": "A comprehensive taxonomy of interpretive marmalade in high-dimensional sponge topology",
+    "raw": "A comprehensive taxonomy of interpretive marmalade in high-dimensional sponge topology"
+  },
+  "identifiers": {},
+  "metadata": {},
+  "abstract": null,
+  "open_access": {},
+  "attempts": [
+    {
+      "source": "crossref",
+      "url": "https://api.crossref.org/works?query.bibliographic=A+comprehensive+taxonomy+of+interpretive+marmalade+in+high-dimensional+sponge+topology&rows=3&select=DOI%2Ctitle%2Cauthor%2Cissued%2Cscore%2Ctype%2Ccontainer-title%2Cabstract&mailto=%3Cowner%3E",
+      "status": 200,
+      "outcome": "miss",
+      "note": "3 candidates, best title similarity 0.45, below 0.90"
+    },
+    {
+      "source": "openalex",
+      "url": "https://api.openalex.org/works?search=A+comprehensive+taxonomy+of+interpretive+marmalade+in+high-dimensional+sponge+topology&per-page=3",
+      "status": 200,
+      "outcome": "miss",
+      "note": "best title similarity 0.26, below 0.90"
+    },
+    {
+      "source": "europepmc",
+      "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=TITLE%3A%22A+comprehensive+taxonomy+of+interpretive+marmalade+in+high-dimensional+sponge+topology%22&format=json&resultType=core&pageSize=3",
+      "status": 200,
+      "outcome": "miss",
+      "note": "best title similarity 0.00, below 0.90"
+    }
+  ],
+  "created": "2026-09-12T10:00:00.000Z"
+}

@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.crossref.org/works?query.bibliographic=A+comprehensive+taxonomy+of+interpretive+marmalade+in+high-dimensional+sponge+topology&rows=3&select=DOI%2Ctitle%2Cauthor%2Cissued%2Cscore%2Ctype%2Ccontainer-title%2Cabstract&mailto=%3Cowner%3E",
+    "hash": "614368a4c7ca678259005cb8421a2dcf2907858469a47c64e878b6b5f8a59371"
+  },
+  "response": {
+    "url": "https://api.crossref.org/works?query.bibliographic=A+comprehensive+taxonomy+of+interpretive+marmalade+in+high-dimensional+sponge+topology&rows=3&select=DOI%2Ctitle%2Cauthor%2Cissued%2Cscore%2Ctype%2Ccontainer-title%2Cabstract&mailto=%3Cowner%3E",
+    "status": 200,
+    "headers": {
+      "date": "Sat, 12 Sep 2026 13:54:54 GMT",
+      "content-type": "application/json",
+      "transfer-encoding": "chunked",
+      "connection": "close",
+      "access-control-expose-headers": "Link",
+      "access-control-allow-headers": "X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language, Accept-Ranges, Cache-Control",
+      "access-control-allow-origin": "*",
+      "server": "Jetty(9.4.40.v20210413)",
+      "x-rate-limit-limit": "3",
+      "x-rate-limit-interval": "1s",
+      "x-concurrency-limit": "3",
+      "x-api-pool": "polite-array",
+      "permissions-policy": "interest-cohort=()"
+    },
+    "encoding": "utf-8",
+    "body": "{\"status\":\"ok\",\"message-type\":\"work-list\",\"message-version\":\"1.0.0\",\"message\":{\"facets\":{},\"total-results\":4410202,\"items\":[{\"DOI\":\"10.1142\\/5154\",\"title\":[\"High-Dimensional Manifold Topology\"],\"issued\":{\"date-parts\":[[2003,10]]},\"score\":24.537683,\"type\":\"proceedings\"},{\"DOI\":\"10.1021\\/acsami.5b10267.s001\",\"title\":[\"Sulfur Nanogranular Film-Coated Three-Dimensional Graphene Sponge-Based High Power Lithium Sulfur Battery\"],\"issued\":{\"date-parts\":[[null]]},\"score\":23.963457,\"type\":\"component\"},{\"DOI\":\"10.1142\\/9789812704443_bmatter\",\"title\":[\"BACK MATTER\"],\"issued\":{\"date-parts\":[[2003,10]]},\"score\":23.68171,\"type\":\"proceedings-article\",\"container-title\":[\"High-Dimensional Manifold Topology\"]}],\"items-per-page\":3,\"query\":{\"start-index\":0,\"search-terms\":null}}}"
+  }
+}

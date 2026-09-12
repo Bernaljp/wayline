@@ -5,6 +5,8 @@ asserts on what a user or the next component can observe: the files on disk, the
 journal events, and the exit codes.
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -378,6 +380,64 @@ class DefaultHarnessTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             default_harness("0.0.0", hermes_python=None)
 
+    def test_the_owner_address_is_a_field_of_the_file(self):
+        """The scout sends it to the polite pools; a project without one is valid and says nothing."""
+        self.assertIsNone(default_harness(hermes_python=None)["owner_email"])
+        value = default_harness(hermes_python=None, owner_email="owner@example.org")
+        check(value, load_schema("harness"), name="harness.json")
+        self.assertEqual(value["owner_email"], "owner@example.org")
+
+
+class _Terminal(io.StringIO):
+    """A stdin that says it is a terminal, so the prompt path can be tested without one."""
+
+    def isatty(self):
+        return True
+
+
+class OwnerEmailTest(ProjectTestCase):
+    def test_init_stores_the_address_it_was_given(self):
+        project = self.temp / "study"
+        init_project(project, harness_root=self.fake_harness(), owner_email="owner@example.org")
+        self.assertEqual(read_harness(project)["owner_email"], "owner@example.org")
+
+    def test_without_an_address_the_file_says_so_and_init_notes_it(self):
+        project = self.temp / "study"
+        report = init_project(project, harness_root=self.fake_harness(), owner_email=None)
+        self.assertIsNone(read_harness(project)["owner_email"])
+        self.assertTrue(any("mailto" in note for note in report["notes"]))
+
+    def test_the_address_reaches_the_scouts_user_agent(self):
+        from wayline.dossier import scout_fetcher
+
+        project = self.temp / "study"
+        init_project(project, harness_root=self.fake_harness(), owner_email="owner@example.org")
+        fetcher = scout_fetcher(project, email=read_harness(project)["owner_email"])
+        self.assertEqual(fetcher.user_agent, "wayline/%s (mailto:owner@example.org)" % TAG)
+
+    def test_the_flag_wins_over_anything_that_could_be_asked(self):
+        from wayline.project import ask_email
+
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(ask_email("flag@example.org", str(self.temp), stream=_Terminal("typed@example.org")), "flag@example.org")
+        self.assertEqual(printed.getvalue(), "", "the flag answers the question, so it is never asked")
+
+    def test_at_a_terminal_the_owner_is_asked_and_an_empty_answer_keeps_the_suggestion(self):
+        from wayline.project import ask_email, detect_email
+
+        suggestion = detect_email(None)
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(ask_email(None, str(self.temp), stream=_Terminal("typed@example.org")), "typed@example.org")
+            self.assertEqual(ask_email(None, str(self.temp), stream=_Terminal("")), suggestion)
+        self.assertIn("owner address", printed.getvalue())
+
+    def test_a_second_init_leaves_an_owner_edited_address_alone(self):
+        project = self.temp / "study"
+        harness = self.fake_harness()
+        init_project(project, harness_root=harness, owner_email="first@example.org")
+        init_project(project, harness_root=harness, owner_email="second@example.org")
+        self.assertEqual(read_harness(project)["owner_email"], "first@example.org")
+
 
 class InitCommandTest(ProjectTestCase):
     def run_cli(self, *args):
@@ -404,6 +464,17 @@ class InitCommandTest(ProjectTestCase):
         done = self.run_cli("init", str(self.temp / "cli-study"), "--uninstall-units")
         self.assertEqual(done.returncode, 2)
         self.assertIn("ticket 14", done.stderr)
+
+    def test_the_email_flag_lands_in_harness_json(self):
+        project = self.temp / "cli-study"
+        done = self.run_cli("init", str(project), "--email", "owner@example.org")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(read_harness(project)["owner_email"], "owner@example.org")
+
+    def test_away_from_a_terminal_nothing_is_asked(self):
+        """`init` is what the tick, the suite, and every script call; it may never block on a prompt."""
+        done = self.run_cli("init", str(self.temp / "cli-study"))
+        self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_switch_from_the_command_line_moves_the_pointer(self):
         first, second = self.temp / "one", self.temp / "two"

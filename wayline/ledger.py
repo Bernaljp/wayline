@@ -27,7 +27,7 @@ from pathlib import Path
 
 from wayline.jsonschema import check, load_schema
 
-__all__ = ["Ledger", "LedgerError", "make_event", "now_ts", "atomic_write", "EVENTS", "PAYLOAD_ENUMS", "JOURNAL", "LOCK"]
+__all__ = ["Ledger", "LedgerError", "ledger_for", "make_event", "now_ts", "atomic_write", "EVENTS", "PAYLOAD_ENUMS", "JOURNAL", "LOCK"]
 
 JOURNAL = "journal.jsonl"
 LOCK = ".lock"
@@ -499,6 +499,15 @@ class Ledger:
     def read_json(self, relpath):
         with open(self.path(relpath), encoding="utf-8") as handle:
             return json.load(handle)
+
+
+def ledger_for(project_or_ledger):
+    """A `Ledger`, from one or from the project path of one.
+
+    Every function that writes to the ledger takes either, so a caller with a ledger in hand
+    does not open a second one and a caller with only a path does not have to build it.
+    """
+    return project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
 
 
 def _dumps(value, **options):

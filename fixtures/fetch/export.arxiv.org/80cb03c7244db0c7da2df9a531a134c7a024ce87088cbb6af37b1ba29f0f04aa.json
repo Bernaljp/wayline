@@ -1,0 +1,29 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://export.arxiv.org/api/query?id_list=1912.01703&max_results=1",
+    "hash": "80cb03c7244db0c7da2df9a531a134c7a024ce87088cbb6af37b1ba29f0f04aa"
+  },
+  "response": {
+    "url": "https://export.arxiv.org/api/query?id_list=1912.01703&max_results=1",
+    "status": 200,
+    "headers": {
+      "connection": "close",
+      "content-length": "3691",
+      "via": "1.1 google, 1.1 varnish, 1.1 varnish, 1.1 varnish",
+      "content-type": "application/atom+xml; charset=utf-8",
+      "server": "Google Frontend",
+      "x-cloud-trace-context": "7093b86c5ebfdea4b6658b72215c4a8a",
+      "accept-ranges": "bytes",
+      "age": "2360",
+      "date": "Sat, 12 Sep 2026 14:01:45 GMT",
+      "x-served-by": "cache-lga21990-LGA, cache-lga21990-LGA, cache-lga21956-LGA, cache-fra-etou8220079-FRA",
+      "x-cache": "MISS, MISS, HIT",
+      "x-cache-hits": "0, 0, 0",
+      "x-timer": "S1789221706.939633,VS0,VE3",
+      "strict-transport-security": "max-age=300"
+    },
+    "encoding": "utf-8",
+    "body": "<?xml version='1.0' encoding='UTF-8'?>\n<feed xmlns:opensearch=\"http://a9.com/-/spec/opensearch/1.1/\" xmlns:arxiv=\"http://arxiv.org/schemas/atom\" xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>https://arxiv.org/api/SZDSk6mamGGPJj3TeFZYGzXwIgc</id>\n  <title>arXiv Query: search_query=&amp;id_list=1912.01703&amp;start=0&amp;max_results=1</title>\n  <updated>2026-09-12T13:22:26Z</updated>\n  <link href=\"https://arxiv.org/api/query?search_query=&amp;start=0&amp;max_results=1&amp;id_list=1912.01703\" type=\"application/atom+xml\"/>\n  <opensearch:itemsPerPage>1</opensearch:itemsPerPage>\n  <opensearch:totalResults>1</opensearch:totalResults>\n  <opensearch:startIndex>0</opensearch:startIndex>\n  <entry>\n    <id>http://arxiv.org/abs/1912.01703v1</id>\n    <title>PyTorch: An Imperative Style, High-Performance Deep Learning Library</title>\n    <updated>2019-12-03T22:06:05Z</updated>\n    <link href=\"https://arxiv.org/abs/1912.01703v1\" rel=\"alternate\" type=\"text/html\"/>\n    <link href=\"https://arxiv.org/pdf/1912.01703v1\" rel=\"related\" type=\"application/pdf\" title=\"pdf\"/>\n    <summary>Deep learning frameworks have often focused on either usability or speed, but not both. PyTorch is a machine learning library that shows that these two goals are in fact compatible: it provides an imperative and Pythonic programming style that supports code as a model, makes debugging easy and is consistent with other popular scientific computing libraries, while remaining efficient and supporting hardware accelerators such as GPUs.\n  In this paper, we detail the principles that drove the implementation of PyTorch and how they are reflected in its architecture. We emphasize that every aspect of PyTorch is a regular Python program under the full control of its user. We also explain how the careful and pragmatic implementation of the key components of its runtime enables them to work together to achieve compelling performance.\n  We demonstrate the efficiency of individual subsystems, as well as the overall speed of PyTorch on several common benchmarks.</summary>\n    <category term=\"cs.LG\" scheme=\"http://arxiv.org/schemas/atom\"/>\n    <category term=\"cs.MS\" scheme=\"http://arxiv.org/schemas/atom\"/>\n    <category term=\"stat.ML\" scheme=\"http://arxiv.org/schemas/atom\"/>\n    <published>2019-12-03T22:06:05Z</published>\n    <arxiv:comment>12 pages, 3 figures, NeurIPS 2019</arxiv:comment>\n    <arxiv:primary_category term=\"cs.LG\"/>\n    <author>\n      <name>Adam Paszke</name>\n    </author>\n    <author>\n      <name>Sam Gross</name>\n    </author>\n    <author>\n      <name>Francisco Massa</name>\n    </author>\n    <author>\n      <name>Adam Lerer</name>\n    </author>\n    <author>\n      <name>James Bradbury</name>\n    </author>\n    <author>\n      <name>Gregory Chanan</name>\n    </author>\n    <author>\n      <name>Trevor Killeen</name>\n    </author>\n    <author>\n      <name>Zeming Lin</name>\n    </author>\n    <author>\n      <name>Natalia Gimelshein</name>\n    </author>\n    <author>\n      <name>Luca Antiga</name>\n    </author>\n    <author>\n      <name>Alban Desmaison</name>\n    </author>\n    <author>\n      <name>Andreas Köpf</name>\n    </author>\n    <author>\n      <name>Edward Yang</name>\n    </author>\n    <author>\n      <name>Zach DeVito</name>\n    </author>\n    <author>\n      <name>Martin Raison</name>\n    </author>\n    <author>\n      <name>Alykhan Tejani</name>\n    </author>\n    <author>\n      <name>Sasank Chilamkurthy</name>\n    </author>\n    <author>\n      <name>Benoit Steiner</name>\n    </author>\n    <author>\n      <name>Lu Fang</name>\n    </author>\n    <author>\n      <name>Junjie Bai</name>\n    </author>\n    <author>\n      <name>Soumith Chintala</name>\n    </author>\n  </entry>\n</feed>\n"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://export.arxiv.org/api/query?id_list=1802.03426&max_results=1",
+    "hash": "593441a116fb444d63cbc7845460556e1f8409aa088558e762b26561a44b2166"
+  },
+  "response": {
+    "url": "https://export.arxiv.org/api/query?id_list=1802.03426&max_results=1",
+    "status": 200,
+    "headers": {
+      "connection": "close",
+      "content-length": "2317",
+      "via": "1.1 google, 1.1 varnish, 1.1 varnish, 1.1 varnish",
+      "content-type": "application/atom+xml; charset=utf-8",
+      "server": "Google Frontend",
+      "x-cloud-trace-context": "cbfff3dfb34c6cbae3ebac27903a64df",
+      "accept-ranges": "bytes",
+      "age": "0",
+      "date": "Sat, 12 Sep 2026 14:01:42 GMT",
+      "x-served-by": "cache-lga21979-LGA, cache-lga21979-LGA, cache-lga21959-LGA, cache-fra-etou8220143-FRA",
+      "x-cache": "MISS, HIT, MISS",
+      "x-cache-hits": "0, 1, 0",
+      "x-timer": "S1789221703.623096,VS0,VE84",
+      "strict-transport-security": "max-age=300"
+    },
+    "encoding": "utf-8",
+    "body": "<?xml version='1.0' encoding='UTF-8'?>\n<feed xmlns:opensearch=\"http://a9.com/-/spec/opensearch/1.1/\" xmlns:arxiv=\"http://arxiv.org/schemas/atom\" xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>https://arxiv.org/api/WFMnU2YZQgvTIwVwYqRtonthKcQ</id>\n  <title>arXiv Query: search_query=&amp;id_list=1802.03426&amp;start=0&amp;max_results=1</title>\n  <updated>2026-09-12T13:56:44Z</updated>\n  <link href=\"https://arxiv.org/api/query?search_query=&amp;start=0&amp;max_results=1&amp;id_list=1802.03426\" type=\"application/atom+xml\"/>\n  <opensearch:itemsPerPage>1</opensearch:itemsPerPage>\n  <opensearch:totalResults>1</opensearch:totalResults>\n  <opensearch:startIndex>0</opensearch:startIndex>\n  <entry>\n    <id>http://arxiv.org/abs/1802.03426v3</id>\n    <title>UMAP: Uniform Manifold Approximation and Projection for Dimension Reduction</title>\n    <updated>2020-09-18T01:56:41Z</updated>\n    <link href=\"https://arxiv.org/abs/1802.03426v3\" rel=\"alternate\" type=\"text/html\"/>\n    <link href=\"https://arxiv.org/pdf/1802.03426v3\" rel=\"related\" type=\"application/pdf\" title=\"pdf\"/>\n    <summary>UMAP (Uniform Manifold Approximation and Projection) is a novel manifold learning technique for dimension reduction. UMAP is constructed from a theoretical framework based in Riemannian geometry and algebraic topology. The result is a practical scalable algorithm that applies to real world data. The UMAP algorithm is competitive with t-SNE for visualization quality, and arguably preserves more of the global structure with superior run time performance. Furthermore, UMAP has no computational restrictions on embedding dimension, making it viable as a general purpose dimension reduction technique for machine learning.</summary>\n    <category term=\"stat.ML\" scheme=\"http://arxiv.org/schemas/atom\"/>\n    <category term=\"cs.CG\" scheme=\"http://arxiv.org/schemas/atom\"/>\n    <category term=\"cs.LG\" scheme=\"http://arxiv.org/schemas/atom\"/>\n    <published>2018-02-09T19:39:33Z</published>\n    <arxiv:comment>Reference implementation available at http://github.com/lmcinnes/umap</arxiv:comment>\n    <arxiv:primary_category term=\"stat.ML\"/>\n    <author>\n      <name>Leland McInnes</name>\n    </author>\n    <author>\n      <name>John Healy</name>\n    </author>\n    <author>\n      <name>James Melville</name>\n    </author>\n  </entry>\n</feed>\n"
+  }
+}
