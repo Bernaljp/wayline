@@ -52,6 +52,17 @@ class IntakeTest(unittest.TestCase):
 
     def test_an_owner_who_has_no_references_is_not_looked_up(self):
         self.assertEqual(intake_references("## References\n\nNone. A fixture that needed a dossier would not be a fixture.\n"), [])
+        self.assertEqual(intake_references("## References\n\n- None\n"), [])
+        self.assertEqual(intake_references("## References\n\n- n/a\n"), [])
+
+    def test_a_title_that_merely_begins_with_none_is_still_looked_up(self):
+        """"None" closing a sentence is the owner's answer; "Nothing" running on is a paper's title."""
+        text = "## References\n\n- Nothing is learned twice: replay and the sample complexity of control\n"
+        self.assertEqual([reference.kind for reference in intake_references(text)], ["title"])
+
+    def test_a_reference_line_with_an_identifier_is_read_whatever_word_it_opens_with(self):
+        text = "## References\n\n- None of the above, arXiv:1706.03762\n"
+        self.assertEqual([reference.value for reference in intake_references(text)], ["1706.03762"])
 
     def test_a_reference_named_twice_is_resolved_once(self):
         text = "## References\n\n- 10.1038/s41586-020-2649-2\n- https://doi.org/10.1038/s41586-020-2649-2\n"
@@ -75,9 +86,28 @@ class SlugTest(unittest.TestCase):
         record = {"metadata": {}, "identifiers": {}, "query": {"kind": "title", "value": "A taxonomy of marmalade"}}
         self.assertEqual(slug_for(record), "a-taxonomy-of-marmalade")
 
-    def test_a_slug_stays_inside_the_length_a_node_id_allows(self):
-        record = {"metadata": {"title": "word " * 40, "authors": ["Somebody Withaverylongfamilyname"], "year": 2020}}
-        self.assertLessEqual(len(slug_for(record)), 80)
+    def test_a_slug_is_always_a_node_id_too(self):
+        """One string names the dossier's directory and its node, so one function has to accept both."""
+        from wayline.kb import node_id
+
+        for record in (
+            {"metadata": {"title": "word " * 40, "authors": ["Somebody Withaverylongfamilyname"], "year": 2020}},
+            {"metadata": {}, "identifiers": {}, "query": {"kind": "title", "value": "A taxonomy of marmalade " * 6}},
+            {"metadata": {"title": "Ünïcödé: a stüdy", "authors": ["Ann Lee"], "year": 1999}},
+        ):
+            with self.subTest(title=(record["metadata"].get("title") or "")[:30]):
+                slug = slug_for(record)
+                self.assertEqual(node_id(slug), slug)
+                self.assertLessEqual(len(slug), 80)
+
+    def test_a_taken_slug_and_its_neighbour_both_stay_node_ids(self):
+        from wayline.kb import node_id
+
+        record = {"metadata": {"title": "word " * 40, "authors": ["Ann Lee"], "year": 2020}}
+        first = slug_for(record)
+        second = slug_for(record, taken={first})
+        self.assertNotEqual(first, second)
+        self.assertEqual(node_id(second), second)
 
 
 class RecordTest(unittest.TestCase):
@@ -236,6 +266,20 @@ class AbsorbTest(ProjectTestCase):
             self.project / "research" / CACHE / "api.crossref.org" / (request.hash + ".json"),
         )
         self.assertIn("research/.cache/", (self.project / ".gitignore").read_text(encoding="utf-8"))
+
+    def test_a_project_with_no_owner_address_is_told_what_the_polite_pools_lose(self):
+        """A project laid out before the address existed still absorbs; it is just not in the pool."""
+        harness = self.project / "harness.json"
+        stored = json.loads(harness.read_text(encoding="utf-8"))
+        stored["owner_email"] = None
+        harness.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
+        report = absorb_level_0(self.project, fetcher=recording_fetcher(RECORDINGS, email=None))
+        self.assertEqual(report["references"], 10)
+        self.assertTrue(any("mailto" in note for note in report["notes"]))
+        self.assertTrue(any("owner_email" in note for note in report["notes"]))
+
+    def test_a_project_with_an_address_gets_no_such_note(self):
+        self.assertEqual(self.absorb()["notes"], [])
 
     def test_nothing_reaches_the_network(self):
         """The recording backend has no inner backend, so an unrecorded request would raise."""

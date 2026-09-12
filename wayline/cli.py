@@ -89,6 +89,17 @@ GROUP_TITLES = {
 }
 
 
+def parse_args(parser, args):
+    """argparse without the process exit, so the dashboard can call a verb in-process.
+
+    Returns `(options, None)` or `(None, exit_code)`; argparse has already printed the complaint.
+    """
+    try:
+        return parser.parse_args(args), None
+    except SystemExit as stop:
+        return None, (stop.code if isinstance(stop.code, int) else 2)
+
+
 def lookup(name):
     for verb in VERBS:
         if verb.name == name:

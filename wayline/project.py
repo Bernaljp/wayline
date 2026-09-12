@@ -23,6 +23,7 @@ from pathlib import Path
 from string import Template
 
 from wayline import HARNESS_ROOT, POLICY_PATH, TAG
+from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, atomic_write, now_ts
 from wayline.resources import ResourceError, render_resources, snapshot as resources_snapshot
@@ -861,12 +862,7 @@ def switch_project(path):
 # --- the verbs ------------------------------------------------------------------------------------------
 
 
-def _parse(parser, args):
-    """argparse without the process exit, so the dashboard can call a verb in-process."""
-    try:
-        return parser.parse_args(args), None
-    except SystemExit as stop:
-        return None, (stop.code if isinstance(stop.code, int) else 2)
+
 
 
 def ask_email(given, path, stream=None):
@@ -895,7 +891,7 @@ def init_command(args):
     parser.add_argument("--no-git", action="store_true", help="do not run git init even when the directory is not a repository")
     parser.add_argument("--email", help="the owner address the scout sends to the polite pools; git's is offered when this is omitted")
     parser.add_argument("--uninstall-units", action="store_true", help="remove the user units (ticket 14 installs them)")
-    options, code = _parse(parser, args)
+    options, code = parse_args(parser, args)
     if options is None:
         return code
     if options.uninstall_units:
@@ -923,7 +919,7 @@ def status_command(args):
     parser = argparse.ArgumentParser(prog="wayline status", description="print the frontier, the running work, the window, the goal, and the last events")
     parser.add_argument("--project", help="the project to read; the active one by default")
     parser.add_argument("--json", action="store_true", help="print the view as JSON instead of text")
-    options, code = _parse(parser, args)
+    options, code = parse_args(parser, args)
     if options is None:
         return code
     try:
@@ -938,7 +934,7 @@ def status_command(args):
 def switch_command(args):
     parser = argparse.ArgumentParser(prog="wayline switch", description="make another project the active one")
     parser.add_argument("path", help="the project to switch to")
-    options, code = _parse(parser, args)
+    options, code = parse_args(parser, args)
     if options is None:
         return code
     try:

@@ -17,10 +17,12 @@ import re
 import sys
 from pathlib import Path
 
+from wayline.cli import parse_args
 from wayline.fetch import caching_fetcher, recording_fetcher
 from wayline.jsonschema import ValidationError, check, load_schema
-from wayline.kb import make_node, rebuild_query_pack, write_node
-from wayline.ledger import Ledger, now_ts
+from wayline.kb import ID_MAX, make_node, rebuild_query_pack, slugify, write_node
+from wayline.ledger import ledger_for, now_ts
+from wayline.project import HARNESS_JSON, ProjectError, find_project, policy_for, read_harness
 from wayline.scout import Reference, Scout, UNRESOLVED, parse_reference
 
 __all__ = [
@@ -31,14 +33,17 @@ __all__ = [
 REFS = "refs"
 CACHE = ".cache/scout"
 LEVEL_0 = 0
+QUERY_PACK_MAX = 20000  # the fallback when a policy carries no `kb.query_pack_max_chars`
 INTAKE = "INTAKE.md"
 
 # Words a slug drops: they carry no identity and eat the character budget.
 _STOPWORDS = frozenset("a an the of for and or to in on with by via using is are at from".split())
-_NOT_SLUG = re.compile(r"[^a-z0-9]+")
+STEM_MAX = ID_MAX - 10  # room under a node id's cap for the `-2` a clashing slug takes
+_SENTENCE_END = ".:;,!?"
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 _REFERENCES_HEADING = re.compile(r"^references?\b", re.IGNORECASE)
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+_LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _EMPTY_ANSWER = frozenset(["none", "n/a", "na", "nothing", "tbd", "todo", "-", "none."])
 _ALNUM = re.compile(r"[a-z0-9]", re.IGNORECASE)
 _DOI_OR_ID = re.compile(r"\b10\.\d{4,9}/|arxiv|https?://", re.IGNORECASE)
@@ -63,19 +68,19 @@ def slug_for(record, taken=()):
     parts = []
     authors = metadata.get("authors") or []
     if authors:
-        parts.append(_slugify(_family_name(authors[0])))
+        parts.append(slugify(_family_name(authors[0])))
     if metadata.get("year"):
         parts.append(str(metadata["year"]))
-    words = [word for word in _slugify(metadata.get("title") or "").split("-") if word and word not in _STOPWORDS]
+    words = [word for word in slugify(metadata.get("title") or "").split("-") if word and word not in _STOPWORDS]
     parts.extend(words[:5])
     stem = "-".join(part for part in parts if part).strip("-")
     if not stem:
-        stem = _slugify(identifiers.get("arxiv_id") or identifiers.get("doi") or (record.get("query") or {}).get("value") or "reference")
-    stem = stem[:70].strip("-") or "reference"
+        stem = slugify(identifiers.get("arxiv_id") or identifiers.get("doi") or (record.get("query") or {}).get("value") or "")
+    stem = slugify(stem, STEM_MAX) or "reference"
     candidate, suffix = stem, 1
     while candidate in taken:
         suffix += 1
-        candidate = "%s-%d" % (stem[:70 - len(str(suffix)) - 1], suffix)
+        candidate = "%s-%d" % (slugify(stem, STEM_MAX - len(str(suffix)) - 1), suffix)
     return candidate
 
 
@@ -92,8 +97,6 @@ def _family_name(author):
     return words[-1] if words else ""
 
 
-def _slugify(text):
-    return _NOT_SLUG.sub("-", str(text or "").lower()).strip("-")
 
 
 # --- the record ---------------------------------------------------------------------------------
@@ -125,9 +128,8 @@ def write_l0(project_or_ledger, dossier):
     The node is written whether or not the reference resolved: the graph has to be able to say
     that a reference was named and did not resolve, which is a fact about the project.
     """
-    ledger = project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
-    check(dossier, load_schema("dossier"), name="refs/%s/dossier.json" % dossier.get("slug"))
-    path = ledger.write_json("%s/%s/dossier.json" % (REFS, dossier["slug"]), dossier)
+    ledger = ledger_for(project_or_ledger)
+    path = ledger.write_json("%s/%s/dossier.json" % (REFS, dossier["slug"]), dossier, schema="dossier")
     node = make_node(
         dossier["slug"],
         "paper",
@@ -191,12 +193,20 @@ def _says_none(line):
     """Whether a line under the heading is the owner saying there are no references.
 
     "None." and "None. A fixture that needed a dossier would not be a fixture." are both that
-    answer; a line carrying an identifier never is, whatever word it opens with.
+    answer, because the word closes a sentence of its own. "Nothing is known about X" is a title
+    and is looked up, because the word runs on into the sentence. A line carrying an identifier
+    is never this answer, whatever word it opens with.
     """
     if _DOI_OR_ID.search(line):
         return False
-    first = _NOT_SLUG.sub("", line.split()[0].lower()) if line.split() else ""
-    return line.lower().rstrip(".").strip() in _EMPTY_ANSWER or first in _EMPTY_ANSWER
+    line = _LIST_MARKER.sub("", line).strip()
+    if line.lower().rstrip(".").strip() in _EMPTY_ANSWER:
+        return True
+    words = line.split()
+    if not words:
+        return False
+    opener = words[0].lower()
+    return opener.rstrip(_SENTENCE_END) in _EMPTY_ANSWER and (len(words) == 1 or opener[-1:] in _SENTENCE_END)
 
 
 def read_intake(project):
@@ -225,10 +235,8 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
     makes that free and a reference that was unresolved last week may resolve today. The slug of
     a dossier that already exists is kept, so a re-run never leaves two directories for one work.
     """
-    from wayline.project import policy_for
-
     project = Path(project)
-    ledger = ledger or Ledger(project)
+    ledger = ledger_for(ledger if ledger is not None else project)
     if email is None:
         email = _email(project)
     fetcher = fetcher if fetcher is not None else scout_fetcher(project, email=email)
@@ -237,7 +245,12 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
 
     known = _known_slugs(ledger)
     taken = set(known.values())
-    report = {"project": str(project), "references": len(references), "written": [], "verified": 0, "unresolved": 0, "problems": []}
+    report = {"project": str(project), "references": len(references), "written": [], "verified": 0, "unresolved": 0, "problems": [], "notes": []}
+    if not email:
+        report["notes"].append(
+            "no owner address in %s; the requests carry no mailto, which is what the polite pools ask for "
+            "(add \"owner_email\" to harness.json, or lay the project out with wayline init --email <address>)" % HARNESS_JSON
+        )
     for reference in references:
         if not isinstance(reference, Reference):
             reference = parse_reference(reference)
@@ -254,7 +267,7 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
         taken.add(slug)
         report["written"].append({"slug": slug, "existence": dossier["existence"], "resolved_by": dossier["resolved_by"], "reference": reference.raw})
         report["verified" if dossier["existence"] != UNRESOLVED else "unresolved"] += 1
-    rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", 20000))
+    rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
     return report
 
 
@@ -280,14 +293,12 @@ def absorb_command(args):
     parser.add_argument("--project", help="the project to absorb into; the active one by default")
     parser.add_argument("--fixtures", help="answer every request from this directory of recorded responses instead of the network")
     parser.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
-    options, code = _parse(parser, args)
+    options, code = parse_args(parser, args)
     if options is None:
         return code
     if options.level != LEVEL_0:
         print("wayline absorb: level %d needs the inventory and the skim, which tickets 21 to 24 build" % options.level, file=sys.stderr)
         return 2
-    from wayline.project import ProjectError, find_project
-
     try:
         project = find_project(options.project)
         fetcher = scout_fetcher(project, email=_email(project), fixtures=options.fixtures) if options.fixtures else None
@@ -304,8 +315,6 @@ def absorb_command(args):
 
 def _email(project):
     """The address the polite pools are told about, from the project's `harness.json`."""
-    from wayline.project import ProjectError, read_harness
-
     try:
         return read_harness(project).get("owner_email")
     except (ProjectError, OSError, ValueError):
@@ -318,13 +327,8 @@ def _render(report):
         lines.append("  %-10s %-50s %s" % (written["existence"], written["slug"], written["resolved_by"] or ""))
     for problem in report["problems"]:
         lines.append("  problem    %s: %s" % (problem["reference"], problem["problem"]))
+    for note in report["notes"]:
+        lines.append("  note       %s" % note)
     if not report["written"] and not report["problems"]:
         lines.append("  nothing to absorb; INTAKE.md names no references")
     return "\n".join(lines)
-
-
-def _parse(parser, args):
-    try:
-        return parser.parse_args(args), None
-    except SystemExit as stop:
-        return None, (stop.code if isinstance(stop.code, int) else 2)

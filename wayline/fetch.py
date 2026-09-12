@@ -30,6 +30,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from wayline import TAG
+
 __all__ = [
     "FetchError", "Response", "Request", "request_hash", "user_agent", "canonical_url",
     "RateLimiter", "Backend", "UrllibBackend", "DirectoryBackend", "Fetcher",
@@ -156,8 +158,10 @@ class RateLimiter:
     """The per-host limit, enforced in the seam so no caller can forget it.
 
     Two things are enforced, both per host: at most one request in flight (what arXiv means by a
-    single connection), and a minimum interval between the start of one request and the next.
-    The clock and the sleep are arguments so a test can assert on the waits without sleeping.
+    single connection), and a minimum interval between the end of one request and the start of
+    the next. Pacing from the end rather than the start is the more conservative of the two
+    readings, and it is the one a slow service deserves. The clock and the sleep are arguments so
+    a test can assert on the waits without sleeping.
     """
 
     def __init__(self, limits=None, default=DEFAULT_RATE, clock=time.monotonic, sleep=time.sleep):
@@ -314,8 +318,6 @@ class Fetcher:
     """The seam itself: `fetch(url, headers) -> Response` over a backend, with the User-Agent attached."""
 
     def __init__(self, backend=None, tag=None, email=None):
-        from wayline import TAG
-
         self.backend = backend if backend is not None else UrllibBackend()
         self.tag = tag or TAG
         self.email = email
@@ -331,9 +333,6 @@ class Fetcher:
         request = Request(url, outbound, method)
         self.requests.append(request)
         return self.backend.send(request)
-
-    # The seam's name in the spec; `fetcher.fetch(...)` and `fetcher(...)` are the same call.
-    __call__ = fetch
 
     @property
     def hosts(self):

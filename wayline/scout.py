@@ -10,13 +10,19 @@ The order per reference kind, and why:
 
 - a DOI: Crossref (free, complete, polite pool by `mailto`), then OpenAlex (identifiers and an
   abstract Crossref often lacks), then Unpaywall (where the PDF is), then Europe PMC (which has
-  the biomedical preprints the other three miss); a `10.1101` DOI is bioRxiv or medRxiv and goes
-  to their own API first, because that is the only source with the preprint's version history.
+  the biomedical work and the preprints the other three miss). A `10.1101` DOI is bioRxiv or
+  medRxiv and goes to their own API first: it is the only source with the preprint's version
+  history and the journal DOI it was later published under, which is the whole value of asking.
 - a title: Crossref `query.bibliographic` with three rows and a title-similarity check here in
   code, because a bibliographic query always answers something and the top hit is often a
   different paper; then OpenAlex `search`, then Europe PMC `TITLE:`.
-- an arXiv id: the arXiv API. OpenAlex has no arXiv namespace, so an arXiv paper reaches it
-  through the journal DOI the arXiv record carries, when it has one.
+- an arXiv id: the arXiv API, and nothing else. OpenAlex has no arXiv namespace, so an arXiv
+  paper reaches it through the journal DOI the arXiv record carries, when it has one.
+- a bare URL: nothing. No keyless service answers a URL, so it stays unresolved.
+
+After a work is found, whatever the resolving source left empty is filled from the next source
+that has it, and no more than that: an L0 record is metadata, identifiers, and an abstract, and
+Crossref carries no abstract for most journals.
 
 Semantic Scholar is not called: keyless it returns 429 on the first request (note 06), so a
 chain that depended on it would be a chain that fails. A test asserts no request ever goes there.
@@ -31,10 +37,11 @@ import unicodedata
 import urllib.parse
 import xml.etree.ElementTree as ElementTree
 
+from wayline.fetch import FetchError, canonical_url
+
 __all__ = [
     "Reference", "ScoutError", "Scout", "parse_reference", "parse_references", "resolve",
     "VERIFIED", "UNRESOLVED", "SOURCES", "TITLE_SIMILARITY", "normalize_title", "title_similarity",
-    "is_biomedical_doi", "BIOMEDICAL_PREFIXES",
 ]
 
 VERIFIED = "verified"
@@ -60,16 +67,6 @@ BIORXIV_DETAILS = "https://api.biorxiv.org/details/%s/%s/na/json"
 # DOI, so both are asked (bioRxiv first: it is the larger of the two).
 PREPRINT_PREFIX = "10.1101"
 PREPRINT_SERVERS = ("biorxiv", "medrxiv")
-
-# DOI registrants whose catalogue is biomedical: Europe PMC is asked for one of these even when
-# an earlier source already resolved the work but left the abstract empty, because Europe PMC is
-# where the biomedical abstracts are. A DOI no earlier source resolved is sent there whatever its
-# prefix, since one more request is cheaper than calling a real paper unresolved.
-BIOMEDICAL_PREFIXES = (
-    "10.1101", "10.1038", "10.1016", "10.1371", "10.1093", "10.1186", "10.1126", "10.7554",
-    "10.1073", "10.1261", "10.1128", "10.1111", "10.1002", "10.1172", "10.1084", "10.15252",
-    "10.1158", "10.1182", "10.1210", "10.1074", "10.1083", "10.1091", "10.1105", "10.1534",
-)
 
 _DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>,;)\]]+)", re.IGNORECASE)
 _ARXIV_DOI = re.compile(r"^10\.48550/arxiv\.(.+)$", re.IGNORECASE)
@@ -154,12 +151,12 @@ def _arxiv_id(text):
     """The arXiv id in `text`, or None. A bare number counts only next to the word arXiv or a link."""
     lowered = text.lower()
     marked = bool(_ARXIV_MARKER.search(lowered))
-    for pattern, needs_mark in ((_ARXIV_NEW, True), (_ARXIV_OLD, True)):
+    for pattern in (_ARXIV_NEW, _ARXIV_OLD):
         found = pattern.search(text)
         if found is None:
             continue
-        if needs_mark and not marked and not lowered.startswith(found.group(1).lower()):
-            continue
+        if not marked and not lowered.startswith(found.group(1).lower()):
+            continue  # a bare number inside a sentence is a number, not an identifier
         return found.group(1)
     return None
 
@@ -230,10 +227,7 @@ class Scout:
 
     def _resolve_arxiv(self, reference, record):
         record["identifiers"]["arxiv_id"] = reference.value
-        if self._arxiv(reference.value, record):
-            return
-        # An arXiv id the API does not know may still be a DOI-registered e-print.
-        self._crossref_doi("10.48550/arXiv.%s" % _without_version(reference.value), record)
+        self._arxiv(reference.value, record)
 
     def _resolve_title(self, reference, record):
         title = reference.value
@@ -244,24 +238,31 @@ class Scout:
         self._europepmc('TITLE:"%s"' % title.replace('"', " "), record, asked_title=title)
 
     def _resolve_url(self, reference, record):
-        """A bare URL is recorded as a locator; nothing is claimed about a work behind it."""
+        """A bare URL is kept as a locator and nothing is claimed about the work behind it.
+
+        No keyless service takes a URL as a question, so there is nothing to ask. Giving the
+        record a title made out of the URL would be inventing one, which is the one thing this
+        module may not do; the reference stays `unresolved` until someone gives it an identifier.
+        """
         record["identifiers"]["url"] = reference.value
-        record["metadata"]["title"] = reference.value
-        record["attempts"].append(_attempt("none", reference.value, None, "miss", "a URL with no identifier in it is not looked up"))
+        record["attempts"].append(_attempt("none", reference.value, None, "skipped", "no keyless service resolves a bare URL; give it a DOI or an arXiv id"))
 
     def _enrich(self, record):
         """Fill what the resolving source left empty, and never more than that.
 
-        OpenAlex is a daily budget rather than a rate (note 06), so it is asked only for an
-        abstract nobody else had; Unpaywall only for a PDF location nobody else had.
+        An L0 record is metadata, identifiers, and an abstract, and the source that established
+        the work exists often carries only the first two: Crossref has no abstract for most
+        journals, and no service but Unpaywall says where the PDF is. So each of these runs only
+        when the field it fills is still empty, which is also what keeps OpenAlex, a daily budget
+        rather than a rate (note 06), read sparingly.
         """
         doi = record["identifiers"].get("doi")
         if record["existence"] != VERIFIED or not doi:
             return
         if not record["abstract"] and record["resolved_by"] != "openalex":
             self._openalex_doi(doi, record, enriching=True)
-        if not record["abstract"] and record["resolved_by"] != "europepmc" and is_biomedical_doi(doi):
-            self._europepmc('DOI:"%s"' % doi, record, source_doi=doi)
+        if not record["abstract"] and record["resolved_by"] != "europepmc":
+            self._europepmc('DOI:"%s"' % doi, record, source_doi=doi, enriching=True)
         if not record["open_access"].get("pdf_url") and record["resolved_by"] != "unpaywall":
             self._unpaywall(doi, record, enriching=True)
 
@@ -286,10 +287,8 @@ class Scout:
         items = (message or {}).get("items") or []
         best, score = _best_title_match(title, items, lambda item: _first(item.get("title")))
         if best is None:
-            record["attempts"][-1]["outcome"] = "miss"
-            record["attempts"][-1]["note"] = "3 candidates, best title similarity %.2f, below %.2f" % (score, TITLE_SIMILARITY)
-            return False
-        record["attempts"][-1]["note"] = "title similarity %.2f" % score
+            return _too_far(record, score, len(items))
+        _note(record, "title similarity %.2f" % score)
         _take_crossref(best, record)
         return _resolved(record, "crossref")
 
@@ -307,10 +306,8 @@ class Scout:
         items = (payload or {}).get("results") or []
         best, score = _best_title_match(title, items, lambda item: item.get("display_name"))
         if best is None:
-            record["attempts"][-1]["outcome"] = "miss"
-            record["attempts"][-1]["note"] = "best title similarity %.2f, below %.2f" % (score, TITLE_SIMILARITY)
-            return False
-        record["attempts"][-1]["note"] = "title similarity %.2f" % score
+            return _too_far(record, score, len(items))
+        _note(record, "title similarity %.2f" % score)
         _take_openalex(best, record)
         return _resolved(record, "openalex")
 
@@ -326,7 +323,7 @@ class Scout:
         _take_unpaywall(work, record)
         return True if enriching else _resolved(record, "unpaywall")
 
-    def _europepmc(self, query, record, asked_title=None, source_doi=None):
+    def _europepmc(self, query, record, asked_title=None, source_doi=None, enriching=False):
         url = _with(EUROPEPMC_SEARCH, query=query, format="json", resultType="core", pageSize="3")
         answer = self._get(url, "europepmc", record)
         payload = answer.json() if answer is not None and answer.ok else None
@@ -334,17 +331,15 @@ class Scout:
         if asked_title is not None:
             best, score = _best_title_match(asked_title, results, lambda item: item.get("title"))
             if best is None:
-                record["attempts"][-1]["outcome"] = "miss"
-                record["attempts"][-1]["note"] = "best title similarity %.2f, below %.2f" % (score, TITLE_SIMILARITY)
-                return False
-            record["attempts"][-1]["note"] = "title similarity %.2f" % score
+                return _too_far(record, score, len(results))
+            _note(record, "title similarity %.2f" % score)
         else:
             best = _first_matching(results, source_doi)
             if best is None:
-                record["attempts"][-1]["outcome"] = "miss"
+                _note(record, None, outcome="miss")
                 return False
         _take_europepmc(best, record)
-        return _resolved(record, "europepmc")
+        return True if enriching else _resolved(record, "europepmc")
 
     def _arxiv(self, identifier, record):
         answer = self._get(_with(ARXIV_QUERY, id_list=identifier, max_results="1"), "arxiv", record)
@@ -358,17 +353,18 @@ class Scout:
         answer = self._get(BIORXIV_DETAILS % (server, urllib.parse.quote(doi, safe="/")), server, record)
         payload = answer.json() if answer is not None and answer.ok else None
         collection = (payload or {}).get("collection") or []
-        if not collection or not isinstance(collection[0], dict) or not collection[0].get("title"):
+        # The API returns one entry per version, oldest first; the newest is the one to record,
+        # and it is the one that has to carry a title before this counts as knowing the work.
+        latest = collection[-1] if collection else None
+        if not isinstance(latest, dict) or not latest.get("title"):
             return False
-        _take_biorxiv(collection[-1], server, record)
+        _take_biorxiv(latest, server, record)
         return _resolved(record, server)
 
     # --- the one place a request is made ---
 
     def _get(self, url, source, record):
         """One request, recorded in the record's `attempts` whatever it answers."""
-        from wayline.fetch import FetchError
-
         try:
             answer = self.fetcher.fetch(url)
         except FetchError as failure:
@@ -402,9 +398,22 @@ def _blank(reference):
 
 
 def _attempt(source, url, status, outcome, note):
-    from wayline.fetch import canonical_url
-
     return {"source": source, "url": canonical_url(url), "status": status, "outcome": outcome, "note": note}
+
+
+def _note(record, note, outcome=None):
+    """Write what the last request turned out to mean onto the attempt that made it."""
+    if record["attempts"]:
+        record["attempts"][-1]["note"] = note
+        if outcome is not None:
+            record["attempts"][-1]["outcome"] = outcome
+    return record
+
+
+def _too_far(record, score, candidates):
+    """Mark the last attempt a miss because no candidate's title was close enough. Always False."""
+    _note(record, "%d candidate(s), best title similarity %.2f, below %.2f" % (candidates, score, TITLE_SIMILARITY), outcome="miss")
+    return False
 
 
 def _resolved(record, source):
@@ -416,6 +425,16 @@ def _set(mapping, key, value):
     """Fill a field only when it is still empty: the first source to know something keeps it."""
     if value not in (None, "", [], {}) and not mapping.get(key):
         mapping[key] = value
+
+
+def _set_open_access(record, is_oa):
+    """Record whether the work is open access, unless a source has already said so.
+
+    `is_oa` is the one field `_set` cannot carry, because False is a real answer and `_set`
+    treats every empty value as nothing said.
+    """
+    if is_oa is not None and record["open_access"].get("is_oa") is None:
+        record["open_access"]["is_oa"] = bool(is_oa)
 
 
 def _with(url, **parameters):
@@ -457,16 +476,6 @@ def _first_matching(results, doi):
         if doi is None or str(item.get("doi", "")).lower() == str(doi).lower():
             return item
     return None
-
-
-def is_biomedical_doi(doi):
-    """Whether a DOI's registrant publishes biomedical work, by prefix (`BIOMEDICAL_PREFIXES`)."""
-    prefix = str(doi or "").split("/", 1)[0]
-    return prefix in BIOMEDICAL_PREFIXES
-
-
-def _without_version(identifier):
-    return re.sub(r"v\d+$", "", identifier)
 
 
 def _clean(text):
@@ -528,8 +537,7 @@ def _take_openalex(work, record):
     _set(record["open_access"], "pdf_url", best.get("pdf_url"))
     _set(record["open_access"], "license", best.get("license"))
     _set(record["open_access"], "status", (work.get("open_access") or {}).get("oa_status"))
-    if record["open_access"].get("is_oa") is None and (work.get("open_access") or {}).get("is_oa") is not None:
-        record["open_access"]["is_oa"] = bool(work["open_access"]["is_oa"])
+    _set_open_access(record, (work.get("open_access") or {}).get("is_oa"))
 
 
 def _openalex_abstract(inverted):
@@ -552,8 +560,7 @@ def _take_unpaywall(work, record):
     _set(record["open_access"], "pdf_url", best.get("url_for_pdf") or best.get("url"))
     _set(record["open_access"], "license", best.get("license"))
     _set(record["open_access"], "status", work.get("oa_status"))
-    if record["open_access"].get("is_oa") is None and work.get("is_oa") is not None:
-        record["open_access"]["is_oa"] = bool(work["is_oa"])
+    _set_open_access(record, work.get("is_oa"))
 
 
 def _take_europepmc(result, record):
@@ -570,8 +577,7 @@ def _take_europepmc(result, record):
     _set(metadata, "type", result.get("pubType"))
     if not record["abstract"]:
         record["abstract"] = _clean(result.get("abstractText"))
-    if record["open_access"].get("is_oa") is None and result.get("isOpenAccess") is not None:
-        record["open_access"]["is_oa"] = str(result["isOpenAccess"]).upper() == "Y"
+    _set_open_access(record, None if result.get("isOpenAccess") is None else str(result["isOpenAccess"]).upper() == "Y")
 
 
 def _take_arxiv(entry, record):
@@ -596,7 +602,7 @@ def _take_arxiv(entry, record):
     for link in entry.findall(atom + "link"):
         if link.get("title") == "pdf":
             _set(record["open_access"], "pdf_url", link.get("href"))
-    record["open_access"].setdefault("is_oa", True)
+    _set_open_access(record, True)
 
 
 def _take_biorxiv(detail, server, record):
@@ -612,7 +618,7 @@ def _take_biorxiv(detail, server, record):
         _set(identifiers, "published_doi", detail["published"])
     if not record["abstract"]:
         record["abstract"] = _clean(detail.get("abstract"))
-    record["open_access"].setdefault("is_oa", True)
+    _set_open_access(record, True)
     _set(record["open_access"], "license", detail.get("license"))
 
 

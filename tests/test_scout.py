@@ -11,7 +11,7 @@ from pathlib import Path
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from wayline.fetch import recording_fetcher
 from wayline.scout import (
-    Reference, Scout, ScoutError, TITLE_SIMILARITY, UNRESOLVED, VERIFIED, is_biomedical_doi,
+    Reference, Scout, ScoutError, TITLE_SIMILARITY, UNRESOLVED, VERIFIED,
     normalize_title, parse_reference, parse_references, resolve, title_similarity,
 )
 
@@ -124,6 +124,12 @@ class ChainTest(unittest.TestCase):
         self.assertEqual(crossref["outcome"], "miss")
         self.assertIn("below", crossref["note"])
 
+    def test_a_resolved_reference_is_not_asked_of_a_source_that_would_add_nothing(self):
+        """Each step after the first runs only for a field still empty; the arXiv record has them all."""
+        chain = scout()
+        chain.resolve(parse_reference(ARXIV))
+        self.assertEqual(len(chain.fetcher.requests), 1)
+
     def test_an_arxiv_id_resolves_through_the_arxiv_api_alone(self):
         chain = scout()
         record = chain.resolve(parse_reference(ARXIV))
@@ -142,6 +148,11 @@ class ChainTest(unittest.TestCase):
         self.assertEqual(record["metadata"]["type"], "preprint")
         self.assertIn("SARS-CoV-2", record["metadata"]["title"])
         self.assertIn("coronavirus", record["abstract"])
+
+    def test_the_newest_version_of_a_preprint_is_the_one_recorded(self):
+        """The API returns one entry per version, oldest first; an L0 record means the current one."""
+        record = scout().resolve(parse_reference(PREPRINT_DOI))
+        self.assertEqual(record["metadata"]["version"], "3")
 
     def test_a_preprint_record_carries_the_journal_doi_it_was_published_under(self):
         record = scout().resolve(parse_reference(PREPRINT_DOI))
@@ -181,23 +192,18 @@ class ChainTest(unittest.TestCase):
             self.assertEqual(request.headers["User-Agent"], "wayline/%s (mailto:%s)" % (chain.fetcher.tag, EMAIL))
 
     def test_a_url_reference_is_kept_as_a_locator_and_nothing_is_claimed_about_it(self):
+        """No keyless service takes a URL, so a title made out of the URL would be an invented one."""
         chain = scout()
         record = chain.resolve(parse_reference("https://example.org/a/paper.html"))
         self.assertEqual(record["existence"], UNRESOLVED)
         self.assertEqual(record["identifiers"]["url"], "https://example.org/a/paper.html")
+        self.assertEqual(record["metadata"], {})
         self.assertEqual(chain.fetcher.requests, [])
+        self.assertEqual(record["attempts"][0]["outcome"], "skipped")
 
     def test_resolve_takes_a_string_as_readily_as_a_reference(self):
         record = resolve(DOI, recording_fetcher(RECORDINGS, email=EMAIL), EMAIL)
         self.assertEqual(record["resolved_by"], "crossref")
-
-
-class BiomedicalTest(unittest.TestCase):
-    def test_the_prefixes_that_send_a_doi_to_europe_pmc(self):
-        self.assertTrue(is_biomedical_doi("10.1101/2020.03.22.002386"))
-        self.assertTrue(is_biomedical_doi("10.1371/journal.pone.0000000"))
-        self.assertFalse(is_biomedical_doi("10.5555/not-a-life-science"))
-        self.assertFalse(is_biomedical_doi(None))
 
 
 class NoFabricationTest(unittest.TestCase):
