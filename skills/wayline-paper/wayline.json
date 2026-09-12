@@ -1,0 +1,9 @@
+{
+  "id": "paper",
+  "scope_kind": "global",
+  "capability_summary": "A shell until ticket 53: drafts the manuscript from the ledger under a venue's guidelines, with a provenance tag on every claim sentence.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": ["skill/wayline-paper"],
+  "sha256": "d09f9c36f835d778c8b1ca1b250c32d1389007191a4e36494ede0d60b6247f26"
+}

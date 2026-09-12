@@ -51,18 +51,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from wayline import HARNESS_ROOT, TAG
+from wayline import HARNESS_ROOT, TAG, dag
 from wayline.ledger import Ledger, atomic_write
 from wayline.project import (
-    HARNESS_JSON, RESEARCH, ProjectError, active_path, home, is_project, policy_for, read_active,
-    read_harness, read_projects, status_view,
+    FINDINGS, HARNESS_JSON, RESEARCH, ProjectError, active_path, home, is_project, policy_for,
+    read_active, read_harness, read_jobs, read_projects, status_view,
 )
+from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
 
 __all__ = [
     "DashboardError", "STATIC_ROOT", "LOOPBACK", "TOKEN_HEADER", "TOKEN_COOKIE", "SSE_RETRY_MS",
     "READINGS_TTL_S", "IDLE_TIMEOUT_S", "TAIL_LINES_MAX", "DashboardHandler", "DashboardServer",
     "dashboard_path", "read_settings", "record_settings", "project_ids", "projects_view", "find_dashboard_project",
     "ledger_snapshot", "etag", "overview_view", "journal_tail", "phase_from_events",
+    "graph_svg", "tickets_view", "ticket_view", "log_path", "log_tail",
     "static_file", "tunnel_line", "serve_lines", "make_server", "serve", "serve_command",
 ]
 
@@ -462,6 +464,235 @@ def _journal_size(ledger):
         return 0
 
 
+# --- the graph, the ticket pages, and the log tail (Implementation Decisions 8) ------------------
+
+
+def graph_svg(project):
+    """The ticket DAG as inline SVG: `dag.svg` over `refresh_graph(write=False)`, frontier-highlighted.
+
+    Read-only like `overview_view`: a poll must not take the ledger's lock to regenerate
+    `graph.json`. A project with no tickets yet draws an empty canvas rather than raising, since
+    `dag.layout` has no row to measure a width from when there are no nodes.
+    """
+    project = Path(project)
+    graph, _ = refresh_graph(project, write=False)
+    entries = graph["tickets"]
+    if not entries:
+        return '<svg viewBox="0 0 0 0" xmlns="http://www.w3.org/2000/svg"></svg>\n'
+    nodes = [entry["id"] for entry in entries]
+    edges = [(blocker, entry["id"]) for entry in entries for blocker in entry["blocked_by"]]
+    frontier_ids = {entry["id"] for entry in frontier(graph)}
+    status = {entry["id"]: "frontier" if entry["id"] in frontier_ids else entry["status"] for entry in entries}
+    return dag.svg(nodes, edges, status)
+
+
+def tickets_view(project):
+    """Every ticket's frontmatter, by id: the list a graph node's click opens one of."""
+    return read_tickets(Path(project))
+
+
+_ATTEMPT_NAME = re.compile(r"^\d+$")
+_RESUME_NAME = re.compile(r"^resume-(\d+)$")
+
+
+def ticket_view(project, ticket_id):
+    """One ticket's page: frontmatter, body, the context pack, the latest result, findings, and its logs.
+
+    The frontmatter and body come from the ticket file itself. The latest result is the most recent
+    attempt's `research/sessions/<id>/<attempt>/result.json`, the one structured record a worker
+    returned, distinct from the body's own prose `## Result` section. Findings are filtered from
+    `findings.jsonl` by ticket id: there is no per-ticket findings file to read instead. Session and
+    job logs are named here, not read: the log tail endpoint reads them, so a page that only wants
+    the list is not made to wait on a file that may be growing.
+    """
+    project = Path(project)
+    path = _ticket_path(project, ticket_id)
+    if path is None:
+        raise DashboardError("no such ticket: %d (GET /api/projects/<id>/tickets lists them)" % ticket_id)
+    fields, body = read_ticket(path)
+    return {
+        "fields": fields,
+        "body": body,
+        "context_pack": list(fields.get("context_pack") or []),
+        "result": _latest_result(project, ticket_id),
+        "findings": _findings_for(project, ticket_id),
+        "sessions": _session_logs(project, ticket_id),
+        "jobs": _job_logs(project, ticket_id),
+    }
+
+
+def _ticket_path(project, ticket_id):
+    matches = sorted(tickets_dir(project).glob("%02d-*.md" % ticket_id))
+    return matches[0] if matches else None
+
+
+def _session_dir(project, ticket_id):
+    return Path(project) / RESEARCH / "sessions" / str(ticket_id)
+
+
+def _attempt_dirs(project, ticket_id):
+    """Every attempt directory of a ticket's sessions, oldest first."""
+    base = _session_dir(project, ticket_id)
+    if not base.is_dir():
+        return []
+    attempts = [entry for entry in base.iterdir() if entry.is_dir() and _ATTEMPT_NAME.match(entry.name)]
+    return sorted(attempts, key=lambda entry: int(entry.name))
+
+
+def _latest_result(project, ticket_id):
+    for attempt_dir in reversed(_attempt_dirs(project, ticket_id)):
+        candidate = attempt_dir / "result.json"
+        if not candidate.is_file():
+            continue
+        try:
+            return json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def _findings_for(project, ticket_id):
+    path = Path(project) / RESEARCH / FINDINGS
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    findings = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("ticket") == ticket_id:
+            findings.append(entry)
+    return findings
+
+
+def _session_logs(project, ticket_id):
+    """The session log ids of one ticket, oldest attempt first, each with a `resume-<k>` after it."""
+    logs = []
+    for attempt_dir in _attempt_dirs(project, ticket_id):
+        if (attempt_dir / "stream.jsonl").is_file():
+            logs.append({"id": "%d/%s" % (ticket_id, attempt_dir.name), "attempt": int(attempt_dir.name)})
+        resumes = sorted(
+            (entry for entry in attempt_dir.iterdir() if entry.is_dir() and _RESUME_NAME.match(entry.name)),
+            key=lambda entry: int(_RESUME_NAME.match(entry.name).group(1)),
+        )
+        for resume_dir in resumes:
+            if (resume_dir / "stream.jsonl").is_file():
+                logs.append({
+                    "id": "%d/%s/%s" % (ticket_id, attempt_dir.name, resume_dir.name),
+                    "attempt": int(attempt_dir.name), "resume": resume_dir.name,
+                })
+    return logs
+
+
+def _job_logs(project, ticket_id):
+    jobs, _ = read_jobs(project)
+    return [{"id": job["id"], "status": job["status"], "log": job["log"]}
+            for job in jobs if job.get("ticket") == ticket_id]
+
+
+def _ticket_session_snapshot(project, ticket_id):
+    """One `(mtime_ns, size)` per file under one ticket's own `research/sessions/<id>/`.
+
+    Not part of `ledger_snapshot`: a resume writes into `resume-<k>/` without touching the ticket
+    file (its status does not change), and the attempt that opened it may not have touched the
+    ticket file either, so `tickets/<id>`'s ETag needs a snapshot `overview` and `tickets` do not:
+    the session list and the latest result it names live here, not in the ticket's frontmatter.
+    Scoped to one ticket rather than folded into `ledger_snapshot`, since a poll of one ticket's
+    page has no reason to scan every other ticket's session tree.
+    """
+    values = {}
+    for attempt_dir in _attempt_dirs(project, ticket_id):
+        _stat_into(values, attempt_dir / "stream.jsonl", attempt_dir.name + "/stream.jsonl")
+        _stat_into(values, attempt_dir / "result.json", attempt_dir.name + "/result.json")
+        resumes = sorted(entry for entry in attempt_dir.iterdir() if entry.is_dir() and _RESUME_NAME.match(entry.name))
+        for resume_dir in resumes:
+            key = "%s/%s/stream.jsonl" % (attempt_dir.name, resume_dir.name)
+            _stat_into(values, resume_dir / "stream.jsonl", key)
+    return values
+
+
+# The route's `log_id` for `kind=session`: `<ticket>/<attempt>` or `<ticket>/<attempt>/resume-<k>`,
+# restricted to digits and the literal `resume-` so a request can never spell a path outside
+# `research/sessions/`. For `kind=job` it is a job's own id (schemas/job.json's own pattern).
+_SESSION_LOG_ID = re.compile(r"^\d+/\d+(?:/resume-\d+)?$")
+_JOB_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def log_path(project, kind, log_id):
+    """The file `logs/<kind>/<id>` names, or None when the id does not resolve to one.
+
+    `tick` ignores the id: one machine has one tick log, `~/.wayline/tick.log` (spec Per-machine
+    pointers), outside every project's ledger, so it is read the same whichever project is open.
+    A `job`'s `log` field is ledger-authored (code writes `research/jobs/*.json`, never a request),
+    but it is still resolved beneath the project root the way `static_file` refuses an escape,
+    since a hand-edited job file is not a reason to read outside the project.
+    """
+    project = Path(project).resolve()
+    if kind == "session":
+        if not _SESSION_LOG_ID.match(log_id):
+            raise DashboardError("a session log id is ticket/attempt or ticket/attempt/resume-k, got %r" % log_id)
+        return project / RESEARCH / "sessions" / log_id / "stream.jsonl"
+    if kind == "job":
+        if not _JOB_ID.match(log_id):
+            raise DashboardError("bad job id: %r" % log_id)
+        job_path = project / RESEARCH / "jobs" / (log_id + ".json")
+        try:
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        raw = job.get("log")
+        if not isinstance(raw, str):
+            return None
+        try:
+            resolved = (project / raw).resolve()
+        except OSError:
+            return None
+        return resolved if resolved.is_relative_to(project) else None
+    if kind == "tick":
+        return home() / "tick.log"
+    raise DashboardError("no such log kind: %r (session, job, or tick)" % kind)
+
+
+def log_tail(path, since=0):
+    """The bytes of `path` appended after byte `since`, and the offset to ask for next.
+
+    Plain bytes, not journal lines: a worker stream is `stream.jsonl` but a job or the tick log is
+    plain text, so the tail hands back whatever is there and leaves how to show it to the page. A
+    log that does not exist yet (a ticket never attempted, a tick that has not run) answers
+    `exists: false` rather than raising: a page opened before the first attempt is not an error.
+    """
+    since = max(int(since), 0)
+    stamp = _log_version(path)
+    if stamp is None:
+        return {"since": since, "next": since, "size": 0, "truncated": False, "text": "", "exists": False}
+    size = stamp[1]
+    truncated = since > size
+    start = 0 if truncated else since
+    with open(path, "rb") as handle:
+        handle.seek(start)
+        chunk = handle.read()
+    return {
+        "since": start, "next": start + len(chunk), "size": size, "truncated": truncated,
+        "text": chunk.decode("utf-8", "replace"), "exists": True,
+    }
+
+
+def _log_version(path):
+    if path is None:
+        return None
+    try:
+        stamp = path.stat()
+    except OSError:
+        return None
+    return (stamp.st_mtime_ns, stamp.st_size)
+
+
 # --- the static page --------------------------------------------------------------------------------
 
 
@@ -588,6 +819,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/?$"), "api_projects"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/overview/?$"), "api_overview"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/journal/?$"), "api_journal"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/graph\.svg$"), "api_graph"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/tickets/?$"), "api_tickets"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/tickets/(?P<ticket>\d+)/?$"), "api_ticket"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/logs/(?P<kind>[a-z]+)/(?P<log_id>.+)$"), "api_logs"),
     )
 
     def log_message(self, *args):
@@ -733,6 +968,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return None
         return None
+
+    def api_graph(self, query, project):
+        path = self._project(project)
+        tag = etag("graph", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        if self._not_modified(tag):
+            return None
+        return self._send(HTTPStatus.OK, graph_svg(path).encode("utf-8"), "image/svg+xml",
+                           (("ETag", tag), ("Cache-Control", "no-cache")))
+
+    def api_tickets(self, query, project):
+        path = self._project(project)
+        tag = etag("tickets", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        if self._not_modified(tag):
+            return None
+        return self._json(tickets_view(path), tag)
+
+    def api_ticket(self, query, project, ticket):
+        path = self._project(project)
+        ticket_id = int(ticket)
+        tag = etag(
+            "ticket", project, ticket,
+            self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
+            self.server.memo.get(("sessions", str(path), ticket_id), lambda: _ticket_session_snapshot(path, ticket_id)),
+        )
+        if self._not_modified(tag):
+            return None
+        return self._json(ticket_view(path, ticket_id), tag)
+
+    def api_logs(self, query, project, kind, log_id):
+        path = self._project(project)
+        since = _offset(query.get("since", ["0"])[0])
+        target = log_path(path, kind, log_id)
+        tag = etag("logs", project, kind, log_id, since, _log_version(target))
+        if self._not_modified(tag):
+            return None
+        return self._json(log_tail(target, since), tag)
 
     def _static(self, path):
         target = static_file(path, root=self.server.static_root)

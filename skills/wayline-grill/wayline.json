@@ -1,0 +1,9 @@
+{
+  "id": "grill",
+  "scope_kind": "global",
+  "capability_summary": "Phase P2: asks the frontier of the design tree in tiers with a recommended answer each, looks facts up instead of asking them, and lands every answer in DECISIONS.md and every settled term in CONTEXT.md.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": ["skill/wayline-grill"],
+  "sha256": "b87bb5414d39199009053c305b21e293527fed7930332687aa02f0ebe27fce06"
+}
