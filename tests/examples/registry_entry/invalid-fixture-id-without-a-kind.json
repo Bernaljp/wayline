@@ -1,0 +1,13 @@
+{
+  "id": "wayline-grill",
+  "kind": "skill",
+  "scope_kind": "global",
+  "path": "skills/wayline-grill",
+  "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "capability_summary": "Asks the frontier of open design questions in tiers and lands every answer in DECISIONS.md.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": ["wayline-grill"],
+  "outcome": {"assigned": 0, "passed_first_time": 0, "failed": 0, "last_used": null},
+  "assignable": true
+}

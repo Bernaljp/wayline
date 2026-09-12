@@ -1,0 +1,13 @@
+{
+  "id": "coder",
+  "kind": "agent",
+  "scope_kind": "global",
+  "path": "roles/coder",
+  "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "capability_summary": "Implements one code ticket in its worktree.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "outcome": {"assigned": 0, "passed_first_time": 0, "failed": 0, "last_used": null},
+  "assignable": true
+}

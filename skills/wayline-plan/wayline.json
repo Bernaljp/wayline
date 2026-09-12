@@ -1,0 +1,9 @@
+{
+  "id": "plan",
+  "scope_kind": "global",
+  "capability_summary": "Phase P4: cuts SPEC.md into research/tickets/ and graph.json, calls the librarian for a role and skills per ticket, opens a decision ticket wherever a choice remains, and passes the plan-time Type-A checks.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": ["skill/wayline-plan"],
+  "sha256": "5aecf27e7307563cc8a8afd656175eb4816ee5d54e1736844c7f2bb252890a87"
+}

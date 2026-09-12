@@ -1,7 +1,11 @@
 {
-  "role": "coder",
-  "summary": "Implements one code ticket in its worktree and returns the structured result.",
-  "kinds": ["code", "docs", "harness"],
+  "id": "coder",
+  "scope_kind": "global",
+  "capability_summary": "Implements one code ticket in its worktree and returns the structured result.",
+  "applicability_tags": {"kinds": ["code", "docs", "harness"], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "d8df0f6a5670bc736d86b406ab568d3fb7400177d168bda7eff455973e1b4d1d",
   "may_judge": false,
   "output_schema": "result",
   "allowed_tools": [
