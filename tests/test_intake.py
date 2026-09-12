@@ -19,7 +19,7 @@ from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from wayline import cli, intake
+from wayline import cli
 from wayline.dossier import read_intake
 from wayline.jsonschema import check, load_schema
 from wayline.ledger import Ledger
@@ -216,6 +216,13 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
     def test_there_are_no_references_and_absorb_looks_nothing_up(self):
         self.assertEqual(read_intake(self.project), [])
 
+    def test_a_later_intake_that_names_no_class_keeps_the_ones_the_owner_added(self):
+        code, _, err = run("--project", str(self.project), "--intent", "the same question, restated")
+        self.assertEqual(code, 0, err)
+        harness = read_harness(self.project)
+        self.assertEqual(harness["human_only"], ["goal", "data", "baselines"])
+        self.assertEqual((harness["autonomy"], harness["radius"]), ("autonomous", "strict"))
+
     def test_the_settings_land_in_harness_json_and_in_intake_md(self):
         harness = read_harness(self.project)
         self.assertEqual(harness["autonomy"], "autonomous")
@@ -249,6 +256,19 @@ class BadGoalTest(IntakeTestCase):
         self.assertFalse(self.goal_path().exists())
         self.assertEqual(self.decisions(), [])
         self.assertIn("find out whether it works", self.section("Intent"), "a rejected goal is not a failed intake")
+
+    def test_a_goal_with_no_sample_artifact_is_rejected_as_missing_even_when_its_command_needs_none(self):
+        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "echo 'auroc: 0.95'"}
+        self.assert_rejected(self.intake_with(goal, sample=False), ["missing", "--sample"])
+
+    def test_a_rejected_goal_changes_nothing_in_harness_json(self):
+        before = (self.project / "harness.json").read_bytes()
+        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "exit 3",
+                "budget": {"gpu_hours": 999, "wallclock": None, "usage_windows": None}}
+        self.assert_rejected(self.intake_with(goal), ["fails"])
+        harness = read_harness(self.project)
+        self.assertIsNone(harness["budgets"]["gpu_hours"])
+        self.assertNotEqual((self.project / "harness.json").read_bytes(), before, "the intake itself is still recorded")
 
     def test_a_goal_without_an_eval_command_is_rejected_as_missing(self):
         self.assert_rejected(self.intake_with({"metric": "auroc", "direction": "up", "target": 0.9}), ["missing", "eval_command"])
@@ -320,7 +340,7 @@ class GoalLaterTest(IntakeTestCase):
 
     def test_the_same_goal_twice_changes_nothing(self):
         goal, sample = self.measurable_goal()
-        run("--project", str(self.project), "--goal", str(goal), "--sample", str(sample))
+        self.assertEqual(run("--project", str(self.project), "--goal", str(goal), "--sample", str(sample))[0], 0)
         code, out, _ = run("--project", str(self.project), "--goal", str(goal), "--sample", str(sample))
         self.assertEqual(code, 0)
         self.assertIn("unchanged", out)
@@ -360,8 +380,6 @@ class SpecOnStdinTest(IntakeTestCase):
         self.assertEqual((harness["autonomy"], harness["radius"]), ("interactive", "exploratory"))
         self.assertEqual(harness["human_only"], ["goal", "data", "methods"])
         self.assertEqual(harness["budgets"]["gpu_hours"], 2)
-        self.assertEqual(json.loads(self.goal_path().read_text(encoding="utf-8"))["budget"]["gpu_hours"], 2,
-                         "a budget stated once reaches both files")
         self.assertEqual([reference.value for reference in read_intake(self.project)], ["10.1038/s41586-020-2649-2"])
 
     def test_a_spec_with_a_field_intake_does_not_know_is_refused(self):

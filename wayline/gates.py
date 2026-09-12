@@ -214,11 +214,11 @@ def run_machine_acceptance(commands, cwd, timeout_s):
     """
     results = []
     for command in commands:
-        results.append(run_command(command, cwd, timeout_s))
+        results.append(run_shell(command, cwd, timeout_s))
     return results
 
 
-def run_command(command, cwd, timeout_s, env=None, label="wayline accept"):
+def run_shell(command, cwd, timeout_s, env=None, label="wayline accept"):
     """Run one shell command in `cwd` under `timeout_s`; returns `{cmd, exit_code, seconds, tail}`.
 
     stdout and stderr arrive interleaved in `tail`, as a person would have seen them. `env`

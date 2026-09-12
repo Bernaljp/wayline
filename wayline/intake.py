@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 from wayline.cli import parse_args
-from wayline.gates import TIMEOUT_EXIT_CODE, run_command
+from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import DECISION, Ledger, atomic_write
 from wayline.project import HARNESS_JSON, ProjectError, find_project, policy_for, read_harness
@@ -40,7 +40,6 @@ __all__ = [
 
 INTAKE_MD = "INTAKE.md"
 GOAL_JSON = "GOAL.json"
-CONDUCTOR_JSON = "conductor.json"
 
 # The sections of INTAKE.md, in order. The fixture of the wayline-intake skill pins the same list.
 SECTIONS = ("Intent", "References", "Data", "Code", "Constraints", "Autonomy", "Radius", "Budgets",
@@ -48,7 +47,7 @@ SECTIONS = ("Intent", "References", "Data", "Code", "Constraints", "Autonomy", "
 
 # BRIEF 6.2, one line each, so the owner's copy says what the setting does and not only its name.
 AUTONOMY = {
-    "interactive": "the owner answers every round, approves the spec and the graph, answers every decision ticket, and is asked on every `needs_human` result.",
+    "interactive": "the owner answers every question the grill asks, approves the spec and the graph, answers every decision ticket, and is asked on every `needs_human` result.",
     "checkpoints": "the owner approves the spec and the graph and answers decision tickets; waves run alone.",
     "autonomous": "the decider resolves every open question, every decision ticket not in a human-only class, and every parked proposal, and never anything on the irreversible list.",
 }
@@ -71,9 +70,6 @@ SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "m
 LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_only")
 BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
 GOAL_OPTIONAL = {"dataset_or_split": None, "held_out_split": None, "baseline": None, "budget": None, "stop_when": "goal_reached"}
-DIRECTIONS = {"up": "up", "down": "down", "maximize": "up", "minimize": "down"}
-# harness.json budgets key -> GOAL.json budget key: one budget stated once reaches both files.
-BUDGET_KEYS = {"gpu_hours": "gpu_hours", "wallclock_hours": "wallclock", "usage_windows": "usage_windows"}
 
 ARTIFACT = "{artifact}"
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ""}
@@ -129,7 +125,7 @@ def check_goal(goal, project, sample=None, timeout_s=None):
     project = Path(project)
     stated = goal if isinstance(goal, dict) else None
     if stated is None:
-        return GoalCheck("invalid", "the goal is not a JSON object", None, stated=None)
+        return GoalCheck("invalid", "invalid: the goal is not a JSON object", None, stated=None)
     command = stated.get("eval_command")
     if not isinstance(command, str) or not command.strip():
         return GoalCheck("missing", "missing: the goal names no eval_command, so nothing can measure it", None, stated=stated)
@@ -141,21 +137,19 @@ def check_goal(goal, project, sample=None, timeout_s=None):
         sample = Path(sample).expanduser().resolve()
         if not sample.exists():
             return GoalCheck("missing", "missing: the sample artifact %s does not exist" % sample, None, stated=stated)
-    if ARTIFACT in command and sample is None:
-        return GoalCheck("missing", "missing: eval_command %s measures %s and no sample artifact was given (--sample)" % (shown, ARTIFACT),
-                         None, stated=stated)
-    runnable = command.replace(ARTIFACT, shlex.quote(str(sample))) if sample is not None else command
-    environment = dict(os.environ, WAYLINE_PROJECT=str(project.resolve()))
-    if sample is not None:
-        environment["WAYLINE_ARTIFACT"] = str(sample)
+    if sample is None:
+        return GoalCheck("missing", "missing: no sample artifact was given (--sample), so eval_command %s was not run on one "
+                         "and nothing shows it can measure an artifact a ticket produces" % shown, None, stated=stated)
+    runnable = command.replace(ARTIFACT, shlex.quote(str(sample)))
+    environment = dict(os.environ, WAYLINE_PROJECT=str(project.resolve()), WAYLINE_ARTIFACT=str(sample))
     if timeout_s is None:
         timeout_s = policy_for(project).get("acceptance_timeout_s", 600)
-    result = run_command(runnable, project, timeout_s, env=environment, label="wayline intake")
+    result = run_shell(runnable, project, timeout_s, env=environment, label="wayline intake")
     tail = _last_lines(result["tail"])
     exit_code = result["exit_code"]
-    on = " on the sample artifact %s" % sample if sample is not None else ""
+    on = " on the sample artifact %s" % sample
     if exit_code == 127:
-        return GoalCheck("missing", "missing: eval_command %s names a command the shell cannot find (exit 127): %s" % (shown, tail),
+        return GoalCheck("missing", "missing: eval_command %s exited 127, which is how the shell reports a command it cannot find: %s" % (shown, tail),
                          None, stated=stated)
     if exit_code == TIMEOUT_EXIT_CODE:
         return GoalCheck("fails", "fails: eval_command %s was killed after %s seconds%s" % (shown, timeout_s, on), None, stated=stated)
@@ -187,8 +181,6 @@ def normalize_goal(goal):
         value["budget"] = {"gpu_hours": None, "wallclock": None, "usage_windows": None}
     elif isinstance(value["budget"], dict):
         value["budget"] = {"gpu_hours": None, "wallclock": None, "usage_windows": None, **value["budget"]}
-    if isinstance(value.get("direction"), str):
-        value["direction"] = DIRECTIONS.get(value["direction"].strip().lower(), value["direction"])
     errors = validate(value, load_schema("goal"))
     return value, ["%s: %s" % (error.path, error.message) for error in errors]
 
@@ -560,9 +552,8 @@ def take_intake(project, spec, base=None, timeout_s=None):
     if not gathered.intent and not gathered.plans:
         raise IntakeError("an intake needs the intent: a paragraph (--intent, or text as an argument) or a plan (--plan)")
     harness = read_harness(project)
-    if spec.get("autonomy") and spec["autonomy"] != harness["autonomy"] and _conductor_running(project):
-        raise IntakeError("the conductor is running; autonomy changes wait until it is stopped (wayline stop)")
-    classes = human_only_classes(spec.get("human_only", []))
+    # The classes already in harness.json stay: an intake that does not name them never shrinks what waits for the owner.
+    classes = human_only_classes(list(harness.get("human_only", [])) + spec.get("human_only", []))
     updated = dict(harness)
     updated["autonomy"] = spec.get("autonomy") or harness["autonomy"]
     updated["radius"] = spec.get("radius") or harness["radius"]
@@ -572,11 +563,7 @@ def take_intake(project, spec, base=None, timeout_s=None):
 
     goal = None
     if spec.get("goal") is not None:
-        stated = spec["goal"]
-        if isinstance(stated, dict) and isinstance(stated.get("budget") or {}, dict):
-            stated = dict(stated, budget=_shared_budget(budgets, stated.get("budget") or {}))
-        goal = check_goal(stated, project, sample=_sample(spec.get("sample"), base), timeout_s=timeout_s)
-        goal.stated = spec["goal"]
+        goal = check_goal(spec["goal"], project, sample=_sample(spec.get("sample"), base), timeout_s=timeout_s)
     updated["budgets"] = budgets
     schema = load_schema("harness")
     order = list(schema["properties"])  # the schema's order, so the new keys sit beside autonomy and radius
@@ -603,31 +590,8 @@ def take_intake(project, spec, base=None, timeout_s=None):
     }
 
 
-def _shared_budget(budgets, goal_budget):
-    """One budget stated once reaches both files: each side's unstated fields take the other's values.
-
-    `budgets` (harness.json's) is filled in place; the goal's budget is returned.
-    """
-    merged = dict(goal_budget)
-    for harness_key, goal_key in BUDGET_KEYS.items():
-        if budgets.get(harness_key) is None and merged.get(goal_key) is not None:
-            budgets[harness_key] = merged[goal_key]
-        if merged.get(goal_key) is None:
-            merged[goal_key] = budgets.get(harness_key)
-    return merged
-
-
 def _sample(text, base):
     return None if not text else _as_path(text, base) or Path(text)
-
-
-def _conductor_running(project):
-    try:
-        heartbeat = json.loads((Path(project) / "research" / CONDUCTOR_JSON).read_text(encoding="utf-8"))
-        os.kill(int(heartbeat["pid"]), 0)
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-    return True
 
 
 # --- INTAKE.md ------------------------------------------------------------------------------------------
