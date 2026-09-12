@@ -25,6 +25,7 @@ from wayline.ledger import Ledger
 from wayline.worker import Envelope, Patch
 
 ONE_TICKET = FIXTURES_DIR / "projects" / "one-ticket"
+FIVE_TICKETS = FIXTURES_DIR / "projects" / "five-tickets"
 
 HELLO = {"hello.txt": "hello\n"}
 WRONG = {"hello.txt": "goodbye\n"}
@@ -514,12 +515,153 @@ class RunLoopTest(ConductorCase):
         self.assertIn("no scripted envelope", self.payload("ticket_failed")["reason"])
 
 
+class FiveTicketsCase(ProjectTestCase):
+    """A laid-out copy of the five-ticket fixture, run with the fake worker it ships with."""
+
+    def lay_out(self, name="five-tickets"):
+        """A copy of the fixture, laid out by `init`, with its ledger."""
+        self.project = self.temp / name
+        shutil.copytree(FIVE_TICKETS, self.project)
+        project.init_project(self.project)
+        self.ledger = Ledger(self.project)
+        return self.project
+
+    def conduct(self, name="five-tickets", policy=None):
+        """Copy the fixture, lay it out, and run the conductor over it to the end."""
+        self.lay_out(name)
+        with worker.use_fake() as fake:
+            fake.load(FIVE_TICKETS / "fake-worker.json")
+            self.waves = Conductor(self.project, policy=policy, out=io.StringIO()).run()
+        self.journal, _ = self.ledger.read_events()
+        return self.waves
+
+    def launched(self):
+        return [wave.launched for wave in self.waves]
+
+    def read_journal(self):
+        self.journal, _ = self.ledger.read_events()
+        return self.journal
+
+    def at_payload(self, name, identifier):
+        """The payload of this ticket's last event of this name."""
+        found = [event["payload"] for event in self.read_journal()
+                 if event["event"] == name and event["ticket"] == identifier]
+        self.assertTrue(found, "ticket %d has no %s event" % (identifier, name))
+        return found[-1]
+
+    def at(self, name, identifier):
+        """Where in the journal this ticket's one event of this name is."""
+        found = [index for index, event in enumerate(self.journal)
+                 if event["event"] == name and event["ticket"] == identifier]
+        self.assertEqual(len(found), 1, "ticket %d has %d %s event(s)" % (identifier, len(found), name))
+        return found[0]
+
+    def statuses(self):
+        return {fields["id"]: fields["status"] for fields in tickets.read_tickets(self.project)}
+
+    def read(self, name):
+        return (self.project / name).read_text(encoding="utf-8")
+
+
+class FiveTicketsTest(FiveTicketsCase):
+    """The M1 graph with two workers: the branches overlap and the touch-set conflict serializes."""
+
+    def setUp(self):
+        super().setUp()
+        self.conduct()
+
+    def test_the_two_branches_run_two_at_a_time(self):
+        """`max_parallel_workers` is 2, and the graph has two branches that share no path."""
+        self.assertEqual(self.launched(), [[1, 2], [3, 4], [5]])
+
+    def test_both_workers_of_a_wave_were_launched_before_either_result_was_carried(self):
+        self.assertLess(self.at("ticket_launched", 2), self.at("ticket_result", 1))
+        self.assertLess(self.at("ticket_launched", 4), self.at("ticket_result", 3))
+
+    def test_the_conflicting_ticket_launched_only_after_the_tickets_it_shares_a_path_with(self):
+        """Ticket 5 may write all of `notes/`, where tickets 1 and 3 write, and nothing blocks it."""
+        launched = self.at("ticket_launched", 5)
+        self.assertGreater(launched, self.at("integrated", 1))
+        self.assertGreater(launched, self.at("integrated", 3))
+
+    def test_every_ticket_closes_and_the_run_ends_with_an_empty_frontier(self):
+        self.assertEqual(self.statuses(), {1: "done", 2: "done", 3: "done", 4: "done", 5: "done"})
+        self.assertTrue(self.waves[-1].ended)
+        self.assertEqual(self.journal[-1]["event"], "run_ended")
+        self.assertEqual(self.journal[-1]["payload"], {"reason": "frontier_empty"})
+        self.assertEqual(self.read("notes/alpha.md"), "alpha\nalpha extended\n")
+        self.assertEqual(self.read("reports/beta.md"), "beta\nbeta extended\n")
+        self.assertIn("alpha.md", self.read("notes/INDEX.md"))
+        self.assertEqual(list((self.project / conductor.WORKTREES).iterdir()), [])
+
+    def test_every_launch_records_the_context_it_sent_and_the_prompt_it_sent_it_in(self):
+        launches = [event["payload"] for event in self.journal if event["event"] == "ticket_launched"]
+        self.assertEqual(len(launches), 5)
+        for payload in launches:
+            with self.subTest(ticket=payload["ticket"]):
+                self.assertGreater(payload["context_chars"], 0)
+                self.assertRegex(payload["prompt_sha256"], r"\A[0-9a-f]{64}\Z")
+        self.assertEqual(len({payload["prompt_sha256"] for payload in launches}), 5)
+
+
+class SlotsTest(FiveTicketsCase):
+    """`policy.max_parallel_workers`: how many workers one wave runs at once."""
+
+    def test_one_slot_runs_the_same_graph_one_ticket_at_a_time(self):
+        policy = dict(project.policy_for(self.temp / "nowhere", HARNESS_ROOT), max_parallel_workers=1)
+        self.conduct(policy=policy)
+        self.assertEqual(self.launched(), [[1], [2], [3], [4], [5]])
+        self.assertEqual(set(self.statuses().values()), {"done"})
+
+    def test_a_policy_that_names_no_usable_number_of_workers_is_refused(self):
+        self.lay_out()
+        policy = dict(project.policy_for(self.project, HARNESS_ROOT), max_parallel_workers=0)
+        with self.assertRaises(ConductorError) as caught:
+            Conductor(self.project, policy=policy, out=io.StringIO()).wave()
+        self.assertIn("max_parallel_workers", str(caught.exception))
+
+
+class ParallelOutcomeTest(FiveTicketsCase):
+    """What one worker's trouble does to the other worker of the same wave."""
+
+    def test_a_launch_the_backend_refuses_is_not_counted_as_launched(self):
+        """`wave.launched` names the tickets whose process started, as `ticket_launched` does."""
+        self.lay_out()
+        with worker.use_fake() as fake:
+            fake.script(done(ticket_id=2), patch=patch({"reports/beta.md": "beta\n"}, "ticket 2"), ticket="2")
+            wave = Conductor(self.project, out=io.StringIO()).wave()
+        self.assertEqual(wave.launched, [2])
+        self.assertEqual(sorted(wave.failed), [1])
+        self.assertEqual(sorted(wave.done), [2])
+        self.assertIn("no scripted envelope", self.at_payload("ticket_failed", 1)["reason"])
+        self.assertEqual([event["payload"]["ticket"] for event in self.read_journal()
+                          if event["event"] == "ticket_launched"], [2])
+
+    def test_an_unexpected_failure_on_one_ticket_still_carries_the_other(self):
+        """Both workers have already committed; an uncarried one would be left `running` forever."""
+        class Exploding(Conductor):
+            def _outcome(self, attempt):
+                if attempt.id == 1:
+                    raise RuntimeError("something no wave step accounts for")
+                return super()._outcome(attempt)
+
+        self.lay_out()
+        with worker.use_fake() as fake:
+            fake.load(FIVE_TICKETS / "fake-worker.json")
+            with self.assertRaises(RuntimeError):
+                Exploding(self.project, out=io.StringIO()).wave()
+        self.assertEqual(self.statuses()[2], "done")
+        self.assertEqual(self.read("reports/beta.md"), "beta\n")
+        self.assertIn("integrated", [event["event"] for event in self.read_journal() if event["ticket"] == 2])
+
+
 class ShellRunTest(ProjectTestCase):
     """The same path from the shell, with the fixture's own fake script: M0's "one command"."""
 
-    def test_the_fixture_runs_end_to_end_with_the_fake_backend(self):
-        target = self.temp / "one-ticket"
-        shutil.copytree(ONE_TICKET, target)
+    def run_fixture(self, source):
+        """Copy a fixture project, lay it out, and run it with `WAYLINE_LAUNCHER=fake`."""
+        target = self.temp / source.name
+        shutil.copytree(source, target)
         environment = dict(os.environ, WAYLINE_HOME=str(self.wayline_home))
         laid_out = subprocess.run([sys.executable, "-m", "wayline", "init", str(target)],
                                   cwd=HARNESS_ROOT, capture_output=True, text=True, env=environment, timeout=120)
@@ -530,15 +672,26 @@ class ShellRunTest(ProjectTestCase):
         ran = subprocess.run([sys.executable, "-m", "wayline", "run"],
                              cwd=HARNESS_ROOT, capture_output=True, text=True, env=environment, timeout=300)
         self.assertEqual(ran.returncode, 0, ran.stderr)
-        self.assertIn("1 ticket(s) done", ran.stdout)
         self.assertIn("frontier_empty", ran.stdout)
-
-        self.assertEqual((target / "hello.txt").read_text(encoding="utf-8"), "hello\n")
         self.assertEqual(list((target / conductor.WORKTREES).iterdir()), [])
-        events = [json.loads(line)["event"] for line in (target / "research" / "journal.jsonl").read_text(encoding="utf-8").split("\n") if line]
-        self.assertEqual(events[0], "run_started")
-        self.assertEqual(events[-1], "run_ended")
-        self.assertIn("ticket_done", events)
+        events = [json.loads(line) for line in (target / "research" / "journal.jsonl").read_text(encoding="utf-8").split("\n") if line]
+        self.assertEqual(events[0]["event"], "run_started")
+        self.assertEqual(events[-1]["event"], "run_ended")
+        return target, ran, events
+
+    def test_the_fixture_runs_end_to_end_with_the_fake_backend(self):
+        target, ran, events = self.run_fixture(ONE_TICKET)
+        self.assertIn("1 ticket(s) done", ran.stdout)
+        self.assertEqual((target / "hello.txt").read_text(encoding="utf-8"), "hello\n")
+        self.assertIn("ticket_done", [event["event"] for event in events])
+
+    def test_the_five_ticket_fixture_runs_its_whole_graph_with_two_workers(self):
+        """M1's demo from the shell: three waves, five tickets, the conflict serialized."""
+        target, ran, events = self.run_fixture(FIVE_TICKETS)
+        self.assertIn("3 wave(s), 5 ticket(s) done", ran.stdout)
+        self.assertEqual([fields["status"] for fields in tickets.read_tickets(target)], ["done"] * 5)
+        closed = [event["payload"]["ticket"] for event in events if event["event"] == "ticket_done"]
+        self.assertEqual(sorted(closed), [1, 2, 3, 4, 5])
 
 
 class TierTest(unittest.TestCase):

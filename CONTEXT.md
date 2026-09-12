@@ -20,6 +20,10 @@ _Avoid_: scope, write set
 Open tickets whose blockers are done or accepted.
 _Avoid_: ready queue, runnable set
 
+**Launchable**:
+The frontier minus the tickets that collide with running work or want resources that are not free.
+_Avoid_: eligible, schedulable
+
 **Wave**:
 One pass of the conductor loop.
 _Avoid_: iteration, round

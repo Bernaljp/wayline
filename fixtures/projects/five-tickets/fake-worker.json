@@ -1,0 +1,111 @@
+[
+  {
+    "ticket": "1",
+    "delay": 0.25,
+    "envelope": {
+      "structured_output": {
+        "ticket_id": 1,
+        "status": "done",
+        "summary": "Wrote notes/alpha.md holding the single line alpha and committed it on the ticket branch.",
+        "outputs_written": ["notes/alpha.md"],
+        "commands_run": ["wayline accept"],
+        "checks": {"test -f notes/alpha.md": "pass", "grep -qx alpha notes/alpha.md": "pass"},
+        "cost": {"turns": 3, "minutes": 1}
+      },
+      "num_turns": 3,
+      "duration_ms": 4100,
+      "usage": {"input_tokens": 11, "output_tokens": 120}
+    },
+    "patch": {
+      "files": {"notes/alpha.md": "alpha\n"},
+      "message": "ticket 1: write notes/alpha.md"
+    }
+  },
+  {
+    "ticket": "2",
+    "delay": 0.25,
+    "envelope": {
+      "structured_output": {
+        "ticket_id": 2,
+        "status": "done",
+        "summary": "Wrote reports/beta.md holding the single line beta and committed it on the ticket branch.",
+        "outputs_written": ["reports/beta.md"],
+        "commands_run": ["wayline accept"],
+        "checks": {"test -f reports/beta.md": "pass", "grep -qx beta reports/beta.md": "pass"},
+        "cost": {"turns": 3, "minutes": 1}
+      },
+      "num_turns": 3,
+      "duration_ms": 4300,
+      "usage": {"input_tokens": 11, "output_tokens": 118}
+    },
+    "patch": {
+      "files": {"reports/beta.md": "beta\n"},
+      "message": "ticket 2: write reports/beta.md"
+    }
+  },
+  {
+    "ticket": "3",
+    "delay": 0.25,
+    "envelope": {
+      "structured_output": {
+        "ticket_id": 3,
+        "status": "done",
+        "summary": "Added the line alpha extended under the line notes/alpha.md already held.",
+        "outputs_written": ["notes/alpha.md"],
+        "commands_run": ["wayline accept"],
+        "checks": {"grep -qx alpha notes/alpha.md": "pass", "grep -qx 'alpha extended' notes/alpha.md": "pass"},
+        "cost": {"turns": 3, "minutes": 1}
+      },
+      "num_turns": 3,
+      "duration_ms": 3900,
+      "usage": {"input_tokens": 12, "output_tokens": 126}
+    },
+    "patch": {
+      "files": {"notes/alpha.md": "alpha\nalpha extended\n"},
+      "message": "ticket 3: extend notes/alpha.md"
+    }
+  },
+  {
+    "ticket": "4",
+    "delay": 0.25,
+    "envelope": {
+      "structured_output": {
+        "ticket_id": 4,
+        "status": "done",
+        "summary": "Added the line beta extended under the line reports/beta.md already held.",
+        "outputs_written": ["reports/beta.md"],
+        "commands_run": ["wayline accept"],
+        "checks": {"grep -qx beta reports/beta.md": "pass", "grep -qx 'beta extended' reports/beta.md": "pass"},
+        "cost": {"turns": 3, "minutes": 1}
+      },
+      "num_turns": 3,
+      "duration_ms": 4000,
+      "usage": {"input_tokens": 12, "output_tokens": 124}
+    },
+    "patch": {
+      "files": {"reports/beta.md": "beta\nbeta extended\n"},
+      "message": "ticket 4: extend reports/beta.md"
+    }
+  },
+  {
+    "ticket": "5",
+    "envelope": {
+      "structured_output": {
+        "ticket_id": 5,
+        "status": "done",
+        "summary": "Wrote notes/INDEX.md naming the one file the notes directory holds beside it.",
+        "outputs_written": ["notes/INDEX.md"],
+        "commands_run": ["wayline accept"],
+        "checks": {"test -f notes/INDEX.md": "pass", "grep -q alpha.md notes/INDEX.md": "pass"},
+        "cost": {"turns": 2, "minutes": 1}
+      },
+      "num_turns": 2,
+      "duration_ms": 3200,
+      "usage": {"input_tokens": 13, "output_tokens": 96}
+    },
+    "patch": {
+      "files": {"notes/INDEX.md": "# The notes\n\n- alpha.md\n"},
+      "message": "ticket 5: index notes/"
+    }
+  }
+]
