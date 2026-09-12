@@ -35,7 +35,7 @@ __all__ = [
     "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
     "home", "projects_path", "active_path", "read_active", "set_active", "read_projects",
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
-    "init_project", "status_view", "render_status", "switch_project", "read_jobs",
+    "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
 ]
 
@@ -320,7 +320,7 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
     changes.extend(_write_research(project, harness_root, pinned_tag))
 
     # The .claude/ tree: symlinks to the harness skills and workflow scripts, refreshed when stale.
-    symlink_changes, symlink_notes = _write_claude_dir(project, harness_root)
+    symlink_changes, symlink_notes = refresh_symlinks(project, harness_root)
     changes.extend(symlink_changes)
     notes.extend(symlink_notes)
 
@@ -443,13 +443,16 @@ def _template_files(harness_root):
     return sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
 
 
-def _write_claude_dir(project, harness_root):
-    """Symlink every harness skill and workflow script into the project's `.claude/`.
+def refresh_symlinks(project, harness_root=None):
+    """Relink every harness skill and workflow script into the project's `.claude/`.
 
-    A symlink that points somewhere else (an upgrade moved the harness) is replaced; a symlink
-    into this harness whose target is gone is removed; a real directory or file (a local skill,
-    a local role override) is left alone and reported.
+    One refresher, used by `init` and later by `upgrade`: a symlink that points somewhere else (an
+    upgrade moved the harness) is replaced; a symlink into this harness whose target is gone is
+    removed; a real directory or file (a local skill, a local role override) is left alone and
+    reported. Returns `(changes, notes)`, both relative to the project.
     """
+    project = Path(project)
+    harness_root = Path(harness_root or HARNESS_ROOT).resolve()
     changes, notes = [], []
     for name in ("skills", "workflows", "agents"):
         directory = project / ".claude" / name

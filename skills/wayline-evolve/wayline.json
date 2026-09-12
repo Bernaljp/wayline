@@ -1,0 +1,9 @@
+{
+  "id": "evolve",
+  "scope_kind": "global",
+  "capability_summary": "A shell until ticket 45: turns owner feedback and the post-run retrospective into change records, one harness ticket per record, and a fixture that fails on the old behaviour.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": ["skill/wayline-evolve"],
+  "sha256": "56f6b9d3ef526f42521691cd152b78e7c59f221863cafb317b18263aa9593bba"
+}

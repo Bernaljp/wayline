@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "skill/wayline-grill",
+  "kind": "skill",
+  "subject": {
+    "path": "skills/wayline-grill/SKILL.md",
+    "sha256": null,
+    "also": [
+      "skills/wayline-grill/wayline.json"
+    ]
+  },
+  "origin": {
+    "project": null,
+    "ticket": 27,
+    "session_id": null,
+    "journal_ts": null,
+    "change_record": null,
+    "reason": "seed: ticket 27 registered the five interactive skills; ticket 30 records the tier this fixture replays"
+  },
+  "launch": {
+    "model": "opus",
+    "effort": "high",
+    "permission_mode": "dontAsk",
+    "max_turns": 100,
+    "output_format": "stream-json",
+    "json_schema": null,
+    "fallback_model": "opus"
+  },
+  "input": {
+    "prompt": "input/prompt.md",
+    "agent": null,
+    "context_manifest": null,
+    "input_hash": null
+  },
+  "structural": [
+    {
+      "check": "file_exists",
+      "path": "research/DECISIONS.md"
+    }
+  ],
+  "note": "The tier is asked in one message, so the checks on how many questions reached the owner, and on which of them were facts the skill should have looked up itself, arrive with ticket 30.",
+  "baseline": null,
+  "quarantine": {
+    "status": "active",
+    "flake_limit": 2,
+    "flakes": [],
+    "stable_runs_to_restore": 3
+  }
+}
