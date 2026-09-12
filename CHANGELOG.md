@@ -46,6 +46,14 @@ The M0 demo, live and unattended (ticket 06, M0 Skeleton).
 - The order the run settled, worth having written down: a `PreToolUse` hook runs first, and its
   exit 0 means no decision, after which the normal permission flow refuses a call the role's
   allowlist does not cover. A hook's silence is not permission.
+- A review pass fixed four defects before the ticket landed: the first of a ticket's skills was
+  never looked up, so a misspelled one was a slash-command line expanding into nothing with no
+  problem recorded; the inlined bodies sat outside the tier's context cap and were counted
+  nowhere, so three large skills could have tripled a prompt with `cut` still false; the
+  meta-schema strip was a blanket recursive delete, which would have taken a result field
+  actually named `$schema` out of `properties` and left it in `required`, a schema no worker can
+  satisfy; and the recorder fell back to raw multi-line stdin when `jq` could not compact it,
+  which costs a reader the whole record file rather than the one entry.
 
 The fetch seam, the scout, L0 records, and the knowledge base (ticket 20, M3 Dossiers).
 
