@@ -549,6 +549,25 @@ class SwitchDrainTest(ControlCase):
         self.assertEqual(job.read_text(encoding="utf-8"), '{"id": "j-0001", "status": "running"}\n')
 
 
+class LedgerCommitTest(ControlCase):
+    """A wave commits the ledger without the session directory of a worker that is still writing into it."""
+
+    def test_a_running_worker_s_session_directory_waits_for_the_wave_that_carries_it(self):
+        fake, driven = self.conductor_over((done(), patch(), 600))
+        launching = driven.wave()
+        session = "research/sessions/1/1/"
+        first = self.git("show", "--name-only", "--format=", launching.ledger_commit).split("\n")
+        self.assertIn("research/journal.jsonl", first)
+        self.assertEqual([path for path in first if path.startswith(session)], [],
+                         "the ledger commit took files a running worker's session was still writing")
+        fake.release()
+        driven.settle()
+        carrying = driven.wave()
+        later = self.git("show", "--name-only", "--format=", carrying.ledger_commit).split("\n")
+        self.assertIn(session + "prompt.md", later)
+        self.assertIn(session + "result.json", later)
+
+
 class SlotsWhileRunningTest(ControlCase):
     """`max_parallel_workers` counts the workers still running from earlier waves, not only this wave's."""
 

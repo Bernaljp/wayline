@@ -1508,14 +1508,22 @@ class Conductor:
             self._git(self.project, "branch", "-D", BRANCH % identifier, ok=None)
 
     def _commit_ledger(self):
-        """Commit what the wave wrote under `research/`, so `main` stays clean for the next fast-forward."""
-        self._git(self.project, "add", "--", RESEARCH)
+        """Commit what the wave wrote under `research/`, so `main` stays clean for the next fast-forward.
+
+        The session directories of the attempts still in flight are left for a later wave. Their
+        worker, or the thread waiting on it, is still writing there (`result.json`, the worker's
+        `acceptance.json`), and a file renamed into place while `git add` reads the directory fails
+        the whole add. The wave that carries an attempt commits its directory.
+        """
+        busy = [":(exclude)" + self._attempt_dir(attempt).relative_to(self.project).as_posix()
+                for attempt in self.flight.values()]
+        self._git(self.project, "add", "--", RESEARCH, *busy)
         if self._git(self.project, "diff", "--cached", "--name-only", "--", HEARTBEAT_PATH).stdout.strip():
             # A project laid out before the heartbeat was ignored: keep the file out of the commit.
             self._git(self.project, "reset", "-q", "--", HEARTBEAT_PATH)
         if self._git(self.project, "diff", "--cached", "--quiet", "--", RESEARCH, ok=None).returncode == 0:
             return None
-        self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH)
+        self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH, *busy)
         return self._head(self.project)
 
     def _head(self, path):
