@@ -27,7 +27,7 @@ from pathlib import Path
 
 from wayline.jsonschema import check, load_schema
 
-__all__ = ["Ledger", "LedgerError", "make_event", "now_ts", "EVENTS", "PAYLOAD_ENUMS", "JOURNAL", "LOCK"]
+__all__ = ["Ledger", "LedgerError", "make_event", "now_ts", "atomic_write", "EVENTS", "PAYLOAD_ENUMS", "JOURNAL", "LOCK"]
 
 JOURNAL = "journal.jsonl"
 LOCK = ".lock"
@@ -398,7 +398,7 @@ class Ledger:
         text = _dumps(value, indent=2) + "\n"
         target = self.path(relpath, replacing=True)
         with self.lock():
-            _atomic_write(target, text)
+            atomic_write(target, text)
         return target
 
     def write_markdown(self, relpath, text):
@@ -407,7 +407,21 @@ class Ledger:
         if not text.endswith("\n"):
             text += "\n"
         with self.lock():
-            _atomic_write(target, text)
+            atomic_write(target, text)
+        return target
+
+    def touch(self, relpath):
+        """Create an empty file under research/ when it is absent, and leave it alone when it is not.
+
+        What `init` needs for the line files a project starts with: an empty `journal.jsonl` and
+        `findings.jsonl` exist from the first moment, so a reader never has to tell "no file yet"
+        from "nothing happened yet", and a second `init` changes neither.
+        """
+        target = self.path(relpath)
+        with self.lock():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT, 0o644)
+            os.close(fd)
         return target
 
     def append_line(self, relpath, line):
@@ -496,7 +510,7 @@ def _escape_line_breaks(text):
     return text
 
 
-def _atomic_write(target, text):
+def atomic_write(target, text):
     """Write `text` to a temp file next to `target`, fsync, and rename it into place.
 
     The new file gets the mode of the file it replaces, else 0666 under the umask, so a rewrite

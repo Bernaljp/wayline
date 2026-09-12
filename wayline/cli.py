@@ -38,7 +38,7 @@ def lazy(module, attribute):
 # The verb table of Implementation Decisions 1, grouped as the spec groups it, plus `job`, the
 # verb decisions 4 and 6 give experiment workers to write a job file for the runner.
 VERBS = [
-    Verb("init", "init <path> [--uninstall-units]", "lay out a project, register it, install the user units once per machine", "project"),
+    Verb("init", "init <path> [--uninstall-units]", "lay out a project, register it, make it the active one (the user units arrive with the tick)", "project", lazy("wayline.project", "init_command")),
     Verb("intake", "intake [--goal]", "phase P0: take what the owner has and write INTAKE.md (also a skill)", "phases"),
     Verb("absorb", "absorb", "phase P1: build the dossiers for the references", "phases"),
     Verb("position", "position", "phase P2: write the position memo", "phases"),
@@ -51,9 +51,9 @@ VERBS = [
     Verb("stop", "stop [--drain]", "journal a control event the conductor applies at its next wave", "controls"),
     Verb("cancel", "cancel <id>", "journal a control event cancelling a ticket", "controls"),
     Verb("rerun", "rerun <id>", "journal a control event rerunning a ticket", "controls"),
-    Verb("status", "status", "print the frontier, running tickets and jobs, open decisions, the window, the goal, the last events", "views"),
+    Verb("status", "status [--project <path>] [--json]", "print the frontier, running tickets and jobs, open decisions, the window, the goal, the last events", "views", lazy("wayline.project", "status_command")),
     Verb("answer", "answer <id> \"<text>\"", "answer a decision ticket from the command line", "views"),
-    Verb("switch", "switch <path>", "make another project the active one", "views"),
+    Verb("switch", "switch <path>", "make another project the active one", "views", lazy("wayline.project", "switch_command")),
     Verb("feedback", "feedback \"<text>\"", "file feedback for the evolve loop", "views"),
     Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services"),
     Verb("tick", "tick", "the recurrent job that relaunches work after windows, answers, and jobs", "services"),
