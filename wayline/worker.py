@@ -1272,6 +1272,7 @@ class Scripted:
     died: bool = False
     ticket: Optional[str] = None
     role: Optional[str] = None
+    respond: Optional[object] = None  # `respond(request, message) -> Envelope`, in place of `envelope`
 
     def matches(self, request):
         if self.ticket is not None and str(request.env.get("WAYLINE_TICKET")) != self.ticket:
@@ -1307,6 +1308,12 @@ class FakeLauncher:
     validates it. `died` cuts the stream after `system/init`, as a killed worker leaves it, and
     hands the scripted `errors` over as the harness's own (the timeout text). `alive` seeds the
     pid-alive simulation `pid_alive` answers from; `alive` is a dict a test may edit directly.
+
+    `respond` stands in for the envelope when a test cannot know the answer before the call: a
+    session whose prompt code builds from the ledger (the sentence classifier's numbered batch)
+    is answered by `respond(request, message)`, which returns the envelope for what it was sent.
+    `message` is None on a launch and the resume message on a resume. Tests only; a JSON script
+    cannot carry a function.
     """
 
     name = "fake"
@@ -1324,8 +1331,12 @@ class FakeLauncher:
             self._next_pid = 100000
 
     @staticmethod
-    def _scripted(envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None):
-        if not isinstance(envelope, Envelope):
+    def _scripted(envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None, respond=None):
+        if respond is not None and not callable(respond):
+            raise LaunchError("respond is a function of (request, message) returning an Envelope, got %r" % (respond,))
+        if envelope is None and respond is None:
+            raise LaunchError("a scripted call needs an envelope or a respond function")
+        if envelope is not None and not isinstance(envelope, Envelope):
             envelope = Envelope.from_dict(envelope)
         if patch is not None and not isinstance(patch, Patch):
             if not isinstance(patch, dict) or not isinstance(patch.get("files"), dict):
@@ -1342,10 +1353,10 @@ class FakeLauncher:
             raise LaunchError("delay is a number of seconds, got %r" % (delay,))
         if role is not None and not isinstance(role, str):
             raise LaunchError("role is a string or null")
-        return Scripted(envelope, patch, float(delay), alive, bool(died), None if ticket is None else str(ticket), role)
+        return Scripted(envelope, patch, float(delay), alive, bool(died), None if ticket is None else str(ticket), role, respond)
 
-    def script(self, envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None):
-        entry = self._scripted(envelope, patch, delay, alive, died, ticket, role)
+    def script(self, envelope=None, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None, respond=None):
+        entry = self._scripted(envelope, patch, delay, alive, died, ticket, role, respond)
         with self._lock:
             self.queue.append(entry)
         return entry
@@ -1410,7 +1421,9 @@ class FakeLauncher:
         stream_path = run_dir / "stream.jsonl"
         _write_text(run_dir / "stderr.txt", "")
         _write_text(run_dir / "pid", "%d\n" % pid)
-        given = scripted.envelope
+        given = scripted.envelope if scripted.respond is None else scripted.respond(request, message)
+        if not isinstance(given, Envelope):
+            given = Envelope.from_dict(given)
         session = given.session_id or session_id or str(uuid.uuid4())
         model = given.model or RESOLVED_MODELS.get(request.model, request.model)
         head = [{"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": str(request.cwd),

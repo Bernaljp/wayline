@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "claim_classes",
+  "description": "The sentence classifier's answer (Implementation Decisions 11): one class for every numbered sentence of the batch it was handed. The session sees numbers and sentences only; code maps each number back to its sentence and caches the class under research/.cache/claims.json by the sentence's hash, so a rebuild classifies only the sentences that changed.",
+  "type": "object",
+  "required": ["classes"],
+  "additionalProperties": false,
+  "properties": {
+    "classes": {
+      "type": "array",
+      "description": "one entry per numbered sentence of the batch, every number exactly once",
+      "items": {
+        "type": "object",
+        "required": ["n", "class"],
+        "additionalProperties": false,
+        "properties": {
+          "n": {"type": "integer", "minimum": 1, "description": "the sentence's number, exactly as the prompt printed it"},
+          "class": {
+            "type": "string",
+            "enum": ["claim", "definition", "transition", "method_description"],
+            "description": "claim: asserts something about the world, the data, or a result, a negative result included; definition: says what a term or a quantity means; transition: moves the reader along and asserts nothing; method_description: says what was done or how, without asserting what came of it"
+          }
+        }
+      }
+    }
+  }
+}

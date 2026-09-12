@@ -1,0 +1,9 @@
+{
+  "groups": [
+    {
+      "group": "SPEC.md#c1-interaction-terms",
+      "text": "Pairwise interaction terms raise the held-out AUROC to 0.861.{res:t3-a1/results/interactions/summary.json#auroc_mean}"
+    }
+  ],
+  "negative_results": ""
+}
