@@ -157,6 +157,7 @@ function select(id) {
   }
   every('overview', state.pollViews, loadOverview);
   every('graph', state.pollViews, loadGraph);
+  every('outputs', state.pollViews, loadOutputs);
   showGraph();
   startTail();
 }
@@ -360,6 +361,89 @@ async function pollLog() {
 
 document.getElementById('ticket-back').addEventListener('click', showGraph);
 document.getElementById('logs-back').addEventListener('click', () => (state.ticket ? openTicket(state.ticket) : showGraph()));
+document.getElementById('tick-log-button').addEventListener('click', () => openLog('tick', 'tick'));
+
+// --- the outputs index (ticket 42) ---------------------------------------------------------------
+
+const CATEGORIES = ['results', 'findings', 'figures', 'dossiers', 'report', 'paper', 'docs'];
+const PREVIEWABLE_MARKDOWN = /\.(?:md|markdown)$/i;
+const PREVIEWABLE_IMAGE = /\.(?:png|jpe?g|gif|svg|webp)$/i;
+
+function humanSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let value = n;
+  let unit = -1;
+  do {
+    value /= 1024;
+    unit += 1;
+  } while (value >= 1024 && unit < units.length - 1);
+  return `${value.toFixed(1)} ${units[unit]}`;
+}
+
+// A download's URL carries the token the same way the page's own polls do: `fetch` and `<img>`
+// attach neither a header nor a cookie of their own to a link the owner clicks or a preview opens.
+function downloadUrl(path) {
+  const encoded = path.split('/').map(encodeURIComponent).join('/');
+  const query = TOKEN ? `?${new URLSearchParams({ token: TOKEN })}` : '';
+  return `/api/projects/${encodeURIComponent(state.project)}/download/${encoded}${query}`;
+}
+
+async function loadOutputs() {
+  if (!state.project) return;
+  try {
+    const view = await get(`/api/projects/${encodeURIComponent(state.project)}/outputs`);
+    if (view) renderOutputs(view);
+  } catch (failure) {
+    replace(document.getElementById('outputs-body'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+  }
+}
+
+function renderOutputs(view) {
+  const parts = [];
+  for (const name of CATEGORIES) {
+    const entries = view[name] || [];
+    parts.push(el('h3', { text: `${name} (${entries.length})` }));
+    parts.push(entries.length
+      ? el('ul', { class: 'outputs' }, entries.map((entry) => outputRow(entry)))
+      : el('p', { class: 'note', text: 'none' }));
+  }
+  parts.push(el('div', { id: 'outputs-preview' }));
+  replace(document.getElementById('outputs-body'), parts);
+}
+
+function outputRow(entry) {
+  const row = el('li', {}, [
+    el('a', { href: downloadUrl(entry.path), text: entry.path }),
+    el('span', { class: 'note', text: ` ${humanSize(entry.size)}` }),
+  ]);
+  if (PREVIEWABLE_MARKDOWN.test(entry.path) || PREVIEWABLE_IMAGE.test(entry.path)) {
+    const view = el('button', { type: 'button', class: 'tab', text: 'view' });
+    view.addEventListener('click', () => previewOutput(entry));
+    row.appendChild(document.createTextNode(' '));
+    row.appendChild(view);
+  }
+  return row;
+}
+
+async function previewOutput(entry) {
+  const preview = document.getElementById('outputs-preview');
+  if (!preview) return;
+  if (PREVIEWABLE_IMAGE.test(entry.path)) {
+    replace(preview, [el('img', { src: downloadUrl(entry.path), alt: entry.path })]);
+    return;
+  }
+  replace(preview, [el('p', { class: 'note', text: 'loading...' })]);
+  try {
+    const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
+    const response = await fetch(downloadUrl(entry.path), { cache: 'no-store', headers });
+    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+    replace(preview, [renderMarkdown(await response.text())]);
+  } catch (failure) {
+    replace(preview, [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+  }
+}
 
 // --- the journal tail ---------------------------------------------------------------------------
 
