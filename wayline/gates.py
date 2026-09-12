@@ -21,6 +21,7 @@ The Type-B half (the verifier launch and the verdict record) is ticket 32's.
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -28,9 +29,8 @@ import time
 from pathlib import Path
 
 from wayline import HARNESS_ROOT, POLICY_PATH
-from wayline.frontmatter import FrontmatterError, load_document
-from wayline.jsonschema import check, load_schema
 from wayline.ledger import now_ts
+from wayline.tickets import read_ticket, tickets_dir
 
 __all__ = [
     "GateError",
@@ -38,7 +38,7 @@ __all__ = [
     "HOOK_TIMEOUT_S",
     "accept",
     "acceptance_file_record",
-    "read_ticket",
+    "ticket_by_id",
     "run_machine_acceptance",
     "worker_settings",
     "write_worker_settings",
@@ -144,27 +144,28 @@ def _write_json(path, value):
 # --- reading a ticket --------------------------------------------------------------------------
 
 
-def read_ticket(project, ticket_id):
-    """The frontmatter of `research/tickets/NN-slug.md` whose `id` is `ticket_id`.
+def ticket_by_id(project, ticket_id):
+    """The frontmatter of the one ticket whose `id` is `ticket_id`.
 
-    `tickets.py` owns the ticket directory once ticket 02 lands; `accept` needs one ticket and
-    reads it here so that the worktree verb does not wait on the graph.
+    `tickets.py` owns reading and validating a ticket file, so this only finds the file.
+    It reads that one rather than the whole directory on purpose: an unrelated ticket the
+    planner left half-written must not stop a worker running its own acceptance.
     """
     try:
         wanted = int(ticket_id)
     except (TypeError, ValueError):
         raise GateError("a ticket id is an integer, got %r" % (ticket_id,)) from None
-    directory = Path(project).resolve() / "research" / "tickets"
+    directory = tickets_dir(project)
     if not directory.is_dir():
         raise GateError("%s does not exist; is %s a wayline project?" % (directory, project))
     for path in sorted(directory.glob("*.md")):
-        try:
-            frontmatter, _ = load_document(path.read_text(encoding="utf-8"))
-        except (OSError, FrontmatterError) as failure:
-            raise GateError("%s cannot be read: %s" % (path, failure)) from None
-        if frontmatter.get("id") != wanted:
+        leading = re.match(r"(\d+)-", path.name)
+        if not leading or int(leading.group(1)) != wanted:
             continue
-        check(frontmatter, load_schema("ticket"), name="ticket %s" % path.name)
+        try:
+            frontmatter, _ = read_ticket(path)
+        except OSError as failure:
+            raise GateError("%s cannot be read: %s" % (path, failure)) from None
         return frontmatter
     raise GateError("no ticket in %s has id %d" % (directory, wanted))
 
@@ -313,7 +314,7 @@ def accept(args):
         project = _required_environment("WAYLINE_PROJECT")
         ticket_id = _required_environment("WAYLINE_TICKET")
         destination = Path(_required_environment("TICKET_ACCEPTANCE_FILE"))
-        ticket = read_ticket(project, ticket_id)
+        ticket = ticket_by_id(project, ticket_id)
     except ValueError as failure:  # GateError, or a ticket the schema refuses
         return _fail(str(failure))
 

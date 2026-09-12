@@ -66,7 +66,8 @@ class VerbListTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn(TAG, done.stdout)
         for verb in cli.VERBS:
-            self.assertIn(verb.name, done.stdout)
+            if not verb.hidden:
+                self.assertIn(verb.name, done.stdout)
 
 
 class NotYetImplementedTest(unittest.TestCase):

@@ -1,0 +1,22 @@
+{
+  "entries": [
+    {
+      "path": "results/features/summary.json",
+      "size": 2048,
+      "sha256": "9f2c4a1d6b83e05f7c1a2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f30",
+      "job": null,
+      "run_id": "t2-a1",
+      "ticket": 2,
+      "ts": "2026-09-11T12:20:00Z"
+    },
+    {
+      "path": "results/baseline/seed-2/summary.json",
+      "size": 1120,
+      "sha256": "1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f7081",
+      "job": "j-0002",
+      "run_id": "t3-a1",
+      "ticket": 3,
+      "ts": "2026-09-11T14:52:10Z"
+    }
+  ]
+}

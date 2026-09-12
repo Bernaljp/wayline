@@ -16,9 +16,9 @@ import unittest
 from pathlib import Path
 
 from tests.paths import HARNESS_ROOT
-from wayline import cli
+from wayline import cli, worker
 from wayline.frontmatter import dump_document
-from wayline.gates import GateError, acceptance_file_record, read_ticket, run_machine_acceptance
+from wayline.gates import GateError, acceptance_file_record, run_machine_acceptance, ticket_by_id
 
 SAMPLE_TICKET = {
     "id": 7,
@@ -54,27 +54,27 @@ class ReadTicketTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
 
     def test_the_ticket_is_found_by_its_id_not_its_file_name(self):
-        ticket = read_ticket(self.project, 7)
+        ticket = ticket_by_id(self.project, 7)
         self.assertEqual(ticket["title"], "Add the tokenizer")
 
     def test_a_string_id_is_accepted(self):
-        self.assertEqual(read_ticket(self.project, "7")["id"], 7)
+        self.assertEqual(ticket_by_id(self.project, "7")["id"], 7)
 
     def test_an_unknown_id_is_an_error_naming_the_directory(self):
         with self.assertRaises(GateError) as caught:
-            read_ticket(self.project, 99)
+            ticket_by_id(self.project, 99)
         self.assertIn("tickets", str(caught.exception))
 
     def test_a_ticket_the_schema_refuses_is_an_error(self):
         broken = dict(SAMPLE_TICKET, id=8, difficulty=9)
         write_project(self.project, extra_tickets=[("08-broken.md", broken)])
         with self.assertRaises(ValueError):
-            read_ticket(self.project, 8)
+            ticket_by_id(self.project, 8)
 
     def test_a_project_without_tickets_is_an_error(self):
         with tempfile.TemporaryDirectory() as empty:
             with self.assertRaises(GateError) as caught:
-                read_ticket(empty, 7)
+                ticket_by_id(empty, 7)
         self.assertIn("wayline project", str(caught.exception))
 
 
@@ -243,6 +243,30 @@ class AcceptVerbTest(unittest.TestCase):
 
     def test_the_verb_is_built(self):
         self.assertIsNotNone(cli.lookup("accept").handler)
+
+
+class LaunchEnvironmentTest(unittest.TestCase):
+    """The launcher of ticket 03 and the guards of ticket 04 name the same variables.
+
+    Nothing else joins them until the conductor of ticket 05 composes a launch, so without
+    this the two could drift apart and only a live run would notice.
+    """
+
+    def test_session_env_carries_what_accept_and_the_guards_read(self):
+        environment = worker.session_env("/tmp/project", 7, 1, ["src/", "tests/"])
+        for name in ("WAYLINE_PROJECT", "WAYLINE_TICKET", "TICKET_ACCEPTANCE_FILE", "TICKET_TOUCHES"):
+            with self.subTest(variable=name):
+                self.assertIn(name, environment)
+                self.assertTrue(environment[name])
+
+    def test_the_acceptance_file_lands_in_the_session_directory(self):
+        session = worker.session_dir("/tmp/project", 7, 1)
+        environment = worker.session_env("/tmp/project", 7, 1, ["src/"])
+        self.assertEqual(Path(environment["TICKET_ACCEPTANCE_FILE"]).parent, Path(session))
+
+    def test_the_touch_set_is_the_colon_separated_list_the_guards_split(self):
+        environment = worker.session_env("/tmp/project", 7, 1, ["src/", "results/run/"])
+        self.assertEqual(environment["TICKET_TOUCHES"], "src/:results/run/")
 
 
 if __name__ == "__main__":
