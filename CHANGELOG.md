@@ -4,6 +4,13 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+The manifest and findings provenance (ticket 18, M2 Hardware).
+
+- `wayline.provenance.register_artifact(project_or_ledger, path, job, run_id, ticket)` hashes a result artifact (sha256, in chunks) into `research/manifest.json` and journals `manifest`; a second registration of the same path replaces its entry instead of appending a stale sibling, and the read-hash-write happens under the ledger's lock so two workers registering at once cannot lose an entry. `run_id` must be `t<ticket>-a<attempt>`; a bad entry (a ticket outside the schema's range, say) never reaches the manifest.
+- `add_finding(project_or_ledger, text, provenance, ticket, negative=False)` refuses (raises `ProvenanceError`, writing nothing) when a provenance locator has no `<path>#<locator>` shape or its path half is not in `manifest.json`; an accepted finding gets a sequential id (`f-0001`, ...) in `findings.jsonl`, journals `finding`, and re-renders `findings.md`. `provenance` takes one locator or several, so one finding may cite more than one artifact.
+- `render_findings` writes `findings.md` from `findings.jsonl`, grouped by ticket in ticket order, negative results marked; `add_finding` calls it after every change so the two files never drift.
+- `oversized_tracked_files(project)` warns (never refuses) about a git-tracked file heavier than `policy.artifacts.commit_threshold_bytes` (a project's `harness.json` may override the shipped default), naming the manifest as the alternative to committing it; `results/` is already git-ignored by `init` (ticket 02), so this only ever catches a file someone chose to commit.
+
 The conductor's M0 path with the fake worker (ticket 05, M0 Skeleton).
 
 - `wayline run` is the conductor over one project. A wave regenerates `graph.json`, computes the frontier, adds `.worktrees/<id>` on `ticket/<id>` from `main`, assembles the prompt, launches through the launcher seam, validates the result, runs the ticket's machine acceptance in the worktree, rebases onto `main`, runs it again as `rebased`, fast-forwards `main`, runs it a third time as `main`, writes the findings and the status through the ledger, journals every step, removes the worktree and the branch, and commits what it wrote as `ledger: wave <n>`. It journals `run_ended` with `frontier_empty` when nothing is left.
