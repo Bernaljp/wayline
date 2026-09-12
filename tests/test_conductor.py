@@ -1,0 +1,567 @@
+"""The conductor's M0 path (Implementation Decisions 5; Testing Decisions seam 4).
+
+A wave is driven directly against `fixtures/projects/one-ticket/` with the fake worker, and what
+is asserted is what the next component and the owner can see: the journal, `main`, the ticket
+files, the ledger, the worktree that is or is not still there. The same path is run once through
+the shell, because "unattended, one command" is what M0 demos.
+"""
+
+import hashlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+from tests.paths import FIXTURES_DIR, HARNESS_ROOT
+from tests.projects import ProjectTestCase
+from wayline import conductor, project, tickets, worker
+from wayline.conductor import Conductor, ConductorError
+from wayline.ledger import Ledger
+from wayline.worker import Envelope, Patch
+
+ONE_TICKET = FIXTURES_DIR / "projects" / "one-ticket"
+
+HELLO = {"hello.txt": "hello\n"}
+WRONG = {"hello.txt": "goodbye\n"}
+
+
+def done(ticket_id=1, **extra):
+    """An envelope carrying the result a coder returns when the ticket went well."""
+    result = {
+        "ticket_id": ticket_id,
+        "status": "done",
+        "summary": "wrote hello.txt and ran the acceptance",
+        "outputs_written": ["hello.txt"],
+    }
+    result.update(extra)
+    return Envelope(structured_output=result, num_turns=3, duration_ms=1200)
+
+
+def patch(files=None, message="ticket 1: write hello.txt", commit=True):
+    return Patch(files=dict(files or HELLO), message=message, commit=commit)
+
+
+class ConductorCase(ProjectTestCase):
+    """A laid-out copy of the one-ticket fixture, with `~/.wayline` pointed at a temporary directory."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.temp / "one-ticket"
+        shutil.copytree(ONE_TICKET, self.project)
+        project.init_project(self.project)
+        self.ledger = Ledger(self.project)
+
+    # --- reading the project back ---
+
+    def events(self, name=None):
+        events, _ = self.ledger.read_events()
+        return [event for event in events if name is None or event["event"] == name]
+
+    def sequence(self):
+        return [event["event"] for event in self.events()]
+
+    def payload(self, name):
+        found = self.events(name)
+        self.assertTrue(found, "no %s event in the journal: %s" % (name, self.sequence()))
+        return found[-1]["payload"]
+
+    def ticket(self, identifier=1):
+        return {fields["id"]: fields for fields in tickets.read_tickets(self.project)}[identifier]
+
+    def git(self, *args, cwd=None):
+        done_process = subprocess.run(["git", "-C", str(cwd or self.project), *args], capture_output=True, text=True)
+        self.assertEqual(done_process.returncode, 0, done_process.stderr)
+        return done_process.stdout.strip()
+
+    def log(self):
+        return self.git("log", "--format=%s", "main").split("\n")
+
+    def worktree(self, identifier=1):
+        return self.project / conductor.WORKTREES / str(identifier)
+
+    def branches(self):
+        """`git branch` marks the current branch with `*` and one checked out in a worktree with `+`."""
+        return [line[2:].strip() for line in self.git("branch").split("\n") if line.strip()]
+
+    def commit_on_main(self, name, text="from main\n"):
+        (self.project / name).write_text(text, encoding="utf-8")
+        self.git("add", "--", name)
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main: add " + name)
+
+    # --- driving a wave ---
+
+    def conduct(self, *scripted, waves=1):
+        """Script the fake with `(envelope, patch)` pairs, run `waves` waves, keep what it was called with."""
+        with worker.use_fake() as fake:
+            for envelope, applied in scripted:
+                fake.script(envelope, patch=applied)
+            self.conductor = Conductor(self.project, out=io.StringIO())
+            results = [self.conductor.wave() for _ in range(waves)]
+            self.calls = list(fake.calls)  # the fake is reset when the block ends
+        return results
+
+
+class WholePathTest(ConductorCase):
+    """One ticket from the frontier to a fast-forwarded `main`, which is M0's demo."""
+
+    def setUp(self):
+        super().setUp()
+        self.result = self.conduct((done(findings=[{"text": "a finding", "provenance": "hello.txt#L1"}]), patch()))[0]
+
+    def test_the_journal_carries_the_steps_in_order(self):
+        self.assertEqual(self.sequence(), [
+            "ticket_launched", "ticket_session", "ticket_result",
+            "acceptance", "acceptance", "acceptance",
+            "integrated", "finding", "ticket_done", "run_ended",
+        ])
+
+    def test_the_acceptance_ran_in_all_three_places_and_passed(self):
+        wheres = [event["payload"]["where"] for event in self.events("acceptance")]
+        self.assertEqual(wheres, ["worktree", "rebased", "main"])
+        for event in self.events("acceptance"):
+            self.assertTrue(event["payload"]["pass"])
+            self.assertEqual([result["cmd"] for result in event["payload"]["results"]],
+                             ["test -f hello.txt", "grep -qx hello hello.txt"])
+
+    def test_main_carries_the_worker_commit_under_the_ledger_commit(self):
+        self.assertEqual(self.log()[:2], ["ledger: wave 1", "ticket 1: write hello.txt"])
+        self.assertEqual((self.project / "hello.txt").read_text(encoding="utf-8"), "hello\n")
+        self.assertEqual(self.payload("integrated")["commit"], self.git("rev-parse", "main~1"))
+        self.assertEqual(self.payload("integrated")["resolved_by"], "none")
+
+    def test_the_worktree_and_the_branch_are_gone(self):
+        self.assertFalse(self.worktree().exists())
+        self.assertNotIn("ticket/1", self.branches())
+        self.assertNotIn("worktrees/1", self.git("worktree", "list"))
+
+    def test_the_ticket_is_done_and_carries_its_result(self):
+        self.assertEqual(self.ticket()["status"], "done")
+        body = (tickets.tickets_dir(self.project) / "01-write-the-hello-file.md").read_text(encoding="utf-8")
+        self.assertIn("## Result", body)
+        self.assertIn("### Attempt 1", body)
+        self.assertIn("wrote hello.txt and ran the acceptance", body)
+
+    def test_the_finding_reaches_findings_jsonl_and_the_journal(self):
+        written = [json.loads(line) for line in (self.project / "research" / "findings.jsonl").read_text(encoding="utf-8").split("\n") if line]
+        self.assertEqual(written, [{"id": "t1-a1-f1", "ticket": 1, "text": "a finding", "provenance": "hello.txt#L1", "negative": False}])
+        self.assertEqual(self.payload("finding"), written[0])
+
+    def test_the_run_ends_when_the_frontier_is_empty(self):
+        self.assertTrue(self.result.ended)
+        self.assertEqual(self.result.reason, "frontier_empty")
+        self.assertEqual(self.payload("run_ended"), {"reason": "frontier_empty"})
+        self.assertEqual((self.result.launched, self.result.done, self.result.failed), ([1], [1], []))
+
+    def test_the_ledger_commit_names_the_wave_and_touches_only_research(self):
+        self.assertEqual(self.log()[0], "ledger: wave 1")
+        changed = self.git("show", "--name-only", "--format=", "main").split("\n")
+        self.assertTrue(changed)
+        for path in changed:
+            self.assertTrue(path.startswith("research/"), path)
+
+    def test_nothing_is_left_uncommitted_outside_research(self):
+        self.assertEqual(conductor.dirty_outside_research(self.project), [])
+
+    def test_the_wave_regenerated_the_graph_it_schedules_from(self):
+        stored = json.loads((self.project / "research" / "graph.json").read_text(encoding="utf-8"))
+        self.assertEqual([entry["id"] for entry in stored["tickets"]], [1])
+        self.assertEqual(stored["tickets"][0]["status"], "done")
+        self.assertEqual(stored["tickets"][0]["attempt"], 1)
+        self.assertIn("01-write-the-hello-file.md", stored["snapshot"])
+
+
+class LaunchTest(ConductorCase):
+    """What the wave hands the launcher seam, and what it journals about the launch."""
+
+    def setUp(self):
+        super().setUp()
+        self.conduct((done(), patch()))
+        self.call = self.calls[0]
+
+    def test_the_worker_ran_in_the_ticket_worktree(self):
+        self.assertEqual(Path(self.call.request.cwd), self.worktree())
+        self.assertEqual(self.payload("ticket_launched")["worktree"], str(self.worktree()))
+
+    def test_the_launch_carries_the_environment_the_guards_read(self):
+        environment = self.call.request.env
+        self.assertEqual(environment["TICKET_TOUCHES"], "hello.txt")
+        self.assertEqual(environment["WAYLINE_TICKET"], "1")
+        self.assertEqual(Path(environment["WAYLINE_PROJECT"]), self.project)
+        self.assertTrue(environment["TICKET_ACCEPTANCE_FILE"].endswith("research/sessions/1/1/acceptance.json"))
+
+    def test_the_launch_carries_the_role_and_its_tool_lists(self):
+        role = worker.read_role("coder")
+        self.assertEqual(self.call.request.role, "coder")
+        self.assertEqual(self.call.request.allowed_tools, role.allowed_tools)
+        self.assertEqual(self.call.request.disallowed_tools, role.disallowed_tools)
+        self.assertNotIn("tools", self.call.request.agent_json["coder"])
+
+    def test_the_model_and_effort_come_from_the_difficulty_tier(self):
+        self.assertEqual((self.call.request.model, self.call.request.effort), ("sonnet", "low"))
+        self.assertEqual(self.call.request.agent_json["coder"]["maxTurns"], 40)
+        self.assertEqual(self.call.request.max_minutes, 30)
+        launched = self.payload("ticket_launched")
+        self.assertEqual((launched["model"], launched["effort"], launched["role"]), ("sonnet", "low", "coder"))
+
+    def test_the_per_launch_settings_are_the_rendered_guards(self):
+        settings = json.loads(Path(self.call.request.settings_path).read_text(encoding="utf-8"))
+        commands = [handler["command"] for matchers in settings["hooks"].values() for matcher in matchers for handler in matcher["hooks"]]
+        self.assertEqual(sorted(Path(command).name for command in commands), ["command_guard.sh", "stop_guard.sh", "touch_set_guard.sh"])
+        self.assertTrue(all(command.startswith(str(HARNESS_ROOT)) for command in commands))
+
+    def test_both_directories_of_the_launch_line_are_added(self):
+        self.assertEqual(self.call.request.add_dirs, [str(HARNESS_ROOT), str(self.project)])
+
+    def test_the_prompt_beside_the_stream_is_the_one_the_journal_hashes(self):
+        written = (self.project / "research" / "sessions" / "1" / "1" / "prompt.md").read_text(encoding="utf-8")
+        self.assertEqual(self.payload("ticket_launched")["prompt_sha256"], hashlib.sha256(written.encode("utf-8")).hexdigest())
+        self.assertIn("# Ticket 1: Write the hello file", written)
+        self.assertIn("Prove that the conductor runs one ticket end to end", written)  # the context pack
+
+    def test_the_session_is_journaled_from_the_stream(self):
+        session = self.payload("ticket_session")
+        self.assertEqual(session["session_id"], self.events("ticket_result")[0]["payload"]["session_id"])
+        self.assertEqual(session["model"], "claude-sonnet-5")
+        self.assertEqual(self.payload("ticket_launched")["context_chars"], len((ONE_TICKET / "research" / "INTAKE.md").read_text(encoding="utf-8")))
+
+
+class RebaseTest(ConductorCase):
+    """The integration protocol: the worker's commit is replayed on a `main` that moved."""
+
+    def setUp(self):
+        super().setUp()
+        # The branch exists before the wave and points at an older main, so the rebase is real.
+        self.git("branch", conductor.BRANCH % 1, "main")
+        self.commit_on_main("from-main.txt")
+
+    def test_the_commit_is_replayed_on_top_of_main(self):
+        self.conduct((done(), patch()))
+        self.assertEqual(self.log()[:3], ["ledger: wave 1", "ticket 1: write hello.txt", "main: add from-main.txt"])
+        self.assertTrue((self.project / "from-main.txt").exists())
+        self.assertEqual((self.project / "hello.txt").read_text(encoding="utf-8"), "hello\n")
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_a_conflict_fails_the_ticket_and_leaves_main_alone(self):
+        self.commit_on_main("hello.txt", "a different hello\n")
+        head = self.git("rev-parse", "main")
+        self.conduct((done(), patch()))
+        failed = self.payload("ticket_failed")
+        self.assertEqual(failed["next"], "split")
+        self.assertIn("hello.txt", failed["reason"])
+        self.assertIn("ticket 08", failed["reason"])
+        self.assertEqual(self.git("rev-parse", "main~1" if self.log()[0].startswith("ledger") else "main"), head)
+        self.assertEqual((self.project / "hello.txt").read_text(encoding="utf-8"), "a different hello\n")
+
+    def test_a_conflict_leaves_no_rebase_in_progress_and_keeps_the_worktree(self):
+        self.commit_on_main("hello.txt", "a different hello\n")
+        self.conduct((done(), patch()))
+        self.assertTrue(self.worktree().exists(), "the branch and its worktree stay for the next attempt")
+        self.assertIn("ticket/1", self.branches())
+        self.assertEqual(self.git("status", "--porcelain", cwd=self.worktree()), "")
+        self.assertEqual(self.ticket()["status"], "failed")
+
+
+class InvalidResultTest(ConductorCase):
+    """A result the schema refuses: resumed once with the error, then the ticket fails."""
+
+    def test_one_resume_recovers_the_ticket(self):
+        self.conduct((Envelope(), None), (done(), patch()))
+        self.assertEqual(self.sequence(), [
+            "ticket_launched", "ticket_session", "ticket_result", "ticket_resumed", "ticket_result",
+            "acceptance", "acceptance", "acceptance", "integrated", "ticket_done", "run_ended",
+        ])
+        self.assertEqual(self.payload("ticket_resumed")["reason"], "invalid_result")
+        self.assertEqual([event["payload"]["valid"] for event in self.events("ticket_result")], [False, True])
+        self.assertEqual([call.kind for call in self.calls], ["launch", "resume"])
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_the_resume_message_carries_the_error(self):
+        self.conduct((Envelope(), None), (done(), patch()))
+        self.assertIn("structured_output", self.calls[1].message)
+        self.assertIn("Do not start new work", self.calls[1].message)
+
+    def test_a_second_invalid_result_fails_the_ticket(self):
+        self.conduct((Envelope(), None), (Envelope(), None))
+        self.assertEqual(self.payload("ticket_failed")["next"], "tier_up")
+        self.assertIn("after one resume", self.payload("ticket_failed")["reason"])
+        self.assertEqual(self.ticket()["status"], "failed")
+        self.assertNotIn("integrated", self.sequence())
+        self.assertTrue(self.worktree().exists())
+
+    def test_a_result_for_another_ticket_is_not_this_ticket_result(self):
+        self.conduct((done(ticket_id=9), patch()), (done(ticket_id=9), patch()))
+        self.assertIn("ticket_id 9", self.payload("ticket_failed")["reason"])
+
+    def test_a_run_that_ends_with_a_failed_ticket_still_ends(self):
+        result = self.conduct((Envelope(), None), (Envelope(), None))[0]
+        self.assertTrue(result.ended)
+        self.assertEqual(result.failed, [1])
+
+
+class FailedAcceptanceTest(ConductorCase):
+    """The Type-A gates the conductor runs itself: a failure is resumed once with the output."""
+
+    def test_one_resume_recovers_the_ticket(self):
+        self.conduct((done(), patch(WRONG)), (done(), patch(HELLO, message="ticket 1: fix hello.txt")))
+        self.assertEqual([event["payload"]["where"] for event in self.events("acceptance")],
+                         ["worktree", "worktree", "rebased", "main"])
+        self.assertEqual([event["payload"]["pass"] for event in self.events("acceptance")], [False, True, True, True])
+        self.assertEqual(self.payload("ticket_resumed")["reason"], "acceptance_failed")
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_the_resume_message_quotes_the_command_that_failed(self):
+        self.conduct((done(), patch(WRONG)), (done(), patch(HELLO, message="ticket 1: fix hello.txt")))
+        message = self.calls[1].message
+        self.assertIn("grep -qx hello hello.txt", message)
+        self.assertIn("exit 1", message)
+        self.assertNotIn("test -f hello.txt\n(exit", message)  # only the failing command is quoted
+
+    def test_a_second_failure_fails_the_ticket(self):
+        self.conduct((done(), patch(WRONG)), (done(), patch(WRONG, message="ticket 1: still wrong")))
+        self.assertEqual(self.payload("ticket_failed")["next"], "tier_up")
+        self.assertIn("still failed in the worktree", self.payload("ticket_failed")["reason"])
+        self.assertNotIn("integrated", self.sequence())
+        self.assertFalse((self.project / "hello.txt").exists())
+
+
+class UncommittedWorkTest(ConductorCase):
+    """The conductor integrates a branch, so work left in the working tree is not a result."""
+
+    def test_an_uncommitted_file_in_the_touch_set_fails_the_ticket(self):
+        self.conduct((done(), patch(commit=False)))
+        self.assertIn("uncommitted", self.payload("ticket_failed")["reason"])
+        self.assertIn("hello.txt", self.payload("ticket_failed")["reason"])
+        self.assertEqual(self.payload("ticket_failed")["next"], "tier_up")
+        self.assertNotIn("integrated", self.sequence())
+
+    def test_untracked_noise_outside_the_touch_set_is_not_held_against_the_worker(self):
+        self.widen_acceptance()
+        self.conduct((done(), patch()))
+        self.assertIn("ticket_done", self.sequence())
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def widen_acceptance(self):
+        """Give the ticket a gate that drops a build artifact, as a real test command would."""
+        path = tickets.tickets_dir(self.project) / "01-write-the-hello-file.md"
+        fields, body = tickets.read_ticket(path)
+        fields["acceptance"]["machine"] = ["test -f hello.txt", ": > build-artifact.tmp"]
+        tickets.write_ticket(self.ledger, fields, body)
+        self.git("add", "--", "research")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger: widen the acceptance")
+
+
+class ResultStatusTest(ConductorCase):
+    """A result that is not `done` never reaches the integration."""
+
+    def test_blocked_on_marks_the_ticket_blocked_with_the_path(self):
+        self.conduct((done(blocked_on="src/other.py is outside the touch set"), patch()))
+        self.assertEqual(self.payload("ticket_blocked")["path"], "src/other.py is outside the touch set")
+        self.assertEqual(self.ticket()["status"], "blocked")
+        self.assertNotIn("acceptance", self.sequence())
+
+    def test_a_write_outside_the_declared_touch_set_blocks_the_ticket(self):
+        self.conduct((done(touched_outside_declared=["docs/readme.md"]), patch()))
+        self.assertEqual(self.payload("ticket_blocked")["path"], "docs/readme.md")
+        self.assertEqual(self.ticket()["status"], "blocked")
+
+    def test_a_failed_status_fails_the_ticket_with_its_summary(self):
+        envelope = done()
+        envelope.structured_output.update({"status": "failed", "summary": "the library does not exist"})
+        self.conduct((envelope, None))
+        self.assertEqual(self.payload("ticket_failed")["reason"], "the library does not exist")
+        self.assertEqual(self.payload("ticket_failed")["next"], "tier_up")
+
+    def test_needs_human_asks_the_question_the_worker_left(self):
+        envelope = done()
+        envelope.structured_output.update({"status": "needs_human", "summary": "which split is held out?"})
+        self.conduct((envelope, None))
+        self.assertEqual(self.payload("ticket_needs_human")["question"], "which split is held out?")
+        self.assertEqual(self.ticket()["status"], "needs_human")
+
+    def test_a_running_result_waits_for_the_job_poller(self):
+        envelope = done()
+        envelope.structured_output.update({"status": "running", "jobs": ["j-0001"]})
+        self.conduct((envelope, None))
+        self.assertIn("j-0001", self.payload("ticket_needs_human")["question"])
+        self.assertIn("ticket 17", self.payload("ticket_needs_human")["question"])
+
+
+class RefuseToStartTest(ConductorCase):
+    """`wayline run` refuses a project it would integrate into badly, and says what to do."""
+
+    def problems(self, harness_root=HARNESS_ROOT):
+        return conductor.refuse_to_start(self.project, harness_root)[0]
+
+    def test_a_clean_project_on_main_has_nothing_against_it(self):
+        self.assertEqual(self.problems(), [])
+
+    def test_a_change_outside_research_refuses_the_run(self):
+        (self.project / "stray.txt").write_text("mine\n", encoding="utf-8")
+        problems = self.problems()
+        self.assertEqual(len(problems), 1)
+        self.assertIn("stray.txt", problems[0])
+        self.assertIn("commit or stash", problems[0])
+
+    def test_a_tracked_change_outside_research_refuses_the_run(self):
+        (self.project / "README.md").write_text("changed\n", encoding="utf-8")
+        self.assertIn("README.md", self.problems()[0])
+
+    def test_a_change_inside_research_is_what_the_conductor_itself_writes(self):
+        (self.project / "research" / "findings.jsonl").write_text('{"id":"x"}\n', encoding="utf-8")
+        self.assertEqual(self.problems(), [])
+        self.assertEqual(conductor.dirty_outside_research(self.project), [])
+
+    def test_a_project_on_another_branch_refuses_the_run(self):
+        self.git("switch", "-c", "elsewhere")
+        problems = self.problems()
+        self.assertIn("elsewhere", problems[0])
+        self.assertIn("git -C", problems[0])
+
+    def test_a_tagged_harness_that_is_not_the_pin_refuses_the_run(self):
+        other = self.temp / "other-harness"
+        other.mkdir()
+        for args in (["init", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "one"], ["tag", "v9.9.9"]):
+            subprocess.run(["git", "-C", str(other), *args], capture_output=True, text=True, check=True)
+        problems = self.problems(harness_root=other)
+        self.assertIn("v9.9.9", problems[0])
+        self.assertIn("v0.0.0", problems[0])
+
+    def test_an_untagged_harness_is_a_note_and_not_a_refusal(self):
+        problems, notes = conductor.refuse_to_start(self.project, HARNESS_ROOT)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("v0.0.0", notes[0])
+
+    def test_the_verb_exits_2_and_prints_what_to_do(self):
+        (self.project / "stray.txt").write_text("mine\n", encoding="utf-8")
+        code, out, err = run_verb(["--project", str(self.project)])
+        self.assertEqual(code, 2)
+        self.assertIn("stray.txt", err)
+        self.assertNotIn("ticket_launched", [event["event"] for event in self.events()])
+
+    def test_a_flag_a_later_ticket_builds_says_which(self):
+        for flag, owner in (("--resume", "ticket 09"), ("--detach", "ticket 09"), ("--simulate-limit", "ticket 10")):
+            with self.subTest(flag=flag):
+                arguments = [flag] if flag != "--simulate-limit" else [flag, "5"]
+                code, _, err = run_verb(arguments + ["--project", str(self.project)])
+                self.assertEqual(code, 2)
+                self.assertIn(owner, err)
+
+
+def run_verb(arguments):
+    """`wayline run` in process, with its output captured."""
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code = conductor.run_command(arguments)
+    return code, out.getvalue(), err.getvalue()
+
+
+class RunLoopTest(ConductorCase):
+    """`Conductor.run`, the loop both the verb and the dashboard call."""
+
+    def never(self, seconds):
+        self.fail("the run slept %s seconds; a wave that did work must not sleep" % seconds)
+
+    def test_the_run_journals_its_start_and_stops_when_the_frontier_empties(self):
+        with worker.use_fake() as fake:
+            fake.script(done(), patch=patch())
+            waves = Conductor(self.project, out=io.StringIO()).run(sleep=self.never)
+        self.assertEqual(len(waves), 1)
+        self.assertTrue(waves[-1].ended)
+        self.assertEqual(self.sequence()[0], "run_started")
+        started = self.payload("run_started")
+        self.assertEqual((started["harness_tag"], started["autonomy"], started["radius"]), ("v0.0.0", "checkpoints", "moderate"))
+        self.assertEqual(started["resume"], False)
+        self.assertEqual(started["pid"], os.getpid())
+
+    def test_max_waves_stops_the_loop_whatever_the_frontier_holds(self):
+        with worker.use_fake() as fake:
+            waves = Conductor(self.project, out=io.StringIO()).run(max_waves=1, sleep=self.never)
+        self.assertEqual(len(waves), 1)
+        self.assertEqual(self.ticket()["status"], "failed")  # the fake had nothing scripted
+        self.assertIn("no scripted envelope", self.payload("ticket_failed")["reason"])
+
+
+class ShellRunTest(ProjectTestCase):
+    """The same path from the shell, with the fixture's own fake script: M0's "one command"."""
+
+    def test_the_fixture_runs_end_to_end_with_the_fake_backend(self):
+        target = self.temp / "one-ticket"
+        shutil.copytree(ONE_TICKET, target)
+        environment = dict(os.environ, WAYLINE_HOME=str(self.wayline_home))
+        laid_out = subprocess.run([sys.executable, "-m", "wayline", "init", str(target)],
+                                  cwd=HARNESS_ROOT, capture_output=True, text=True, env=environment, timeout=120)
+        self.assertEqual(laid_out.returncode, 0, laid_out.stderr)
+
+        # `init` made it the active project, so the run needs no --project: "unattended, one command".
+        environment.update(WAYLINE_LAUNCHER="fake", WAYLINE_FAKE_SCRIPT=str(target / "fake-worker.json"))
+        ran = subprocess.run([sys.executable, "-m", "wayline", "run"],
+                             cwd=HARNESS_ROOT, capture_output=True, text=True, env=environment, timeout=300)
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+        self.assertIn("1 ticket(s) done", ran.stdout)
+        self.assertIn("frontier_empty", ran.stdout)
+
+        self.assertEqual((target / "hello.txt").read_text(encoding="utf-8"), "hello\n")
+        self.assertEqual(list((target / conductor.WORKTREES).iterdir()), [])
+        events = [json.loads(line)["event"] for line in (target / "research" / "journal.jsonl").read_text(encoding="utf-8").split("\n") if line]
+        self.assertEqual(events[0], "run_started")
+        self.assertEqual(events[-1], "run_ended")
+        self.assertIn("ticket_done", events)
+
+
+class TierTest(unittest.TestCase):
+    """The policy's difficulty table, which decides the model, the effort, and the budget."""
+
+    def setUp(self):
+        self.policy = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
+
+    def test_every_difficulty_resolves_to_the_table_of_decision_14(self):
+        expected = [("sonnet", "low", 40), ("sonnet", "medium", 40), ("opus", "high", 100), ("fable", "xhigh", 200), ("fable", "max", 200)]
+        for difficulty, (model, effort, turns) in enumerate(expected, start=1):
+            with self.subTest(difficulty=difficulty):
+                tier = conductor.tier_for(self.policy, difficulty)
+                self.assertEqual((tier.model, tier.effort, tier.max_turns), (model, effort, turns))
+
+    def test_the_context_cap_follows_the_model(self):
+        self.assertEqual(conductor.tier_for(self.policy, 1).context_chars, 120000)
+        self.assertEqual(conductor.tier_for(self.policy, 5).context_chars, 300000)
+
+    def test_a_model_outside_the_cap_table_takes_the_smallest_cap(self):
+        policy = dict(self.policy, difficulty=dict(self.policy["difficulty"], **{"1": {"model": "haiku", "effort": "low", "budget": "small"}}))
+        self.assertEqual(conductor.tier_for(policy, 1).context_chars, 120000)
+
+    def test_the_ticket_budget_wins_over_the_tier(self):
+        tier = conductor.tier_for(self.policy, 1, {"max_turns": 5, "max_minutes": 2})
+        self.assertEqual((tier.max_turns, tier.max_minutes), (5, 2))
+
+    def test_a_difficulty_the_policy_does_not_have_names_the_ones_it_does(self):
+        with self.assertRaises(ConductorError) as caught:
+            conductor.tier_for(self.policy, 9)
+        self.assertIn("1, 2, 3, 4, 5", str(caught.exception))
+
+
+class PorcelainTest(unittest.TestCase):
+    """`git status --porcelain -z`, whose rename entries are two fields, not one."""
+
+    def test_a_plain_entry_is_a_status_and_a_path(self):
+        self.assertEqual(conductor.porcelain_entries("?? stray.txt\0"), [("??", "stray.txt")])
+
+    def test_a_rename_carries_both_paths_and_does_not_swallow_the_next_entry(self):
+        self.assertEqual(
+            conductor.porcelain_entries("R  new.txt\0old.txt\0 M other.txt\0"),
+            [("R ", "new.txt"), ("R ", "old.txt"), (" M", "other.txt")])
+
+    def test_a_path_with_a_space_survives(self):
+        self.assertEqual(conductor.porcelain_entries("?? a file.txt\0"), [("??", "a file.txt")])
+
+    def test_nothing_changed_is_no_entries(self):
+        self.assertEqual(conductor.porcelain_entries(""), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

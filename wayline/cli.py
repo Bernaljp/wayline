@@ -45,7 +45,7 @@ VERBS = [
     Verb("grill", "grill", "phase P2: ask the frontier of open questions in tiers (also a skill)", "phases"),
     Verb("specify", "specify", "phase P3: write SPEC.md with claims, experiments, and seams", "phases"),
     Verb("plan", "plan", "phase P4: cut the ticket graph and assign roles and skills (also a skill)", "phases"),
-    Verb("run", "run [--resume] [--detach] [--simulate-limit s] [--simulate-failure id]", "the conductor; --detach launches it as the transient unit wayline-conductor", "conductor"),
+    Verb("run", "run [--project <path>] [--resume] [--detach] [--simulate-limit s] [--simulate-failure id]", "the conductor: waves until the frontier is empty", "conductor", lazy("wayline.conductor", "run_command")),
     Verb("pause", "pause", "journal a control event the conductor applies at its next wave", "controls"),
     Verb("resume", "resume", "journal a control event the conductor applies at its next wave", "controls"),
     Verb("stop", "stop [--drain]", "journal a control event the conductor applies at its next wave", "controls"),

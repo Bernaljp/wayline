@@ -23,9 +23,11 @@ a recording stand-in, so the real backend is exercised without the network.
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,7 +42,8 @@ from pathlib import Path
 from typing import Optional, Union
 
 from wayline import HARNESS_ROOT
-from wayline.jsonschema import SchemaError, check_schema, validate
+from wayline.frontmatter import FrontmatterError, load_document
+from wayline.jsonschema import SchemaError, check_schema, load_schema, validate
 from wayline.ledger import now_ts
 
 __all__ = [
@@ -48,6 +51,7 @@ __all__ = [
     "launch", "resume", "pid_alive", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS",
+    "Role", "RoleError", "Prompt", "read_role", "assemble_prompt", "read_locator", "CONSULT_MAX",
 ]
 
 _log = logging.getLogger("wayline.worker")
@@ -305,6 +309,383 @@ class Started:
     pid: int
     run_dir: Path
     stream_path: Path
+
+
+# --- roles and the prompt (Implementation Decisions 1 and 3) -------------------------------------
+
+
+ROLES = "roles"                 # <harness>/roles/<role>/agent.md and wayline.json
+ROLE_PROMPTS = "prompts/roles"  # <harness>/prompts/roles/<role>.md: the protocol the prompt carries
+LOCAL_ROLES = ".claude/agents"  # <project>/.claude/agents/<role>.md: the project's own wording
+
+# `--agents` takes neither key, each for its own reason (decision 3, from map ticket 01).
+FORBIDDEN_AGENT_KEYS = {
+    "tools": "an agent `tools` allowlist removes the StructuredOutput tool; tool restriction is wayline.json's allowed_tools and disallowed_tools",
+    "skills": "`skills` in `--agents` does not inject when the agent runs as the main session; a skill reaches the worker as a /wayline-<skill> line in the prompt",
+}
+
+# The fields `roles/<role>/wayline.json` may carry; anything else is a typo, not a setting.
+ROLE_SETTINGS = ("role", "summary", "kinds", "may_judge", "output_schema", "allowed_tools", "disallowed_tools")
+
+# `policy.consultant.max_questions_per_ticket`, restated in the contract lines.
+CONSULT_MAX = 5
+
+_ROLE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*\Z")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*\Z")
+
+
+class RoleError(ValueError):
+    """A role the harness cannot launch: a missing file, a forbidden agent key, a broken tool list."""
+
+
+@dataclass
+class Role:
+    """One role as its two files define it (decision 1), plus the protocol its prompt carries."""
+
+    name: str
+    description: str
+    system_prompt: str
+    allowed_tools: list = field(default_factory=list)
+    disallowed_tools: list = field(default_factory=list)
+    output_schema: Optional[str] = None
+    may_judge: bool = False
+    summary: str = ""
+    kinds: list = field(default_factory=list)
+    protocol: str = ""
+    source: Optional[Path] = None
+
+    def agent_json(self, model, effort, max_turns=None):
+        """The `--agents` object of decision 3, in its order, with no `tools` and no `skills`."""
+        agent = {
+            "description": self.description,
+            "prompt": self.system_prompt,
+            "model": model,
+            "effort": effort,
+            "maxTurns": None if max_turns is None else int(max_turns),
+            "permissionMode": "dontAsk",
+        }
+        if agent["maxTurns"] is None:
+            del agent["maxTurns"]
+        return {self.name: agent}
+
+
+def read_role(name, harness_root=HARNESS_ROOT, project=None):
+    """The role `name` as its files define it; a project's `.claude/agents/<role>.md` wins for the words.
+
+    The tool lists stay the harness's on purpose: a project may say what a role is for in its own
+    terms, but what a worker is permitted to run is the harness's decision (decision 4).
+    """
+    if not isinstance(name, str) or not _ROLE_NAME_RE.match(name):
+        raise RoleError("a role name is lowercase letters, digits, and dashes, got %r" % (name,))
+    root = Path(harness_root).resolve()
+    settings = _role_settings(root / ROLES / name / "wayline.json", name)
+    source = root / ROLES / name / "agent.md"
+    if project is not None:
+        local = Path(project) / LOCAL_ROLES / (name + ".md")
+        if local.is_file():
+            source = local
+    description, system_prompt = _role_markdown(source, name)
+    protocol_path = root / ROLE_PROMPTS / (name + ".md")
+    protocol = protocol_path.read_text(encoding="utf-8") if protocol_path.is_file() else ""
+    return Role(
+        name=name, description=description, system_prompt=system_prompt,
+        allowed_tools=settings["allowed_tools"], disallowed_tools=settings["disallowed_tools"],
+        output_schema=settings["output_schema"], may_judge=settings["may_judge"],
+        summary=settings["summary"], kinds=settings["kinds"], protocol=protocol, source=source,
+    )
+
+
+def _role_markdown(path, name):
+    """`agent.md`: the description the `--agents` object needs and the body, which is the system prompt."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as failure:
+        raise RoleError("the role %r has no readable %s: %s" % (name, path, failure)) from None
+    try:
+        frontmatter, body = load_document(text)
+    except FrontmatterError as failure:
+        raise RoleError("%s: %s" % (path, failure)) from None
+    for key, why in FORBIDDEN_AGENT_KEYS.items():
+        if key in frontmatter:
+            raise RoleError("%s must not carry %r: %s" % (path, key, why))
+    if frontmatter.get("name", name) != name:
+        raise RoleError("%s names the role %r but the harness reads it as %r" % (path, frontmatter.get("name"), name))
+    description = frontmatter.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise RoleError("%s needs a description in its frontmatter: --agents carries one per agent" % path)
+    if not body.strip():
+        raise RoleError("%s has no body, and the body is the role's system prompt" % path)
+    return description.strip(), body.strip()
+
+
+def _role_settings(path, name):
+    """`wayline.json`: the tool lists and the registry fields, with every value checked."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as failure:
+        raise RoleError("the role %r has no readable %s: %s" % (name, path, failure)) from None
+    except ValueError as failure:
+        raise RoleError("%s is not readable JSON: %s" % (path, failure)) from None
+    if not isinstance(value, dict):
+        raise RoleError("%s holds an object of role settings, got %s" % (path, type(value).__name__))
+    unknown = sorted(set(value) - set(ROLE_SETTINGS))
+    if unknown:
+        raise RoleError("%s has no field(s) %s (the fields are %s)" % (path, ", ".join(unknown), ", ".join(ROLE_SETTINGS)))
+    if value.get("role", name) != name:
+        raise RoleError("%s names the role %r but lives under %r" % (path, value.get("role"), name))
+    for key in ("allowed_tools", "disallowed_tools", "kinds"):
+        items = value.setdefault(key, [])
+        if not isinstance(items, list) or not all(isinstance(item, str) and item.strip() for item in items):
+            raise RoleError("%s: %s is a list of non-empty strings" % (path, key))
+    if not isinstance(value.setdefault("may_judge", False), bool):
+        raise RoleError("%s: may_judge is true or false" % path)
+    if value.setdefault("output_schema", None) is not None and not isinstance(value["output_schema"], str):
+        raise RoleError("%s: output_schema names a shipped schema, or is null" % path)
+    if not isinstance(value.setdefault("summary", ""), str):
+        raise RoleError("%s: summary is a string" % path)
+    return value
+
+
+# --- context pack locators -----------------------------------------------------------------------
+
+
+def read_locator(locator, roots):
+    """The text one context-pack entry names, and the problem that stopped it being read.
+
+    An entry is a path, optionally with `:<first>-<last>` line numbers (1-based, inclusive) or
+    `#<anchor>` naming a markdown heading, whose section runs to the next heading at that level
+    or above. The path is resolved against each root in order and must stay inside the root it
+    resolved in, so a pack cannot reach out of the project through `..` or a symlink.
+    """
+    path_part, kind, selector = _split_locator(locator)
+    if not path_part:
+        return "", "names no file"
+    found = None
+    for root in roots:
+        root = Path(root).resolve()
+        candidate = (root / path_part).resolve()
+        if not candidate.is_relative_to(root):
+            return "", "resolves outside %s" % root
+        if candidate.is_file():
+            found = candidate
+            break
+    if found is None:
+        return "", "no file at %s" % path_part
+    try:
+        text = found.read_text(encoding="utf-8", errors="replace")
+    except OSError as failure:
+        return "", "cannot be read: %s" % failure
+    if kind == "lines":
+        return _lines(text, selector, path_part)
+    if kind == "anchor":
+        return _section(text, selector)
+    return text, None
+
+
+def _split_locator(locator):
+    """A locator as `(path, kind, selector)`, where kind is `file`, `lines`, or `anchor`."""
+    text = str(locator).strip()
+    if "#" in text:
+        path_part, anchor = text.split("#", 1)
+        return path_part.strip(), "anchor", anchor.strip()
+    match = re.search(r":(\d+)(?:-(\d+))?\Z", text)
+    if match:
+        first = int(match.group(1))
+        return text[: match.start()].strip(), "lines", (first, int(match.group(2)) if match.group(2) else first)
+    return text, "file", None
+
+
+def _lines(text, selector, path_part):
+    first, last = selector
+    lines = text.split("\n")
+    if text.endswith("\n"):
+        lines.pop()
+    if first < 1 or first > len(lines):
+        return "", "%s has %d line(s), so line %d is outside it" % (path_part, len(lines), first)
+    return "\n".join(lines[first - 1: max(first, last)]) + "\n", None
+
+
+def _section(text, anchor):
+    """The markdown section under the heading whose slug is `anchor`, to the next heading at or above it."""
+    wanted = _slug(anchor)
+    lines = text.split("\n")
+    start, level = None, 0
+    for index, line in enumerate(lines):
+        match = _HEADING_RE.match(line)
+        if match is None:
+            continue
+        if start is None:
+            if _slug(match.group(2)) == wanted:
+                start, level = index, len(match.group(1))
+        elif len(match.group(1)) <= level:
+            return "\n".join(lines[start:index]).rstrip("\n") + "\n", None
+    if start is None:
+        return "", "no heading matches #%s" % anchor
+    return "\n".join(lines[start:]).rstrip("\n") + "\n", None
+
+
+def _slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+# --- prompt assembly -----------------------------------------------------------------------------
+
+
+@dataclass
+class Prompt:
+    """The assembled prompt, its context size, and what assembling it had to leave out."""
+
+    text: str
+    context_chars: int = 0
+    cut: bool = False
+    dropped: list = field(default_factory=list)
+    problems: list = field(default_factory=list)
+
+    @property
+    def sha256(self):
+        """What the journal records, so two launches of the same ticket can be told apart."""
+        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+
+
+def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX):
+    """The worker's prompt, assembled in the order of decision 3.
+
+    One `/wayline-<skill>` line per assigned skill, the ticket restated, the context pack under
+    locator headers cut at the tier's cap with the cut announced, the role protocol, the result
+    schema, and the contract lines. `roots` are the directories a locator resolves against, in
+    order (the worktree and the project); `max_chars` is `policy.context_pack.max_chars` for the
+    tier's model, None for no cap.
+    """
+    pack = _context_section(ticket.get("context_pack") or [], roots, max_chars)
+    parts = [
+        "\n".join("/wayline-%s" % skill for skill in (ticket.get("skills") or [])),
+        _ticket_section(ticket, budget),
+        pack.text,
+        role.protocol,
+        _result_section(ticket, role),
+        _contract_section(ticket, consult_max),
+    ]
+    text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
+    return Prompt(text, pack.context_chars, pack.cut, pack.dropped, pack.problems)
+
+
+def _ticket_section(ticket, budget):
+    lines = ["# Ticket %s: %s" % (ticket["id"], ticket["title"]), "", "- kind: %s" % ticket["kind"]]
+    if ticket.get("demo"):
+        lines.append("- demo: %s" % ticket["demo"])
+    lines.append("- touch set: %s" % ", ".join("`%s`" % item for item in ticket["touches"]))
+    machine = (ticket.get("acceptance") or {}).get("machine") or []
+    if machine:
+        lines.append("- acceptance, which the conductor runs again in the worktree, after the rebase, and on `main`:")
+        lines.extend("    - `%s`" % command for command in machine)
+    else:
+        lines.append("- acceptance: this ticket carries no machine acceptance command.")
+    if budget:
+        lines.append("- budget: %s turns, %s minutes" % (budget.get("max_turns", "?"), budget.get("max_minutes", "?")))
+    return "\n".join(lines)
+
+
+def _context_section(locators, roots, max_chars):
+    """The pack rendered under locator headers, cut at `max_chars` with every cut announced.
+
+    It comes back in a `Prompt`, whose fields are exactly what a pack has to report: the text, the
+    characters it spent, whether it was cut, what was dropped, and what could not be read.
+    """
+    pack = Prompt("")
+    if not locators:
+        return pack
+    cap = None if max_chars is None else max(0, int(max_chars))
+    rendered = ["# Context pack", "", "What the planner packed for this ticket, in the ticket's order."]
+    used = 0
+    for index, locator in enumerate(locators):
+        if cap is not None and used >= cap:
+            pack.dropped.extend(str(item) for item in locators[index:])
+            break
+        text, problem = read_locator(locator, roots)
+        rendered.extend(["", "## %s" % locator, ""])
+        if problem is not None:
+            pack.problems.append("%s %s" % (locator, problem))
+            rendered.append("[wayline: this entry could not be read: it %s.]" % problem)
+            continue
+        note = None
+        if cap is not None and used + len(text) > cap:
+            left_out = len(text) - (cap - used)
+            text = text[: cap - used]
+            note = "[wayline: this entry was cut here at the context cap; %d character(s) are missing.]" % left_out
+            pack.cut = True
+        used += len(text)
+        fence = _fence(text)
+        rendered.extend([fence, text.rstrip("\n"), fence])
+        if note:
+            rendered.extend(["", note])
+    if pack.dropped:
+        pack.cut = True
+        rendered.extend(["", "[wayline: the context pack reached its cap of %d characters; %s left out: %s. Ask the consultant for what you need from them.]"
+                         % (cap, "one entry was" if len(pack.dropped) == 1 else "%d entries were" % len(pack.dropped), ", ".join(pack.dropped))])
+    pack.text = "\n".join(rendered)
+    pack.context_chars = used
+    return pack
+
+
+def _fence(text):
+    """A code fence longer than any run of backticks the text itself carries."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
+def _result_section(ticket, role):
+    name = role.output_schema or "result"
+    schema = load_schema(name)
+    lines = [
+        "# The result",
+        "",
+        "Return it through the structured output, once, before you stop. The launch passes the `%s` schema to this session, and the conductor validates what comes back against it again:" % name,
+        "",
+    ]
+    required = set(schema.get("required") or ())
+    for field_name, definition in (schema.get("properties") or {}).items():
+        line = "- `%s` (%s%s)" % (field_name, _type_phrase(definition), ", required" if field_name in required else "")
+        if definition.get("description"):
+            line += ": " + definition["description"]
+        lines.append(line)
+    lines.extend([
+        "",
+        "`ticket_id` is %s. `status` is `done` only when the acceptance commands pass. A finding "
+        "without a provenance the manifest can resolve is refused by the ledger, so give the path "
+        "and the locator it came from." % ticket["id"],
+    ])
+    return "\n".join(lines)
+
+
+def _type_phrase(definition):
+    """A schema property as one readable phrase, so the prompt and the schema cannot drift."""
+    kind = definition.get("type")
+    if isinstance(kind, list):
+        return " or ".join(_type_phrase(dict(definition, type=one)) for one in kind)
+    if definition.get("enum"):
+        return "%s, one of %s" % (kind or "value", ", ".join(str(value) for value in definition["enum"]))
+    if kind == "array":
+        return "array of " + _type_phrase(definition.get("items") or {})
+    if kind == "object":
+        keys = list(definition.get("properties") or {})
+        if keys:
+            required = set(definition.get("required") or ())
+            return "object with " + ", ".join(key + " (required)" if key in required else key for key in keys)
+        extra = definition.get("additionalProperties")
+        return ("object of " + _type_phrase(extra)) if isinstance(extra, dict) else "object"
+    return kind or "any"
+
+
+def _contract_section(ticket, consult_max):
+    return "\n".join([
+        "# The contract",
+        "",
+        "- Write only under the touch set: %s. A hook blocks every write outside it." % ", ".join("`%s`" % item for item in ticket["touches"]),
+        "- Run `wayline accept` from the worktree root before you stop; the stop is blocked until the file it writes exists.",
+        "- Commit your work on the branch `ticket/%s`. The conductor integrates that branch, so anything uncommitted is lost." % ticket["id"],
+        "- Never integrate, never close the ticket, never edit `research/`: the conductor does all three.",
+        "- Ask the consultant with `wayline consult <slug> \"<question>\"`, at most %s in this ticket." % ("once" if consult_max == 1 else "%d times" % consult_max),
+    ])
 
 
 # --- the session directory ----------------------------------------------------------------------

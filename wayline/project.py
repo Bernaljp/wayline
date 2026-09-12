@@ -30,7 +30,7 @@ from wayline.tickets import GRAPH, by_status, empty_graph, frontier, read_graph,
 __all__ = [
     "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
     "home", "projects_path", "active_path", "read_active", "set_active", "read_projects",
-    "register", "default_harness", "detect_hermes", "read_harness", "find_project", "is_project",
+    "register", "default_harness", "detect_hermes", "read_harness", "find_project", "is_project", "policy_for",
     "init_project", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
 ]
@@ -148,6 +148,31 @@ def _policy(harness_root=None):
         if candidate.is_file():
             return json.loads(candidate.read_text(encoding="utf-8"))
     return json.loads(Path(POLICY_PATH).read_text(encoding="utf-8"))
+
+
+def policy_for(project=None, harness_root=None):
+    """The effective policy: the harness defaults under the project's `harness.json` overrides.
+
+    The project's file is read tolerantly, because `wayline accept` runs inside a worktree from a
+    worker session and must not fail over an override it cannot read: an unreadable or absent
+    `harness.json` leaves the global defaults standing.
+    """
+    value = _policy(harness_root)
+    if project is None:
+        return value
+    try:
+        overrides = json.loads((Path(project) / HARNESS_JSON).read_text(encoding="utf-8")).get("policy")
+    except (OSError, ValueError, AttributeError):
+        overrides = None
+    return _merge(value, overrides if isinstance(overrides, dict) else {})
+
+
+def _merge(base, overrides):
+    """`overrides` wins key by key; two dicts under one key merge, so a project may override one number."""
+    merged = dict(base)
+    for key, value in overrides.items():
+        merged[key] = _merge(merged[key], value) if isinstance(value, dict) and isinstance(merged.get(key), dict) else value
+    return merged
 
 
 def detect_hermes():
