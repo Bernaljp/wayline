@@ -1,0 +1,106 @@
+{
+  "duration_api_ms": 47053,
+  "stop_reason": "end_turn",
+  "session_id": "8ac866e7-f8c8-4677-949a-1e4c35dd2c38",
+  "total_cost_usd": 0.39977799999999997,
+  "usage": {
+    "input_tokens": 162,
+    "cache_creation_input_tokens": 20332,
+    "cache_read_input_tokens": 227246,
+    "output_tokens": 3281,
+    "output_tokens_details": {
+      "thinking_tokens": 1054
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 20332,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 32,
+        "output_tokens": 927,
+        "cache_read_input_tokens": 43733,
+        "cache_creation_input_tokens": 635,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 635
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-opus-5": {
+      "inputTokens": 162,
+      "outputTokens": 3281,
+      "cacheReadInputTokens": 227246,
+      "cacheCreationInputTokens": 20332,
+      "webSearchRequests": 0,
+      "costUSD": 0.39977799999999997,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000,
+      "thinkingTokens": 1054,
+      "canonicalModel": "claude-opus-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_015yxR885XB8wETSqup85zTQ",
+      "tool_input": {
+        "command": "git -C /home/bernaljp/.claude/jobs/06132532/tmp/record/project diff --stat",
+        "description": "Show which tracked files the intake changed"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required",
+  "subagent_stats": {
+    "spawned": 0,
+    "requested": {
+      "background": 0,
+      "foreground": 0,
+      "unset": 0
+    },
+    "started_in_background": 0,
+    "max_depth": 0,
+    "spawned_by_subagents": 0,
+    "completed": 0,
+    "failed": 0,
+    "killed": {
+      "parent": 0,
+      "user": 0,
+      "system": 0
+    },
+    "refused": {
+      "depth_limit": 0,
+      "concurrency_limit": 0,
+      "budget": 0
+    },
+    "by_type": {}
+  },
+  "is_error": false,
+  "num_turns": 8,
+  "subtype": "success",
+  "api_error_status": null,
+  "result": "I wrote the intake to `research/INTAKE.md` and read it back. `harness.json` now has autonomy `checkpoints`, radius `moderate`, human-only `goal` and `data`, and empty budgets. There is no goal, and nothing is committed.\n\n**What it records**\n- **Intent:** your paragraph, word for word.\n- **References:** your three, exactly as you wrote them.\n- **Data:** `data/expression.csv`, with nothing held out.\n- **Code:** none. **Budgets:** not stated.\n- **Goal:** none, because you didn't state a number and there's no script to measure one. You can add one later with `wayline intake --goal <file> --sample <artifact>`.\n\n**Two problems you should see before the run goes further**\n1. **The data is tiny.** `expression.csv` has 2 cells (c1 in state A, c2 in state B) and 3 genes. That's far too little to find gene programs that separate the states with any statistical support. I wrote down that the run will report this as it stands and ask whether a larger table exists before any claim depends on it. If this file is a stub for the real data, point the intake at the real file.\n2. **The references don't seem to be about gene programs.** As far as I can tell, arXiv:1706.03762 is the Transformer paper (\"Attention Is All You Need\"), the DOI is the SciPy 1.0 paper, and the third is AlphaFold. I haven't checked these; the scout will. If they're right, the part of your question about whether the papers' programs show up in your data has nothing to test against. The intake says the run won't make up programs to fill that gap. If you meant other papers, swap them in.\n\n**What I assumed** (each is an `Assumed:` line under Constraints, so you can correct it)\n- Nothing in `data/` is held out, since you named no split.\n- The data stays on this machine, since you didn't say it could leave.\n- States A and B in the table are the \"two cell states\" in your paragraph.\n- There are no code repositories, deadlines, hardware limits, licences, or excluded methods.\n- Autonomy and radius keep their defaults. Under `checkpoints`, you approve the spec and the ticket graph and answer decision tickets. Under `moderate`, the run may also add follow-up tickets that test where a claim breaks.\n- The only decisions reserved for you are the two that always are: changes to the goal and changes to the data.\n\nYour \"honest answer over a positive one\" is also recorded as a constraint, quoted directly.",
+  "ttft_ms": 2483,
+  "type": "result",
+  "duration_ms": 47719,
+  "uuid": "1d3024f3-4cc6-40a3-b234-4838632f422a",
+  "ttft_stream_ms": 1322,
+  "time_to_request_ms": 45,
+  "first_content_frame_ms": 1323,
+  "queued_turn_count": 0,
+  "result_index": 0
+}

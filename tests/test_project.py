@@ -81,7 +81,7 @@ class InitLayoutTest(ProjectTestCase):
         research = self.project / "research"
         for name in RESEARCH_DIRS:
             self.assertTrue((research / name).is_dir(), name)
-        self.assertIn("## The intent", (research / "INTAKE.md").read_text(encoding="utf-8"))
+        self.assertIn("## Intent", (research / "INTAKE.md").read_text(encoding="utf-8"))
         self.assertEqual((research / "journal.jsonl").read_bytes(), b"")
         self.assertEqual((research / "findings.jsonl").read_bytes(), b"")
         self.assertEqual(json.loads((research / "manifest.json").read_text(encoding="utf-8")), {"entries": []})

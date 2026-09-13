@@ -214,16 +214,23 @@ def run_machine_acceptance(commands, cwd, timeout_s):
     """
     results = []
     for command in commands:
-        results.append(_run_one(command, cwd, timeout_s))
+        results.append(run_shell(command, cwd, timeout_s))
     return results
 
 
-def _run_one(command, cwd, timeout_s):
+def run_shell(command, cwd, timeout_s, env=None, label="wayline accept"):
+    """Run one shell command in `cwd` under `timeout_s`; returns `{cmd, exit_code, seconds, tail}`.
+
+    stdout and stderr arrive interleaved in `tail`, as a person would have seen them. `env`
+    replaces the environment when given; intake passes the sample artifact to a goal's
+    `eval_command` this way.
+    """
     started = time.monotonic()
     process = subprocess.Popen(
         command,
         shell=True,
         cwd=str(cwd),
+        env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -237,7 +244,7 @@ def _run_one(command, cwd, timeout_s):
     except subprocess.TimeoutExpired:
         _kill_group(process)
         output, note = _drain(process)
-        output = output + "\nwayline accept: killed after %s seconds.%s\n" % (timeout_s, note)
+        output = output + "\n%s: killed after %s seconds.%s\n" % (label, timeout_s, note)
         exit_code = TIMEOUT_EXIT_CODE
     return {
         "cmd": command,
