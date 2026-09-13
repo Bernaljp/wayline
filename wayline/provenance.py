@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, tickets, worker
+from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, pacing, tickets, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, now_ts
@@ -79,8 +79,12 @@ class ProvenanceError(ValueError):
     """A finding whose provenance does not resolve, or an artifact that cannot be manifested."""
 
 
-class UsageLimited(ProvenanceError):
-    """A session the usage limit refused: a closed window rather than a bad answer, so never resumed."""
+class UsageLimited(ProvenanceError, gates.UsageLimited):
+    """A session the usage limit refused: a closed window rather than a bad answer, so never resumed.
+
+    It is the gate's `UsageLimited` too, so whatever catches a refused verdict catches a refused
+    writer or classifier as well, with the `limit` that refused it.
+    """
 
 
 def _ledger(project_or_ledger):
@@ -1261,18 +1265,26 @@ def _global_changes(context):
 
 
 def _resources(context):
-    paused = [event.get("payload") or {} for event in context.events if event.get("event") == ledger.PAUSED]
+    stopped = [event.get("payload") or {} for event in context.events if event.get("event") == ledger.PAUSED]
+    paused = [payload for payload in stopped if payload.get("model") != pacing.FABLE]
+    held = [payload for payload in stopped if payload.get("model") == pacing.FABLE]
     lines = ["Usage windows: the run paused %d time(s) on a closed window." % len(paused)]
     lines.extend("- `%s` window at utilization %s, reset at %s" % (
         payload.get("window"), _number(payload.get("utilization")), payload.get("resets_at")) for payload in paused)
+    if held:
+        # The hold of decision 15 paused nothing: every launch not on Fable went on.
+        lines.append("Fable's weekly window held the launches on Fable %d time(s), while everything else kept launching." % len(held))
+        lines.extend("- held at utilization %s until %s" % (_number(payload.get("utilization")), payload.get("resets_at"))
+                     for payload in held)
     peaks = {}
     for event in context.events:
         payload = event.get("payload") or {}
         readings = []
         if event.get("event") == ledger.PACING:
-            readings = [(window, payload.get(window)) for window in ("five_hour", "seven_day")]
-        elif event.get("event") == ledger.PAUSED and payload.get("window") in ("five_hour", "seven_day"):
-            readings = [(payload["window"], payload.get("utilization"))]
+            readings = [(window, payload.get(window)) for window in pacing.READINGS]
+        elif event.get("event") == ledger.PAUSED:
+            window = pacing.FABLE if payload.get("model") == pacing.FABLE else payload.get("window")
+            readings = [(window, payload.get("utilization"))] if window in pacing.READINGS else []
         for window, value in readings:
             if _is_number(value):
                 peaks[window] = max(peaks.get(window, value), value)
@@ -1554,35 +1566,37 @@ def _request(project, role, policy, harness_root, prompt, schema, budget, run_di
 def _launch_structured(request, problem_of, what):
     """Launch, check the answer, resume once with the reason when it is unusable, and raise when it still is."""
     envelope = worker.launch(request)
-    _raise_if_refused(envelope, what)
+    _raise_if_refused(envelope, what, request.model)
     problem = problem_of(envelope)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_STRUCTURED % problem)
-        _raise_if_refused(envelope, what)
+        _raise_if_refused(envelope, what, request.model)
         problem = problem_of(envelope)
     if problem is not None:
         raise ProvenanceError("the %s's answer could not be used: %s" % (what, problem))
     return envelope
 
 
-def _raise_if_refused(envelope, what):
+def _raise_if_refused(envelope, what, model=None):
     """Raise `UsageLimited` for a session that returned nothing because a usage window refused it.
 
     docs/verification/m5.md: the live writer on fable came back after one turn with
     `status: rejected` on the `seven_day_overage_included` window and no structured output. A
     resume would be refused the same way, and the message the answer "could not be used" would
-    send the owner looking for a bug in a prompt.
+    send the owner looking for a bug in a prompt. Every form of a refusal counts (decision 15): the
+    rejected event, a 429, the "hit your" or "reached your" limit text, a subagent's failed task.
     """
     if envelope.valid:
         return
-    refused = [event for event in envelope.rate_limit_events if event.status == "rejected"]
-    if not refused:
+    limit = pacing.hit_limit(envelope, worker.stderr_of(envelope), datetime.now(timezone.utc).timestamp(), model=model)
+    if limit is None:
         return
-    last = refused[-1]
-    until = (datetime.fromtimestamp(last.resets_at, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
-             if last.resets_at else "an unknown time")
-    raise UsageLimited("the %s was refused by the usage limit on the %s window until %s"
-                       % (what, last.rate_limit_type or "unknown", until))
+    refused = [event for event in envelope.rate_limit_events if event.status == "rejected" and event.rate_limit_type]
+    window = (refused[-1].rate_limit_type if refused
+              else pacing.FABLE_LIMIT_TYPE if limit.model == pacing.FABLE else limit.window)
+    until = (datetime.fromtimestamp(limit.resets_at, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+             if limit.resets_at else "an unknown time")
+    raise UsageLimited("the %s was refused by the usage limit on the %s window until %s" % (what, window, until), limit)
 
 
 def _schema_problem(envelope, schema):

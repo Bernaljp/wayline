@@ -114,6 +114,7 @@ K_FROM = "from"
 K_TO = "to"
 K_FIVE_HOUR = "five_hour"
 K_SEVEN_DAY = "seven_day"
+K_FABLE = "fable"
 K_ACTION = "action"
 K_RESETS_AT = "resets_at"
 K_WINDOW = "window"
@@ -217,9 +218,9 @@ EVENTS = {
     RUN_STARTED: (K_RESUME, K_HARNESS_TAG, K_AUTONOMY, K_RADIUS, K_PID),
     RUN_ENDED: (K_REASON,),
     PHASE: (K_FROM, K_TO),
-    PACING: (K_FIVE_HOUR, K_SEVEN_DAY, K_ACTION),
-    PAUSED: (K_RESETS_AT, K_WINDOW, K_UTILIZATION),
-    UNPAUSED: (),
+    PACING: (K_FIVE_HOUR, K_SEVEN_DAY, K_FABLE, K_ACTION),
+    PAUSED: (K_RESETS_AT, K_WINDOW, K_UTILIZATION, K_MODEL),
+    UNPAUSED: (K_MODEL,),
     TICKET_CREATED: (K_TICKET, K_KIND, K_PROPOSED_BY, K_ORIGIN, K_BLOCKED_BY),
     ASSIGNED: (K_TICKET, K_ROLE, K_SKILLS),
     TICKET_LAUNCHED: (K_TICKET, K_ATTEMPT, K_ROLE, K_MODEL, K_EFFORT, K_SKILLS, K_WORKTREE, K_PID, K_CONTEXT_CHARS, K_PROMPT_SHA256),
@@ -272,6 +273,8 @@ PAYLOAD_ENUMS = {
     (RUN_ENDED, K_REASON): ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched"),
     (PACING, K_ACTION): ("normal", "cheap_only", "stop"),
     (PAUSED, K_WINDOW): ("five_hour", "seven_day", "unknown"),
+    (PAUSED, K_MODEL): ("fable",),
+    (UNPAUSED, K_MODEL): ("fable",),
     (TICKET_RESUMED, K_REASON): ("invalid_result", "acceptance_failed", "worker_died", "timeout", "readopted"),
     (ACCEPTANCE, K_WHERE): ("worktree", "rebased", "main"),
     (INTEGRATED, K_RESOLVED_BY): ("none", "integrator"),

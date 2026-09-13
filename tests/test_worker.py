@@ -92,7 +92,7 @@ class InterfaceTest(unittest.TestCase):
         self.assertEqual([field.name for field in dataclasses.fields(LaunchRequest)], request_fields)
         names = [field.name for field in dataclasses.fields(Envelope)]
         self.assertEqual(names[:len(envelope_fields)], envelope_fields)
-        self.assertEqual(names[len(envelope_fields):], ["errors", "result_text"])
+        self.assertEqual(names[len(envelope_fields):], ["errors", "result_text", "failed_tasks", "answered"])
 
     def test_run_dir_is_the_wayline_run_variable(self):
         request = make_request(Path("/tmp/x/research/sessions/3/1"))
@@ -391,6 +391,15 @@ class StreamParsingTest(unittest.TestCase):
         self.assertEqual(envelope.rate_limit_events[-1].status, "rejected")
         self.assertEqual(envelope.last_windows(), (1.0, 0.61))
         self.assertIn("session limit", " ".join(envelope.errors))
+        self.assertNotIn("fable", " ".join(worker.describe_windows(envelope)), "only a Fable request's own event carries Fable's week")
+
+    def test_the_recorded_fable_refusal_carries_fable_s_weekly_window(self):
+        envelope = worker.read_envelope(self.stream("note-fable-refused.jsonl"), None, exit_code=1)
+        (event,) = envelope.rate_limit_events
+        self.assertEqual((event.status, event.rate_limit_type), ("rejected", "seven_day_overage_included"))
+        self.assertEqual(event.seven_day_overage_included, worker.Window(1.0, 1789524000))
+        self.assertEqual(envelope.last_windows(), (0.16, 0.64))
+        self.assertEqual(worker.describe_windows(envelope)[-1], "  fable: 100% used, resets 2026-09-16T02:00:00Z")
 
     def test_a_killed_stream_has_a_session_and_no_result(self):
         envelope = worker.read_envelope(self.stream("synth-killed.jsonl"), SCHEMA, exit_code=143)
@@ -746,6 +755,25 @@ class FakeBackendTest(unittest.TestCase):
             self.assertEqual(rejected.api_error_status, 429)
             self.assertEqual(rejected.rate_limit_events[0].status, "rejected")
             self.assertEqual(rejected.exit_code, 1)
+
+    def test_the_fake_writes_a_turn_fable_s_window_and_a_failed_task_where_the_parser_finds_them(self):
+        refusal = "Agent terminated early due to an API error: rate_limit, HTTP 429, model sent to the API: claude-fable-5-1"
+        with worker.use_fake() as fake:
+            fake.script(Envelope(
+                structured_output={"skill_token": "A", "report": "r"}, answered=True,
+                failed_tasks=[{"task_id": "t1", "error": refusal}],
+                rate_limit_events=[worker.RateLimitEvent("rejected", 1789524000, "seven_day_overage_included", None, None,
+                                                         worker.Window(1.0, 1789524000))],
+            ))
+            fake.script(Envelope(structured_output={"skill_token": "A", "report": "r"}))
+            worked = worker.launch(self.request())
+            again = worker.read_envelope(self.run / "stream.jsonl", self.request().schema_path, exit_code=0)
+            quiet = worker.launch(self.request())
+        for envelope in (worked, again):
+            self.assertTrue(envelope.answered)
+            self.assertEqual(envelope.failed_tasks, [{"task_id": "t1", "error": refusal}])
+            self.assertEqual(envelope.rate_limit_events[0].seven_day_overage_included, worker.Window(1.0, 1789524000))
+        self.assertEqual((quiet.answered, quiet.failed_tasks), (False, []))
 
     def test_a_dead_worker_carries_the_scripted_errors_like_a_timeout(self):
         with worker.use_fake() as fake:

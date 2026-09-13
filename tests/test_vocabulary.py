@@ -16,7 +16,8 @@ class VocabularyTest(unittest.TestCase):
     def test_the_spec_table_was_read(self):
         self.assertGreater(len(self.events), 40)
         self.assertEqual(self.events["run_started"], ("resume", "harness_tag", "autonomy", "radius", "pid"))
-        self.assertEqual(self.events["unpaused"], ())
+        self.assertEqual(self.events["unpaused"], ("model",))
+        self.assertEqual(self.enums[("paused", "model")], ("fable",))
         self.assertEqual(self.events["tagged"], ("tag",))
         self.assertEqual(self.events["pinned"], ("tag", "previous"))
         self.assertEqual(self.enums[("run_ended", "reason")], ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched"))

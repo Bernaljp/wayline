@@ -22,6 +22,7 @@ from wayline.ledger import (
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
     UNPAUSED, VERDICT, WAVE,
 )
+from wayline.pacing import FABLE  # the model a `paused` and an `unpaused` name for the hold on Fable's weekly window
 
 __all__ = [
     "STATUS_AFTER", "GATES", "READOPTED", "WORKER_DIED", "SESSION", "RESULT", "JOBS", "ENDS_ATTEMPT",
@@ -192,7 +193,7 @@ class TicketView:
 def _pacing(payload=None):
     payload = payload or {}
     return {"five_hour": payload.get("five_hour"), "seven_day": payload.get("seven_day"),
-            "action": payload.get("action") or "normal"}
+            "fable": payload.get("fable"), "action": payload.get("action") or "normal"}
 
 
 @dataclass
@@ -201,7 +202,10 @@ class View:
 
     `pause` is the window pause (`paused` until `unpaused`) and `paused_by_owner` the owner's
     (`control pause` until `control resume`); both outlive a restart, because neither the usage
-    window nor the owner's instruction ends with a conductor. `stall` is the stall counter of
+    window nor the owner's instruction ends with a conductor. `hold` is the hold on Fable's weekly
+    window (`paused` with `model: fable` until `unpaused` with it, decision 15), which outlives a
+    restart the same way; it holds only the launches on Fable, so a whole-run pause can start and
+    end inside it. `stall` is the stall counter of
     decision 5, rebuilt from the `wave` event the conductor journals at the end of every settling
     wave: progress resets it, and so does a `stall`, after which the count starts again. Nothing
     else does, so a run started with `--resume` and one started without rebuild the same view.
@@ -215,6 +219,7 @@ class View:
 
     tickets: dict = field(default_factory=dict)
     pause: Optional[dict] = None
+    hold: Optional[dict] = None
     pacing: dict = field(default_factory=_pacing)
     paused_by_owner: bool = False
     autonomy: Optional[str] = None
@@ -249,9 +254,16 @@ class View:
                 self.run["ended"] = payload.get("reason")
             self.stop = self.switched = None
         elif name == PAUSED:
-            self.pause = {key: payload.get(key) for key in ("resets_at", "window", "utilization")}
+            stands = {key: payload.get(key) for key in ("resets_at", "window", "utilization")}
+            if payload.get("model") == FABLE:
+                self.hold = stands
+            else:
+                self.pause = stands
         elif name == UNPAUSED:
-            self.pause = None
+            if payload.get("model") == FABLE:
+                self.hold = None
+            else:
+                self.pause = None
         elif name == PACING:
             self.pacing = _pacing(payload)
         elif name == CONTROL:

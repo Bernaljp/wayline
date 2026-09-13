@@ -714,6 +714,7 @@ def window_status(events, harness=None):
         "action": view.pacing["action"],
         "five_hour": view.pacing["five_hour"],
         "seven_day": view.pacing["seven_day"],
+        "fable": view.pacing["fable"],
         "paused": view.pause is not None,
         "resets_at": pause.get("resets_at"),
         "window": pause.get("window"),
@@ -827,11 +828,11 @@ def _render_decisions(decisions):
 
 
 def _render_window(window):
-    """The pacing action, the pause with its reset time when there is one, and both utilizations."""
+    """The pacing action, the pause with its reset time when there is one, and the utilizations, Fable's weekly window last."""
     parts = ["window   %s" % window["action"]]
     if window["paused"]:
         parts.append("paused on %s until %s" % (window["window"] or "unknown", window["resets_at"] or "unknown"))
-    for key in ("five_hour", "seven_day"):
+    for key in ("five_hour", "seven_day", "fable"):
         parts.append("%s %s" % (key, "unknown" if window[key] is None else _number(window[key])))
     return "   ".join(parts)
 
