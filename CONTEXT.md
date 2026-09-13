@@ -80,6 +80,18 @@ _Avoid_: router, dispatcher
 The recurrent job that relaunches work after usage windows, answers, and jobs.
 _Avoid_: cron job, watchdog, daemon
 
+**Fable's weekly window**:
+The weekly allowance of Fable usage, counted apart from the all-models week.
+_Avoid_: Fable limit, Fable quota
+
+**Fallback**:
+Fable work launched on Opus while Fable's weekly window is spent; never the CLI's switch to another model on overload.
+_Avoid_: downgrade, substitution
+
+**Fallback consent**:
+The owner's standing answer on fallback for a project: `auto`, `ask`, or `wait`.
+_Avoid_: permission, fallback policy
+
 **Evolve**:
 The loop that turns owner feedback into tested, versioned harness changes.
 _Avoid_: self-improvement, learning
