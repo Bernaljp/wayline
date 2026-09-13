@@ -517,6 +517,56 @@ def refresh_symlinks(project, harness_root=None):
     return changes, notes
 
 
+def repin(project, harness_tag, harness_root=None):
+    """Point a project at another harness tag: the pin, the CLAUDE.md block, the links, and a commit.
+
+    What `upgrade` does to the project once the harness checkout is at the tag. The pin is set in
+    the owner's own `harness.json` without reflowing the rest of it, and the files this changed are
+    committed on the project's branch by path, so the next `run` is not refused for changes outside
+    `research/` that the harness itself made. Returns `(changes, notes)`.
+    """
+    project = Path(project).resolve()
+    harness_root = Path(harness_root or HARNESS_ROOT).resolve()
+    path = project / HARNESS_JSON
+    value = read_harness(project)
+    changes, notes = [], []
+    if value["harness_tag"] != harness_tag:
+        value["harness_tag"] = harness_tag
+        check(value, load_schema("harness"), name=HARNESS_JSON)
+        atomic_write(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+        changes.append(HARNESS_JSON)
+    changed, note = _write_claude_block(project, harness_root, harness_tag)
+    if changed:
+        changes.append(CLAUDE_MD)
+    if note:
+        notes.append(note)
+    linked, link_notes = refresh_symlinks(project, harness_root)
+    changes.extend(linked)
+    notes.extend(link_notes)
+    register(project, harness_tag)
+    if _is_repository(project):
+        # Only the paths this call wrote: `.claude/skills/` also holds the project's own skills, whose
+        # unfinished edits are the owner's to commit. A created directory is no path to commit, and a
+        # removed link that was never tracked is none either.
+        paths = []
+        for change in changes:
+            relative = change[len("removed "):] if change.startswith("removed ") else change
+            if relative.endswith("/"):
+                continue
+            if os.path.lexists(project / relative) or _git(project, "ls-files", "--", relative).stdout.strip():
+                paths.append(relative)
+        if paths:
+            _git(project, "add", "-A", "--", *paths)
+            staged = [line for line in _git(project, "diff", "--cached", "--name-only", "--", *paths).stdout.splitlines() if line]
+            if staged:
+                identity = [] if _git(project, "config", "user.email", check_exit=False).stdout.strip() else \
+                    ["-c", "user.name=wayline", "-c", "user.email=wayline@localhost"]
+                _git(project, *identity, "commit", "-q", "-m", "wayline: pin %s" % harness_tag, "--", *staged)
+    else:
+        notes.append("%s is not a git repository, so nothing was committed" % project)
+    return changes, notes
+
+
 def _under(path, root):
     try:
         return Path(path).resolve().is_relative_to(Path(root).resolve())

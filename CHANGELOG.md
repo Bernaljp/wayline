@@ -4,6 +4,21 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+Tags, pins, upgrade, rollback, and promotion (ticket 46, M6 Evolve).
+
+- `wayline run` now refuses to start when the harness checkout is not at the project's pin, `harness.json.harness_tag`, and prints the `wayline upgrade --to <tag> --project <path>` command that fixes it. When the checkout sits on another tag, it also prints the command that moves the project to that tag instead. The check lists every tag on the checkout's commit (`git tag --points-at HEAD`) rather than the one `git describe --tags --exact-match` would pick, so a commit carrying two tags matches either pin. `WAYLINE_UNPINNED=1` skips the check. The suite sets it in `tests/__init__.py`, beside `WAYLINE_UNITS=none`, because it runs between tags and a shallow clone has none; a development checkout running untagged work needs it too.
+- `wayline upgrade [--to <tag>]` (`evolve.upgrade`) moves a project to a tag, the latest by default. It refuses while a conductor runs on the project or while the harness checkout has tracked changes. It checks the harness out at the tag, detached, then repins the project through `project.repin`: the pin, the CLAUDE.md block that names it, and the skill and workflow symlinks through ticket 27's refresher. It commits exactly the files that changed, so the next `run` is not refused for changes the harness made outside `research/`. It prints the `CHANGELOG.md` entries between the two tags, read from the newer tag's own changelog so a rollback still lists what it leaves behind, journals `pinned` with `previous`, and names every other registered project still pinned elsewhere. A rollback is `upgrade --to` an older tag. `upgrade --to` the current pin only puts the checkout back and journals nothing.
+- `wayline promote skill|role|policy <name>` (`evolve.promote`) works one step per call:
+  - The first call opens `promote/<name>` from the harness `main`, as a worktree under `~/.wayline/worktrees/`, so the owner's checkout never moves. It copies in a local skill, a local role prompt (only for a role whose sidecar the harness already has, since the tool lists are the harness's to write), or one policy key merged over the harness default. It also copies the artifact's fixtures, with their subject paths, pinned subject copies, and hashes moved to the harness locations, and without their per-machine `runs/`. It adds a paragraph under `## Unreleased`, commits, and runs `python -m unittest` and `wayline fixture run --suite` in that worktree.
+  - A call before the owner merges the branch changes nothing.
+  - A call after the merge tags the harness `main`: the next minor tag, or `--tag`, which must be past the latest. The release renames `## Unreleased` to the tag's entry, sets `__version__`, commits `Release vX.Y.Z` where `main` is checked out (or in a worktree of its own), makes an annotated tag, journals `tagged`, and removes the branch and its worktree.
+  - A policy key is replaced in place in `policy.json`, leaving every other line as it was spelled, and a value the policy schema refuses opens no branch.
+- A review pass fixed three defects before the ticket landed.
+  - The pin commit staged all of `.claude/skills/` and `harness.json`, so an owner's half-written local skill or unfinished setting would have been committed under `wayline: pin`. It now stages only the links it rewrote, and `upgrade` refuses while `harness.json` or `CLAUDE.md` has uncommitted changes.
+  - `upgrade` checked for a conductor only on the project it moved, while every project runs from the one harness checkout; it now refuses while a conductor runs on any registered project.
+  - `promote` counted a branch as merged only when its tip was in `main`'s history, so a squash or rebase merge on GitHub would have waited forever. It now also counts `main` holding every file the promotion wrote as the branch has them, and its waiting message says to pull the merge first.
+- `evolve.promotion_candidates` is the recommendation the evolver's retrospective (ticket 45) prints: a local skill with at least three first-time passes and no failure is recommended, and nothing is promoted until the owner runs the command.
+
 Hold only Fable launches while Fable's weekly window is spent (ticket 54, M1 Frontier and windows).
 
 - Fable's weekly window is read apart from the all-models week: from the Fable line of `/usage` (`Current week (Fable): N% used · resets <time>`) at `run` start and again before any wave that would launch Fable work (the wave then picks under what the reading says), and from a Fable session's own `rate_limit_event` (`unifiedWindows.seven_day_overage_included`). The `pacing` event gains `fable`. It never moves the action, and `cheap_at` does not apply to it.
@@ -24,7 +39,6 @@ The grill and the autonomy switch (ticket 30, M4 Front door).
 - The `wayline-grill` skill is written: build the tree from the memo and the intake, look facts up instead of asking them, ask the whole tier with a `Recommended:` line on each question, record every answer and term before the next tier, and on "decide the rest yourself" raise the switch and leave the rest to the decider. Every command it runs passes `--project .`, because a verb without it acts on the machine's active project.
 - The skill's fixture holds one grill recorded live over the toy intent, three turns of one session, with structural checks on `DECISIONS.md`, `CONTEXT.md`, the journal, and the turns. The checks confirm four things: every answer follows a tier that asked it in an earlier turn and is journaled; every tier question was asked with a recommendation; no fact was put to the owner; and after the switch nothing but the owner's own questions was settled. `tests/test_intake.py`'s structural helper reads every trace of a recording of several turns and evaluates `tool_not_used`.
 
-
 The absorb workflow for L2 (ticket 24, M3 Dossiers).
 
 - `wayline absorb --level 2 <slug>` reads one promoted paper in full, in `wayline/absorb.py`. It refuses a paper below level 2 (a read is earned by `dossier.promote`) or one without an inventory.
@@ -43,7 +57,6 @@ The absorb workflow for L2 (ticket 24, M3 Dossiers).
   - The session passed the workflow's `args` as JSON text, and the Workflow tool handed it to the script as an object. `absorb.js` now accepts either.
 - New schemas `dossier_entry`, `dossier_entry_list`, `dossier_sections`, and `absorb_result`, and new roles `absorb`, `synthesizer`, and `critic`. The `reader`'s prompt now allows the one chunk file and image it is pointed at. `fixtures/absorb/` is a small LaTeX paper whose inventory the harness's own chain reads, remade by `make.py`.
 
-
 The integration protocol and the integrator role (ticket 08, M1 Frontier and windows).
 
 - A rebase conflict no longer fails the ticket outright. The conductor reads the conflicting files with their markers, aborts the rebase, and launches the new `integrator` role once in the ticket's worktree, with the markers as its context and, as its touch set, every path both the branch and `main` changed (the conflicting paths, and the paths a later commit of the branch may stop on); then it rebases again, and only a second conflict fails the ticket with `next: split`. `integrated` records `resolved_by: integrator` when the integrator's rebase is what went through.
@@ -52,7 +65,6 @@ The integration protocol and the integrator role (ticket 08, M1 Frontier and win
 - `roles/integrator/` reads and edits (`Read, Edit, Glob, Grep`, no `Write`), runs exactly `git rebase main`, `git rebase --continue` and `git rebase --abort` (a `git rebase *` rule would admit `--exec <any command>`), `git add` and the reading git commands, and `wayline accept`; the touch-set guard confines its edits to its touch set. `GIT_EDITOR=true` is in its environment so `git rebase --continue` opens no editor. It runs on `policy.roles.integrator` (opus, high) with the ticket's budget, in `research/sessions/<ticket>/<attempt>/integrator/`. Nothing about its session is journaled as a `ticket_*` event, because a restart would resume its session id as the worker's; the ticket file's `## Result` section records it.
 - Integrations are carried one at a time on the conductor's thread, and every step that moves a branch or `main` holds the ledger lock: the rebases, the fast-forward, and the per-wave `ledger: wave <n>` commit. The integrator's session and every acceptance run outside it, so a long acceptance never holds up `wayline answer`, `wayline consult`, or the dashboard.
 - The integrator is model work: a conflict met while the owner has paused or the run is stopping leaves the attempt waiting in flight, and the wave after `wayline resume` carries it again from the rebase. That worker result is one outcome, counted by the wave that concludes it, so the stall counter is not moved twice; and a run waiting between waves is no longer woken, wave after wave, by an attempt that waits for the hold to end.
-
 
 User units, `run --detach`, and the notifier (ticket 13, M1 Frontier and windows).
 

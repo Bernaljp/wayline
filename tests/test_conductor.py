@@ -450,9 +450,9 @@ class ResultStatusTest(ConductorCase):
 class RefuseToStartTest(ConductorCase):
     """`wayline run` refuses a project it would integrate into badly, and says what to do.
 
-    The other refusal decision 5 names, a harness checkout whose tag is not the project's pin, is
-    ticket 46's: it arrives with the tagging and the `upgrade` command that fixes a mismatch. The
-    harness this suite runs from is on no tag, and these tests show that does not stop a run.
+    The third refusal decision 5 names, a harness checkout whose tag is not the project's pin, is
+    tested in `test_versions`. The suite runs with `WAYLINE_UNPINNED=1` (`tests/__init__.py`),
+    because the harness it runs from is between tags.
     """
 
     def problems(self):
