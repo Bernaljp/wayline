@@ -1168,10 +1168,17 @@ class TerminateTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
 
     def sleeper(self, run_dir):
-        """A process that is nobody's worker but carries a session's environment, as a worker does."""
-        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
-                                   env=dict(os.environ, WAYLINE_RUN=str(run_dir)))
+        """A process that is nobody's worker but carries a session's environment, as a worker does.
+
+        It is returned once it has said it is running. `Popen` returns as soon as the child is
+        forked, and until the child has exec'd, `/proc/<pid>/environ` is still the parent's, which
+        names no session.
+        """
+        process = subprocess.Popen([sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(60)"],
+                                   env=dict(os.environ, WAYLINE_RUN=str(run_dir)), stdout=subprocess.PIPE, text=True)
         self.addCleanup(lambda: process.poll() is None and (process.kill(), process.wait()))
+        self.addCleanup(process.stdout.close)
+        self.assertEqual(process.stdout.readline().strip(), "ready")
         return process
 
     def test_a_pid_is_this_session_worker_only_while_its_environment_names_the_session(self):

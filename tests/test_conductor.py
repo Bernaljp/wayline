@@ -284,7 +284,7 @@ class RebaseTest(ConductorCase):
         failed = self.payload("ticket_failed")
         self.assertEqual(failed["next"], "split")
         self.assertIn("hello.txt", failed["reason"])
-        self.assertIn("ticket 08", failed["reason"])
+        self.assertIn("integrator", failed["reason"])  # nothing scripted it, so it could not be launched
         subjects = self.log()
         above = next((index for index, subject in enumerate(subjects) if not subject.startswith("ledger:")), len(subjects))
         self.assertEqual(self.git("rev-parse", "main~%d" % above), head, "only the ledger's own commits are above it")

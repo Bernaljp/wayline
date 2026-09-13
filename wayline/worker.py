@@ -52,7 +52,7 @@ __all__ = [
     "launch", "resume", "pid_alive", "terminate", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS",
-    "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "read_locator", "CONSULT_MAX",
+    "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
     "schema_bullets", "schema_section",
 ]
 
@@ -796,6 +796,72 @@ def _contract_section(ticket, consult_max):
         "- Never integrate, never close the ticket, never edit `research/`: the conductor does all three.",
         "- Ask the consultant with `wayline consult <slug> \"<question>\"`, at most %s in this ticket." % ("once" if consult_max == 1 else "%d times" % consult_max),
     ])
+
+
+def integrator_prompt(ticket, role, conflicts, touches=None, max_chars=None, budget=None):
+    """The integrator's prompt (decision 5): the ticket, the conflict, the protocol, the result, the contract.
+
+    `conflicts` is `[(path, text)]`: each conflicting file as the stopped rebase left it, markers
+    and all, in git's order. The files are cut at `max_chars` the way a context pack is, with the
+    cut announced. The touch set this prompt states is `touches`, the paths that may conflict (the
+    conflicting paths when None), not the ticket's.
+    """
+    branch = "ticket/%s" % ticket["id"]
+    paths = ", ".join("`%s`" % path for path in (touches if touches is not None else [path for path, _ in conflicts]))
+    head = [
+        "# Integration of ticket %s: %s" % (ticket["id"], ticket["title"]),
+        "",
+        "The branch `%s` holds this ticket's finished work, and rebasing it onto `main` conflicted: "
+        "`main` moved while the ticket ran. Your one job is to finish that rebase." % branch,
+        "",
+        "- touch set: %s, the paths both the branch and `main` changed" % paths,
+    ]
+    machine = (ticket.get("acceptance") or {}).get("machine") or []
+    if machine:
+        head.append("- acceptance, which the conductor runs again on the rebased branch and on `main`:")
+        head.extend("    - `%s`" % command for command in machine)
+    if budget:
+        head.append("- budget: %s turns, %s minutes" % (budget.get("max_turns", "?"), budget.get("max_minutes", "?")))
+
+    cap = None if max_chars is None else max(0, int(max_chars))
+    used, cut = 0, False
+    shown = ["# The conflict", "",
+             "Each conflicting file as the stopped rebase left it. The conductor aborted that rebase, so the "
+             "worktree you start in is clean and on `%s`." % branch]
+    for path, text in conflicts:
+        shown.extend(["", "## %s" % path, ""])
+        if cap is not None and used >= cap:
+            shown.append("[wayline: left out at the context cap of %d characters; read the file in the worktree.]" % cap)
+            cut = True
+            continue
+        note = None
+        if cap is not None and used + len(text) > cap:
+            note = "[wayline: this file was cut here at the context cap; %d character(s) are missing.]" % (len(text) - (cap - used))
+            text, cut = text[: cap - used], True
+        used += len(text)
+        fence = _fence(text)
+        shown.extend([fence, text.rstrip("\n"), fence])
+        if note:
+            shown.extend(["", note])
+
+    result = schema_section("# The result", role.output_schema or "result", closing=[
+        "",
+        "`ticket_id` is %s. `status` is `done` only when the rebase finished and `wayline accept` passed "
+        "after it. The summary names each conflicting path and what you kept from each side." % ticket["id"],
+    ])
+    contract = "\n".join([
+        "# The contract",
+        "",
+        "- Write only the touch set: %s. A hook blocks every write outside it, and the conductor refuses a rebased branch "
+        "that changes a path the branch did not change before." % paths,
+        "- Run `git rebase main` yourself, resolve, `git add` each resolved path, and `git rebase --continue` until the rebase finishes.",
+        "- If you cannot resolve it, run `git rebase --abort` and return `status: failed` with the reason.",
+        "- Never push, merge, reset, switch branches, or edit `research/`. The conductor rebases once more after you stop "
+        "and fast-forwards `main` only when that rebase is clean; if it still conflicts, the ticket is split.",
+    ])
+    parts = ["\n".join(head), "\n".join(shown), role.protocol, result, contract]
+    text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
+    return Prompt(text, used, cut)
 
 
 # --- the session directory ----------------------------------------------------------------------
