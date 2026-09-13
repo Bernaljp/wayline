@@ -154,13 +154,28 @@ class ProjectViewTest(unittest.TestCase):
         self.assertEqual(view.pause, {"resets_at": "2026-09-12T13:00:00Z", "window": "five_hour", "utilization": 0.93})
         self.assertIsNone(view.apply(event("unpaused")).pause)
 
+    def test_the_hold_on_fable_lasts_until_its_own_unpaused_and_a_whole_run_pause_starts_and_ends_inside_it(self):
+        """Ticket 54 (decision 15): `paused` with `model: fable` is the hold, and a `paused` without it the whole run's."""
+        journal = [
+            run_started(),
+            event("paused", {"resets_at": "2026-09-16T02:00:00Z", "window": "seven_day", "utilization": 1.0, "model": "fable"}, at=1),
+            event("paused", {"resets_at": "2026-09-12T13:00:00Z", "window": "five_hour", "utilization": 1.0}, at=2),
+            event("unpaused", at=3),
+            run_started(resume=True, pid=2),
+        ]
+        view = replay.replay(journal)
+        self.assertEqual(view.hold, {"resets_at": "2026-09-16T02:00:00Z", "window": "seven_day", "utilization": 1.0})
+        self.assertIsNone(view.pause, "the whole-run pause started and ended inside the hold")
+        self.assertEqual(replay.replay(journal), view, "replaying twice yields the same view")
+        self.assertIsNone(view.apply(event("unpaused", {"model": "fable"}, at=5)).hold)
+
     def test_pacing_is_the_latest_reading(self):
         view = replay.replay([
-            event("pacing", {"five_hour": 0.5, "seven_day": 0.2, "action": "normal"}),
+            event("pacing", {"five_hour": 0.5, "seven_day": 0.2, "fable": 1.0, "action": "normal"}),
             event("pacing", {"five_hour": 0.85, "seven_day": 0.3, "action": "cheap_only"}),
         ])
-        self.assertEqual(view.pacing, {"five_hour": 0.85, "seven_day": 0.3, "action": "cheap_only"})
-        self.assertEqual(replay.replay([]).pacing, {"five_hour": None, "seven_day": None, "action": "normal"})
+        self.assertEqual(view.pacing, {"five_hour": 0.85, "seven_day": 0.3, "fable": None, "action": "cheap_only"})
+        self.assertEqual(replay.replay([]).pacing, {"five_hour": None, "seven_day": None, "fable": None, "action": "normal"})
 
     def test_the_owner_pause_holds_until_the_owner_resumes_even_across_a_restart(self):
         view = replay.replay([run_started(), control("pause"), run_started(resume=True, pid=2)])
@@ -242,7 +257,7 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(view.verdicts, {1: [{"verdict_type": "ticket_quality", "pass": True}]})
         self.assertEqual(view.run, {"pid": 31415, "resume": False, "ts": "2026-09-11T11:00:00.000Z", "ended": None})
         self.assertIsNone(view.pause)
-        self.assertEqual(view.pacing, {"five_hour": 0.41, "seven_day": 0.52, "action": "normal"})
+        self.assertEqual(view.pacing, {"five_hour": 0.41, "seven_day": 0.52, "fable": None, "action": "normal"})
 
 
 class IdempotenceTest(unittest.TestCase):

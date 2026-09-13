@@ -12,12 +12,13 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_conductor import ONE_TICKET, FIVE_TICKETS, done, drive, patch
-from wayline import conductor, project, registry, tickets, worker
+from wayline import conductor, pacing, project, registry, tickets, worker
 from wayline import ledger as ledger_module
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
@@ -177,6 +178,44 @@ class TwoTicketsCase(ProjectTestCase):
             results = drive(self.conductor)
             self.calls = list(fake.calls)
         return results
+
+
+class RefusedIntegratorTest(TwoTicketsCase):
+    """Ticket 54 (decision 15): an integrator a usage window refused is not spent, and is launched again, never resumed."""
+
+    def refused_midway(self, request, message):
+        """An integrator that starts the rebase, stops on the conflict, and is then refused by the usage limit."""
+        self.look(request)
+        git_in(Path(request.cwd), "rebase", "main", env=request.env)
+        return Envelope(api_error_status=429, is_error=True, exit_code=1, answered=True,
+                        errors=["You've hit your session limit · resets 3:45pm (UTC)"])
+
+    def test_a_refused_integrator_is_set_aside_and_launched_again_once_the_window_resets(self):
+        now = [time.time()]
+        with worker.use_fake() as fake:
+            self.script_workers(fake)
+            fake.script(respond=self.refused_midway, ticket="2", role="integrator")
+            fake.script(respond=self.resolving, ticket="2", role="integrator")
+            driven = Conductor(self.project, out=io.StringIO())
+            driven.clock = lambda: now[0]
+            for _ in range(8):
+                driven.wave()
+                driven.settle()
+                if self.events("paused"):
+                    break
+            paused = self.payload("paused", ticket=None)
+            self.assertEqual(self.status(2), "running", "the integration waits for the window rather than failing")
+            now[0] = pacing.epoch(paused["resets_at"])
+            drive(driven)
+            self.calls = list(fake.calls)
+        self.assertEqual(paused["window"], "five_hour")
+        self.assertEqual([call.kind for call in self.integrator_calls()], ["launch", "launch"])
+        attempt = self.project / "research" / "sessions" / "2" / "1"
+        self.assertTrue((attempt / "integrator-refused-1" / "stream.jsonl").is_file(), "the refused session is kept for the record")
+        self.assertEqual((self.status(2), self.payload("integrated")["resolved_by"]), ("done", "integrator"))
+        self.assertEqual(self.events("ticket_failed"), [])
+        self.assertEqual([(seen["rebasing"], seen["branch"]) for seen in self.seen], [(False, "ticket/2")] * 2,
+                         "the rebase the refused integrator began was aborted before it was launched again")
 
 
 class ResolvedConflictTest(TwoTicketsCase):

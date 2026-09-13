@@ -131,9 +131,11 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(usage.resets["five_hour"], at(RIYADH, 2026, 9, 11, 22, 10))
         self.assertEqual(usage.resets["seven_day"], at(RIYADH, 2026, 9, 16, 5, 0))
 
-    def test_the_per_model_week_is_not_the_all_models_week(self):
-        usage = pacing.parse_usage("Current week (Fable): 43% used · resets Sep 16, 5am (UTC)", 0)
-        self.assertIsNone(usage)
+    def test_the_fable_week_is_read_as_fable_s_and_not_as_the_all_models_week(self):
+        now = at(timezone.utc, 2026, 9, 11, 12, 0)
+        usage = pacing.parse_usage("Current week (Fable): 43% used · resets Sep 16, 5am (UTC)", now)
+        self.assertEqual((usage.five_hour, usage.seven_day, usage.fable), (None, None, 0.43))
+        self.assertEqual(usage.resets, {"fable": at(timezone.utc, 2026, 9, 16, 5, 0)})
 
     def test_text_without_either_line_is_no_reading(self):
         self.assertIsNone(pacing.parse_usage("Unknown command: /usage", 0))
@@ -198,6 +200,118 @@ class HitLimitTest(unittest.TestCase):
         self.assertEqual(pacing.resets_at(Limit("api_error_status", window="seven_day"), windows, 1000), 9000)
 
 
+# What `claude -p "/usage"` printed while Fable's weekly window was spent (the Fable research note, question 3).
+USAGE_FABLE_SPENT = """Current session: 24% used · resets Sep 13, 1:20pm (Asia/Riyadh)
+Current week (all models): 71% used · resets Sep 16, 5am (Asia/Riyadh)
+Current week (Fable): 100% used · resets Sep 16, 5am (Asia/Riyadh)
+"""
+
+REFUSED_TEXT = ("You've reached your Fable limit. Switch to another model, or manage usage credits at "
+                "claude.ai/settings/usage?from=cc_cli_limit_message, to continue.")
+
+
+def fable_event(status="rejected", utilization=1.0, resets_at=1789524000):
+    """A `rate_limit_event` of Fable's weekly window, as only a Fable request's own event carries it."""
+    return RateLimitEvent.from_dict({
+        "status": status, "resets_at": resets_at if status == "rejected" else None, "rate_limit_type": "seven_day_overage_included",
+        "five_hour": {"utilization": 0.16, "resets_at": 1789255200}, "seven_day": {"utilization": 0.64, "resets_at": 1789524000},
+        "seven_day_overage_included": {"utilization": utilization, "resets_at": resets_at},
+    })
+
+
+class FableWindowTest(unittest.TestCase):
+    """Ticket 54, criteria 1 and 2 (decision 15): Fable's weekly window read, and a Fable refusal in each of its forms."""
+
+    def test_the_fable_line_of_usage_reads_beside_the_two_windows_with_its_reset(self):
+        now = at(RIYADH, 2026, 9, 13, 12, 0)
+        usage = pacing.parse_usage(USAGE_FABLE_SPENT, now)
+        self.assertEqual((usage.five_hour, usage.seven_day, usage.fable), (0.24, 0.71, 1.0))
+        self.assertEqual(usage.resets["fable"], at(RIYADH, 2026, 9, 16, 5, 0))
+        self.assertEqual(usage.resets["fable"], usage.resets["seven_day"], "the two weeks reset together on this account")
+
+    def test_only_the_fable_block_of_a_rate_limit_event_is_read_as_fable_s_window(self):
+        windows = Windows()
+        windows.observe(event(five_hour=0.2, seven_day=0.64, five_reset=2000, week_reset=9000), 0)
+        self.assertIsNone(windows.utilization("fable", 0), "other models' events never carry Fable's window")
+        windows.observe(fable_event(status="allowed", utilization=0.93, resets_at=9000), 0)
+        self.assertEqual((windows.utilization("fable", 0), windows.utilization("seven_day", 0)), (0.93, 0.64))
+        self.assertIsNone(windows.utilization("fable", 9000))
+
+    def test_the_recorded_refusal_is_a_fable_refusal_by_its_rejected_event(self):
+        envelope = worker.read_envelope(STREAMS / "note-fable-refused.jsonl", None, exit_code=1)
+        self.assertEqual((envelope.api_error_status, envelope.is_error, envelope.subtype, envelope.num_turns), (429, True, "success", 1))
+        self.assertEqual(pacing.hit_limit(envelope, model="fable"), Limit("rate_limit_event", 1789524000, "seven_day", 1.0, "fable"))
+        self.assertFalse(envelope.answered, "refused before its first turn: the one assistant message is the synthetic refusal")
+
+    def test_its_429_alone_is_a_fable_refusal_on_a_fable_launch(self):
+        envelope = worker.read_envelope(STREAMS / "note-fable-refused.jsonl", None, exit_code=1)
+        envelope.rate_limit_events, envelope.result_text = [], None
+        self.assertEqual(pacing.hit_limit(envelope, model="fable"), Limit("api_error_status", None, "seven_day", None, "fable"))
+        self.assertEqual(pacing.hit_limit(envelope, model="opus"), Limit("api_error_status", None, "unknown", None, None),
+                         "a 429 that names no window on another model's launch is the whole run's")
+
+    def test_the_text_signal_matches_reached_your_as_well_as_hit_your(self):
+        refused = pacing.hit_limit(Envelope(exit_code=1, result_text=REFUSED_TEXT))
+        self.assertEqual(refused, Limit("message", None, "seven_day", None, "fable"), "the text names Fable, whatever the launch was on")
+        self.assertEqual(pacing.hit_limit(Envelope(exit_code=1, result_text="You've reached your weekly limit")),
+                         Limit("message", None, "seven_day", None, None))
+        self.assertIsNone(pacing.hit_limit(Envelope(exit_code=0, result_text=REFUSED_TEXT)), "a clean exit is not a refusal")
+
+    def test_a_session_limit_on_a_fable_launch_is_still_the_whole_run_s(self):
+        now = at(timezone.utc, 2026, 9, 11, 12, 0)
+        envelope = Envelope(api_error_status=429, exit_code=1, errors=["You've hit your session limit · resets 3:45pm (UTC)"])
+        self.assertEqual(pacing.hit_limit(envelope, now=now, model="fable"),
+                         Limit("api_error_status", at(timezone.utc, 2026, 9, 11, 15, 45), "five_hour", None, None))
+        rejected = Envelope(exit_code=1, rate_limit_events=[event(status="rejected", resets_at=1789153800, five_hour=1.0)])
+        self.assertIsNone(pacing.hit_limit(rejected, model="fable").model)
+
+    def test_a_subagent_s_failed_task_is_a_fable_refusal_while_its_parent_s_result_stays_a_success(self):
+        envelope = worker.read_envelope(STREAMS / "note-fable-subagent-refused.jsonl", None, exit_code=0)
+        self.assertEqual((envelope.is_error, envelope.subtype, envelope.api_error_status), (False, "success", None))
+        self.assertTrue(envelope.answered)
+        self.assertEqual(len(envelope.failed_tasks), 1)
+        self.assertIn("claude-fable-5-1", envelope.failed_tasks[0]["error"])
+        self.assertEqual(pacing.hit_limit(envelope, model="haiku").model, "fable", "the rejected event in the parent's stream says so")
+        envelope.rate_limit_events = []
+        self.assertEqual(pacing.hit_limit(envelope, model="haiku"), Limit("subagent", None, "seven_day", None, "fable"))
+
+    def test_a_failed_task_fable_did_not_refuse_is_no_limit(self):
+        for error in ("Agent terminated early: the tool failed",
+                      "Agent terminated early due to an API error (error type rate_limit, HTTP 429, model sent to the API: claude-opus-5)"):
+            with self.subTest(error=error):
+                envelope = Envelope(exit_code=0, failed_tasks=[{"task_id": "t1", "error": error}])
+                self.assertIsNone(pacing.hit_limit(envelope, model="haiku"), "a subagent on another model met a limit of its own")
+
+    def test_only_the_line_that_says_a_limit_was_hit_decides_the_window(self):
+        now = at(timezone.utc, 2026, 9, 11, 12, 0)
+        stderr = "debug: model sent to the API: claude-fable-5-1\nYou've hit your session limit · resets 3:45pm (UTC)\n"
+        self.assertEqual(pacing.hit_limit(Envelope(exit_code=1), stderr=stderr, now=now, model="fable"),
+                         Limit("message", at(timezone.utc, 2026, 9, 11, 15, 45), "five_hour", None, None))
+
+    def test_a_worker_that_took_turns_answered_and_a_synthetic_refusal_did_not(self):
+        self.assertTrue(worker.read_envelope(STREAMS / "note01-launch2-success.jsonl", None, exit_code=0).answered)
+        self.assertTrue(worker.read_envelope(STREAMS / "synth-killed.jsonl", None, exit_code=143).answered)
+        self.assertFalse(worker.read_envelope(STREAMS / "synth-rejected-429.jsonl", None, exit_code=1).answered)
+
+    def test_a_fable_refusal_resets_at_its_signal_else_fable_s_reading_else_the_week_s_never_the_five_hour(self):
+        refusal = Limit("message", None, "seven_day", None, "fable")
+        windows = Windows()
+        windows.record("five_hour", 0.3, resets_at=2000)
+        self.assertEqual(pacing.resets_at(refusal, windows, 1000), 1000 + 5 * HOUR)
+        windows.record("seven_day", 0.7, resets_at=8000)
+        self.assertEqual(pacing.resets_at(refusal, windows, 1000), 8000)
+        windows.record("fable", 1.0, resets_at=9000)
+        self.assertEqual(pacing.resets_at(refusal, windows, 1000), 9000)
+        self.assertEqual(pacing.resets_at(Limit("rate_limit_event", 7000, "seven_day", 1.0, "fable"), windows, 1000), 7000)
+
+    def test_the_hold_s_paused_payload_names_the_model_and_the_week(self):
+        windows = Windows()
+        windows.record("fable", 1.0, resets_at=9000)
+        self.assertEqual(pacing.paused_payload(Limit("api_error_status", None, "seven_day", None, "fable"), 9000, windows),
+                         {"resets_at": pacing.iso(9000), "window": "seven_day", "utilization": 1.0, "model": "fable"})
+        self.assertNotIn("model", pacing.paused_payload(Limit("message", None, "five_hour"), 9000, windows))
+
+
 # --- the launcher ------------------------------------------------------------------------------
 
 
@@ -225,6 +339,29 @@ class SimulatedLimitFakeTest(ProjectTestCase):
         self.assertGreaterEqual(rejected[0].resets_at, int(before) + 30)
         self.assertLessEqual(rejected[0].resets_at, int(time.time()) + 31)
         self.assertEqual(second.rate_limit_events, [], "one launch, not every launch")
+
+    def test_a_fable_limit_waits_for_the_next_fable_launch_and_rejects_fable_s_weekly_window(self):
+        with worker.use_fake() as fake:
+            worker.simulate_limit(30, model="fable")
+            before = time.time()
+            opus = self.launch(fake, "opus")
+            fake.script(Envelope(structured_output={"ok": True}))
+            (self.temp / "fable").mkdir()
+            fable = worker.launch(make_request(self.temp / "fable", schema_path=str(SCHEMA), model="fable"))
+        self.assertEqual(opus.rate_limit_events, [], "a launch on another model does not take it")
+        (rejected,) = fable.rate_limit_events
+        self.assertEqual((rejected.status, rejected.rate_limit_type), ("rejected", "seven_day_overage_included"))
+        self.assertGreaterEqual(rejected.resets_at, int(before) + 30)
+        self.assertEqual(rejected.seven_day_overage_included.utilization, 1.0)
+        self.assertEqual(pacing.hit_limit(fable, model="fable").model, "fable")
+        self.assertIsNone(worker.simulated_limit())
+
+    def test_a_launch_that_defines_an_agent_on_fable_is_a_fable_launch(self):
+        agents = {"coder": {"description": "a coder", "prompt": "You code.", "model": "haiku", "effort": "low"},
+                  "probe": {"description": "probe", "prompt": "Reply ok", "model": "fable", "effort": "low"}}
+        self.assertTrue(worker.launches_on(make_request(self.temp, model="haiku", agent_json=agents), "fable"))
+        self.assertTrue(worker.launches_on(make_request(self.temp, model="haiku", agent_json=json.dumps(agents)), "fable"))
+        self.assertFalse(worker.launches_on(make_request(self.temp, model="opus"), "fable"))
 
 
 class LauncherCliTest(StandInMixin, unittest.TestCase):
@@ -460,8 +597,8 @@ class PauseTest(PacingCase):
 
     def test_a_429_is_journaled_as_a_pause_and_its_session_resumed_after_the_reset_without_failing(self):
         driven = self.conductor()
-        limited = Envelope(api_error_status=429, is_error=True, subtype="error_during_execution", exit_code=1,
-                           errors=["You've hit your session limit · resets 3:45pm"])
+        limited = Envelope(api_error_status=429, is_error=True, subtype="error_during_execution", exit_code=1, answered=True,
+                           errors=["You've hit your session limit · resets 3:45pm"])  # stopped mid-work, so resumed
         self.script(1, envelope=limited)
         self.script(1)
         driven.wave()
