@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "id": "role/m0-coder-probe",
+  "kind": "role",
+  "subject": {
+    "path": "roles/coder/agent.md",
+    "sha256": "28c2387577878d4e939151984178894806524f969e95b1a59c477dab04c627bb",
+    "also": []
+  },
+  "origin": {
+    "project": "/tmp/wayline-m0-live2",
+    "ticket": 1,
+    "session_id": "915038af-a5c6-4d81-99cb-014f813cacf7",
+    "journal_ts": "2026-09-12T16:16:30.260Z",
+    "change_record": null,
+    "reason": "seed: the second live M0 run of ticket 06 (docs/verification/m0.md), the first journaled claude -p session; ticket 44 records it as the first fixture"
+  },
+  "launch": {
+    "role": "coder",
+    "model": "sonnet",
+    "effort": "low",
+    "permission_mode": "dontAsk",
+    "max_turns": 40,
+    "output_format": "stream-json",
+    "json_schema": "input/schema.json",
+    "fallback_model": "sonnet",
+    "allowed_tools": [
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Agent",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pytest*)",
+      "Bash(ruff *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(wayline accept*)",
+      "Bash(wayline consult *)"
+    ],
+    "disallowed_tools": [
+      "WebFetch",
+      "WebSearch",
+      "NotebookEdit",
+      "mcp__*",
+      "Workflow",
+      "Skill",
+      "EnterWorktree",
+      "CronCreate",
+      "CronDelete",
+      "CronList"
+    ],
+    "add_dirs": [
+      "{harness}",
+      "{project}"
+    ],
+    "env": {
+      "TICKET_TOUCHES": "m0/",
+      "TICKET_ACCEPTANCE_FILE": "{run}/acceptance.json",
+      "WAYLINE_PROJECT": "{project}",
+      "WAYLINE_TICKET": "1",
+      "WAYLINE_RUN": "{run}"
+    },
+    "settings": "input/settings.json"
+  },
+  "input": {
+    "prompt": "input/prompt.md",
+    "agent": "input/agent.json",
+    "context_manifest": "input/manifest.json",
+    "input_hash": "7ae242ced8f54402cc7a8a5bb906598521792660ea96165eba8366109c012526"
+  },
+  "structural": [
+    {
+      "check": "schema_valid"
+    },
+    {
+      "check": "path_equals",
+      "path": "$.ticket_id",
+      "value": 1
+    },
+    {
+      "check": "path_in",
+      "path": "$.status",
+      "values": [
+        "done"
+      ]
+    },
+    {
+      "check": "path_contains_all",
+      "path": "$.outputs_written",
+      "values": [
+        "m0/hello.txt",
+        "m0/report.md"
+      ]
+    },
+    {
+      "check": "path_matches",
+      "path": "$.outputs_written[*]",
+      "regex": "^m0/"
+    },
+    {
+      "check": "path_absent_or_empty",
+      "path": "$.touched_outside_declared"
+    },
+    {
+      "check": "file_exists",
+      "path": "m0/report.md",
+      "in": "worktree"
+    },
+    {
+      "check": "file_absent",
+      "path": "escaped.txt",
+      "in": "worktree"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Agent"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline accept"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "hello_holds_the_single_line"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "a_finding_carries_the_touch_set_refusal"
+    }
+  ],
+  "baseline": {
+    "recorded_at": "2026-09-13T06:27:38.693Z",
+    "subject_sha256": "28c2387577878d4e939151984178894806524f969e95b1a59c477dab04c627bb",
+    "input_hash": "7ae242ced8f54402cc7a8a5bb906598521792660ea96165eba8366109c012526",
+    "structural": "0/3",
+    "judged": null,
+    "passed": false,
+    "unstable": false
+  },
+  "quarantine": {
+    "status": "active",
+    "flake_limit": 2,
+    "flakes": [],
+    "stable_runs_to_restore": 3,
+    "stable_runs": 0,
+    "restored_at": null,
+    "counted_from": 0
+  },
+  "cost": {
+    "per_subject_run": {
+      "turns": 11,
+      "input_tokens": 237750,
+      "output_tokens": 3715
+    }
+  },
+  "judged": {
+    "rubric": "rubric.md",
+    "show_judge": [
+      "$.summary",
+      "$.findings",
+      "$.outputs_written",
+      "$.commands_run"
+    ],
+    "judge": {
+      "model": "haiku",
+      "effort": "low",
+      "tools": [],
+      "votes": 1,
+      "must_differ_from_subject_session": true
+    },
+    "sample_size": 3,
+    "pass_rule": {
+      "at_least": 2
+    },
+    "strict": false
+  },
+  "last_run": {
+    "ts": "2026-09-13T06:27:38.439Z",
+    "subject_sha256": "28c2387577878d4e939151984178894806524f969e95b1a59c477dab04c627bb",
+    "input_hash": "7ae242ced8f54402cc7a8a5bb906598521792660ea96165eba8366109c012526",
+    "definition_sha256": "71a1e20f224a7b3e5b332a9f1e09c982b45cd2d1b2848a5626e350ef97ae1239",
+    "structural": "0/3",
+    "judged": null,
+    "outcome": {
+      "structural": false,
+      "judged": null
+    }
+  },
+  "note": "Pruned by hand from the recorder's 19 proposals to the M0 ticket's demo: status done, the two files in m0/ and nothing outside it, one Agent call, wayline accept run, and a finding that carries the touch-set refusal. The session runs in a project holding the ticket, INTAKE.md, harness.json, and the two m0 skills, committed on main and checked out on ticket/1."
+}

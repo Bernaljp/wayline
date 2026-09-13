@@ -9,6 +9,7 @@ journaled session. Nothing here reaches a model; `docs/verification/m6.md` holds
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -186,6 +187,7 @@ class StructuralChecksTest(unittest.TestCase):
             "def always_wrong(root):",
             "    return ['wrong on purpose']",
         ]) + "\n")
+        write(self.temp / "broken_checks.py", "raise ValueError('broken at import')\n")
 
     def check(self, check, output=GOOD, schema=SCHEMA):
         results = fixtures.structural_checks([check], output, self.root, trace=self.trace, fixture_dir=self.temp, schema=schema)
@@ -230,6 +232,8 @@ class StructuralChecksTest(unittest.TestCase):
             ({"check": "python", "file": "checks.py", "fn": "greeted_two"}, True),
             ({"check": "python", "file": "checks.py", "fn": "always_wrong"}, False),
             ({"check": "python", "file": "checks.py", "fn": "not_there"}, False),
+            ({"check": "python", "file": "broken_checks.py", "fn": "anything"}, False),
+            ({"check": "tool_used", "tool": "Bash", "input_matches": "("}, False),
             ({"check": "schema_valid"}, True),
         ]
         for check, expected in cases:
@@ -313,6 +317,27 @@ class PassRuleTest(Harness):
             self.assertNotIn(placeholder, json.dumps(call.request.env) + call.request.prompt)
         command = json.loads((call.run_dir / "env.json").read_text(encoding="utf-8"))["command"]
         self.assertNotIn("--bare", command)
+
+
+    def test_a_ticket_launch_runs_in_a_git_project_on_the_ticket_branch(self):
+        self.make_fixture(judged=False)
+        record = self.record_of()
+        record["launch"]["env"].update(TICKET_TOUCHES="m0/", WAYLINE_TICKET="1")
+        self.update_record(launch=record["launch"])
+        self.run_fixtures(subject=[good()] * 3, ids=["prompt/greeting"])
+        cwd = self.subject_calls()[0].request.cwd
+        branch = subprocess.run(["git", "-C", str(cwd), "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(branch, "ticket/1")
+
+    def test_a_cache_under_the_claude_directory_is_refused_before_anything_launches(self):
+        self.make_fixture()
+        under = Path.home() / ".claude" / "wayline-fixture-test-never-written"
+        with mock.patch.dict(os.environ, {"WAYLINE_HOME": str(under)}):
+            with self.assertRaises(fixtures.FixtureError) as caught:
+                self.run_fixtures(subject=[good()] * 3, ids=["prompt/greeting"])
+        self.assertIn("Edit(~/.claude/**)", str(caught.exception))
+        self.assertEqual(self.calls, [])
+        self.assertFalse(under.exists())
 
 
 class JudgeTest(Harness):
@@ -436,14 +461,37 @@ class SelectionTest(Harness):
 
     def test_the_turn_ceiling_skips_the_judged_samples_and_still_runs_the_free_layer(self):
         self.policy["fixtures"]["max_turns_per_suite"] = 6
-        result = self.run_fixtures(subject=[good()] * 3, ids=["prompt/greeting", "prompt/farewell"])
+        result = self.run_fixtures(subject=[good()] * 6, ids=["prompt/greeting", "prompt/farewell"])
         greeting, farewell = result.runs
         self.assertEqual(result.exit_code, 2)
         self.assertEqual((greeting.structural, greeting.judged, greeting.partial), (3, None, True))
-        self.assertTrue(farewell.partial)
+        self.assertEqual((farewell.structural, farewell.judged, farewell.partial), (3, None, True))
+        self.assertEqual(len(self.subject_calls()), 6, "the subject sessions behind the free layer go on after the ceiling")
         self.assertEqual(self.judge_calls(), [])
         self.assertIn("ceiling", self.printed)
         self.assertIsNone(self.record_of("greeting").get("last_run"), "a partial run is no outcome to measure a flake by")
+
+    def test_a_structural_failure_after_the_ceiling_is_still_a_regression(self):
+        self.policy["fixtures"]["max_turns_per_suite"] = 1
+        self.passing_baseline("farewell")
+        result = self.run_fixtures(subject=[good(word="bye")] * 3, ids=["prompt/farewell"])
+        run = result.runs[0]
+        self.assertEqual((run.structural, run.partial, run.regression), (0, False, True))
+        self.assertEqual(result.exit_code, 1)
+
+    def test_a_refused_subject_session_stops_the_suite_and_is_not_cached(self):
+        refused = Envelope(rate_limit_events=[RateLimitEvent("rejected")])
+        first = self.run_fixtures(subject=[refused], ids=["prompt/greeting", "prompt/farewell"])
+        self.assertEqual((first.exit_code, [run.partial for run in first.runs], len(self.subject_calls())), (2, [True, True], 1))
+        self.assertIn("refused", self.printed)
+        second = self.run_fixtures(subject=[good()] * 3, judge=[verdict("pass")] * 3, ids=["prompt/greeting"])
+        self.assertEqual((second.exit_code, second.runs[0].structural, len(self.subject_calls())), (0, 3, 3))
+
+    def test_a_judge_without_a_usable_verdict_is_asked_again_next_time(self):
+        broken = Envelope(subtype="error_max_structured_output_retries", is_error=True)
+        self.run_fixtures(subject=[good()] * 3, judge=[verdict("pass"), broken, verdict("pass")], ids=["prompt/greeting"])
+        run = self.run_fixtures(judge=[verdict("pass")], ids=["prompt/greeting"]).runs[0]
+        self.assertEqual((len(self.subject_calls()), len(self.judge_calls()), run.judged), (0, 1, 3))
 
 
 # --- regressions, flakes, quarantine ----------------------------------------------------------------
@@ -473,6 +521,63 @@ class ExitCodeTest(Harness):
             with redirect_stdout(StringIO()):
                 code = cli.main(["fixture", "run", "prompt/greeting", "--root", str(self.root)])
         self.assertEqual(code, 1)
+
+    def test_a_regression_stays_selected_by_changed_until_it_is_fixed(self):
+        self.make_fixture()
+        self.passing_baseline()
+        write(self.root / SUBJECT, "Greet only Ada.\n")
+        self.assertEqual(self.run_fixtures(subject=[good(word="bye")] * 3, changed=True).exit_code, 1)
+        again = self.run_fixtures(changed=True)
+        self.assertEqual(([run.id for run in again.runs], again.exit_code, self.calls), (["prompt/greeting"], 1, []))
+
+    def test_a_subject_that_no_longer_renders_is_a_regression_when_the_baseline_passed(self):
+        self.make_fixture()
+        self.passing_baseline()
+        (self.root / SUBJECT).unlink()
+        result = self.run_fixtures(ids=["prompt/greeting"])
+        self.assertTrue(result.runs[0].gating)
+        self.assertEqual((result.exit_code, self.calls), (1, []))
+        self.assertIn("REGRESSION, cannot run", self.printed)
+
+    def test_a_fixture_json_that_no_longer_validates_is_a_regression_when_the_baseline_passed(self):
+        self.make_fixture()
+        self.passing_baseline()
+        self.update_record(structural=[{"check": "path_looks_right", "path": "$.word"}])
+        self.assertEqual(self.run_fixtures(ids=["prompt/greeting"]).exit_code, 1)
+
+    def test_a_launch_failure_is_named_and_the_suite_goes_on(self):
+        write(self.root / "prompts" / "farewell.md", "Say goodbye.\n")
+        self.make_fixture("farewell", subject="prompts/farewell.md", judged=False)
+        self.make_fixture("greeting", judged=False)
+        self.passing_baseline("greeting")
+        result = self.run_fixtures(subject=[good()] * 3, ids=["prompt/farewell", "prompt/greeting"])  # enough for the first only
+        farewell, greeting = result.runs
+        self.assertEqual(farewell.structural, 3)
+        self.assertIn("launch failed", greeting.skipped)
+        self.assertEqual((greeting.gating, result.exit_code), (True, 1))
+
+    def test_a_subject_nothing_carries_into_the_run_is_refused(self):
+        self.make_fixture()
+        write(self.root / "docs" / "style.md", "Be brief.\n")
+        self.update_record(subject={"path": "docs/style.md", "sha256": None, "also": []})
+        run = self.run_fixtures(ids=["prompt/greeting"]).runs[0]
+        self.assertIn("nothing carries", run.skipped)
+        self.assertEqual(self.calls, [])
+
+    def test_a_skill_subject_is_delivered_into_the_runs_project_and_a_change_to_it_is_a_new_run(self):
+        skill = "skills/wayline-greet/SKILL.md"
+        write(self.root / skill, "---\nname: wayline-greet\ndescription: Greets.\n---\n\nSay hello.\n")
+        directory = self.make_fixture(judged=False, structural=[{"check": "schema_valid"}])
+        write(directory / "input" / "context" / ".claude" / "skills" / "wayline-greet" / "SKILL.md", "a stale copy\n")
+        self.update_record(subject={"path": skill, "sha256": None, "also": []})
+        self.run_fixtures(subject=[good()] * 3, ids=["prompt/greeting"])
+        delivered = Path(self.subject_calls()[0].request.cwd) / ".claude" / "skills" / "wayline-greet" / "SKILL.md"
+        self.assertIn("Say hello.", delivered.read_text(encoding="utf-8"))
+        write(self.root / skill, "---\nname: wayline-greet\ndescription: Greets.\n---\n\nSay goodbye.\n")
+        self.run_fixtures(subject=[good()] * 3, ids=["prompt/greeting"])
+        self.assertEqual(len(self.subject_calls()), 3, "the changed skill is a new cache key")
+        delivered = Path(self.subject_calls()[0].request.cwd) / ".claude" / "skills" / "wayline-greet" / "SKILL.md"
+        self.assertIn("Say goodbye.", delivered.read_text(encoding="utf-8"))
 
     def test_a_fixture_that_cannot_launch_is_skipped_and_named(self):
         self.make_fixture()
@@ -672,6 +777,22 @@ class RecordTest(Harness):
             with worker.use_fake():
                 fixtures.record(self.project, "nobody", "role", "x", root=self.root, runs=0, policy=self.policy)
         self.assertIn("journal", str(caught.exception))
+
+    def test_a_record_that_fails_leaves_nothing_behind_and_can_be_retried(self):
+        self.journaled_session()
+        with self.assertRaises(OSError):
+            self.record(rubric=self.temp / "no-such-rubric.md")
+        parent = self.root / "fixtures" / "role"
+        self.assertEqual(sorted(path.name for path in parent.iterdir()) if parent.is_dir() else [], [])
+        self.assertTrue((self.record() / "fixture.json").is_file())
+
+    def test_a_subject_nothing_would_carry_is_refused_before_anything_is_written(self):
+        self.journaled_session()
+        write(self.root / "docs" / "style.md", "Be brief.\n")
+        with self.assertRaises(fixtures.FixtureError) as caught:
+            self.record(kind="prompt", slug="style", subject_path="docs/style.md")
+        self.assertIn("nothing would carry", str(caught.exception))
+        self.assertFalse((self.root / "fixtures" / "prompt").exists())
 
     def test_an_existing_fixture_is_never_overwritten(self):
         self.journaled_session()

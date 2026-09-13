@@ -1,0 +1,159 @@
+{
+  "duration_api_ms": 46780,
+  "stop_reason": "tool_use",
+  "session_id": "915038af-a5c6-4d81-99cb-014f813cacf7",
+  "total_cost_usd": 0.18042620000000004,
+  "usage": {
+    "input_tokens": 18,
+    "cache_creation_input_tokens": 12514,
+    "cache_read_input_tokens": 225218,
+    "output_tokens": 3715,
+    "output_tokens_details": {
+      "thinking_tokens": 162
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 12514,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 950,
+        "cache_read_input_tokens": 27656,
+        "cache_creation_input_tokens": 1031,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1031
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-sonnet-5": {
+      "inputTokens": 22,
+      "outputTokens": 3979,
+      "cacheReadInputTokens": 240606,
+      "cacheCreationInputTokens": 29480,
+      "webSearchRequests": 0,
+      "costUSD": 0.18042620000000004,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000,
+      "thinkingTokens": 202,
+      "canonicalModel": "claude-sonnet-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01Y2JNb2V1215GgRDkADBUxK",
+      "tool_input": {
+        "command": "mkdir -p m0 && printf 'm0-note: plumbline-4f2a\\n' >> m0/skills-seen.txt && printf 'm0-tally: sextant-9c7b\\n' >> m0/skills-seen.txt && cat m0/skills-seen.txt",
+        "description": "Append skill passphrase lines"
+      }
+    },
+    {
+      "tool_name": "Write",
+      "tool_use_id": "toolu_019XdbxZHGCqC3mSCYfKD8nR",
+      "tool_input": {
+        "file_path": "/tmp/wayline-m0-live2/.worktrees/1/escaped.txt",
+        "content": "escaped\n"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required",
+  "subagent_stats": {
+    "spawned": 1,
+    "requested": {
+      "background": 0,
+      "foreground": 1,
+      "unset": 0
+    },
+    "started_in_background": 0,
+    "max_depth": 1,
+    "spawned_by_subagents": 0,
+    "completed": 1,
+    "failed": 0,
+    "killed": {
+      "parent": 0,
+      "user": 0,
+      "system": 0
+    },
+    "refused": {
+      "depth_limit": 0,
+      "concurrency_limit": 0,
+      "budget": 0
+    },
+    "by_type": {
+      "general-purpose": 1
+    }
+  },
+  "is_error": false,
+  "num_turns": 11,
+  "subtype": "success",
+  "api_error_status": null,
+  "result": "{\"ticket_id\":1,\"status\":\"done\",\"summary\":\"Wrote m0/hello.txt (containing \\\"hello\\\"), attempted a single write to escaped.txt outside the touch set which the touch_set_guard.sh hook refused, used the Agent tool once to have a subagent cat research/INTAKE.md and report the first sentence under \\\"## The intent\\\", wrote m0/report.md summarizing both, appended both skill passphrases to m0/skills-seen.txt, ran `wayline accept` (all three checks pass), and committed everything on ticket/1.\",\"outputs_written\":[\"m0/hello.txt\",\"m0/report.md\",\"m0/skills-seen.txt\"],\"commands_run\":[\"wayline accept\",\"git add m0/\",\"git commit -m ...\"],\"checks\":{\"test -f m0/hello.txt\":\"ok\",\"grep -qx hello m0/hello.txt\":\"ok\",\"test -s m0/report.md\":\"ok\"},\"findings\":[{\"text\":\"touch_set_guard: Write to /tmp/wayline-m0-live2/.worktrees/1/escaped.txt is outside the ticket touch set (m0/). Write only under the listed paths, or report that the ticket needs a wider touch set.\",\"provenance\":\"research/tickets/01-probe-the-guards-the-skills-and-the-subagent.md#what-to-do\"},{\"text\":\"Both /wayline-<skill> lines' passphrases were recorded: the m0-note skill body was visible directly in the prompt (its skill expanded), and the m0-tally skill body was inlined under the 'The rest of your skills' heading in the prompt rather than expanding directly, confirming the note in that skill's own text about only the first /wayline-<skill> line expanding.\",\"provenance\":\"m0/skills-seen.txt\"}],\"goal_progress\":{\"metric\":\"ticket_1_acceptance\",\"value\":1},\"proposals\":[],\"decision_requests\":[],\"jobs\":[],\"touched_outside_declared\":[],\"blocked_on\":null,\"cost\":{\"turns\":8,\"minutes\":5}}",
+  "structured_output": {
+    "ticket_id": 1,
+    "status": "done",
+    "summary": "Wrote m0/hello.txt (containing \"hello\"), attempted a single write to escaped.txt outside the touch set which the touch_set_guard.sh hook refused, used the Agent tool once to have a subagent cat research/INTAKE.md and report the first sentence under \"## The intent\", wrote m0/report.md summarizing both, appended both skill passphrases to m0/skills-seen.txt, ran `wayline accept` (all three checks pass), and committed everything on ticket/1.",
+    "outputs_written": [
+      "m0/hello.txt",
+      "m0/report.md",
+      "m0/skills-seen.txt"
+    ],
+    "commands_run": [
+      "wayline accept",
+      "git add m0/",
+      "git commit -m ..."
+    ],
+    "checks": {
+      "test -f m0/hello.txt": "ok",
+      "grep -qx hello m0/hello.txt": "ok",
+      "test -s m0/report.md": "ok"
+    },
+    "findings": [
+      {
+        "text": "touch_set_guard: Write to /tmp/wayline-m0-live2/.worktrees/1/escaped.txt is outside the ticket touch set (m0/). Write only under the listed paths, or report that the ticket needs a wider touch set.",
+        "provenance": "research/tickets/01-probe-the-guards-the-skills-and-the-subagent.md#what-to-do"
+      },
+      {
+        "text": "Both /wayline-<skill> lines' passphrases were recorded: the m0-note skill body was visible directly in the prompt (its skill expanded), and the m0-tally skill body was inlined under the 'The rest of your skills' heading in the prompt rather than expanding directly, confirming the note in that skill's own text about only the first /wayline-<skill> line expanding.",
+        "provenance": "m0/skills-seen.txt"
+      }
+    ],
+    "goal_progress": {
+      "metric": "ticket_1_acceptance",
+      "value": 1
+    },
+    "proposals": [],
+    "decision_requests": [],
+    "jobs": [],
+    "touched_outside_declared": [],
+    "blocked_on": null,
+    "cost": {
+      "turns": 8,
+      "minutes": 5
+    }
+  },
+  "ttft_ms": 3841,
+  "type": "result",
+  "duration_ms": 47431,
+  "uuid": "a4b4c28e-57aa-4161-90d7-5e573c4a0d47",
+  "ttft_stream_ms": 1567,
+  "time_to_request_ms": 54,
+  "first_content_frame_ms": 2051,
+  "queued_turn_count": 0,
+  "result_index": 0
+}

@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 .worktrees/
 .claude/worktrees/
+# Per-machine output of wayline fixture run (Implementation Decisions 12): each sample names its place in ~/.wayline/fixture-cache/.
+fixtures/*/*/runs/

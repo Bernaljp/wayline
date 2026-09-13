@@ -40,6 +40,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -82,6 +83,7 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 _STEP_RE = re.compile(r"\.([A-Za-z_][A-Za-z0-9_-]*)|\.\*|\[(\d+)\]|\[\*\]|\['([^']*)'\]|\[\"([^\"]*)\"\]")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*\Z")
 _ROLE_FILE_RE = re.compile(r"^(?:roles/([a-z][a-z0-9-]*)/agent\.md|\.claude/agents/([a-z][a-z0-9-]*)\.md)\Z")
+_SKILL_FILE_RE = re.compile(r"^((?:\.claude/)?skills/([a-z0-9][a-z0-9-]*))/.+\Z")
 
 
 class FixtureError(ValueError):
@@ -334,8 +336,13 @@ def _tool_matches(check, name, arguments):
         return False
     if "arg" in check and check["arg"] not in [value for value in arguments.values() if isinstance(value, str)]:
         return False
-    if "input_matches" in check and not re.search(check["input_matches"], json.dumps(arguments, ensure_ascii=False)):
-        return False
+    if "input_matches" in check:
+        try:
+            pattern = re.compile(check["input_matches"])
+        except re.error as failure:
+            raise FixtureError("the input_matches regex %r does not compile: %s" % (check["input_matches"], failure))
+        if not pattern.search(json.dumps(arguments, ensure_ascii=False)):
+            return False
     return True
 
 
@@ -367,8 +374,8 @@ def _python(check, output, root, trace, fixture_dir):
         spec = importlib.util.spec_from_file_location(name, path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-    except (OSError, SyntaxError, ImportError) as failure:
-        raise FixtureError("%s cannot be loaded: %s" % (check["file"], failure))
+    except Exception as failure:  # a checks.py that raises at import fails its checks; it never crashes the suite
+        raise FixtureError("%s cannot be loaded: %s: %s" % (check["file"], type(failure).__name__, failure))
     function = getattr(module, check["fn"], None)
     if not callable(function):
         raise FixtureError("%s has no function %s" % (check["file"], check["fn"]))
@@ -473,7 +480,14 @@ def _role_of(record, agents):
 
 
 def render_input(directory, record, root):
-    """`(prompt, agents, schema_text)` a run sends: the pinned pack with the current subject put into it.
+    """`(prompt, agents, schema_text, deliveries)` a run sends: the pinned pack with the current subject put into it.
+
+    Each subject file reaches the run by one route: a role's `agent.md` becomes the `--agents`
+    description and prompt, a schema under `schemas/` the pinned `--json-schema`, text pinned under
+    `input/subject/` is replaced where it sits in the prompt, and a skill's directory is delivered
+    into the run's project as `.claude/skills/<name>/` (`deliveries`, pairs of the project path and
+    the source directory). A subject file no route carries is refused: a change to it could never
+    be caught, and a fixture that silently ran the old subject would pass forever.
 
     The texts still carry the `{harness}`, `{project}`, and `{run}` placeholders, which each run
     fills with its own paths; the cache key is taken before that, so it is the same on every run.
@@ -488,25 +502,48 @@ def render_input(directory, record, root):
         raise FixtureError("%s: the pinned input cannot be read: %s" % (record["id"], failure))
     role = _role_of(record, agents)
     subject = record["subject"]
+    deliveries = []
     for relative in [subject["path"]] + list(subject.get("also") or []):
         current_path = root / relative
         if not current_path.is_file():
             raise FixtureError("%s: the subject file %s is not under %s" % (record["id"], relative, root))
         current = current_path.read_text(encoding="utf-8")
         pinned = directory / "input" / "subject" / relative
+        skill = _SKILL_FILE_RE.match(relative)
+        carried = False
         if _ROLE_FILE_RE.match(relative):
             description, body = _role_parts(current, relative)
             agents[role] = dict(agents[role], description=description, prompt=body)
+            carried = True
         elif relative.startswith("schemas/") and relative.endswith(".json") and schema_text is not None:
             schema_text = current
-        elif pinned.is_file():
+            carried = True
+        if pinned.is_file():
             old = pinned.read_text(encoding="utf-8").strip()
             if old != current.strip():
                 if not old or old not in prompt:
                     raise FixtureError("%s: the pinned text of %s is not in %s, so a change to it cannot reach the run"
                                        % (record["id"], relative, inputs["prompt"]))
                 prompt = prompt.replace(old, current.strip())
-    return prompt, agents, schema_text
+            carried = True
+        if skill:
+            delivery = (".claude/skills/%s" % skill.group(2), str(root / skill.group(1)))
+            if delivery not in deliveries:
+                deliveries.append(delivery)
+            carried = True
+        if not carried:
+            raise FixtureError("%s: nothing carries %s into a run (it is not a role's agent.md, a pinned schema, a skill, or text "
+                               "pinned under input/subject/), so a change to it could not be caught" % (record["id"], relative))
+    return prompt, agents, schema_text, deliveries
+
+
+def _delivered(deliveries):
+    """The files `render_input` delivers into a run's project, as manifest entries, so a change to one is a new cache key."""
+    entries = []
+    for target, source in deliveries:
+        for path in sorted(item for item in Path(source).rglob("*") if item.is_file()):
+            entries.append({"path": "%s/%s" % (target, path.relative_to(source)), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    return entries
 
 
 def _role_parts(text, relative):
@@ -531,6 +568,21 @@ def _fill(text, values):
 
 def _cache_root():
     return projects.home() / CACHE
+
+
+def _check_cache_root():
+    """Refuse a cache under `~/.claude/`, before anything is launched or written.
+
+    A subject runs in a project inside the cache, and the worker settings of decision 4 deny
+    `Edit(~/.claude/**)`, so a subject there can write nothing: the first live recording, made with
+    `WAYLINE_HOME` under `~/.claude/jobs/`, had every write of all three samples refused
+    (`docs/verification/m6.md`), and the fixture failed for the harness's reason rather than the subject's.
+    """
+    root = _cache_root().resolve()
+    claude = (Path.home() / ".claude").resolve()
+    if root == claude or root.is_relative_to(claude):
+        raise FixtureError("the fixture cache %s is under %s, where the worker settings deny every edit (Edit(~/.claude/**)), "
+                           "so a subject run there could write nothing; point WAYLINE_HOME elsewhere" % (root, claude))
 
 
 def _slot(kind, key, name):
@@ -652,20 +704,27 @@ class SuiteResult:
 
 
 class _Budget:
+    """What the suite may still spend: the turn ceiling stops the judge, and a refused session stops every launch.
+
+    `fixtures.max_turns_per_suite` skips the remaining judged samples and still runs the free layer
+    (decision 12), so subject sessions go on after the ceiling; a usage window that refused a session
+    would refuse the next one too, so nothing is launched after that.
+    """
+
     def __init__(self, limit):
         self.limit = limit
         self.spent = 0
         self.refused = None
 
     @property
-    def exhausted(self):
-        return self.refused is not None or (self.limit is not None and self.spent >= self.limit)
+    def spent_out(self):
+        return self.limit is not None and self.spent >= self.limit
 
     def stop_reason(self):
         if self.refused:
             return self.refused
-        return ("the turn ceiling (fixtures.max_turns_per_suite = %d) is spent (%d turns): the remaining judged samples "
-                "and every subject run not already cached were skipped" % (self.limit, self.spent))
+        return ("the turn ceiling (fixtures.max_turns_per_suite = %d) is spent (%d turns): the remaining judged samples were "
+                "skipped, and the structural layer still ran" % (self.limit, self.spent))
 
 
 def discover(root=HARNESS_ROOT):
@@ -693,6 +752,31 @@ def load_fixture(directory):
     return record
 
 
+def _raw_record(directory):
+    """`fixture.json` as JSON, unvalidated, or None: what a fixture that no longer loads still says about its baseline."""
+    try:
+        value = _read_json(Path(directory) / "fixture.json")
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _cannot_run(run, record, reason):
+    """A fixture the runner cannot load, render, or launch: named, and a regression when it passed at its baseline.
+
+    A change that breaks a subject so badly the fixture cannot even run has not stopped it from
+    failing; skipping it quietly would let exactly that change through.
+    """
+    record = record if isinstance(record, dict) else {}
+    baseline = record.get("baseline") if isinstance(record.get("baseline"), dict) else None
+    run.skipped = reason
+    run.baseline = baseline
+    run.quarantined = (record.get("quarantine") or {}).get("status") == "quarantined"
+    run.regression = bool(baseline and baseline.get("passed"))
+    run.gating = run.regression and not run.quarantined
+    return run
+
+
 def _unrunnable(record, directory):
     if record["kind"] == "conductor":
         return "a conductor fixture is a recorded journal the unit suite replays with the fake worker"
@@ -709,10 +793,11 @@ def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budge
     directory, root = Path(directory), Path(root)
     policy = projects.policy_for(None) if policy is None else policy
     budget = _Budget(None) if budget is None else budget
+    _check_cache_root()
     try:
         record = load_fixture(directory)
     except FixtureError as failure:
-        return FixtureRun(fixture_id(directory), skipped=str(failure))
+        return _cannot_run(FixtureRun(fixture_id(directory)), _raw_record(directory), str(failure))
     run = FixtureRun(record["id"], baseline=record.get("baseline"))
     reason = _unrunnable(record, directory)
     if reason:
@@ -726,49 +811,59 @@ def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budge
         run.at_least = run.n if judged.get("strict") else min(int(judged["pass_rule"]["at_least"]), run.n)
     try:
         rendered = render_input(directory, record, root)
-    except FixtureError as failure:
-        run.skipped = str(failure)
-        return run
-    current_subject = subject_sha256(record, root)
-    pinned_hash = input_hash(directory, record)
-    manifest = context_manifest(directory, record)
+        current_subject = subject_sha256(record, root)
+        pinned_hash = input_hash(directory, record)
+        manifest = context_manifest(directory, record) + _delivered(rendered[3])
+    except (FixtureError, OSError, ValueError) as failure:
+        return _cannot_run(run, record, str(failure))
 
+    stopped = False
     try:
         for index in range(run.n):
             run.samples.append(_subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run))
-        run.structural = sum(1 for sample in run.samples if sample.structural_passed)
-        if judged and len(run.samples) == run.n and run.structural == run.n:
+        if judged and all(sample.structural_passed for sample in run.samples):
             _judge_samples(directory, record, judged, policy, use_cache, budget, run)
     except _CostStop:
-        run.partial = True
+        stopped = True
+    except (worker.LaunchError, worker.RoleError, FixtureError, OSError, ValueError) as failure:
+        return _cannot_run(run, record, "the launch failed: %s" % failure)
     run.structural = sum(1 for sample in run.samples if sample.structural_passed)
-    structural_ok = not run.partial and run.structural == run.n
+    # A sample that failed the free layer settles the fixture even when the suite stopped: it cannot pass any more.
+    decided = not stopped or run.structural < len(run.samples)
+    run.partial = not decided
+    structural_ok = len(run.samples) == run.n and run.structural == run.n
     judged_ok = True if not judged else (run.judged is not None and run.judged >= run.at_least)
-    run.passed = structural_ok and judged_ok and not run.partial
+    run.passed = decided and structural_ok and judged_ok
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    if not run.partial:
+    if decided:
         _settle(directory, record, run, current_subject, pinned_hash, structural_ok, judged_ok if judged and structural_ok else None)
     _write_runs(directory, run, stamp)
     return run
 
 
 def _subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run):
-    prompt, agents, schema_text = rendered
+    prompt, agents, schema_text, _ = rendered
     launch = record["launch"]
     key = _sha({"prompt": prompt, "agent": json.dumps(agents, sort_keys=True), "manifest": manifest,
                 "schema": schema_text, "model": launch["model"], "effort": launch["effort"]})
     slot = _slot("subject", key, str(index))
     hit = _cached(slot, "envelope.json") if use_cache else None
-    if hit is None and budget.exhausted:
+    if hit is None and budget.refused:
         raise _CostStop()
     if hit is not None:
         attempt, stored, cached = hit, _read_json(hit / "envelope.json"), True
     else:
         attempt = _fresh(slot)
         stored = _launch_subject(directory, record, rendered, attempt)
-        _write_json(attempt / "envelope.json", stored)
         cached = False
+        if _refused(stored) and stored.get("structured_output") is None:
+            # Kept under its own name and never served from the cache: a refusal says nothing about the subject.
+            _write_json(attempt / "refused.json", stored)
+            _account(run, budget, stored, cached)
+            budget.refused = "a usage window refused the subject session %s: nothing more is launched" % stored.get("session_id")
+            raise _CostStop()
+        _write_json(attempt / "envelope.json", stored)
     _account(run, budget, stored, cached)
     project_dir = attempt / "project"
     schema = json.loads(_fill(schema_text, _values(attempt))) if schema_text is not None else None
@@ -777,10 +872,6 @@ def _subject_sample(directory, record, rendered, manifest, index, use_cache, bud
                                trace=stored.get("stream"), fixture_dir=directory, schema=schema, ended_ok=ended_ok)
     sample = Sample(index, cached, stored.get("session_id"), checks, place=str(attempt))
     sample.stored = stored
-    if _refused(stored) and stored.get("structured_output") is None:
-        run.samples.append(sample)
-        budget.refused = "a usage window refused the subject session %s: nothing more is launched" % stored.get("session_id")
-        raise _CostStop()
     return sample
 
 
@@ -789,7 +880,7 @@ def _values(attempt):
 
 
 def _launch_subject(directory, record, rendered, attempt):
-    prompt, agents, schema_text = rendered
+    prompt, agents, schema_text, deliveries = rendered
     launch = record["launch"]
     values = _values(attempt)
     project_dir = attempt / "project"
@@ -798,9 +889,16 @@ def _launch_subject(directory, record, rendered, attempt):
         shutil.copytree(context, project_dir)
     else:
         project_dir.mkdir()
+    for target, source in deliveries:  # the current skill replaces whatever copy the pinned context holds
+        destination = project_dir / target
+        if destination.is_symlink() or destination.is_file():
+            destination.unlink()
+        elif destination.is_dir():
+            shutil.rmtree(destination)
+        shutil.copytree(source, destination)
     env = {name: _fill(value, values) for name, value in (launch.get("env") or {}).items()}
-    if "TICKET_TOUCHES" in env:
-        _git_init(project_dir)  # a ticket's worker commits on its branch
+    if "TICKET_TOUCHES" in env:  # a ticket's worker commits on its branch
+        _git_init(project_dir, "ticket/%s" % env["WAYLINE_TICKET"] if env.get("WAYLINE_TICKET") else None)
     env["WAYLINE_RUN"] = values["run"]
     env["PATH"] = os.pathsep.join([str(HARNESS_ROOT / "bin")] + [entry for entry in os.environ.get("PATH", os.defpath).split(os.pathsep) if entry])
     schema_path = settings_path = None
@@ -820,9 +918,13 @@ def _launch_subject(directory, record, rendered, attempt):
     return _stored(worker.launch(request))
 
 
-def _git_init(directory):
+def _git_init(directory, branch=None):
+    """The run's project as a ticket's worker finds its worktree: the input committed on `main`, checked out on `branch`."""
     identity = ["-c", "user.name=wayline fixture", "-c", "user.email=fixture@wayline.invalid"]
-    for arguments in (["init", "-q"], ["add", "-A"], identity + ["commit", "-q", "--allow-empty", "-m", "fixture input"]):
+    steps = [["init", "-q", "-b", "main"], ["add", "-A"], identity + ["commit", "-q", "--allow-empty", "-m", "fixture input"]]
+    if branch:
+        steps.append(["checkout", "-q", "-b", branch])
+    for arguments in steps:
         subprocess.run(["git", "-C", str(directory)] + arguments, capture_output=True, text=True)
 
 
@@ -856,14 +958,15 @@ def _judge_samples(directory, record, judged, policy, use_cache, budget, run):
         for vote in range(votes):
             slot = _slot("judge", key, "%d-%d" % (sample.index, vote))
             hit = _cached(slot, "verdict.json") if use_cache else None
-            if hit is None and budget.exhausted:
+            if hit is None and (budget.refused or budget.spent_out):
                 raise _CostStop()
             if hit is not None:
                 answer, cached = _read_json(hit / "verdict.json"), True
             else:
                 attempt = _fresh(slot)
                 answer = _launch_judge(role, model, effort, _judge_prompt(rubric, shown, role), attempt, subject_sessions)
-                _write_json(attempt / "verdict.json", answer)
+                # Only a usable verdict is served again; one the judge could not give is kept under its own name and asked again.
+                _write_json(attempt / ("verdict.json" if answer["usable"] else "unusable.json"), answer)
                 cached = False
             _account(run, budget, answer, cached)
             answers.append(answer)
@@ -904,14 +1007,14 @@ def _launch_judge(role, model, effort, prompt, attempt, subject_sessions):
     stored = _stored(envelope)
     answer = envelope.structured_output
     verdict = {"session_id": envelope.session_id, "model": envelope.model, "num_turns": envelope.num_turns,
-               "usage": envelope.usage, "rate_limit_events": stored["rate_limit_events"], "refused": False}
+               "usage": envelope.usage, "rate_limit_events": stored["rate_limit_events"], "refused": False, "usable": False}
     if envelope.session_id and envelope.session_id in subject_sessions:
         verdict.update(verdict="fail", reason="the judge answered from the subject's session %s; a verdict must come from a fresh session" % envelope.session_id)
     elif answer is None:
         verdict.update(verdict="fail", reason="the judge returned no usable verdict: %s" % ("; ".join(envelope.errors) or envelope.subtype or "no structured output"))
         verdict["refused"] = _refused(stored)
     else:
-        verdict.update(verdict=answer["verdict"], reason=answer["reason"])
+        verdict.update(verdict=answer["verdict"], reason=answer["reason"], usable=True)
     return verdict
 
 
@@ -973,6 +1076,10 @@ def _write_runs(directory, run, stamp):
 def describe(run):
     """The line the runner prints for one fixture: the layers, the baseline, the delta, the cost, the verdict."""
     if run.skipped:
+        if run.gating:
+            return "%s: REGRESSION, cannot run: %s" % (run.id, run.skipped)
+        if run.regression:
+            return "%s: cannot run, quarantined (reported, not gating): %s" % (run.id, run.skipped)
         return "%s: skipped (%s)" % (run.id, run.skipped)
     structural = "structural %d/%d" % (run.structural, run.n)
     if not run.has_judged:
@@ -1013,12 +1120,19 @@ def _suite_state_path():
 
 
 def _changed(directory, root):
+    """Whether `--changed` selects a fixture: its subject changed since it last ran, or it still fails a baseline that passed.
+
+    The second half keeps a regression selected until it is fixed: the run that caught it records
+    the new subject hash, and without it the next `--changed` run would pass by selecting nothing.
+    """
     try:
         record = load_fixture(directory)
     except FixtureError:
         return True
-    reference = ((record.get("last_run") or {}).get("subject_sha256") or (record.get("baseline") or {}).get("subject_sha256")
-                 or record["subject"].get("sha256"))
+    last, baseline = record.get("last_run") or {}, record.get("baseline") or {}
+    if baseline.get("passed") and last and False in (last.get("outcome") or {}).values():
+        return True
+    reference = last.get("subject_sha256") or baseline.get("subject_sha256") or record["subject"].get("sha256")
     return subject_sha256(record, root) != reference
 
 
@@ -1188,6 +1302,8 @@ def record(project, session_id, kind, slug, root=HARNESS_ROOT, subject_path=None
         raise FixtureError("a recorded fixture's kind is one of %s; a conductor fixture is a recorded journal" % ", ".join(k for k in FIXTURE_KINDS if k != "conductor"))
     if not _SLUG_RE.match(slug or ""):
         raise FixtureError("a fixture slug is lowercase letters, digits, and dashes, got %r" % (slug,))
+    if runs != 0:
+        _check_cache_root()  # the baseline runs in the cache: refuse before anything is recorded
     identifier = "%s/%s" % (kind, slug)
     directory = root / FIXTURES / kind / slug
     if directory.exists():
@@ -1225,79 +1341,94 @@ def record(project, session_id, kind, slug, root=HARNESS_ROOT, subject_path=None
     for relative in subject_files:
         if not (root / relative).is_file():
             raise FixtureError("the subject file %s is not under %s" % (relative, root))
-
-    directory.mkdir(parents=True)
-    _write_text(directory / "input" / "prompt.md", template(prompt_text))
-    _write_json(directory / "input" / "agent.json", agents)
-    schema_name = None
-    if (session / "schema.json").is_file():
-        schema_name = "input/schema.json"
-        _write_text(directory / schema_name, (session / "schema.json").read_text(encoding="utf-8"))
-    settings_name = None
-    if (session / "settings.json").is_file():
-        settings = template((session / "settings.json").read_text(encoding="utf-8"))
-        if json.loads(settings):
-            settings_name = "input/settings.json"
-            _write_text(directory / settings_name, settings)
-    for relative in subject_files:
         text = (root / relative).read_text(encoding="utf-8").strip()
-        if not _ROLE_FILE_RE.match(relative) and not relative.startswith("schemas/") and text and text in prompt_text:
-            _write_text(directory / "input" / "subject" / relative, text + "\n")
-        elif kind == "prompt" and relative == subject_path:
-            raise FixtureError("the prompt %s is not in the session's prompt as it stands now, so a change to it could not reach a run" % relative)
-    copied = []
-    for relative in _context_paths(project, ticket) + [str(item) for item in context or ()]:
-        source = project / relative
-        if not source.resolve().is_relative_to(project) or not source.exists() or relative in copied:
-            continue
-        target = directory / "input" / "context" / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        (shutil.copytree if source.is_dir() else shutil.copyfile)(source, target)
-        copied.append(relative)
-    manifest_name = None
-    if copied:
-        manifest_name = "input/manifest.json"
-        _write_json(directory / manifest_name, context_manifest(directory))
-    (directory / "recorded").mkdir()
-    shutil.copyfile(session / "result.json", directory / "recorded" / ("result-%s.json" % session_id))
-    _write_text(directory / "recorded" / ("trace-%s.jsonl" % session_id), _reduced_trace(session / "stream.jsonl"))
+        carried = (_ROLE_FILE_RE.match(relative) or _SKILL_FILE_RE.match(relative) or (text and text in prompt_text)
+                   or (relative.startswith("schemas/") and relative.endswith(".json") and (session / "schema.json").is_file()))
+        if not carried:
+            raise FixtureError("nothing would carry %s into a run: it is not a role's agent.md, a skill, the pinned schema, or text "
+                               "of the session's prompt as it stands now, so a change to it could not be caught" % relative)
 
-    settings_policy = policy.get("fixtures") or {}
-    fixture = {
-        "schema_version": 1, "id": identifier, "kind": kind,
-        "subject": {"path": subject_path, "sha256": None, "also": list(also or [])},
-        "origin": {"project": str(project), "ticket": ticket, "session_id": session_id, "journal_ts": named[0].get("ts"),
-                   "change_record": str(change_record) if change_record else None,
-                   "reason": reason or "recorded from session %s of %s" % (session_id, project)},
-        "launch": {"role": role, "model": fields.get("model"), "effort": fields.get("effort"), "permission_mode": "dontAsk",
-                   "max_turns": (agents.get(role) or {}).get("maxTurns"), "output_format": "stream-json", "json_schema": schema_name,
-                   "fallback_model": fields.get("fallback_model"), "allowed_tools": fields["allowed_tools"],
-                   "disallowed_tools": fields["disallowed_tools"], "add_dirs": [template(entry) for entry in fields["add_dirs"]],
-                   "env": {name: template(str(value)) for name, value in environment.items() if name.startswith(("TICKET_", "WAYLINE_"))},
-                   "settings": settings_name},
-        "input": {"prompt": "input/prompt.md", "agent": "input/agent.json", "context_manifest": manifest_name, "input_hash": None},
-        "structural": _proposals(output),
-        "baseline": None,
-        "quarantine": {"status": "active", "flake_limit": int(settings_policy.get("flake_limit", 2)), "flakes": [],
-                       "stable_runs_to_restore": int(settings_policy.get("stable_runs_to_restore", 3))},
-        "cost": {"per_subject_run": {"turns": result.get("num_turns"), "input_tokens": _cost_of(result)["input_tokens"],
-                                     "output_tokens": _cost_of(result)["output_tokens"]}},
-    }
-    if rubric is not None:
-        _write_text(directory / "rubric.md", Path(rubric).read_text(encoding="utf-8"))
-        judge = settings_policy.get("judge") or {"model": "haiku", "effort": "low"}
-        fixture["judged"] = {
-            "rubric": "rubric.md",
-            "show_judge": list(show_judge) or [_path_for([key]) for key in (output or {})] or ["$"],
-            "judge": {"model": judge["model"], "effort": judge["effort"], "tools": [], "votes": 1, "must_differ_from_subject_session": True},
-            "sample_size": int(settings_policy.get("sample_size", 3)),
-            "pass_rule": {"at_least": int(settings_policy.get("at_least", 2))}, "strict": False}
-    fixture["subject"]["sha256"] = subject_sha256(fixture, root)
-    fixture["input"]["input_hash"] = input_hash(directory, fixture)
-    errors = validate(fixture, load_schema("fixture"))
-    if errors:
-        raise FixtureError("the recorded fixture is not valid: %s" % "; ".join("%s: %s" % (error.path, error.message) for error in errors[:5]))
-    _write_json(directory / "fixture.json", fixture)
+    # Built in a scratch directory beside the fixture and renamed into place whole, so a record that fails leaves no
+    # half-written fixture behind to block the next attempt. The scratch is the recorder's own, never a fixture.
+    parent = root / FIXTURES / kind
+    parent.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=".%s." % slug, suffix=".recording", dir=parent))
+    try:
+        work.chmod(0o755)
+        _write_text(work / "input" / "prompt.md", template(prompt_text))
+        _write_json(work / "input" / "agent.json", agents)
+        schema_name = None
+        if (session / "schema.json").is_file():
+            schema_name = "input/schema.json"
+            _write_text(work / schema_name, (session / "schema.json").read_text(encoding="utf-8"))
+        settings_name = None
+        if (session / "settings.json").is_file():
+            settings = template((session / "settings.json").read_text(encoding="utf-8"))
+            if json.loads(settings):
+                settings_name = "input/settings.json"
+                _write_text(work / settings_name, settings)
+        for relative in subject_files:
+            text = (root / relative).read_text(encoding="utf-8").strip()
+            if not _ROLE_FILE_RE.match(relative) and not relative.startswith("schemas/") and text and text in prompt_text:
+                _write_text(work / "input" / "subject" / relative, text + "\n")
+        copied = []
+        for relative in _context_paths(project, ticket) + [str(item) for item in context or ()]:
+            source = project / relative
+            if not source.resolve().is_relative_to(project) or not source.exists() or relative in copied:
+                continue
+            target = work / "input" / "context" / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            (shutil.copytree if source.is_dir() else shutil.copyfile)(source, target)
+            copied.append(relative)
+        manifest_name = None
+        if copied:
+            manifest_name = "input/manifest.json"
+            _write_json(work / manifest_name, context_manifest(work))
+        (work / "recorded").mkdir()
+        shutil.copyfile(session / "result.json", work / "recorded" / ("result-%s.json" % session_id))
+        _write_text(work / "recorded" / ("trace-%s.jsonl" % session_id), _reduced_trace(session / "stream.jsonl"))
+
+        settings_policy = policy.get("fixtures") or {}
+        fixture = {
+            "schema_version": 1, "id": identifier, "kind": kind,
+            "subject": {"path": subject_path, "sha256": None, "also": list(also or [])},
+            "origin": {"project": str(project), "ticket": ticket, "session_id": session_id, "journal_ts": named[0].get("ts"),
+                       "change_record": str(change_record) if change_record else None,
+                       "reason": reason or "recorded from session %s of %s" % (session_id, project)},
+            "launch": {"role": role, "model": fields.get("model"), "effort": fields.get("effort"), "permission_mode": "dontAsk",
+                       "max_turns": (agents.get(role) or {}).get("maxTurns"), "output_format": "stream-json", "json_schema": schema_name,
+                       "fallback_model": fields.get("fallback_model"), "allowed_tools": fields["allowed_tools"],
+                       "disallowed_tools": fields["disallowed_tools"], "add_dirs": [template(entry) for entry in fields["add_dirs"]],
+                       "env": {name: template(str(value)) for name, value in environment.items() if name.startswith(("TICKET_", "WAYLINE_"))},
+                       "settings": settings_name},
+            "input": {"prompt": "input/prompt.md", "agent": "input/agent.json", "context_manifest": manifest_name, "input_hash": None},
+            "structural": _proposals(output),
+            "baseline": None,
+            # policy.json allows 0 for both; a fixture needs at least one flake to quarantine and one run to restore.
+            "quarantine": {"status": "active", "flake_limit": max(1, int(settings_policy.get("flake_limit", 2))), "flakes": [],
+                           "stable_runs_to_restore": max(1, int(settings_policy.get("stable_runs_to_restore", 3)))},
+            "cost": {"per_subject_run": {"turns": result.get("num_turns"), "input_tokens": _cost_of(result)["input_tokens"],
+                                         "output_tokens": _cost_of(result)["output_tokens"]}},
+        }
+        if rubric is not None:
+            _write_text(work / "rubric.md", Path(rubric).read_text(encoding="utf-8"))
+            judge = settings_policy.get("judge") or {"model": "haiku", "effort": "low"}
+            fixture["judged"] = {
+                "rubric": "rubric.md",
+                "show_judge": list(show_judge) or [_path_for([key]) for key in (output or {})] or ["$"],
+                "judge": {"model": judge["model"], "effort": judge["effort"], "tools": [], "votes": 1, "must_differ_from_subject_session": True},
+                "sample_size": int(settings_policy.get("sample_size", 3)),
+                "pass_rule": {"at_least": int(settings_policy.get("at_least", 2))}, "strict": False}
+        fixture["subject"]["sha256"] = subject_sha256(fixture, root)
+        fixture["input"]["input_hash"] = input_hash(work, fixture)
+        errors = validate(fixture, load_schema("fixture"))
+        if errors:
+            raise FixtureError("the recorded fixture is not valid: %s" % "; ".join("%s: %s" % (error.path, error.message) for error in errors[:5]))
+        _write_json(work / "fixture.json", fixture)
+        os.rename(work, directory)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
     print("recorded %s from session %s into %s" % (identifier, session_id, directory))
     print("  %d structural checks proposed (schema_valid, then one per scalar and array): prune the incidental ones" % len(fixture["structural"]))
 

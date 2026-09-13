@@ -1,0 +1,223 @@
+{
+  "title": "result",
+  "description": "The structured result a worker session returns (BRIEF 9.4), passed to claude -p as --json-schema and re-validated in code.",
+  "type": "object",
+  "required": [
+    "ticket_id",
+    "status",
+    "summary"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "ticket_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "done",
+        "running",
+        "failed",
+        "blocked",
+        "needs_human"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "outputs_written": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "commands_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "text",
+          "provenance"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "provenance": {
+            "type": "string",
+            "description": "a path with a locator the manifest can resolve"
+          },
+          "negative": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "goal_progress": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "metric",
+        "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^t[0-9]+-a[0-9]+$"
+        }
+      }
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "title",
+          "kind",
+          "why"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dossier",
+              "lit",
+              "code",
+              "docs",
+              "experiment",
+              "analysis",
+              "figure",
+              "writing",
+              "review",
+              "decision",
+              "harness"
+            ]
+          },
+          "why": {
+            "type": "string"
+          },
+          "blocked_by": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "radius": {
+            "type": "string",
+            "enum": [
+              "strict",
+              "moderate",
+              "exploratory"
+            ]
+          }
+        }
+      }
+    },
+    "decision_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "question",
+          "options",
+          "recommended"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recommended": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blocking": {
+            "type": "string",
+            "enum": [
+              "subgraph",
+              "all"
+            ]
+          },
+          "human_only": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "experiment tickets: the job ids a running result leaves for the poller"
+    },
+    "touched_outside_declared": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocked_on": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cost": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minutes": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
