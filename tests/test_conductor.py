@@ -284,7 +284,7 @@ class RebaseTest(ConductorCase):
         failed = self.payload("ticket_failed")
         self.assertEqual(failed["next"], "split")
         self.assertIn("hello.txt", failed["reason"])
-        self.assertIn("ticket 08", failed["reason"])
+        self.assertIn("integrator", failed["reason"])  # nothing scripted it, so it could not be launched
         subjects = self.log()
         above = next((index for index, subject in enumerate(subjects) if not subject.startswith("ledger:")), len(subjects))
         self.assertEqual(self.git("rev-parse", "main~%d" % above), head, "only the ledger's own commits are above it")
@@ -491,9 +491,9 @@ class RefuseToStartTest(ConductorCase):
         self.assertNotIn("ticket_launched", [event["event"] for event in self.events()])
 
     def test_a_flag_a_later_ticket_builds_says_which(self):
-        code, _, err = run_verb(["--detach", "--project", str(self.project)])
+        code, _, err = run_verb(["--simulate-failure", "5", "--project", str(self.project)])
         self.assertEqual(code, 2)
-        self.assertIn("ticket 13", err)
+        self.assertIn("ticket 38", err)
 
 
 def run_verb(arguments):
