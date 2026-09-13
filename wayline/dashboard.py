@@ -45,6 +45,7 @@ import socket
 import sys
 import threading
 import time
+import zipfile
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -57,6 +58,7 @@ from wayline.project import (
     FINDINGS, HARNESS_JSON, RESEARCH, ProjectError, active_path, home, is_project, policy_for,
     read_active, read_harness, read_jobs, read_projects, status_view,
 )
+from wayline.provenance import FINDINGS_MD, MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
 from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
 
 __all__ = [
@@ -65,6 +67,7 @@ __all__ = [
     "dashboard_path", "read_settings", "record_settings", "project_ids", "projects_view", "find_dashboard_project",
     "ledger_snapshot", "etag", "overview_view", "journal_tail", "phase_from_events",
     "graph_svg", "tickets_view", "ticket_view", "log_path", "log_tail",
+    "outputs_view", "byte_range", "download_target",
     "static_file", "tunnel_line", "serve_lines", "make_server", "serve", "serve_command",
 ]
 
@@ -693,6 +696,235 @@ def _log_version(path):
     return (stamp.st_mtime_ns, stamp.st_size)
 
 
+# --- the outputs index and downloads (ticket 42) -------------------------------------------------
+
+# arXiv's terms of use forbid re-serving an e-print (dossier.py's docstring), so nothing under a
+# reference's own `source/` is ever indexed or downloaded, whatever a request or a zip walk asks
+# for; `init` gitignores it for the same reason.
+_REFS_SOURCE = (RESEARCH, "refs")
+
+
+def _is_source_tree(project, resolved):
+    """Whether `resolved` is `research/refs/<slug>/source` or lives beneath it."""
+    try:
+        relative = resolved.relative_to(project)
+    except ValueError:
+        return True
+    parts = relative.parts
+    return len(parts) >= 4 and parts[:2] == _REFS_SOURCE and parts[3] == "source"
+
+
+def _file_entry(project, path):
+    """`{path, size, sha256}` for one existing file, `path` relative-to-project as posix, or None."""
+    if path.is_symlink():
+        return None
+    try:
+        stamp = path.stat()
+    except OSError:
+        return None
+    if not path.is_file() or _is_source_tree(project, path):
+        return None
+    return {"path": path.relative_to(project).as_posix(), "size": stamp.st_size, "sha256": sha256_of(path)}
+
+
+def _tree_entries(project, root):
+    """Every file under `root` (itself relative to `project`), sorted, `source/` trees excluded."""
+    base = project / root
+    if not base.is_dir():
+        return []
+    entries = []
+    for path in sorted(base.rglob("*")):
+        if path.is_dir() or path.is_symlink():
+            continue
+        entry = _file_entry(project, path)
+        if entry is not None:
+            entries.append(entry)
+    return entries
+
+
+def _manifest_entries(project):
+    """The `results/` index of the ticket: `manifest.json`'s own entries, as recorded.
+
+    Sizes and hashes come from the manifest itself rather than a fresh stat: `register_artifact`
+    hashed the file once when it was produced, `results/` is gitignored and may be pruned by the
+    owner between runs, and a finding's provenance already points at what the manifest recorded,
+    not at whatever happens to be on disk right now.
+    """
+    manifest = read_manifest(project)
+    return [
+        {"path": entry["path"], "size": entry["size"], "sha256": entry["sha256"],
+         "ticket": entry.get("ticket"), "run_id": entry.get("run_id"), "job": entry.get("job")}
+        for entry in manifest.get("entries", []) if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    ]
+
+
+def _findings_entries(project):
+    return [entry for entry in (
+        _file_entry(project, project / RESEARCH / FINDINGS),
+        _file_entry(project, project / RESEARCH / FINDINGS_MD),
+    ) if entry is not None]
+
+
+# A dossier's own files, never the `source/`, `inventory.json`, `entries.jsonl`, `code/`, or
+# `qa_log.md` beside it: those are absorb's working files, not what the ticket calls "dossiers".
+_DOSSIER_FILES = ("dossier.json", "dossier.md", "code_dossier.json")
+
+
+def _dossier_entries(project):
+    entries = []
+    refs = project / RESEARCH / "refs"
+    if not refs.is_dir():
+        return entries
+    for slug_dir in sorted(refs.iterdir()):
+        if not slug_dir.is_dir():
+            continue
+        for name in _DOSSIER_FILES:
+            entry = _file_entry(project, slug_dir / name)
+            if entry is not None:
+                entries.append(entry)
+    return entries
+
+
+def _figures_entries(project):
+    """Every file under a reference's own `figures/`: the crops its inventory pass extracted."""
+    entries = []
+    refs = project / RESEARCH / "refs"
+    if not refs.is_dir():
+        return entries
+    for slug_dir in sorted(refs.iterdir()):
+        entries.extend(_tree_entries(project, (slug_dir / "figures").relative_to(project)))
+    return entries
+
+
+def outputs_view(project):
+    """The outputs index of Implementation Decisions 8: what the owner browses and downloads.
+
+    Every category is a flat list of `{path, size, sha256}` (results carries the manifest's own
+    `ticket`, `run_id`, and `job` too), `path` relative to the project root and exactly what
+    `GET /api/projects/<id>/download/<path>` takes. `results/` is read through `manifest.json`
+    rather than walked, since that is the one tree a finding's provenance already trusts; every
+    other category is real files on disk, walked and hashed fresh.
+    """
+    project = Path(project).resolve()
+    return {
+        "results": _manifest_entries(project),
+        "findings": _findings_entries(project),
+        "figures": _figures_entries(project),
+        "dossiers": _dossier_entries(project),
+        "report": [entry for entry in (_file_entry(project, project / RESEARCH / "REPORT.md"),) if entry is not None],
+        "paper": _tree_entries(project, Path(RESEARCH) / "paper"),
+        "docs": _tree_entries(project, Path("docs")),
+    }
+
+
+def _outputs_snapshot(project):
+    """One `(mtime_ns, size)` per file the outputs index reads: the version behind its ETag.
+
+    Cheap like `ledger_snapshot`, so a poll that finds nothing new never re-hashes a tree; the
+    index itself (`outputs_view`) is only built again once this snapshot has actually moved.
+    `results/` needs no entry of its own here: `manifest.json` is what `_manifest_entries` reads,
+    and its own stat already moves the tag when a new artifact is registered.
+    """
+    project = Path(project)
+    values = {}
+    _stat_into(values, project / RESEARCH / MANIFEST_JSON, RESEARCH + "/" + MANIFEST_JSON)
+    _stat_into(values, project / RESEARCH / FINDINGS, RESEARCH + "/" + FINDINGS)
+    _stat_into(values, project / RESEARCH / FINDINGS_MD, RESEARCH + "/" + FINDINGS_MD)
+    _stat_into(values, project / RESEARCH / "REPORT.md", RESEARCH + "/REPORT.md")
+    for root in (project / RESEARCH / "refs", project / RESEARCH / "paper", project / "docs"):
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file() and not path.is_symlink() and not _is_source_tree(project, path):
+                _stat_into(values, path, path.relative_to(project).as_posix())
+    return values
+
+
+class _Unsatisfiable(Exception):
+    """A `Range` header that names bytes past the end of the file: answer 416, not a body."""
+
+
+_RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+def byte_range(header, size):
+    """The single byte range a `Range` header names, or None to send the whole body.
+
+    RFC 9110 section 14.2's `bytes=<first>-<last>`, `bytes=<first>-`, and `bytes=-<suffix>`; a
+    missing header, more than one range, or a unit this server does not parse all mean "send
+    everything" rather than a refusal, since only ticket 42 asks for single-range support.
+    """
+    if not header or "," in header:
+        return None
+    match = _RANGE_RE.match(header.strip())
+    if not match:
+        return None
+    first, last = match.groups()
+    if not first and not last:
+        return None
+    if not first:
+        length = int(last)
+        start, end = max(size - length, 0), size - 1
+    else:
+        start = int(first)
+        end = int(last) if last else size - 1
+    if size == 0 or start >= size or start > end:
+        raise _Unsatisfiable(size)
+    return start, min(end, size - 1)
+
+
+class _ChunkedWriter:
+    """The zip-streaming recipe of research-notes 08 Section 3: `write`, `tell`, and `close` over
+    `wfile`, framing every write as one HTTP/1.1 chunk (RFC 9112 section 7.1). `zipfile` cannot
+    seek this, so it flags every member with the data descriptor bit and writes CRC and sizes
+    after the member's bytes; nothing here buffers more than one write call's worth of data.
+    """
+
+    def __init__(self, wfile):
+        self._wfile = wfile
+        self._pos = 0
+
+    def write(self, data):
+        if data:
+            self._wfile.write(b"%x\r\n" % len(data))
+            self._wfile.write(bytes(data))
+            self._wfile.write(b"\r\n")
+            self._pos += len(data)
+        return len(data)
+
+    def tell(self):
+        return self._pos
+
+    def flush(self):
+        pass
+
+    def close(self):
+        self._wfile.write(b"0\r\n\r\n")
+
+
+def download_target(project, relpath):
+    """The file or directory `download/<path>` names beneath `project`, or None.
+
+    Resolved and checked against the project root the way `static_file` checks against
+    `dashboard/`, so `..` and a symlink out both end as None; a path under any reference's own
+    `source/` is refused the same way, since that tree must never be re-served.
+    """
+    project = Path(project).resolve()
+    relative = unquote(relpath)
+    if not relative or relative.startswith("/") or ".." in Path(relative).parts:
+        return None
+    candidate = project / relative
+    try:
+        resolved = candidate.resolve()
+    except OSError:  # pragma: no cover - a symlink loop under the project
+        return None
+    if not resolved.is_relative_to(project) or not resolved.exists():
+        return None
+    if _is_source_tree(project, resolved):
+        return None
+    return resolved
+
+
 # --- the static page --------------------------------------------------------------------------------
 
 
@@ -823,6 +1055,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/tickets/?$"), "api_tickets"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/tickets/(?P<ticket>\d+)/?$"), "api_ticket"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/logs/(?P<kind>[a-z]+)/(?P<log_id>.+)$"), "api_logs"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/outputs/?$"), "api_outputs"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/download/(?P<relpath>.+)$"), "api_download"),
     )
 
     def log_message(self, *args):
@@ -1004,6 +1238,86 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self._not_modified(tag):
             return None
         return self._json(log_tail(target, since), tag)
+
+    def api_outputs(self, query, project):
+        path = self._project(project)
+        tag = etag("outputs", project, self.server.memo.get(("outputs", str(path)), lambda: _outputs_snapshot(path)))
+        if self._not_modified(tag):
+            return None
+        return self._json(outputs_view(path), tag)
+
+    def api_download(self, query, project, relpath):
+        """A single file, ranged, or a directory streamed as a zip (Implementation Decisions 8)."""
+        path = self._project(project)
+        target = download_target(path, relpath)
+        if target is None:
+            return self._text(HTTPStatus.NOT_FOUND, "no such output: %s\n" % relpath)
+        if target.is_dir():
+            return self._download_zip(path, target)
+        return self._download_file(target)
+
+    def _download_file(self, target):
+        try:
+            size = target.stat().st_size
+        except OSError:
+            return self._text(HTTPStatus.NOT_FOUND, "no such output\n")
+        try:
+            requested = byte_range(self.headers.get("Range"), size)
+        except _Unsatisfiable:
+            self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+            self.send_header("Content-Range", "bytes */%d" % size)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        start, end = requested if requested else (0, max(size - 1, 0))
+        length = 0 if size == 0 else end - start + 1
+        self.send_response(HTTPStatus.PARTIAL_CONTENT if requested else HTTPStatus.OK)
+        self.send_header("Content-Type", content_type(target))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        if requested:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        self.send_header("Content-Disposition", 'attachment; filename="%s"' % target.name)
+        self.end_headers()
+        if self.command == "HEAD" or length == 0:
+            return None
+        with open(target, "rb") as handle:
+            handle.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = handle.read(min(remaining, 1 << 16))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+        return None
+
+    def _download_zip(self, project, directory):
+        """A directory, streamed as a zip through the chunked-encoding wrapper of ticket 42.
+
+        Never buffered whole: `zipfile` writes each member's compressed bytes as they are
+        produced, and `_ChunkedWriter` turns every one of those writes into one HTTP chunk.
+        """
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", 'attachment; filename="%s.zip"' % directory.name)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        if self.command == "HEAD":
+            return None
+        writer = _ChunkedWriter(self.wfile)
+        try:
+            with zipfile.ZipFile(writer, "w", zipfile.ZIP_DEFLATED) as archive:
+                for member in sorted(directory.rglob("*")):
+                    if member.is_dir() or member.is_symlink() or _is_source_tree(project, member):
+                        continue
+                    archive.write(member, member.relative_to(directory).as_posix())
+            writer.close()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        self.close_connection = True
+        return None
 
     def _static(self, path):
         target = static_file(path, root=self.server.static_root)
