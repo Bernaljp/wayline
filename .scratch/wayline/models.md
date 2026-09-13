@@ -1,12 +1,12 @@
 # Wayline tickets: which model and effort to implement each one
 
-Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline`; each issue also carries a `model:` label with its row of this table.
+Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. Each issue also carries a `model:` label with its row of this table.
 
 | Difficulty | Model | Effort | Tickets | Label |
 |---|---|---|---|---|
 | 1 | sonnet | low | none | |
 | 2 | sonnet | medium | 12, 16, 18, 23, 25, 37, 41, 42, 48 (9) | `model:sonnet-medium` |
-| 3 | opus | high | the other 31 | `model:opus-high` |
+| 3 | opus | high | the other 35 | `model:opus-high` |
 | 4 | fable | xhigh | 01, 03, 07, 30, 31, 32, 43, 45, 50, 53 (10) | `model:fable-xhigh` |
 | 5 | fable | max | 05, 09, 34 (3) | `model:fable-max` |
 
@@ -36,7 +36,7 @@ Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`medium`, `high`, 
 
 ## By wave
 
-Waves are the earliest start from `.scratch/wayline/waves.md`. The order column is a schedule under four rules: at most three sessions in flight; one Fable session at a time (so 07 and 32 never overlap); a milestone demo runs alone, and the demos land in milestone order so that every tag contains the code of the tags before it (`upgrade` moves a project between tags); same-module pairs (08 and 10 after 09, 38 before 45) run one after the other. Read a cell left to right: tickets separated by commas start together, each in its own worktree; "then" waits until everything before it has landed on `master` and is pushed; "alone" means nothing else in flight.
+Waves are the earliest start from `.scratch/wayline/waves.md`. The order column is a schedule under four rules: at most three sessions in flight; one Fable session at a time (so 07 and 32 never overlap); a milestone demo runs alone, and the demos land in milestone order so that every tag contains the code of the tags before it (`upgrade` moves a project between tags); same-module pairs (08 and 10 after 09, 38 before 45, 54 before 55) run one after the other. Read a cell left to right: tickets separated by commas start together, each in its own worktree; "then" waits until everything before it has landed on `master` and is pushed; "alone" means nothing else in flight.
 
 | Wave | Tickets with their grade | Order |
 |---|---|---|
@@ -46,10 +46,10 @@ Waves are the earliest start from `.scratch/wayline/waves.md`. The order column 
 | 4 | 06 opus high, 07 fable xhigh, 12 sonnet medium, 17 opus high, 21 opus high, 23 sonnet medium, 25 sonnet medium, 27 opus high, 32 fable xhigh, 48 sonnet medium, 52 opus high | 06 alone; then 07, 27, 12 together; then 32, 17, 21 together; then 23, 25, 52 together; then 48. |
 | 5 | 09 fable max, 19 opus high, 22 opus high, 28 opus high, 40 opus high, 42 sonnet medium, 49 opus high | 09, 28, 42 together, 09 at the top of a window; then 22, 40, 49 together. 19 is the M2 demo: it waits for wave 8, after 15. |
 | 6 | 08 opus high, 10 opus high, 13 opus high, 24 opus high, 30 fable xhigh, 39 opus high, 41 sonnet medium, 44 opus high | 30, 08, 41 together; then 10, 13, 24 together; then 44. 39 waits for 19 (wave 8). |
-| 7 | 14 opus high, 26 opus high, 31 fable xhigh, 46 opus high | 31, 14, 46 together. 26 is the M3 demo: it waits for wave 8, after 19. |
-| 8 | 15 opus high, 29 opus high, 33 opus high, 35 opus high, 37 sonnet medium | 33, 35, 37 together; then 15 alone; then 19 alone; then 26 alone; then 29, 39 together. |
-| 9 | 34 fable max | 34 at the top of a window. It may start together with 29 and 39, since it needs only 33. |
-| 10 | 36 opus high, 38 opus high, 45 fable xhigh | 36 alone; then 38; then 45 (or 38 and 45 together, and expect one merge). |
+| 7 | 26 opus high, 31 fable xhigh, 46 opus high, 54 opus high | 31, 54, 46 together. 26 is the M3 demo: it waits for wave 9, after 19. |
+| 8 | 14 opus high, 29 opus high, 33 opus high, 37 sonnet medium, 55 opus high | 33, 14, 37 together; then 55. 29 waits for 26 (wave 9). |
+| 9 | 15 opus high, 34 fable max, 35 opus high, 56 opus high | 34 at the top of a window, with 35 and 56 together; then 15 alone; then 19 alone; then 26 alone; then 29, 39 together. |
+| 10 | 36 opus high, 38 opus high, 45 fable xhigh, 57 opus high | 36 alone; then 38 and 57 together (both edit the wave: expect one merge); then 45 (or 38 and 45 together, and expect one merge). |
 | 11 | 43 fable xhigh | 43 alone, started at the top of a window in the evening; nothing else that night. |
 | 12 | 47 opus high, 50 fable xhigh, 51 opus high | 50, 51 together; then 47 alone. |
 | 13 | 53 fable xhigh | 53 alone. |
@@ -71,8 +71,8 @@ Waves are the earliest start from `.scratch/wayline/waves.md`. The order column 
 | 11 Read-only dashboard: transport, tabs, journal tail, overview | #12 | 3 | 3 | opus | high | Threading server, ETags, and the server-sent events alternative; research-notes 08 carries the server. |
 | 12 Dashboard graph, ticket pages, and logs endpoints | #13 | 4 | 2 | sonnet | medium | The 43-line layered layout is in the research note; the rest is endpoints and a page. |
 | 13 User units, run --detach, and the notifier | #14 | 6 | 3 | opus | high | Touches the owner's systemd user manager and the credentials env file; the uninstall must leave nothing behind. |
-| 14 The tick | #15 | 7 | 3 | opus | high | Many branches (login expiry, usage, heartbeat, jobs, relaunch) under a fake clock; a one-minute live test. |
-| 15 M1 live demo | #16 | 8 | 3 | opus | high | The first cross-cutting live run; mostly running and recording with the owner at the laptop. |
+| 14 The tick | #15 | 8 | 3 | opus | high | Many branches (login expiry, usage, heartbeat, jobs, relaunch) under a fake clock; a one-minute live test. |
+| 15 M1 live demo | #16 | 9 | 3 | opus | high | The first cross-cutting live run; mostly running and recording with the owner at the laptop. |
 | 16 Resources detection and slots | #17 | 3 | 2 | sonnet | medium | `nvidia-smi` and `/proc` parsing over recorded readings; the slot rules are given verbatim. |
 | 17 Job runner seam | #18 | 4 | 3 | opus | high | The launch line and the decode table are verbatim from research-notes 05; the OOM rule and the `setsid` fallback need care; live on the GPU. |
 | 18 Manifest and findings provenance | #19 | 3 | 2 | sonnet | medium | Four ledger functions and one refusal; small and exact. |
@@ -92,7 +92,7 @@ Waves are the earliest start from `.scratch/wayline/waves.md`. The order column 
 | 32 Type-B verdicts: the verifier role and gates | #33 | 4 | 4 | fable | xhigh | The verifier's prompt and the gate every later Type-B question reuses; the two-thread kill argument. |
 | 33 Specify | #34 | 8 | 3 | opus | high | The specify protocol, its structural checks, and the verdict loop; the planner role itself lands in 34. |
 | 34 Plan: the planner, plan-time checks, and ticket assignment | #35 | 9 | 5 | fable | max | The planner's prompt (demo, acceptance, touch set, difficulty, context pack), the plan-time checks, replan, and split; every project run's quality starts here. |
-| 35 Decision tickets end to end and dashboard actions | #36 | 8 | 3 | opus | high | Wires the conductor, the tick, the dashboard, and the CLI through four answer paths and nine token-guarded actions. |
+| 35 Decision tickets end to end and dashboard actions | #36 | 9 | 3 | opus | high | Wires the conductor, the tick, the dashboard, and the CLI through four answer paths and nine token-guarded actions. |
 | 36 M4 live demo | #37 | 10 | 3 | opus | high | The front door live end to end; the session runs the verbs and records (v0.5.0). |
 | 37 Proposals admission | #38 | 8 | 2 | sonnet | medium | The admission rules are given verbatim (radius, similarity thresholds, caps) with a fake judge. |
 | 38 Stall detection and the escalation chain | #39 | 10 | 3 | opus | high | The stall counter and the four-step escalation chain inside the wave; `--simulate-failure`. |
@@ -111,6 +111,10 @@ Waves are the earliest start from `.scratch/wayline/waves.md`. The order column 
 | 51 The documentation site | #52 | 12 | 3 | opus | high | The documentarian role, Sphinx in the project's own environment, symbol and example checks. |
 | 52 Venue guidelines | #53 | 4 | 3 | opus | high | Seventeen venues' rules from heterogeneous pages into one schema; seven manuscript checks. |
 | 53 The paper and the M7 demo | #54 | 13 | 4 | fable | xhigh | The writer's prompt under the provenance rule, the build loop with the linter and the checks, the kill argument (v1.0.0). |
+| 54 Hold only Fable launches while Fable's weekly window is spent | #101 | 7 | 3 | opus | high | Extends 10's pacing and pause with a hold per model, four refusal signals, and replay; the spec carries the exact events, regex, and rules. |
+| 55 Fall back to Opus under the fallback consent | #102 | 8 | 3 | opus | high | The consent through intake, `switch --fallback`, and `control`, and the launch mapping with its escalation rule; decision 15 gives every value. |
+| 56 Verdicts on Opus and the verdict principle | #103 | 9 | 3 | opus | high | A rule change in the gates and the spot-check, fallback verdicts under each consent, and one report section. |
+| 57 Ask the owner when Fable is spent | #104 | 10 | 3 | opus | high | A decision ticket opened by code with four options, a superseded close, and a timeout under a fake clock; one dashboard action. |
 
 ## Working the window
 
