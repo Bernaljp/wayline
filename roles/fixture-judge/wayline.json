@@ -1,0 +1,19 @@
+{
+  "id": "fixture-judge",
+  "scope_kind": "global",
+  "capability_summary": "Answers one fixture's rubric question about one recorded output from the fields the fixture shows it, with no tools, and returns pass or fail with the reason.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "a897a97dc3c82e58276eff9619de791aacda9a0070572f188c7b480e0265d6d6",
+  "may_judge": true,
+  "output_schema": "fixture_verdict",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}

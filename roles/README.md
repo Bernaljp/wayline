@@ -16,10 +16,14 @@ The conductor composes `agent.json` from the two: `description` and `prompt` fro
 `permissionMode: dontAsk`. The per-launch protocol the role follows is separate, in
 `prompts/roles/<role>.md`, because it is part of the prompt and changes with the phase.
 
-## The verifier is launched by a gate, not assigned to a ticket
+## The verifier and the fixture judge are launched by code, not assigned to a ticket
 
 Every other role here is assigned to a ticket by the librarian and launched by the conductor.
-`verifier` is not: `wayline.gates.verdict` launches it and its `kinds` is empty. Its prompt is assembled by the gate too, from the one question, the scope
+`verifier` is not: `wayline.gates.verdict` launches it and its `kinds` is empty. Neither is
+`fixture-judge`, which `wayline fixture run` launches once per sample with no tools, the fixture's
+rubric, and only the fields the fixture shows it (Implementation Decisions 12). Both have
+`may_judge`, as the critic below does. The verifier's prompt is assembled by the gate too, from the
+one question, the scope
 limit, and the paths, because a verdict has no touch set, no acceptance to run, and nothing to
 commit. `docs/verification/m4.md` records what its session can actually do: the `Bash(...)` rules
 below are the harness saying what it means to permit, and what makes the role read-only is the
@@ -36,7 +40,7 @@ conductor's second rebase checks that it did. It has `Edit` and not `Write`: res
 changes files that exist. Its rebase commands are spelled out whole (`git rebase main`,
 `--continue`, `--abort`), because a `git rebase *` rule would admit `--exec <any command>`.
 
-## The roles an L2 absorb launches, and the second role that may judge
+## The roles an L2 absorb launches, and another role that may judge
 
 `absorb`, `synthesizer`, and `critic` are not assigned to tickets either; `wayline.absorb` launches
 them, and their `kinds` are empty. `absorb` is the one headless session of a level-2 read: its only
@@ -46,7 +50,7 @@ and `Grep`, and why `Workflow` and `Skill` are not on its removal list. The `rea
 `synthesizer` run inside that session as workflow agents, defined in the same `--agents` object; in
 the conductor fan-out each is a session of its own.
 
-`critic` is the second role with `may_judge`, beside `verifier`. The gate reads the role an ask
+`critic` has `may_judge` too, beside `verifier` and `fixture-judge`. The gate reads the role an ask
 names, refuses one without `may_judge`, and runs it on the verifier's tier for the author's model,
 so the depth spot-check of an L2 dossier is the critic's read of work the readers wrote on sonnet.
 Ticket 29 gives the critic its other job, the position memo.

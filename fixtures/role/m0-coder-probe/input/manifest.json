@@ -1,0 +1,22 @@
+[
+  {
+    "path": ".claude/skills/wayline-m0-note/SKILL.md",
+    "sha256": "7a8e673b734f818c43ba91b905fd10261aa312f76070a06fa0c5f692a32ed89c"
+  },
+  {
+    "path": ".claude/skills/wayline-m0-tally/SKILL.md",
+    "sha256": "fe7e0b20061fae95a03fe657db1d12f332800d6e5e980042716c4efe67c6edfa"
+  },
+  {
+    "path": "harness.json",
+    "sha256": "830d74cfe95105549c9f5b9037d90174296178f81af68b62fb4bd7fc5bbbed92"
+  },
+  {
+    "path": "research/INTAKE.md",
+    "sha256": "cb437909f67c2297d6ca6dcb83298f47189817eade9ef7533f64d500f2b71f10"
+  },
+  {
+    "path": "research/tickets/01-probe-the-guards-the-skills-and-the-subagent.md",
+    "sha256": "14f53c3ae4c70a69185f26e7fa4f6468bdfe59fa1f59569231ca6cd9c40ea6b9"
+  }
+]

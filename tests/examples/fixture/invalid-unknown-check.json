@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "id": "role/worker-smoke-test-ticket",
+  "kind": "role",
+  "subject": {
+    "path": "roles/coder/agent.md",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "also": [
+      "schemas/result.json"
+    ]
+  },
+  "origin": {
+    "project": "/tmp/m0",
+    "ticket": 3,
+    "session_id": "0c1e",
+    "journal_ts": "2026-09-11T20:41:07Z",
+    "change_record": null,
+    "reason": "seed: first green M0 run"
+  },
+  "launch": {
+    "role": "coder",
+    "model": "sonnet",
+    "effort": "medium",
+    "permission_mode": "dontAsk",
+    "max_turns": 40,
+    "output_format": "stream-json",
+    "json_schema": "input/schema.json",
+    "fallback_model": "sonnet",
+    "allowed_tools": [
+      "Read"
+    ],
+    "disallowed_tools": [
+      "WebFetch"
+    ],
+    "add_dirs": [
+      "{harness}"
+    ],
+    "env": {
+      "WAYLINE_RUN": "{run}"
+    },
+    "settings": "input/settings.json"
+  },
+  "input": {
+    "prompt": "input/prompt.md",
+    "agent": "input/agent.json",
+    "context_manifest": "input/manifest.json",
+    "input_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "structural": [
+    {
+      "check": "schema_valid"
+    },
+    {
+      "check": "path_in",
+      "path": "$.status",
+      "values": [
+        "done"
+      ]
+    },
+    {
+      "check": "path_equals",
+      "path": "$.touched_outside_declared",
+      "value": []
+    },
+    {
+      "check": "path_matches",
+      "path": "$.findings[*].provenance",
+      "regex": "^(results|tests)/.+#L\\d+$"
+    },
+    {
+      "check": "path_contains_all",
+      "path": "$.outputs_written",
+      "values": [
+        "tests/test_smoke.py"
+      ]
+    },
+    {
+      "check": "path_contains_any",
+      "path": "$.commands_run",
+      "values": [
+        "pytest"
+      ]
+    },
+    {
+      "check": "path_count",
+      "path": "$.findings",
+      "min": 1
+    },
+    {
+      "check": "path_absent_or_empty",
+      "path": "$.decision_requests"
+    },
+    {
+      "check": "file_exists",
+      "path": "tests/test_smoke.py",
+      "in": "worktree"
+    },
+    {
+      "check": "file_absent",
+      "path": "escaped.txt"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Skill",
+      "arg": "wayline-sweep-runner"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "WebFetch"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "cost_within_budget"
+    },
+    {
+      "check": "path_looks_right",
+      "path": "$.summary"
+    }
+  ],
+  "judged": {
+    "rubric": "rubric.md",
+    "show_judge": [
+      "$.summary",
+      "$.findings"
+    ],
+    "judge": {
+      "model": "haiku",
+      "effort": "low",
+      "tools": [],
+      "votes": 1,
+      "must_differ_from_subject_session": true
+    },
+    "sample_size": 3,
+    "pass_rule": {
+      "at_least": 2
+    },
+    "strict": false
+  },
+  "baseline": {
+    "recorded_at": "2026-09-11T21:03:00Z",
+    "subject_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "input_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "structural": "3/3",
+    "judged": "3/3",
+    "passed": true,
+    "unstable": false
+  },
+  "last_run": null,
+  "quarantine": {
+    "status": "active",
+    "flake_limit": 2,
+    "flakes": [],
+    "stable_runs_to_restore": 3,
+    "stable_runs": 0,
+    "restored_at": null,
+    "counted_from": 0
+  },
+  "cost": {
+    "per_subject_run": {
+      "turns": 12,
+      "input_tokens": 41000,
+      "output_tokens": 3900
+    },
+    "per_judge_run": {
+      "turns": 1,
+      "input_tokens": 2100,
+      "output_tokens": 90
+    }
+  },
+  "tags": [
+    "m0"
+  ]
+}

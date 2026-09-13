@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "id": "skill/wayline-intake",
+  "kind": "skill",
+  "subject": {
+    "path": "skills/wayline-intake/SKILL.md",
+    "sha256": "ce7806f832fb13f3000fda9fdfec0b306b9fbd418f45aa799b835c7d3e6a498c",
+    "also": [
+      "skills/wayline-intake/wayline.json"
+    ]
+  },
+  "origin": {
+    "project": null,
+    "ticket": 27,
+    "session_id": "8ac866e7-f8c8-4677-949a-1e4c35dd2c38",
+    "journal_ts": null,
+    "change_record": null,
+    "reason": "seed: ticket 27 registered the five interactive skills; ticket 28 recorded the intake under recorded/ and wrote the checks on the files it wrote"
+  },
+  "launch": {
+    "model": "opus",
+    "effort": "high",
+    "permission_mode": "dontAsk",
+    "max_turns": 100,
+    "output_format": "stream-json",
+    "json_schema": null,
+    "fallback_model": "opus",
+    "tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(wayline intake*)"
+    ]
+  },
+  "input": {
+    "prompt": "input/prompt.md",
+    "agent": null,
+    "context_manifest": null,
+    "input_hash": null
+  },
+  "structural": [
+    {
+      "check": "file_exists",
+      "path": "research/INTAKE.md",
+      "in": "worktree"
+    },
+    {
+      "check": "file_absent",
+      "path": "research/GOAL.json",
+      "in": "worktree"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline intake"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "intake_has_every_section"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "references_reach_absorb"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "data_pointer_is_listed"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "harness_records_the_intake"
+    }
+  ],
+  "note": "The session runs in a project laid out by wayline init with input/context/ copied into its root. The owner states no quantitative goal, so GOAL.json must not be written: a goal nobody asked for is the failure this fixture exists to catch. The skill writes through `wayline intake`, never into research/ itself, which tool_used checks on the trace. recorded/ holds what the session left: research/INTAKE.md, harness.json, the result envelope, and the trace with system/init reduced to the session id and the model. Two things about the recording machine rather than the skill are redacted in the trace and the result: the hermes interpreter path the session read out of harness.json, and a closing paragraph about the host's own claude.ai connectors.",
+  "baseline": null,
+  "quarantine": {
+    "status": "active",
+    "flake_limit": 2,
+    "flakes": [],
+    "stable_runs_to_restore": 3
+  }
+}

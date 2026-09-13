@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fixture_verdict",
+  "description": "The fixture judge's answer (Implementation Decisions 12): whether one sample of a fixture's subject meets the fixture's rubric, judged by a fresh session with no tools from only the fields the fixture shows it.",
+  "type": "object",
+  "required": ["verdict", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {"type": "string", "enum": ["pass", "fail"], "description": "pass when the fields meet the rubric, fail when they do not"},
+    "reason": {"type": "string", "pattern": "\\S", "description": "one paragraph: the rubric's words applied and the field that settled it; on a fail, each thing that fell short"}
+  }
+}
