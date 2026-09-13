@@ -27,6 +27,7 @@ from wayline import HARNESS_ROOT, POLICY_PATH, TAG, replay
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import CONTROL, DECISION, SWITCHED, Ledger, atomic_write, conductor_holder, now_ts
+from wayline.pacing import thresholds
 from wayline.resources import (
     LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
 )
@@ -694,11 +695,12 @@ def window_status(events, harness=None):
     """The usage windows as the journal last saw them: the pacing reading and whether a run is paused.
 
     The fold is the conductor's own (`replay.View`), so `status` and a conductor never disagree
-    about a pause: it lasts until `unpaused`, whatever restarts come in between.
+    about a pause: it lasts until `unpaused`, whatever restarts come in between. The thresholds are
+    the ones the conductor paces by: `harness.json`'s, under what a `control pacing` event set.
     """
     harness = harness or {}
-    pacing = harness.get("pacing", {})
     view = replay.replay(events)
+    stop_at, cheap_at = thresholds(harness.get("pacing"), view.thresholds)
     pause = view.pause or {}
     return {
         "action": view.pacing["action"],
@@ -708,8 +710,8 @@ def window_status(events, harness=None):
         "resets_at": pause.get("resets_at"),
         "window": pause.get("window"),
         "utilization": pause.get("utilization"),
-        "stop_at": pacing.get("stop_at"),
-        "cheap_at": pacing.get("cheap_at"),
+        "stop_at": stop_at,
+        "cheap_at": cheap_at,
     }
 
 
@@ -817,12 +819,12 @@ def _render_decisions(decisions):
 
 
 def _render_window(window):
-    parts = ["window   %s" % ("paused" if window["paused"] else window["action"])]
+    """The pacing action, the pause with its reset time when there is one, and both utilizations."""
+    parts = ["window   %s" % window["action"]]
     if window["paused"]:
-        parts.append("%s until %s" % (window["window"] or "unknown", window["resets_at"] or "unknown"))
+        parts.append("paused on %s until %s" % (window["window"] or "unknown", window["resets_at"] or "unknown"))
     for key in ("five_hour", "seven_day"):
-        if window[key] is not None:
-            parts.append("%s %s" % (key, _number(window[key])))
+        parts.append("%s %s" % (key, "unknown" if window[key] is None else _number(window[key])))
     return "   ".join(parts)
 
 

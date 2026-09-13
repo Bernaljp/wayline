@@ -28,10 +28,17 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   `wave` event lets a restart rebuild.
 - The conflict-free integration. A rebase conflict fails the ticket with `next: split`; the
   integrator role that resolves one arrives with ticket 08.
-- No pacing and no window pause: ticket 10 computes the action the pick order already reads and
-  decides what an action refuses to launch; the owner's pause (`wayline pause`) holds launches
-  here. No job poller, so an experiment ticket whose jobs outlive its worker stays `running` and
-  holds the run open until ticket 19's poller closes it or `wayline stop` ends the run.
+- Pacing and the window pause (ticket 10, `wayline.pacing`). `run` reads `/usage` before its
+  first wave, and every wave folds in the `rate_limit_event`s the workers' streams gained, so the
+  action of wave step 8 follows the windows while the workers are still running; `pacing` is
+  journaled when the reading changes. `stop`, a window pause, the owner's pause, and a stop hold
+  every session that needs a model, verdicts and resumes included, and `cheap_only` launches only
+  difficulty 1 and 2 and holds the verdicts. What needs no model still happens first in the wave:
+  the workers already running finish, and their machine checks and integration run. A hit limit
+  journals `paused`, a session the limit stopped is resumed after the reset instead of failed,
+  and the first wave past the reset journals `unpaused`. No job poller, so an experiment ticket
+  whose jobs outlive its worker stays `running` and holds the run open until ticket 19's poller
+  closes it or `wayline stop` ends the run.
 - A result's `proposals`, `decision_requests` and `goal_progress` are written into the ticket's
   `## Result` section so the owner sees them, and nothing else: admission is ticket 37, decision
   tickets are ticket 35, and keep-if-better is ticket 39.
@@ -56,9 +63,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, gates, replay, schedule, tickets, worker
+from wayline import HARNESS_ROOT, gates, pacing, replay, schedule, tickets, worker
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
+    ACCEPTANCE, CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, now_ts,
 )
@@ -118,9 +125,16 @@ RESUME_TIMEOUT = (
     "now, through the structured output, matching the schema this session was launched with. Do not "
     "start new work."
 )
+RESUME_LIMIT = (
+    "Your session stopped at the subscription's usage limit before it returned its result, and the "
+    "window has reset since. Continue the ticket from where you left off, commit on the ticket branch, "
+    "run `wayline accept`, and return the structured result."
+)
 REJECTED = (
     "the %s verdict failed: a fresh %s session that did not write this read it and found\n\n%s"
 )
+# How much of a returned session's stderr is searched for the words of a hit limit.
+STDERR_TAIL_BYTES = 65536
 
 
 # What the conductor says when a `control` event another process appended arrives, by command.
@@ -358,6 +372,8 @@ class _Attempt:
     terminated_at: Optional[float] = None
     # The findings `_close` filed for this attempt.
     findings: int = 0
+    # How many of the session stream's `rate_limit_event`s pacing has already folded in.
+    limits_read: int = 0
 
     @property
     def id(self):
@@ -391,10 +407,12 @@ class Conductor:
         # The Type-B queue of decision 11: what each done ticket earned, drained later in the wave
         # because a verdict is model work like any other and is paced like any other.
         self.verdicts = []
-        # The pacing action of wave step 8 and the resource answer of step 7, both seams the pick
-        # order already reads: ticket 10 computes the action from the windows, and the job poller
-        # replaces `resources_free` with the free-slot rule of `wayline.resources`.
+        # The pacing action of wave step 8, computed from the latest reading of each window, and the
+        # resource answer of step 7, which the job poller replaces with the free-slot rule of
+        # `wayline.resources`. `clock` is the time pacing reads, which a test moves across a reset.
         self.action = schedule.NORMAL
+        self.windows = pacing.Windows()
+        self.clock = time.time
         self.resources_free = schedule.everything_free
         # What a run carries between waves: the working view folded from the journal, the byte
         # offset read so far, the attempts whose sessions are in flight, and the heartbeat.
@@ -426,11 +444,14 @@ class Conductor:
         result = WaveResult(self.number)
         self._beat()
         arrived = self._tail()
+        self._pace()  # what `run` start and the journal read, before anything below can start a session
         first = not self.taken_over
         if first:
             self._take_over(result)
         self._apply_controls(arrived, first)
+        self._unpause_at_reset()
         self._poll(result)
+        self._pace()
         if not self._holds_launches():
             picks = self._picks(self._graph())
             if picks:
@@ -468,13 +489,14 @@ class Conductor:
                 "resume": bool(resume), "harness_tag": harness.get("harness_tag"),
                 "autonomy": harness.get("autonomy"), "radius": harness.get("radius"), "pid": os.getpid(),
             })
+            self._read_usage()
             waves = []
             wait = self._idle if wait is None else wait
             while True:
                 waves.append(self.wave())
                 if waves[-1].ended or (max_waves is not None and len(waves) >= max_waves):
                     return waves
-                wait(self._poll_seconds())
+                wait(self._wait_seconds())
         finally:
             self.heartbeat.release()
             self.heartbeat = None
@@ -522,6 +544,7 @@ class Conductor:
         """Fold what the journal gained since the last read into the working view (wave step 1)."""
         events, self.offset = self.ledger.read_events(self.offset)
         replay.replay(events, self.view)
+        self._heard_pacing(events)
         return events
 
     def _journal_wave(self, result):
@@ -664,6 +687,7 @@ class Conductor:
         """The session's process exists: where to find it, and, for a launch, `ticket_launched` with its pid."""
         attempt.pid, attempt.run_dir, attempt.stream_path = started.pid, Path(started.run_dir), Path(started.stream_path)
         attempt.tail = worker.StreamTail(started.stream_path)
+        attempt.limits_read = 0
         if kind == "launch":
             self._journal_launch(attempt, started)
         attempt.started = True
@@ -787,21 +811,23 @@ class Conductor:
         else:
             self._died(attempt, session)
 
-    def _died(self, attempt, session):
-        """A session that died without its result: resumed by session id, or relaunched when it had none.
+    def _died(self, attempt, session, why=RESUME_DIED, what="its worker died"):
+        """A session that ended without its result: resumed by session id, or relaunched when it had none.
 
-        Either one waits, like any session that needs a model, while the run is paused or stopping.
+        `why` is what the resume says and `what` is what the conductor says happened: a worker that
+        died, or a session a usage limit stopped. Either one waits, like any session that needs a
+        model, while the run is paused or stopping.
         """
         if attempt.session_id:
-            message = RESUME_DIED
+            message = why
             previous = attempt.run_dir / "prompt.md" if session.kind == "resume" and attempt.run_dir else None
             if previous is not None and previous.is_file():
                 message += RESUME_DIED_MESSAGE % previous.read_text(encoding="utf-8").strip()
             attempt.want = _Want(replay.WORKER_DIED, message)
-            doing = "its worker died; resuming session %s" % attempt.session_id
+            doing = "%s; resuming session %s" % (what, attempt.session_id)
         else:
             attempt.want = _Want(RELAUNCH)
-            doing = "its worker died before its session started; relaunching it"
+            doing = "%s before its session started; relaunching it" % what
         self.flight[attempt.id] = attempt
         started = self._start_wanted(attempt)
         self.say("  ticket %d: %s%s" % (attempt.id, doing, "" if started else " once the run may launch again"))
@@ -892,6 +918,7 @@ class Conductor:
             attempt = self.flight[identifier]
             try:
                 self._journal_session(attempt)
+                self._observe(attempt)
                 if attempt.running:
                     continue
                 if attempt.want is not None:
@@ -907,10 +934,15 @@ class Conductor:
             raise escaped
 
     def _carry(self, attempt, result):
-        """What a returned session came to, counted into the wave; nothing expected raises out."""
+        """What a returned session came to, counted into the wave; nothing expected raises out.
+
+        A session a usage limit stopped without a usable result is no outcome at all: it is the
+        window's doing, so it spends no gate, is not counted as settling the wave, and waits to be
+        resumed after the reset (`_wait_out`).
+        """
         if attempt.thread is not None:
             attempt.thread.join()
-        outcome = "failed"
+        outcome, limited = "failed", False
         try:
             if attempt.failure is not None:
                 raise attempt.failure
@@ -918,11 +950,16 @@ class Conductor:
                 raise ConductorError("the worker thread ended without a result and without an error")
             attempt.session_id = attempt.session_id or attempt.envelope.session_id
             self._journal_session(attempt)
-            outcome = self._advance(attempt)
+            self._observe(attempt)
+            limit = self._limit_of(attempt)
+            if limit is not None and limit.signal != pacing.EVENT_SIGNAL:  # a rejected event paused the run as it was read
+                self._pause(limit, "ticket %d's worker" % attempt.id)
+            limited = limit is not None and not attempt.envelope.valid
+            outcome = self._wait_out(attempt) if limited else self._advance(attempt)
         except (ValueError, OSError) as failure:  # a launch, a ticket file, or a git step
             self._fail(attempt, str(failure), "needs_human")
         finally:
-            if attempt.started:
+            if attempt.started and not limited:
                 result.outcomes += 1
         if outcome == "session":
             self.flight[attempt.id] = attempt
@@ -1138,8 +1175,13 @@ class Conductor:
         return "failed"
 
     def _holds_launches(self):
-        """Whether this wave may start no session that needs a model: the owner paused, or the run is stopping."""
-        return self.view.paused_by_owner or self._stop_requested() is not None
+        """Whether this wave may start no session that needs a model (wave step 8).
+
+        The owner paused the run, a usage limit paused it until its window resets, pacing says
+        `stop`, or the run is stopping.
+        """
+        return (self.view.paused_by_owner or self.view.pause is not None
+                or schedule.holds_model_work(self.action) or self._stop_requested() is not None)
 
     def _stop_requested(self):
         """The stop this run is to apply, as a `_Stop`, or None.
@@ -1153,6 +1195,161 @@ class Conductor:
             return None
         drain = True if stop is None else stop["drain"]
         return _Stop(drain, "switched" if away or (stop or {}).get("switch_to") else "stopped")
+
+    # --- pacing and the pause (decision 5, wave step 8) ---
+
+    def _read_usage(self):
+        """The `/usage` reading of `run` start, through the launcher seam; a failure is said, never raised."""
+        try:
+            text = worker.usage()
+        except (worker.LaunchError, OSError) as failure:
+            self.say("  /usage could not be read (%s); pacing waits for the workers' rate_limit_event" % failure)
+            return
+        now = self.clock()
+        usage = pacing.parse_usage(text, now) if text is not None else None
+        if usage is None:
+            if text is not None:
+                self.say("  /usage printed neither window; pacing waits for the workers' rate_limit_event")
+            return
+        for name in pacing.WINDOWS:
+            self.windows.record(name, getattr(usage, name), usage.resets.get(name), now)
+
+    def _heard_pacing(self, events):
+        """Take the readings in `pacing` events another process journaled (the tick's `/usage`) or a restart replays.
+
+        Each is taken as read at its event's time, so it replaces only an older reading: the
+        `/usage` a run read at its start is not undone by the journal it replays at its first wave.
+        An event that says what this run's readings already say is its own, and is passed over.
+        """
+        for event in events:
+            if event.get("event") != PACING:
+                continue
+            payload, observed = event.get("payload") or {}, pacing.epoch(event.get("ts"))
+            now = self.clock()
+            if observed is None or all(payload.get(name) == self.windows.utilization(name, now) for name in pacing.WINDOWS):
+                continue
+            for name in pacing.WINDOWS:
+                self.windows.record(name, payload.get(name), None, observed)
+
+    def _observe(self, attempt):
+        """Fold the `rate_limit_event`s a session's stream gained into the readings; a rejected one pauses the run.
+
+        The action is computed again at once, before the caller carries or resumes anything, so a
+        session waiting to start is held by the reading its own stream just gave.
+        """
+        if attempt.tail is None:
+            return
+        seen = attempt.tail.read().rate_limit_events
+        if len(seen) < attempt.limits_read:  # a relaunch rewrote the stream
+            attempt.limits_read = 0
+        if len(seen) == attempt.limits_read:
+            return
+        now = self.clock()
+        for event in seen[attempt.limits_read:]:
+            self.windows.observe(event, now)
+            limit = pacing.rejected(event)
+            if limit is not None:
+                self._pause(limit, "ticket %d's worker" % attempt.id)
+        attempt.limits_read = len(seen)
+        self._pace()
+
+    def _limit_of(self, attempt):
+        """The usage limit a returned session stopped at, by any of the three signals of decision 5, or None.
+
+        A reset the message gives as a bare time (`resets 3:45pm`) is read against when the stream
+        was last written, so a result a restart carries hours later does not pause until tomorrow.
+        """
+        stderr, reference = "", self.clock()
+        if attempt.run_dir is not None:
+            try:
+                with open(attempt.run_dir / "stderr.txt", "rb") as handle:
+                    handle.seek(max(0, os.fstat(handle.fileno()).st_size - STDERR_TAIL_BYTES))
+                    stderr = handle.read().decode("utf-8", "replace")
+            except OSError:
+                pass
+        if attempt.stream_path is not None:
+            try:
+                reference = min(reference, attempt.stream_path.stat().st_mtime)
+            except OSError:
+                pass
+        return pacing.hit_limit(attempt.envelope, stderr, reference)
+
+    def _wait_out(self, attempt):
+        """A session a usage limit stopped: journal its result, then resume it after the reset rather than fail it.
+
+        The resume is journaled `ticket_resumed` with `worker_died`, the reason decision 2 gives the
+        resume of an interrupted session by its id (or the relaunch of one that never started), and
+        like it spends no gate.
+        """
+        if not attempt.result_journaled:
+            self._journal_result(attempt)
+            attempt.result_journaled = True
+        kind = "launch" if attempt.run_dir in (None, self._attempt_dir(attempt)) else "resume"
+        self._died(attempt, replay.Session(kind), RESUME_LIMIT, "its session stopped at the usage limit")
+        return "session"
+
+    def _pause(self, limit, source):
+        """Journal `paused` for a hit limit, unless its window has reset already or the run is paused as long."""
+        now = self.clock()
+        resets = pacing.resets_at(limit, self.windows, now)
+        if resets <= now:
+            return
+        held = pacing.epoch((self.view.pause or {}).get("resets_at"))
+        if held is not None and held >= resets:
+            return
+        payload = pacing.paused_payload(limit, resets, self.windows)
+        self.ledger.append_event(PAUSED, payload)
+        self._tail()
+        self.say("  %s hit the usage limit (%s, %s window); paused until %s: running workers finish, nothing that needs a model starts"
+                 % (source, limit.signal, limit.window, payload["resets_at"]))
+
+    def _unpause_at_reset(self):
+        """`unpaused` once the window a pause waits for has reset; a pause whose reset cannot be read ends now."""
+        pause = self.view.pause
+        if pause is None:
+            return
+        resets = pacing.epoch(pause.get("resets_at"))
+        if resets is not None and resets > self.clock():
+            return
+        self.ledger.append_event(UNPAUSED, {})
+        self._tail()
+        self.say("  the %s window reset (%s); unpaused" % (pause.get("window") or "unknown", pause.get("resets_at")))
+
+    def _pace(self):
+        """Wave step 8: the action from the latest readings, journaled as `pacing` when the reading changed.
+
+        With nothing read from either surface yet, the action stands as it is: a run is never
+        slowed or stopped on a guess.
+        """
+        if not self.windows.known():
+            return
+        now = self.clock()
+        stop_at, cheap_at = self._thresholds()
+        reading = {name: self.windows.utilization(name, now) for name in pacing.WINDOWS}
+        self.action = pacing.action_for(reading["five_hour"], reading["seven_day"], stop_at, cheap_at)
+        reading["action"] = self.action
+        if reading == self.view.pacing:
+            return
+        self.ledger.append_event(PACING, reading)
+        self._tail()
+        self.say("  pacing: %s (five_hour %s, seven_day %s; stop at %s, cheap only at %s)"
+                 % (self.action, reading["five_hour"], reading["seven_day"], stop_at, cheap_at))
+
+    def _thresholds(self):
+        """`(stop_at, cheap_at)`: `policy.pacing`, under `harness.json`'s `pacing`, under a `control pacing` event's."""
+        try:
+            harness = read_harness(self.project)
+        except (ProjectError, ValueError, OSError):
+            harness = {}
+        return pacing.thresholds(self.policy.get("pacing"), harness.get("pacing"), self.view.thresholds)
+
+    def _wait_seconds(self):
+        """How long `run` waits before the next wave: `policy.poll_seconds`, or less when a pause resets sooner."""
+        seconds = self._poll_seconds()
+        resets = pacing.epoch((self.view.pause or {}).get("resets_at"))
+        if resets is not None:
+            seconds = max(0, min(seconds, resets - self.clock()))
+        return seconds
 
     # --- what other processes asked for (decision 5, wave step 1) ---
 
@@ -1364,11 +1561,13 @@ class Conductor:
 
         Pacing holds the whole queue rather than part of it: a ticket whose first verdict passed
         and whose second was never taken is neither accepted nor failed, and leaving one in that
-        state across a window boundary is worse than leaving both for the next wave.
+        state across a window boundary is worse than leaving both for the next wave. `cheap_only`
+        holds it too, because a verdict runs a tier above the work it judges and so is never on
+        the cheap tier that difficulty 1 and 2 run on.
         """
         if not self.verdicts:
             return
-        if schedule.holds_model_work(self.action):
+        if self.action != schedule.NORMAL:
             self.say("  %d ticket(s) wait for a verdict; pacing says %s"
                      % (len(self.verdicts), self.action))
             return
@@ -1590,7 +1789,6 @@ def _in_touch_set(path, touches):
 # The flags of decision 1's verb table that later tickets build, named so `run` can say which.
 LATER = (
     ("detach", "--detach", "ticket 13 (the transient wayline-conductor unit)"),
-    ("simulate_limit", "--simulate-limit", "ticket 10 (pacing and the pause)"),
     ("simulate_failure", "--simulate-failure", "ticket 38 (the stall and the escalation ladder)"),
 )
 
@@ -1602,7 +1800,8 @@ def run_command(args):
     parser.add_argument("--project", help="the project to run; the active one by default")
     parser.add_argument("--resume", action="store_true", help="say in run_started that this run resumes one (every run replays the journal)")
     parser.add_argument("--detach", action="store_true", help="run as the transient unit wayline-conductor (ticket 13)")
-    parser.add_argument("--simulate-limit", metavar="S", help="pretend a usage limit was hit (ticket 10)")
+    parser.add_argument("--simulate-limit", metavar="S", type=float,
+                        help="the next launch carries a rejected rate_limit_event resetting S seconds ahead, which pauses the run")
     parser.add_argument("--simulate-failure", metavar="ID", help="pretend a ticket failed (ticket 38)")
     parser.add_argument("--max-waves", type=int, metavar="N", help="stop after N waves, whatever the frontier still holds")
     try:
@@ -1613,6 +1812,9 @@ def run_command(args):
         if getattr(options, name):
             print("wayline run: %s is not yet implemented; it arrives with %s" % (flag, owner), file=sys.stderr)
             return 2
+    if options.simulate_limit is not None and options.simulate_limit < 0:
+        print("wayline run: --simulate-limit takes a number of seconds, 0 or more", file=sys.stderr)
+        return 2
 
     try:
         project = find_project(options.project)
@@ -1628,11 +1830,15 @@ def run_command(args):
 
     conductor = Conductor(project)
     print("run      %s (%s, radius %s)" % (project, harness.get("autonomy"), harness.get("radius")))
+    if options.simulate_limit is not None:
+        worker.simulate_limit(options.simulate_limit)
     try:
         waves = conductor.run(max_waves=options.max_waves, resume=options.resume)
     except (ConductorError, ValueError, OSError) as failure:
         print("wayline run: %s" % failure, file=sys.stderr)
         return 1
+    finally:
+        worker.simulate_limit(None)  # a limit no launch took must not reach the next run in this process
     done = [identifier for wave in waves for identifier in wave.done]
     failed = [identifier for wave in waves for identifier in wave.failed]
     running = [identifier for wave in waves for identifier in wave.running]
