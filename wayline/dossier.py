@@ -1325,13 +1325,18 @@ def source_fetcher(email=None, tag=None):
     return Fetcher(UrllibBackend(), tag=tag, email=email)
 
 
-def build_inventory(project, slug, fetcher=None, email=None, compile_source=True, rasterize=True):
-    """Fetch one arXiv reference's source, keep it, and write `refs/<slug>/inventory.json`.
+def build_inventory(project, slug, fetcher=None, email=None, compile_source=True, rasterize=True, pdf=None, tools=None, run=None):
+    """Write `refs/<slug>/inventory.json`: from the arXiv e-print source when there is one, else from a PDF.
 
-    The chain of research-notes 06 Section 2, in order: the e-print from `/src/<id>` through the
-    seam, the main file from `00README` or the `\\documentclass` grep, `latexpand`, the
+    The arXiv chain of research-notes 06 Section 2, in order: the e-print from `/src/<id>` through
+    the seam, the main file from `00README` or the `\\documentclass` grep, `latexpand`, the
     environments by regex, exact numbers from one `pdflatex` run when the source compiles, and
-    `arxiv.org/html/<id>` when the tarball will not flatten. Returns the inventory written.
+    `arxiv.org/html/<id>` when the tarball will not flatten.
+
+    A reference without an arXiv id, or a `pdf` the owner hands over, goes to the non-arXiv chain
+    of `wayline.pdf_inventory` instead (Section 1): the PDF given, else the one already kept under
+    `refs/<slug>/source/`, else the open-access PDF the scout found. A PDF-only arXiv submission
+    goes there too. `tools` and `run` are that chain's seams. Returns the inventory written.
     """
     project = Path(project)
     ledger = ledger_for(project)
@@ -1339,26 +1344,23 @@ def build_inventory(project, slug, fetcher=None, email=None, compile_source=True
     if record is None:
         raise DossierError("refs/%s has no dossier.json; run wayline absorb --level 0 first" % slug)
     identifier = (record.get("identifiers") or {}).get("arxiv_id")
-    if not identifier:
-        raise DossierError(
-            "refs/%s has no arXiv id, so there is no e-print source to fetch; a PDF goes to the "
-            "non-arXiv chain of ticket 22" % slug
-        )
-    previous = _read_json(ledger, "%s/%s/%s" % (REFS, slug, INVENTORY)) or {}
-    etag = (previous.get("source") or {}).get("etag") if _kept_source(ledger, slug) else None
     if email is None:
         email = _email(project)
+    if pdf is not None or not identifier:
+        return _pdf_inventory(ledger, slug, record, pdf, fetcher, email, tools, run)
+    previous = _read_json(ledger, "%s/%s/%s" % (REFS, slug, INVENTORY)) or {}
+    etag = (previous.get("source") or {}).get("etag") if _kept_source(ledger, slug) else None
     fetcher = fetcher if fetcher is not None else source_fetcher(email=email)
     fetched = fetch_arxiv_source(fetcher, identifier, etag)
 
     notes, workspace = [], Path(tempfile.mkdtemp(prefix="wayline-arxiv-"))
     try:
         if fetched.kind == "pdf":
-            return _pdf_submission(ledger, slug, identifier, fetched, previous)
+            return _pdf_submission(ledger, slug, identifier, fetched, workspace, tools, run)
         if fetched.from_cache and previous.get("source_type") == "pdf":
             # A 304 says nothing has changed, and what did not change is a PDF: there is no
-            # tarball to flatten and no HTML rendering to fall back to. The record stands.
-            return _pdf_unchanged(ledger, slug, fetched, previous)
+            # tarball to flatten and no HTML rendering to fall back to, so the kept PDF is read again.
+            return _pdf_unchanged(ledger, slug, fetched, previous, tools, run)
         if fetched.from_cache:
             files = _restore_source(ledger, slug, workspace)
             notes.append("arXiv answered 304 Not Modified; the source kept under refs/%s/%s/ is the one it served" % (slug, SOURCE))
@@ -1487,51 +1489,77 @@ def _html_fallback(slug, identifier, fetcher, notes):
     }
 
 
-def _pdf_submission(ledger, slug, identifier, fetched, previous):
-    """A PDF-only submission: arXiv has no source, so the paper is kept and ticket 22 reads it."""
+_ARXIV_PDF_NOTE = "arXiv served a PDF, which means the submission has no source; the inventory is the non-arXiv PDF chain's"
+
+
+def _pdf_submission(ledger, slug, identifier, fetched, workspace, tools, run):
+    """A PDF-only submission: arXiv has no source, so the PDF it served is inventoried as a PDF."""
+    from wayline.pdf_inventory import build_pdf_inventory
+
     name = "%s.pdf" % slugify(identifier)
-    ledger.write_bytes("%s/%s/%s/%s" % (REFS, slug, SOURCE, name), fetched.payload)
-    inventory = {
-        "schema_version": 1,
-        "slug": slug,
-        "source_type": "pdf",
-        "source": {
-            "kind": "pdf", "url": fetched.url, "arxiv_id": identifier, "version": fetched.version,
-            "etag": fetched.etag, "fetched": now_ts(), "from_cache": False,
-            "bytes": len(fetched.payload), "files": 1, "main": "%s/%s" % (SOURCE, name),
-            "flattened_by": None, "compiled": False,
-        },
-        "provenance": {key: _NONE for key in (
-            "sections", "appendices", "equations", "figures", "tables", "algorithms", "theorems",
-            "references", "metadata", "raw_images", "text_layer", "page_count",
-        )},
-        "counts": {},
-        "page_count": None,
-        "text_layer": None,
-        "sections": [], "equations": [], "figures": [], "tables": [], "algorithms": [],
-        "theorems": [], "appendices": [], "references": [], "raw_images": [],
-        "metadata": {"arxiv_id": identifier},
-        "notes": [
-            "arXiv served a PDF, which means the submission has no source; the inventory of a PDF "
-            "is the non-arXiv chain of ticket 22, and the file is kept at refs/%s/%s/%s" % (slug, SOURCE, name)
-        ],
-        "created": previous.get("created") or now_ts(),
-    }
-    if previous:
-        inventory["updated"] = now_ts()
-    check(inventory, load_schema("inventory"), name="refs/%s/%s" % (slug, INVENTORY))
+    downloaded = Path(workspace) / name
+    downloaded.write_bytes(fetched.payload)
+    source = {"name": name, "url": fetched.url, "arxiv_id": identifier, "version": fetched.version,
+              "etag": fetched.etag, "from_cache": False}
+    inventory = build_pdf_inventory(ledger, slug, downloaded, tools=tools, run=run, source=source)
+    return _with_note(ledger, slug, inventory, _ARXIV_PDF_NOTE)
+
+
+def _pdf_unchanged(ledger, slug, fetched, previous, tools, run):
+    """A PDF-only submission arXiv has just said is still the one on disk: the kept PDF, read again."""
+    from wayline.pdf_inventory import build_pdf_inventory
+
+    kept = previous.get("source") or {}
+    path = ledger.research / REFS / slug / str(kept.get("main") or "")
+    if not kept.get("main") or not path.is_file():
+        raise DossierError("arXiv answered 304 for refs/%s but its PDF is not kept under %s/; remove %s and fetch again"
+                           % (slug, SOURCE, INVENTORY))
+    source = {key: kept.get(key) for key in ("url", "arxiv_id", "version") if kept.get(key)}
+    source.update({"name": path.name, "etag": fetched.etag, "from_cache": True})
+    inventory = build_pdf_inventory(ledger, slug, path, tools=tools, run=run, source=source)
+    return _with_note(ledger, slug, inventory, "%s; arXiv answered 304 Not Modified, so the kept PDF was read again" % _ARXIV_PDF_NOTE)
+
+
+def _with_note(ledger, slug, inventory, note):
+    inventory["notes"] = [note] + list(inventory.get("notes") or [])
     ledger.write_json("%s/%s/%s" % (REFS, slug, INVENTORY), inventory, schema="inventory")
     return inventory
 
 
-def _pdf_unchanged(ledger, slug, fetched, previous):
-    """The record of a PDF-only submission arXiv has just said is still the one on disk."""
-    inventory = dict(previous)
-    inventory["source"] = dict(previous.get("source") or {}, fetched=now_ts(), from_cache=True, etag=fetched.etag)
-    inventory["updated"] = now_ts()
-    check(inventory, load_schema("inventory"), name="refs/%s/%s" % (slug, INVENTORY))
-    ledger.write_json("%s/%s/%s" % (REFS, slug, INVENTORY), inventory, schema="inventory")
-    return inventory
+def _pdf_inventory(ledger, slug, record, pdf, fetcher, email, tools, run):
+    """The non-arXiv chain for one reference: the PDF given, the one kept, or the open-access one."""
+    from wayline.pdf_inventory import PDF_NAME, build_pdf_inventory
+
+    if pdf is not None:
+        return build_pdf_inventory(ledger, slug, Path(pdf), tools=tools, run=run)
+    previous = _read_json(ledger, "%s/%s/%s" % (REFS, slug, INVENTORY)) or {}
+    kept_main = (previous.get("source") or {}).get("main")
+    kept = ledger.research / REFS / slug / kept_main if kept_main else ledger.research / REFS / slug / SOURCE / PDF_NAME
+    if kept.is_file():
+        source = {key: value for key, value in (previous.get("source") or {}).items()
+                  if key in ("url", "arxiv_id", "version", "etag")}
+        source["name"] = kept.name
+        return build_pdf_inventory(ledger, slug, kept, tools=tools, run=run, source=source)
+    url = (record.get("open_access") or {}).get("pdf_url")
+    if not url:
+        raise DossierError(
+            "refs/%s has no arXiv id, no PDF kept under %s/, and no open-access PDF the scout found; "
+            "hand one over with wayline absorb --inventory %s --pdf <path>" % (slug, SOURCE, slug)
+        )
+    fetcher = fetcher if fetcher is not None else source_fetcher(email=email)
+    response = fetcher.fetch(url)
+    if not response.ok or response.body[:4] != _PDF_MAGIC:
+        raise DossierError(
+            "the open-access PDF of refs/%s at %s answered %d%s; hand one over with wayline absorb --inventory %s --pdf <path>"
+            % (slug, url, response.status, "" if not response.ok else " with something that is not a PDF", slug)
+        )
+    workspace = Path(tempfile.mkdtemp(prefix="wayline-pdf-download-"))
+    try:
+        downloaded = workspace / PDF_NAME
+        downloaded.write_bytes(response.body)
+        return build_pdf_inventory(ledger, slug, downloaded, tools=tools, run=run, source={"url": url})
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
 
 
 def _kept_source(ledger, slug):
@@ -2091,7 +2119,8 @@ def absorb_command(args):
     parser = argparse.ArgumentParser(prog="wayline absorb", description="build the dossiers for the references")
     parser.add_argument("slugs", nargs="*", help="level 1 only: the reference slug(s) to skim; omitted skims every one not already at level 1 or above")
     parser.add_argument("--level", type=int, default=0, choices=[0, 1, 2], help="the dossier level to build; level 2 needs the absorb workflow, ticket 24")
-    parser.add_argument("--inventory", metavar="SLUG", help="fetch one arXiv reference's e-print source and write refs/<slug>/inventory.json")
+    parser.add_argument("--inventory", metavar="SLUG", help="write refs/<slug>/inventory.json from the arXiv e-print source, or from a PDF when there is none")
+    parser.add_argument("--pdf", metavar="PATH", help="with --inventory: inventory this PDF (kept under refs/<slug>/source/, never committed)")
     parser.add_argument("--report", action="store_true", help="print the papers-by-level report and exit; --level is ignored")
     parser.add_argument("--project", help="the project to absorb into; the active one by default")
     parser.add_argument("--fixtures", help="answer every request from this directory of recorded responses instead of the network")
@@ -2136,7 +2165,7 @@ def _inventory_command(options):
     try:
         project = find_project(options.project)
         fetcher = recording_fetcher(options.fixtures, email=_email(project)) if options.fixtures else None
-        inventory = build_inventory(project, options.inventory, fetcher=fetcher)
+        inventory = build_inventory(project, options.inventory, fetcher=fetcher, pdf=options.pdf)
     except (DossierError, FetchError, ProjectError, ValidationError, ValueError, OSError) as failure:
         print("wayline absorb --inventory: %s" % failure, file=sys.stderr)
         return 1
@@ -2149,13 +2178,16 @@ def _inventory_command(options):
 
 def _render_inventory(inventory):
     source = inventory.get("source") or {}
-    lines = [
-        "%-12s %s  (%s, %s)" % (inventory["slug"], source.get("url", ""), inventory["source_type"], source.get("version") or "no version"),
-        "  source     %s files, main %s, flattened by %s%s" % (
+    lines = ["%-12s %s  (%s, %s)" % (inventory["slug"], source.get("url", ""), inventory["source_type"], source.get("version") or "no version")]
+    if inventory["source_type"] == "pdf":
+        lines.append("  source     %s, %s pages, converter %s, references by %s" % (
+            source.get("main"), inventory.get("page_count"), source.get("converter") or "none", source.get("references_by") or "none",
+        ))
+    else:
+        lines.append("  source     %s files, main %s, flattened by %s%s" % (
             source.get("files"), source.get("main"), source.get("flattened_by"),
             ", compiled" if source.get("compiled") else ", not compiled",
-        ),
-    ]
+        ))
     counts = inventory.get("counts") or {}
     if counts:
         lines.append("  found      " + ", ".join("%s %d" % (name, counts[name]) for name in sorted(counts) if counts[name]))
