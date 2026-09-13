@@ -864,12 +864,31 @@ class FakeBackendTest(unittest.TestCase):
             self.assertFalse(worker.pid_alive(started[0].pid))
             self.assertEqual(int((self.run / "pid").read_text(encoding="utf-8")), started[1].pid)
 
-    def test_a_delay_is_honored(self):
+    def test_a_delay_holds_the_call_for_that_long(self):
         with worker.use_fake() as fake:
             fake.script(Envelope(structured_output={"skill_token": "A", "report": "r"}), delay=0.05)
-            with mock.patch("wayline.worker.time.sleep") as sleep:
-                worker.launch(self.request())
-            sleep.assert_called_once_with(0.05)
+            with mock.patch.object(threading.Event, "wait", autospec=True, return_value=False) as wait:
+                envelope = worker.launch(self.request())
+        self.assertIn(mock.call(mock.ANY, 0.05), wait.call_args_list)
+        self.assertEqual(envelope.exit_code, 0)
+
+    def test_a_released_call_returns_its_result_at_once_and_is_alive_until_then(self):
+        with worker.use_fake() as fake:
+            fake.script(Envelope(structured_output={"skill_token": "A", "report": "r"}), delay=600)
+            begun, box = threading.Event(), {}
+
+            def call():
+                box["envelope"] = worker.launch(self.request(), on_start=lambda started: (box.update(started=started), begun.set()))
+
+            thread = threading.Thread(target=call, daemon=True)
+            thread.start()
+            self.assertTrue(begun.wait(10))
+            self.assertTrue(worker.pid_alive(box["started"].pid), "a call still held is a live worker")
+            self.assertEqual(fake.release(), 1)
+            thread.join(10)
+            self.assertFalse(thread.is_alive(), "the released call kept holding")
+            self.assertEqual((box["envelope"].exit_code, box["envelope"].valid), (0, True))
+            self.assertFalse(worker.pid_alive(box["started"].pid))
 
     def test_a_script_file_drives_demos(self):
         script = self.root / "fake.json"
@@ -1100,6 +1119,97 @@ class SeamTest(unittest.TestCase):
             ["role", "model", "effort", "prompt", "agent_json", "allowed_tools", "disallowed_tools",
              "settings_path", "add_dirs", "cwd", "env", "schema_path", "max_minutes"])
         self.assertEqual(worker.FakeLauncher.name, "fake")
+
+
+INIT = {"type": "system", "subtype": "init", "session_id": "s-1", "model": "claude-sonnet-5"}
+RESULT = {"type": "result", "subtype": "success", "is_error": False, "session_id": "s-1",
+          "structured_output": {"word": "hello"}}
+
+
+class StreamTailTest(unittest.TestCase):
+    """What a conductor that did not start a worker learns from its stream while it still runs."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="wayline-tail-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.stream = self.root / "stream.jsonl"
+
+    def write(self, text, mode="a"):
+        with open(self.stream, mode, encoding="utf-8") as handle:
+            handle.write(text)
+
+    def test_the_tail_sees_the_session_and_then_the_result_as_the_stream_grows(self):
+        tail = worker.StreamTail(self.stream)
+        self.write(json.dumps(INIT) + "\n")
+        self.assertEqual((tail.read().session_id, tail.model, tail.result), ("s-1", "claude-sonnet-5", None))
+        line = json.dumps(RESULT)
+        self.write(json.dumps({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}) + "\n" + line[:20])
+        self.assertIsNone(tail.read().result, "half a line is a line still being written")
+        self.write(line[20:] + "\n")
+        self.assertEqual(tail.read().result["structured_output"], {"word": "hello"})
+
+    def test_a_stream_rewritten_by_a_relaunch_is_read_again_from_the_start(self):
+        self.write(json.dumps(INIT) + "\n" + json.dumps(RESULT) + "\n")
+        tail = worker.StreamTail(self.stream).read()
+        self.assertIsNotNone(tail.result)
+        self.write(json.dumps(dict(INIT, session_id="s-2")) + "\n", mode="w")
+        self.assertEqual((tail.read().session_id, tail.result), ("s-2", None))
+
+    def test_a_stream_that_is_not_there_yet_says_nothing(self):
+        tail = worker.StreamTail(self.root / "not-yet.jsonl").read()
+        self.assertEqual((tail.session_id, tail.model, tail.result), (None, None, None))
+
+
+class TerminateTest(unittest.TestCase):
+    """Ending a worker by its pid, which is all a restarted conductor or a cancel has to go on."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="wayline-terminate-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+
+    def sleeper(self, run_dir):
+        """A process that is nobody's worker but carries a session's environment, as a worker does."""
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                   env=dict(os.environ, WAYLINE_RUN=str(run_dir)))
+        self.addCleanup(lambda: process.poll() is None and (process.kill(), process.wait()))
+        return process
+
+    def test_a_pid_is_this_session_worker_only_while_its_environment_names_the_session(self):
+        mine, other = self.root / "sessions" / "3" / "1", self.root / "sessions" / "4" / "1"
+        process = self.sleeper(mine)
+        self.assertTrue(worker.CLAUDE_CLI.pid_alive(process.pid, run_dir=mine))
+        self.assertFalse(worker.CLAUDE_CLI.pid_alive(process.pid, run_dir=other), "a reused pid is not the worker")
+        self.assertTrue(worker.CLAUDE_CLI.pid_alive(process.pid))
+
+    def test_the_real_backend_signals_only_the_process_of_the_session_it_names(self):
+        mine, other = self.root / "sessions" / "3" / "1", self.root / "sessions" / "4" / "1"
+        process = self.sleeper(mine)
+        self.assertFalse(worker.CLAUDE_CLI.terminate(process.pid, run_dir=other))
+        self.assertIsNone(process.poll(), "a process of another session was signalled")
+        self.assertTrue(worker.CLAUDE_CLI.terminate(process.pid, run_dir=mine))
+        self.assertEqual(process.wait(10), -15)
+        self.assertFalse(worker.CLAUDE_CLI.terminate(process.pid, run_dir=mine), "a process that is gone is not signalled")
+
+    def test_a_terminated_fake_worker_returns_at_once_and_leaves_no_result(self):
+        run_dir = self.root / "run"
+        run_dir.mkdir()
+        with worker.use_fake() as fake:
+            fake.script(Envelope(), delay=30)
+            started, box = threading.Event(), {}
+
+            def call():
+                box["envelope"] = worker.launch(make_request(run_dir), on_start=lambda begun: (box.update(begun=begun), started.set()))
+
+            thread = threading.Thread(target=call, daemon=True)
+            thread.start()
+            self.assertTrue(started.wait(10))
+            begun = box["begun"]
+            self.assertTrue(worker.terminate(begun.pid, begun.run_dir))
+            thread.join(10)
+            self.assertFalse(thread.is_alive(), "the scripted call slept on after it was terminated")
+            self.assertEqual(box["envelope"].exit_code, 143)
+            self.assertIsNone(worker.parse_stream(begun.stream_path).result)
+            self.assertFalse(worker.pid_alive(begun.pid))
 
 
 if __name__ == "__main__":

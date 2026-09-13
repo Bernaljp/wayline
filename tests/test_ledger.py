@@ -4,7 +4,10 @@ import fcntl
 import json
 import multiprocessing
 import os
+import signal
 import stat
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -334,6 +337,87 @@ class LockTest(LedgerCase):
         events, offset = self.book.read_events()
         self.assertEqual(len(events), 2 * APPENDS_PER_PROCESS)
         self.assertEqual(offset, len(raw))
+
+
+def hold_heartbeat(project, ready, spawned, release):
+    """A conductor in miniature: take the heartbeat, write it, start a long-lived worker, wait."""
+    beat = Ledger(project).heartbeat().acquire(tries=1)
+    beat.write(pid=os.getpid(), started_at="2026-09-12T10:00:00.000Z", last_wave_at=None, harness_tag="v0.0.0")
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    spawned.put(worker.pid)
+    ready.set()
+    release.wait(120)
+
+
+def kill_quietly(pid):
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+class HeartbeatTest(LedgerCase):
+    """`research/conductor.json`: the heartbeat and the flock that keeps a second conductor out (decision 5)."""
+
+    def record(self, **changes):
+        record = {"pid": 4242, "started_at": "2026-09-12T10:00:00.000Z", "last_wave_at": None, "harness_tag": "v0.0.0"}
+        record.update(changes)
+        return record
+
+    def test_a_second_conductor_is_refused_while_the_first_holds_the_heartbeat(self):
+        first = self.book.heartbeat().acquire()
+        self.addCleanup(first.release)
+        first.write(**self.record())
+        with self.assertRaises(ledger.ConductorBusy) as caught:
+            Ledger(self.project).heartbeat().acquire(tries=1)
+        self.assertEqual(caught.exception.holder, self.record())
+        first.release()
+        Ledger(self.project).heartbeat().acquire(tries=1).release()
+
+    def test_the_heartbeat_is_rewritten_in_place_and_reads_back_whole(self):
+        beat = self.book.heartbeat().acquire()
+        self.addCleanup(beat.release)
+        path = self.project / "research" / "conductor.json"
+        beat.write(**self.record(last_wave_at="2026-09-12T10:01:00.000Z"))
+        inode = path.stat().st_ino
+        beat.write(**self.record())  # shorter than the record it replaces
+        self.assertEqual(path.stat().st_ino, inode, "a rename would leave the lock on a file no reader opens")
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), self.record())
+        self.assertEqual(ledger.read_heartbeat(self.project), self.record())
+
+    def test_a_torn_tail_after_the_first_line_does_not_hide_the_heartbeat(self):
+        path = self.project / "research" / "conductor.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(self.record()) + "\n" + '"last_wave_at": null}\n', encoding="utf-8")
+        self.assertEqual(ledger.read_heartbeat(self.project), self.record())
+        path.write_text("{not json", encoding="utf-8")
+        self.assertIsNone(ledger.read_heartbeat(self.project))
+
+    def test_the_holder_is_named_only_while_a_conductor_holds_the_lock(self):
+        self.assertIsNone(ledger.conductor_holder(self.project))
+        beat = self.book.heartbeat().acquire()
+        beat.write(**self.record())
+        self.assertEqual(ledger.conductor_holder(self.project), self.record())
+        beat.release()
+        self.assertIsNone(ledger.conductor_holder(self.project))
+        self.assertEqual(ledger.read_heartbeat(self.project), self.record(), "the last heartbeat stays for the tick")
+
+    def test_a_killed_conductor_frees_the_lock_while_the_worker_it_started_lives_on(self):
+        context = multiprocessing.get_context("fork")
+        ready, release, spawned = context.Event(), context.Event(), context.Queue()
+        holder = context.Process(target=hold_heartbeat, args=(str(self.project), ready, spawned, release))
+        holder.start()
+        self.addCleanup(kill_quietly, holder.pid)
+        self.assertTrue(ready.wait(60))
+        worker_pid = spawned.get(timeout=60)
+        self.addCleanup(kill_quietly, worker_pid)
+        with self.assertRaises(ledger.ConductorBusy) as caught:
+            Ledger(self.project).heartbeat().acquire(tries=1)
+        self.assertEqual(caught.exception.holder["pid"], holder.pid)
+        os.kill(holder.pid, signal.SIGKILL)
+        holder.join(60)
+        os.kill(worker_pid, 0)  # raises if the worker died with its conductor
+        Ledger(self.project).heartbeat().acquire(tries=1).release()
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@
         "verdict", "finding", "progress", "discarded", "proposal_admitted", "proposal_parked",
         "decision_opened", "decision",
         "job_launched", "job_finished", "job_retried", "job_failed", "job_cancelled", "manifest",
-        "stall", "promoted", "demoted", "absorbed", "consulted", "notified", "control", "switched",
+        "wave", "stall", "promoted", "demoted", "absorbed", "consulted", "notified", "control", "switched",
         "feedback", "change_record", "tagged", "pinned", "report_rendered", "paper_started"
       ]
     },

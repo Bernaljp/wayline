@@ -1,0 +1,1 @@
+{"type": "system", "subtype": "init", "session_id": "8ae1d76c-72fa-4bda-b8b2-7a7e8c3415e6", "model": "claude-sonnet-5", "cwd": "/tmp/wayline-m1-kill-resume/five-tickets/.worktrees/4", "permissionMode": "dontAsk", "agents": ["coder"], "apiKeySource": "none", "fake": true}

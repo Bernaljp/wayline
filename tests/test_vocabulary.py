@@ -55,7 +55,7 @@ class VocabularyTest(unittest.TestCase):
                 continue
             if name.startswith("K_"):
                 self.assertIn(getattr(ledger, name), spec_keys, name)
-            elif name.isupper() and isinstance(getattr(ledger, name), str) and name not in ("JOURNAL", "LOCK"):
+            elif name.isupper() and isinstance(getattr(ledger, name), str) and name not in ("JOURNAL", "LOCK", "HEARTBEAT"):
                 self.assertIn(getattr(ledger, name), spec_events, name)
 
     def test_a_row_with_alternatives_splits_per_event(self):
