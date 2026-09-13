@@ -1,0 +1,22 @@
+\documentclass{article}
+\pdfinfoomitdate=1
+\pdftrailerid{}
+\pdfsuppressptexinfo=-1
+\title{Interaction terms improve tabular classification on synthetic benchmarks}
+\author{Ada Query}
+\date{2022}
+\begin{document}
+\maketitle
+\begin{abstract}
+On a synthetic two-class set whose label depends on a linear part and one pairwise interaction
+between two features, a model that also sees the interaction term reaches a higher held-out AUROC
+than one that sees only the linear features. This paper is one of two written for a test fixture,
+never a paper anyone submitted anywhere.
+\end{abstract}
+\section{Method}
+Two features are drawn uniformly and multiplied; the product is added to the model's inputs
+alongside the linear features already there.
+\section{Result}
+The interaction term raises held-out AUROC by several points over the linear-only model, on every
+signal strength tried.
+\end{document}

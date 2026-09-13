@@ -9,7 +9,7 @@ answered out of `research/.cache/scout/` without a new request.
 
 Level 1 is one `reader` (sonnet, medium) call per paper over a capped input, merged into the same
 dossier by `absorb_level_1` (`wayline absorb --level 1 <slug>...`). Level 2, the full absorb
-workflow (ticket 24), is not built here; what this module does have is the depth budget itself:
+workflow, is `wayline.absorb` (`wayline absorb --level 2 <slug>`); what this module has is the depth budget itself:
 `promote` decides, for a trigger of Implementation Decisions 9, whether a paper earns a level-2
 read inside `policy.absorb.l2_per_phase` for the current phase, or opens a `decision` ticket
 beyond it, and `demote` lowers a level with its own trigger. `render_levels_report` is the
@@ -2117,8 +2117,10 @@ def absorb_command(args):
 
         return code_command(args)
     parser = argparse.ArgumentParser(prog="wayline absorb", description="build the dossiers for the references")
-    parser.add_argument("slugs", nargs="*", help="level 1 only: the reference slug(s) to skim; omitted skims every one not already at level 1 or above")
-    parser.add_argument("--level", type=int, default=0, choices=[0, 1, 2], help="the dossier level to build; level 2 needs the absorb workflow, ticket 24")
+    parser.add_argument("slugs", nargs="*", help="level 1: the reference slug(s) to skim, every one below level 1 when omitted; level 2: the one promoted slug to read in full")
+    parser.add_argument("--level", type=int, default=0, choices=[0, 1, 2], help="the dossier level to build")
+    parser.add_argument("--fanout", choices=["workflow", "conductor"], help="level 2: override policy.absorb.fanout")
+    parser.add_argument("--spot-check", action="store_true", help="level 2: take the queued depth spot-check right after the read")
     parser.add_argument("--inventory", metavar="SLUG", help="write refs/<slug>/inventory.json from the arXiv e-print source, or from a PDF when there is none")
     parser.add_argument("--pdf", metavar="PATH", help="with --inventory: inventory this PDF (kept under refs/<slug>/source/, never committed)")
     parser.add_argument("--report", action="store_true", help="print the papers-by-level report and exit; --level is ignored")
@@ -2131,8 +2133,9 @@ def absorb_command(args):
     if options.inventory:
         return _inventory_command(options)
     if options.level == LEVEL_2 and not options.report:
-        print("wayline absorb: level 2 needs the inventory and the absorb workflow, which tickets 21, 22, and 24 build", file=sys.stderr)
-        return 2
+        from wayline.absorb import level_2_command
+
+        return level_2_command(options)
     try:
         project = find_project(options.project)
     except ProjectError as failure:

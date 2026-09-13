@@ -1,0 +1,9 @@
+{
+  "item_id": "eq-1",
+  "locator": "flat.tex:13",
+  "kind": "equation",
+  "content": "y = m x + b",
+  "importance": 5,
+  "relation_to_intent": "",
+  "oddities": ["b is never defined in the text."]
+}

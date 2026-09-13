@@ -26,6 +26,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -49,16 +50,18 @@ from wayline.ledger import now_ts
 
 __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
-    "launch", "resume", "pid_alive", "terminate", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
+    "launch", "resume", "pid_alive", "terminate", "usage", "simulate_limit", "simulated_limit", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
-    "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS",
-    "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "read_locator", "CONSULT_MAX",
+    "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command",
+    "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
     "schema_bullets", "schema_section",
 ]
 
 _log = logging.getLogger("wayline.worker")
 
 TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
+USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence")  # decision 5; research-notes/02 launch 4
+USAGE_TIMEOUT_S = 60
 PROC = Path("/proc")  # where a pid's environment says which session it belongs to
 FALLBACK_MODEL = "sonnet"  # `--fallback-model`: overload only, never usage limits (decision 3)
 MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")  # what decision 3 passes as --model; the policy schema's enum
@@ -798,6 +801,72 @@ def _contract_section(ticket, consult_max):
     ])
 
 
+def integrator_prompt(ticket, role, conflicts, touches=None, max_chars=None, budget=None):
+    """The integrator's prompt (decision 5): the ticket, the conflict, the protocol, the result, the contract.
+
+    `conflicts` is `[(path, text)]`: each conflicting file as the stopped rebase left it, markers
+    and all, in git's order. The files are cut at `max_chars` the way a context pack is, with the
+    cut announced. The touch set this prompt states is `touches`, the paths that may conflict (the
+    conflicting paths when None), not the ticket's.
+    """
+    branch = "ticket/%s" % ticket["id"]
+    paths = ", ".join("`%s`" % path for path in (touches if touches is not None else [path for path, _ in conflicts]))
+    head = [
+        "# Integration of ticket %s: %s" % (ticket["id"], ticket["title"]),
+        "",
+        "The branch `%s` holds this ticket's finished work, and rebasing it onto `main` conflicted: "
+        "`main` moved while the ticket ran. Your one job is to finish that rebase." % branch,
+        "",
+        "- touch set: %s, the paths both the branch and `main` changed" % paths,
+    ]
+    machine = (ticket.get("acceptance") or {}).get("machine") or []
+    if machine:
+        head.append("- acceptance, which the conductor runs again on the rebased branch and on `main`:")
+        head.extend("    - `%s`" % command for command in machine)
+    if budget:
+        head.append("- budget: %s turns, %s minutes" % (budget.get("max_turns", "?"), budget.get("max_minutes", "?")))
+
+    cap = None if max_chars is None else max(0, int(max_chars))
+    used, cut = 0, False
+    shown = ["# The conflict", "",
+             "Each conflicting file as the stopped rebase left it. The conductor aborted that rebase, so the "
+             "worktree you start in is clean and on `%s`." % branch]
+    for path, text in conflicts:
+        shown.extend(["", "## %s" % path, ""])
+        if cap is not None and used >= cap:
+            shown.append("[wayline: left out at the context cap of %d characters; read the file in the worktree.]" % cap)
+            cut = True
+            continue
+        note = None
+        if cap is not None and used + len(text) > cap:
+            note = "[wayline: this file was cut here at the context cap; %d character(s) are missing.]" % (len(text) - (cap - used))
+            text, cut = text[: cap - used], True
+        used += len(text)
+        fence = _fence(text)
+        shown.extend([fence, text.rstrip("\n"), fence])
+        if note:
+            shown.extend(["", note])
+
+    result = schema_section("# The result", role.output_schema or "result", closing=[
+        "",
+        "`ticket_id` is %s. `status` is `done` only when the rebase finished and `wayline accept` passed "
+        "after it. The summary names each conflicting path and what you kept from each side." % ticket["id"],
+    ])
+    contract = "\n".join([
+        "# The contract",
+        "",
+        "- Write only the touch set: %s. A hook blocks every write outside it, and the conductor refuses a rebased branch "
+        "that changes a path the branch did not change before." % paths,
+        "- Run `git rebase main` yourself, resolve, `git add` each resolved path, and `git rebase --continue` until the rebase finishes.",
+        "- If you cannot resolve it, run `git rebase --abort` and return `status: failed` with the reason.",
+        "- Never push, merge, reset, switch branches, or edit `research/`. The conductor rebases once more after you stop "
+        "and fast-forwards `main` only when that rebase is clean; if it still conflicts, the ticket is split.",
+    ])
+    parts = ["\n".join(head), "\n".join(shown), role.protocol, result, contract]
+    text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
+    return Prompt(text, used, cut)
+
+
 # --- the session directory ----------------------------------------------------------------------
 
 
@@ -1096,12 +1165,13 @@ def read_envelope(stream_path, schema_path, exit_code=None, errors=()):
 
 
 class StreamTail:
-    """A live `stream.jsonl` read as it grows: its session, its model, and its result once it is there.
+    """A live `stream.jsonl` read as it grows: its session, its model, every `rate_limit_event`, and its result.
 
     This is what a conductor that did not start a worker (a restarted one) can know about it, and
-    what a running conductor reads between waves. Each `read` starts where the last one stopped;
-    a half-written last line is left for the next read, and a stream that shrank or was replaced
-    was rewritten by a relaunch into the same directory and is read again from the start.
+    what a running conductor reads between waves, which is how pacing sees a window fill while
+    the worker is still running. Each `read` starts where the last one stopped; a half-written last
+    line is left for the next read, and a stream that shrank or was replaced was rewritten by a
+    relaunch into the same directory and is read again from the start.
     """
 
     def __init__(self, path):
@@ -1111,6 +1181,7 @@ class StreamTail:
         self.session_id = None
         self.model = None
         self.result = None
+        self.rate_limit_events = []
 
     def read(self):
         """Read what was appended since the last read; returns the tail."""
@@ -1122,6 +1193,7 @@ class StreamTail:
             info = os.fstat(handle.fileno())
             if info.st_ino != self.inode or info.st_size < self.offset:
                 self.offset, self.inode, self.session_id, self.model, self.result = 0, info.st_ino, None, None, None
+                self.rate_limit_events = []
             handle.seek(self.offset)
             for raw in handle:
                 if not raw.endswith(b"\n"):
@@ -1136,6 +1208,8 @@ class StreamTail:
                 if message.get("type") == "system" and message.get("subtype") == "init" and self.session_id is None:
                     self.session_id = message.get("session_id") if isinstance(message.get("session_id"), str) else None
                     self.model = message.get("model") if isinstance(message.get("model"), str) else None
+                elif message.get("type") == "rate_limit_event":
+                    self.rate_limit_events.append(RateLimitEvent.from_info(message.get("rate_limit_info")))
                 elif message.get("type") == "result":
                     self.result = message
         return self
@@ -1212,6 +1286,16 @@ def _exit_code(returncode):
 # --- the claude_cli backend ---------------------------------------------------------------------
 
 
+def setup_token_command():
+    """How `init` names the command that mints the units' token when it talks to the owner."""
+    return "%s setup-token" % ClaudeCli.executable
+
+
+def setup_token():
+    """Run `setup-token` at the owner's terminal through the real backend; returns its exit code."""
+    return ClaudeCli().setup_token()
+
+
 class ClaudeCli:
     """The real backend: the launch line of decision 3 as a subprocess, its stream parsed from disk."""
 
@@ -1259,6 +1343,37 @@ class ClaudeCli:
             return False
         return True
 
+    def usage(self, timeout=USAGE_TIMEOUT_S):
+        """The text `claude -p "/usage" --output-format json` prints (decision 5): a local command, no model call.
+
+        research-notes/02 found it costs no turn and no token. Raises `LaunchError` when the
+        executable cannot be run or prints no result text.
+        """
+        executable = self._executable()
+        environment = dict(os.environ)
+        environment.pop("CLAUDE_CODE_RETRY_WATCHDOG", None)
+        try:
+            done = subprocess.run([executable, *USAGE_ARGV], stdin=subprocess.DEVNULL, capture_output=True,
+                                  text=True, timeout=timeout, env=environment)
+        except (OSError, subprocess.SubprocessError) as failure:
+            raise LaunchError("%s -p /usage did not run: %s" % (self.executable, failure))
+        try:
+            message = json.loads(done.stdout)
+        except ValueError:
+            raise LaunchError("%s -p /usage printed no JSON (exit %d)" % (self.executable, done.returncode))
+        text = message.get("result") if isinstance(message, dict) else None
+        if not isinstance(text, str):
+            raise LaunchError("%s -p /usage printed no result text (exit %d)" % (self.executable, done.returncode))
+        return text
+
+    def setup_token(self):
+        """`claude setup-token` at the owner's terminal, for `init` to write `~/.wayline/env` from.
+
+        It mints a one-year inference-only token, prints it, and saves nothing (research-notes 02),
+        so it runs with the terminal attached and the owner pastes what it printed. Returns its exit code.
+        """
+        return subprocess.run([self._executable(), "setup-token"], check=False).returncode
+
     def _executable(self):
         override = os.environ.get("WAYLINE_CLAUDE")
         if override:
@@ -1281,7 +1396,11 @@ class ClaudeCli:
         stream_path = run_dir / "stream.jsonl"
         stderr_path = run_dir / "stderr.txt"
         errors = []
+        injected = _simulated_event() if session_id is None else None
         with open(stream_path, "wb") as stream, open(stderr_path, "wb") as stderr:
+            if injected is not None:  # ahead of everything the session writes, which follows it in the file
+                stream.write((json.dumps(_rate_limit_message(injected)) + "\n").encode("utf-8"))
+                stream.flush()
             try:
                 process = subprocess.Popen(
                     [executable] + argv[1:], stdin=subprocess.DEVNULL, stdout=stream, stderr=stderr,
@@ -1410,6 +1529,13 @@ class FakeLauncher:
             self._holds = {}
             self._loaded = None
             self._next_pid = 100000
+            self.usage_text = None
+
+    def usage(self):
+        """The scripted `/usage` text (`usage_text`), None when none was scripted; an exception put there is raised."""
+        if isinstance(self.usage_text, BaseException):
+            raise self.usage_text
+        return self.usage_text
 
     @staticmethod
     def _scripted(envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None, respond=None):
@@ -1540,6 +1666,9 @@ class FakeLauncher:
         model = given.model or RESOLVED_MODELS.get(request.model, request.model)
         head = [{"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": str(request.cwd),
                  "permissionMode": "dontAsk", "agents": [request.role], "apiKeySource": "none", "fake": True}]
+        injected = _simulated_event() if kind == "launch" else None
+        if injected is not None:
+            head.append(dict(_rate_limit_message(injected), session_id=session))
         for event in given.rate_limit_events:
             head.append({"type": "rate_limit_event", "rate_limit_info": _rate_limit_info(event), "session_id": session})
         _write_text(stream_path, "".join(json.dumps(line) + "\n" for line in head))  # visible while the call runs, as the real stream is
@@ -1669,6 +1798,48 @@ def pid_alive(pid, run_dir=None):
 def terminate(pid, run_dir=None, hard=False):
     """End a worker by its pid through the selected backend; returns whether it was running."""
     return backend().terminate(pid, run_dir, hard)
+
+
+def usage():
+    """The plan usage text `claude -p "/usage"` prints, through the selected backend (decision 5)."""
+    return backend().usage()
+
+
+# --- the simulated limit (decision 5; M1's demo) ----------------------------------------------------
+
+_simulated = {"seconds": None}
+_simulated_lock = threading.Lock()
+
+
+def simulate_limit(seconds):
+    """Arm one simulated hit limit, or disarm it with None: `wayline run --simulate-limit <seconds>`.
+
+    The next launch, through either backend, carries one `rate_limit_event` with `status: rejected`
+    and a `resetsAt` that many seconds ahead, written into its stream ahead of what the session
+    writes, so the pause can be shown in minutes without exhausting a window. The session itself
+    runs as it would have, which is what "running workers finish" looks like.
+    """
+    with _simulated_lock:
+        _simulated["seconds"] = None if seconds is None else float(seconds)
+
+
+def simulated_limit():
+    """The seconds a simulated limit is armed with, or None."""
+    with _simulated_lock:
+        return _simulated["seconds"]
+
+
+def _simulated_event():
+    """Take the armed simulated limit, once: the rejected event it injects, or None."""
+    with _simulated_lock:
+        seconds, _simulated["seconds"] = _simulated["seconds"], None
+    if seconds is None:
+        return None
+    return RateLimitEvent(status="rejected", resets_at=math.ceil(time.time() + seconds), rate_limit_type="five_hour")
+
+
+def _rate_limit_message(event):
+    return {"type": "rate_limit_event", "rate_limit_info": _rate_limit_info(event), "simulated": True}
 
 
 def _names_session(pid, run_dir):

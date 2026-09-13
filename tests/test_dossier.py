@@ -314,10 +314,17 @@ class VerbTest(ProjectTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(printed)["verified"], 9)
 
-    def test_a_level_that_is_not_built_yet_exits_2_and_says_which_ticket_builds_it(self):
+    def test_level_2_without_exactly_one_slug_exits_2_and_says_so(self):
         code, _, complaint = self.run_verb("absorb", "--level", "2", "--project", str(self.project))
         self.assertEqual(code, 2)
-        self.assertIn("tickets 21, 22, and 24", complaint)
+        self.assertIn("exactly one slug", complaint)
+
+    def test_level_2_on_a_paper_that_was_not_promoted_exits_1(self):
+        self.run_verb("absorb", "--project", str(self.project), "--fixtures", str(RECORDINGS))
+        slug = sorted(path.parent.name for path in (self.project / "research" / "refs").glob("*/dossier.json"))[0]
+        code, _, complaint = self.run_verb("absorb", "--level", "2", slug, "--project", str(self.project))
+        self.assertEqual(code, 1)
+        self.assertIn("promotion", complaint)
 
     def test_a_level_outside_the_three_is_an_argument_error(self):
         self.assertEqual(self.run_verb("absorb", "--level", "9", "--project", str(self.project))[0], 2)

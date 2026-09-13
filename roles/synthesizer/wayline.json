@@ -1,0 +1,19 @@
+{
+  "id": "synthesizer",
+  "scope_kind": "global",
+  "capability_summary": "Writes an L2 dossier's prose sections from the absorb readers' entries, with a locator on every sentence.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "eeb26b9e41dafbf58e36e163b99bddc7e3686f9746f96ca211a03f380abf8232",
+  "may_judge": false,
+  "output_schema": "dossier_sections",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}

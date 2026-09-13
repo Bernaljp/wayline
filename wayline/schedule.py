@@ -16,26 +16,34 @@ from pathlib import Path
 from wayline.tickets import DECISION, HARDEST, SATISFIED, frontier, is_open_decision, open_decisions
 
 __all__ = [
-    "NORMAL", "CHEAP_ONLY", "STOP",
+    "NORMAL", "CHEAP_ONLY", "STOP", "CHEAP_MAX", "affordable",
     "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
     "everything_free", "launchable", "order_key", "pick", "held_back", "holds_model_work",
 ]
 
-# The pacing actions of decision 5. `cheap_only` changes the pick order here; which tickets an
-# action refuses outright, and the `paused` event, are ticket 10's.
+# The pacing actions of decision 5 (`wayline.pacing` computes which one holds). `stop` launches
+# nothing; `cheap_only` launches only the tickets at or below `CHEAP_MAX` and puts the cheaper first.
 NORMAL = "normal"
 CHEAP_ONLY = "cheap_only"
 STOP = "stop"
+CHEAP_MAX = 2
 
 
 def holds_model_work(action):
     """Whether this pacing action stops the conductor launching a model at all.
 
-    Only `stop` does. Whether `cheap_only` should hold back the expensive end of the queue as
-    well (a verdict runs a tier above the work it judges) is ticket 10's to decide, with the
-    windows in front of it; until then `cheap_only` reorders and refuses nothing.
+    Only `stop` does. `cheap_only` still launches difficulty 1 and 2 (`pick`), and the conductor
+    holds the verdict queue under it as well, because a verdict runs a tier above the work it
+    judges and is never on the cheap tier.
     """
     return action == STOP
+
+
+def affordable(entry, action=NORMAL):
+    """Whether this pacing action lets the ticket launch: any under `normal`, difficulty 1 and 2 under `cheap_only`."""
+    if action == STOP:
+        return False
+    return action != CHEAP_ONLY or (entry.get("difficulty") or 0) <= CHEAP_MAX
 
 
 # --- touch sets ------------------------------------------------------------------------------
@@ -230,8 +238,10 @@ def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_f
     Up to `slots` of them (`policy.max_parallel_workers`). Each pick joins the running set before
     the next is chosen, so two tickets that share a path are never launched into the same wave:
     the second waits for the first to be integrated, which is what makes the conflict serialize.
+    The pacing action removes what it does not afford: everything under `stop`, difficulty 3 to 5
+    under `cheap_only`.
     """
-    ready = frontier(graph)
+    ready = [entry for entry in frontier(graph) if affordable(entry, action)]
     lengths = critical_path_lengths(graph)
     held = list(running)
     chosen = []

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dossier_entry",
+  "description": "One reader's entry for one inventory item of an L2 absorb (Implementation Decisions 9): the item it answers, where in the source it was read, the item in exact form, how much it matters, how it bears on the intent, and what looked odd. A figure's entry also says what the figure shows, whether it supports the claim that cites it, and anything odd about it. One line of refs/<slug>/entries.jsonl; the coverage audit counts these against the inventory.",
+  "type": "object",
+  "required": ["item_id", "locator", "kind", "content", "importance", "relation_to_intent", "oddities"],
+  "additionalProperties": false,
+  "properties": {
+    "item_id": {"type": "string", "pattern": "^[a-z]+-[0-9]+$", "description": "the inventory item this entry answers, as the obligation list names it"},
+    "chunk_id": {"type": "string", "pattern": "^c-[0-9]+$", "description": "the chunk the entry was read from; filled in by the fan-out, not by the reader"},
+    "locator": {"type": "string", "pattern": "\\S", "description": "where the item was read: <file>:<line> in the source, or a page of a PDF"},
+    "kind": {"type": "string", "enum": ["section", "equation", "figure", "table", "algorithm", "theorem", "appendix"]},
+    "content": {"type": "string", "pattern": "\\S", "description": "the item in exact form: an equation's LaTeX as the source writes it, a theorem's statement word for word, a table's cells, a section's argument in the paper's own terms"},
+    "importance": {"type": "integer", "minimum": 1, "maximum": 5, "description": "1 is incidental to the paper, 5 is what the paper stands on"},
+    "relation_to_intent": {"type": "string", "description": "how this item bears on the project's intent; empty when it does not"},
+    "oddities": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "anything that does not add up: a number that disagrees with another, a step that is skipped, a symbol never defined"},
+    "what_it_shows": {"type": "string", "pattern": "\\S", "description": "figures: what the image actually shows, read off the image rather than the caption"},
+    "supports_cited_claim": {"type": "string", "pattern": "\\S", "description": "figures: the claim that cites the figure, and whether what it shows supports it"},
+    "anything_odd": {"type": "string", "description": "figures: axes, scales, error bars, or panels that mislead or disagree with the text; empty when nothing is"}
+  },
+  "oneOf": [
+    {"properties": {"kind": {"const": "figure"}}, "required": ["what_it_shows", "supports_cited_claim", "anything_odd"]},
+    {"properties": {"kind": {"enum": ["section", "equation", "table", "algorithm", "theorem", "appendix"]}}}
+  ]
+}
