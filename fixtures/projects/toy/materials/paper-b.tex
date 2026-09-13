@@ -1,0 +1,18 @@
+\documentclass{article}
+\pdfinfoomitdate=1
+\pdftrailerid{}
+\pdfsuppressptexinfo=-1
+\title{A held-out evaluation protocol for small synthetic datasets}
+\author{Bo Split}
+\date{2020}
+\begin{document}
+\maketitle
+\begin{abstract}
+A fixed fraction of a synthetic set, drawn once and never used for fitting, is enough to compare
+two models honestly as long as the draw is seeded and the split is taken from the same ordered
+sequence every time. This paper is one of two written for a test fixture, never a paper anyone
+submitted anywhere.
+\end{abstract}
+\section{Protocol}
+Generate every row from one seeded stream, in order; hold out the last fifth for evaluation only.
+\end{document}

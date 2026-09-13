@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://export.arxiv.org/api/query?id_list=2401.00001&max_results=1",
+    "hash": "0daf6c6534498cc1b6c971840ad38bcac6d2af11a4932ff3d1084567da0d2ed6"
+  },
+  "response": {
+    "url": "https://export.arxiv.org/api/query?id_list=2401.00001&max_results=1",
+    "status": 200,
+    "headers": {},
+    "encoding": "utf-8",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:arxiv=\"http://arxiv.org/schemas/atom\">\n  <entry>\n    <id>http://arxiv.org/abs/2401.00001</id>\n    <published>2024-01-01T00:00:00Z</published>\n    <title>A tiny code repository for reproducible toy experiments</title>\n    <summary>The toy project's dataset generator and training script are released as a small\npackage, tagged once, so a reader can reproduce a run from the exact commit this paper names.</summary>\n    <author><name>Cy Repo</name></author>\n    <link title=\"pdf\" href=\"http://arxiv.org/pdf/2401.00001\" rel=\"related\" type=\"application/pdf\"/>\n    <arxiv:primary_category term=\"cs.LG\"/>\n  </entry>\n</feed>\n"
+  }
+}

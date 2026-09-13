@@ -1,0 +1,23 @@
+{
+  "id": "integrator",
+  "scope_kind": "global",
+  "capability_summary": "Finishes one ticket branch's conflicted rebase onto main, editing only the conflicting paths.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "6fda46f27ab90fd9987da8d77ae0abeb921508809e97491b2c73d75156a21463",
+  "may_judge": false,
+  "output_schema": "result",
+  "allowed_tools": [
+    "Read", "Edit", "Glob", "Grep",
+    "Bash(git rebase main)", "Bash(git rebase --continue)", "Bash(git rebase --abort)", "Bash(git add *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show *)",
+    "Bash(wayline accept*)"
+  ],
+  "disallowed_tools": [
+    "Write", "NotebookEdit", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync"
+  ]
+}

@@ -1,0 +1,18 @@
+# 57 - Ask the owner when Fable is spent
+
+**What to build:** Under consent `ask`, the owner is asked once per spent window, and only when Fable work is actually waiting: a `human_only` decision ticket that pauses nothing beyond the hold offers `fall back` or `wait` for this window and `always fall back` or `always wait` for the project, with a recommended answer, and reaches the owner's phone through the `decision_opened` notification. An answer from the command line, the dashboard, or the ticket file takes effect at the next wave; the reset or a change of consent closes an unanswered ticket as superseded; a project that never recorded a consent, running `autonomous`, falls back after two hours without an answer. The dashboard gains the `model_fallback` action.
+
+**Blocked by:** 35 (Decision tickets end to end and dashboard actions), 55 (Fall back to Opus under the fallback consent)
+
+**Status:** ready-for-agent
+
+**GitHub:** [#104](https://github.com/Bernaljp/wayline/issues/104) (mirror; the local file is the source)
+
+**Milestone:** M5 Overnight and report. **Spec:** milestone M5 criterion 13; Implementation Decisions 15 (asking the owner, what `wayline status` and the dashboard show, the vocabulary the build adds), 5 (decision tickets), 8 (actions), 7 (the notifier), 2 and 14 (the event and policy tables).
+
+- [ ] Under `ask`, when the hold first drops a launch, the conductor opens one decision ticket keyed by the window's `resets_at` (replay and restarts never open a second): `human_only`, `blocking: null`, with the options `fall back`, `wait`, `always fall back`, and `always wait`, the recommended answer `wait` when the reset is under `policy.model_fallback.wait_under_hours` (12) away and `fall back` otherwise, and a `decision_opened` notification naming the reset, what is held, the recommended answer, and `wayline answer <id> "<option>"`; a spent week with nothing waiting opens no ticket.
+- [ ] An answer is matched against the options, trimmed and case-insensitive: `fall back` falls back for this window, `wait` waits, and `always fall back` and `always wait` also journal `control model_fallback` with `auto` or `wait`; an answer matching none counts as `wait` for this window, and a notification says so.
+- [ ] At the first wave past the reset, or on a `control model_fallback` setting `auto` or `wait` while the ticket is open, the conductor closes it with a `decision` carrying `answer: superseded` and `decided_by: conductor` (added to the enumeration in the event table of Implementation Decisions 2); Fable work then goes on as the consent says, and a late `wayline answer` is refused.
+- [ ] Unanswered: an explicit `ask` never times out; a project without the `model_fallback` key under `autonomous` gets `fall back` for this window after `policy.model_fallback.ask_timeout_hours` (2), journaled as a `decision` with `decided_by: conductor` and a rationale naming the timeout; otherwise the ticket waits. Both policy keys join `policy.json` and the policy table of Implementation Decisions 14.
+- [ ] `wayline status` lists the ask with the open decision tickets, adding `falls back at <time> unless answered` when the timeout applies; the dashboard's decisions view answers it on its form, and a `model_fallback` action beside `autonomy` and `pacing` calls `project.set_model_fallback` behind the action token.
+- [ ] Tests: journal replay under a fake clock covers the ticket opening once, each answer, an unmatched answer, the superseded close at the reset and on a change of consent, the timeout with and without the key and under each autonomy, and a late answer; HTTP tests cover the new action and its token.

@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.crossref.org/works/10.9999%2Fwayline.toy.b?mailto=%3Cowner%3E",
+    "hash": "e5e94c4cfef13e5591032d79caac239ff576a9284f9e4ff2c7451dafc2ff7a5e"
+  },
+  "response": {
+    "url": "https://api.crossref.org/works/10.9999%2Fwayline.toy.b?mailto=%3Cowner%3E",
+    "status": 200,
+    "headers": {},
+    "encoding": "utf-8",
+    "body": "{\"status\": \"ok\", \"message-type\": \"work\", \"message\": {\"DOI\": \"10.9999/wayline.toy.b\", \"URL\": \"https://doi.org/10.9999/wayline.toy.b\", \"title\": [\"A held-out evaluation protocol for small synthetic datasets\"], \"author\": [{\"given\": \"Bo\", \"family\": \"Split\"}], \"issued\": {\"date-parts\": [[2020]]}, \"container-title\": [\"Proceedings of Toy Benchmarks\"], \"type\": \"proceedings-article\", \"abstract\": \"<jats:p>A fixed fraction of a synthetic set, drawn once and never used for fitting, is enough to compare two models honestly.</jats:p>\"}}"
+  }
+}

@@ -25,6 +25,17 @@ commit. `docs/verification/m4.md` records what its session can actually do: the 
 below are the harness saying what it means to permit, and what makes the role read-only is the
 absent write tools and the permission system's own reading of a command.
 
+## The integrator is launched by the conductor, not assigned to a ticket
+
+`integrator` is the other role outside the librarian's reach (`kinds` empty). The conductor
+launches it once when rebasing a ticket branch onto `main` conflicts, in that ticket's worktree,
+with every path both the branch and `main` changed as `TICKET_TOUCHES` and the conflict markers as
+the prompt's context (`wayline.worker.integrator_prompt`). It finishes the rebase itself, since a
+resolution committed on the old branch would conflict again when the conductor replays it, and the
+conductor's second rebase checks that it did. It has `Edit` and not `Write`: resolving a conflict
+changes files that exist. Its rebase commands are spelled out whole (`git rebase main`,
+`--continue`, `--abort`), because a `git rebase *` rule would admit `--exec <any command>`.
+
 ## The roles an L2 absorb launches, and the second role that may judge
 
 `absorb`, `synthesizer`, and `critic` are not assigned to tickets either; `wayline.absorb` launches

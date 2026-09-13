@@ -26,12 +26,22 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   escalation ladder (a tier up, a split ticket, `needs_human`) is named in the `next` of the
   `ticket_failed` event and built by ticket 38, which also acts on the stall counter that the
   `wave` event lets a restart rebuild.
-- The conflict-free integration. A rebase conflict fails the ticket with `next: split`; the
-  integrator role that resolves one arrives with ticket 08.
-- No pacing and no window pause: ticket 10 computes the action the pick order already reads and
-  decides what an action refuses to launch; the owner's pause (`wayline pause`) holds launches
-  here. No job poller, so an experiment ticket whose jobs outlive its worker stays `running` and
-  holds the run open until ticket 19's poller closes it or `wayline stop` ends the run.
+- The integration protocol (ticket 08), one ticket at a time under the ledger lock. A rebase
+  conflict is aborted and the `integrator` role is launched once in the worktree, on the
+  conflicting paths, to finish the rebase itself; the conductor's second rebase is the check, and
+  a second conflict fails the ticket with `next: split`. The integrator is model work, so it waits
+  while the run holds launches, and the attempt waits in flight with it.
+- Pacing and the window pause (ticket 10, `wayline.pacing`). `run` reads `/usage` before its
+  first wave, and every wave folds in the `rate_limit_event`s the workers' streams gained, so the
+  action of wave step 8 follows the windows while the workers are still running; `pacing` is
+  journaled when the reading changes. `stop`, a window pause, the owner's pause, and a stop hold
+  every session that needs a model, verdicts and resumes included, and `cheap_only` launches only
+  difficulty 1 and 2 and holds the verdicts. What needs no model still happens first in the wave:
+  the workers already running finish, and their machine checks and integration run. A hit limit
+  journals `paused`, a session the limit stopped is resumed after the reset instead of failed,
+  and the first wave past the reset journals `unpaused`. No job poller, so an experiment ticket
+  whose jobs outlive its worker stays `running` and holds the run open until ticket 19's poller
+  closes it or `wayline stop` ends the run.
 - A result's `proposals`, `decision_requests` and `goal_progress` are written into the ticket's
   `## Result` section so the owner sees them, and nothing else: admission is ticket 37, decision
   tickets are ticket 35, and keep-if-better is ticket 39.
@@ -56,11 +66,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, gates, replay, schedule, tickets, worker
+from wayline import HARNESS_ROOT, gates, pacing, replay, schedule, tick, tickets, worker
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
+    ACCEPTANCE, CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
-    TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, now_ts,
+    TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
 from wayline.project import ProjectError, find_project, policy_for, read_harness
 
@@ -92,6 +102,10 @@ ACCEPTANCE_FAILED = "acceptance_failed"
 RELAUNCH = "relaunch"
 # The gate a worker that ran past its budget is resumed at, once (decision 3).
 TIMEOUT = "timeout"
+# The role that finishes a conflicted rebase (decision 5), and what an attempt whose integration
+# waits for the run to allow model work waits for.
+INTEGRATOR = "integrator"
+INTEGRATE = "integrate"
 
 # The identity a conductor commits the ledger under when the project's repository has none.
 IDENTITY = ("-c", "user.name=wayline", "-c", "user.email=wayline@localhost")
@@ -118,9 +132,16 @@ RESUME_TIMEOUT = (
     "now, through the structured output, matching the schema this session was launched with. Do not "
     "start new work."
 )
+RESUME_LIMIT = (
+    "Your session stopped at the subscription's usage limit before it returned its result, and the "
+    "window has reset since. Continue the ticket from where you left off, commit on the ticket branch, "
+    "run `wayline accept`, and return the structured result."
+)
 REJECTED = (
     "the %s verdict failed: a fresh %s session that did not write this read it and found\n\n%s"
 )
+# How much of a returned session's stderr is searched for the words of a hit limit.
+STDERR_TAIL_BYTES = 65536
 
 
 # What the conductor says when a `control` event another process appended arrives, by command.
@@ -313,6 +334,14 @@ class _Stop(NamedTuple):
     reason: str
 
 
+class _Conflict(NamedTuple):
+    """A rebase that stopped: the paths git names as unmerged, each one's text with its markers, and git's words."""
+
+    paths: list
+    markers: list
+    output: str
+
+
 @dataclass
 class _Attempt:
     """One attempt at one ticket, carried through the steps of the outcome."""
@@ -358,6 +387,11 @@ class _Attempt:
     terminated_at: Optional[float] = None
     # The findings `_close` filed for this attempt.
     findings: int = 0
+    # Whether the attempt passed every gate before the integration and waits to integrate, because
+    # its rebase conflicted while the run held the integrator's launch.
+    integrating: bool = False
+    # How many of the session stream's `rate_limit_event`s pacing has already folded in.
+    limits_read: int = 0
 
     @property
     def id(self):
@@ -391,10 +425,12 @@ class Conductor:
         # The Type-B queue of decision 11: what each done ticket earned, drained later in the wave
         # because a verdict is model work like any other and is paced like any other.
         self.verdicts = []
-        # The pacing action of wave step 8 and the resource answer of step 7, both seams the pick
-        # order already reads: ticket 10 computes the action from the windows, and the job poller
-        # replaces `resources_free` with the free-slot rule of `wayline.resources`.
+        # The pacing action of wave step 8, computed from the latest reading of each window, and the
+        # resource answer of step 7, which the job poller replaces with the free-slot rule of
+        # `wayline.resources`. `clock` is the time pacing reads, which a test moves across a reset.
         self.action = schedule.NORMAL
+        self.windows = pacing.Windows()
+        self.clock = time.time
         self.resources_free = schedule.everything_free
         # What a run carries between waves: the working view folded from the journal, the byte
         # offset read so far, the attempts whose sessions are in flight, and the heartbeat.
@@ -426,11 +462,14 @@ class Conductor:
         result = WaveResult(self.number)
         self._beat()
         arrived = self._tail()
+        self._pace()  # what `run` start and the journal read, before anything below can start a session
         first = not self.taken_over
         if first:
             self._take_over(result)
         self._apply_controls(arrived, first)
+        self._unpause_at_reset()
         self._poll(result)
+        self._pace()
         if not self._holds_launches():
             picks = self._picks(self._graph())
             if picks:
@@ -468,13 +507,14 @@ class Conductor:
                 "resume": bool(resume), "harness_tag": harness.get("harness_tag"),
                 "autonomy": harness.get("autonomy"), "radius": harness.get("radius"), "pid": os.getpid(),
             })
+            self._read_usage()
             waves = []
             wait = self._idle if wait is None else wait
             while True:
                 waves.append(self.wave())
                 if waves[-1].ended or (max_waves is not None and len(waves) >= max_waves):
                     return waves
-                wait(self._poll_seconds())
+                wait(self._wait_seconds())
         finally:
             self.heartbeat.release()
             self.heartbeat = None
@@ -497,7 +537,10 @@ class Conductor:
 
     def _ready(self):
         """Whether a session returned, or the journal grew past what this conductor has read."""
-        if any(attempt.thread is not None and not attempt.running for attempt in self.flight.values()):
+        # An attempt that waits for the run to allow model work again is woken by the journal
+        # (`wayline resume`), not by its own finished thread, or the run would take waves back to back.
+        if any(attempt.want is None and attempt.thread is not None and not attempt.running
+               for attempt in self.flight.values()):
             return True
         if any(attempt.adopted and attempt.tail.read().result is not None for attempt in self.flight.values()):
             return True
@@ -522,6 +565,7 @@ class Conductor:
         """Fold what the journal gained since the last read into the working view (wave step 1)."""
         events, self.offset = self.ledger.read_events(self.offset)
         replay.replay(events, self.view)
+        self._heard_pacing(events)
         return events
 
     def _journal_wave(self, result):
@@ -664,6 +708,7 @@ class Conductor:
         """The session's process exists: where to find it, and, for a launch, `ticket_launched` with its pid."""
         attempt.pid, attempt.run_dir, attempt.stream_path = started.pid, Path(started.run_dir), Path(started.stream_path)
         attempt.tail = worker.StreamTail(started.stream_path)
+        attempt.limits_read = 0
         if kind == "launch":
             self._journal_launch(attempt, started)
         attempt.started = True
@@ -787,21 +832,23 @@ class Conductor:
         else:
             self._died(attempt, session)
 
-    def _died(self, attempt, session):
-        """A session that died without its result: resumed by session id, or relaunched when it had none.
+    def _died(self, attempt, session, why=RESUME_DIED, what="its worker died"):
+        """A session that ended without its result: resumed by session id, or relaunched when it had none.
 
-        Either one waits, like any session that needs a model, while the run is paused or stopping.
+        `why` is what the resume says and `what` is what the conductor says happened: a worker that
+        died, or a session a usage limit stopped. Either one waits, like any session that needs a
+        model, while the run is paused or stopping.
         """
         if attempt.session_id:
-            message = RESUME_DIED
+            message = why
             previous = attempt.run_dir / "prompt.md" if session.kind == "resume" and attempt.run_dir else None
             if previous is not None and previous.is_file():
                 message += RESUME_DIED_MESSAGE % previous.read_text(encoding="utf-8").strip()
             attempt.want = _Want(replay.WORKER_DIED, message)
-            doing = "its worker died; resuming session %s" % attempt.session_id
+            doing = "%s; resuming session %s" % (what, attempt.session_id)
         else:
             attempt.want = _Want(RELAUNCH)
-            doing = "its worker died before its session started; relaunching it"
+            doing = "%s before its session started; relaunching it" % what
         self.flight[attempt.id] = attempt
         started = self._start_wanted(attempt)
         self.say("  ticket %d: %s%s" % (attempt.id, doing, "" if started else " once the run may launch again"))
@@ -892,11 +939,17 @@ class Conductor:
             attempt = self.flight[identifier]
             try:
                 self._journal_session(attempt)
+                self._observe(attempt)
                 if attempt.running:
                     continue
                 if attempt.want is not None:
-                    self._start_wanted(attempt)
-                    continue
+                    if attempt.want.stage != INTEGRATE:
+                        self._start_wanted(attempt)
+                        continue
+                    if self._holds_launches():
+                        continue
+                    attempt.want = None  # the integration it waited for may launch its integrator now
+
                 if attempt.adopted and not self._adopted_returned(attempt):
                     continue
                 self._carry(attempt, result)
@@ -907,10 +960,15 @@ class Conductor:
             raise escaped
 
     def _carry(self, attempt, result):
-        """What a returned session came to, counted into the wave; nothing expected raises out."""
+        """What a returned session came to, counted into the wave; nothing expected raises out.
+
+        A session a usage limit stopped without a usable result is no outcome at all: it is the
+        window's doing, so it spends no gate, is not counted as settling the wave, and waits to be
+        resumed after the reset (`_wait_out`).
+        """
         if attempt.thread is not None:
             attempt.thread.join()
-        outcome = "failed"
+        outcome, limited = "failed", False
         try:
             if attempt.failure is not None:
                 raise attempt.failure
@@ -918,11 +976,17 @@ class Conductor:
                 raise ConductorError("the worker thread ended without a result and without an error")
             attempt.session_id = attempt.session_id or attempt.envelope.session_id
             self._journal_session(attempt)
-            outcome = self._advance(attempt)
+            self._observe(attempt)
+            limit = self._limit_of(attempt)
+            if limit is not None and limit.signal != pacing.EVENT_SIGNAL:  # a rejected event paused the run as it was read
+                self._pause(limit, "ticket %d's worker" % attempt.id)
+            limited = limit is not None and not attempt.envelope.valid
+            outcome = self._wait_out(attempt) if limited else self._advance(attempt)
         except (ValueError, OSError) as failure:  # a launch, a ticket file, or a git step
             self._fail(attempt, str(failure), "needs_human")
         finally:
-            if attempt.started:
+            # An integration left waiting for the run to allow model work is counted by the wave that concludes it.
+            if attempt.started and not limited and not attempt.integrating:
                 result.outcomes += 1
         if outcome == "session":
             self.flight[attempt.id] = attempt
@@ -1022,6 +1086,9 @@ class Conductor:
         if not attempt.result_journaled:
             self._journal_result(attempt)
             attempt.result_journaled = True
+        if attempt.integrating:
+            attempt.integrating = False
+            return self._finish(attempt)
         problem = self._invalid(attempt)
         if attempt.stage == ACCEPTANCE_FAILED:
             if problem is not None:
@@ -1042,10 +1109,17 @@ class Conductor:
             record = self._accept(attempt, "worktree", attempt.worktree)
             if not record["pass"]:
                 return self._want_resume(attempt, ACCEPTANCE_FAILED, RESUME_ACCEPTANCE % _failures(record["results"]))
-        if self._committed(attempt) and self._integrate(attempt):
+        return self._finish(attempt)
+
+    def _finish(self, attempt):
+        """The branch's commits integrated and the ticket closed: `done`, `failed`, or `session` while the integrator waits."""
+        self._stop_integrator(attempt)
+        if not self._committed(attempt):
+            return "failed"
+        outcome = self._integrate(attempt)
+        if outcome == "done":
             self._close(attempt)
-            return "done"
-        return "failed"
+        return outcome
 
     def _invalid(self, attempt):
         """Why the envelope is not a result the conductor can act on, or None when it is one."""
@@ -1079,8 +1153,8 @@ class Conductor:
 
     def _start_wanted(self, attempt):
         """Start the session an attempt waits for, unless the run holds model work; returns whether it did."""
-        if attempt.want is None or self._holds_launches():
-            return False
+        if attempt.want is None or attempt.want.stage == INTEGRATE or self._holds_launches():
+            return False  # an integration is carried again by `_poll`, not started as a session
         want, attempt.want = attempt.want, None
         if want.stage == RELAUNCH:
             self._journal_resumed(attempt, replay.WORKER_DIED)
@@ -1138,8 +1212,13 @@ class Conductor:
         return "failed"
 
     def _holds_launches(self):
-        """Whether this wave may start no session that needs a model: the owner paused, or the run is stopping."""
-        return self.view.paused_by_owner or self._stop_requested() is not None
+        """Whether this wave may start no session that needs a model (wave step 8).
+
+        The owner paused the run, a usage limit paused it until its window resets, pacing says
+        `stop`, or the run is stopping.
+        """
+        return (self.view.paused_by_owner or self.view.pause is not None
+                or schedule.holds_model_work(self.action) or self._stop_requested() is not None)
 
     def _stop_requested(self):
         """The stop this run is to apply, as a `_Stop`, or None.
@@ -1153,6 +1232,161 @@ class Conductor:
             return None
         drain = True if stop is None else stop["drain"]
         return _Stop(drain, "switched" if away or (stop or {}).get("switch_to") else "stopped")
+
+    # --- pacing and the pause (decision 5, wave step 8) ---
+
+    def _read_usage(self):
+        """The `/usage` reading of `run` start, through the launcher seam; a failure is said, never raised."""
+        try:
+            text = worker.usage()
+        except (worker.LaunchError, OSError) as failure:
+            self.say("  /usage could not be read (%s); pacing waits for the workers' rate_limit_event" % failure)
+            return
+        now = self.clock()
+        usage = pacing.parse_usage(text, now) if text is not None else None
+        if usage is None:
+            if text is not None:
+                self.say("  /usage printed neither window; pacing waits for the workers' rate_limit_event")
+            return
+        for name in pacing.WINDOWS:
+            self.windows.record(name, getattr(usage, name), usage.resets.get(name), now)
+
+    def _heard_pacing(self, events):
+        """Take the readings in `pacing` events another process journaled (the tick's `/usage`) or a restart replays.
+
+        Each is taken as read at its event's time, so it replaces only an older reading: the
+        `/usage` a run read at its start is not undone by the journal it replays at its first wave.
+        An event that says what this run's readings already say is its own, and is passed over.
+        """
+        for event in events:
+            if event.get("event") != PACING:
+                continue
+            payload, observed = event.get("payload") or {}, pacing.epoch(event.get("ts"))
+            now = self.clock()
+            if observed is None or all(payload.get(name) == self.windows.utilization(name, now) for name in pacing.WINDOWS):
+                continue
+            for name in pacing.WINDOWS:
+                self.windows.record(name, payload.get(name), None, observed)
+
+    def _observe(self, attempt):
+        """Fold the `rate_limit_event`s a session's stream gained into the readings; a rejected one pauses the run.
+
+        The action is computed again at once, before the caller carries or resumes anything, so a
+        session waiting to start is held by the reading its own stream just gave.
+        """
+        if attempt.tail is None:
+            return
+        seen = attempt.tail.read().rate_limit_events
+        if len(seen) < attempt.limits_read:  # a relaunch rewrote the stream
+            attempt.limits_read = 0
+        if len(seen) == attempt.limits_read:
+            return
+        now = self.clock()
+        for event in seen[attempt.limits_read:]:
+            self.windows.observe(event, now)
+            limit = pacing.rejected(event)
+            if limit is not None:
+                self._pause(limit, "ticket %d's worker" % attempt.id)
+        attempt.limits_read = len(seen)
+        self._pace()
+
+    def _limit_of(self, attempt):
+        """The usage limit a returned session stopped at, by any of the three signals of decision 5, or None.
+
+        A reset the message gives as a bare time (`resets 3:45pm`) is read against when the stream
+        was last written, so a result a restart carries hours later does not pause until tomorrow.
+        """
+        stderr, reference = "", self.clock()
+        if attempt.run_dir is not None:
+            try:
+                with open(attempt.run_dir / "stderr.txt", "rb") as handle:
+                    handle.seek(max(0, os.fstat(handle.fileno()).st_size - STDERR_TAIL_BYTES))
+                    stderr = handle.read().decode("utf-8", "replace")
+            except OSError:
+                pass
+        if attempt.stream_path is not None:
+            try:
+                reference = min(reference, attempt.stream_path.stat().st_mtime)
+            except OSError:
+                pass
+        return pacing.hit_limit(attempt.envelope, stderr, reference)
+
+    def _wait_out(self, attempt):
+        """A session a usage limit stopped: journal its result, then resume it after the reset rather than fail it.
+
+        The resume is journaled `ticket_resumed` with `worker_died`, the reason decision 2 gives the
+        resume of an interrupted session by its id (or the relaunch of one that never started), and
+        like it spends no gate.
+        """
+        if not attempt.result_journaled:
+            self._journal_result(attempt)
+            attempt.result_journaled = True
+        kind = "launch" if attempt.run_dir in (None, self._attempt_dir(attempt)) else "resume"
+        self._died(attempt, replay.Session(kind), RESUME_LIMIT, "its session stopped at the usage limit")
+        return "session"
+
+    def _pause(self, limit, source):
+        """Journal `paused` for a hit limit, unless its window has reset already or the run is paused as long."""
+        now = self.clock()
+        resets = pacing.resets_at(limit, self.windows, now)
+        if resets <= now:
+            return
+        held = pacing.epoch((self.view.pause or {}).get("resets_at"))
+        if held is not None and held >= resets:
+            return
+        payload = pacing.paused_payload(limit, resets, self.windows)
+        self.ledger.append_event(PAUSED, payload)
+        self._tail()
+        self.say("  %s hit the usage limit (%s, %s window); paused until %s: running workers finish, nothing that needs a model starts"
+                 % (source, limit.signal, limit.window, payload["resets_at"]))
+
+    def _unpause_at_reset(self):
+        """`unpaused` once the window a pause waits for has reset; a pause whose reset cannot be read ends now."""
+        pause = self.view.pause
+        if pause is None:
+            return
+        resets = pacing.epoch(pause.get("resets_at"))
+        if resets is not None and resets > self.clock():
+            return
+        self.ledger.append_event(UNPAUSED, {})
+        self._tail()
+        self.say("  the %s window reset (%s); unpaused" % (pause.get("window") or "unknown", pause.get("resets_at")))
+
+    def _pace(self):
+        """Wave step 8: the action from the latest readings, journaled as `pacing` when the reading changed.
+
+        With nothing read from either surface yet, the action stands as it is: a run is never
+        slowed or stopped on a guess.
+        """
+        if not self.windows.known():
+            return
+        now = self.clock()
+        stop_at, cheap_at = self._thresholds()
+        reading = {name: self.windows.utilization(name, now) for name in pacing.WINDOWS}
+        self.action = pacing.action_for(reading["five_hour"], reading["seven_day"], stop_at, cheap_at)
+        reading["action"] = self.action
+        if reading == self.view.pacing:
+            return
+        self.ledger.append_event(PACING, reading)
+        self._tail()
+        self.say("  pacing: %s (five_hour %s, seven_day %s; stop at %s, cheap only at %s)"
+                 % (self.action, reading["five_hour"], reading["seven_day"], stop_at, cheap_at))
+
+    def _thresholds(self):
+        """`(stop_at, cheap_at)`: `policy.pacing`, under `harness.json`'s `pacing`, under a `control pacing` event's."""
+        try:
+            harness = read_harness(self.project)
+        except (ProjectError, ValueError, OSError):
+            harness = {}
+        return pacing.thresholds(self.policy.get("pacing"), harness.get("pacing"), self.view.thresholds)
+
+    def _wait_seconds(self):
+        """How long `run` waits before the next wave: `policy.poll_seconds`, or less when a pause resets sooner."""
+        seconds = self._poll_seconds()
+        resets = pacing.epoch((self.view.pause or {}).get("resets_at"))
+        if resets is not None:
+            seconds = max(0, min(seconds, resets - self.clock()))
+        return seconds
 
     # --- what other processes asked for (decision 5, wave step 1) ---
 
@@ -1289,32 +1523,204 @@ class Conductor:
     # --- the integration protocol ---
 
     def _integrate(self, attempt):
-        """Rebase, re-accept, fast-forward `main`, accept there (decision 5, the conflict-free case)."""
-        if self._git(attempt.worktree, "rebase", MAIN, ok=None).returncode != 0:
-            conflicts = [line for line in self._git(attempt.worktree, "diff", "--name-only",
-                                                    "--diff-filter=U", ok=None).stdout.split("\n") if line.strip()]
-            self._git(attempt.worktree, "rebase", "--abort", ok=None)
-            self._fail(attempt, "rebasing %s onto main conflicts in %s; the integrator role arrives with ticket 08"
-                       % (BRANCH % attempt.id, ", ".join(conflicts) or "a path git did not name"), "split")
-            return False
+        """The integration protocol of decision 5 for one ticket: `done`, `failed`, or `session`.
+
+        Integrations are carried one at a time on the conductor's thread, and every git step that
+        moves a branch or `main` holds the ledger lock, the lock any other process that writes the
+        ledger takes. In the worktree, `git rebase main`; on a conflict the rebase is aborted and the
+        integrator is launched once, which finishes the rebase itself (a commit on top of the old
+        branch cannot help: the next rebase replays the commit that conflicted). The conductor then
+        rebases again, and a second conflict fails the ticket with `next: split`. The integrator's
+        session and every acceptance run outside the lock, because either may take minutes and
+        `wayline answer`, `wayline consult`, and the dashboard write the ledger meanwhile.
+
+        What the integrator hands back is checked, not trusted: the worktree must still be on the
+        ticket branch, and the branch must still carry a change of its own and no path it did not
+        change before. An integrator a restarted conductor finds already launched for this attempt
+        is not launched again.
+
+        A conflict met while the run holds launches leaves the integration waiting in flight
+        (`session`); the wave after the hold ends carries it again from the rebase.
+
+        After a clean rebase the acceptance reruns on the branch (`where: rebased`), `main` is
+        fast-forwarded, the acceptance reruns there (`where: main`), and `integrated` records the
+        commit and who resolved the conflict.
+        """
+        spent = self._integrator_spent(attempt)
+        resolved_by = INTEGRATOR if spent else "none"
+        problem = self._off_branch(attempt)
+        if problem is not None:
+            self._fail(attempt, problem, "split" if spent else self._next_step(attempt))
+            return "failed"
+        before = self._branch_paths(attempt)
+        with self.ledger.lock():
+            conflict = self._rebase(attempt)
+        if conflict is not None and spent:
+            self._fail(attempt, "rebasing %s onto main conflicts in %s, and the integrator was already launched for "
+                       "this attempt before the conductor restarted" % (BRANCH % attempt.id, ", ".join(conflict.paths)
+                                                                        or "a path git did not name"), "split")
+            return "failed"
+        if conflict is not None:
+            if not conflict.paths:
+                self._fail(attempt, "rebasing %s onto main failed and git named no conflicting path, so there is "
+                           "nothing an integrator could resolve: %s" % (BRANCH % attempt.id, conflict.output), "split")
+                return "failed"
+            if self._holds_launches():
+                attempt.integrating, attempt.want = True, _Want(INTEGRATE)
+                self.say("  ticket %d: rebasing onto main conflicts in %s; the integrator waits until the run may launch again"
+                         % (attempt.id, ", ".join(conflict.paths)))
+                return "session"
+            # Every path both sides changed may conflict, not only the one the rebase stopped on first.
+            touches = sorted(set(conflict.paths) | (before & self._main_paths(attempt)))
+            told = self._launch_integrator(attempt, conflict, touches)
+            resolved_by = INTEGRATOR
+            with self.ledger.lock():
+                again = self._rebase(attempt)
+            if again is not None:
+                self._fail(attempt, "rebasing %s onto main conflicted in %s; the integrator %s; the rebase after it "
+                           "still fails%s" % (BRANCH % attempt.id, ", ".join(conflict.paths), told,
+                                              " in " + ", ".join(again.paths) if again.paths else ": " + again.output),
+                           "split")
+                return "failed"
+            problem = self._off_branch(attempt) or _changed_by_integrator(before, self._branch_paths(attempt))
+            if problem is not None:
+                self._fail(attempt, "the integrator %s; %s" % (told, problem), "split")
+                return "failed"
         if not self._accept(attempt, "rebased", attempt.worktree)["pass"]:
             self._fail(attempt, "the machine acceptance failed after the rebase onto main", self._next_step(attempt))
-            return False
-        merge = self._git(self.project, "merge", "--ff-only", BRANCH % attempt.id, ok=None)
+            return "failed"
+        with self.ledger.lock():
+            merge = self._git(self.project, "merge", "--ff-only", BRANCH % attempt.id, ok=None)
+            commit = attempt.commit = self._head(self.project) if merge.returncode == 0 else None
         if merge.returncode != 0:
             self._fail(attempt, "main could not be fast-forwarded to %s: %s"
                        % (BRANCH % attempt.id, (merge.stderr or merge.stdout).strip()), "split")
-            return False
-        commit = attempt.commit = self._head(self.project)
+            return "failed"
         if not self._accept(attempt, "main", self.project)["pass"]:
             self._fail(attempt, "the machine acceptance failed on main after the fast-forward to %s; main "
                        "carries the commit and a person has to look" % commit[:12], "needs_human")
-            return False
+            return "failed"
         if self.view.integrated.get(attempt.id) != commit:  # journaled already by a conductor that died after it
-            self.ledger.append_event(INTEGRATED, {"ticket": attempt.id, "commit": commit, "resolved_by": "none"},
+            self.ledger.append_event(INTEGRATED, {"ticket": attempt.id, "commit": commit, "resolved_by": resolved_by},
                                      ticket=attempt.id)
-        self.say("  integrated %s into main as %s" % (BRANCH % attempt.id, commit[:12]))
-        return True
+        self.say("  integrated %s into main as %s%s" % (BRANCH % attempt.id, commit[:12],
+                                                        " (resolved by the integrator)" if resolved_by == INTEGRATOR else ""))
+        return "done"
+
+    def _rebase(self, attempt):
+        """`git rebase main` in the worktree: None when it is clean, else the `_Conflict`, with no rebase left in progress.
+
+        The conflicting files are read before the abort, because the markers exist only while the
+        rebase is stopped. A rebase an integrator left in progress fails here as well, and is aborted.
+        """
+        rebased = self._git(attempt.worktree, "rebase", MAIN, ok=None)
+        if rebased.returncode == 0:
+            return None
+        paths = [line for line in self._git(attempt.worktree, "diff", "--name-only", "--diff-filter=U",
+                                            ok=None).stdout.split("\n") if line.strip()]
+        markers = [(path, _conflicted_text(attempt.worktree / path)) for path in paths]
+        self._git(attempt.worktree, "rebase", "--abort", ok=None)
+        return _Conflict(paths, markers, (rebased.stderr or rebased.stdout).strip())
+
+    def _off_branch(self, attempt):
+        """Why the worktree has no ticket branch checked out to integrate, or None when it has."""
+        head = self._git(attempt.worktree, "symbolic-ref", "--quiet", "--short", "HEAD", ok=None)
+        if head.returncode == 0 and head.stdout.strip() == BRANCH % attempt.id:
+            return None
+        return "the worktree of ticket %d is on %s, not %s, so the branch it would integrate is not the one it worked on" % (
+            attempt.id, head.stdout.strip() or "a detached HEAD", BRANCH % attempt.id)
+
+    def _branch_paths(self, attempt):
+        """The paths the ticket branch changes since it left `main`."""
+        return _names(self._git(self.project, "diff", "--name-only", "-z", "%s...%s" % (MAIN, BRANCH % attempt.id)).stdout)
+
+    def _main_paths(self, attempt):
+        """The paths `main` changed since the ticket branch left it."""
+        return _names(self._git(self.project, "diff", "--name-only", "-z", "%s...%s" % (BRANCH % attempt.id, MAIN)).stdout)
+
+    def _integrator_dir(self, attempt):
+        return self._attempt_dir(attempt) / INTEGRATOR
+
+    def _integrator_spent(self, attempt):
+        """Whether this attempt's one integrator was already launched: its session left a stream."""
+        return (self._integrator_dir(attempt) / "stream.jsonl").is_file()
+
+    def _stop_integrator(self, attempt):
+        """An integrator a dead conductor launched: ended if it still runs, and the rebase it was in aborted.
+
+        Nothing but the session directory records it, because its session is not journaled; a
+        restarted conductor that carries the attempt would otherwise rebase the worktree under it.
+        """
+        if not self._integrator_spent(attempt) or not (attempt.worktree / ".git").exists():
+            return
+        run_dir = self._integrator_dir(attempt)
+        pid = _read_pid(run_dir)
+        if pid is not None and worker.pid_alive(pid, run_dir):
+            worker.terminate(pid, run_dir)
+            deadline = time.monotonic() + STOP_WAIT_S
+            while worker.pid_alive(pid, run_dir) and time.monotonic() < deadline:
+                time.sleep(0.2)
+            if worker.pid_alive(pid, run_dir):
+                worker.terminate(pid, run_dir, hard=True)
+            self.say("  ticket %d: stopped the integrator (pid %d) a conductor launched before the restart" % (attempt.id, pid))
+        self._git(attempt.worktree, "rebase", "--abort", ok=None)  # nothing to abort is not an error here
+
+    def _launch_integrator(self, attempt, conflict, touches):
+        """Launch the integrator once, in the worktree, with `touches` as its touch set; what it came to, in words.
+
+        The session runs to its end on this thread, since nothing behind this ticket can integrate
+        before it. Nothing about it is journaled as a `ticket_*` event: the attempt a restart
+        replays is the worker's, and an integrator's session id there would be resumed as the
+        worker's. The ticket file records the session instead, `integrated` records that the
+        integrator resolved the conflict, and its session directory is what a restart finds.
+        """
+        told, session = None, None
+        try:
+            role = worker.read_role(INTEGRATOR, self.harness_root, self.project)
+            tier = self._integrator_tier(attempt)
+            run_dir = self._integrator_dir(attempt)
+            prompt = worker.integrator_prompt(attempt.ticket, role, conflict.markers, touches=touches,
+                                              max_chars=tier.context_chars,
+                                              budget={"max_turns": tier.max_turns, "max_minutes": tier.max_minutes})
+            env = worker.session_env(self.project, attempt.id, attempt.number, touches, harness_root=self.harness_root)
+            env.update(WAYLINE_RUN=str(run_dir), TICKET_ACCEPTANCE_FILE=str(run_dir / "acceptance.json"),
+                       GIT_EDITOR="true")  # `git rebase --continue` opens no editor in a session with no terminal
+            request = worker.LaunchRequest(
+                role=role.name, model=tier.model, effort=tier.effort, prompt=prompt.text,
+                agent_json=role.agent_json(tier.model, tier.effort, tier.max_turns),
+                allowed_tools=list(role.allowed_tools), disallowed_tools=list(role.disallowed_tools),
+                settings_path=gates.write_worker_settings(run_dir / "settings.json", self.harness_root),
+                add_dirs=[str(self.harness_root), str(self.project)], cwd=attempt.worktree, env=env,
+                schema_path=self.harness_root / "schemas" / ((role.output_schema or "result") + ".json"),
+                max_minutes=tier.max_minutes,
+            )
+            self.say("  ticket %d: rebasing onto main conflicts in %s; launching the integrator (%s %s)"
+                     % (attempt.id, ", ".join(conflict.paths), tier.model, tier.effort))
+            envelope = worker.launch(request)
+        except Exception as failure:  # a role, a prompt, a settings file, or the launch: the ticket is split, not the run
+            told = "could not be launched (%s)" % failure
+        else:
+            session = "session `%s` on %s" % (envelope.session_id or "unknown", envelope.model or tier.model)
+            result = envelope.structured_output if envelope.valid else None
+            if result is None:
+                told = "returned no usable result (%s)" % ("; ".join(envelope.errors) or "no structured output")
+            else:
+                told = "returned %s: %s" % (result.get("status"), (result.get("summary") or "").strip() or "no summary")
+        self.say("  ticket %d: the integrator %s" % (attempt.id, told))
+        attempt.body = tickets.with_result_note(attempt.body, [
+            "**Integrator** (attempt %d), %s, on %s: it %s." % (
+                attempt.number, session or "no session", ", ".join("`%s`" % path for path in touches), told),
+        ])
+        tickets.write_ticket(self.ledger, attempt.ticket, attempt.body)
+        return told
+
+    def _integrator_tier(self, attempt):
+        """`policy.roles.integrator`'s model and effort, with the ticket's own budget and the model's context cap."""
+        entry = (self.policy.get("roles") or {}).get(INTEGRATOR) or {}
+        model, effort = entry.get("model") or attempt.tier.model, entry.get("effort") or attempt.tier.effort
+        caps = (self.policy.get("context_pack") or {}).get("max_chars") or {}
+        return Tier(model=model, effort=effort, max_turns=attempt.tier.max_turns, max_minutes=attempt.tier.max_minutes,
+                    context_chars=caps.get(model, attempt.tier.context_chars))
 
     # --- closing the ticket ---
 
@@ -1364,11 +1770,13 @@ class Conductor:
 
         Pacing holds the whole queue rather than part of it: a ticket whose first verdict passed
         and whose second was never taken is neither accepted nor failed, and leaving one in that
-        state across a window boundary is worse than leaving both for the next wave.
+        state across a window boundary is worse than leaving both for the next wave. `cheap_only`
+        holds it too, because a verdict runs a tier above the work it judges and so is never on
+        the cheap tier that difficulty 1 and 2 run on.
         """
         if not self.verdicts:
             return
-        if schedule.holds_model_work(self.action):
+        if self.action != schedule.NORMAL:
             self.say("  %d ticket(s) wait for a verdict; pacing says %s"
                      % (len(self.verdicts), self.action))
             return
@@ -1517,14 +1925,15 @@ class Conductor:
         """
         busy = [":(exclude)" + self._attempt_dir(attempt).relative_to(self.project).as_posix()
                 for attempt in self.flight.values()]
-        self._git(self.project, "add", "--", RESEARCH, *busy)
-        if self._git(self.project, "diff", "--cached", "--name-only", "--", HEARTBEAT_PATH).stdout.strip():
-            # A project laid out before the heartbeat was ignored: keep the file out of the commit.
-            self._git(self.project, "reset", "-q", "--", HEARTBEAT_PATH)
-        if self._git(self.project, "diff", "--cached", "--quiet", "--", RESEARCH, ok=None).returncode == 0:
-            return None
-        self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH, *busy)
-        return self._head(self.project)
+        with self.ledger.lock():  # a commit to `main`, like the fast-forward of an integration
+            self._git(self.project, "add", "--", RESEARCH, *busy)
+            if self._git(self.project, "diff", "--cached", "--name-only", "--", HEARTBEAT_PATH).stdout.strip():
+                # A project laid out before the heartbeat was ignored: keep the file out of the commit.
+                self._git(self.project, "reset", "-q", "--", HEARTBEAT_PATH)
+            if self._git(self.project, "diff", "--cached", "--quiet", "--", RESEARCH, ok=None).returncode == 0:
+                return None
+            self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH, *busy)
+            return self._head(self.project)
 
     def _head(self, path):
         return self._git(path, "rev-parse", "HEAD").stdout.strip()
@@ -1560,6 +1969,32 @@ def _parse_ts(value):
         return None
 
 
+def _conflicted_text(path):
+    """A conflicting file as a stopped rebase left it, for the integrator's prompt; what git left instead when it is not text."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "(no file at this path in the stopped rebase: one side deleted it)\n"
+    if b"\0" in data[:8000]:
+        return "(a binary file of %d bytes; git cannot place conflict markers in it)\n" % len(data)
+    return data.decode("utf-8", errors="replace")
+
+
+def _names(text):
+    """The paths `git diff --name-only -z` printed, as a set."""
+    return {name for name in text.split("\0") if name}
+
+
+def _changed_by_integrator(before, after):
+    """Why a branch the integrator rebased is not the branch it was given, or None when it still is one."""
+    if not after:
+        return "the rebased branch carries no change of its own any more"
+    extra = sorted(after - before)
+    if extra:
+        return "the rebased branch now changes %s, which the branch did not change before" % ", ".join(extra)
+    return None
+
+
 def _read_pid(run_dir):
     """The pid a backend wrote beside a session's stream, or None."""
     try:
@@ -1589,8 +2024,6 @@ def _in_touch_set(path, touches):
 
 # The flags of decision 1's verb table that later tickets build, named so `run` can say which.
 LATER = (
-    ("detach", "--detach", "ticket 13 (the transient wayline-conductor unit)"),
-    ("simulate_limit", "--simulate-limit", "ticket 10 (pacing and the pause)"),
     ("simulate_failure", "--simulate-failure", "ticket 38 (the stall and the escalation ladder)"),
 )
 
@@ -1601,8 +2034,9 @@ def run_command(args):
                                      description="run the conductor over a project until its frontier is empty")
     parser.add_argument("--project", help="the project to run; the active one by default")
     parser.add_argument("--resume", action="store_true", help="say in run_started that this run resumes one (every run replays the journal)")
-    parser.add_argument("--detach", action="store_true", help="run as the transient unit wayline-conductor (ticket 13)")
-    parser.add_argument("--simulate-limit", metavar="S", help="pretend a usage limit was hit (ticket 10)")
+    parser.add_argument("--detach", action="store_true", help="run as the transient user unit wayline-conductor, which outlives this shell")
+    parser.add_argument("--simulate-limit", metavar="S", type=float,
+                        help="the next launch carries a rejected rate_limit_event resetting S seconds ahead, which pauses the run")
     parser.add_argument("--simulate-failure", metavar="ID", help="pretend a ticket failed (ticket 38)")
     parser.add_argument("--max-waves", type=int, metavar="N", help="stop after N waves, whatever the frontier still holds")
     try:
@@ -1613,6 +2047,9 @@ def run_command(args):
         if getattr(options, name):
             print("wayline run: %s is not yet implemented; it arrives with %s" % (flag, owner), file=sys.stderr)
             return 2
+    if options.simulate_limit is not None and options.simulate_limit < 0:
+        print("wayline run: --simulate-limit takes a number of seconds, 0 or more", file=sys.stderr)
+        return 2
 
     try:
         project = find_project(options.project)
@@ -1626,13 +2063,20 @@ def run_command(args):
             print("wayline run: %s" % problem, file=sys.stderr)
         return 2
 
+    if options.detach:
+        return _detach(project, options)
+    announce_dashboard(project)
     conductor = Conductor(project)
     print("run      %s (%s, radius %s)" % (project, harness.get("autonomy"), harness.get("radius")))
+    if options.simulate_limit is not None:
+        worker.simulate_limit(options.simulate_limit)
     try:
         waves = conductor.run(max_waves=options.max_waves, resume=options.resume)
     except (ConductorError, ValueError, OSError) as failure:
         print("wayline run: %s" % failure, file=sys.stderr)
         return 1
+    finally:
+        worker.simulate_limit(None)  # a limit no launch took must not reach the next run in this process
     done = [identifier for wave in waves for identifier in wave.done]
     failed = [identifier for wave in waves for identifier in wave.failed]
     running = [identifier for wave in waves for identifier in wave.running]
@@ -1650,3 +2094,50 @@ def run_command(args):
         print("ticket(s) %s left jobs running; nothing here can advance them until the job poller lands"
               % ", ".join(str(identifier) for identifier in running))
     return 1 if failed or rejected else 0
+
+
+def _detach(project, options):
+    """`run --detach`: the same run, started as the transient unit `wayline-conductor` (decision 5).
+
+    The refusals a foreground run makes have already been made here, at the terminal, where the
+    owner reads them; inside the unit they would only reach the manager's journal.
+    """
+    holder = conductor_holder(project)
+    if holder is not None:
+        print("wayline run: a conductor (pid %s) already runs on %s" % (holder.get("pid", "?"), project), file=sys.stderr)
+        return 1
+    run_args = ["--max-waves", str(options.max_waves)] if options.max_waves is not None else []
+    try:
+        said = tick.launch_detached(project, run_args)
+    except tick.UnitError as failure:
+        print("wayline run: %s" % failure, file=sys.stderr)
+        return 1
+    print("detached %s as %s.service%s" % (project, tick.CONDUCTOR_UNIT, "  (%s)" % said if said else ""))
+    print("  journalctl --user -u %s -f follows it; wayline status reads the project; wayline stop ends it" % tick.CONDUCTOR_UNIT)
+    announce_dashboard(project)
+    return 0
+
+
+def announce_dashboard(project, out=None):
+    """Print the dashboard's address and start its service when it is not active (decision 8).
+
+    `run` never hosts the dashboard, so the address it prints is the service's, which outlives
+    every conductor. Nothing here can fail the run: the dashboard is a view.
+    """
+    out = out or sys.stdout
+    from wayline import dashboard  # the views import the project module this one does; keep the verb's import light
+    state, detail = tick.ensure_dashboard()
+    try:
+        settings = dashboard.read_settings(project=project)
+    except (ValueError, OSError) as failure:
+        print("dashboard  unknown address: %s" % failure, file=out)
+        return state
+    notes = {
+        "active": "",
+        "started": "  (started %s)" % tick.DASHBOARD_SERVICE,
+        "off": "  (%s; wayline serve runs it by hand)" % detail,
+        "failed": "  (%s did not start: %s; wayline init installs it, wayline serve runs it by hand)" % (tick.DASHBOARD_SERVICE, detail),
+    }
+    print("dashboard  %s%s" % (dashboard.dashboard_url(settings), notes[state]), file=out)
+    print("  " + dashboard.tunnel_line(settings["port"]), file=out)
+    return state
