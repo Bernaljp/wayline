@@ -51,7 +51,7 @@ __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
     "launch", "resume", "pid_alive", "terminate", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
-    "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS",
+    "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "read_locator", "CONSULT_MAX",
     "schema_bullets", "schema_section",
 ]
@@ -1212,6 +1212,16 @@ def _exit_code(returncode):
 # --- the claude_cli backend ---------------------------------------------------------------------
 
 
+def setup_token_command():
+    """How `init` names the command that mints the units' token when it talks to the owner."""
+    return "%s setup-token" % ClaudeCli.executable
+
+
+def setup_token():
+    """Run `setup-token` at the owner's terminal through the real backend; returns its exit code."""
+    return ClaudeCli().setup_token()
+
+
 class ClaudeCli:
     """The real backend: the launch line of decision 3 as a subprocess, its stream parsed from disk."""
 
@@ -1258,6 +1268,14 @@ class ClaudeCli:
         except (ProcessLookupError, PermissionError):
             return False
         return True
+
+    def setup_token(self):
+        """`claude setup-token` at the owner's terminal, for `init` to write `~/.wayline/env` from.
+
+        It mints a one-year inference-only token, prints it, and saves nothing (research-notes 02),
+        so it runs with the terminal attached and the owner pastes what it printed. Returns its exit code.
+        """
+        return subprocess.run([self._executable(), "setup-token"], check=False).returncode
 
     def _executable(self):
         override = os.environ.get("WAYLINE_CLAUDE")
