@@ -61,6 +61,7 @@
       "additionalProperties": false,
       "properties": {
         "prompt": {"type": "string", "description": "input/prompt.md, the exact rendered prompt"},
+        "replies": {"type": "array", "items": {"type": "string", "pattern": "^[^/]"}, "description": "input/replies/<n>.md in order: what the owner said after the prompt, for a skill that asks; the runner does not replay them yet"},
         "agent": {"type": ["string", "null"], "description": "input/agent.json, the --agents object; null leaves the fixture unrunnable"},
         "context_manifest": {"type": ["string", "null"], "description": "input/manifest.json: a sha256 per file of input/context/, which is copied into the run's project"},
         "input_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "sha256 over the prompt, the agent JSON, the context manifest, and the schema as pinned"}
