@@ -33,7 +33,7 @@ A machine-checkable condition; code judges it.
 _Avoid_: hard check, lint
 
 **Type-B gate**:
-A quality verdict; the verifier judges it, never the author.
+A quality verdict; a fresh verifier session judges it, never the session that wrote the work.
 _Avoid_: review, soft check
 
 **Done**:
