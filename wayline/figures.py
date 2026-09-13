@@ -34,6 +34,7 @@ import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from wayline import HARNESS_ROOT
 from wayline.cli import parse_args
 from wayline.fetch import FetchError, caching_fetcher, canonical_url, recording_fetcher
 from wayline.project import ProjectError, find_project, read_harness
@@ -528,19 +529,14 @@ def default_style():
     """The color budget of BRIEF 13.1: one categorical set, one ramp per quantity, a diverging
     pair, one special hue, and the equation-parameter colors. The categorical set is Okabe and
     Ito's 2008 palette, chosen for being distinguishable under the common forms of color-vision
-    deficiency; a project overrides any of this in its own `figures/style.json`.
+    deficiency; a project overrides any of this in its own `figures/style.json`, which `init`
+    copies from the same file this reads (`figures/style.default.json` in the harness).
+
+    Two keys serve the palette check rather than the drawing: `diverging.cmap` names the ramp the
+    diverging pair is drawn with, and `cvd_min_delta_e` is the CIEDE2000 distance a color outside
+    the budget must keep from every other color under simulated color-vision deficiency.
     """
-    return {
-        "schema_version": 1,
-        "categorical": [
-            "#000000", "#E69F00", "#56B4E9", "#009E73",
-            "#F0E442", "#0072B2", "#D55E00", "#CC79A7",
-        ],
-        "ramp_per_quantity": {},
-        "diverging": {"low": "#2166AC", "high": "#B2182B"},
-        "special_hue": "#D62728",
-        "equation_parameter_colors": ["#1B9E77", "#D95F02", "#7570B3"],
-    }
+    return json.loads((HARNESS_ROOT / FIGURES / STYLE_DEFAULT_JSON).read_text(encoding="utf-8"))
 
 
 # --- reading and writing the ledger's copies ----------------------------------------------------

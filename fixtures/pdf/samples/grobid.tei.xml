@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+  <teiHeader xml:lang="en">
+    <fileDesc>
+      <titleStmt>
+        <title level="a" type="main">A tiny two-column paper, written for the PDF inventory</title>
+      </titleStmt>
+      <sourceDesc>
+        <biblStruct>
+          <analytic>
+            <author><persName><forename type="first">The</forename><surname>Suite</surname></persName></author>
+            <title level="a" type="main">A tiny two-column paper, written for the PDF inventory</title>
+          </analytic>
+          <monogr><imprint><date/></imprint></monogr>
+          <idno type="DOI">10.0000/tiny.2026.1</idno>
+        </biblStruct>
+      </sourceDesc>
+    </fileDesc>
+  </teiHeader>
+  <text xml:lang="en">
+    <body/>
+    <back>
+      <div type="references">
+        <listBibl>
+          <biblStruct xml:id="b0" coords="2,72.00,380.10,229.00,20.00">
+            <monogr>
+              <title level="m" type="main">The TeXbook</title>
+              <author><persName><forename type="first">D</forename><forename type="middle">E</forename><surname>Knuth</surname></persName></author>
+              <imprint><publisher>Addison-Wesley</publisher><date type="published" when="1984"/></imprint>
+            </monogr>
+            <note type="raw_reference">D. E. Knuth. The TEXbook. Addison-Wesley, 1984.</note>
+          </biblStruct>
+          <biblStruct xml:id="b1" coords="2,72.00,348.00,229.00,20.00">
+            <analytic>
+              <title level="a" type="main">A Document Preparation System</title>
+              <author><persName><forename type="first">L</forename><surname>Lamport</surname></persName></author>
+            </analytic>
+            <monogr>
+              <title level="m">LaTeX</title>
+              <imprint><date type="published" when="1994-01-01"/></imprint>
+            </monogr>
+            <idno type="DOI">10.0000/latex.1994</idno>
+            <note type="raw_reference">L. Lamport. LATEX: A Document Preparation System. Addison-Wesley, 1994.</note>
+          </biblStruct>
+        </listBibl>
+      </div>
+    </back>
+  </text>
+</TEI>

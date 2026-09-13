@@ -17,9 +17,11 @@ import re
 import shutil
 import socket
 import stat
+import subprocess
 import threading
 import unittest
 import xml.etree.ElementTree as ET
+import zipfile
 from http.cookies import SimpleCookie
 from pathlib import Path
 
@@ -29,13 +31,14 @@ from wayline import TAG
 from wayline.dashboard import (
     DashboardError, DashboardHandler, IDLE_TIMEOUT_S, LOOPBACK, READINGS_TTL_S, SSE_RETRY_MS,
     TOKEN_COOKIE, TOKEN_HEADER, TAIL_LINES_MAX,
-    dashboard_path, dashboard_url, etag, graph_svg, journal_tail, ledger_snapshot, log_path,
-    log_tail, make_server, overview_view, phase_from_events, project_ids, projects_view,
-    read_settings, record_settings, requires_token, serve_lines, static_file, ticket_view,
-    tickets_view, tunnel_line,
+    byte_range, dashboard_path, dashboard_url, download_target, etag, graph_svg, journal_tail,
+    ledger_snapshot, log_path, log_tail, make_server, outputs_view, overview_view,
+    phase_from_events, project_ids, projects_view, read_settings, record_settings,
+    requires_token, serve_lines, static_file, ticket_view, tickets_view, tunnel_line,
 )
 from wayline.ledger import Ledger
 from wayline.project import home, register, set_active
+from wayline.provenance import sha256_of
 from wayline.tickets import GRAPH, frontier, read_tickets, refresh_graph
 
 STATIC = HARNESS_ROOT / "dashboard"
@@ -588,6 +591,205 @@ class LogTailEndpointTest(DashboardTestCase):
     def test_an_unchanged_log_answers_304(self):
         first = self.api("/logs/session/2/1?since=0")
         self.assertEqual(self.api("/logs/session/2/1?since=0", {"If-None-Match": first.etag}).status, 304)
+
+
+# --- the outputs index (ticket 42) --------------------------------------------------------------
+
+
+class OutputsEndpointTest(DashboardTestCase):
+    def setUp(self):
+        super().setUp()
+        research = self.project / "research"
+        (research / "findings.md").write_text("# findings\n\nnone yet.\n", encoding="utf-8")
+        (research / "REPORT.md").write_text("# Report\n\nA claim.\n", encoding="utf-8")
+        (research / "paper").mkdir(parents=True, exist_ok=True)
+        (research / "paper" / "main.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+        refs = research / "refs" / "attn-is-all-you-need"
+        (refs / "figures").mkdir(parents=True, exist_ok=True)
+        (refs / "source").mkdir(parents=True, exist_ok=True)
+        (refs / "dossier.json").write_text(json.dumps({"slug": "attn-is-all-you-need"}), encoding="utf-8")
+        (refs / "dossier.md").write_text("# Attention Is All You Need\n", encoding="utf-8")
+        (refs / "figures" / "fig1.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        (refs / "source" / "flat.tex").write_text("never re-served\n", encoding="utf-8")
+        (self.project / "docs").mkdir(exist_ok=True)
+        (self.project / "docs" / "index.html").write_text("<h1>docs</h1>\n", encoding="utf-8")
+
+    def outputs(self):
+        return self.api("/outputs").json
+
+    def test_results_come_from_the_manifest_verbatim(self):
+        manifest = json.loads((self.project / "research" / "manifest.json").read_text(encoding="utf-8"))
+        results = self.outputs()["results"]
+        self.assertEqual(len(results), len(manifest["entries"]))
+        for entry, expected in zip(results, manifest["entries"]):
+            self.assertEqual(entry["path"], expected["path"])
+            self.assertEqual(entry["size"], expected["size"])
+            self.assertEqual(entry["sha256"], expected["sha256"])
+            self.assertEqual(entry["ticket"], expected["ticket"])
+
+    def test_findings_jsonl_and_findings_md_are_indexed_with_a_real_hash(self):
+        entries = {entry["path"]: entry for entry in self.outputs()["findings"]}
+        self.assertIn("research/findings.jsonl", entries)
+        self.assertIn("research/findings.md", entries)
+        on_disk = self.project / "research" / "findings.md"
+        self.assertEqual(entries["research/findings.md"]["sha256"], sha256_of(on_disk))
+        self.assertEqual(entries["research/findings.md"]["size"], on_disk.stat().st_size)
+
+    def test_the_report_is_indexed_when_it_exists(self):
+        report = self.outputs()["report"]
+        self.assertEqual([entry["path"] for entry in report], ["research/REPORT.md"])
+
+    def test_the_report_is_absent_rather_than_an_error_before_it_is_rendered(self):
+        (self.project / "research" / "REPORT.md").unlink()
+        self.assertEqual(self.outputs()["report"], [])
+
+    def test_the_paper_and_docs_trees_are_walked(self):
+        view = self.outputs()
+        self.assertEqual([entry["path"] for entry in view["paper"]], ["research/paper/main.tex"])
+        self.assertEqual([entry["path"] for entry in view["docs"]], ["docs/index.html"])
+
+    def test_dossiers_carry_the_dossier_files_and_nothing_else_beside_them(self):
+        paths = {entry["path"] for entry in self.outputs()["dossiers"]}
+        self.assertEqual(paths, {
+            "research/refs/attn-is-all-you-need/dossier.json",
+            "research/refs/attn-is-all-you-need/dossier.md",
+        })
+
+    def test_figures_are_a_references_own_figures_directory(self):
+        paths = [entry["path"] for entry in self.outputs()["figures"]]
+        self.assertEqual(paths, ["research/refs/attn-is-all-you-need/figures/fig1.png"])
+
+    def test_a_references_source_tree_is_never_indexed_anywhere(self):
+        view = self.outputs()
+        every_path = [entry["path"] for category in view.values() for entry in category]
+        self.assertFalse(any("/source/" in path for path in every_path), every_path)
+
+    def test_missing_paper_and_docs_trees_are_empty_lists_not_errors(self):
+        shutil.rmtree(self.project / "research" / "paper")
+        shutil.rmtree(self.project / "docs")
+        view = self.outputs()
+        self.assertEqual(view["paper"], [])
+        self.assertEqual(view["docs"], [])
+
+    def test_an_unchanged_index_answers_304_and_a_new_file_moves_the_tag(self):
+        first = self.api("/outputs")
+        self.assertEqual(first.status, 200)
+        self.assertEqual(self.api("/outputs", {"If-None-Match": first.etag}).status, 304)
+        (self.project / "research" / "paper" / "abstract.tex").write_text("abstract\n", encoding="utf-8")
+        changed = self.api("/outputs", {"If-None-Match": first.etag})
+        self.assertEqual(changed.status, 200)
+        self.assertNotEqual(changed.etag, first.etag)
+
+
+# --- downloads: single files, ranges, and directories as a zip (ticket 42) ----------------------
+
+
+class ByteRangeTest(unittest.TestCase):
+    def test_no_header_means_the_whole_body(self):
+        self.assertIsNone(byte_range(None, 100))
+
+    def test_a_first_last_range(self):
+        self.assertEqual(byte_range("bytes=100-199", 1000), (100, 199))
+
+    def test_an_open_ended_range_runs_to_the_end(self):
+        self.assertEqual(byte_range("bytes=900-", 1000), (900, 999))
+
+    def test_a_suffix_range_is_the_last_n_bytes(self):
+        self.assertEqual(byte_range("bytes=-100", 1000), (900, 999))
+
+    def test_a_suffix_longer_than_the_file_clamps_to_the_start(self):
+        self.assertEqual(byte_range("bytes=-10000", 1000), (0, 999))
+
+    def test_a_multi_range_header_is_treated_as_the_whole_body(self):
+        self.assertIsNone(byte_range("bytes=0-10,20-30", 1000))
+
+    def test_a_range_past_the_end_is_unsatisfiable(self):
+        with self.assertRaises(Exception):
+            byte_range("bytes=99999999-", 1000)
+
+
+class DownloadEndpointTest(DashboardTestCase):
+    def setUp(self):
+        super().setUp()
+        refs = self.project / "research" / "refs" / "paper-x" / "source"
+        refs.mkdir(parents=True, exist_ok=True)
+        (refs / "flat.tex").write_text("never re-served\n", encoding="utf-8")
+        (self.project / "research" / "paper").mkdir(parents=True, exist_ok=True)
+        (self.project / "research" / "paper" / "main.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+        (self.project / "research" / "paper" / "sections").mkdir(exist_ok=True)
+        (self.project / "research" / "paper" / "sections" / "intro.tex").write_text("Introduction.\n", encoding="utf-8")
+
+    def download(self, relpath, headers=None):
+        return self.get("/api/projects/%s/download/%s" % (self.project_id, relpath), headers=headers)
+
+    def test_it_downloads_a_file_that_exists_on_disk(self):
+        response = self.download("results/baseline/seed-1.log")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers.get("accept-ranges"), "bytes")
+        self.assertEqual(response.body, (self.project / "results" / "baseline" / "seed-1.log").read_bytes())
+
+    def test_a_missing_manifest_path_is_a_clean_404_not_a_crash(self):
+        response = self.download("results/features/summary.json")
+        self.assertEqual(response.status, 404)
+
+    def test_a_single_range_answers_206_with_content_range(self):
+        whole = (self.project / "results" / "baseline" / "seed-1.log").read_bytes()
+        response = self.download("results/baseline/seed-1.log", {"Range": "bytes=0-9"})
+        self.assertEqual(response.status, 206)
+        self.assertEqual(response.body, whole[0:10])
+        self.assertEqual(response.headers.get("content-range"), "bytes 0-9/%d" % len(whole))
+
+    def test_a_range_past_the_end_is_416(self):
+        response = self.download("results/baseline/seed-1.log", {"Range": "bytes=999999-"})
+        self.assertEqual(response.status, 416)
+        self.assertTrue(response.headers.get("content-range", "").startswith("bytes */"))
+
+    def test_a_path_escaping_the_project_is_refused(self):
+        response = self.download("../../../etc/passwd")
+        self.assertEqual(response.status, 404)
+
+    def test_a_references_source_file_cannot_be_downloaded_though_it_exists_on_disk(self):
+        path = "research/refs/paper-x/source/flat.tex"
+        self.assertTrue((self.project / path).is_file())
+        self.assertIsNone(download_target(self.project, path))
+        self.assertEqual(self.download(path).status, 404)
+
+    def test_a_directory_downloads_as_a_clean_zip(self):
+        response = self.download("research/paper")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers.get("content-type"), "application/zip")
+        archive = zipfile.ZipFile(io.BytesIO(response.body))
+        self.assertIsNone(archive.testzip())
+        self.assertEqual(set(archive.namelist()), {"main.tex", "sections/intro.tex"})
+
+    def test_a_directory_zip_never_carries_a_references_source_tree(self):
+        response = self.download("research/refs/paper-x")
+        archive = zipfile.ZipFile(io.BytesIO(response.body))
+        self.assertIsNone(archive.testzip())
+        self.assertNotIn("source/flat.tex", archive.namelist())
+
+    def test_a_seventeen_megabyte_tree_zips_cleanly(self):
+        """research-notes 08 Section 3's own measurement, reproduced as the ticket's acceptance."""
+        bulk = self.project / "results" / "bulk"
+        bulk.mkdir(parents=True, exist_ok=True)
+        line = (b"the quick brown fox jumps over the lazy dog\n") * 200  # ~8.8 KB of text
+        for index in range(40):
+            (bulk / ("file-%02d.txt" % index)).write_bytes(line * 47)  # ~400 KB each, ~16 MB total
+        (bulk / "noise.bin").write_bytes(os.urandom(3 * 1024 * 1024))  # +3 MiB incompressible
+        total = sum(path.stat().st_size for path in bulk.rglob("*") if path.is_file())
+        self.assertGreater(total, 17 * 1024 * 1024 - (1024 * 1024))
+        response = self.download("results/bulk")
+        self.assertEqual(response.status, 200)
+        archive = zipfile.ZipFile(io.BytesIO(response.body))
+        self.assertIsNone(archive.testzip())
+        self.assertEqual(len(archive.namelist()), 41)
+        if shutil.which("unzip"):
+            extracted = self.temp / "extracted"
+            zip_path = self.temp / "tree.zip"
+            zip_path.write_bytes(response.body)
+            extracted.mkdir()
+            result = subprocess.run(["unzip", "-tq", str(zip_path)], cwd=extracted, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 # --- server-sent events, the alternative behind ?transport=sse ---------------------------------------

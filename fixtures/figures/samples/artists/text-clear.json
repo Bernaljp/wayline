@@ -1,0 +1,50 @@
+{
+  "schema": "figure_artists/1",
+  "figures": [
+    {
+      "saved_to": "out.pdf",
+      "figure": {
+        "width_px": 350.39,
+        "height_px": 118.11,
+        "dpi": 100.0,
+        "width_in": 3.5039370078740157,
+        "height_in": 1.1811023622047245,
+        "scale": 1.0
+      },
+      "texts": [
+        {
+          "text": "AUROC",
+          "role": "text",
+          "fontsize_pt": 7.0,
+          "extent": [
+            35.04,
+            57.06,
+            69.91,
+            67.06
+          ],
+          "haloed": false
+        },
+        {
+          "text": "Runtime",
+          "role": "text",
+          "fontsize_pt": 7.0,
+          "extent": [
+            210.24,
+            57.06,
+            251.36,
+            67.06
+          ],
+          "haloed": false
+        }
+      ],
+      "panels": [],
+      "marked_lines": [],
+      "structure": [],
+      "mappables": [],
+      "colors": [
+        "#000000",
+        "#FFFFFF"
+      ]
+    }
+  ]
+}

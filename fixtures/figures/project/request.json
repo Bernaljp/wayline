@@ -1,0 +1,47 @@
+{
+  "schema": "figure_request/1",
+  "ticket": "49",
+  "figure_id": "fig1",
+  "mode": "unguided",
+  "kind": "result",
+  "register": "quantitative",
+  "claim": {
+    "claim_id": "C1",
+    "text": "Method X has the highest held-out AUROC at a moderate runtime.",
+    "claim_type": "comparison"
+  },
+  "data": [
+    {
+      "path": "results/t7-a1/scores.csv",
+      "sha256": "7c3f3b2774664a8e09e2a7934bce648fef8d676f079531f6eb03991f9415553e",
+      "run_id": "t7-a1"
+    },
+    {
+      "path": "results/t8-a1/timing.csv",
+      "sha256": "f44004a41e8b1403177bfd964867be03caeabbae662a16240aeea34b26a13b4f",
+      "run_id": "t8-a1"
+    }
+  ],
+  "style": "figures/style.json",
+  "target": {
+    "venue": null,
+    "width_mm": 89,
+    "max_height_mm": 120,
+    "min_font_pt": 5,
+    "min_dpi": 300,
+    "max_words": null,
+    "formats": [
+      "pdf",
+      "png"
+    ],
+    "library": "matplotlib"
+  },
+  "forbidden_text": {
+    "gene_names": null,
+    "dataset_names": [],
+    "allow_regex": []
+  },
+  "budget": {
+    "render_seconds": 120
+  }
+}

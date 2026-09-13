@@ -1,0 +1,9 @@
+[
+  {
+    "panel": "c",
+    "criterion": "sign_balance",
+    "displayed": 0.55,
+    "global": 0.75,
+    "tolerance": 0.1
+  }
+]

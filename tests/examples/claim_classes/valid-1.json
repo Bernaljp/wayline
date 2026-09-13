@@ -1,0 +1,8 @@
+{
+  "classes": [
+    {"n": 1, "class": "claim"},
+    {"n": 2, "class": "definition"},
+    {"n": 3, "class": "transition"},
+    {"n": 4, "class": "method_description"}
+  ]
+}

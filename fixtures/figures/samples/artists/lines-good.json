@@ -1,0 +1,177 @@
+{
+  "schema": "figure_artists/1",
+  "figures": [
+    {
+      "saved_to": "out.pdf",
+      "figure": {
+        "width_px": 350.39,
+        "height_px": 196.85,
+        "dpi": 100.0,
+        "width_in": 3.5039370078740157,
+        "height_in": 1.968503937007874,
+        "scale": 1.0
+      },
+      "texts": [
+        {
+          "text": "0.0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            45.08,
+            -2.07,
+            67.21,
+            11.93
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.2",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            94.45,
+            -2.07,
+            116.58,
+            11.93
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.4",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            143.83,
+            -2.07,
+            165.95,
+            11.93
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.6",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            193.2,
+            -2.07,
+            215.33,
+            11.93
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.8",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            242.57,
+            -2.07,
+            264.7,
+            11.93
+          ],
+          "haloed": false
+        },
+        {
+          "text": "1.0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            291.95,
+            -2.07,
+            314.07,
+            11.93
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.00",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            3.08,
+            20.04,
+            34.08,
+            34.04
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.25",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            3.08,
+            54.49,
+            34.08,
+            68.49
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.50",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            3.08,
+            88.94,
+            34.08,
+            102.94
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.75",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            3.08,
+            123.39,
+            34.08,
+            137.39
+          ],
+          "haloed": false
+        },
+        {
+          "text": "1.00",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            3.08,
+            157.84,
+            34.08,
+            171.84
+          ],
+          "haloed": false
+        }
+      ],
+      "panels": [],
+      "marked_lines": [
+        {
+          "gid": "required:edges",
+          "kind": "required",
+          "linestyle": "solid"
+        },
+        {
+          "gid": "optional:feedback",
+          "kind": "optional",
+          "linestyle": "dashed"
+        }
+      ],
+      "structure": [
+        {
+          "gid": "container:stage",
+          "colors": [
+            "#808080"
+          ]
+        }
+      ],
+      "mappables": [],
+      "colors": [
+        "#000000",
+        "#808080",
+        "#FFFFFF"
+      ]
+    }
+  ]
+}

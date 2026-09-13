@@ -1,0 +1,73 @@
+{
+  "schema": "figure_request/1",
+  "ticket": "P-042",
+  "figure_id": "fig3",
+  "mode": "unguided",
+  "kind": "framework",
+  "register": "quantitative",
+  "claim": {
+    "claim_id": "C2",
+    "text": "Method X recovers the sign of regulatory edges more often than baselines A and B across five datasets.",
+    "claim_type": "mechanism",
+    "evidence": [
+      "results/t17-a1/metrics.json"
+    ]
+  },
+  "data": [
+    {
+      "path": "results/t17-a1/edge_signs.csv",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "run_id": "t17-a1",
+      "shape": {
+        "rows": 1250,
+        "columns": [
+          {
+            "name": "method",
+            "type": "categorical",
+            "cardinality": 3
+          }
+        ],
+        "grouping": [
+          "method"
+        ],
+        "paired": false
+      }
+    }
+  ],
+  "style": "figures/style.json",
+  "target": {
+    "venue": "nature-methods",
+    "width_mm": 183,
+    "max_height_mm": 247,
+    "min_font_pt": 5,
+    "min_dpi": 300,
+    "max_words": null,
+    "formats": [
+      "pdf",
+      "png"
+    ],
+    "library": "matplotlib"
+  },
+  "candidates": {
+    "max": 5,
+    "families": null,
+    "exclude_index_ids": []
+  },
+  "comparables": [],
+  "forbidden_text": {
+    "gene_names": null,
+    "dataset_names": [
+      "PBMC3k"
+    ],
+    "allow_regex": [
+      "^[a-h]$"
+    ]
+  },
+  "revision_of": null,
+  "change_requests": [],
+  "budget": {
+    "render_seconds": 600,
+    "critic_sessions": 1,
+    "verifier_sessions": 2
+  }
+}

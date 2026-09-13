@@ -1,0 +1,121 @@
+{
+  "schema": "figure_result/1",
+  "ticket": "P-042",
+  "figure_id": "fig3",
+  "version": 1,
+  "status": "verified",
+  "data_shape": {
+    "family_hint": [
+      "distribution",
+      "ranking"
+    ],
+    "n_groups": 15,
+    "n_per_group": 10
+  },
+  "candidates": [
+    {
+      "rank": 1,
+      "index_id": "distribution/boxplot-grouped/matplotlib",
+      "chart_type": "grouped boxplot with seed points",
+      "library": "matplotlib",
+      "generator": "figures/fig3/cand_01.py",
+      "png": "figures/fig3/cand_01.png",
+      "rendered": true,
+      "pitfalls_consulted": [
+        "matplotlib/log-minor-ticks"
+      ],
+      "score": {
+        "claim_legibility": 5,
+        "honesty": 5,
+        "venue_fit": 4,
+        "legibility_at_size": 4,
+        "total": 18
+      },
+      "critic_reasons": "Sign accuracy per method reads in one glance; seeds are visible."
+    },
+    {
+      "rank": null,
+      "index_id": "distribution/ridgeline/matplotlib",
+      "rendered": false,
+      "error": "KeyError: 'dataset'"
+    }
+  ],
+  "critic": {
+    "session": "s-critic",
+    "model": "opus",
+    "rubric_version": "1"
+  },
+  "selected": {
+    "rank": 1,
+    "by": "decider",
+    "margin": 3,
+    "margin_low": false
+  },
+  "final": {
+    "generator": "figures/fig3/fig3.py",
+    "pdf": "figures/fig3/fig3.pdf",
+    "png": "figures/fig3/fig3.png",
+    "caption": "figures/fig3/caption.md",
+    "notes": "figures/fig3/notes.md",
+    "crops": [
+      "figures/fig3/crops/a.png"
+    ],
+    "inputs": [
+      {
+        "path": "results/t17-a1/edge_signs.csv",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "run_id": "t17-a1",
+        "panels": [
+          "a"
+        ]
+      }
+    ],
+    "output_sha256": {
+      "pdf": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "png": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "checks": [
+    {
+      "id": "fonts_embedded",
+      "type": "A",
+      "pass": true,
+      "tool": "pdffonts",
+      "detail": "1 font (CID TrueType), all embedded"
+    }
+  ],
+  "honesty_verdict": {
+    "type": "B",
+    "verdict": "fail",
+    "session": "s-verify",
+    "model": "fable",
+    "findings": []
+  },
+  "schematic_elements": [],
+  "selection_statistics": [
+    {
+      "panel": "c",
+      "criterion": "sign_balance",
+      "displayed": 0.55,
+      "global": 0.57,
+      "tolerance": 0.1
+    }
+  ],
+  "findings_for_text": [],
+  "refusals": [],
+  "traps_hit": [
+    {
+      "library": "matplotlib",
+      "chart_type": "boxplot",
+      "description": "Outlier markers hid the seed points.",
+      "fix": "showfliers=False with the points overlaid.",
+      "promote_to_index": true
+    }
+  ],
+  "sessions": [
+    {
+      "role": "figure-designer",
+      "session": "s-draw"
+    }
+  ]
+}

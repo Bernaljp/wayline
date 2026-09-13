@@ -1,0 +1,14 @@
+{
+  "schema": "figure_result/1",
+  "ticket": "P-042",
+  "figure_id": "fig3",
+  "status": "refused",
+  "refusals": [
+    {
+      "change_request": "cr2",
+      "reason": "would show a transfer the data does not support",
+      "alternative_candidate": null,
+      "overridden_by": null
+    }
+  ]
+}

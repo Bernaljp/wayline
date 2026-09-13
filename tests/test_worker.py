@@ -656,6 +656,28 @@ class FakeBackendTest(unittest.TestCase):
     def request(self, **overrides):
         return make_request(self.run, **{"cwd": str(self.repo), **overrides})
 
+    def test_a_scripted_responder_answers_what_the_call_was_sent(self):
+        """A prompt built by code from the ledger cannot be answered before the call; a responder can."""
+        seen = []
+
+        def respond(request, message):
+            seen.append((request.prompt, message))
+            return Envelope(structured_output={"skill_token": "R", "report": str(len(request.prompt))})
+
+        with worker.use_fake() as fake:
+            fake.script(respond=respond)
+            envelope = worker.launch(self.request())
+        self.assertTrue(envelope.valid)
+        self.assertEqual(envelope.structured_output["report"], str(len(seen[0][0])))
+        self.assertIsNone(seen[0][1], "a launch has no resume message")
+
+    def test_a_scripted_call_needs_an_envelope_or_a_responder(self):
+        with worker.use_fake() as fake:
+            with self.assertRaises(worker.LaunchError):
+                fake.script()
+            with self.assertRaises(worker.LaunchError):
+                fake.script(respond="not a function")
+
     def test_scripted_envelopes_return_in_order_and_then_run_out(self):
         with worker.use_fake() as fake:
             fake.script(Envelope(structured_output={"skill_token": "A", "report": "one"}))

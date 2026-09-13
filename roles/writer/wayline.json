@@ -1,0 +1,24 @@
+{
+  "id": "writer",
+  "scope_kind": "global",
+  "capability_summary": "Writes report and paper prose under C8 from the findings and the knowledge base, ending every claim sentence with a provenance tag that resolves.",
+  "applicability_tags": {"kinds": ["writing"], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": [],
+  "sha256": "b0423703e7bf14741565112c1fe89993a70b1e523da26db981a68a589c8ddf26",
+  "may_judge": false,
+  "output_schema": "result",
+  "allowed_tools": [
+    "Read", "Edit", "Write", "Glob", "Grep",
+    "Bash(git add *)", "Bash(git commit *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)",
+    "Bash(ls *)", "Bash(cat *)",
+    "Bash(wayline accept*)", "Bash(wayline consult *)"
+  ],
+  "disallowed_tools": [
+    "WebFetch", "WebSearch", "NotebookEdit", "Agent",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync"
+  ]
+}
