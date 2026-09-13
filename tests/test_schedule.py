@@ -154,9 +154,17 @@ class PickTest(unittest.TestCase):
         self.assertEqual(ids(schedule.pick(built, slots=2, goal_tickets={2})), [2, 1])
 
     def test_the_harder_ticket_goes_first_and_cheap_only_turns_that_around(self):
-        built = graph(entry(1, difficulty=1), entry(2, difficulty=4))
+        built = graph(entry(1, difficulty=1), entry(2, difficulty=2))
         self.assertEqual(ids(schedule.pick(built, slots=2)), [2, 1])
         self.assertEqual(ids(schedule.pick(built, slots=2, action=schedule.CHEAP_ONLY)), [1, 2])
+
+    def test_cheap_only_launches_only_difficulty_1_and_2(self):
+        built = graph(entry(1, difficulty=3), entry(2, difficulty=2), entry(3, difficulty=5), entry(4, difficulty=1))
+        self.assertEqual(ids(schedule.pick(built, slots=4, action=schedule.CHEAP_ONLY)), [4, 2])
+
+    def test_stop_launches_nothing(self):
+        built = graph(entry(1, difficulty=1), entry(2, difficulty=2))
+        self.assertEqual(schedule.pick(built, slots=2, action=schedule.STOP), [])
 
     def test_the_lower_id_breaks_a_tie(self):
         built = graph(entry(3), entry(1), entry(2))
