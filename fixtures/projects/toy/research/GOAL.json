@@ -1,0 +1,11 @@
+{
+  "metric": "auroc",
+  "direction": "up",
+  "target": 0.82,
+  "dataset_or_split": null,
+  "held_out_split": "held_out",
+  "eval_command": "PYTHONPATH=src python3 -m toy.eval --split held_out",
+  "baseline": {"value": null, "source": null},
+  "budget": {"gpu_hours": null, "wallclock": null, "usage_windows": null},
+  "stop_when": "goal_reached"
+}
