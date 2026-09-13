@@ -56,11 +56,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, gates, replay, schedule, tickets, worker
+from wayline import HARNESS_ROOT, gates, replay, schedule, tick, tickets, worker
 from wayline.ledger import (
     ACCEPTANCE, CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
-    TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, now_ts,
+    TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
 from wayline.project import ProjectError, find_project, policy_for, read_harness
 
@@ -1589,7 +1589,6 @@ def _in_touch_set(path, touches):
 
 # The flags of decision 1's verb table that later tickets build, named so `run` can say which.
 LATER = (
-    ("detach", "--detach", "ticket 13 (the transient wayline-conductor unit)"),
     ("simulate_limit", "--simulate-limit", "ticket 10 (pacing and the pause)"),
     ("simulate_failure", "--simulate-failure", "ticket 38 (the stall and the escalation ladder)"),
 )
@@ -1601,7 +1600,7 @@ def run_command(args):
                                      description="run the conductor over a project until its frontier is empty")
     parser.add_argument("--project", help="the project to run; the active one by default")
     parser.add_argument("--resume", action="store_true", help="say in run_started that this run resumes one (every run replays the journal)")
-    parser.add_argument("--detach", action="store_true", help="run as the transient unit wayline-conductor (ticket 13)")
+    parser.add_argument("--detach", action="store_true", help="run as the transient user unit wayline-conductor, which outlives this shell")
     parser.add_argument("--simulate-limit", metavar="S", help="pretend a usage limit was hit (ticket 10)")
     parser.add_argument("--simulate-failure", metavar="ID", help="pretend a ticket failed (ticket 38)")
     parser.add_argument("--max-waves", type=int, metavar="N", help="stop after N waves, whatever the frontier still holds")
@@ -1626,6 +1625,9 @@ def run_command(args):
             print("wayline run: %s" % problem, file=sys.stderr)
         return 2
 
+    if options.detach:
+        return _detach(project, options)
+    announce_dashboard(project)
     conductor = Conductor(project)
     print("run      %s (%s, radius %s)" % (project, harness.get("autonomy"), harness.get("radius")))
     try:
@@ -1650,3 +1652,50 @@ def run_command(args):
         print("ticket(s) %s left jobs running; nothing here can advance them until the job poller lands"
               % ", ".join(str(identifier) for identifier in running))
     return 1 if failed or rejected else 0
+
+
+def _detach(project, options):
+    """`run --detach`: the same run, started as the transient unit `wayline-conductor` (decision 5).
+
+    The refusals a foreground run makes have already been made here, at the terminal, where the
+    owner reads them; inside the unit they would only reach the manager's journal.
+    """
+    holder = conductor_holder(project)
+    if holder is not None:
+        print("wayline run: a conductor (pid %s) already runs on %s" % (holder.get("pid", "?"), project), file=sys.stderr)
+        return 1
+    run_args = ["--max-waves", str(options.max_waves)] if options.max_waves is not None else []
+    try:
+        said = tick.launch_detached(project, run_args)
+    except tick.UnitError as failure:
+        print("wayline run: %s" % failure, file=sys.stderr)
+        return 1
+    print("detached %s as %s.service%s" % (project, tick.CONDUCTOR_UNIT, "  (%s)" % said if said else ""))
+    print("  journalctl --user -u %s -f follows it; wayline status reads the project; wayline stop ends it" % tick.CONDUCTOR_UNIT)
+    announce_dashboard(project)
+    return 0
+
+
+def announce_dashboard(project, out=None):
+    """Print the dashboard's address and start its service when it is not active (decision 8).
+
+    `run` never hosts the dashboard, so the address it prints is the service's, which outlives
+    every conductor. Nothing here can fail the run: the dashboard is a view.
+    """
+    out = out or sys.stdout
+    from wayline import dashboard  # the views import the project module this one does; keep the verb's import light
+    state, detail = tick.ensure_dashboard()
+    try:
+        settings = dashboard.read_settings(project=project)
+    except (ValueError, OSError) as failure:
+        print("dashboard  unknown address: %s" % failure, file=out)
+        return state
+    notes = {
+        "active": "",
+        "started": "  (started %s)" % tick.DASHBOARD_SERVICE,
+        "off": "  (%s; wayline serve runs it by hand)" % detail,
+        "failed": "  (%s did not start: %s; wayline init installs it, wayline serve runs it by hand)" % (tick.DASHBOARD_SERVICE, detail),
+    }
+    print("dashboard  %s%s" % (dashboard.dashboard_url(settings), notes[state]), file=out)
+    print("  " + dashboard.tunnel_line(settings["port"]), file=out)
+    return state
