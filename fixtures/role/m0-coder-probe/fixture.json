@@ -140,12 +140,12 @@
     }
   ],
   "baseline": {
-    "recorded_at": "2026-09-13T06:27:38.693Z",
+    "recorded_at": "2026-09-13T06:43:03.426Z",
     "subject_sha256": "28c2387577878d4e939151984178894806524f969e95b1a59c477dab04c627bb",
     "input_hash": "7ae242ced8f54402cc7a8a5bb906598521792660ea96165eba8366109c012526",
-    "structural": "0/3",
-    "judged": null,
-    "passed": false,
+    "structural": "3/3",
+    "judged": "3/3",
+    "passed": true,
     "unstable": false
   },
   "quarantine": {
@@ -154,7 +154,7 @@
     "flakes": [],
     "stable_runs_to_restore": 3,
     "stable_runs": 0,
-    "restored_at": null,
+    "restored_at": "2026-09-13T06:43:03.426Z",
     "counted_from": 0
   },
   "cost": {
@@ -186,15 +186,15 @@
     "strict": false
   },
   "last_run": {
-    "ts": "2026-09-13T06:27:38.439Z",
+    "ts": "2026-09-13T07:02:11.925Z",
     "subject_sha256": "28c2387577878d4e939151984178894806524f969e95b1a59c477dab04c627bb",
     "input_hash": "7ae242ced8f54402cc7a8a5bb906598521792660ea96165eba8366109c012526",
-    "definition_sha256": "71a1e20f224a7b3e5b332a9f1e09c982b45cd2d1b2848a5626e350ef97ae1239",
-    "structural": "0/3",
-    "judged": null,
+    "definition_sha256": "86efae968c4d65889e88992e352d935ed1fd86d8230b87b5124b380dca13984f",
+    "structural": "3/3",
+    "judged": "3/3",
     "outcome": {
-      "structural": false,
-      "judged": null
+      "structural": true,
+      "judged": true
     }
   },
   "note": "Pruned by hand from the recorder's 19 proposals to the M0 ticket's demo: status done, the two files in m0/ and nothing outside it, one Agent call, wayline accept run, and a finding that carries the touch-set refusal. The session runs in a project holding the ticket, INTAKE.md, harness.json, and the two m0 skills, committed on main and checked out on ticket/1."
