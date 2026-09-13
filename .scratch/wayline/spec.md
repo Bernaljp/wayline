@@ -363,9 +363,9 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `run_started` | `resume`, `harness_tag`, `autonomy`, `radius`, `pid` |
   | `run_ended` | `reason`: `frontier_empty`, `goal_reached`, `stopped`, `stall_strict`, `switched` |
   | `phase` | `from`, `to` (P0 to P8) |
-  | `pacing` | `five_hour`, `seven_day`, `action`: `normal`, `cheap_only`, `stop` (written only on change) |
-  | `paused` | `resets_at`, `window`: `five_hour`, `seven_day`, `unknown`; `utilization` |
-  | `unpaused` | none |
+  | `pacing` | `five_hour`, `seven_day`, `fable`, `action`: `normal`, `cheap_only`, `stop` (written only on change; `fable` is Fable's weekly window, decision 15) |
+  | `paused` | `resets_at`, `window`: `five_hour`, `seven_day`, `unknown`; `utilization`; `model`: `fable` (the hold on Fable's weekly window, decision 15; absent for the whole-run pause) |
+  | `unpaused` | `model`: `fable` (the hold ended; absent when the whole-run pause ends) |
   | `ticket_created` | `ticket`, `kind`, `proposed_by`, `origin`, `blocked_by` |
   | `assigned` | `ticket`, `role`, `skills` |
   | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256` |

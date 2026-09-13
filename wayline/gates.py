@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 from wayline import HARNESS_ROOT
-from wayline import worker
+from wayline import pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
 from wayline.project import policy_for
@@ -66,6 +66,7 @@ __all__ = [
     "kill_argument",
     "take_verdict",
     "ticket_asks",
+    "UsageLimited",
     "verdict",
     "verdict_for",
     "verdict_dir",
@@ -426,6 +427,18 @@ RESUME_VERDICT = (
 )
 
 
+class UsageLimited(GateError):
+    """A session a usage window refused: a closed window rather than a bad answer, so it is never resumed.
+
+    `limit` is the `pacing.Limit` that said so. The conductor journals it, keeps the verdict queued,
+    and launches it again, fresh, once the window allows (decision 15).
+    """
+
+    def __init__(self, message, limit=None):
+        super().__init__(message)
+        self.limit = limit
+
+
 @dataclass
 class Ask:
     """One verdict waiting to be taken: the five values `verdict` needs, and who is owed it.
@@ -643,7 +656,9 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     the author's own model. The session is given the paths and the one question; a session that
     returns something the `verdict` schema refuses is resumed once with the reason, and a second
     unusable answer raises rather than counting as a fail. A verdict nobody could take is not a
-    verdict against the subject.
+    verdict against the subject. A session a usage window refused is never resumed, since a resume
+    would be refused the same way: it raises `UsageLimited`, and the verdict is launched again,
+    fresh, once the window allows (decision 15).
 
     The one caller that stops here rather than going through `verdict` is the kill argument's
     first thread: a rejection memo is one thread's case against the work, not a judgment of it,
@@ -679,14 +694,16 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         schema_path=Path(harness_root).resolve() / "schemas" / (VERDICT_SCHEMA + ".json"),
         max_minutes=_budget(policy, "max_minutes"),
     )
+    what = "the %s verdict on the %s %s" % (verdict_type, subject_kind, subject)
     envelope = worker.launch(request)
+    _raise_if_refused(envelope, model, what)
     problem = _unusable(envelope)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_VERDICT % problem)
+        _raise_if_refused(envelope, model, what)
         problem = _unusable(envelope)
     if problem is not None:
-        raise GateError("the %s verdict on the %s %s could not be taken: %s"
-                        % (verdict_type, subject_kind, subject, problem))
+        raise GateError("%s could not be taken: %s" % (what, problem))
     returned = envelope.structured_output
     return Verdict(
         subject_kind=subject_kind, subject=str(subject), verdict_type=verdict_type,
@@ -699,6 +716,18 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
 def _budget(policy, key):
     """`policy.budget.small`'s turns or minutes, or None when the policy carries neither."""
     return ((policy.get("budget") or {}).get(VERDICT_BUDGET) or {}).get(key)
+
+
+def _raise_if_refused(envelope, model, what):
+    """Raise `UsageLimited` for a session a usage window stopped without a usable answer (decision 15)."""
+    if envelope.valid:
+        return
+    limit = pacing.hit_limit(envelope, worker.stderr_of(envelope), time.time(), model=model)
+    if limit is None:
+        return
+    window = "Fable's weekly window" if limit.model == pacing.FABLE else "the %s window" % limit.window
+    until = pacing.iso(limit.resets_at) if limit.resets_at is not None else "an unknown time"
+    raise UsageLimited("%s was refused by the usage limit on %s until %s" % (what, window, until), limit)
 
 
 def _unusable(envelope):

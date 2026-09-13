@@ -18,7 +18,7 @@ from wayline.tickets import DECISION, HARDEST, SATISFIED, frontier, is_open_deci
 __all__ = [
     "NORMAL", "CHEAP_ONLY", "STOP", "CHEAP_MAX", "affordable",
     "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
-    "everything_free", "launchable", "order_key", "pick", "held_back", "holds_model_work",
+    "everything_free", "nothing_held", "launchable", "order_key", "pick", "held_back", "holds_model_work",
 ]
 
 # The pacing actions of decision 5 (`wayline.pacing` computes which one holds). `stop` launches
@@ -232,25 +232,31 @@ def _decision_above(entry, entries):
     return None
 
 
-def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_free, goal_tickets=()):
+def nothing_held(entry):
+    """No launch is held: what `pick` is given while the hold on Fable's weekly window does not stand."""
+    return False
+
+
+def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_free, goal_tickets=(), held=nothing_held):
     """The tickets this wave launches, in the order it launches them (wave steps 7 to 9).
 
     Up to `slots` of them (`policy.max_parallel_workers`). Each pick joins the running set before
     the next is chosen, so two tickets that share a path are never launched into the same wave:
     the second waits for the first to be integrated, which is what makes the conflict serialize.
     The pacing action removes what it does not afford: everything under `stop`, difficulty 3 to 5
-    under `cheap_only`.
+    under `cheap_only`. `held(entry)` names a launch the hold on Fable's weekly window keeps back
+    (decision 15), dropped before anything is picked, so its slot goes to what else is launchable.
     """
-    ready = [entry for entry in frontier(graph) if affordable(entry, action)]
+    ready = [entry for entry in frontier(graph) if affordable(entry, action) and not held(entry)]
     lengths = critical_path_lengths(graph)
-    held = list(running)
+    taken = list(running)
     chosen = []
     while len(chosen) < max(0, int(slots)):
-        options = launchable(ready, held, root, free)
+        options = launchable(ready, taken, root, free)
         if not options:
             break
         best = min(options, key=lambda entry: order_key(entry, lengths, action, goal_tickets))
         ready = [entry for entry in ready if entry["id"] != best["id"]]
-        held.append(best)
+        taken.append(best)
         chosen.append(best)
     return chosen

@@ -14,9 +14,13 @@ the launch's own stream survives. This directory is the one place under `researc
 something other than the ledger: the launch line itself redirects the worker's stream there,
 and the request is written beside it so the run can be reproduced by hand.
 
-Two envelope fields extend the spec's list, each with a reason: `errors` carries the error text
-the conductor puts in its one resume (BRIEF 9.1), and `result_text` carries the plain `result`
-string a session without a schema returns (the tick reads `claude -p "/usage"` through this seam).
+Four envelope fields extend the spec's list, each with a reason: `errors` carries the error text
+the conductor puts in its one resume (BRIEF 9.1); `result_text` carries the plain `result` string a
+session without a schema returns (the tick reads `claude -p "/usage"` through this seam);
+`failed_tasks` carries the subagent tasks the stream reports failed (`system/task_updated` with
+`status: failed`), because a subagent refused by Fable's weekly window shows only there while its
+parent's result stays a success (decision 15); and `answered` says whether the model took a turn
+at all, because a session a usage window refused before its first turn is relaunched, never resumed.
 
 `WAYLINE_CLAUDE` names the executable when it is not the `claude` on PATH; the tests point it at
 a recording stand-in, so the real backend is exercised without the network.
@@ -43,7 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Union
 
-from wayline import HARNESS_ROOT, registry
+from wayline import HARNESS_ROOT, pacing, registry
 from wayline.frontmatter import FrontmatterError, load_document
 from wayline.jsonschema import SchemaError, check_schema, load_schema, validate
 from wayline.ledger import now_ts
@@ -51,6 +55,7 @@ from wayline.ledger import now_ts
 __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
     "launch", "resume", "pid_alive", "terminate", "usage", "simulate_limit", "simulated_limit", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
+    "launches_on", "stderr_tail", "stderr_of",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
@@ -179,6 +184,8 @@ class RateLimitEvent:
 
     `status`, `resets_at`, and `rate_limit_type` are documented; the `five_hour` and `seven_day`
     windows come from the observed, undocumented `unifiedWindows` block and are None without it.
+    `seven_day_overage_included` is Fable's weekly window from the same block, which only a Fable
+    request's own event carries (decision 15).
     """
 
     status: Optional[str]
@@ -186,6 +193,7 @@ class RateLimitEvent:
     rate_limit_type: Optional[str] = None
     five_hour: Optional[Window] = None
     seven_day: Optional[Window] = None
+    seven_day_overage_included: Optional[Window] = None
 
     @classmethod
     def from_info(cls, info):
@@ -205,6 +213,7 @@ class RateLimitEvent:
             rate_limit_type=info.get("rateLimitType") if isinstance(info.get("rateLimitType"), str) else None,
             five_hour=window("five_hour"),
             seven_day=window("seven_day"),
+            seven_day_overage_included=window("seven_day_overage_included"),
         )
 
     @classmethod
@@ -221,7 +230,8 @@ class RateLimitEvent:
         status = data.get("status")
         if status is not None and not isinstance(status, str):
             raise LaunchError("rate_limit_event.status is a string or null")
-        return cls(status, _integer(data.get("resets_at")), data.get("rate_limit_type"), Window.from_dict(data.get("five_hour")), Window.from_dict(data.get("seven_day")))
+        return cls(status, _integer(data.get("resets_at")), data.get("rate_limit_type"), Window.from_dict(data.get("five_hour")),
+                   Window.from_dict(data.get("seven_day")), Window.from_dict(data.get("seven_day_overage_included")))
 
     def as_dict(self):
         return asdict(self)
@@ -229,7 +239,7 @@ class RateLimitEvent:
 
 @dataclass
 class Envelope:
-    """What one model call came back with: the fields of decision 3, in its order, then the two extensions.
+    """What one model call came back with: the fields of decision 3, in its order, then the four extensions.
 
     `structured_output` is the object validated in code against the request's schema, or None:
     a `success` result without the key, a `subtype: error_max_structured_output_retries`, or an
@@ -255,6 +265,8 @@ class Envelope:
     stream_path: Optional[Path] = None
     errors: list = field(default_factory=list)
     result_text: Optional[str] = None
+    failed_tasks: list = field(default_factory=list)
+    answered: bool = False
 
     def __post_init__(self):
         if self.structured_output is not None and not isinstance(self.structured_output, dict):
@@ -263,7 +275,7 @@ class Envelope:
             value = getattr(self, name)
             if value is not None and not isinstance(value, dict):
                 raise LaunchError("envelope.%s is an object or None" % name)
-        for name in ("permission_denials", "errors", "rate_limit_events"):
+        for name in ("permission_denials", "errors", "rate_limit_events", "failed_tasks"):
             value = getattr(self, name)
             if value is None:
                 setattr(self, name, [])
@@ -271,6 +283,10 @@ class Envelope:
                 raise LaunchError("envelope.%s is a list, got %s" % (name, type(value).__name__))
         if any(not isinstance(item, str) for item in self.errors):
             raise LaunchError("envelope.errors is a list of strings")
+        if any(not isinstance(item, dict) for item in self.failed_tasks):
+            raise LaunchError("envelope.failed_tasks is a list of {task_id, error} objects")
+        if not isinstance(self.answered, bool):
+            raise LaunchError("envelope.answered is true or false, got %r" % (self.answered,))
         self.rate_limit_events = [RateLimitEvent.from_dict(item) for item in self.rate_limit_events]
         if self.stream_path is not None and not isinstance(self.stream_path, Path):
             self.stream_path = Path(self.stream_path)
@@ -1106,7 +1122,10 @@ def spelled_argv(argv, run_dir):
 
 @dataclass
 class Parsed:
-    """What `parse_stream` found: the init, every rate limit event, the final result, and the torn lines."""
+    """What `parse_stream` found: the init, every rate limit event, the final result, and the torn lines.
+
+    Also every failed subagent task, and whether the session's own model answered at least once.
+    """
 
     session_id: Optional[str] = None
     model: Optional[str] = None
@@ -1115,6 +1134,8 @@ class Parsed:
     result: Optional[dict] = None
     torn_lines: int = 0
     messages: int = 0
+    failed_tasks: list = field(default_factory=list)
+    answered: bool = False
 
 
 def parse_stream(path):
@@ -1148,11 +1169,37 @@ def parse_stream(path):
                 parsed.model = message.get("model") if isinstance(message.get("model"), str) else None
             elif kind == "rate_limit_event":
                 parsed.rate_limit_events.append(RateLimitEvent.from_info(message.get("rate_limit_info")))
+            elif kind == "assistant":
+                parsed.answered = parsed.answered or _answered(message)
+            elif kind == "system" and message.get("subtype") == "task_updated":
+                failure = _failed_task(message)
+                if failure is not None:
+                    parsed.failed_tasks.append(failure)
             elif kind == "result":
                 parsed.result = message
     if parsed.torn_lines:
         _log.warning("%s: skipped %d torn line(s)", path, parsed.torn_lines)
     return parsed
+
+
+# The model an `assistant` message names when the CLI wrote it in the model's place (an API error).
+SYNTHETIC_MODEL = "<synthetic>"
+
+
+def _answered(message):
+    """Whether an `assistant` message is a turn of the session's own model: not a subagent's, not an API error's stand-in."""
+    body = message.get("message") if isinstance(message.get("message"), dict) else {}
+    return (message.get("parent_tool_use_id") is None and not message.get("error")
+            and not message.get("is_api_error_message") and body.get("model") != SYNTHETIC_MODEL)
+
+
+def _failed_task(message):
+    """A `system/task_updated` whose patch says its subagent task failed, as `{task_id, error}`; None for any other update."""
+    patch = message.get("patch") if isinstance(message.get("patch"), dict) else {}
+    if patch.get("status") != "failed":
+        return None
+    return {"task_id": message.get("task_id") if isinstance(message.get("task_id"), str) else None,
+            "error": patch.get("error") if isinstance(patch.get("error"), str) else None}
 
 
 def read_envelope(stream_path, schema_path, exit_code=None, errors=()):
@@ -1259,6 +1306,9 @@ def _envelope_from(parsed, stream_path, schema_path, exit_code, errors):
         stream_path=stream_path,
         errors=errors,
         result_text=result.get("result") if isinstance(result.get("result"), str) else None,
+        failed_tasks=list(parsed.failed_tasks),
+        # A turn shows as an assistant message of the session's own model, or, where a stream holds none, as output tokens.
+        answered=parsed.answered or bool(_integer((result.get("usage") if isinstance(result.get("usage"), dict) else {}).get("output_tokens"))),
     )
 
 
@@ -1396,7 +1446,7 @@ class ClaudeCli:
         stream_path = run_dir / "stream.jsonl"
         stderr_path = run_dir / "stderr.txt"
         errors = []
-        injected = _simulated_event() if session_id is None else None
+        injected = _simulated_event(request) if session_id is None else None
         with open(stream_path, "wb") as stream, open(stderr_path, "wb") as stderr:
             if injected is not None:  # ahead of everything the session writes, which follows it in the file
                 stream.write((json.dumps(_rate_limit_message(injected)) + "\n").encode("utf-8"))
@@ -1666,11 +1716,18 @@ class FakeLauncher:
         model = given.model or RESOLVED_MODELS.get(request.model, request.model)
         head = [{"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": str(request.cwd),
                  "permissionMode": "dontAsk", "agents": [request.role], "apiKeySource": "none", "fake": True}]
-        injected = _simulated_event() if kind == "launch" else None
+        injected = _simulated_event(request) if kind == "launch" else None
         if injected is not None:
             head.append(dict(_rate_limit_message(injected), session_id=session))
         for event in given.rate_limit_events:
             head.append({"type": "rate_limit_event", "rate_limit_info": _rate_limit_info(event), "session_id": session})
+        if given.answered:  # one turn of the model's own, which is what a session that did any work leaves
+            head.append({"type": "assistant", "message": {"model": model, "role": "assistant", "type": "message",
+                                                          "content": [{"type": "text", "text": "Working on it."}]},
+                         "parent_tool_use_id": None, "session_id": session, "fake": True})
+        for task in given.failed_tasks:
+            head.append({"type": "system", "subtype": "task_updated", "task_id": task.get("task_id"),
+                         "patch": {"status": "failed", "error": task.get("error")}, "session_id": session})
         _write_text(stream_path, "".join(json.dumps(line) + "\n" for line in head))  # visible while the call runs, as the real stream is
         if scripted.alive is not None:
             self.alive[pid] = scripted.alive
@@ -1729,7 +1786,7 @@ class FakeLauncher:
 def _rate_limit_info(event):
     info = {"status": event.status, "resetsAt": event.resets_at, "rateLimitType": event.rate_limit_type}
     windows = {}
-    for name in ("five_hour", "seven_day"):
+    for name in ("five_hour", "seven_day", "seven_day_overage_included"):
         window = getattr(event, name)
         if window is not None:
             windows[name] = {"utilization": window.utilization, "resetsAt": window.resets_at}
@@ -1807,20 +1864,26 @@ def usage():
 
 # --- the simulated limit (decision 5; M1's demo) ----------------------------------------------------
 
-_simulated = {"seconds": None}
+_simulated = {"seconds": None, "model": None}
 _simulated_lock = threading.Lock()
 
 
-def simulate_limit(seconds):
-    """Arm one simulated hit limit, or disarm it with None: `wayline run --simulate-limit <seconds>`.
+def simulate_limit(seconds, model=None):
+    """Arm one simulated hit limit, or disarm it with None: `wayline run --simulate-limit [fable:]<seconds>`.
 
     The next launch, through either backend, carries one `rate_limit_event` with `status: rejected`
     and a `resetsAt` that many seconds ahead, written into its stream ahead of what the session
     writes, so the pause can be shown in minutes without exhausting a window. The session itself
     runs as it would have, which is what "running workers finish" looks like.
+
+    With `model="fable"` the event is Fable's weekly window refusing (`seven_day_overage_included`),
+    and it waits for the next launch on Fable (decision 15): a launch on any other model takes nothing.
     """
+    if model not in (None, pacing.FABLE):
+        raise LaunchError("a simulated limit is on every model's windows or on Fable's weekly window, not on %r" % (model,))
     with _simulated_lock:
         _simulated["seconds"] = None if seconds is None else float(seconds)
+        _simulated["model"] = None if seconds is None else model
 
 
 def simulated_limit():
@@ -1829,13 +1892,50 @@ def simulated_limit():
         return _simulated["seconds"]
 
 
-def _simulated_event():
-    """Take the armed simulated limit, once: the rejected event it injects, or None."""
+def launches_on(request, model):
+    """Whether a launch runs on `model`: its own `--model`, or any agent its `--agents` defines on it (decision 15)."""
+    if request.model == model:
+        return True
+    try:
+        agents = json.loads(request.agent_json) if isinstance(request.agent_json, str) else request.agent_json
+    except ValueError:
+        return False
+    return isinstance(agents, dict) and any(isinstance(agent, dict) and agent.get("model") == model for agent in agents.values())
+
+
+def _simulated_event(request):
+    """Take the armed simulated limit, once, if this launch is the one it waits for: the rejected event it injects, or None."""
     with _simulated_lock:
-        seconds, _simulated["seconds"] = _simulated["seconds"], None
-    if seconds is None:
-        return None
-    return RateLimitEvent(status="rejected", resets_at=math.ceil(time.time() + seconds), rate_limit_type="five_hour")
+        seconds, model = _simulated["seconds"], _simulated["model"]
+        if seconds is None or (model is not None and not launches_on(request, model)):
+            return None
+        _simulated["seconds"] = _simulated["model"] = None
+    resets = math.ceil(time.time() + seconds)
+    if model == pacing.FABLE:
+        return RateLimitEvent(status="rejected", resets_at=resets, rate_limit_type=pacing.FABLE_LIMIT_TYPE,
+                              seven_day_overage_included=Window(1.0, resets))
+    return RateLimitEvent(status="rejected", resets_at=resets, rate_limit_type="five_hour")
+
+
+# How much of a returned session's stderr is searched for the words of a hit limit.
+STDERR_TAIL_BYTES = 65536
+
+
+def stderr_tail(run_dir, limit=STDERR_TAIL_BYTES):
+    """The end of the stderr a session wrote beside its stream, where a CLI may say a limit was hit; "" when there is none."""
+    if run_dir is None:
+        return ""
+    try:
+        with open(Path(run_dir) / "stderr.txt", "rb") as handle:
+            handle.seek(max(0, os.fstat(handle.fileno()).st_size - limit))
+            return handle.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def stderr_of(envelope):
+    """The stderr tail of the session an envelope came back from, read beside its stream; "" when there is none."""
+    return stderr_tail(envelope.stream_path.parent if envelope.stream_path is not None else None)
 
 
 def _rate_limit_message(event):
@@ -1956,12 +2056,15 @@ def smoke_request(run_dir, model="sonnet", effort="low"):
 
 
 def describe_windows(envelope):
-    """The five-hour and seven-day utilization of the latest rate limit event, as printable lines."""
+    """The five-hour and seven-day utilization of the latest rate limit event, and Fable's week when it carries it, as printable lines."""
     if not envelope.rate_limit_events:
         return ["usage windows: no rate_limit_event in the stream"]
     last = envelope.rate_limit_events[-1]
     lines = ["usage windows (status %s, type %s):" % (last.status, last.rate_limit_type)]
-    for name, window in (("five_hour", last.five_hour), ("seven_day", last.seven_day)):
+    windows = [("five_hour", last.five_hour), ("seven_day", last.seven_day)]
+    if last.seven_day_overage_included is not None:  # only a Fable request's own event carries Fable's weekly window
+        windows.append(("fable", last.seven_day_overage_included))
+    for name, window in windows:
         if window is None:
             lines.append("  %s: unknown (no unifiedWindows block; read /usage instead)" % name)
         elif window.utilization is None:

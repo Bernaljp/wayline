@@ -38,10 +38,19 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   every session that needs a model, verdicts and resumes included, and `cheap_only` launches only
   difficulty 1 and 2 and holds the verdicts. What needs no model still happens first in the wave:
   the workers already running finish, and their machine checks and integration run. A hit limit
-  journals `paused`, a session the limit stopped is resumed after the reset instead of failed,
-  and the first wave past the reset journals `unpaused`. No job poller, so an experiment ticket
+  journals `paused`, a session the limit stopped mid-work is resumed after the reset instead of
+  failed, one it refused before its first turn is relaunched in the same attempt (decision 15), and
+  the first wave past the reset journals `unpaused`. No job poller, so an experiment ticket
   whose jobs outlive its worker stays `running` and holds the run open until ticket 19's poller
   closes it or `wayline stop` ends the run.
+- The hold on Fable's weekly window (ticket 54, decision 15). A refusal on that window, or a reading
+  of it at `pacing.stop_at`, journals `paused` with `model: fable` instead of the whole-run pause.
+  While the hold stands, launchable drops every launch on Fable (a ticket whose tier is Fable, a
+  session that defines an agent on Fable, and a done ticket's verdicts, whole, when any of them
+  runs on Fable) and everything else keeps launching; a Fable session stopped mid-work waits and is
+  resumed on Fable after the reset. `/usage` is read again before a wave launches Fable work, and
+  `unpaused` with `model: fable` ends the hold at the reset, or earlier when a reading puts Fable
+  under `stop_at`.
 - A result's `proposals`, `decision_requests` and `goal_progress` are written into the ticket's
   `## Result` section so the owner sees them, and nothing else: admission is ticket 37, decision
   tickets are ticket 35, and keep-if-better is ticket 39.
@@ -140,8 +149,6 @@ RESUME_LIMIT = (
 REJECTED = (
     "the %s verdict failed: a fresh %s session that did not write this read it and found\n\n%s"
 )
-# How much of a returned session's stderr is searched for the words of a hit limit.
-STDERR_TAIL_BYTES = 65536
 
 
 # What the conductor says when a `control` event another process appended arrives, by command.
@@ -437,6 +444,11 @@ class Conductor:
         self.action = schedule.NORMAL
         self.windows = pacing.Windows()
         self.clock = time.time
+        # The wave `/usage` was last read for before it launched Fable work (decision 15): once a wave at most.
+        self._usage_wave = None
+        # What was last said of `/usage` giving no reading and of verdicts waiting on the hold, so a week-long hold says each once.
+        self._usage_trouble = None
+        self._said_waiting = None
         self.resources_free = schedule.everything_free
         # What a run carries between waves: the working view folded from the journal, the byte
         # offset read so far, the attempts whose sessions are in flight, and the heartbeat.
@@ -519,6 +531,7 @@ class Conductor:
                     "autonomy": harness.get("autonomy"), "radius": harness.get("radius"), "pid": os.getpid(),
                 })
             self._read_usage()
+            self._usage_wave = self.number + 1  # the reading `run` start just took stands for its first wave
             waves = []
             wait = self._idle if wait is None else wait
             while True:
@@ -586,7 +599,7 @@ class Conductor:
                                             "progressed": bool(result.done or result.findings)})
 
     def _end(self, result):
-        """`run_ended`: once a stop has been applied, or once the frontier is empty and nothing runs.
+        """`run_ended`: once a stop has been applied, or once the frontier is empty, nothing runs, and no verdict is queued.
 
         A stop without `drain` ends the run at this wave and leaves the workers still running to
         finish on their own, for the next run to re-adopt. A drain waits for them, and leaves a
@@ -608,7 +621,8 @@ class Conductor:
             self.ledger.append_event(RUN_ENDED, {"reason": stopping.reason})
             result.ended, result.reason = True, stopping.reason
             return
-        if self.flight:
+        if self.flight or self.verdicts:
+            # Queued verdicts wait on pacing or on the hold on Fable's weekly window, and are taken once it allows.
             return
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
@@ -632,13 +646,57 @@ class Conductor:
         running from earlier waves leave free. A ticket left `running` by jobs that outlived their
         worker holds its touch set against the frontier but occupies no worker slot, because that
         ticket has no worker.
+
+        While the hold on Fable's weekly window stands, a ticket whose tier is Fable is dropped
+        before the pick, so its slot goes to whatever else is launchable. When the pick would launch
+        Fable work and no hold stands, `/usage` is read first and the pick is made again under what
+        it says: without the Fable tickets when it began the hold, and under the action it paced to.
         """
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         busy = sum(1 for attempt in self.flight.values() if attempt.running or attempt.adopted)
-        return schedule.pick(
-            graph, running=running, slots=max(0, self._slots() - busy), action=self.action,
-            root=self.project, free=self.resources_free, goal_tickets=self._goal_tickets(),
-        )
+        goal_tickets = self._goal_tickets()
+
+        def pick():
+            return schedule.pick(
+                graph, running=running, slots=max(0, self._slots() - busy), action=self.action,
+                root=self.project, free=self.resources_free, goal_tickets=goal_tickets,
+                held=self._on_fable if self.view.hold is not None else schedule.nothing_held,
+            )
+
+        picks = pick()
+        if any(self._on_fable(entry) for entry in picks) and self._read_usage_before_fable():
+            picks = pick()  # the reading may have begun the hold or moved the action: pick again under what it says
+        return picks
+
+    def _on_fable(self, entry):
+        """Whether a ticket launches on Fable: the tier of its effective difficulty names Fable (decision 15)."""
+        try:
+            return tier_for(self.policy, entry.get("difficulty")).model == pacing.FABLE
+        except ConductorError:
+            return False  # the launch fails on the missing tier, and says so there
+
+    def _read_usage_before_fable(self):
+        """Read `/usage` before this wave starts Fable work, once a wave and only while no hold stands; whether it read.
+
+        Reading `/usage` takes no turn, so it is read before any wave that would launch Fable work
+        (decision 15): a week spent since the last reading begins the hold before a launch is refused.
+        The reading paces the run as well, so a caller that asked whether it may launch has to ask again.
+        """
+        if self.view.hold is not None or self._usage_wave == self.number:
+            return False
+        self._usage_wave = self.number
+        self._read_usage()
+        self._pace()
+        return True
+
+    def _fable_held(self):
+        """Whether the hold on Fable's weekly window stands, reading `/usage` first when this wave has not."""
+        self._read_usage_before_fable()
+        return self.view.hold is not None
+
+    def _held_on_fable(self, request):
+        """Whether a session waits for the hold: it runs on Fable or defines an agent on Fable, and the hold stands."""
+        return request is not None and worker.launches_on(request, pacing.FABLE) and self._fable_held()
 
     def _slots(self):
         """`policy.max_parallel_workers`: how many workers this conductor runs at once."""
@@ -957,7 +1015,7 @@ class Conductor:
                     if attempt.want.stage != INTEGRATE:
                         self._start_wanted(attempt)
                         continue
-                    if self._holds_launches():
+                    if self._integrator_waits(attempt):
                         continue
                     attempt.want = None  # the integration it waited for may launch its integrator now
 
@@ -988,9 +1046,9 @@ class Conductor:
             attempt.session_id = attempt.session_id or attempt.envelope.session_id
             self._journal_session(attempt)
             self._observe(attempt)
-            limit = self._limit_of(attempt)
+            limit, written = self._limit_of(attempt)
             if limit is not None and limit.signal != pacing.EVENT_SIGNAL:  # a rejected event paused the run as it was read
-                self._pause(limit, "ticket %d's worker" % attempt.id)
+                self._pause(limit, "ticket %d's worker" % attempt.id, written)
             limited = limit is not None and not attempt.envelope.valid
             outcome = self._wait_out(attempt) if limited else self._advance(attempt)
         except (ValueError, OSError) as failure:  # a launch, a ticket file, or a git step
@@ -1163,9 +1221,12 @@ class Conductor:
         return "session"
 
     def _start_wanted(self, attempt):
-        """Start the session an attempt waits for, unless the run holds model work; returns whether it did."""
+        """Start the session an attempt waits for, unless the run holds model work or the hold holds it on Fable; whether it did."""
         if attempt.want is None or attempt.want.stage == INTEGRATE or self._holds_launches():
             return False  # an integration is carried again by `_poll`, not started as a session
+        if self._held_on_fable(attempt.request) or self._holds_launches():
+            # Resumed, or relaunched, on Fable once the hold ends; and the `/usage` the hold read may have said `stop`.
+            return False
         want, attempt.want = attempt.want, None
         if want.stage == RELAUNCH:
             self._journal_resumed(attempt, replay.WORKER_DIED)
@@ -1251,16 +1312,23 @@ class Conductor:
         try:
             text = worker.usage()
         except (worker.LaunchError, OSError) as failure:
-            self.say("  /usage could not be read (%s); pacing waits for the workers' rate_limit_event" % failure)
+            self._usage_says("/usage could not be read (%s); pacing waits for the workers' rate_limit_event" % failure)
             return
         now = self.clock()
         usage = pacing.parse_usage(text, now) if text is not None else None
         if usage is None:
             if text is not None:
-                self.say("  /usage printed neither window; pacing waits for the workers' rate_limit_event")
+                self._usage_says("/usage printed none of the windows; pacing waits for the workers' rate_limit_event")
             return
-        for name in pacing.WINDOWS:
+        self._usage_trouble = None
+        for name in pacing.READINGS:
             self.windows.record(name, getattr(usage, name), usage.resets.get(name), now)
+
+    def _usage_says(self, message):
+        """Say why `/usage` gave no reading once, not at every wave that reads it again."""
+        if message != self._usage_trouble:
+            self.say("  " + message)
+        self._usage_trouble = message
 
     def _heard_pacing(self, events):
         """Take the readings in `pacing` events another process journaled (the tick's `/usage`) or a restart replays.
@@ -1270,14 +1338,38 @@ class Conductor:
         An event that says what this run's readings already say is its own, and is passed over.
         """
         for event in events:
+            payload, observed = event.get("payload") or {}, pacing.epoch(event.get("ts"))
+            if event.get("event") in (PAUSED, UNPAUSED) and payload.get("model") == pacing.FABLE and observed is not None:
+                self._heard_hold(event["event"], payload, observed)
+                continue
             if event.get("event") != PACING:
                 continue
-            payload, observed = event.get("payload") or {}, pacing.epoch(event.get("ts"))
             now = self.clock()
-            if observed is None or all(payload.get(name) == self.windows.utilization(name, now) for name in pacing.WINDOWS):
+            if observed is None or all(payload.get(name) == self.windows.utilization(name, now) for name in pacing.READINGS):
                 continue
-            for name in pacing.WINDOWS:
+            for name in pacing.READINGS:
                 self.windows.record(name, payload.get(name), None, observed)
+
+    def _heard_hold(self, name, payload, observed):
+        """Take what a journaled hold says of Fable's weekly window (decision 15).
+
+        Its `paused` is a reading of the week as spent at the moment it was journaled, so a `pacing`
+        event from before it cannot end it at a restart. Its `unpaused` retires a reading that still
+        has the week spent, because a `pacing` event names no reset and would begin the hold again.
+        A hold the readings already put at `stop_at` or above (this run's own) is passed over, and one
+        taken in is read as at least `stop_at`, so a refusal that reported less does not end its own hold.
+        """
+        held, stop_at = self.windows.readings.get(pacing.FABLE), self._thresholds()[0]
+        if name == UNPAUSED:
+            if held is not None and (held.observed_at is None or held.observed_at <= observed) and held.utilization >= stop_at:
+                del self.windows.readings[pacing.FABLE]
+            return
+        if (self.windows.utilization(pacing.FABLE, self.clock()) or 0) >= stop_at:
+            return
+        utilization = payload.get("utilization")
+        spent = max(stop_at, utilization if isinstance(utilization, (int, float)) and not isinstance(utilization, bool) else 1.0)
+        resets = pacing.epoch(payload.get("resets_at"))
+        self.windows.record(pacing.FABLE, spent, None if resets is None else int(resets), observed)
 
     def _observe(self, attempt):
         """Fold the `rate_limit_event`s a session's stream gained into the readings; a rejected one pauses the run.
@@ -1294,7 +1386,9 @@ class Conductor:
             return
         now = self.clock()
         for event in seen[attempt.limits_read:]:
-            self.windows.observe(event, now)
+            # A stream does not say when it wrote an event, so while the hold stands its Fable reading is not taken:
+            # an allowed event written before the refusal that began the hold would end it. `/usage` and the reset do.
+            self.windows.observe(event, now, pacing.WINDOWS if self.view.hold is not None else pacing.READINGS)
             limit = pacing.rejected(event)
             if limit is not None:
                 self._pause(limit, "ticket %d's worker" % attempt.id)
@@ -1302,42 +1396,72 @@ class Conductor:
         self._pace()
 
     def _limit_of(self, attempt):
-        """The usage limit a returned session stopped at, by any of the three signals of decision 5, or None.
+        """`(limit, written)`: the usage limit a returned session stopped at (or None), and when its stream was last written.
 
         A reset the message gives as a bare time (`resets 3:45pm`) is read against when the stream
         was last written, so a result a restart carries hours later does not pause until tomorrow.
         """
-        stderr, reference = "", self.clock()
-        if attempt.run_dir is not None:
-            try:
-                with open(attempt.run_dir / "stderr.txt", "rb") as handle:
-                    handle.seek(max(0, os.fstat(handle.fileno()).st_size - STDERR_TAIL_BYTES))
-                    stderr = handle.read().decode("utf-8", "replace")
-            except OSError:
-                pass
+        reference = self.clock()
         if attempt.stream_path is not None:
             try:
                 reference = min(reference, attempt.stream_path.stat().st_mtime)
             except OSError:
                 pass
-        return pacing.hit_limit(attempt.envelope, stderr, reference)
+        limit = pacing.hit_limit(attempt.envelope, worker.stderr_tail(attempt.run_dir), reference,
+                                 model=attempt.request.model if attempt.request is not None else None)
+        return limit, reference
 
     def _wait_out(self, attempt):
         """A session a usage limit stopped: journal its result, then resume it after the reset rather than fail it.
 
         The resume is journaled `ticket_resumed` with `worker_died`, the reason decision 2 gives the
         resume of an interrupted session by its id (or the relaunch of one that never started), and
-        like it spends no gate.
+        like it spends no gate. A launch the limit refused before its first turn holds nothing to
+        resume, so it is relaunched in the same attempt instead, never resumed (decision 15).
         """
         if not attempt.result_journaled:
             self._journal_result(attempt)
             attempt.result_journaled = True
         kind = "launch" if attempt.run_dir in (None, self._attempt_dir(attempt)) else "resume"
+        if kind == "launch" and not attempt.envelope.answered:
+            self._keep_refused(attempt)
+            attempt.session_id, attempt.want = None, _Want(RELAUNCH)
+            self.flight[attempt.id] = attempt
+            started = self._start_wanted(attempt)
+            self.say("  ticket %d: the usage limit refused its session before its first turn; relaunching it%s"
+                     % (attempt.id, "" if started else " once the window allows"))
+            return "session"
         self._died(attempt, replay.Session(kind), RESUME_LIMIT, "its session stopped at the usage limit")
         return "session"
 
-    def _pause(self, limit, source):
-        """Journal `paused` for a hit limit, unless its window has reset already or the run is paused as long."""
+    def _keep_refused(self, attempt):
+        """Copy a refused session's stream, stderr, and result into `refused-<n>/` of its attempt, which the relaunch writes over.
+
+        The journal's `ticket_session` and `ticket_result` name the refused session, so what it wrote is kept beside them.
+        """
+        base = self._attempt_dir(attempt)
+        number = 1
+        while (base / ("refused-%d" % number)).exists():
+            number += 1
+        kept = base / ("refused-%d" % number)
+        try:
+            kept.mkdir(parents=True)
+            for name in ("stream.jsonl", "stderr.txt", "result.json"):
+                if (base / name).is_file():
+                    shutil.copy2(base / name, kept / name)
+        except OSError as failure:
+            self.say("  ticket %d: the refused session could not be kept in %s (%s); its relaunch writes over it"
+                     % (attempt.id, kept.name, failure))
+
+    def _pause(self, limit, source, written=None):
+        """Journal `paused` for a hit limit, unless its window has reset already or the run is paused as long.
+
+        A limit on Fable's weekly window pauses nothing: it begins the hold on Fable launches (`_hold`).
+        `written` is when the session that met the limit last wrote its stream, which a restart may carry long after.
+        """
+        if limit.model == pacing.FABLE:
+            self._hold(limit, source, written)
+            return
         now = self.clock()
         resets = pacing.resets_at(limit, self.windows, now)
         if resets <= now:
@@ -1352,36 +1476,93 @@ class Conductor:
                  % (source, limit.signal, limit.window, payload["resets_at"]))
 
     def _unpause_at_reset(self):
-        """`unpaused` once the window a pause waits for has reset; a pause whose reset cannot be read ends now."""
-        pause = self.view.pause
-        if pause is None:
+        """`unpaused` once the window a pause or the hold waits for has reset; one whose reset cannot be read ends now."""
+        pause, hold = self.view.pause, self.view.hold
+        if pause is not None and not self._resets_later(pause):
+            self.ledger.append_event(UNPAUSED, {})
+            self._tail()
+            self.say("  the %s window reset (%s); unpaused" % (pause.get("window") or "unknown", pause.get("resets_at")))
+        if hold is not None and not self._resets_later(hold):
+            self._unhold("Fable's weekly window reset (%s)" % hold.get("resets_at"))
+
+    def _resets_later(self, stands):
+        """Whether a pause or the hold waits for a reset that is still ahead."""
+        resets = pacing.epoch(stands.get("resets_at"))
+        return resets is not None and resets > self.clock()
+
+    def _hold(self, limit, source, written=None):
+        """Journal the hold on Fable's weekly window, `paused` with `model: fable`, unless it stands as long already.
+
+        A refusal is itself a reading of the week as spent, at `stop_at` at least, so neither its own
+        figure nor an older `/usage` reading ends the hold at the next wave. A refusal met just now is
+        the newest reading there is. One whose stream was `written` earlier (a result a restart carries)
+        gives way to a reading taken since that puts Fable under `stop_at`: the week reset in between.
+        Nothing else is held: the run goes on launching every session that is not on Fable (decision 15).
+        """
+        now = self.clock()
+        resets = pacing.resets_at(limit, self.windows, now)
+        if resets <= now:
             return
-        resets = pacing.epoch(pause.get("resets_at"))
-        if resets is not None and resets > self.clock():
+        if limit.signal != pacing.READING_SIGNAL:
+            stop_at, held = self._thresholds()[0], self.windows.readings.get(pacing.FABLE)
+            at = now if written is None or written >= now else written
+            newer = held is not None and held.observed_at is not None and held.observed_at > at
+            if at < now and newer and (self.windows.utilization(pacing.FABLE, now) or 0) < stop_at:
+                return
+            spent = max(stop_at, 1.0 if limit.utilization is None else limit.utilization)
+            self.windows.record(pacing.FABLE, spent, resets, held.observed_at if newer else at)
+        standing = pacing.epoch((self.view.hold or {}).get("resets_at"))
+        if standing is not None and standing >= resets:
             return
-        self.ledger.append_event(UNPAUSED, {})
+        payload = pacing.paused_payload(limit, resets, self.windows)
+        self.ledger.append_event(PAUSED, payload)
         self._tail()
-        self.say("  the %s window reset (%s); unpaused" % (pause.get("window") or "unknown", pause.get("resets_at")))
+        self.say("  %s: Fable's weekly window is spent (%s); Fable launches are held until %s and everything else keeps launching"
+                 % (source, limit.signal, payload["resets_at"]))
+
+    def _unhold(self, why):
+        """Journal the end of the hold on Fable's weekly window: `unpaused` with `model: fable`."""
+        self.ledger.append_event(UNPAUSED, {"model": pacing.FABLE})
+        self._tail()
+        self.say("  %s; Fable launches are no longer held" % why)
 
     def _pace(self):
         """Wave step 8: the action from the latest readings, journaled as `pacing` when the reading changed.
 
         With nothing read from either surface yet, the action stands as it is: a run is never
-        slowed or stopped on a guess.
+        slowed or stopped on a guess. Fable's weekly window never moves the action; its reading
+        begins or ends the hold on Fable launches instead (`_hold_by_reading`).
         """
         if not self.windows.known():
             return
         now = self.clock()
         stop_at, cheap_at = self._thresholds()
-        reading = {name: self.windows.utilization(name, now) for name in pacing.WINDOWS}
-        self.action = pacing.action_for(reading["five_hour"], reading["seven_day"], stop_at, cheap_at)
+        reading = {name: self.windows.utilization(name, now) for name in pacing.READINGS}
+        if self.windows.known(pacing.WINDOWS):
+            self.action = pacing.action_for(reading["five_hour"], reading["seven_day"], stop_at, cheap_at)
         reading["action"] = self.action
-        if reading == self.view.pacing:
+        if reading != self.view.pacing:
+            self.ledger.append_event(PACING, reading)
+            self._tail()
+            self.say("  pacing: %s (five_hour %s, seven_day %s, fable %s; stop at %s, cheap only at %s)"
+                     % (self.action, reading["five_hour"], reading["seven_day"], reading["fable"], stop_at, cheap_at))
+        self._hold_by_reading(reading["fable"], stop_at)
+
+    def _hold_by_reading(self, fable, stop_at):
+        """The hold a reading of Fable's weekly window calls for: begun at `stop_at` or above, ended under it.
+
+        `cheap_at` never applies, since Fable has no cheaper tier (decision 15). A reading under
+        `stop_at` can end a hold only when it is newer than what began the hold, which `Windows`
+        sees to: a reading is replaced only by one read at the same moment or later.
+        """
+        if fable is None:
             return
-        self.ledger.append_event(PACING, reading)
-        self._tail()
-        self.say("  pacing: %s (five_hour %s, seven_day %s; stop at %s, cheap only at %s)"
-                 % (self.action, reading["five_hour"], reading["seven_day"], stop_at, cheap_at))
+        if self.view.hold is None and fable >= stop_at:
+            reading = self.windows.readings.get(pacing.FABLE)
+            self._hold(pacing.Limit(pacing.READING_SIGNAL, reading.resets_at if reading else None, pacing.SEVEN_DAY,
+                                    fable, pacing.FABLE), "Fable's weekly window reads %s, at or above stop_at %s" % (fable, stop_at))
+        elif self.view.hold is not None and fable < stop_at:
+            self._unhold("Fable's weekly window reads %s, under stop_at %s" % (fable, stop_at))
 
     def _thresholds(self):
         """`(stop_at, cheap_at)`: `policy.pacing`, under `harness.json`'s `pacing`, under a `control pacing` event's."""
@@ -1392,11 +1573,12 @@ class Conductor:
         return pacing.thresholds(self.policy.get("pacing"), harness.get("pacing"), self.view.thresholds)
 
     def _wait_seconds(self):
-        """How long `run` waits before the next wave: `policy.poll_seconds`, or less when a pause resets sooner."""
+        """How long `run` waits before the next wave: `policy.poll_seconds`, or less when a pause or the hold resets sooner."""
         seconds = self._poll_seconds()
-        resets = pacing.epoch((self.view.pause or {}).get("resets_at"))
-        if resets is not None:
-            seconds = max(0, min(seconds, resets - self.clock()))
+        for stands in (self.view.pause, self.view.hold):
+            resets = pacing.epoch((stands or {}).get("resets_at"))
+            if resets is not None:
+                seconds = max(0, min(seconds, resets - self.clock()))
         return seconds
 
     # --- what other processes asked for (decision 5, wave step 1) ---
@@ -1576,7 +1758,7 @@ class Conductor:
                 self._fail(attempt, "rebasing %s onto main failed and git named no conflicting path, so there is "
                            "nothing an integrator could resolve: %s" % (BRANCH % attempt.id, conflict.output), "split")
                 return "failed"
-            if self._holds_launches():
+            if self._integrator_waits(attempt):
                 attempt.integrating, attempt.want = True, _Want(INTEGRATE)
                 self.say("  ticket %d: rebasing onto main conflicts in %s; the integrator waits until the run may launch again"
                          % (attempt.id, ", ".join(conflict.paths)))
@@ -1584,6 +1766,9 @@ class Conductor:
             # Every path both sides changed may conflict, not only the one the rebase stopped on first.
             touches = sorted(set(conflict.paths) | (before & self._main_paths(attempt)))
             told = self._launch_integrator(attempt, conflict, touches)
+            if told is None:  # a usage window refused it: it is not spent, and is launched again once the window allows
+                attempt.integrating, attempt.want = True, _Want(INTEGRATE)
+                return "session"
             resolved_by = INTEGRATOR
             with self.ledger.lock():
                 again = self._rebase(attempt)
@@ -1656,6 +1841,15 @@ class Conductor:
         """Whether this attempt's one integrator was already launched: its session left a stream."""
         return (self._integrator_dir(attempt) / "stream.jsonl").is_file()
 
+    def _set_aside(self, run_dir):
+        """Move a refused integrator's session directory aside, kept for the record, so its one launch is not spent."""
+        number = 1
+        while run_dir.with_name("%s-refused-%d" % (run_dir.name, number)).exists():
+            number += 1
+        aside = run_dir.with_name("%s-refused-%d" % (run_dir.name, number))
+        run_dir.rename(aside)
+        return aside
+
     def _stop_integrator(self, attempt):
         """An integrator a dead conductor launched: ended if it still runs, and the rebase it was in aborted.
 
@@ -1677,7 +1871,10 @@ class Conductor:
         self._git(attempt.worktree, "rebase", "--abort", ok=None)  # nothing to abort is not an error here
 
     def _launch_integrator(self, attempt, conflict, touches):
-        """Launch the integrator once, in the worktree, with `touches` as its touch set; what it came to, in words.
+        """Launch the integrator once, in the worktree, with `touches` as its touch set; what it came to, in words, or None if refused.
+
+        A session a usage window refused is no launch at all: the limit is journaled, its directory
+        is set aside, and None tells the integration to wait and launch it again (decision 15).
 
         The session runs to its end on this thread, since nothing behind this ticket can integrate
         before it. Nothing about it is journaled as a `ticket_*` event: the attempt a restart
@@ -1711,12 +1908,26 @@ class Conductor:
         except Exception as failure:  # a role, a prompt, a settings file, or the launch: the ticket is split, not the run
             told = "could not be launched (%s)" % failure
         else:
-            session = "session `%s` on %s" % (envelope.session_id or "unknown", envelope.model or tier.model)
-            result = envelope.structured_output if envelope.valid else None
-            if result is None:
-                told = "returned no usable result (%s)" % ("; ".join(envelope.errors) or "no structured output")
+            limit = pacing.hit_limit(envelope, worker.stderr_tail(run_dir), self.clock(), model=tier.model)
+            if limit is not None and not envelope.valid:
+                self._pause(limit, "ticket %d's integrator" % attempt.id)
+                self._git(attempt.worktree, "rebase", "--abort", ok=None)  # what the refused session began is not left in progress
+                try:
+                    aside = self._set_aside(run_dir)
+                except OSError as failure:  # its one launch stays spent, and the rebase after it fails the ticket as it would
+                    told = ("was refused by the usage limit, and its session could not be set aside to be launched again (%s)"
+                            % failure)
+                else:
+                    self.say("  ticket %d: the usage limit refused the integrator; its session is kept in %s, and it is "
+                             "launched again, never resumed, once the window allows" % (attempt.id, aside.name))
+                    return None
             else:
-                told = "returned %s: %s" % (result.get("status"), (result.get("summary") or "").strip() or "no summary")
+                session = "session `%s` on %s" % (envelope.session_id or "unknown", envelope.model or tier.model)
+                result = envelope.structured_output if envelope.valid else None
+                if result is None:
+                    told = "returned no usable result (%s)" % ("; ".join(envelope.errors) or "no structured output")
+                else:
+                    told = "returned %s: %s" % (result.get("status"), (result.get("summary") or "").strip() or "no summary")
         self.say("  ticket %d: the integrator %s" % (attempt.id, told))
         attempt.body = tickets.with_result_note(attempt.body, [
             "**Integrator** (attempt %d), %s, on %s: it %s." % (
@@ -1724,6 +1935,16 @@ class Conductor:
         ])
         tickets.write_ticket(self.ledger, attempt.ticket, attempt.body)
         return told
+
+    def _integrator_waits(self, attempt):
+        """Whether the integrator may not launch now: the run holds model work, or it runs on Fable while the hold stands.
+
+        Its request defines the one agent, on its tier's model, so that model says whether it is on Fable.
+        The run is asked again after the hold, because the `/usage` the hold may read can say `stop`.
+        """
+        if self._holds_launches():
+            return True
+        return (self._integrator_tier(attempt).model == pacing.FABLE and self._fable_held()) or self._holds_launches()
 
     def _integrator_tier(self, attempt):
         """`policy.roles.integrator`'s model and effort, with the ticket's own budget and the model's context cap."""
@@ -1784,6 +2005,9 @@ class Conductor:
         state across a window boundary is worse than leaving both for the next wave. `cheap_only`
         holds it too, because a verdict runs a tier above the work it judges and so is never on
         the cheap tier that difficulty 1 and 2 run on.
+
+        While the hold on Fable's weekly window stands, a done ticket any of whose verdicts runs on
+        Fable keeps every one of them queued, and the other tickets' verdicts are taken (decision 15).
         """
         if not self.verdicts:
             return
@@ -1793,14 +2017,41 @@ class Conductor:
             return
         queued, self.verdicts = self.verdicts, []
         for entry in queued:
+            on_fable = self._verdicts_on_fable(entry) and self._fable_held()
+            if on_fable or self._holds_launches() or self.action != schedule.NORMAL:
+                # The ticket's verdicts wait whole: on the hold, or on a refusal or a `/usage` reading met in this wave.
+                self.verdicts.append(entry)
+                continue
             self._gate(entry, result)
+        waiting = sorted(entry.ticket for entry in self.verdicts) if self.view.hold is not None else None
+        if waiting and waiting != self._said_waiting:
+            self.say("  ticket(s) %s wait for a verdict on Fable while Fable's weekly window is held"
+                     % ", ".join(str(identifier) for identifier in waiting))
+        self._said_waiting = waiting
+
+    def _verdicts_on_fable(self, entry):
+        """Whether any verdict a done ticket earned runs on Fable: its verifier's tier for the author names Fable."""
+        for ask in entry.asks:
+            try:
+                if gates.verifier_tier(self.policy, ask.author_model)[0] == pacing.FABLE:
+                    return True
+            except gates.GateError:
+                continue  # the gate refuses it by name when it is taken
+        return False
 
     def _gate(self, entry, result):
         """One done ticket's verdicts, in order; every one of them has to pass before it is accepted."""
-        for ask in entry.asks:
+        for index, ask in enumerate(entry.asks):
             try:
                 verdict = gates.verdict_for(ask, project=self.project, harness_root=self.harness_root,
                                             policy=self.policy, ledger=self.ledger)
+            except gates.UsageLimited as refused:
+                # A closed window, not a verdict: what is left of the ticket's verdicts stays queued, to be launched again.
+                self._pause(refused.limit, "ticket %d's %s verdict" % (entry.ticket, ask.verdict_type))
+                self.verdicts.append(_Queued(entry.ticket, entry.attempt, entry.asks[index:]))
+                self.say("  ticket %d: the usage limit refused its %s verdict; it stays queued and is launched again, never resumed"
+                         % (entry.ticket, ask.verdict_type))
+                return
             except (ValueError, OSError) as failure:
                 # A verdict nobody could take is not a verdict against the ticket. It keeps the
                 # `done` its machine gates earned and is not accepted, which is what `wayline
@@ -2039,6 +2290,18 @@ LATER = (
 )
 
 
+def parse_simulated_limit(text):
+    """`--simulate-limit`'s value as `(seconds, model)`: `S` for every model's windows, `fable:S` for Fable's weekly window; None otherwise."""
+    model, _, seconds = str(text).rpartition(":")
+    if model not in ("", pacing.FABLE):
+        return None
+    try:
+        value = float(seconds)
+    except ValueError:
+        return None
+    return (value, model or None) if 0 <= value < float("inf") else None
+
+
 def run_command(args):
     """`wayline run`: the conductor over the active project, or the one `--project` names."""
     parser = argparse.ArgumentParser(prog="wayline run",
@@ -2046,8 +2309,9 @@ def run_command(args):
     parser.add_argument("--project", help="the project to run; the active one by default")
     parser.add_argument("--resume", action="store_true", help="say in run_started that this run resumes one (every run replays the journal)")
     parser.add_argument("--detach", action="store_true", help="run as the transient user unit wayline-conductor, which outlives this shell")
-    parser.add_argument("--simulate-limit", metavar="S", type=float,
-                        help="the next launch carries a rejected rate_limit_event resetting S seconds ahead, which pauses the run")
+    parser.add_argument("--simulate-limit", metavar="[fable:]S",
+                        help="the next launch carries a rejected rate_limit_event resetting S seconds ahead, which pauses the run; "
+                             "with fable:S the next Fable launch is refused on Fable's weekly window, which holds only Fable launches")
     parser.add_argument("--simulate-failure", metavar="ID", help="pretend a ticket failed (ticket 38)")
     parser.add_argument("--max-waves", type=int, metavar="N", help="stop after N waves, whatever the frontier still holds")
     try:
@@ -2058,8 +2322,9 @@ def run_command(args):
         if getattr(options, name):
             print("wayline run: %s is not yet implemented; it arrives with %s" % (flag, owner), file=sys.stderr)
             return 2
-    if options.simulate_limit is not None and options.simulate_limit < 0:
-        print("wayline run: --simulate-limit takes a number of seconds, 0 or more", file=sys.stderr)
+    simulated = None if options.simulate_limit is None else parse_simulated_limit(options.simulate_limit)
+    if options.simulate_limit is not None and simulated is None:
+        print("wayline run: --simulate-limit takes a number of seconds, 0 or more, or fable:<seconds>", file=sys.stderr)
         return 2
 
     try:
@@ -2079,8 +2344,8 @@ def run_command(args):
     announce_dashboard(project)
     conductor = Conductor(project)
     print("run      %s (%s, radius %s)" % (project, harness.get("autonomy"), harness.get("radius")))
-    if options.simulate_limit is not None:
-        worker.simulate_limit(options.simulate_limit)
+    if simulated is not None:
+        worker.simulate_limit(*simulated)
     try:
         waves = conductor.run(max_waves=options.max_waves, resume=options.resume)
     except (ConductorError, ValueError, OSError) as failure:

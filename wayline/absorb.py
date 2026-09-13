@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from wayline import HARNESS_ROOT, gates, worker
+from wayline import HARNESS_ROOT, gates, pacing, worker
 from wayline.dossier import LEVEL_2, REFS, SOURCE, DossierError, read_dossier
 from wayline.jsonschema import ValidationError, load_schema, validate
 from wayline.ledger import LedgerError, ledger_for, now_ts
@@ -598,6 +598,12 @@ def workflow_fanout(context):
             else:
                 outcome.result = result
             return outcome
+        limit = pacing.hit_limit(envelope, worker.stderr_of(envelope), model=request.model)
+        if limit is not None:
+            outcome.problems.append("the usage limit refused the absorb session on %s; it is not launched again with other "
+                                    "rules, and absorbing again once the window allows launches it fresh"
+                                    % ("Fable's weekly window" if limit.model == pacing.FABLE else "the %s window" % limit.window))
+            return outcome
         refused = _refused(envelope)
         detail = "; ".join(envelope.errors) or (envelope.result_text or "").strip() or "no reason given"
         if rules == NARROW and refused:
@@ -745,7 +751,8 @@ def conductor_fanout(context):
             max_minutes=_minutes(context.policy, "medium"),
         )
         envelope = _launch(context, request, outcome)
-        if envelope is not None and not envelope.valid and envelope.session_id:
+        if envelope is not None and not envelope.valid and envelope.session_id \
+                and pacing.hit_limit(envelope, worker.stderr_of(envelope), model=request.model) is None:  # a refused session is never resumed
             envelope = _resume(context, request, envelope.session_id, INVALID_RESUME % ("; ".join(envelope.errors) or "no structured output"), outcome) or envelope
         if envelope is not None and envelope.valid:
             sections = envelope.structured_output
@@ -801,6 +808,8 @@ def _read_chunk(context, request, chunk, outcome):
     missing = [item for item in chunk["obligations"] if item not in {entry["item_id"] for entry in got}]
     if envelope.valid and not missing:
         return got, None
+    if not envelope.valid and pacing.hit_limit(envelope, worker.stderr_of(envelope), model=request.model) is not None:
+        return got, "the usage limit refused the reader, and a refused session is never resumed; absorb again once the window allows"
     if not envelope.session_id:
         return got, "the reader returned no valid entries and no session to resume: %s" % "; ".join(envelope.errors)
     message = MISSING_RESUME % ", ".join(missing) if envelope.valid else INVALID_RESUME % ("; ".join(envelope.errors) or "no structured output")

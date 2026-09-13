@@ -467,6 +467,18 @@ class ConductorFanoutTest(AbsorbTestCase):
         self.fake.script(Envelope(structured_output=sections()), role="synthesizer")
         self.assertEqual(self.absorb()["fanout"], "conductor")
 
+    def test_a_reader_the_usage_limit_refused_is_not_resumed(self):
+        """Ticket 54 (decision 15): a refused session is never resumed, and its chunk fails with the reason."""
+        self.fake.script(respond=self.reader(), role="reader")
+        self.fake.script(Envelope(api_error_status=429, is_error=True, exit_code=1, session_id="refused-reader",
+                                  errors=["You've hit your session limit · resets 3:45pm (UTC)"]), role="reader")
+        self.script_readers(count=4)
+        self.fake.script(Envelope(structured_output=sections()), role="synthesizer")
+        report = self.absorb(fanout=CONDUCTOR)
+        self.assertEqual([call for call in self.fake.calls if call.kind == "resume"], [])
+        self.assertEqual(report["failures"][0]["chunk"], "c-002")
+        self.assertIn("never resumed", report["failures"][0]["reason"])
+
 
 class CoverageAuditTest(unittest.TestCase):
     def test_a_figure_answered_without_saying_what_it_shows_is_not_covered(self):
