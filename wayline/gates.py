@@ -58,6 +58,8 @@ __all__ = [
     "Verdict",
     "VERIFIER",
     "VERDICT_TYPES",
+    "CLAIM_SUPPORT",
+    "file_writing_ticket",
     "SEVERITIES",
     "SUBJECT_KINDS",
     "findings_text",
@@ -214,16 +216,23 @@ def run_machine_acceptance(commands, cwd, timeout_s):
     """
     results = []
     for command in commands:
-        results.append(_run_one(command, cwd, timeout_s))
+        results.append(run_shell(command, cwd, timeout_s))
     return results
 
 
-def _run_one(command, cwd, timeout_s):
+def run_shell(command, cwd, timeout_s, env=None, label="wayline accept"):
+    """Run one shell command in `cwd` under `timeout_s`; returns `{cmd, exit_code, seconds, tail}`.
+
+    stdout and stderr arrive interleaved in `tail`, as a person would have seen them. `env`
+    replaces the environment when given; intake passes the sample artifact to a goal's
+    `eval_command` this way.
+    """
     started = time.monotonic()
     process = subprocess.Popen(
         command,
         shell=True,
         cwd=str(cwd),
+        env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -237,7 +246,7 @@ def _run_one(command, cwd, timeout_s):
     except subprocess.TimeoutExpired:
         _kill_group(process)
         output, note = _drain(process)
-        output = output + "\nwayline accept: killed after %s seconds.%s\n" % (timeout_s, note)
+        output = output + "\n%s: killed after %s seconds.%s\n" % (label, timeout_s, note)
         exit_code = TIMEOUT_EXIT_CODE
     return {
         "cmd": command,
@@ -398,7 +407,8 @@ DIFF = "diff"                            # difficulty 3: an independent read of 
 RESULT = "result"                        # difficulty 4 and 5: an independent read of the result
 KILL_MEMO = "kill_argument_memo"         # the first thread: the strongest rejection memo
 KILL_ARGUMENT = "kill_argument"          # the second thread: the memo adjudicated point by point
-VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT)
+CLAIM_SUPPORT = "claim_support"          # a sampled report claim: do its cited artifacts support it
+VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT)
 
 # What an independent read of a done ticket reads, by the ticket's effective difficulty.
 DIFFICULTY_VERDICTS = {3: DIFF, 4: RESULT, 5: RESULT}
@@ -826,39 +836,9 @@ def _file_writing_ticket(project, ledger, adjudication, paths, memo):
     """File the `writing` ticket a failed kill argument scopes the claims down with; returns its id.
 
     The touch set is the subject itself, because scoping a claim down is an edit to the document
-    that makes it. The verifier is the ticket's author: no planner, worker, decider, human, or
-    evolve pass proposed it, and naming one of them would be a lie in the file a person reads.
+    that makes it.
     """
-    project = Path(project).resolve()
-    ledger = ledger_for(ledger or project)
-    identifier = next_id(project)
-    fields = {
-        "id": identifier,
-        "title": WRITING_TITLE,
-        "kind": "writing",
-        "difficulty": WRITING_DIFFICULTY,
-        "status": "open",
-        "blocked_by": [],
-        "touches": [adjudication.subject],
-        "role": WRITING_ROLE,
-        "skills": [],
-        "inputs": list(paths),
-        "outputs": [adjudication.subject],
-        "acceptance": {
-            "machine": [],
-            "quality": ["Does every point the kill argument left standing now have either the "
-                        "evidence it asked for or a claim scoped down to what the artifacts support?"],
-        },
-        "context_pack": list(paths),
-        "origin": adjudication.subject,
-        "proposed_by": VERIFIER,
-        "demo": "The kill argument runs again on %s and these points no longer stand." % adjudication.subject,
-    }
     body = "\n".join([
-        "## Demo",
-        "",
-        fields["demo"],
-        "",
         "## What the kill argument left standing",
         "",
         "The rejection memo was written by verifier session `%s` (%s) and adjudicated by verifier "
@@ -871,8 +851,48 @@ def _file_writing_ticket(project, ledger, adjudication, paths, memo):
         "",
         "## The paths both threads read",
         "",
-    ] + ["- `%s`" % item for item in paths]) + "\n"
-    write_ticket(ledger, fields, body)
+    ] + ["- `%s`" % item for item in paths])
+    return file_writing_ticket(
+        project, ledger, title=WRITING_TITLE, touches=[adjudication.subject], inputs=list(paths),
+        quality=["Does every point the kill argument left standing now have either the "
+                 "evidence it asked for or a claim scoped down to what the artifacts support?"],
+        origin=adjudication.subject,
+        demo="The kill argument runs again on %s and these points no longer stand." % adjudication.subject,
+        body=body,
+    )
+
+
+def file_writing_ticket(project, ledger, *, title, touches, inputs, quality, origin, demo, body):
+    """File one `writing` ticket on the verifier's behalf and journal `ticket_created`; returns its id.
+
+    What files one: a failed kill argument, and a sampled report claim its artifacts do not support
+    (ticket 40). The verifier is the ticket's author: no planner, worker, decider, human, or evolve
+    pass proposed it, and naming one of them would be a lie in the file a person reads. `body` is
+    the markdown after the `## Demo` section, which this writes from `demo`.
+    """
+    project = Path(project).resolve()
+    ledger = ledger_for(ledger or project)
+    identifier = next_id(project)
+    fields = {
+        "id": identifier,
+        "title": title,
+        "kind": "writing",
+        "difficulty": WRITING_DIFFICULTY,
+        "status": "open",
+        "blocked_by": [],
+        "touches": list(touches),
+        "role": WRITING_ROLE,
+        "skills": [],
+        "inputs": list(inputs),
+        "outputs": list(touches),
+        "acceptance": {"machine": [], "quality": list(quality)},
+        "context_pack": list(inputs),
+        "origin": origin,
+        "proposed_by": VERIFIER,
+        "demo": demo,
+    }
+    text = "\n".join(["## Demo", "", demo, "", body.strip("\n")]) + "\n"
+    write_ticket(ledger, fields, text)
     ledger.append_event(TICKET_CREATED, {
         "ticket": identifier, "kind": fields["kind"], "proposed_by": VERIFIER,
         "origin": fields["origin"], "blocked_by": [],

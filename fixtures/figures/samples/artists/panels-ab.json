@@ -1,0 +1,216 @@
+{
+  "schema": "figure_artists/1",
+  "figures": [
+    {
+      "saved_to": "out.pdf",
+      "figure": {
+        "width_px": 350.39,
+        "height_px": 177.17,
+        "dpi": 100.0,
+        "width_in": 3.5039370078740157,
+        "height_in": 1.7716535433070868,
+        "scale": 1.0
+      },
+      "texts": [
+        {
+          "text": "0.0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            30.97,
+            23.72,
+            53.1,
+            37.72
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.5",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            91.18,
+            23.72,
+            113.3,
+            37.72
+          ],
+          "haloed": false
+        },
+        {
+          "text": "1.0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            151.38,
+            23.72,
+            173.51,
+            37.72
+          ],
+          "haloed": false
+        },
+        {
+          "text": "x",
+          "role": "text",
+          "fontsize_pt": 10.0,
+          "extent": [
+            98.12,
+            4.17,
+            106.37,
+            18.17
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            4.17,
+            43.73,
+            26.29,
+            57.73
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.5",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            4.17,
+            91.55,
+            26.29,
+            105.55
+          ],
+          "haloed": false
+        },
+        {
+          "text": "1.0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            4.17,
+            139.38,
+            26.29,
+            153.38
+          ],
+          "haloed": false
+        },
+        {
+          "text": "a",
+          "role": "panel_label",
+          "fontsize_pt": 12.0,
+          "extent": [
+            36.01,
+            158.0,
+            47.26,
+            173.0
+          ],
+          "haloed": false
+        },
+        {
+          "text": "y",
+          "role": "text",
+          "fontsize_pt": 10.0,
+          "extent": [
+            87.4,
+            126.17,
+            95.65,
+            140.17
+          ],
+          "haloed": false
+        },
+        {
+          "text": "X",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            241.8,
+            23.72,
+            251.3,
+            37.72
+          ],
+          "haloed": false
+        },
+        {
+          "text": "A",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            308.7,
+            23.72,
+            318.2,
+            37.72
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            181.93,
+            38.94,
+            204.05,
+            52.94
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0.5",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            181.93,
+            94.62,
+            204.05,
+            108.62
+          ],
+          "haloed": false
+        },
+        {
+          "text": "b",
+          "role": "panel_label",
+          "fontsize_pt": 12.0,
+          "extent": [
+            213.77,
+            158.0,
+            225.65,
+            173.0
+          ],
+          "haloed": false
+        }
+      ],
+      "panels": [
+        {
+          "label": "a",
+          "bbox": [
+            0.01189,
+            0.02352,
+            0.49518,
+            0.97648
+          ]
+        },
+        {
+          "label": "b",
+          "bbox": [
+            0.51921,
+            0.1339,
+            0.98811,
+            0.97648
+          ]
+        }
+      ],
+      "marked_lines": [],
+      "structure": [],
+      "mappables": [],
+      "colors": [
+        "#000000",
+        "#0072B2",
+        "#CCCCCC",
+        "#E69F00",
+        "#FFFFFF"
+      ]
+    }
+  ]
+}

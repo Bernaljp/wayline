@@ -4,14 +4,14 @@
 
 **Blocked by:** 48 (The plot index)
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#50](https://github.com/Bernaljp/wayline/issues/50) (mirror; the local file is the source)
 
 **Milestone:** M7 Figures, docs, paper. **Spec:** Implementation Decisions 13 (the figure role's checks, figure schemas, style); research-notes 11 Sections 3 and 4.
 
-- [ ] `schemas/figure_request.json` (`figure_request/1`) and `schemas/figure_result.json` (`figure_result/1`) carry the fields of Implementation Decisions 13, with `register: conceptual` forced for `framework` and `graphical_abstract` kinds and `guided` requiring `revision_of` and non-empty `change_requests`.
-- [ ] `figures/style.json` per project (from `figures/style.default.json`) holds the categorical set, one ramp per named quantity, the diverging pair, the single special hue, and the equation-parameter colors; `init` copies the default.
-- [ ] The 19 checks are functions with the tools named in the spec (`pdffonts` for Type 42 embedding, `pdfinfo` for width, pixel math and `pdfimages -list` for resolution, the save-time artist assertion and a PDF text walk for minimum font size and forbidden text, `pdftotext` for the word cap, `ruff` for the generator, a clean-room regeneration with SSIM at or above `policy.figures.ssim_min`, the palette allowlist or a CVD-simulated CIEDE2000 distance, the declared tolerance for selection representativeness, presence checks for schematic and mixed-data disclosure, `pdftoppm -r 600` crops, window-extent overlap, the provenance manifest); checks that need Python plotting or PDF libraries run as scripts shipped under `figures/checks/` in the project's environment, and the harness stays standard-library.
-- [ ] Each check returns `{id, type: "A", pass, tool, detail}`; the check runner returns the report block of `figure_result`.
-- [ ] Tests run every check against committed sample PDFs and PNGs with one passing and one failing case each.
+- [x] `schemas/figure_request.json` (`figure_request/1`) and `schemas/figure_result.json` (`figure_result/1`) carry the fields of Implementation Decisions 13, with `register: conceptual` forced for `framework` and `graphical_abstract` kinds and `guided` requiring `revision_of` and non-empty `change_requests`.
+- [x] `figures/style.json` per project (from `figures/style.default.json`) holds the categorical set, one ramp per named quantity, the diverging pair, the single special hue, and the equation-parameter colors; `init` copies the default.
+- [x] The 19 checks are functions with the tools named in the spec (`pdffonts` for Type 42 embedding, `pdfinfo` for width, pixel math and `pdfimages -list` for resolution, the save-time artist assertion and a PDF text walk for minimum font size and forbidden text, `pdftotext` for the word cap, `ruff` for the generator, a clean-room regeneration with SSIM at or above `policy.figures.ssim_min`, the palette allowlist or a CVD-simulated CIEDE2000 distance, the declared tolerance for selection representativeness, presence checks for schematic and mixed-data disclosure, `pdftoppm -r 600` crops, window-extent overlap, the provenance manifest); checks that need Python plotting or PDF libraries run as scripts shipped under `figures/checks/` in the project's environment, and the harness stays standard-library.
+- [x] Each check returns `{id, type: "A", pass, tool, detail}`; the check runner returns the report block of `figure_result`.
+- [x] Tests run every check against committed sample PDFs and PNGs with one passing and one failing case each.
