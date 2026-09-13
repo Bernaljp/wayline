@@ -1,0 +1,111 @@
+{
+  "schema": "figure_artists/1",
+  "figures": [
+    {
+      "saved_to": "out.pdf",
+      "figure": {
+        "width_px": 350.39,
+        "height_px": 196.85,
+        "dpi": 100.0,
+        "width_in": 3.5039370078740157,
+        "height_in": 1.968503937007874,
+        "scale": 1.0
+      },
+      "texts": [
+        {
+          "text": "0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            118.3,
+            -2.07,
+            127.17,
+            11.93
+          ],
+          "haloed": false
+        },
+        {
+          "text": "2",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            194.09,
+            -2.07,
+            202.96,
+            11.93
+          ],
+          "haloed": false
+        },
+        {
+          "text": "0",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            85.19,
+            145.78,
+            94.07,
+            159.78
+          ],
+          "haloed": false
+        },
+        {
+          "text": "1",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            85.19,
+            107.89,
+            94.07,
+            121.89
+          ],
+          "haloed": false
+        },
+        {
+          "text": "2",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            85.19,
+            69.99,
+            94.07,
+            83.99
+          ],
+          "haloed": false
+        },
+        {
+          "text": "3",
+          "role": "ticklabel",
+          "fontsize_pt": 10.0,
+          "extent": [
+            85.19,
+            32.1,
+            94.07,
+            46.1
+          ],
+          "haloed": false
+        }
+      ],
+      "panels": [],
+      "marked_lines": [],
+      "structure": [
+        {
+          "gid": "container:stage",
+          "colors": [
+            "#E69F00"
+          ]
+        }
+      ],
+      "mappables": [
+        {
+          "cmap": "magma",
+          "quantity": "density"
+        }
+      ],
+      "colors": [
+        "#000000",
+        "#E69F00",
+        "#FFFFFF"
+      ]
+    }
+  ]
+}

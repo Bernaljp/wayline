@@ -61,6 +61,10 @@ GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/se
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")
 # The directories a project keeps outside the ledger; both are gitignored.
 PROJECT_DIRS = (".worktrees", "results")
+# The house style (Implementation Decisions 13): the harness default, copied once into the project,
+# where the owner and the figure role edit it and a later `init` never overwrites it.
+STYLE_DEFAULT = Path("figures") / "style.default.json"
+STYLE_JSON = Path("figures") / "style.json"
 
 JOURNAL = "journal.jsonl"
 FINDINGS = "findings.jsonl"
@@ -320,6 +324,16 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
         if not (project / name).exists():
             (project / name).mkdir(parents=True)
             mark(name + "/")
+
+    # figures/style.json: the house style, copied from the harness default once and never again.
+    style_default = harness_root / STYLE_DEFAULT
+    if not (project / STYLE_JSON).exists():
+        if style_default.is_file():
+            (project / STYLE_JSON).parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(project / STYLE_JSON, style_default.read_text(encoding="utf-8"))
+            mark(STYLE_JSON.as_posix())
+        else:
+            notes.append("the harness has no %s; the project has no house style until one is written" % STYLE_DEFAULT.as_posix())
 
     # The research/ tree, through the ledger: it is the only code that writes under research/.
     changes.extend(_write_research(project, harness_root, pinned_tag))

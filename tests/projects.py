@@ -42,6 +42,8 @@ class ProjectTestCase(unittest.TestCase):
         (root / "workflows").mkdir(parents=True, exist_ok=True)
         shutil.copytree(TEMPLATES_DIR, root / "templates" / "project", dirs_exist_ok=True)
         shutil.copy(HARNESS_ROOT / "policy.json", root / "policy.json")
+        (root / "figures").mkdir(exist_ok=True)
+        shutil.copy(HARNESS_ROOT / "figures" / "style.default.json", root / "figures" / "style.default.json")
         for skill in skills:
             directory = root / "skills" / skill
             directory.mkdir(exist_ok=True)

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "library": "matplotlib",
+  "categorical": [
+    "#000000", "#E69F00", "#56B4E9", "#009E73",
+    "#F0E442", "#0072B2", "#D55E00", "#CC79A7"
+  ],
+  "ramp_per_quantity": {},
+  "diverging": {"low": "#2166AC", "high": "#B2182B", "cmap": "RdBu_r"},
+  "special_hue": "#D62728",
+  "equation_parameter_colors": ["#1B9E77", "#D95F02", "#7570B3"],
+  "cvd_min_delta_e": 10
+}

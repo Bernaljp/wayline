@@ -1,0 +1,45 @@
+{
+  "schema": "figure_result/1",
+  "ticket": "49",
+  "figure_id": "fig1",
+  "status": "selected",
+  "candidates": [
+    {
+      "rank": 1,
+      "index_id": "ranking/bar/matplotlib",
+      "rendered": true
+    }
+  ],
+  "selected": {
+    "rank": 1,
+    "by": "decider",
+    "margin": 3,
+    "margin_low": false
+  },
+  "final": {
+    "generator": "figures/fig1/fig1.py",
+    "pdf": "figures/fig1/fig1.pdf",
+    "png": "figures/fig1/fig1.png",
+    "caption": "figures/fig1/caption.md",
+    "notes": "figures/fig1/notes.md",
+    "crops": [],
+    "inputs": [
+      {
+        "path": "results/t7-a1/scores.csv",
+        "sha256": "7c3f3b2774664a8e09e2a7934bce648fef8d676f079531f6eb03991f9415553e",
+        "run_id": "t7-a1",
+        "panels": [
+          "a"
+        ]
+      },
+      {
+        "path": "results/t8-a1/timing.csv",
+        "sha256": "f44004a41e8b1403177bfd964867be03caeabbae662a16240aeea34b26a13b4f",
+        "run_id": "t8-a1",
+        "panels": [
+          "b"
+        ]
+      }
+    ]
+  }
+}
