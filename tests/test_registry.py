@@ -87,7 +87,7 @@ class ShippedSkillsTest(unittest.TestCase):
                 record = json.loads((FIXTURES_DIR / "skill" / name / "fixture.json").read_text(encoding="utf-8"))
                 self.assertEqual(record["id"], "skill/" + name)
                 self.assertEqual(record["kind"], "skill")
-                self.assertNotIn("judged", record, "the judged layer needs the runner of ticket 44")
+                self.assertNotIn("judged", record, "a skill's judged layer arrives with the ticket that records its session")
                 self.assertIsInstance(record["structural"], list)
                 self.assertTrue((HARNESS_ROOT / record["subject"]["path"]).is_file())
                 self.assertTrue((FIXTURES_DIR / "skill" / name / record["input"]["prompt"]).is_file())

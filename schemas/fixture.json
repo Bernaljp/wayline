@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fixture",
+  "description": "One model-behavior fixture (Implementation Decisions 12): fixtures/<kind>/<slug>/fixture.json, beside input/, rubric.md, recorded/, and runs/. The subject, the pinned input pack and how it launches, the structural checks (n of n), the judged layer (at_least of sample_size), the baseline the recorder set, and the state the runner keeps to tell a regression from a flake. wayline record writes it; the author prunes the proposed checks; wayline fixture run updates last_run, quarantine, and, on a rewrite, baseline, and nothing else.",
+  "type": "object",
+  "required": ["schema_version", "id", "kind", "subject", "origin", "launch", "input", "structural", "quarantine"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^(prompt|role|skill|verifier|conductor)/[a-z0-9][a-z0-9-]*$", "description": "<kind>/<slug>, the directory under fixtures/"},
+    "kind": {"type": "string", "enum": ["prompt", "role", "skill", "verifier", "conductor"]},
+    "subject": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "pattern": "^[^/]", "description": "the file under test, relative to the tree that holds fixtures/"},
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "the subject's hash when the fixture was recorded: path and also, names and bytes"},
+        "also": {"type": "array", "items": {"type": "string", "pattern": "^[^/]"}, "description": "further files whose change is a change to the subject (its sidecar, its schema)"}
+      }
+    },
+    "origin": {
+      "type": "object",
+      "required": ["reason"],
+      "additionalProperties": false,
+      "properties": {
+        "project": {"type": ["string", "null"]},
+        "ticket": {"type": ["integer", "null"], "minimum": 1},
+        "session_id": {"type": ["string", "null"]},
+        "journal_ts": {"type": ["string", "null"]},
+        "change_record": {"type": ["string", "null"]},
+        "reason": {"type": "string", "pattern": "\\S", "description": "why the fixture exists; retirement is a human decision recorded here, never a deletion by the runner"}
+      }
+    },
+    "launch": {
+      "type": "object",
+      "required": ["model", "effort"],
+      "additionalProperties": false,
+      "description": "How the subject is launched through the worker launcher. There is no bare field: fixtures never use --bare, which does not use the subscription login.",
+      "properties": {
+        "role": {"type": ["string", "null"], "description": "the --agent the input's agent.json defines"},
+        "model": {"type": "string", "enum": ["haiku", "sonnet", "opus", "fable"]},
+        "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]},
+        "permission_mode": {"type": "string", "enum": ["dontAsk"]},
+        "max_turns": {"type": ["integer", "null"], "minimum": 1},
+        "max_minutes": {"type": ["number", "null"], "minimum": 1},
+        "output_format": {"type": "string", "enum": ["stream-json"]},
+        "json_schema": {"type": ["string", "null"], "description": "the pinned --json-schema, relative to the fixture"},
+        "fallback_model": {"type": ["string", "null"]},
+        "tools": {"type": "array", "items": {"type": "string"}, "description": "the tool list as written by hand before the recorder existed; informational"},
+        "allowed_tools": {"type": "array", "items": {"type": "string"}},
+        "disallowed_tools": {"type": "array", "items": {"type": "string"}},
+        "add_dirs": {"type": "array", "items": {"type": "string"}, "description": "templated: {harness}, {project}"},
+        "env": {"type": "object", "additionalProperties": {"type": "string"}, "description": "the TICKET_* and WAYLINE_* variables, templated: {harness}, {project}, {run}"},
+        "settings": {"type": ["string", "null"], "description": "the pinned settings.json, relative to the fixture, templated with {harness}; null launches with {}"}
+      }
+    },
+    "input": {
+      "type": "object",
+      "required": ["prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "prompt": {"type": "string", "description": "input/prompt.md, the exact rendered prompt"},
+        "agent": {"type": ["string", "null"], "description": "input/agent.json, the --agents object; null leaves the fixture unrunnable"},
+        "context_manifest": {"type": ["string", "null"], "description": "input/manifest.json: a sha256 per file of input/context/, which is copied into the run's project"},
+        "input_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "sha256 over the prompt, the agent JSON, the context manifest, and the schema as pinned"}
+      }
+    },
+    "structural": {"type": "array", "items": {"$ref": "#/$defs/check"}, "description": "Type-A checks, run in order on every sample and required n of n; schema_valid runs first whether or not it is listed"},
+    "judged": {
+      "type": "object",
+      "required": ["rubric", "show_judge", "judge", "sample_size", "pass_rule"],
+      "additionalProperties": false,
+      "properties": {
+        "rubric": {"type": "string", "description": "rubric.md, the one question"},
+        "show_judge": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/path"}, "description": "the only fields of the output the judge sees"},
+        "judge": {
+          "type": "object",
+          "required": ["model", "effort"],
+          "additionalProperties": false,
+          "properties": {
+            "model": {"type": "string", "enum": ["haiku", "sonnet", "opus", "fable"]},
+            "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]},
+            "tools": {"type": "array", "maxItems": 0, "description": "the judge has no tools"},
+            "votes": {"type": "integer", "minimum": 1, "description": "independent judge calls per sample; the majority decides"},
+            "must_differ_from_subject_session": {"const": true}
+          }
+        },
+        "sample_size": {"type": "integer", "minimum": 1},
+        "pass_rule": {
+          "type": "object",
+          "required": ["at_least"],
+          "additionalProperties": false,
+          "properties": {"at_least": {"type": "integer", "minimum": 1}}
+        },
+        "strict": {"type": "boolean", "description": "true forces at_least to sample_size"}
+      }
+    },
+    "baseline": {
+      "type": ["object", "null"],
+      "required": ["recorded_at", "structural", "passed"],
+      "additionalProperties": false,
+      "properties": {
+        "recorded_at": {"type": "string"},
+        "subject_sha256": {"type": ["string", "null"]},
+        "input_hash": {"type": ["string", "null"]},
+        "structural": {"type": "string", "pattern": "^[0-9]+/[0-9]+$"},
+        "judged": {"type": ["string", "null"], "pattern": "^[0-9]+/[0-9]+$"},
+        "passed": {"type": "boolean"},
+        "unstable": {"type": "boolean", "description": "the samples did not agree: a baseline not to gate on until it is tightened"}
+      }
+    },
+    "last_run": {
+      "type": ["object", "null"],
+      "required": ["ts", "outcome"],
+      "additionalProperties": false,
+      "description": "written by the runner: what the previous complete run saw, which is what a flake is measured against",
+      "properties": {
+        "ts": {"type": "string"},
+        "subject_sha256": {"type": ["string", "null"]},
+        "input_hash": {"type": ["string", "null"]},
+        "definition_sha256": {"type": ["string", "null"], "description": "the checks, the judged layer, the rubric, and the input; a change is a rewrite"},
+        "structural": {"type": "string"},
+        "judged": {"type": ["string", "null"]},
+        "outcome": {
+          "type": "object",
+          "required": ["structural", "judged"],
+          "additionalProperties": false,
+          "properties": {"structural": {"type": "boolean"}, "judged": {"type": ["boolean", "null"]}}
+        }
+      }
+    },
+    "quarantine": {
+      "type": "object",
+      "required": ["status", "flake_limit", "flakes", "stable_runs_to_restore"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {"type": "string", "enum": ["active", "quarantined"], "description": "quarantined keeps running and reporting but no longer gates"},
+        "flake_limit": {"type": "integer", "minimum": 1},
+        "flakes": {
+          "type": "array",
+          "description": "appended, never pruned",
+          "items": {
+            "type": "object",
+            "required": ["ts", "layer"],
+            "additionalProperties": false,
+            "properties": {
+              "ts": {"type": "string"},
+              "layer": {"type": "string", "enum": ["structural", "judged", "both"]},
+              "from": {"type": "object"},
+              "to": {"type": "object"}
+            }
+          }
+        },
+        "stable_runs_to_restore": {"type": "integer", "minimum": 1},
+        "stable_runs": {"type": "integer", "minimum": 0, "description": "consecutive runs whose outcome matched the run before"},
+        "restored_at": {"type": ["string", "null"], "description": "when a run of stable outcomes or a rewrite last restored it"},
+        "counted_from": {"type": "integer", "minimum": 0, "description": "the index into flakes from which flakes count toward flake_limit: the flakes before the last restore are kept and no longer counted"}
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "per_subject_run": {"$ref": "#/$defs/cost"},
+        "per_judge_run": {"$ref": "#/$defs/cost"}
+      }
+    },
+    "note": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "path": {"type": "string", "pattern": "^\\$", "description": "a JSONPath of the subset: $, .name, ['name'], [n], [*], .*"},
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "turns": {"type": ["integer", "null"], "minimum": 0},
+        "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "output_tokens": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "check": {
+      "oneOf": [
+        {"type": "object", "required": ["check"], "additionalProperties": false,
+         "properties": {"check": {"const": "schema_valid"}}},
+        {"type": "object", "required": ["check", "path", "value"], "additionalProperties": false,
+         "properties": {"check": {"const": "path_equals"}, "path": {"$ref": "#/$defs/path"}, "value": {"description": "any JSON value; every match must equal it"}}},
+        {"type": "object", "required": ["check", "path", "values"], "additionalProperties": false,
+         "properties": {"check": {"const": "path_in"}, "path": {"$ref": "#/$defs/path"}, "values": {"type": "array", "minItems": 1}}},
+        {"type": "object", "required": ["check", "path", "regex"], "additionalProperties": false,
+         "properties": {"check": {"const": "path_matches"}, "path": {"$ref": "#/$defs/path"}, "regex": {"type": "string"}}},
+        {"type": "object", "required": ["check", "path", "values"], "additionalProperties": false,
+         "properties": {"check": {"const": "path_contains_all"}, "path": {"$ref": "#/$defs/path"}, "values": {"type": "array", "minItems": 1}}},
+        {"type": "object", "required": ["check", "path", "values"], "additionalProperties": false,
+         "properties": {"check": {"const": "path_contains_any"}, "path": {"$ref": "#/$defs/path"}, "values": {"type": "array", "minItems": 1}}},
+        {"type": "object", "required": ["check", "path"], "additionalProperties": false,
+         "properties": {"check": {"const": "path_count"}, "path": {"$ref": "#/$defs/path"}, "min": {"type": "integer", "minimum": 0}, "max": {"type": "integer", "minimum": 0}}},
+        {"type": "object", "required": ["check", "path"], "additionalProperties": false,
+         "properties": {"check": {"const": "path_absent_or_empty"}, "path": {"$ref": "#/$defs/path"}}},
+        {"type": "object", "required": ["check", "path"], "additionalProperties": false,
+         "properties": {"check": {"const": "file_exists"}, "path": {"type": "string", "pattern": "^[^/]"}, "in": {"type": "string", "enum": ["worktree"]}}},
+        {"type": "object", "required": ["check", "path"], "additionalProperties": false,
+         "properties": {"check": {"const": "file_absent"}, "path": {"type": "string", "pattern": "^[^/]"}, "in": {"type": "string", "enum": ["worktree"]}}},
+        {"type": "object", "required": ["check", "tool"], "additionalProperties": false,
+         "properties": {"check": {"const": "tool_used"}, "tool": {"type": "string"}, "arg": {"type": "string"}, "input_matches": {"type": "string"}}},
+        {"type": "object", "required": ["check", "tool"], "additionalProperties": false,
+         "properties": {"check": {"const": "tool_not_used"}, "tool": {"type": "string"}, "arg": {"type": "string"}, "input_matches": {"type": "string"}}},
+        {"type": "object", "required": ["check", "file", "fn"], "additionalProperties": false,
+         "properties": {"check": {"const": "python"}, "file": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+\\.py$"}, "fn": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}}}
+      ]
+    }
+  }
+}

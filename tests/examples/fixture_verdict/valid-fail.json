@@ -1,0 +1,1 @@
+{"verdict": "fail", "reason": "The summary says the tests pass, and no pytest command is in commands_run."}

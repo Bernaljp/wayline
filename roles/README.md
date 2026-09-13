@@ -16,11 +16,13 @@ The conductor composes `agent.json` from the two: `description` and `prompt` fro
 `permissionMode: dontAsk`. The per-launch protocol the role follows is separate, in
 `prompts/roles/<role>.md`, because it is part of the prompt and changes with the phase.
 
-## The verifier is launched by a gate, not assigned to a ticket
+## The verifier and the fixture judge are launched by code, not assigned to a ticket
 
 Every other role here is assigned to a ticket by the librarian and launched by the conductor.
-`verifier` is not: `wayline.gates.verdict` launches it, its `kinds` is empty, and it is the only
-role with `may_judge`. Its prompt is assembled by the gate too, from the one question, the scope
+`verifier` is not: `wayline.gates.verdict` launches it, its `kinds` is empty, and it is one of the
+two roles with `may_judge`. The other is `fixture-judge`, which `wayline fixture run` launches
+once per sample with no tools, the fixture's rubric, and only the fields the fixture shows it
+(Implementation Decisions 12). Its prompt is assembled by the gate too, from the one question, the scope
 limit, and the paths, because a verdict has no touch set, no acceptance to run, and nothing to
 commit. `docs/verification/m4.md` records what its session can actually do: the `Bash(...)` rules
 below are the harness saying what it means to permit, and what makes the role read-only is the
