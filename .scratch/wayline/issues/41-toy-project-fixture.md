@@ -4,13 +4,13 @@
 
 **Blocked by:** 17 (Job runner seam (verbatim prototype 27)), 28 (Intake and the goal)
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#42](https://github.com/Bernaljp/wayline/issues/42) (mirror; the local file is the source)
 
 **Milestone:** M5 Overnight and report. **Spec:** Implementation Decisions 14 (the toy project); milestone M5 criterion 1.
 
-- [ ] `fixtures/projects/toy/` holds the intent, a dataset generator with a seed and a signal-strength parameter, two short synthetic papers as PDFs and one as an arXiv-style source tarball with a tiny code repository at a pinned commit, `GOAL.json` (`metric: auroc`, `direction: up`, a reachable `target`, `held_out_split`, `eval_command`, `stop_when: goal_reached`), autonomy `autonomous` after intake, radius `moderate`.
-- [ ] The experiment script trains a small model on the GPU in a few minutes, accepts batch size and dataloader-worker overrides for the `retry` ladder, and writes a metrics JSON per seed; an oversized configuration allocates beyond 24 GB so the first attempt is a GPU OOM that the ladder retries.
-- [ ] `wayline init` from the fixture produces a project whose `absorb --level 0` resolves the three references from recorded responses and whose experiment ticket runs with fake jobs in the suite and on the GPU live.
-- [ ] A README in the fixture explains what a full run should show (the M5 demo) so a later regression can be judged.
+- [x] `fixtures/projects/toy/` holds the intent, a dataset generator with a seed and a signal-strength parameter, two short synthetic papers as PDFs and one as an arXiv-style source tarball with a tiny code repository at a pinned commit, `GOAL.json` (`metric: auroc`, `direction: up`, a reachable `target`, `held_out_split`, `eval_command`, `stop_when: goal_reached`), autonomy `autonomous` after intake, radius `moderate`.
+- [x] The experiment script trains a small model on the GPU in a few minutes, accepts batch size and dataloader-worker overrides for the `retry` ladder, and writes a metrics JSON per seed; an oversized configuration allocates beyond 24 GB so the first attempt is a GPU OOM that the ladder retries.
+- [x] `wayline init` from the fixture produces a project whose `absorb --level 0` resolves the three references from recorded responses and whose experiment ticket runs with fake jobs in the suite and on the GPU live.
+- [x] A README in the fixture explains what a full run should show (the M5 demo) so a later regression can be judged.
