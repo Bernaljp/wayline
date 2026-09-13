@@ -1,0 +1,97 @@
+{
+  "duration_api_ms": 25762,
+  "stop_reason": "end_turn",
+  "session_id": "fa364b18-287c-46ab-96b4-28bacc6be285",
+  "total_cost_usd": 0.20955400000000002,
+  "usage": {
+    "input_tokens": 98,
+    "cache_creation_input_tokens": 3070,
+    "cache_read_input_tokens": 264028,
+    "output_tokens": 1854,
+    "output_tokens_details": {
+      "thinking_tokens": 444
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3070,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 32,
+        "output_tokens": 1062,
+        "cache_read_input_tokens": 66888,
+        "cache_creation_input_tokens": 844,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 844
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-opus-5": {
+      "inputTokens": 98,
+      "outputTokens": 1854,
+      "cacheReadInputTokens": 264028,
+      "cacheCreationInputTokens": 3070,
+      "webSearchRequests": 0,
+      "costUSD": 0.20955400000000002,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000,
+      "thinkingTokens": 444,
+      "canonicalModel": "claude-opus-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required",
+  "subagent_stats": {
+    "spawned": 0,
+    "requested": {
+      "background": 0,
+      "foreground": 0,
+      "unset": 0
+    },
+    "started_in_background": 0,
+    "max_depth": 0,
+    "spawned_by_subagents": 0,
+    "completed": 0,
+    "failed": 0,
+    "killed": {
+      "parent": 0,
+      "user": 0,
+      "system": 0
+    },
+    "refused": {
+      "depth_limit": 0,
+      "concurrency_limit": 0,
+      "budget": 0
+    },
+    "by_type": {}
+  },
+  "is_error": false,
+  "num_turns": 5,
+  "subtype": "success",
+  "api_error_status": null,
+  "result": "I recorded ten generator seeds as your answer to question 1. Because you said \"I suppose\", the confidence is recorded as low (0.4). I also added \"generator seed\" as a term, then switched autonomy to `autonomous` in `harness.json`.\n\n**What changed:**\n- **The decider takes the rest.** From now on it settles every open question and every decision ticket outside the human-only classes. It takes the two left in the grill: which flexible baseline to use (Q8) and how models are tuned (Q10).\n- **It hasn't decided them yet.** I haven't answered them for you, because anything I record through the grill counts as your answer. The decider will do it, via `wayline grill --decide-rest`.\n- **You can audit its choices.** Each one is recorded as `decided-by: decider` so you can reverse it, and the report lists its decisions first.\n- **Some things still wait for you.** The decider never touches a human-only question (goal or data) or anything on the irreversible list.\n- **Lowering autonomy later:** run `wayline stop`, then `wayline switch --autonomy checkpoints` once the conductor has ended. No conductor is running now, so the next `wayline run` starts autonomous.\n\nTwo questions are about data or the goal, so they stay with you. They can wait until you're ready, but the spec can't settle the null-control claim or the success rule until you answer.\n\n**Tier 3: 2 questions (both human-only).** \"Yes\" to a number accepts the recommendation.\n\n1. **How is objection 1 (the synthetic set plants the interaction) met?** *(human-only)*\n   Options: add a null control set (interaction 0) and state in the anti-claims that the result holds only for synthetic data; the anti-claim statement alone; a short sweep of interaction strength (0, 0.3, 0.6, 1.0)\n   Recommended: the null control plus the anti-claim. Paper-a reports that products change nothing when the labels don't depend on them. If a gain shows up at interaction 0, the method is fitting noise, and that is the check that could refute the claim.\n\n2. **What counts as the gain being real?** *(human-only)*\n   Options: the mean gain over the ten seeds is at least +0.02 and its 95% interval over seeds excludes 0; the mean is at least +0.02, no interval; the gain is positive on every seed\n   Recommended: the mean plus the interval. A mean alone can come from one or two lucky seeds. The ceiling alone varies by about 0.007 across seeds, so the interval is what shows the gain isn't noise.\n\nOnce these two are answered and the decider has taken Q8 and Q10, the grill is complete and the next phase is `wayline specify`.",
+  "ttft_ms": 4187,
+  "type": "result",
+  "duration_ms": 26275,
+  "uuid": "1de60884-dfae-49e0-ab88-d4e22e210b66",
+  "ttft_stream_ms": 1697,
+  "time_to_request_ms": 73,
+  "first_content_frame_ms": 2326,
+  "queued_turn_count": 0,
+  "result_index": 0
+}

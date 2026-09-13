@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "slug": "paper-b",
+  "level": 2,
+  "existence": "verified",
+  "resolved_by": "crossref",
+  "query": {
+    "kind": "title",
+    "value": "Depth versus width in small tabular networks"
+  },
+  "identifiers": {
+    "doi": "10.5555/wayline.fixture.paper-b"
+  },
+  "metadata": {
+    "title": "Depth versus width in small tabular networks",
+    "year": 2023
+  },
+  "created": "2026-09-11T20:00:00.000Z",
+  "relation_to_intent": "A flexible model without explicit products, the competing explanation for any gain.",
+  "deserves_l2_if": "A spec claim rests on its method."
+}

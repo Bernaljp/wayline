@@ -5,5 +5,5 @@
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "medium",
   "fixtures": ["skill/wayline-grill"],
-  "sha256": "b87bb5414d39199009053c305b21e293527fed7930332687aa02f0ebe27fce06"
+  "sha256": "2a130f0a27dfa8e3abc3603c51733ab932af3ca615146619d248e8d31aba88bf"
 }

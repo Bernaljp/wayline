@@ -12,6 +12,10 @@ _Avoid_: task, issue, story
 A question to the human (or the decider) that pauses its subgraph until answered.
 _Avoid_: blocker question, checkpoint
 
+**Design tree**:
+The questions the grill asks, each with the questions whose answers it waits on; a tier asks every open one whose prerequisites are settled.
+_Avoid_: question list, interview
+
 **Touch set**:
 The paths a ticket may write, enforced by a hook.
 _Avoid_: scope, write set
