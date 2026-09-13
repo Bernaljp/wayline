@@ -36,23 +36,17 @@ Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`medium`, `high`, 
 
 ## By wave
 
-Waves are the earliest start from `.scratch/wayline/waves.md`. The order column is a schedule under four rules: at most three sessions in flight; one Fable session at a time (so 07 and 32 never overlap); a milestone demo runs alone, and the demos land in milestone order so that every tag contains the code of the tags before it (`upgrade` moves a project between tags); same-module pairs (08 and 10 after 09, 38 before 45, 54 before 55) run one after the other. Read a cell left to right: tickets separated by commas start together, each in its own worktree; "then" waits until everything before it has landed on `master` and is pushed; "alone" means nothing else in flight.
+Waves are the earliest start from `.scratch/wayline/waves.md`. On 2026-09-13, 33 of the 57 tickets are closed, so this table schedules the 24 still open, in the waves they fall into once the closed ones count as done ("What is left on 2026-09-13" in the waves guide). The full schedule from wave 1, as it stood before any ticket closed, is in this file's history. The order column follows four rules: at most three sessions in flight; one Fable session at a time (31, 34, 45, 43, 50, and 53 never overlap); a milestone demo runs alone, and the demos land in milestone order so that every tag contains the code of the tags before it (`upgrade` moves a project between tags); same-module tickets (38 before 45, 57 beside 38) run one after the other. Read a cell left to right: tickets separated by commas start together, each in its own worktree; "then" waits until everything before it has landed on `master` and is pushed; "alone" means nothing else in flight.
 
-| Wave | Tickets with their grade | Order |
+| Wave left | Tickets with their grade | Order |
 |---|---|---|
-| 1 | 01 fable xhigh | 01 alone. |
-| 2 | 02 opus high, 03 fable xhigh, 04 opus high | 02, 03, 04 together. |
-| 3 | 05 fable max, 11 opus high, 16 sonnet medium, 18 sonnet medium, 20 opus high | 05, 16, 18 together, 05 at the top of a window; then 11, 20 together. |
-| 4 | 06 opus high, 07 fable xhigh, 12 sonnet medium, 17 opus high, 21 opus high, 23 sonnet medium, 25 sonnet medium, 27 opus high, 32 fable xhigh, 48 sonnet medium, 52 opus high | 06 alone; then 07, 27, 12 together; then 32, 17, 21 together; then 23, 25, 52 together; then 48. |
-| 5 | 09 fable max, 19 opus high, 22 opus high, 28 opus high, 40 opus high, 42 sonnet medium, 49 opus high | 09, 28, 42 together, 09 at the top of a window; then 22, 40, 49 together. 19 is the M2 demo: it waits for wave 8, after 15. |
-| 6 | 08 opus high, 10 opus high, 13 opus high, 24 opus high, 30 fable xhigh, 39 opus high, 41 sonnet medium, 44 opus high | 30, 08, 41 together; then 10, 13, 24 together; then 44. 39 waits for 19 (wave 8). |
-| 7 | 26 opus high, 31 fable xhigh, 46 opus high, 54 opus high | 31, 54, 46 together. 26 is the M3 demo: it waits for wave 9, after 19. |
-| 8 | 14 opus high, 29 opus high, 33 opus high, 37 sonnet medium, 55 opus high | 33, 14, 37 together; then 55. 29 waits for 26 (wave 9). |
-| 9 | 15 opus high, 34 fable max, 35 opus high, 56 opus high | 34 at the top of a window, with 35 and 56 together; then 15 alone; then 19 alone; then 26 alone; then 29, 39 together. |
-| 10 | 36 opus high, 38 opus high, 45 fable xhigh, 57 opus high | 36 alone; then 38 and 57 together (both edit the wave: expect one merge); then 45 (or 38 and 45 together, and expect one merge). |
-| 11 | 43 fable xhigh | 43 alone, started at the top of a window in the evening; nothing else that night. |
-| 12 | 47 opus high, 50 fable xhigh, 51 opus high | 50, 51 together; then 47 alone. |
-| 13 | 53 fable xhigh | 53 alone. |
+| 1 | 19 opus high, 26 opus high, 31 fable xhigh, 46 opus high, 54 opus high | 31, 54, 46 together. 19 and 26 are the M2 and M3 demos: they wait for 15 (wave 3). |
+| 2 | 14 opus high, 29 opus high, 33 opus high, 37 sonnet medium, 39 opus high, 55 opus high | 33, 14, 37 together; then 55. 39 waits for 19 and 29 for 26 (wave 3). |
+| 3 | 15 opus high, 34 fable max, 35 opus high, 56 opus high | 34 at the top of a window, with 35 and 56 together; then 15 alone; then 19 alone; then 26 alone; then 29, 39 together. |
+| 4 | 36 opus high, 38 opus high, 45 fable xhigh, 57 opus high | 36 alone; then 38 and 57 together (both edit the wave: expect one merge); then 45. |
+| 5 | 43 fable xhigh | 43 alone, started at the top of a window in the evening; nothing else that night. |
+| 6 | 47 opus high, 50 fable xhigh, 51 opus high | 50, 51 together; then 47 alone. |
+| 7 | 53 fable xhigh | 53 alone. |
 
 ## Per ticket
 
@@ -119,7 +113,7 @@ Waves are the earliest start from `.scratch/wayline/waves.md`. The order column 
 ## Working the window
 
 - Fable at `xhigh` or `max` uses the five-hour window fastest. Run one Fable session at a time and pair it with the sonnet-grade tickets of the same wave; start a `max` ticket (05, 09, 34) at the top of a window.
-- The critical path (01, 02, 05, 27, 28, 30, 31, 33, 34, 36, 43, 50, 53) carries 8 of the 13 Fable tickets, so the Fable budget mostly goes to the chain that sets the calendar. Fill around it with opus and sonnet tickets.
+- The critical path (01, 02, 05, 27, 28, 30, 31, 33, 34, 36, 43, 50, 53) carries 8 of the 13 Fable tickets, so the Fable budget mostly goes to the chain that sets the calendar. What is left of it on 2026-09-13 (31, 33, 34, 36, 43, 50, 53) carries five of the six Fable tickets still open. Fill around it with opus and sonnet tickets.
 - Escalation, the harness's own rule: a ticket that fails its acceptance twice at its grade is rerun one tier up in a fresh session (sonnet medium to opus high, opus high to fable xhigh). A ticket that sailed through is not a reason to lower the next one.
 - A verdict before merging, the harness's own rule too: for difficulty 4 and 5 tickets, have a different model read the diff before you merge the pull request (for example `/code-review` in a fresh opus session). The harness's verifier table pairs a fable author with an opus reader.
 - Live demo tickets (06, 15, 19, 26, 36, 43, 47, 53) need the owner nearby for the tunnel, the phone, and the GPU; the model grade covers the diagnosis, the wallclock is the demo.
@@ -132,4 +126,4 @@ gh api "repos/Bernaljp/wayline/issues?state=open&labels=ready-for-agent&per_page
         | "#\(.number) \(.title)  [\([.labels[].name | select(startswith("model:")) | sub("model:"; "")] | join(","))]"'
 ```
 
-Today it prints only `#2 01 - Package skeleton, ... [fable-xhigh]`.
+On 2026-09-13 it prints tickets 19, 26, 31, 46, and 54; 31 is the only Fable ticket among them.

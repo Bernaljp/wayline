@@ -6,6 +6,22 @@ Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026
 
 A ticket can start when every ticket in its **Blocked by** line is done: its commit is on `master`, `python -m unittest` passes there, its local `Status:` line is updated, and its GitHub issue is closed. Tickets in the same wave never depend on each other, so any subset of a wave can run at the same time. A ticket may also start as soon as its own blockers are done, even if the rest of its wave is not; the waves below are the earliest start, not a required batch.
 
+## What is left on 2026-09-13
+
+33 of the 57 tickets are closed: 01 to 13, 16, 17, 18, 20 to 25, 27, 28, 30, 32, 40, 41, 42, 44, 48, 49, and 52. Counting those as done, the 24 still open fall into seven waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, with each ticket's model and effort, is the order column of `.scratch/wayline/models.md`.
+
+| Wave left | Tickets | Notes |
+|---|---|---|
+| 1 | 19 (M2, #20), 26 (M3, #27), 31 (M4, #32), 46 (M6, #47), 54 (M1, #101) | Ready now. 19 and 26 are milestone demos, so they wait for 15 (rule 7), and 31, 54, and 46 go first. 54 is the first fallback ticket. |
+| 2 | 14 (M1, #15), 29 (M4, #30), 33 (M4, #34), 37 (M5, #38), 39 (M5, #40), 55 (M5, #102) | 14 and 55 wait for 54; 33 and 37 for 31; 39 for 19 and 29 for 26. |
+| 3 | 15 (M1, #16), 34 (M4, #35), 35 (M4, #36), 56 (M5, #103) | 15 closes M1, and the demos 19 and 26 follow it. 34 is the planner, at max. |
+| 4 | 36 (M4, #37), 38 (M5, #39), 45 (M6, #46), 57 (M5, #104) | 36 is the M4 demo. 38, 45, and 57 all edit the wave: 38 first, 57 beside it, 45 after it. |
+| 5 | 43 (M5, #44) | The overnight run; it also waits for the three fallback tickets 54, 55, and 56. |
+| 6 | 47 (M6, #48), 50 (M7, #51), 51 (M7, #52) | 47 is the M6 demo: after 50 and 51. |
+| 7 | 53 (M7, #54) | The last ticket. |
+
+What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, seven tickets. The fallback chain 54 -> 55 -> 56 runs beside it and has to land before 43.
+
 ## Waves (earliest start)
 
 | Wave | Tickets | Notes |
