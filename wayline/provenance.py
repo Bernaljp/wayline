@@ -1070,10 +1070,12 @@ def _decider_decisions(context):
         payload = event.get("payload") or {}
         if event.get("event") != ledger.DECISION or payload.get("decided_by") != "decider":
             continue
-        title = (context.tickets.get(payload.get("ticket")) or {}).get("title")
-        lines.append("- Ticket %s%s: **%s** (confidence %s, %s)" % (
-            payload.get("ticket"), ", *%s*" % title if title else "", _inline(payload.get("answer")),
-            _number(payload.get("confidence")), _when(event)))
+        ticket = payload.get("ticket")
+        title = (context.tickets.get(ticket) or {}).get("title")
+        # A question of the grill has no ticket; its answer opens with the question it settles.
+        subject = "The grill" if ticket is None else "Ticket %s%s" % (ticket, ", *%s*" % title if title else "")
+        lines.append("- %s: **%s** (confidence %s, %s)" % (
+            subject, _inline(payload.get("answer")), _number(payload.get("confidence")), _when(event)))
         if payload.get("rationale"):
             lines.append("  - rationale: %s" % _inline(payload["rationale"]))
     return _records(lines or ["No decision was made by the decider."])

@@ -368,6 +368,14 @@ class ReportTest(RunCase):
         self.assertIn("rationale: split_b holds out whole annotation sources", first)
         self.assertNotIn("20000 rows", first, "a human's decision is not the decider's")
 
+    def test_a_decider_decision_of_the_grill_is_listed_without_a_ticket(self):
+        self.book.append_event("decision", {"ticket": None, "answer": "Q2 How many seeds does a comparison use? Answer: three",
+                                            "decided_by": "decider", "rationale": "policy.json says three", "confidence": 0.7})
+        self.render()
+        first = self.section(1)
+        self.assertIn("- The grill: **Q2 How many seeds does a comparison use? Answer: three** (confidence 0.7", first)
+        self.assertNotIn("Ticket None", first)
+
     def test_open_decision_tickets_and_needs_human_are_listed(self):
         second = self.section(2)
         self.assertIn("Decision ticket 6, *Which label source wins where the two disagree?*: blocking `subgraph`, human only", second)

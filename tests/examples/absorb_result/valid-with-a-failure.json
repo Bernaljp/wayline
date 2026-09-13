@@ -1,0 +1,10 @@
+{
+  "entries": [
+    {"item_id": "eq-1", "chunk_id": "c-002", "locator": "flat.tex:13", "kind": "equation", "content": "y = m x + b", "importance": 5, "relation_to_intent": "", "oddities": []}
+  ],
+  "sections": null,
+  "failures": [
+    {"chunk": "c-002", "reason": "the reader left obligation items out, and so did its retry", "missing": ["eq-2"]},
+    {"chunk": null, "reason": "the synthesizer returned nothing", "missing": []}
+  ]
+}

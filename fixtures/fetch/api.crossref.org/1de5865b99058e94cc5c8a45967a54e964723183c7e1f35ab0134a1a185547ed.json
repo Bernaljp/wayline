@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.crossref.org/works/10.9999%2Fwayline.toy.a?mailto=%3Cowner%3E",
+    "hash": "1de5865b99058e94cc5c8a45967a54e964723183c7e1f35ab0134a1a185547ed"
+  },
+  "response": {
+    "url": "https://api.crossref.org/works/10.9999%2Fwayline.toy.a?mailto=%3Cowner%3E",
+    "status": 200,
+    "headers": {},
+    "encoding": "utf-8",
+    "body": "{\"status\": \"ok\", \"message-type\": \"work\", \"message\": {\"DOI\": \"10.9999/wayline.toy.a\", \"URL\": \"https://doi.org/10.9999/wayline.toy.a\", \"title\": [\"Interaction terms improve tabular classification on synthetic benchmarks\"], \"author\": [{\"given\": \"Ada\", \"family\": \"Query\"}], \"issued\": {\"date-parts\": [[2022]]}, \"container-title\": [\"Journal of Synthetic Machine Learning\"], \"type\": \"journal-article\", \"abstract\": \"<jats:p>On a synthetic two-class set whose label depends on a linear part and one pairwise interaction between two features, a model that also sees the interaction term reaches a higher held-out AUROC.</jats:p>\"}}"
+  }
+}

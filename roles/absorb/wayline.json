@@ -1,0 +1,18 @@
+{
+  "id": "absorb",
+  "scope_kind": "global",
+  "capability_summary": "The one headless session of an L2 absorb: starts the saved absorb workflow with code's arguments and reports how it ended.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "400cc04149bd6234ae156d1e4f4d9579eed4c633b991bfca4fb812569a385217",
+  "may_judge": false,
+  "output_schema": null,
+  "allowed_tools": ["Workflow(absorb)", "Skill(absorb)", "Read", "Glob", "Grep"],
+  "disallowed_tools": [
+    "Edit", "Write", "NotebookEdit", "Bash", "WebFetch", "WebSearch", "mcp__*", "EnterWorktree",
+    "ExitWorktree", "CronCreate", "CronDelete", "CronList", "Monitor", "PushNotification", "SendMessage",
+    "ListAgents", "RemoteTrigger", "ScheduleWakeup", "ReportFindings", "DesignSync", "EnterPlanMode",
+    "ExitPlanMode"
+  ]
+}

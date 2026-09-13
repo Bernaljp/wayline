@@ -19,14 +19,41 @@ The conductor composes `agent.json` from the two: `description` and `prompt` fro
 ## The verifier and the fixture judge are launched by code, not assigned to a ticket
 
 Every other role here is assigned to a ticket by the librarian and launched by the conductor.
-`verifier` is not: `wayline.gates.verdict` launches it, its `kinds` is empty, and it is one of the
-two roles with `may_judge`. The other is `fixture-judge`, which `wayline fixture run` launches
-once per sample with no tools, the fixture's rubric, and only the fields the fixture shows it
-(Implementation Decisions 12). Its prompt is assembled by the gate too, from the one question, the scope
+`verifier` is not: `wayline.gates.verdict` launches it and its `kinds` is empty. Neither is
+`fixture-judge`, which `wayline fixture run` launches once per sample with no tools, the fixture's
+rubric, and only the fields the fixture shows it (Implementation Decisions 12). Both have
+`may_judge`, as the critic below does. The verifier's prompt is assembled by the gate too, from the
+one question, the scope
 limit, and the paths, because a verdict has no touch set, no acceptance to run, and nothing to
 commit. `docs/verification/m4.md` records what its session can actually do: the `Bash(...)` rules
 below are the harness saying what it means to permit, and what makes the role read-only is the
 absent write tools and the permission system's own reading of a command.
+
+## The integrator is launched by the conductor, not assigned to a ticket
+
+`integrator` is the other role outside the librarian's reach (`kinds` empty). The conductor
+launches it once when rebasing a ticket branch onto `main` conflicts, in that ticket's worktree,
+with every path both the branch and `main` changed as `TICKET_TOUCHES` and the conflict markers as
+the prompt's context (`wayline.worker.integrator_prompt`). It finishes the rebase itself, since a
+resolution committed on the old branch would conflict again when the conductor replays it, and the
+conductor's second rebase checks that it did. It has `Edit` and not `Write`: resolving a conflict
+changes files that exist. Its rebase commands are spelled out whole (`git rebase main`,
+`--continue`, `--abort`), because a `git rebase *` rule would admit `--exec <any command>`.
+
+## The roles an L2 absorb launches, and another role that may judge
+
+`absorb`, `synthesizer`, and `critic` are not assigned to tickets either; `wayline.absorb` launches
+them, and their `kinds` are empty. `absorb` is the one headless session of a level-2 read: its only
+job is to start the saved workflow `workflows/absorb.js` with the arguments code wrote, which is why
+its `allowed_tools` are the narrow `Workflow(absorb)` and `Skill(absorb)` rules plus `Read`, `Glob`,
+and `Grep`, and why `Workflow` and `Skill` are not on its removal list. The `reader` and the
+`synthesizer` run inside that session as workflow agents, defined in the same `--agents` object; in
+the conductor fan-out each is a session of its own.
+
+`critic` has `may_judge` too, beside `verifier` and `fixture-judge`. The gate reads the role an ask
+names, refuses one without `may_judge`, and runs it on the verifier's tier for the author's model,
+so the depth spot-check of an L2 dossier is the critic's read of work the readers wrote on sonnet.
+Ticket 29 gives the critic its other job, the position memo.
 
 ## Why `disallowed_tools` names tools the harness never asked for
 

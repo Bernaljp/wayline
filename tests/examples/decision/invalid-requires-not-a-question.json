@@ -1,0 +1,18 @@
+{
+  "id": "Q3",
+  "question": "Which interaction terms are in scope?",
+  "options": [],
+  "recommended": "pairwise products only",
+  "evidence": [],
+  "requires": [
+    "the baseline question"
+  ],
+  "human_only": false,
+  "reversible": true,
+  "tier": 2,
+  "answer": null,
+  "rationale": null,
+  "confidence": null,
+  "decided_by": null,
+  "timestamp": null
+}

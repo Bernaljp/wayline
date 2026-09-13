@@ -1,0 +1,13 @@
+{
+  "item_id": "fig-1",
+  "chunk_id": "c-005",
+  "locator": "flat.tex:27",
+  "kind": "figure",
+  "content": "Points and the fitted line.",
+  "importance": 3,
+  "relation_to_intent": "It is the only evidence the paper gives that a line is enough.",
+  "oddities": [],
+  "what_it_shows": "Eight points rising left to right with a straight line through them.",
+  "supports_cited_claim": "The introduction claims a line fits the points; the image shows it does.",
+  "anything_odd": "The axes carry no units."
+}

@@ -2,8 +2,8 @@
 
 The dashboard is a client of the same functions the command calls, bound to localhost and reached
 from the laptop through `ssh -L`. It reads; it never writes the ledger. `wayline serve` starts it,
-prints the tunnel line, and stays in the foreground; the unit that keeps it alive arrives with the
-tick (ticket 13).
+prints the tunnel line, and stays in the foreground; `wayline-dashboard.service`, which `init`
+installs and `run` starts when it is not active, keeps it alive (ticket 13).
 
 Three decisions from `research-notes/08-dashboard-transport.md` are carried here as written, because
 they were measured rather than guessed:

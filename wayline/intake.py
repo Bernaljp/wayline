@@ -31,7 +31,7 @@ from wayline.cli import parse_args
 from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import DECISION, Ledger, atomic_write
-from wayline.project import HARNESS_JSON, ProjectError, find_project, policy_for, read_harness
+from wayline.project import AUTONOMY, HARNESS_JSON, ProjectError, find_project, policy_for, read_harness
 
 __all__ = [
     "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "GoalCheck", "take_intake", "check_goal", "set_goal",
@@ -44,13 +44,6 @@ GOAL_JSON = "GOAL.json"
 # The sections of INTAKE.md, in order. The fixture of the wayline-intake skill pins the same list.
 SECTIONS = ("Intent", "References", "Data", "Code", "Constraints", "Autonomy", "Radius", "Budgets",
             "Decisions that stay human-only", "Goal")
-
-# BRIEF 6.2, one line each, so the owner's copy says what the setting does and not only its name.
-AUTONOMY = {
-    "interactive": "the owner answers every question the grill asks, approves the spec and the graph, answers every decision ticket, and is asked on every `needs_human` result.",
-    "checkpoints": "the owner approves the spec and the graph and answers decision tickets; waves run alone.",
-    "autonomous": "the decider resolves every open question, every decision ticket not in a human-only class, and every parked proposal, and never anything on the irreversible list.",
-}
 
 # BRIEF 6.3.
 RADIUS = {

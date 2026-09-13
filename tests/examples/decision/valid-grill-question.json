@@ -1,0 +1,24 @@
+{
+  "id": "Q3",
+  "question": "Which interaction terms are in scope?",
+  "options": [
+    "pairwise products only",
+    "pairwise and three-way products"
+  ],
+  "recommended": "pairwise products only",
+  "evidence": [
+    "the generator plants one pairwise product (toy/make_synthetic.py)"
+  ],
+  "requires": [
+    "Q1"
+  ],
+  "human_only": false,
+  "reversible": true,
+  "tier": 2,
+  "supersedes": null,
+  "answer": null,
+  "rationale": null,
+  "confidence": null,
+  "decided_by": null,
+  "timestamp": null
+}

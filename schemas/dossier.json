@@ -53,6 +53,81 @@
     "abstract": {"type": ["string", "null"]},
     "relation_to_intent": {"type": "string", "description": "level 1 and up: one line, from the L1 record, on how the paper relates to the project's intent"},
     "deserves_l2_if": {"type": "string", "description": "level 1 and up: one line, from the L1 record, on what would earn the paper a full read"},
+    "l2": {
+      "type": "object",
+      "description": "level 2: what the absorb workflow read, merged by code. The entries themselves are refs/<slug>/entries.jsonl and the prose is rendered to refs/<slug>/dossier.md; sections is the synthesizer's answer, validated against dossier_sections before it is written here.",
+      "required": ["absorbed", "fanout", "manifest", "entries_path", "chunks", "entries", "coverage", "sections", "failures", "spot_check"],
+      "additionalProperties": false,
+      "properties": {
+        "absorbed": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+        "fanout": {"type": "string", "enum": ["workflow", "conductor"]},
+        "allow_rules": {"type": ["string", "null"], "enum": ["narrow", "broad", null], "description": "workflow fan-out: whether Workflow(absorb) and Skill(absorb) sufficed, or Workflow and Skill were needed"},
+        "session_ids": {"type": "array", "items": {"type": "string"}},
+        "run_file": {"type": ["string", "null"], "description": "the Workflow run file the result was read from"},
+        "manifest": {"type": "string"},
+        "entries_path": {"type": "string"},
+        "markdown_path": {"type": "string"},
+        "chunks": {"type": "integer", "minimum": 0},
+        "entries": {"type": "integer", "minimum": 0},
+        "coverage": {
+          "type": "object",
+          "description": "the Type-A coverage audit: every inventory item has an entry, and every figure an entry that says what it shows",
+          "required": ["pass", "items", "covered", "missing"],
+          "additionalProperties": false,
+          "properties": {
+            "pass": {"type": "boolean"},
+            "items": {"type": "integer", "minimum": 0},
+            "covered": {"type": "integer", "minimum": 0},
+            "missing": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "sections": {"type": ["object", "null"]},
+        "unresolved_locators": {"type": "array", "items": {"type": "string"}},
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["chunk", "reason", "missing"],
+            "additionalProperties": false,
+            "properties": {
+              "chunk": {"type": ["string", "null"]},
+              "reason": {"type": "string"},
+              "missing": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "problems": {"type": "array", "items": {"type": "string"}},
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "agents": {"type": ["integer", "null"], "minimum": 0},
+            "tokens": {"type": ["integer", "null"], "minimum": 0},
+            "duration_ms": {"type": ["integer", "null"], "minimum": 0}
+          }
+        },
+        "spot_check": {
+          "type": "object",
+          "description": "the Type-B depth spot-check, queued for the critic until it is taken",
+          "required": ["status", "role", "verdict_type", "author_model", "question", "scope_limit", "paths"],
+          "additionalProperties": false,
+          "properties": {
+            "status": {"type": "string", "enum": ["queued", "passed", "failed"]},
+            "role": {"type": "string"},
+            "verdict_type": {"type": "string"},
+            "author_model": {"type": "string"},
+            "items": {"type": "array", "items": {"type": "string"}},
+            "flaws": {"type": "integer", "minimum": 0},
+            "question": {"type": "string"},
+            "scope_limit": {"type": "string"},
+            "paths": {"type": "array", "items": {"type": "string"}},
+            "session_id": {"type": ["string", "null"]},
+            "model": {"type": ["string", "null"]},
+            "findings": {"type": "array", "items": {"type": "object"}}
+          }
+        }
+      }
+    },
     "open_access": {
       "type": "object",
       "additionalProperties": false,

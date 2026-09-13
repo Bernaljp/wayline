@@ -4,18 +4,18 @@
   "kind": "skill",
   "subject": {
     "path": "skills/wayline-grill/SKILL.md",
-    "sha256": null,
+    "sha256": "2a130f0a27dfa8e3abc3603c51733ab932af3ca615146619d248e8d31aba88bf",
     "also": [
       "skills/wayline-grill/wayline.json"
     ]
   },
   "origin": {
     "project": null,
-    "ticket": 27,
-    "session_id": null,
+    "ticket": 30,
+    "session_id": "fa364b18-287c-46ab-96b4-28bacc6be285",
     "journal_ts": null,
     "change_record": null,
-    "reason": "seed: ticket 27 registered the five interactive skills; ticket 30 records the tier this fixture replays"
+    "reason": "seed: ticket 27 registered the five interactive skills; ticket 30 recorded one grill over the toy intent under recorded/ and wrote the checks on DECISIONS.md, CONTEXT.md, the journal, and the turns"
   },
   "launch": {
     "model": "opus",
@@ -24,10 +24,25 @@
     "max_turns": 100,
     "output_format": "stream-json",
     "json_schema": null,
-    "fallback_model": "opus"
+    "fallback_model": "opus",
+    "tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(wayline grill*)",
+      "Bash(wayline switch --autonomy*)",
+      "Bash(wayline status*)",
+      "Bash(wayline tools show*)",
+      "Bash(pip show *)",
+      "Bash(python3 -c *)"
+    ]
   },
   "input": {
     "prompt": "input/prompt.md",
+    "replies": [
+      "input/replies/2.md",
+      "input/replies/3.md"
+    ],
     "agent": null,
     "context_manifest": null,
     "input_hash": null
@@ -35,10 +50,104 @@
   "structural": [
     {
       "check": "file_exists",
-      "path": "research/DECISIONS.md"
+      "path": "research/DECISIONS.md",
+      "in": "worktree"
+    },
+    {
+      "check": "file_exists",
+      "path": "research/CONTEXT.md",
+      "in": "worktree"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline grill ask"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline grill answer"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline grill term"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline switch --autonomy autonomous"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Write"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Edit"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Bash",
+      "input_matches": "write_text|write_bytes|\\.write\\(|os\\.(remove|unlink|rename|replace)|shutil\\.|>>?\\s*(research/|harness\\.json)"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "every_settled_record_is_journaled"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "answers_follow_the_tier_that_asked_them"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "every_record_is_a_valid_decision"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "answers_are_whole_records"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "prerequisites_settle_first"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "tiers_ask_the_whole_frontier"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "answers_are_written_before_the_next_tier"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "terms_land_in_context"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "facts_are_looked_up_not_asked"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "goal_questions_stay_human_only"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "the_switch_leaves_the_rest_to_the_decider"
     }
   ],
-  "note": "The tier is asked in one message, so the checks on how many questions reached the owner, and on which of them were facts the skill should have looked up itself, arrive with ticket 30.",
+  "note": "The project is laid out by wayline init, with input/context/ copied into its root, `wayline intake --from input/intake.json` run there (the toy intent, four references, and a goal its eval_command measures on the sample), and input/research/ (a position memo written by hand in the shape of Implementation Decisions 10, because the critic arrives with ticket 29, and the four toy dossiers) written through the ledger. The grill is three turns of one session: input/prompt.md, then each of input/replies/ sent with --resume on the session id. Replies are the owner's: turn 2 answers the first tier, overturning one recommendation, skipping one question, and defining a term; turn 3 answers the carried question and says to decide the rest. The intake leaves open whether scikit-learn is installed, and the generator's code says how big the set is, so a grill that asks either has asked a fact. recorded/ holds per turn the result envelope and the trace with system/init reduced to the session id and the model, and the files the grill left: research/DECISIONS.md, research/CONTEXT.md, research/journal.jsonl, and harness.json. subject.sha256 is the skill as it was recorded. After the recording, the code review of ticket 30 had the skill pass `--project .` on every command, because a verb without it acts on the machine's active project, and had the decider leave irreversible questions to the owner. The skill on disk therefore hashes differently, and the runner of ticket 44 re-runs this fixture.",
   "baseline": null,
   "quarantine": {
     "status": "active",

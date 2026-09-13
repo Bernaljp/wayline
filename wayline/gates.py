@@ -408,7 +408,8 @@ RESULT = "result"                        # difficulty 4 and 5: an independent re
 KILL_MEMO = "kill_argument_memo"         # the first thread: the strongest rejection memo
 KILL_ARGUMENT = "kill_argument"          # the second thread: the memo adjudicated point by point
 CLAIM_SUPPORT = "claim_support"          # a sampled report claim: do its cited artifacts support it
-VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT)
+DEPTH_SPOT_CHECK = "depth_spot_check"    # an L2 dossier: were its most important items and its flaws read in depth
+VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK)
 
 # What an independent read of a done ticket reads, by the ticket's effective difficulty.
 DIFFICULTY_VERDICTS = {3: DIFF, 4: RESULT, 5: RESULT}
@@ -431,7 +432,8 @@ class Ask:
 
     The conductor queues these after `ticket_done` and drains them as model work; nothing about
     an ask is a verdict yet. `author_model` is the model that wrote the subject, which is what
-    `policy.verifier` is keyed by.
+    `policy.verifier` is keyed by. `role` is the judging role: the verifier, except where a
+    decision names another role that may judge (the critic's depth spot-check of a dossier).
     """
 
     subject_kind: str
@@ -442,6 +444,7 @@ class Ask:
     verdict_type: str
     author_model: str
     ticket: Optional[int] = None
+    role: str = VERIFIER
 
 
 @dataclass
@@ -600,7 +603,7 @@ def findings_text(findings, empty="no finding was named"):
 
 def verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
             verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None, ledger=None,
-            cwd=None, memo=None, run_dir=None):
+            cwd=None, memo=None, run_dir=None, role=VERIFIER):
     """One Type-B verdict, journaled: every verdict in the harness comes through here.
 
     A verdict is journaled because its session id and its model are the whole of what makes it
@@ -610,7 +613,7 @@ def verdict(subject_kind, subject, question, paths, scope_limit, *, project, aut
     taken = take_verdict(subject_kind, subject, question, paths, scope_limit, project=project,
                          author_model=author_model, verdict_type=verdict_type, ticket=ticket,
                          harness_root=harness_root, policy=policy, cwd=cwd, memo=memo,
-                         run_dir=run_dir)
+                         run_dir=run_dir, role=role)
     ledger_for(ledger or Path(project).resolve()).append_event(
         VERDICT, taken.payload, ticket=taken.ticket, session_id=taken.session_id)
     return taken
@@ -625,13 +628,16 @@ def verdict_for(ask, **context):
     """
     return verdict(ask.subject_kind, ask.subject, ask.question, ask.paths, ask.scope_limit,
                    author_model=ask.author_model, verdict_type=ask.verdict_type,
-                   ticket=ask.ticket, **context)
+                   ticket=ask.ticket, role=ask.role, **context)
 
 
 def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
                  verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None,
-                 cwd=None, memo=None, run_dir=None):
+                 cwd=None, memo=None, run_dir=None, role=VERIFIER):
     """One verifier session, validated but not journaled; `verdict` is this plus the journal.
+
+    `role` names the judging role, the verifier unless a decision names another; whichever it
+    is, its sidecar has to carry `may_judge`, and it runs on the verifier's tier for the author.
 
     The verifier runs on the model and effort `policy.verifier` gives for `author_model`, never on
     the author's own model. The session is given the paths and the one question; a session that
@@ -654,10 +660,10 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     project = Path(project).resolve()
     policy = policy_for(project, harness_root) if policy is None else policy
     model, effort = verifier_tier(policy, author_model)
-    role = worker.read_role(VERIFIER, harness_root, project)
+    role = worker.read_role(role, harness_root, project)
     if role.may_judge is not True:
-        raise GateError("%s: the verifier role has to carry may_judge, and a Type-B verdict comes "
-                        "from nothing else" % role.source)
+        raise GateError("%s: the %s role has to carry may_judge, and a Type-B verdict comes "
+                        "from nothing else" % (role.source, role.name))
     run_dir = Path(run_dir) if run_dir else verdict_dir(project, subject_kind, subject)
     cwd = Path(cwd) if cwd else project
     prompt = verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cwd=cwd, memo=memo)

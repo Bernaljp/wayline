@@ -124,7 +124,7 @@
         "l1_max_chars": {"type": "integer", "minimum": 1},
         "l2_per_phase": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
         "chunk_max_chars": {"type": "integer", "minimum": 1},
-        "fanout": {"type": "string", "enum": ["workflow", "sequential"]},
+        "fanout": {"type": "string", "enum": ["workflow", "conductor"]},
         "workflow_concurrency": {"type": "integer", "minimum": 1}
       }
     },

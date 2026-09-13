@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "absorb_result",
+  "description": "What one L2 absorb fan-out hands back to code (Implementation Decisions 9): the entries every reader returned, the synthesizer's sections or null when it returned none, and a failure for every chunk that came back short. workflows/absorb.js returns it into the Workflow run file and the conductor fan-out builds the same object from its launches. Code validates each entry against dossier_entry and the sections against dossier_sections before anything is merged, which is why they are only objects here.",
+  "type": "object",
+  "required": ["entries", "sections", "failures"],
+  "additionalProperties": false,
+  "properties": {
+    "entries": {"type": "array", "items": {"type": "object"}},
+    "sections": {"type": ["object", "null"]},
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["chunk", "reason", "missing"],
+        "additionalProperties": false,
+        "properties": {
+          "chunk": {"type": ["string", "null"], "description": "the chunk that came back short; null for the synthesizer"},
+          "reason": {"type": "string", "pattern": "\\S"},
+          "missing": {"type": "array", "items": {"type": "string"}, "description": "the obligation items no entry answered"}
+        }
+      }
+    }
+  }
+}
