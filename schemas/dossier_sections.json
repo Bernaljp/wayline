@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dossier_sections",
+  "description": "What the synthesizer of an L2 absorb returns: the dossier's prose sections, written from the readers' entries alone, one sentence per item with at least one locator on every sentence. A locator is an entry's locator or an inventory item id. Each section is written out in place rather than referenced, because workflows/absorb.js carries this schema verbatim and a test holds the copies equal.",
+  "type": "object",
+  "required": ["method", "claims", "results", "assumptions", "limitations", "flaws_found", "reusable_ideas", "open_questions", "relation_to_intent"],
+  "additionalProperties": false,
+  "properties": {
+    "method": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}},
+    "claims": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}},
+    "results": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}},
+    "assumptions": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}},
+    "limitations": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}},
+    "flaws_found": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}},
+    "reusable_ideas": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}},
+    "open_questions": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}},
+    "relation_to_intent": {"type": "array", "items": {"type": "object", "required": ["text", "locators"], "additionalProperties": false, "properties": {"text": {"type": "string", "pattern": "\\S"}, "locators": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}}}}
+  }
+}

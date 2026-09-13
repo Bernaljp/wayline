@@ -5,7 +5,7 @@
   "applicability_tags": {"kinds": ["dossier"], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "small",
   "fixtures": [],
-  "sha256": "7b2ef6bc2763a64bcf46909453432d4502c0dde3e87f839d901d26bf9617d52a",
+  "sha256": "438b31b7b66caaf2eddaf9a6ad180cdfd2b9452a9e7c23421e0156b2ebedea64",
   "may_judge": false,
   "output_schema": "l1_record",
   "allowed_tools": [],

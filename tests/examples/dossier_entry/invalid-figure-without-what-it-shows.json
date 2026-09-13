@@ -1,0 +1,9 @@
+{
+  "item_id": "fig-1",
+  "locator": "flat.tex:27",
+  "kind": "figure",
+  "content": "Points and the fitted line.",
+  "importance": 3,
+  "relation_to_intent": "",
+  "oddities": []
+}

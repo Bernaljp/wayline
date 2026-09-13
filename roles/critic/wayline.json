@@ -1,0 +1,19 @@
+{
+  "id": "critic",
+  "scope_kind": "global",
+  "capability_summary": "Reads another session's work against its source and returns a verdict with located findings; read-only.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "341b668b0968ad679483048b35b23e35153dbfea3274dd0fc606e8536933c4bc",
+  "may_judge": true,
+  "output_schema": "verdict",
+  "allowed_tools": ["Read", "Glob", "Grep"],
+  "disallowed_tools": [
+    "Edit", "Write", "NotebookEdit", "Bash", "Agent", "WebFetch", "WebSearch", "mcp__*", "Workflow", "Skill",
+    "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete", "CronList", "Monitor",
+    "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger", "ScheduleWakeup", "TaskCreate",
+    "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "EnterPlanMode", "ExitPlanMode"
+  ]
+}

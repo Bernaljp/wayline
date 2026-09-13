@@ -1,0 +1,9 @@
+{
+  "item_id": "sec-1",
+  "locator": "flat.tex:8",
+  "kind": "section",
+  "content": "Tiny papers are read in full or not at all.",
+  "importance": 9,
+  "relation_to_intent": "",
+  "oddities": []
+}

@@ -1,0 +1,46 @@
+\documentclass{article}
+\title{A tiny paper for the absorb workflow}
+\begin{document}
+\maketitle
+\begin{abstract}
+We fit a line and prove a lemma about tiny papers.
+\end{abstract}
+\section{Introduction}\label{sec:intro}
+Tiny papers are read in full or not at all.
+We claim that a line fits the points in Figure~\ref{fig:plot}.
+\section{Method}\label{sec:method}
+The model is a line.
+\begin{equation}
+  y = m x + b
+  \label{eq:line}
+\end{equation}
+\subsection{Fitting}\label{sec:fit}
+We minimize the squared error.
+\begin{align}
+  L &= \sum_i (y_i - m x_i - b)^2 \\
+  \hat m &= \arg\min_m L
+\end{align}
+\begin{algorithm}
+\caption{Fit, carefully}\label{alg:fit}
+Compute the least-squares solution.
+\end{algorithm}
+\begin{figure}
+\includegraphics{figures/plot.png}
+\caption{Points and the fitted line.}\label{fig:plot}
+\end{figure}
+\section{Results}\label{sec:results}
+The fit has an error of 0.1, shown in Table~\ref{tab:numbers}.
+\begin{table}
+\caption{Errors per run.}\label{tab:numbers}
+\begin{tabular}{ll}
+run & error \\
+first & 0.1
+\end{tabular}
+\end{table}
+\begin{lemma}\label{lem:tinier}
+Some tiny papers are tinier.
+\end{lemma}
+\appendix
+\section{Proof of the lemma}\label{app:proof}
+By inspection.
+\end{document}
