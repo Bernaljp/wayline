@@ -199,16 +199,19 @@ def dirty_outside_research(project):
                    if path != RESEARCH and not path.startswith(RESEARCH + "/")})
 
 
-def refuse_to_start(project):
+def refuse_to_start(project, harness_root=None):
     """Every reason this run must not start, with what to do about it; () when there is none.
 
     The branch is checked as well as the tree, because the fast-forward of the integration
     protocol is `git merge --ff-only` into whatever the project has checked out: on another
     branch it would quietly move that one instead of `main`.
 
-    The other refusal of decision 5, a harness checkout whose tag is not the project's pin, is
-    ticket 46's: it ships with the tagging and the `upgrade` command that fixes a mismatch.
+    The third refusal of decision 5 is a harness checkout whose tag is not the project's pin
+    (`evolve.pin_problem`, which names the `wayline upgrade` command that fixes it).
     """
+    from wayline import evolve  # the evolve module imports the fixture runner; keep this module's import light
+
+    harness_root = harness_root or HARNESS_ROOT
     branch = _git_command(project, "rev-parse", "--abbrev-ref", "HEAD", ok=None)
     if branch.returncode != 0:
         return ["%s is not a git repository, and the conductor branches worktrees from main: "
@@ -221,6 +224,9 @@ def refuse_to_start(project):
     if dirty:
         problems.append("%s has %d change(s) outside research/ (%s); commit or stash them, then run again"
                         % (project, len(dirty), ", ".join(dirty[:5]) + (", ..." if len(dirty) > 5 else "")))
+    pinned = evolve.pin_problem(project, harness_root)
+    if pinned:
+        problems.append(pinned)
     return problems
 
 
