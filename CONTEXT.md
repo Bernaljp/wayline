@@ -33,7 +33,7 @@ A machine-checkable condition; code judges it.
 _Avoid_: hard check, lint
 
 **Type-B gate**:
-A quality verdict; the verifier judges it, never the author.
+A quality verdict; a fresh verifier session judges it, never the session that wrote the work.
 _Avoid_: review, soft check
 
 **Done**:
@@ -79,6 +79,18 @@ _Avoid_: router, dispatcher
 **Tick**:
 The recurrent job that relaunches work after usage windows, answers, and jobs.
 _Avoid_: cron job, watchdog, daemon
+
+**Fable's weekly window**:
+The weekly allowance of Fable usage, counted apart from the all-models week.
+_Avoid_: Fable limit, Fable quota
+
+**Fallback**:
+Fable work launched on Opus while Fable's weekly window is spent; never the CLI's switch to another model on overload.
+_Avoid_: downgrade, substitution
+
+**Fallback consent**:
+The owner's standing answer on fallback for a project: `auto`, `ask`, or `wait`.
+_Avoid_: permission, fallback policy
 
 **Evolve**:
 The loop that turns owner feedback into tested, versioned harness changes.
