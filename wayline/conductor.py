@@ -26,8 +26,11 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   escalation ladder (a tier up, a split ticket, `needs_human`) is named in the `next` of the
   `ticket_failed` event and built by ticket 38, which also acts on the stall counter that the
   `wave` event lets a restart rebuild.
-- The conflict-free integration. A rebase conflict fails the ticket with `next: split`; the
-  integrator role that resolves one arrives with ticket 08.
+- The integration protocol (ticket 08), one ticket at a time under the ledger lock. A rebase
+  conflict is aborted and the `integrator` role is launched once in the worktree, on the
+  conflicting paths, to finish the rebase itself; the conductor's second rebase is the check, and
+  a second conflict fails the ticket with `next: split`. The integrator is model work, so it waits
+  while the run holds launches, and the attempt waits in flight with it.
 - No pacing and no window pause: ticket 10 computes the action the pick order already reads and
   decides what an action refuses to launch; the owner's pause (`wayline pause`) holds launches
   here. No job poller, so an experiment ticket whose jobs outlive its worker stays `running` and
@@ -92,6 +95,10 @@ ACCEPTANCE_FAILED = "acceptance_failed"
 RELAUNCH = "relaunch"
 # The gate a worker that ran past its budget is resumed at, once (decision 3).
 TIMEOUT = "timeout"
+# The role that finishes a conflicted rebase (decision 5), and what an attempt whose integration
+# waits for the run to allow model work waits for.
+INTEGRATOR = "integrator"
+INTEGRATE = "integrate"
 
 # The identity a conductor commits the ledger under when the project's repository has none.
 IDENTITY = ("-c", "user.name=wayline", "-c", "user.email=wayline@localhost")
@@ -313,6 +320,14 @@ class _Stop(NamedTuple):
     reason: str
 
 
+class _Conflict(NamedTuple):
+    """A rebase that stopped: the paths git names as unmerged, each one's text with its markers, and git's words."""
+
+    paths: list
+    markers: list
+    output: str
+
+
 @dataclass
 class _Attempt:
     """One attempt at one ticket, carried through the steps of the outcome."""
@@ -358,6 +373,9 @@ class _Attempt:
     terminated_at: Optional[float] = None
     # The findings `_close` filed for this attempt.
     findings: int = 0
+    # Whether the attempt passed every gate before the integration and waits to integrate, because
+    # its rebase conflicted while the run held the integrator's launch.
+    integrating: bool = False
 
     @property
     def id(self):
@@ -497,7 +515,10 @@ class Conductor:
 
     def _ready(self):
         """Whether a session returned, or the journal grew past what this conductor has read."""
-        if any(attempt.thread is not None and not attempt.running for attempt in self.flight.values()):
+        # An attempt that waits for the run to allow model work again is woken by the journal
+        # (`wayline resume`), not by its own finished thread, or the run would take waves back to back.
+        if any(attempt.want is None and attempt.thread is not None and not attempt.running
+               for attempt in self.flight.values()):
             return True
         if any(attempt.adopted and attempt.tail.read().result is not None for attempt in self.flight.values()):
             return True
@@ -895,8 +916,13 @@ class Conductor:
                 if attempt.running:
                     continue
                 if attempt.want is not None:
-                    self._start_wanted(attempt)
-                    continue
+                    if attempt.want.stage != INTEGRATE:
+                        self._start_wanted(attempt)
+                        continue
+                    if self._holds_launches():
+                        continue
+                    attempt.want = None  # the integration it waited for may launch its integrator now
+
                 if attempt.adopted and not self._adopted_returned(attempt):
                     continue
                 self._carry(attempt, result)
@@ -922,7 +948,8 @@ class Conductor:
         except (ValueError, OSError) as failure:  # a launch, a ticket file, or a git step
             self._fail(attempt, str(failure), "needs_human")
         finally:
-            if attempt.started:
+            # An integration left waiting for the run to allow model work is counted by the wave that concludes it.
+            if attempt.started and not attempt.integrating:
                 result.outcomes += 1
         if outcome == "session":
             self.flight[attempt.id] = attempt
@@ -1022,6 +1049,9 @@ class Conductor:
         if not attempt.result_journaled:
             self._journal_result(attempt)
             attempt.result_journaled = True
+        if attempt.integrating:
+            attempt.integrating = False
+            return self._finish(attempt)
         problem = self._invalid(attempt)
         if attempt.stage == ACCEPTANCE_FAILED:
             if problem is not None:
@@ -1042,10 +1072,17 @@ class Conductor:
             record = self._accept(attempt, "worktree", attempt.worktree)
             if not record["pass"]:
                 return self._want_resume(attempt, ACCEPTANCE_FAILED, RESUME_ACCEPTANCE % _failures(record["results"]))
-        if self._committed(attempt) and self._integrate(attempt):
+        return self._finish(attempt)
+
+    def _finish(self, attempt):
+        """The branch's commits integrated and the ticket closed: `done`, `failed`, or `session` while the integrator waits."""
+        self._stop_integrator(attempt)
+        if not self._committed(attempt):
+            return "failed"
+        outcome = self._integrate(attempt)
+        if outcome == "done":
             self._close(attempt)
-            return "done"
-        return "failed"
+        return outcome
 
     def _invalid(self, attempt):
         """Why the envelope is not a result the conductor can act on, or None when it is one."""
@@ -1079,8 +1116,8 @@ class Conductor:
 
     def _start_wanted(self, attempt):
         """Start the session an attempt waits for, unless the run holds model work; returns whether it did."""
-        if attempt.want is None or self._holds_launches():
-            return False
+        if attempt.want is None or attempt.want.stage == INTEGRATE or self._holds_launches():
+            return False  # an integration is carried again by `_poll`, not started as a session
         want, attempt.want = attempt.want, None
         if want.stage == RELAUNCH:
             self._journal_resumed(attempt, replay.WORKER_DIED)
@@ -1289,32 +1326,204 @@ class Conductor:
     # --- the integration protocol ---
 
     def _integrate(self, attempt):
-        """Rebase, re-accept, fast-forward `main`, accept there (decision 5, the conflict-free case)."""
-        if self._git(attempt.worktree, "rebase", MAIN, ok=None).returncode != 0:
-            conflicts = [line for line in self._git(attempt.worktree, "diff", "--name-only",
-                                                    "--diff-filter=U", ok=None).stdout.split("\n") if line.strip()]
-            self._git(attempt.worktree, "rebase", "--abort", ok=None)
-            self._fail(attempt, "rebasing %s onto main conflicts in %s; the integrator role arrives with ticket 08"
-                       % (BRANCH % attempt.id, ", ".join(conflicts) or "a path git did not name"), "split")
-            return False
+        """The integration protocol of decision 5 for one ticket: `done`, `failed`, or `session`.
+
+        Integrations are carried one at a time on the conductor's thread, and every git step that
+        moves a branch or `main` holds the ledger lock, the lock any other process that writes the
+        ledger takes. In the worktree, `git rebase main`; on a conflict the rebase is aborted and the
+        integrator is launched once, which finishes the rebase itself (a commit on top of the old
+        branch cannot help: the next rebase replays the commit that conflicted). The conductor then
+        rebases again, and a second conflict fails the ticket with `next: split`. The integrator's
+        session and every acceptance run outside the lock, because either may take minutes and
+        `wayline answer`, `wayline consult`, and the dashboard write the ledger meanwhile.
+
+        What the integrator hands back is checked, not trusted: the worktree must still be on the
+        ticket branch, and the branch must still carry a change of its own and no path it did not
+        change before. An integrator a restarted conductor finds already launched for this attempt
+        is not launched again.
+
+        A conflict met while the run holds launches leaves the integration waiting in flight
+        (`session`); the wave after the hold ends carries it again from the rebase.
+
+        After a clean rebase the acceptance reruns on the branch (`where: rebased`), `main` is
+        fast-forwarded, the acceptance reruns there (`where: main`), and `integrated` records the
+        commit and who resolved the conflict.
+        """
+        spent = self._integrator_spent(attempt)
+        resolved_by = INTEGRATOR if spent else "none"
+        problem = self._off_branch(attempt)
+        if problem is not None:
+            self._fail(attempt, problem, "split" if spent else self._next_step(attempt))
+            return "failed"
+        before = self._branch_paths(attempt)
+        with self.ledger.lock():
+            conflict = self._rebase(attempt)
+        if conflict is not None and spent:
+            self._fail(attempt, "rebasing %s onto main conflicts in %s, and the integrator was already launched for "
+                       "this attempt before the conductor restarted" % (BRANCH % attempt.id, ", ".join(conflict.paths)
+                                                                        or "a path git did not name"), "split")
+            return "failed"
+        if conflict is not None:
+            if not conflict.paths:
+                self._fail(attempt, "rebasing %s onto main failed and git named no conflicting path, so there is "
+                           "nothing an integrator could resolve: %s" % (BRANCH % attempt.id, conflict.output), "split")
+                return "failed"
+            if self._holds_launches():
+                attempt.integrating, attempt.want = True, _Want(INTEGRATE)
+                self.say("  ticket %d: rebasing onto main conflicts in %s; the integrator waits until the run may launch again"
+                         % (attempt.id, ", ".join(conflict.paths)))
+                return "session"
+            # Every path both sides changed may conflict, not only the one the rebase stopped on first.
+            touches = sorted(set(conflict.paths) | (before & self._main_paths(attempt)))
+            told = self._launch_integrator(attempt, conflict, touches)
+            resolved_by = INTEGRATOR
+            with self.ledger.lock():
+                again = self._rebase(attempt)
+            if again is not None:
+                self._fail(attempt, "rebasing %s onto main conflicted in %s; the integrator %s; the rebase after it "
+                           "still fails%s" % (BRANCH % attempt.id, ", ".join(conflict.paths), told,
+                                              " in " + ", ".join(again.paths) if again.paths else ": " + again.output),
+                           "split")
+                return "failed"
+            problem = self._off_branch(attempt) or _changed_by_integrator(before, self._branch_paths(attempt))
+            if problem is not None:
+                self._fail(attempt, "the integrator %s; %s" % (told, problem), "split")
+                return "failed"
         if not self._accept(attempt, "rebased", attempt.worktree)["pass"]:
             self._fail(attempt, "the machine acceptance failed after the rebase onto main", self._next_step(attempt))
-            return False
-        merge = self._git(self.project, "merge", "--ff-only", BRANCH % attempt.id, ok=None)
+            return "failed"
+        with self.ledger.lock():
+            merge = self._git(self.project, "merge", "--ff-only", BRANCH % attempt.id, ok=None)
+            commit = attempt.commit = self._head(self.project) if merge.returncode == 0 else None
         if merge.returncode != 0:
             self._fail(attempt, "main could not be fast-forwarded to %s: %s"
                        % (BRANCH % attempt.id, (merge.stderr or merge.stdout).strip()), "split")
-            return False
-        commit = attempt.commit = self._head(self.project)
+            return "failed"
         if not self._accept(attempt, "main", self.project)["pass"]:
             self._fail(attempt, "the machine acceptance failed on main after the fast-forward to %s; main "
                        "carries the commit and a person has to look" % commit[:12], "needs_human")
-            return False
+            return "failed"
         if self.view.integrated.get(attempt.id) != commit:  # journaled already by a conductor that died after it
-            self.ledger.append_event(INTEGRATED, {"ticket": attempt.id, "commit": commit, "resolved_by": "none"},
+            self.ledger.append_event(INTEGRATED, {"ticket": attempt.id, "commit": commit, "resolved_by": resolved_by},
                                      ticket=attempt.id)
-        self.say("  integrated %s into main as %s" % (BRANCH % attempt.id, commit[:12]))
-        return True
+        self.say("  integrated %s into main as %s%s" % (BRANCH % attempt.id, commit[:12],
+                                                        " (resolved by the integrator)" if resolved_by == INTEGRATOR else ""))
+        return "done"
+
+    def _rebase(self, attempt):
+        """`git rebase main` in the worktree: None when it is clean, else the `_Conflict`, with no rebase left in progress.
+
+        The conflicting files are read before the abort, because the markers exist only while the
+        rebase is stopped. A rebase an integrator left in progress fails here as well, and is aborted.
+        """
+        rebased = self._git(attempt.worktree, "rebase", MAIN, ok=None)
+        if rebased.returncode == 0:
+            return None
+        paths = [line for line in self._git(attempt.worktree, "diff", "--name-only", "--diff-filter=U",
+                                            ok=None).stdout.split("\n") if line.strip()]
+        markers = [(path, _conflicted_text(attempt.worktree / path)) for path in paths]
+        self._git(attempt.worktree, "rebase", "--abort", ok=None)
+        return _Conflict(paths, markers, (rebased.stderr or rebased.stdout).strip())
+
+    def _off_branch(self, attempt):
+        """Why the worktree has no ticket branch checked out to integrate, or None when it has."""
+        head = self._git(attempt.worktree, "symbolic-ref", "--quiet", "--short", "HEAD", ok=None)
+        if head.returncode == 0 and head.stdout.strip() == BRANCH % attempt.id:
+            return None
+        return "the worktree of ticket %d is on %s, not %s, so the branch it would integrate is not the one it worked on" % (
+            attempt.id, head.stdout.strip() or "a detached HEAD", BRANCH % attempt.id)
+
+    def _branch_paths(self, attempt):
+        """The paths the ticket branch changes since it left `main`."""
+        return _names(self._git(self.project, "diff", "--name-only", "-z", "%s...%s" % (MAIN, BRANCH % attempt.id)).stdout)
+
+    def _main_paths(self, attempt):
+        """The paths `main` changed since the ticket branch left it."""
+        return _names(self._git(self.project, "diff", "--name-only", "-z", "%s...%s" % (BRANCH % attempt.id, MAIN)).stdout)
+
+    def _integrator_dir(self, attempt):
+        return self._attempt_dir(attempt) / INTEGRATOR
+
+    def _integrator_spent(self, attempt):
+        """Whether this attempt's one integrator was already launched: its session left a stream."""
+        return (self._integrator_dir(attempt) / "stream.jsonl").is_file()
+
+    def _stop_integrator(self, attempt):
+        """An integrator a dead conductor launched: ended if it still runs, and the rebase it was in aborted.
+
+        Nothing but the session directory records it, because its session is not journaled; a
+        restarted conductor that carries the attempt would otherwise rebase the worktree under it.
+        """
+        if not self._integrator_spent(attempt) or not (attempt.worktree / ".git").exists():
+            return
+        run_dir = self._integrator_dir(attempt)
+        pid = _read_pid(run_dir)
+        if pid is not None and worker.pid_alive(pid, run_dir):
+            worker.terminate(pid, run_dir)
+            deadline = time.monotonic() + STOP_WAIT_S
+            while worker.pid_alive(pid, run_dir) and time.monotonic() < deadline:
+                time.sleep(0.2)
+            if worker.pid_alive(pid, run_dir):
+                worker.terminate(pid, run_dir, hard=True)
+            self.say("  ticket %d: stopped the integrator (pid %d) a conductor launched before the restart" % (attempt.id, pid))
+        self._git(attempt.worktree, "rebase", "--abort", ok=None)  # nothing to abort is not an error here
+
+    def _launch_integrator(self, attempt, conflict, touches):
+        """Launch the integrator once, in the worktree, with `touches` as its touch set; what it came to, in words.
+
+        The session runs to its end on this thread, since nothing behind this ticket can integrate
+        before it. Nothing about it is journaled as a `ticket_*` event: the attempt a restart
+        replays is the worker's, and an integrator's session id there would be resumed as the
+        worker's. The ticket file records the session instead, `integrated` records that the
+        integrator resolved the conflict, and its session directory is what a restart finds.
+        """
+        told, session = None, None
+        try:
+            role = worker.read_role(INTEGRATOR, self.harness_root, self.project)
+            tier = self._integrator_tier(attempt)
+            run_dir = self._integrator_dir(attempt)
+            prompt = worker.integrator_prompt(attempt.ticket, role, conflict.markers, touches=touches,
+                                              max_chars=tier.context_chars,
+                                              budget={"max_turns": tier.max_turns, "max_minutes": tier.max_minutes})
+            env = worker.session_env(self.project, attempt.id, attempt.number, touches, harness_root=self.harness_root)
+            env.update(WAYLINE_RUN=str(run_dir), TICKET_ACCEPTANCE_FILE=str(run_dir / "acceptance.json"),
+                       GIT_EDITOR="true")  # `git rebase --continue` opens no editor in a session with no terminal
+            request = worker.LaunchRequest(
+                role=role.name, model=tier.model, effort=tier.effort, prompt=prompt.text,
+                agent_json=role.agent_json(tier.model, tier.effort, tier.max_turns),
+                allowed_tools=list(role.allowed_tools), disallowed_tools=list(role.disallowed_tools),
+                settings_path=gates.write_worker_settings(run_dir / "settings.json", self.harness_root),
+                add_dirs=[str(self.harness_root), str(self.project)], cwd=attempt.worktree, env=env,
+                schema_path=self.harness_root / "schemas" / ((role.output_schema or "result") + ".json"),
+                max_minutes=tier.max_minutes,
+            )
+            self.say("  ticket %d: rebasing onto main conflicts in %s; launching the integrator (%s %s)"
+                     % (attempt.id, ", ".join(conflict.paths), tier.model, tier.effort))
+            envelope = worker.launch(request)
+        except Exception as failure:  # a role, a prompt, a settings file, or the launch: the ticket is split, not the run
+            told = "could not be launched (%s)" % failure
+        else:
+            session = "session `%s` on %s" % (envelope.session_id or "unknown", envelope.model or tier.model)
+            result = envelope.structured_output if envelope.valid else None
+            if result is None:
+                told = "returned no usable result (%s)" % ("; ".join(envelope.errors) or "no structured output")
+            else:
+                told = "returned %s: %s" % (result.get("status"), (result.get("summary") or "").strip() or "no summary")
+        self.say("  ticket %d: the integrator %s" % (attempt.id, told))
+        attempt.body = tickets.with_result_note(attempt.body, [
+            "**Integrator** (attempt %d), %s, on %s: it %s." % (
+                attempt.number, session or "no session", ", ".join("`%s`" % path for path in touches), told),
+        ])
+        tickets.write_ticket(self.ledger, attempt.ticket, attempt.body)
+        return told
+
+    def _integrator_tier(self, attempt):
+        """`policy.roles.integrator`'s model and effort, with the ticket's own budget and the model's context cap."""
+        entry = (self.policy.get("roles") or {}).get(INTEGRATOR) or {}
+        model, effort = entry.get("model") or attempt.tier.model, entry.get("effort") or attempt.tier.effort
+        caps = (self.policy.get("context_pack") or {}).get("max_chars") or {}
+        return Tier(model=model, effort=effort, max_turns=attempt.tier.max_turns, max_minutes=attempt.tier.max_minutes,
+                    context_chars=caps.get(model, attempt.tier.context_chars))
 
     # --- closing the ticket ---
 
@@ -1517,14 +1726,15 @@ class Conductor:
         """
         busy = [":(exclude)" + self._attempt_dir(attempt).relative_to(self.project).as_posix()
                 for attempt in self.flight.values()]
-        self._git(self.project, "add", "--", RESEARCH, *busy)
-        if self._git(self.project, "diff", "--cached", "--name-only", "--", HEARTBEAT_PATH).stdout.strip():
-            # A project laid out before the heartbeat was ignored: keep the file out of the commit.
-            self._git(self.project, "reset", "-q", "--", HEARTBEAT_PATH)
-        if self._git(self.project, "diff", "--cached", "--quiet", "--", RESEARCH, ok=None).returncode == 0:
-            return None
-        self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH, *busy)
-        return self._head(self.project)
+        with self.ledger.lock():  # a commit to `main`, like the fast-forward of an integration
+            self._git(self.project, "add", "--", RESEARCH, *busy)
+            if self._git(self.project, "diff", "--cached", "--name-only", "--", HEARTBEAT_PATH).stdout.strip():
+                # A project laid out before the heartbeat was ignored: keep the file out of the commit.
+                self._git(self.project, "reset", "-q", "--", HEARTBEAT_PATH)
+            if self._git(self.project, "diff", "--cached", "--quiet", "--", RESEARCH, ok=None).returncode == 0:
+                return None
+            self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH, *busy)
+            return self._head(self.project)
 
     def _head(self, path):
         return self._git(path, "rev-parse", "HEAD").stdout.strip()
@@ -1558,6 +1768,32 @@ def _parse_ts(value):
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+
+
+def _conflicted_text(path):
+    """A conflicting file as a stopped rebase left it, for the integrator's prompt; what git left instead when it is not text."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "(no file at this path in the stopped rebase: one side deleted it)\n"
+    if b"\0" in data[:8000]:
+        return "(a binary file of %d bytes; git cannot place conflict markers in it)\n" % len(data)
+    return data.decode("utf-8", errors="replace")
+
+
+def _names(text):
+    """The paths `git diff --name-only -z` printed, as a set."""
+    return {name for name in text.split("\0") if name}
+
+
+def _changed_by_integrator(before, after):
+    """Why a branch the integrator rebased is not the branch it was given, or None when it still is one."""
+    if not after:
+        return "the rebased branch carries no change of its own any more"
+    extra = sorted(after - before)
+    if extra:
+        return "the rebased branch now changes %s, which the branch did not change before" % ", ".join(extra)
+    return None
 
 
 def _read_pid(run_dir):
