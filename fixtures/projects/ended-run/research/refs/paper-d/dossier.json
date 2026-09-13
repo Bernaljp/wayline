@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "slug": "paper-d",
+  "level": 0,
+  "existence": "unresolved",
+  "resolved_by": null,
+  "query": {
+    "kind": "title",
+    "value": "A tabular benchmark someone mentioned"
+  },
+  "identifiers": {},
+  "metadata": {},
+  "created": "2026-09-11T20:00:00.000Z"
+}

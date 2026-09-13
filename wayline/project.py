@@ -218,6 +218,7 @@ def default_harness(harness_tag=TAG, policy=None, hermes_python=_DETECT, owner_e
         "harness_tag": harness_tag,
         "autonomy": "checkpoints",
         "radius": "moderate",
+        "human_only": ["goal", "data"],  # decision 4: goal and data changes wait for the owner
         "reservations": {
             "gpu": list(reservations.get("gpu", [])),
             "cores": reservations.get("cores", 8),

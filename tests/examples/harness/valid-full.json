@@ -2,6 +2,11 @@
   "harness_tag": "v0.0.0",
   "autonomy": "checkpoints",
   "radius": "moderate",
+  "human_only": [
+    "goal",
+    "data",
+    "baselines"
+  ],
   "budgets": {
     "gpu_hours": 40,
     "wallclock_hours": 72,

@@ -1,0 +1,67 @@
+{
+  "entries": [
+    {
+      "path": "results/features/summary.json",
+      "size": 51,
+      "sha256": "dd91f42fba35526157c33656f378ba2c5f5ad1a8a69f4847b046388f2e352ad1",
+      "job": null,
+      "run_id": "t1-a1",
+      "ticket": 1,
+      "ts": "2026-09-11T21:02:00.000Z"
+    },
+    {
+      "path": "results/baseline/seed-1/summary.json",
+      "size": 34,
+      "sha256": "05444e66c443de09c9a9cce0bb22a40856089f1f1812c4bf580e9c73aa51b845",
+      "job": "j-0001",
+      "run_id": "t2-a1",
+      "ticket": 2,
+      "ts": "2026-09-11T22:09:00.000Z"
+    },
+    {
+      "path": "results/baseline/seed-2/summary.json",
+      "size": 34,
+      "sha256": "69014fbec0012e7588a490a5580dffca79561106b2e8df648e77c7cb32aa1b7c",
+      "job": "j-0001",
+      "run_id": "t2-a1",
+      "ticket": 2,
+      "ts": "2026-09-11T22:10:00.000Z"
+    },
+    {
+      "path": "results/baseline/seed-3/summary.json",
+      "size": 34,
+      "sha256": "d3f60e9f5f2e138fe8aacb98fe71930814fd0fcc428d30f52f7fc026f1af0b47",
+      "job": "j-0001",
+      "run_id": "t2-a1",
+      "ticket": 2,
+      "ts": "2026-09-11T22:11:00.000Z"
+    },
+    {
+      "path": "results/baseline/summary.json",
+      "size": 61,
+      "sha256": "0dfa123c51bc0160a1c0c79153f60d0d860bc80b90cd1152c85cc8d9da38109e",
+      "job": "j-0001",
+      "run_id": "t2-a1",
+      "ticket": 2,
+      "ts": "2026-09-11T22:12:00.000Z"
+    },
+    {
+      "path": "results/interactions/summary.json",
+      "size": 61,
+      "sha256": "999374b6968623322eec9cb65b4c5b7e372cc35b670fcb4b27c4736828883f09",
+      "job": "j-0002",
+      "run_id": "t3-a1",
+      "ticket": 3,
+      "ts": "2026-09-12T00:45:00.000Z"
+    },
+    {
+      "path": "results/depth/summary.json",
+      "size": 61,
+      "sha256": "dcc3f32ab0a8880d689bc6637a5406145667eac0ea3d3432d867c7a90808d0eb",
+      "job": "j-0003",
+      "run_id": "t4-a1",
+      "ticket": 4,
+      "ts": "2026-09-12T01:49:00.000Z"
+    }
+  ]
+}

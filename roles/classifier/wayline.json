@@ -1,0 +1,19 @@
+{
+  "id": "classifier",
+  "scope_kind": "global",
+  "capability_summary": "Sorts a numbered batch of report sentences into claims, definitions, transitions, and method descriptions, with no tools, and returns one class per sentence.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "be20cf084d68e838049151f4c0db82590b8c739e7d55cd1409a1127f2807ee7a",
+  "may_judge": false,
+  "output_schema": "claim_classes",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}
