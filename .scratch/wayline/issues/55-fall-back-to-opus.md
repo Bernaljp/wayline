@@ -1,0 +1,19 @@
+# 55 - Fall back to Opus under the fallback consent
+
+**What to build:** The owner decides per project whether Fable work falls back to Opus while Fable's weekly window is spent: `auto` falls back without asking, `wait` holds Fable work for the reset, and `ask`, the default, holds it until "57 - Ask the owner when Fable is spent" lands. The consent is asked at intake, changed at any moment with `wayline switch --fallback`, and shown in `wayline status`. Under `auto`, every held Fable launch runs on Opus at the same effort and budget under Opus's context cap, with the agents it defines on Fable moved to Opus and the launch marked as a fallback in the journal; a failure counts toward the ticket's escalation and never raises its kind; a Fable session stopped mid-work continues as a fresh Opus session in the same attempt. Verdicts whose table verifier is Fable keep waiting until "56 - Verdicts on Opus and the verdict principle" lands.
+
+**Blocked by:** 30 (The grill and the autonomy switch), 54 (Hold only Fable launches while Fable's weekly window is spent)
+
+**Status:** ready-for-agent
+
+**GitHub:** [#102](https://github.com/Bernaljp/wayline/issues/102) (mirror; the local file is the source)
+
+**Milestone:** M5 Overnight and report. **Spec:** milestone M5 criterion 11; Implementation Decisions 15 (the fallback consent, what Fable work becomes on Opus, what `wayline status` shows, the vocabulary the build adds), 1 (`harness.json`, `switch --fallback`), 3 (models), 5 (escalation, `control` arguments), 10 (intake), 2 (the event table).
+
+- [ ] `model_fallback` (`auto`, `ask`, `wait`) is in the `harness.json` schema and asked by the intake beside autonomy and budgets; a project without the key behaves as `ask`, and a missing key stays distinguishable from an explicit `ask`.
+- [ ] `wayline switch --fallback auto|ask|wait` writes `harness.json` first and then journals `control` with `command: model_fallback` and `args: {model_fallback: <value>}`, accepted at any time, with a conductor running or not; `project.set_model_fallback` is the function the dashboard action calls; the conductor applies it at its next wave; `model_fallback` joins the `control` enumeration in the event table of Implementation Decisions 2.
+- [ ] Under `auto`, while the hold stands, a Fable launch runs on `opus` at its own effort (difficulty 4 `xhigh`, difficulty 5 `max`, the planner, writer, and evolver `xhigh`, the decider `max`) with its difficulty and its turn and minute budget unchanged, its context pack cut at `context_pack.max_chars.opus` with the cut announced, and every agent its `agent.json` defines on `fable` launched on `opus`; `ticket_launched` carries `fallback_from: fable` beside `model: opus`, added to the event table.
+- [ ] A fallback attempt counts toward the ticket's escalation, and its tier up falls back like any launch; an attempt whose `ticket_launched` carries `fallback_from` never counts toward `difficulty_raised` (the test lands with whichever of this ticket and "38 - Stall detection and the escalation chain" merges second).
+- [ ] Under fallback, a Fable session stopped mid-work is relaunched as a fresh Opus session in the same attempt and worktree, its prompt saying that a stopped session left partial work there; under `wait` and `ask` it waits as ticket 54 built.
+- [ ] While the hold stands, `wayline status` and the dashboard overview print the hold line `fable    held until <reset>   consent <auto|ask|wait|ask (unset)>   waiting <n>   fallen back <m>`, where `waiting` counts the Fable launches held and `fallen back` the events carrying `fallback_from` since the hold's `paused`.
+- [ ] Tests: the fake launcher asserts each fallback `LaunchRequest`'s model, effort, context cap, and agent models; journal replay covers each consent, a `control model_fallback` mid-run, the mid-work stop, and the escalation counting; the hold line is rendered from fixture journals.
