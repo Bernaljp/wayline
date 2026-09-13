@@ -281,9 +281,9 @@ def uninstall_units():
 def detach_argv(project, run_args=(), harness_root=None, interpreter=None, environ=None):
     """The `systemd-run` line that starts `wayline run --resume` on `project` as `wayline-conductor`.
 
-    The unit loads `~/.wayline/env` like the installed units do, and it carries every `WAYLINE_*`
-    variable of the process that asked for it (the harness home, the launcher, the job backend),
-    because a transient unit starts from the manager's environment, not the caller's.
+    The unit loads `~/.wayline/env` like the installed units do, and it carries `PATH` and every
+    `WAYLINE_*` variable of the process that asked for it (the harness home, the launcher, the job
+    backend), because a transient unit starts from the manager's environment, not the caller's.
     """
     environ = os.environ if environ is None else environ
     argv = [
@@ -293,7 +293,8 @@ def detach_argv(project, run_args=(), harness_root=None, interpreter=None, envir
         "--expand-environment=no",
     ]
     for key in sorted(environ):
-        if key.startswith("WAYLINE_"):
+        # PATH too: the manager's lacks `~/.local/bin`, where the executable workers run is installed.
+        if key.startswith("WAYLINE_") or key == "PATH":
             argv += ["-E", "%s=%s" % (key, environ[key])]
     argv += [os.path.abspath(interpreter or sys.executable), "-m", "wayline", "run", "--resume",
              "--project", os.path.abspath(project), *run_args]
@@ -341,6 +342,8 @@ def ensure_dashboard():
         done = systemctl("start", DASHBOARD_SERVICE)
     except UnitsOff as off:
         return "off", str(off)
+    except UnitError as failure:  # an unknown WAYLINE_UNITS; the dashboard is a view and never fails a run
+        return "failed", str(failure)
     if done.returncode == 0:
         return "started", ""
     return "failed", _said(done)
@@ -389,6 +392,8 @@ def offer_env_file(stream=None, out=None, setup_token=None, read_token=None):
         return "no %s written; the units run on your /login" % path
     try:
         code = (setup_token or worker.setup_token)()
+    except KeyboardInterrupt:
+        return "%s interrupted; nothing written" % command
     except (OSError, ValueError) as failure:
         return "%s could not run (%s); nothing written" % (command, failure)
     if code != 0:
@@ -396,8 +401,10 @@ def offer_env_file(stream=None, out=None, setup_token=None, read_token=None):
     try:
         token = (read_token or getpass.getpass)("paste the token it printed (not echoed): ")
         write_env_file(token, path)
-    except (UnitError, OSError, EOFError, KeyboardInterrupt) as failure:
-        return "%s not written: %s" % (path, failure or "cancelled")
+    except (EOFError, KeyboardInterrupt):
+        return "%s not written: cancelled" % path
+    except (UnitError, OSError) as failure:
+        return "%s not written: %s" % (path, failure)
     return "wrote %s (0600); the units load it from their next start" % path
 
 

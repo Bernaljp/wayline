@@ -158,6 +158,12 @@ class UnitsOffTest(ProjectTestCase):
             with self.assertRaises(tick.UnitError):
                 tick.install_units()
 
+    def test_an_unknown_backend_never_fails_the_dashboard_start(self):
+        with mock.patch.dict(os.environ, {tick.UNITS_ENV: "off"}):
+            state, detail = tick.ensure_dashboard()
+        self.assertEqual(state, "failed")
+        self.assertIn("WAYLINE_UNITS=off", detail)
+
 
 class InitVerbTest(FakeManagerCase):
     def init(self, *args):
@@ -227,6 +233,7 @@ class DetachTest(ConductorCase):
         [argv] = self.launches()
         self.assertIn("WAYLINE_LAUNCHER=fake", argv)
         self.assertIn("WAYLINE_HOME=%s" % self.wayline_home, argv)
+        self.assertIn("PATH=%s" % os.environ["PATH"], argv)  # the manager's PATH lacks ~/.local/bin
         self.assertEqual(argv[-2:], ["--max-waves", "3"])
 
     def test_a_conductor_unit_still_running_is_not_doubled(self):
@@ -317,6 +324,16 @@ class EnvFileTest(FakeManagerCase):
         self.assertFalse(tick.env_path().exists())
         note = tick.offer_env_file(stream=_Terminal("y\n"), out=io.StringIO(), setup_token=lambda: 1, read_token=lambda prompt: "tok")
         self.assertIn("exited 1", note)
+        self.assertFalse(tick.env_path().exists())
+
+    def test_a_cancelled_paste_or_an_interrupted_setup_token_is_a_note_not_a_traceback(self):
+        def interrupt(*_):
+            raise KeyboardInterrupt
+
+        note = tick.offer_env_file(stream=_Terminal("y\n"), out=io.StringIO(), setup_token=lambda: 0, read_token=interrupt)
+        self.assertIn("not written: cancelled", note)
+        note = tick.offer_env_file(stream=_Terminal("y\n"), out=io.StringIO(), setup_token=interrupt)
+        self.assertIn("interrupted", note)
         self.assertFalse(tick.env_path().exists())
 
     def test_an_existing_file_is_never_offered_again(self):
