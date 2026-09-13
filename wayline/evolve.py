@@ -237,10 +237,21 @@ def upgrade(project, to=None, harness_root=None):
     if target not in tags:
         spelled = "" if parse_tag(target) else " (tags are spelled vMAJOR.MINOR.PATCH)"
         raise EvolveError("the harness repository %s has no tag %s%s; it has %s" % (harness_root, target, spelled, ", ".join(tags)))
-    holder = conductor_holder(project)
-    if holder is not None:
-        raise EvolveError("a conductor (pid %s) is running on %s against the harness checkout; run wayline stop, then upgrade"
-                          % (holder.get("pid", "?"), project))
+    # Every project runs from this one checkout, so a conductor on any of them holds it, not only on this one.
+    registered = [Path(entry["path"]) for entry in projects.read_projects() if isinstance(entry, dict) and isinstance(entry.get("path"), str)]
+    for candidate in dict.fromkeys([project] + registered):
+        try:
+            holder = conductor_holder(candidate) if projects.is_project(candidate) else None
+        except OSError:
+            holder = None
+        if holder is not None:
+            raise EvolveError("a conductor (pid %s) is running on %s against the harness checkout; run wayline stop --project %s, then upgrade"
+                              % (holder.get("pid", "?"), candidate, candidate))
+    # The pin commit takes these two files whole, so an owner's unfinished edit to either would ride along in it.
+    edited = _git(project, "status", "--porcelain", "--", projects.HARNESS_JSON, projects.CLAUDE_MD, ok=None)
+    if edited.returncode == 0 and edited.stdout.strip():
+        raise EvolveError("%s has uncommitted changes to %s, which the upgrade rewrites and commits; commit or stash them, then upgrade"
+                          % (project, ", ".join(line[3:] for line in edited.stdout.splitlines() if line)))
 
     notes = []
     if target not in (tags_at_head(harness_root) or []):
@@ -519,6 +530,22 @@ def _checkout_of(harness_root, branch):
     return None
 
 
+def _integrated(harness_root, tip, main):
+    """How `main` holds the promotion commit `tip`: `ancestor` (merged), `content` (squashed or rebased), or None.
+
+    A squash or rebase merge leaves the branch tip out of `main`'s history, so the promotion also
+    counts as integrated when `main` holds every file the promotion commit wrote exactly as the
+    branch has it. `CHANGELOG.md` is left out of that comparison, because other entries may have
+    landed beside the promotion's paragraph.
+    """
+    if _git(harness_root, "merge-base", "--is-ancestor", tip, main, ok=None).returncode == 0:
+        return "ancestor"
+    written = [path for path in _git(harness_root, "diff", "--name-only", tip + "^", tip).stdout.splitlines() if path and path != CHANGELOG]
+    if written and _git(harness_root, "diff", "--quiet", tip, main, "--", *written, ok=None).returncode == 0:
+        return "content"
+    return None
+
+
 def _remove_promotion(harness_root, branch, worktree):
     """Drop the promotion worktree and its branch: the branch is merged and tagged, or it was never committed."""
     if Path(worktree).exists():
@@ -549,11 +576,17 @@ def promote(kind, name, project, harness_root=None, tag=None, run=None):
 
     if _exists(harness_root, "refs/heads/" + branch):
         tip = _git(harness_root, "rev-parse", branch).stdout.strip()
-        if _git(harness_root, "merge-base", "--is-ancestor", tip, main, ok=None).returncode != 0:
+        state = _integrated(harness_root, tip, main)
+        if state is None:
             return dict(base, state="waiting", next=[
-                "review %s and merge it into the harness %s; then run wayline promote %s %s again, and it tags the result"
-                % (branch, main, kind, name)])
-        if not _sorted_tags(_git(harness_root, "tag", "--contains", tip).stdout.splitlines()):
+                "review %s and merge it into the harness %s; then run wayline promote %s %s again, and it tags the result "
+                "(the local %s must hold it: after a merge on GitHub, pull it first; a squash or rebase merge counts once "
+                "%s holds the promoted files as the branch has them)" % (branch, main, kind, name, main, main)])
+        if state == "ancestor":
+            released = _sorted_tags(_git(harness_root, "tag", "--contains", tip).stdout.splitlines())
+        else:  # a squash or rebase merge: the promoted content is on main, and a tag at main's head already covers it
+            released = _sorted_tags(_git(harness_root, "tag", "--points-at", main).stdout.splitlines())
+        if not released:
             return _release(harness_root, main, tag, project, base)
         _remove_promotion(harness_root, branch, worktree)  # merged and tagged already: a new promotion starts afresh
     return _branch(harness_root, main, project, base, run or run_check)

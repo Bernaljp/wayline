@@ -293,6 +293,36 @@ class UpgradeTest(HarnessRepositoryCase):
         self.assertIn("4242", str(raised.exception))
         self.assertIn("v0.1.0", self.head_tags())
 
+    def test_a_conductor_on_another_project_holds_the_shared_checkout(self):
+        other = self.temp / "other"
+        init_project(other, harness_root=self.harness, harness_tag="v0.1.0", hermes_python=None, owner_email=None)
+        holding = lambda path: {"pid": 77} if Path(path).resolve() == other.resolve() else None
+        with mock.patch.object(evolve, "conductor_holder", side_effect=holding), self.assertRaises(evolve.EvolveError) as raised:
+            self.upgrade()
+        self.assertIn(str(other), str(raised.exception))
+        self.assertIn("v0.1.0", self.head_tags())
+        self.assertEqual(self.pin(), "v0.1.0")
+
+    def test_an_uncommitted_edit_to_harness_json_is_not_swept_into_the_pin_commit(self):
+        harness = json.loads((self.project / "harness.json").read_text(encoding="utf-8"))
+        harness["autonomy"] = "interactive"
+        (self.project / "harness.json").write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaises(evolve.EvolveError) as raised:
+            self.upgrade()
+        self.assertIn("harness.json", str(raised.exception))
+        self.assertIn("v0.1.0", self.head_tags())
+
+    def test_an_unfinished_local_skill_stays_out_of_the_pin_commit(self):
+        skill = write_skill(self.project / ".claude" / "skills" / "wayline-mine", "mine", scope_kind="local")
+        self.hgit("add", "-A", cwd=self.project)
+        self.hgit("commit", "-q", "-m", "a local skill", cwd=self.project)
+        (skill / "SKILL.md").write_text("half written\n", encoding="utf-8")
+        self.upgrade()
+        committed = self.hgit("show", "--name-only", "--format=", "HEAD", cwd=self.project).split()
+        self.assertIn(".claude/skills/wayline-figure", committed)
+        self.assertFalse([path for path in committed if "wayline-mine" in path], committed)
+        self.assertIn("wayline-mine", self.hgit("status", "--porcelain", cwd=self.project))
+
     def test_another_project_left_on_the_old_pin_is_named(self):
         other = self.temp / "other"
         init_project(other, harness_root=self.harness, harness_tag="v0.1.0", hermes_python=None, owner_email=None)
@@ -443,6 +473,24 @@ class PromoteSkillTest(PromoteCase):
         self.assertFalse(Path(report["worktree"]).exists())
         self.assertEqual(self.hgit("status", "--porcelain"), "")
         self.assertIn("wayline upgrade --to v0.3.0", "\n".join(report["next"]))
+
+    def test_a_squash_merge_counts_as_merged_and_is_tagged(self):
+        self.local_skill()
+        self.promote("skill", self.SKILL)
+        self.hgit("checkout", "-q", "main")
+        self.hgit("merge", "-q", "--squash", "promote/" + self.SKILL)
+        self.hgit("commit", "-q", "-m", "Promote the local skill (squashed)")
+        report = self.promote("skill", self.SKILL)
+        self.assertEqual((report["state"], report["tag"]), ("tagged", "v0.3.0"))
+        self.assertEqual(self.events("tagged"), [{"tag": "v0.3.0"}])
+        self.assertFalse(self.branch_exists("promote/" + self.SKILL))
+
+    def test_the_waiting_message_says_the_local_main_must_hold_the_branch(self):
+        self.local_skill()
+        self.promote("skill", self.SKILL)
+        report = self.promote("skill", self.SKILL)
+        self.assertEqual(report["state"], "waiting")
+        self.assertIn("pull", "\n".join(report["next"]))
 
     def test_the_tag_is_made_in_a_worktree_of_its_own_when_main_is_checked_out_nowhere(self):
         self.local_skill()

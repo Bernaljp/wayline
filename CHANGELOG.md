@@ -13,6 +13,10 @@ Tags, pins, upgrade, rollback, and promotion (ticket 46, M6 Evolve).
   - A call before the owner merges the branch changes nothing.
   - A call after the merge tags the harness `main`: the next minor tag, or `--tag`, which must be past the latest. The release renames `## Unreleased` to the tag's entry, sets `__version__`, commits `Release vX.Y.Z` where `main` is checked out (or in a worktree of its own), makes an annotated tag, journals `tagged`, and removes the branch and its worktree.
   - A policy key is replaced in place in `policy.json`, leaving every other line as it was spelled, and a value the policy schema refuses opens no branch.
+- A review pass fixed three defects before the ticket landed.
+  - The pin commit staged all of `.claude/skills/` and `harness.json`, so an owner's half-written local skill or unfinished setting would have been committed under `wayline: pin`. It now stages only the links it rewrote, and `upgrade` refuses while `harness.json` or `CLAUDE.md` has uncommitted changes.
+  - `upgrade` checked for a conductor only on the project it moved, while every project runs from the one harness checkout; it now refuses while a conductor runs on any registered project.
+  - `promote` counted a branch as merged only when its tip was in `main`'s history, so a squash or rebase merge on GitHub would have waited forever. It now also counts `main` holding every file the promotion wrote as the branch has them, and its waiting message says to pull the merge first.
 - `evolve.promotion_candidates` is the recommendation the evolver's retrospective (ticket 45) prints: a local skill with at least three first-time passes and no failure is recommended, and nothing is promoted until the owner runs the command.
 
 The grill and the autonomy switch (ticket 30, M4 Front door).
