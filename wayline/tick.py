@@ -9,9 +9,10 @@ tick itself, `wayline tick`, which relaunches the conductor through `launch_deta
   journals `pacing` on a change, and stops there while a conductor is alive and waving. Otherwise,
   whatever the window says, it polls the jobs, runs the output check due on the ones that exited,
   renders `REPORT.md` offline when the journal moved, and sends the notifications the owner is owed;
-  then it relaunches the conductor when work remains and the window is open, or when a decision was
-  answered after the run last ended or paused. `tick()` takes a `Machine`, whose clock, heartbeat,
-  notifier, and relaunch the tests replace; `/usage` and `claude auth status` go through the launcher seam.
+  then it journals an answer written into a decision ticket's file, and relaunches the conductor when
+  work remains and the window is open, or when a decision ticket was answered since a conductor last
+  ran. `tick()` takes a `Machine`, whose clock, conductor, notifier, and relaunch the tests replace;
+  `/usage` and `claude auth status` go through the launcher seam.
 
 - **The user units.** `init` writes `wayline-tick.service`, `wayline-tick.timer`, and
   `wayline-dashboard.service` into `~/.config/systemd/user/` exactly as decision 7 gives them, runs
@@ -51,25 +52,26 @@ from typing import Callable, Optional
 
 from wayline import HARNESS_ROOT, pacing, replay
 from wayline.ledger import (
-    DECISION, DECISION_OPENED, NOTIFIED, PACING, PAUSED, REPORT_RENDERED, RUN_ENDED, RUN_STARTED, TICKET_CREATED,
-    TICKET_NEEDS_HUMAN, Ledger, atomic_write, read_heartbeat,
+    CONTROL, DECISION, DECISION_OPENED, NOTIFIED, PACING, PAUSED, REPORT_RENDERED, RUN_ENDED, RUN_STARTED, TICKET_CREATED,
+    TICKET_NEEDS_HUMAN, Ledger, atomic_write, conductor_holder,
 )
-from wayline.project import ProjectError, home, is_project, policy_for, read_active, read_harness, read_jobs
+from wayline.project import (
+    ProjectError, home, is_project, journal_written_answers, policy_for, read_active, read_harness, read_jobs,
+)
 from wayline.resources import LIVE_JOB_STATUSES
+from wayline.schedule import awaits_owner
 from wayline.tickets import DECISION as DECISION_KIND
-from wayline.tickets import (
-    SATISFIED, frontier, is_open_decision, next_id, read_tickets, refresh_graph, relative_path, write_ticket,
-)
+from wayline.tickets import SATISFIED, frontier, is_open_decision, next_id, read_tickets, refresh_graph, write_ticket
 
 __all__ = [
     "UnitError", "UnitsOff", "TICK_SERVICE", "TICK_TIMER", "DASHBOARD_SERVICE", "UNITS", "CONDUCTOR_UNIT",
     "UNITS_ENV", "ENV_FILE", "TOKEN_VARIABLE", "unit_directory", "stamp_path", "env_path", "unit_files",
     "install_units", "uninstall_units", "detach_argv", "launch_detached", "ensure_dashboard",
     "write_env_file", "offer_env_file", "use_fake_systemd", "FakeSystemd",
-    "TICK_LOCK", "LOGIN_ORIGIN", "FINAL_ENDS", "Machine", "TickResult", "tick", "tick_command", "tick_lock",
+    "TICK_LOCK", "LOGIN_ORIGIN", "FINAL_ENDS", "RELAUNCH_REFUSED", "Machine", "TickResult", "tick", "tick_command", "tick_lock",
     "check_login", "read_credentials", "login_expiry", "credentials_path", "read_usage", "poll_jobs", "due_checks",
-    "render_report", "report_due", "due_notifications", "send_due_notifications", "owed_verdicts", "work_remaining",
-    "window_closed", "fable_spent", "answered_since_end", "relaunch_decision", "relaunch", "pid_alive",
+    "render_report", "report_due", "due_notifications", "send_due_notifications", "notify_refused", "journal_answers",
+    "owed_verdicts", "work_remaining", "window_closed", "fable_spent", "answered_since", "relaunch_decision", "relaunch",
 ]
 
 TICK_SERVICE = "wayline-tick.service"
@@ -533,7 +535,6 @@ CREDENTIALS_FILE = ".credentials.json"
 DAY_S = 24 * 3600
 LOGIN_WARNING_DAYS = 3  # `policy.tick.login_warning_days` as decision 14 ships it
 HEARTBEAT_STALE_S = 300  # `policy.heartbeat_stale_s` as decision 14 ships it
-AUTONOMOUS = "autonomous"
 
 # How a tick ended, as `TickResult.ended` names it.
 NO_PROJECT = "no_project"
@@ -547,29 +548,36 @@ NOT_RELAUNCHED = "not_relaunched"
 # undo, fifteen minutes later, the reason the run ended.
 FINAL_ENDS = ("stopped", "goal_reached", "stall_strict", "switched")
 
-# The login tickets the tick opens are told apart by their `origin`, which records the expiry it warned of.
+# The login tickets the tick opens are told apart by their `origin`: a warning records the expiry it
+# warned of, and a lapse the moment it asked.
 LOGIN_ORIGIN = "tick: the login"
 LAPSED_ORIGIN = LOGIN_ORIGIN + " lapsed"
 _EXPIRES_RE = re.compile(r"expires at (\S+)\Z")
+_ASKED_RE = re.compile(r"\(asked at (\S+)\)\Z")
+# The two expiries of the stored login, in milliseconds: the refresh token's, which only a new login
+# renews, and the access token's, which Claude Code refreshes by itself every few hours.
+REFRESH_EXPIRY, ACCESS_EXPIRY = "refreshTokenExpiresAt", "expiresAt"
 
 # The notification decision 7 calls "goal reached": the `run_ended` whose reason is `goal_reached`.
 GOAL_REACHED = "goal_reached"
+# The notification the tick sends when it wanted to relaunch the conductor and could not, once until a run starts or ends.
+RELAUNCH_REFUSED = "relaunch_refused"
 
 
 @dataclass
 class Machine:
     """Everything the tick reads or starts outside the ledger. The defaults are this machine's; the tests pass fakes.
 
-    `heartbeat(project)` reads `research/conductor.json`; `alive(pid)` asks the kernel; `credentials` is
-    `~/.claude/.credentials.json` and `environ` is where a setup token would show; `poll_jobs`, `checks`,
-    and `render` take the project; `notify(event, text, project, ticket)` reaches the owner; and
-    `relaunch(project)` starts the conductor as `wayline-conductor`. `/usage` and `claude auth status` are
-    not here: they go through the launcher seam (`wayline.worker`), whose fake the tests script.
+    `conductor(project)` is the heartbeat of the conductor that holds the project's heartbeat lock, None
+    when none does; `credentials` is `~/.claude/.credentials.json` and `environ` is where a setup token
+    would show; `poll_jobs`, `checks`, and `render` take the project; `notify(event, text, project,
+    ticket)` reaches the owner; and `relaunch(project)` starts the conductor as `wayline-conductor`.
+    `/usage` and `auth status` are not here: they go through the launcher seam (`wayline.worker`),
+    whose fake the tests script.
     """
 
     clock: Callable[[], float] = time.time
-    heartbeat: Optional[Callable] = None
-    alive: Optional[Callable] = None
+    conductor: Optional[Callable] = None
     credentials: Optional[Path] = None
     environ: Optional[dict] = None
     poll_jobs: Optional[Callable] = None
@@ -579,8 +587,7 @@ class Machine:
     relaunch: Optional[Callable] = None
 
     def __post_init__(self):
-        self.heartbeat = self.heartbeat or read_heartbeat
-        self.alive = self.alive or pid_alive
+        self.conductor = self.conductor or conductor_holder
         self.credentials = credentials_path() if self.credentials is None else Path(self.credentials)
         self.environ = os.environ if self.environ is None else self.environ
         self.poll_jobs = self.poll_jobs or poll_jobs
@@ -603,6 +610,7 @@ class TickResult:
     checks: list = field(default_factory=list)
     report: Optional[str] = None
     notified: list = field(default_factory=list)
+    answers: list = field(default_factory=list)
     relaunched: bool = False
     problems: list = field(default_factory=list)
 
@@ -610,12 +618,16 @@ class TickResult:
 def tick(project=None, machine=None, harness_root=None, out=None):
     """One tick over the active project, or over `project`: the tick contract of decision 7. Returns a `TickResult`.
 
-    In order: the login; `/usage`; the heartbeat, stopping while the conductor is alive and has waved
-    within `policy.heartbeat_stale_s`; then, whatever the window says, the jobs, the checks that are due,
-    `REPORT.md`, and the notifications; last, the relaunch. A step that fails is said and kept in
-    `problems`, and the steps after it still run, because a report that cannot render must not keep the
-    conductor from its relaunch. A lapsed login polls the jobs and ends the tick: everything after that
-    needs the subscription, or a conductor that could not run on it. The lock is `tick_command`'s.
+    In order: the login; `/usage`; the heartbeat, stopping while a conductor holds the project and has
+    waved within `policy.heartbeat_stale_s`; then, whatever the window says, the jobs, the checks that are
+    due, `REPORT.md`, and the notifications; last, an answer written into a decision ticket's file, and
+    the relaunch. A step that fails is said and kept in `problems`, and the steps after it still run,
+    because a report that cannot render must not keep the conductor from its relaunch. A lapsed login
+    polls the jobs and ends the tick: everything after that needs the subscription, or a conductor that
+    could not run on it. The lock is `tick_command`'s.
+
+    The heartbeat's lock says whether a conductor is alive, not the pid in the file (`conductor_holder`):
+    after a reboot the pid can name another process, and the lock of a dead conductor is already gone.
     """
     machine = Machine() if machine is None else machine
     out = sys.stdout if out is None else out
@@ -652,27 +664,27 @@ def tick(project=None, machine=None, harness_root=None, out=None):
     result.login = step("login", lambda: check_login(project, ledger, machine, now, days, say))
     if result.login is not None and result.login["lapsed"]:
         result.jobs = step("jobs", lambda: machine.poll_jobs(project)) or []
-        _say_jobs(result.jobs, say)
+        _say_jobs(result, say)
         return end(LAPSED, "the login lapsed: the jobs were polled, and nothing that needs the subscription runs until it is renewed")
 
     result.pacing = step("usage", lambda: read_usage(project, ledger, policy, now, say))
-    record = step("heartbeat", lambda: machine.heartbeat(project))
-    record = record if isinstance(record, dict) else {}
-    pid = record.get("pid")
-    alive = isinstance(pid, int) and not isinstance(pid, bool) and bool(step("heartbeat", lambda: machine.alive(pid)))
-    beat = pacing.epoch(record.get("last_wave_at") or record.get("started_at"))
+    record = step("heartbeat", lambda: machine.conductor(project))
+    alive = isinstance(record, dict)
+    pid = record.get("pid") if alive else None
+    beat = pacing.epoch(record.get("last_wave_at") or record.get("started_at")) if alive else None
     age = None if beat is None else now - beat
     stale_s = policy.get("heartbeat_stale_s", HEARTBEAT_STALE_S)
-    if alive and age is not None and age < stale_s:
-        return end(CONDUCTOR_ALIVE, "conductor pid %d is alive and waved %ds ago; it does the rest" % (pid, age))
+    holder = "the conductor%s" % ("" if pid is None else " (pid %s)" % pid)
+    if alive and (age is None or age < stale_s):
+        return end(CONDUCTOR_ALIVE, "%s holds the project and %s; it does the rest"
+                   % (holder, "has not written its first heartbeat yet" if age is None else "waved %ds ago" % age))
     if alive:
-        say("  conductor pid %d is alive but has not waved for %s (heartbeat_stale_s %s)"
-            % (pid, "unknown" if age is None else "%ds" % age, stale_s))
+        say("  %s holds the project but has not waved for %ds (heartbeat_stale_s %s)" % (holder, age, stale_s))
     else:
-        say("  no conductor is running%s" % ("" if pid is None else " (the heartbeat's pid %s is gone)" % pid))
+        say("  no conductor holds the project")
 
     result.jobs = step("jobs", lambda: machine.poll_jobs(project)) or []
-    _say_jobs(result.jobs, say)
+    _say_jobs(result, say)
     result.checks = step("checks", lambda: machine.checks(project)) or []
     for check in result.checks:
         say("  job %s (ticket %s): %s" % (check["job"], check["ticket"],
@@ -685,8 +697,9 @@ def tick(project=None, machine=None, harness_root=None, out=None):
     result.notified = step("notifications", lambda: send_due_notifications(project, ledger, machine, now, say)) or []
 
     if alive:
-        return end(NOT_RELAUNCHED, "not relaunched: conductor pid %d still holds the project (systemctl --user status %s, or wayline stop)"
-                   % (pid, CONDUCTOR_UNIT))
+        return end(NOT_RELAUNCHED, "not relaunched: %s still holds the project (systemctl --user status %s, or wayline stop)"
+                   % (holder, CONDUCTOR_UNIT))
+    result.answers = sorted(step("answers", lambda: journal_answers(project, ledger, say)) or {})
     decided = step("relaunch", lambda: relaunch_decision(project, ledger, policy, result.pacing, now))
     if decided is None:
         return end(NOT_RELAUNCHED, "not relaunched: whether to relaunch could not be decided")
@@ -697,20 +710,21 @@ def tick(project=None, machine=None, harness_root=None, out=None):
         said = machine.relaunch(project)
     except Exception as failure:  # the units are off, the manager refused, or the run would refuse to start
         result.problems.append("relaunch: %s" % failure)
+        result.notified += step("notifications", lambda: notify_refused(project, ledger, machine, reason, failure, say)) or []
         return end(NOT_RELAUNCHED, "not relaunched although %s: %s" % (reason, failure))
     result.relaunched = True
     return end(RELAUNCHED, "relaunched %s: %s%s" % (CONDUCTOR_UNIT, reason, "  (%s)" % said if said else ""))
 
 
-def _say_jobs(jobs, say):
-    for job in jobs:
+def _say_jobs(result, say):
+    """Say what each polled job came to; a job that could not be polled is a problem of the tick."""
+    for job in result.jobs:
+        if job.get("error"):
+            result.problems.append("jobs: %s: %s" % (job["job"], job["error"]))
+            say("  job %s (ticket %s) could not be polled: %s" % (job["job"], job["ticket"], job["error"]))
+            continue
         say("  job %s (ticket %s): %s%s" % (job["job"], job["ticket"], job["now"],
                                            "" if job["now"] == job["was"] else ", was %s" % job["was"]))
-
-
-def _ts(seconds):
-    """An epoch second as the journal spells a timestamp, so the events a tick writes agree with its clock."""
-    return pacing.iso(seconds).replace("Z", ".000Z")
 
 
 def _harness(project):
@@ -745,24 +759,30 @@ def read_credentials(path):
 
 
 def login_expiry(oauth):
-    """When the stored login ends, in epoch seconds: the later of `expiresAt` and `refreshTokenExpiresAt` (milliseconds); None when neither is there."""
-    values = [(oauth or {}).get(key) for key in ("expiresAt", "refreshTokenExpiresAt")]
-    seconds = [value / 1000 for value in values if isinstance(value, (int, float)) and not isinstance(value, bool)]
-    return max(seconds) if seconds else None
+    """When the stored login ends, in epoch seconds, and the field that said so; `(None, None)` when neither field is a number.
+
+    The refresh token's expiry is the login's, since only a new login renews it. The access token's
+    expiry stands in for it only when the file carries no refresh token's expiry.
+    """
+    for key in (REFRESH_EXPIRY, ACCESS_EXPIRY):
+        value = (oauth or {}).get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value / 1000, key
+    return None, None
 
 
 def check_login(project, ledger, machine, now, warning_days, say):
-    """The login check of decision 7: `claude auth status`, then when the stored login ends. Returns what it found.
+    """The login check of decision 7: `auth status`, then when the stored login ends. Returns what it found.
 
-    The stored login lasts as long as its longest-lived credential. `expiresAt` is the access token's,
-    which Claude Code refreshes by itself every few hours; `refreshTokenExpiresAt` is the refresh token's,
-    which only `/login` renews. So the later of the two is when the login ends, and a `human_only` decision
-    ticket asks the owner to sign in again once that is `warning_days` away or past. Units that load
-    `CLAUDE_CODE_OAUTH_TOKEN` from `~/.wayline/env` run on that one-year token, which outranks the stored
-    login (research-notes 02), so the file says nothing about them and only `auth status` is read.
+    A `human_only` decision ticket asks the owner to sign in again once the login's end is `warning_days`
+    away or past. `auth status` outranks the file: when it says the login works, an expiry read from the
+    access token alone is its routine refresh and not the login's end, and a login past its expiry is not
+    lapsed. Units that load `CLAUDE_CODE_OAUTH_TOKEN` from `~/.wayline/env` run on that one-year token,
+    which outranks the stored login (research-notes 02), so the file says nothing about them.
 
-    Returns `{"logged_in", "expires_at", "token", "lapsed", "ticket"}`: `logged_in` is None when `auth status`
-    could not say, and `lapsed` is True when it said there is no login or the stored login has ended.
+    Returns `{"logged_in", "expires_at", "token", "lapsed", "ticket"}`: `logged_in` is None when `auth
+    status` could not say, and `lapsed` is True when it said there is no login, or when it could not say
+    and the stored login has ended.
     """
     from wayline import worker  # the launcher module is the one place that runs the executable
     token = bool(machine.environ.get(TOKEN_VARIABLE))
@@ -771,96 +791,96 @@ def check_login(project, ledger, machine, now, warning_days, say):
     except worker.LaunchError as failure:
         status = None
         say("  login: %s could not run (%s)" % (worker.auth_status_command(), failure))
-    logged_in = bool(status.get("logged_in")) if isinstance(status, dict) else None
-    expiry = None if token else login_expiry(read_credentials(machine.credentials))
-    lapsed = logged_in is False or (expiry is not None and expiry <= now)
+    logged_in = status.get("logged_in") if isinstance(status, dict) else None
+    logged_in = logged_in if logged_in in (True, False) else None
+    expiry, source = (None, None) if token else login_expiry(read_credentials(machine.credentials))
+    if source == ACCESS_EXPIRY and logged_in is True:
+        expiry = None
+    lapsed = logged_in is False or (logged_in is None and expiry is not None and expiry <= now)
     login = {"logged_in": logged_in, "expires_at": expiry, "token": token, "lapsed": lapsed, "ticket": None}
     if lapsed or (expiry is not None and expiry - now <= warning_days * DAY_S):
-        login["ticket"] = open_login_ticket(project, ledger, machine, now, expiry, logged_in is False, warning_days, say)
+        login["ticket"] = open_login_ticket(project, ledger, machine, now, expiry, lapsed, logged_in is False, warning_days, say)
     elif expiry is not None:
         say("  login: the stored login ends at %s, in %.1f days" % (pacing.iso(expiry), (expiry - now) / DAY_S))
     elif token:
         say("  login: the units run on the setup token in %s" % env_path())
     else:
-        say("  login: %s" % ("logged in; no expiry could be read" if logged_in else "nothing could be read"))
+        say("  login: %s" % ("logged in; its end could not be read" if logged_in else "nothing could be read"))
     return login
 
 
-def open_login_ticket(project, ledger, machine, now, expiry, logged_out, warning_days, say):
+def open_login_ticket(project, ledger, machine, now, expiry, lapsed, logged_out, warning_days, say):
     """Open the `human_only` decision ticket that asks the owner to sign in again, and notify them; its id, or None.
 
     One ticket asks at a time, so an open login ticket is left to ask. A warning is not asked again for
     the same login: a closed ticket that warned of an expiry within `warning_days` of this one was
-    answered. A lapse is asked again at most every `warning_days` while the login stays lapsed. The owner
-    is notified here rather than at the tick's notification step, which a live conductor keeps the tick
-    from reaching; the notifier's claim keeps that step from sending it twice.
+    answered. A lapse is asked again at most every `warning_days` while the login stays lapsed. The id
+    is taken and the ticket written under the ledger's lock. The owner is notified here rather than at the
+    tick's notification step, which a live conductor keeps the tick from reaching; the notifier's claim
+    keeps that step from sending it twice.
     """
     from wayline import worker  # the launcher module names the executable's commands
-    lapsed = logged_out or (expiry is not None and expiry <= now)
     window = warning_days * DAY_S
+    asked_at = pacing.iso(now)
     if logged_out:
-        summary, origin = "%s reports no login" % worker.auth_status_command(), LAPSED_ORIGIN + " (auth status reports no login)"
+        summary = "%s reports no login" % worker.auth_status_command()
+        origin = "%s: auth status reports no login (asked at %s)" % (LAPSED_ORIGIN, asked_at)
     elif lapsed:
-        summary, origin = "the login ended at %s" % pacing.iso(expiry), "%s at %s" % (LAPSED_ORIGIN, pacing.iso(expiry))
+        summary = "the login ended at %s" % pacing.iso(expiry)
+        origin = "%s at %s (asked at %s)" % (LAPSED_ORIGIN, pacing.iso(expiry), asked_at)
     else:
-        summary = "the login ends in %.1f days, at %s" % ((expiry - now) / DAY_S, pacing.iso(expiry))
+        if expiry <= now:
+            summary = "the stored login's expiry, %s, has passed, though %s still reports a login" % (
+                pacing.iso(expiry), worker.auth_status_command())
+        else:
+            summary = "the login ends in %.1f days, at %s" % ((expiry - now) / DAY_S, pacing.iso(expiry))
         origin = "%s expires at %s" % (LOGIN_ORIGIN, pacing.iso(expiry))
-    asked = [ticket for ticket in read_tickets(project)
-             if ticket["kind"] == DECISION_KIND and str(ticket.get("origin") or "").startswith(LOGIN_ORIGIN)]
-    for ticket in asked:
-        if ticket["status"] not in SATISFIED + ("parked",):
-            say("  login: %s; ticket %d already asks the owner to sign in again" % (summary, ticket["id"]))
-            return ticket["id"]
-    if lapsed:
-        opened = _opened_at(ledger)
-        recent = [ticket["id"] for ticket in asked
-                  if ticket["origin"].startswith(LAPSED_ORIGIN) and now - opened.get(ticket["id"], float("-inf")) < window]
-        if recent:
-            say("  login: %s; ticket %d asked less than %s days ago and was answered" % (summary, recent[-1], warning_days))
-            return None
-    else:
+    with ledger.lock():
+        asked = [ticket for ticket in read_tickets(project)
+                 if ticket["kind"] == DECISION_KIND and str(ticket.get("origin") or "").startswith(LOGIN_ORIGIN)]
         for ticket in asked:
-            match = _EXPIRES_RE.search(ticket["origin"])
-            warned = pacing.epoch(match.group(1)) if match else None
-            if warned is not None and abs(warned - expiry) < window:
-                say("  login: %s; ticket %d warned of it and was answered" % (summary, ticket["id"]))
+            if ticket["status"] not in SATISFIED + ("parked",):
+                say("  login: %s; ticket %d already asks the owner to sign in again" % (summary, ticket["id"]))
+                return ticket["id"]
+        for ticket in asked:
+            pattern = _ASKED_RE if lapsed else _EXPIRES_RE
+            if ticket["origin"].startswith(LAPSED_ORIGIN) != lapsed:
+                continue
+            match = pattern.search(ticket["origin"])
+            then = pacing.epoch(match.group(1)) if match else None
+            if then is not None and abs((now if lapsed else expiry) - then) < window:
+                say("  login: %s; ticket %d %s and was answered" % (
+                    summary, ticket["id"], "asked less than %s days ago" % warning_days if lapsed else "warned of it"))
                 return None
-    identifier = next_id(project)
-    fields = {
-        "id": identifier, "title": "Sign in again: the login lapsed" if lapsed else "Renew the login before it ends",
-        "kind": DECISION_KIND, "difficulty": 1, "status": "open", "blocked_by": [], "blocking": None, "human_only": True,
-        "touches": [], "role": "decider", "acceptance": {}, "proposed_by": "tick", "context_pack": [], "origin": origin,
-        "demo": "Run %s on the workstation, check %s, then wayline answer %d \"renewed\"."
-                % (worker.login_command(), worker.auth_status_command(), identifier),
-    }
-    later = ("the tick asks again in %s days while the login stays lapsed" % warning_days if lapsed
-             else "the tick asks again once the login lapses")
-    body = (
-        "## Decision\n\n%s. Every session the harness launches needs the login: once it ends, the workers, the "
-        "verdicts, and the decider fail until someone signs in again.\n\n"
-        "Options:\n\n"
-        "- `renewed`: you ran `%s` on the workstation, or wrote a token from `%s` into %s.\n"
-        "- `later`: %s.\n\n"
-        "Recommended: `renewed`, once `%s` reports the login.\n\n"
-        "Answer with `wayline answer %d \"renewed\"`. Only the owner answers it: the decider runs on the same login.\n"
-    ) % (summary[0].upper() + summary[1:], worker.login_command(), worker.setup_token_command(), env_path(), later,
-         worker.auth_status_command(), identifier)
-    write_ticket(ledger, fields, body)
-    ledger.append_event(TICKET_CREATED, {"ticket": identifier, "kind": DECISION_KIND, "proposed_by": "tick", "origin": origin,
-                                         "blocked_by": []}, ticket=identifier, ts=_ts(now))
-    ledger.append_event(DECISION_OPENED, {"ticket": identifier, "blocking": None, "human_only": True}, ticket=identifier, ts=_ts(now))
+        identifier = next_id(project)
+        fields = {
+            "id": identifier, "title": "Sign in again: the login lapsed" if lapsed else "Renew the login before it ends",
+            "kind": DECISION_KIND, "difficulty": 1, "status": "open", "blocked_by": [], "blocking": None, "human_only": True,
+            "touches": [], "role": "decider", "acceptance": {}, "proposed_by": "tick", "context_pack": [], "origin": origin,
+            "demo": "Run %s on the workstation, check %s, then wayline answer %d \"renewed\"."
+                    % (worker.login_command(), worker.auth_status_command(), identifier),
+        }
+        later = ("the tick asks again in %s days while the login stays lapsed" % warning_days if lapsed
+                 else "the tick asks again once the login lapses")
+        body = (
+            "## Decision\n\n%s. Every session the harness launches needs the login: once it ends, the workers, the "
+            "verdicts, and the decider fail until someone signs in again.\n\n"
+            "Options:\n\n"
+            "- `renewed`: you ran `%s` on the workstation, or wrote a token from `%s` into %s.\n"
+            "- `later`: %s.\n\n"
+            "Recommended: `renewed`, once `%s` reports the login.\n\n"
+            "Answer with `wayline answer %d \"renewed\"`. Only the owner answers it: the decider runs on the same login.\n"
+        ) % (summary[0].upper() + summary[1:], worker.login_command(), worker.setup_token_command(), env_path(), later,
+             worker.auth_status_command(), identifier)
+        write_ticket(ledger, fields, body)
+        ledger.append_event(TICKET_CREATED, {"ticket": identifier, "kind": DECISION_KIND, "proposed_by": "tick", "origin": origin,
+                                             "blocked_by": []}, ticket=identifier)
+        ledger.append_event(DECISION_OPENED, {"ticket": identifier, "blocking": None, "human_only": True}, ticket=identifier)
     machine.notify(DECISION_OPENED, "%s: ticket %d (human only): %s. Sign in again on the workstation with %s, then "
                    "wayline answer %d \"renewed\"" % (project.name, identifier, summary, worker.login_command(), identifier),
                    project, identifier)
     say("  login: %s; opened ticket %d and notified the owner" % (summary, identifier))
     return identifier
-
-
-def _opened_at(ledger):
-    """When each ticket was created, in epoch seconds, as its `ticket_created` says."""
-    events, _ = ledger.read_events()
-    return {(event.get("payload") or {}).get("ticket"): pacing.epoch(event.get("ts"))
-            for event in events if event.get("event") == TICKET_CREATED and pacing.epoch(event.get("ts")) is not None}
 
 
 # --- the window ---
@@ -891,7 +911,7 @@ def read_usage(project, ledger, policy, now, say):
     reading = {"five_hour": usage.five_hour, "seven_day": usage.seven_day, "fable": usage.fable, "action": action}
     changed = reading != view.pacing
     if changed:
-        ledger.append_event(PACING, reading, ts=_ts(now))
+        ledger.append_event(PACING, reading)
     say("  usage: five_hour %s, seven_day %s, fable %s: %s%s"
         % (usage.five_hour, usage.seven_day, usage.fable, action, "; journaled pacing" if changed else ""))
     return reading
@@ -929,7 +949,8 @@ def fable_spent(view, reading, stop_at, now):
 def poll_jobs(project):
     """Poll every job the ledger calls running through the job runner, which writes what it reads into `jobs/<id>.json`.
 
-    Returns `{"job", "ticket", "was", "now"}` per job polled. Nothing is journaled here: `job_finished`,
+    Returns `{"job", "ticket", "was", "now", "error"}` per job polled: `now` is None and `error` says why
+    when a poll raised, and the jobs after it are still polled. Nothing is journaled here: `job_finished`,
     `job_retried`, and `job_failed` are the conductor's, which alone registers the outputs and steps the
     retry ladder (ticket 19). A `pending` job was never launched and has nothing to poll.
     """
@@ -941,8 +962,12 @@ def poll_jobs(project):
     runner = resources.JobRunner(project)
     polled = []
     for job in running:
-        state = runner.poll(resources.handle_for(job))
-        polled.append({"job": job["id"], "ticket": job["ticket"], "was": job["status"], "now": state.name})
+        entry = {"job": job["id"], "ticket": job["ticket"], "was": job["status"], "now": None, "error": None}
+        try:
+            entry["now"] = runner.poll(resources.handle_for(job)).name
+        except Exception as failure:  # a job the manager cannot read must not keep the others unpolled
+            entry["error"] = "%s: %s" % (type(failure).__name__, failure)
+        polled.append(entry)
     return polled
 
 
@@ -1010,11 +1035,15 @@ def send_due_notifications(project, ledger, machine, now, say):
     titles = {ticket["id"]: ticket["title"] for ticket in read_tickets(project)}
     sent = []
     for event, ticket, text in due_notifications(project.name, events, graph, view, titles, now):
-        outcome = machine.notify(event, text, project, ticket) or {}
-        sent.append({"event": event, "ticket": ticket, "channel": outcome.get("channel"), "ok": outcome.get("ok")})
-        say("  notified %s%s: %s through %s" % (event, "" if ticket is None else " (ticket %d)" % ticket,
-                                                 "delivered" if outcome.get("ok") else "not delivered", outcome.get("channel")))
+        sent.append(_send(machine, project, event, ticket, text, say))
     return sent
+
+
+def _send(machine, project, event, ticket, text, say):
+    outcome = machine.notify(event, text, project, ticket) or {}
+    say("  notified %s%s: %s through %s" % (event, "" if ticket is None else " (ticket %d)" % ticket,
+                                             "delivered" if outcome.get("ok") else "not delivered", outcome.get("channel")))
+    return {"event": event, "ticket": ticket, "channel": outcome.get("channel"), "ok": outcome.get("ok")}
 
 
 def due_notifications(name, events, graph, view, titles, now):
@@ -1024,9 +1053,10 @@ def due_notifications(name, events, graph, view, titles, now):
     `run_ended` (`goal_reached` when that was its reason); the login's expiry is its ticket's
     `decision_opened`. A `notified` for the same event and ticket after it is the notifier's claim, final
     even when no channel delivered, so a failing channel costs one message and not one every tick (ticket
-    13). What no longer stands is not sent late: a decision answered since, a ticket that no longer needs a
-    human, a pause that has ended, a run started again. The hold on Fable's weekly window pauses no run and
-    is not sent; under consent `ask` its decision ticket is. `name` is the project's, which starts each text.
+    13). What no longer stands is not sent late: a decision answered since, even before a conductor closed
+    it, a ticket that no longer needs a human, a pause that has ended, a run started again. The hold on
+    Fable's weekly window pauses no run and is not sent; under consent `ask` its decision ticket is.
+    `name` is the project's, which starts each text.
     """
     entries = {entry["id"]: entry for entry in graph["tickets"]}
     claimed, latest = {}, {}
@@ -1059,7 +1089,7 @@ def due_notifications(name, events, graph, view, titles, now):
 def _notification(kind, ticket, payload, entry, title, view, now):
     """The text of one notification, or None when what it would say no longer stands."""
     if kind == DECISION_OPENED:
-        if entry is None or not is_open_decision(entry):
+        if entry is None or not is_open_decision(entry) or ticket in view.answers:
             return None
         return "ticket %d asks: %s%s; wayline answer %d \"<answer>\"" % (
             ticket, title or "a decision", " (human only)" if entry.get("human_only") else "", ticket)
@@ -1078,15 +1108,41 @@ def _notification(kind, ticket, payload, entry, title, view, now):
     return "the run ended (%s); wayline status shows what is left" % (payload.get("reason") or "no reason given")
 
 
+def notify_refused(project, ledger, machine, reason, failure, say):
+    """Tell the owner that the tick wanted to relaunch the conductor and could not, once until a run starts or ends.
+
+    A refusal repeats at every tick until someone acts (a project on another branch, a harness off its pin,
+    the units off), and the conductor it would have started is what sends every other notification.
+    """
+    events, _ = ledger.read_events()
+    boundary = max((index for index, event in enumerate(events) if event.get("event") in (RUN_STARTED, RUN_ENDED)), default=-1)
+    if any(event.get("event") == NOTIFIED and (event.get("payload") or {}).get("event") == RELAUNCH_REFUSED
+           for event in events[boundary + 1:]):
+        return []
+    text = "%s: the tick did not relaunch the conductor although %s: %s" % (project.name, reason, failure)
+    return [_send(machine, project, RELAUNCH_REFUSED, None, text, say)]
+
+
 # --- the relaunch ---
 
 
-def owed_verdicts(project, graph, view, policy):
-    """Every done ticket owed a verdict no conductor took, and whether one of its verdicts runs on Fable.
+def journal_answers(project, ledger, say):
+    """Journal as the owner's any answer written into a decision ticket's `## Answer` section (decision 5); by ticket id."""
+    events, _ = ledger.read_events()
+    written = journal_written_answers(project, ledger, replay.replay(events).answers)
+    for identifier in sorted(written):
+        say("  ticket %d: the answer written in its file is journaled as the owner's" % identifier)
+    return written
 
-    The rule is `Conductor._requeue_verdicts`': the verdicts a done ticket earned (`gates.ticket_asks`)
-    less the ones the journal holds as passed. A ticket any of whose verdicts runs on Fable waits whole
-    while Fable is spent, as the conductor holds it. Returns `{"ticket", "on_fable"}` per ticket.
+
+def owed_verdicts(project, graph, view, policy):
+    """Every done ticket a conductor owes its verdicts or its acceptance, and whether a verdict it is owed runs on Fable.
+
+    The rule is the conductor's restart (`gates.owed_asks`): the verdicts a done ticket earned less the
+    ones the journal holds as passed. A ticket whose verdicts all passed is owed its acceptance, which a
+    conductor killed before `ticket_accepted` never journaled and which needs no model. A ticket any of
+    whose verdicts runs on Fable waits whole while Fable is spent, as the conductor holds it. Returns
+    `{"ticket", "verdicts", "on_fable"}` per ticket, `verdicts` counting the ones still owed.
     """
     from wayline import gates  # the gates import the launcher, which `init` does not need
     fields = {ticket["id"]: ticket for ticket in read_tickets(project)}
@@ -1097,12 +1153,11 @@ def owed_verdicts(project, graph, view, policy):
         if entry["status"] != "done" or launched is None or not launched.model or entry["id"] not in fields:
             continue
         ticket = fields[entry["id"]]
-        earned = gates.ticket_asks(ticket, entry.get("difficulty", ticket["difficulty"]), launched.model, relative_path(ticket),
-                                   commit=view.integrated.get(entry["id"]), outputs=ticket.get("outputs") or [])
-        passed = {item["verdict_type"] for item in view.verdicts.get(entry["id"], []) if item.get("pass")}
-        asks = [ask for ask in earned if ask.verdict_type not in passed]
-        if asks:
-            owed.append({"ticket": entry["id"], "on_fable": any(_verifies_on_fable(gates, policy, ask) for ask in asks)})
+        earned, asks = gates.owed_asks(ticket, entry.get("difficulty", ticket["difficulty"]), launched.model,
+                                       view.integrated.get(entry["id"]), view.verdicts.get(entry["id"], []))
+        if earned:
+            owed.append({"ticket": entry["id"], "verdicts": len(asks),
+                         "on_fable": any(_verifies_on_fable(gates, policy, ask) for ask in asks)})
     return owed
 
 
@@ -1113,62 +1168,82 @@ def _verifies_on_fable(gates, policy, ask):
         return False  # the gate refuses the table by name when the verdict is taken
 
 
-def work_remaining(project, graph, view, policy, fable_is_spent, autonomy):
+def work_remaining(project, graph, view, policy, fable_is_spent):
     """What a relaunched conductor would find to do, as phrases, and what waits on Fable instead (None when nothing does).
 
-    Work is a ticket on the frontier, a running ticket (a worker to re-adopt or a result to carry), a job
-    the ledger calls live, or a done ticket owed a verdict. A decision ticket on the frontier is work only
-    when the decider may take it, not `human_only` and under `autonomous`; the others wait for the owner,
-    whose answer relaunches the conductor. A verdict queue that waits only on Fable is work once Fable's
-    weekly window has reset (decision 15); until then a conductor would hold all of it.
+    Work is what keeps a conductor from ending its run: a ticket on the frontier that a session may take
+    (a `human_only` decision ticket waits for the owner, whose answer relaunches the conductor), a running
+    ticket (a worker to re-adopt, a result to carry, the jobs it left), or a done ticket owed its verdicts
+    or its acceptance. A job counts through its ticket, since a job whose ticket no longer runs is nothing a
+    conductor acts on. A verdict queue that waits only on Fable is work once Fable's weekly window has reset
+    (decision 15); until then a conductor would hold all of it.
     """
     work = []
-    ready = [entry for entry in frontier(graph)
-             if entry["kind"] != DECISION_KIND or (autonomy == AUTONOMOUS and not entry.get("human_only"))]
+    ready = [entry for entry in frontier(graph) if not awaits_owner(entry)]
     if ready:
         work.append("%d ticket(s) on the frontier" % len(ready))
-    running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
+    running = {entry["id"] for entry in graph["tickets"] if entry["status"] == "running"}
     if running:
-        work.append("%d ticket(s) running" % len(running))
-    jobs, _ = read_jobs(project)
-    live = [job for job in jobs if job["status"] in LIVE_JOB_STATUSES]
-    if live:
-        work.append("%d job(s) live" % len(live))
+        jobs, _ = read_jobs(project)
+        live = [job for job in jobs if job["status"] in LIVE_JOB_STATUSES and job["ticket"] in running]
+        work.append("%d ticket(s) running%s" % (len(running), " with %d job(s) live" % len(live) if live else ""))
     owed = owed_verdicts(project, graph, view, policy)
+    accepting = [item for item in owed if not item["verdicts"]]
+    judging = [item for item in owed if item["verdicts"]]
+    if accepting:
+        work.append("%d ticket(s) owed their acceptance" % len(accepting))
     waiting = None
-    if owed and fable_is_spent and all(item["on_fable"] for item in owed):
-        waiting = "%d ticket(s) wait for a verdict on Fable, whose weekly window is spent" % len(owed)
-    elif owed:
-        work.append("%d ticket(s) owed a verdict" % len(owed))
+    if judging and fable_is_spent and all(item["on_fable"] for item in judging):
+        waiting = "%d ticket(s) wait for a verdict on Fable, whose weekly window is spent" % len(judging)
+    elif judging:
+        work.append("%d ticket(s) owed a verdict" % len(judging))
     return work, waiting
 
 
-def answered_since_end(events):
-    """Whether a `decision` was journaled after the last `run_ended` or `paused`."""
-    boundary = max((index for index, event in enumerate(events) if event.get("event") in (RUN_ENDED, PAUSED)), default=-1)
-    return any(event.get("event") == DECISION for event in events[boundary + 1:])
+def answered_since(events):
+    """Whether the owner answered a decision ticket since a conductor last ran.
+
+    That is a `decision` naming a ticket after the last `run_ended` or `paused` (decision 7), or `run_started`
+    or `control stop`. A run killed mid-way writes no end and has taken the answers journaled before it
+    started, and an answer given after a stop is what may undo the stop. A `decision` naming no ticket (the
+    intake's goal, the grill's records) answers nothing a conductor waits on.
+    """
+    def boundary(event):
+        payload = event.get("payload") or {}
+        return event.get("event") in (RUN_STARTED, RUN_ENDED, PAUSED) or (event.get("event") == CONTROL and payload.get("command") == "stop")
+
+    last = max((index for index, event in enumerate(events) if boundary(event)), default=-1)
+    return any(event.get("event") == DECISION
+               and isinstance((event.get("payload") or {}).get("ticket", event.get("ticket")), int)
+               and not isinstance((event.get("payload") or {}).get("ticket", event.get("ticket")), bool)
+               for event in events[last + 1:])
 
 
 def relaunch_decision(project, ledger, policy, reading, now):
     """`(reason, None)` when the conductor is to be relaunched, else `(None, why not)`: the last step of the tick contract.
 
-    A `decision` journaled after the last `run_ended` or `paused` relaunches it, since applying an answer
-    needs no model. Otherwise it is relaunched when work remains (`work_remaining`) and the window is open
-    (`window_closed`). A project never run is the owner's to start, and a run that ended for one of
-    `FINAL_ENDS` is relaunched only by an answer.
+    A decision ticket answered since a conductor last ran relaunches it, since applying an answer needs no
+    model. Otherwise it is relaunched when work remains (`work_remaining`) and the window is open
+    (`window_closed`). A project never run is the owner's to start; one switched away from is no longer
+    the tick's; and a run that ended for one of `FINAL_ENDS`, or a stop no conductor has taken yet, is
+    undone only by an answer, since a relaunched run would otherwise drop the stop unread.
     """
     events, _ = ledger.read_events()
     view = replay.replay(events)
     if view.run is None:
         return None, "the project has never been run; wayline run starts it"
-    if answered_since_end(events):
-        return "a decision was answered after the run last ended or paused", None
+    switched = view.switched or {}
+    if switched.get("from") == str(project) and switched.get("to") != str(project):
+        return None, "the project was switched away from, to %s" % switched.get("to")
+    if answered_since(events):
+        return "a decision ticket was answered since the conductor last ran", None
+    if view.stop is not None:
+        return None, "a stop (by %s) waits for a conductor to take it; only an answer or the owner undoes it" % (view.stop.get("by") or "someone")
     if view.run.get("ended") in FINAL_ENDS:
         return None, "the last run ended %s, which only an answer or the owner undoes" % view.run["ended"]
     graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     stop_at, _ = thresholds_for(project, policy, view)
-    autonomy = view.autonomy or _harness(project).get("autonomy")
-    work, waiting = work_remaining(project, graph, view, policy, fable_spent(view, reading, stop_at, now), autonomy)
+    work, waiting = work_remaining(project, graph, view, policy, fable_spent(view, reading, stop_at, now))
     if not work:
         return None, "no work remains" + ("; " + waiting if waiting else "")
     closed = window_closed(view, reading, stop_at, now)
@@ -1184,19 +1259,6 @@ def relaunch(project):
     if problems:
         raise UnitError("the conductor would refuse to start: " + "; ".join(problems))
     return launch_detached(project)
-
-
-def pid_alive(pid):
-    """Whether a process with this pid exists: the heartbeat's pid, as decision 7 reads it."""
-    try:
-        os.kill(int(pid), 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except (OverflowError, ValueError):
-        return False
-    return True
 
 
 # --- the verb ---

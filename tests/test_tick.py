@@ -1,11 +1,11 @@
 """The tick (ticket 14; Implementation Decisions 7, 14, and 15).
 
 `tick.tick` is called directly on a laid-out project whose journal each test writes, with a fake
-heartbeat, the fake launcher scripted with `/usage` and `claude auth status`, a notifier whose
+conductor heartbeat, the fake launcher scripted with `/usage` and `auth status`, a notifier whose
 channels are faked, a relaunch that records the call, and a clock the test sets. What is asserted is
 what the owner and the next process see: the journal, the ticket files, the notifications and the
 relaunch the tick asked for, and how the tick ended. The verb is run for its lock, and the real
-`claude auth status` backend against a stand-in executable.
+`auth status` backend against a stand-in executable.
 """
 
 import io
@@ -44,6 +44,7 @@ def usage_text(session, week, fable=None):
 
 LOGGED_IN = {"logged_in": True, "exit_code": 0, "status": {"loggedIn": True, "subscriptionType": "max"}}
 LOGGED_OUT = {"logged_in": False, "exit_code": 1, "status": {"loggedIn": False}}
+UNSAID = {"logged_in": None, "exit_code": 2, "status": None}
 
 
 class TickCase(ProjectTestCase):
@@ -57,7 +58,7 @@ class TickCase(ProjectTestCase):
         self.fake = self.enterContext(worker.use_fake())
         self.now = NOW
         self.heartbeat = None
-        self.living = set()
+        self.holding = False  # whether a conductor holds the heartbeat's lock
         self.credentials = self.temp / "credentials.json"
         self.environ = {}
         self.sent = []
@@ -69,7 +70,7 @@ class TickCase(ProjectTestCase):
     # --- the fakes ---
 
     def machine(self, **overrides):
-        values = dict(clock=lambda: self.now, heartbeat=lambda path: self.heartbeat, alive=lambda pid: pid in self.living,
+        values = dict(clock=lambda: self.now, conductor=lambda path: self.heartbeat if self.holding else None,
                       credentials=self.credentials, environ=self.environ, notify=self.notify, relaunch=self.relaunch,
                       render=self.render, poll_jobs=self.poll)
         values.update(overrides)
@@ -108,7 +109,7 @@ class TickCase(ProjectTestCase):
         found, _ = self.ledger.read_events()
         return [event for event in found if name is None or event["event"] == name]
 
-    def add_ticket(self, identifier, status="open", difficulty=1, kind="code", human_only=False, quality=()):
+    def add_ticket(self, identifier, status="open", difficulty=1, kind="code", human_only=False, quality=(), answer=None):
         fields = {"id": identifier, "title": "Ticket %d" % identifier, "kind": kind, "difficulty": difficulty,
                   "status": status, "blocked_by": [], "touches": ["file%d.txt" % identifier], "role": "coder",
                   "acceptance": {"machine": ["true"]}, "proposed_by": "planner"}
@@ -116,7 +117,8 @@ class TickCase(ProjectTestCase):
             fields.update(blocking=None, human_only=human_only, role="decider", touches=[])
         if quality:
             fields["acceptance"]["quality"] = list(quality)
-        tickets.write_ticket(self.ledger, fields, "\n## Demo\n\nTicket %d.\n" % identifier)
+        body = "\n## Demo\n\nTicket %d.\n" % identifier
+        tickets.write_ticket(self.ledger, fields, tickets.with_answer(body, answer) if answer is not None else body)
 
     def set_status(self, identifier, status):
         ticket = {item["id"]: item for item in tickets.read_tickets(self.project)}[identifier]
@@ -130,19 +132,30 @@ class TickCase(ProjectTestCase):
         if ended is not None:
             self.journal("run_ended", {"reason": ended})
 
+    def answered(self, identifier, text="the held-out split"):
+        self.journal("decision", {"ticket": identifier, "answer": text, "decided_by": "human", "rationale": None, "confidence": None},
+                     ticket=identifier)
+
     def done_on(self, identifier, model):
         """Ticket `identifier` launched on `model` and done, which earns the verdicts its difficulty and criteria ask."""
         self.journal("ticket_launched", {"ticket": identifier, "attempt": 1, "role": "coder", "model": model, "effort": "high"}, ticket=identifier)
         self.journal("ticket_done", {"ticket": identifier}, ticket=identifier)
 
-    def login_ends(self, access_in, refresh_in):
-        self.credentials.write_text(json.dumps({"claudeAiOauth": {
-            "accessToken": "a", "refreshToken": "r", "expiresAt": int((self.now + access_in) * 1000),
-            "refreshTokenExpiresAt": int((self.now + refresh_in) * 1000), "subscriptionType": "max",
-        }}), encoding="utf-8")
+    def login_ends(self, access_in, refresh_in=None):
+        oauth = {"accessToken": "a", "refreshToken": "r", "expiresAt": int((self.now + access_in) * 1000), "subscriptionType": "max"}
+        if refresh_in is not None:
+            oauth["refreshTokenExpiresAt"] = int((self.now + refresh_in) * 1000)
+        self.credentials.write_text(json.dumps({"claudeAiOauth": oauth}), encoding="utf-8")
 
     def login_tickets(self):
         return [item for item in tickets.read_tickets(self.project) if str(item.get("origin") or "").startswith(tick.LOGIN_ORIGIN)]
+
+    def launch_job(self, jobs, job_id, outputs=(), states=("running",), written=None):
+        jobs.script([resources.JobState(state, result="success", exit_code=0) if state == "exited" else state for state in states],
+                    outputs=written or {}, job_id=job_id)
+        resources.JobRunner(self.project, backend=jobs).launch(resources.JobSpec(
+            id=job_id, ticket=1, command=("python3", "train.py"), cwd=str(self.project),
+            log=str(self.project / "results" / "logs" / ("%s.log" % job_id)), expected_outputs=tuple(outputs)))
 
 
 # --- no project --------------------------------------------------------------------------------------------------
@@ -199,6 +212,20 @@ class LoginTest(TickCase):
         self.assertEqual((result.login["expires_at"], result.login["lapsed"], result.login["ticket"]), (self.now + 26 * DAY, False, None))
         self.assertEqual((self.login_tickets(), self.sent), ([], []))
 
+    def test_an_access_token_alone_past_its_end_is_its_routine_refresh_while_auth_status_reports_the_login(self):
+        self.login_ends(access_in=-HOUR)
+        result = self.run_tick()
+        self.assertEqual((result.login["expires_at"], result.login["lapsed"], result.login["ticket"]), (None, False, None))
+        self.assertEqual(self.login_tickets(), [])
+
+    def test_a_login_past_its_expiry_that_auth_status_still_reports_is_warned_of_and_not_lapsed(self):
+        self.login_ends(access_in=6 * HOUR, refresh_in=-HOUR)
+        result = self.run_tick()
+        self.assertFalse(result.login["lapsed"])
+        self.assertNotEqual(result.ended, tick.LAPSED)
+        [opened] = self.login_tickets()
+        self.assertEqual(opened["title"], "Renew the login before it ends")
+
     def test_an_answered_warning_is_not_asked_again_for_the_same_login(self):
         self.login_ends(access_in=6 * HOUR, refresh_in=2 * DAY)
         self.run_tick()
@@ -227,7 +254,8 @@ class LoginTest(TickCase):
         self.assertEqual((result.login["token"], result.login["expires_at"], result.login["lapsed"]), (True, None, False))
         self.assertEqual(self.login_tickets(), [])
 
-    def test_a_login_that_ended_lapses_and_the_tick_only_polls_the_jobs(self):
+    def test_a_stored_login_that_ended_lapses_when_auth_status_cannot_say_and_the_tick_only_polls_the_jobs(self):
+        self.fake.auth = None
         self.login_ends(access_in=-HOUR, refresh_in=-HOUR)
         self.fake.usage_text = usage_text(10, 10)
         self.ran()
@@ -239,7 +267,13 @@ class LoginTest(TickCase):
         self.assertEqual(self.polled, [self.project.resolve()])
         self.assertEqual((self.relaunched, self.rendered, self.events("pacing")), ([], [], []))
 
-    def test_claude_auth_status_reporting_no_login_is_a_lapse(self):
+    def test_auth_status_failing_without_saying_there_is_no_login_is_not_a_lapse(self):
+        self.fake.auth = UNSAID
+        self.login_ends(access_in=6 * HOUR, refresh_in=26 * DAY)
+        result = self.run_tick()
+        self.assertEqual((result.login["logged_in"], result.login["lapsed"], self.login_tickets()), (None, False, []))
+
+    def test_auth_status_reporting_no_login_is_a_lapse(self):
         self.fake.auth = LOGGED_OUT
         result = self.run_tick()
         self.assertEqual((result.ended, result.login["logged_in"]), (tick.LAPSED, False))
@@ -260,12 +294,12 @@ class LoginTest(TickCase):
 
 
 class AuthStatusBackendTest(unittest.TestCase):
-    """`ClaudeCli.auth_status` runs `claude auth status --json` and reads its exit code and JSON."""
+    """`ClaudeCli.auth_status` runs `auth status --json` and reads its exit code and JSON."""
 
     def setUp(self):
         self.temp = Path(tempfile.mkdtemp(prefix="wayline-auth-"))
         self.addCleanup(shutil.rmtree, self.temp, ignore_errors=True)
-        self.stand_in = self.temp / "claude"
+        self.stand_in = self.temp / "stand-in"
         self.stand_in.write_text('#!/bin/sh\nprintf "%s" "$*" > "$FAKE_AUTH_ARGV"\nprintf "%s" "$FAKE_AUTH_JSON"\nexit "$FAKE_AUTH_EXIT"\n',
                                  encoding="utf-8")
         self.stand_in.chmod(0o755)
@@ -280,11 +314,11 @@ class AuthStatusBackendTest(unittest.TestCase):
                          {"logged_in": True, "exit_code": 0, "status": {"loggedIn": True, "subscriptionType": "max"}})
         self.assertEqual((self.temp / "argv").read_text(encoding="utf-8"), "auth status --json")
 
-    def test_exit_1_reads_as_no_login(self):
+    def test_logged_in_false_reads_as_no_login(self):
         self.assertEqual(self.status('{"loggedIn": false}', 1), {"logged_in": False, "exit_code": 1, "status": {"loggedIn": False}})
 
-    def test_output_that_is_not_json_is_read_by_the_exit_code(self):
-        self.assertEqual(self.status("Not logged in", 1), {"logged_in": False, "exit_code": 1, "status": None})
+    def test_a_nonzero_exit_that_does_not_say_there_is_no_login_says_nothing(self):
+        self.assertEqual(self.status("TypeError: cannot read the configuration", 1), {"logged_in": None, "exit_code": 1, "status": None})
 
 
 # --- /usage and the heartbeat ---------------------------------------------------------------------------------------
@@ -294,7 +328,7 @@ class UsageTest(TickCase):
     def setUp(self):
         super().setUp()
         self.heartbeat = {"pid": 4242, "started_at": ts(NOW - HOUR), "last_wave_at": ts(NOW - 30), "harness_tag": "v0.0.0"}
-        self.living.add(4242)
+        self.holding = True
 
     def pacings(self):
         return [event["payload"] for event in self.events("pacing")]
@@ -311,7 +345,7 @@ class UsageTest(TickCase):
         self.assertEqual(self.pacings()[-1], {"five_hour": 0.95, "seven_day": 0.23, "fable": 0.43, "action": "stop"})
 
     def test_usage_that_cannot_be_read_journals_nothing(self):
-        self.fake.usage_text = worker.LaunchError("claude is not on PATH")
+        self.fake.usage_text = worker.LaunchError("the executable is not on PATH")
         result = self.run_tick()
         self.assertEqual((result.pacing, self.pacings(), result.problems), (None, [], []))
 
@@ -323,32 +357,41 @@ class HeartbeatTest(TickCase):
         self.add_ticket(1)
         self.fake.usage_text = usage_text(10, 10)
 
-    def test_a_live_conductor_that_waved_recently_ends_the_tick_once_usage_is_read(self):
+    def test_a_conductor_that_holds_the_project_and_waved_recently_ends_the_tick_once_usage_is_read(self):
         self.heartbeat = {"pid": 4242, "started_at": ts(NOW - HOUR), "last_wave_at": ts(NOW - 60), "harness_tag": "v0.0.0"}
-        self.living.add(4242)
+        self.holding = True
         result = self.run_tick()
         self.assertEqual(result.ended, tick.CONDUCTOR_ALIVE)
         self.assertEqual(len(self.events("pacing")), 1)
         self.assertEqual((self.polled, self.rendered, self.sent, self.relaunched), ([], [], [], []))
 
-    def test_a_live_conductor_that_stopped_waving_is_not_relaunched_but_the_rest_runs(self):
+    def test_a_conductor_that_took_the_lock_and_has_not_written_its_heartbeat_yet_is_alive(self):
+        self.heartbeat, self.holding = {}, True
+        result = self.run_tick()
+        self.assertEqual(result.ended, tick.CONDUCTOR_ALIVE)
+        self.assertIn("has not written its first heartbeat", result.why)
+
+    def test_a_conductor_that_holds_the_project_and_stopped_waving_is_not_relaunched_but_the_rest_runs(self):
         self.heartbeat = {"pid": 4242, "started_at": ts(NOW - HOUR), "last_wave_at": ts(NOW - 600), "harness_tag": "v0.0.0"}
-        self.living.add(4242)
+        self.holding = True
         result = self.run_tick()
         self.assertEqual(result.ended, tick.NOT_RELAUNCHED)
         self.assertIn("still holds the project", result.why)
         self.assertEqual((self.polled, self.rendered, self.relaunched), ([self.project.resolve()], [self.project.resolve()], []))
 
-    def test_a_dead_conductor_with_work_and_an_open_window_is_relaunched(self):
-        self.heartbeat = {"pid": 4242, "started_at": ts(NOW - HOUR), "last_wave_at": ts(NOW - 60), "harness_tag": "v0.0.0"}
+    def test_a_heartbeat_no_conductor_holds_is_no_conductor_whatever_its_pid_names_now(self):
+        """After a reboot the heartbeat's pid can name another process; the lock of the dead conductor is gone."""
+        self.heartbeat = {"pid": os.getpid(), "started_at": ts(NOW - HOUR), "last_wave_at": ts(NOW - 60), "harness_tag": "v0.0.0"}
         result = self.run_tick()
         self.assertEqual((result.ended, result.relaunched), (tick.RELAUNCHED, True))
         self.assertEqual(self.relaunched, [self.project.resolve()])
         self.assertIn("1 ticket(s) on the frontier", result.why)
         self.assertEqual(self.polled, [self.project.resolve()])
 
-    def test_no_heartbeat_at_all_is_no_conductor(self):
-        self.assertTrue(self.run_tick().relaunched)
+    def test_the_real_heartbeat_lock_answers_by_default(self):
+        self.assertIs(tick.Machine().conductor, tick.conductor_holder)
+        result = self.run_tick(conductor=tick.conductor_holder)
+        self.assertTrue(result.relaunched)
 
 
 # --- the relaunch ------------------------------------------------------------------------------------------------------
@@ -418,6 +461,22 @@ class WorkTest(TickCase):
         self.assertFalse(result.relaunched)
         self.assertIn("ended stopped", result.why)
 
+    def test_a_stop_no_conductor_took_is_not_dropped_by_a_relaunch(self):
+        self.ran()
+        self.add_ticket(1)
+        project.control(self.project, "stop", {"drain": False})
+        result = self.run_tick()
+        self.assertFalse(result.relaunched)
+        self.assertIn("a stop (by cli) waits for a conductor", result.why)
+
+    def test_a_project_switched_away_from_is_not_relaunched(self):
+        self.ran()
+        self.add_ticket(1)
+        self.journal("switched", {"from": str(self.project.resolve()), "to": str(self.temp / "other")})
+        result = self.run_tick()
+        self.assertFalse(result.relaunched)
+        self.assertIn("switched away from", result.why)
+
     def test_a_run_killed_mid_run_with_a_ticket_running_is_relaunched(self):
         self.ran()
         self.add_ticket(1, status="running")
@@ -428,42 +487,61 @@ class WorkTest(TickCase):
     def test_a_human_only_decision_ticket_is_not_work(self):
         self.ran(ended="frontier_empty", autonomy="autonomous")
         self.add_ticket(1, kind="decision", human_only=True)
-        self.assertFalse(self.run_tick().relaunched)
+        result = self.run_tick()
+        self.assertFalse(result.relaunched)
+        self.assertIn("no work remains", result.why)
 
-    def test_a_decision_ticket_the_decider_may_take_is_work_only_under_autonomous(self):
+    def test_a_decision_ticket_a_session_may_take_is_work(self):
         self.ran(ended="frontier_empty")
         self.add_ticket(1, kind="decision")
-        self.assertFalse(self.run_tick().relaunched)
-        self.ran(ended="frontier_empty", autonomy="autonomous")
         self.assertTrue(self.run_tick().relaunched)
+
+    def test_a_pending_job_file_is_not_work_on_its_own(self):
+        """Nothing launches a pending job of a ticket that no longer runs, so a relaunch would only end at its first wave."""
+        self.ran(ended="frontier_empty")
+        self.add_ticket(1, status="done")
+        spec = resources.JobSpec(id="j-0003", ticket=1, command=("python3", "train.py"), cwd=str(self.project),
+                                 log=str(self.project / "results" / "logs" / "j-0003.log"))
+        resources.JobRunner(self.project, backend=resources.FAKE_JOBS).write(
+            resources.job_record(spec, backend=resources.FakeJobs.name, unit=resources.unit_name("j-0003"), status="pending"))
+        result = self.run_tick()
+        self.assertFalse(result.relaunched)
+        self.assertIn("no work remains", result.why)
 
     def test_a_running_job_is_polled_and_its_outputs_are_checked_once_it_exited(self):
         self.ran()
         self.add_ticket(1, status="running")
         with resources.use_fake_jobs() as jobs:
-            jobs.script(["running", resources.JobState("exited", result="success", exit_code=0)],
-                        outputs={"results/metrics.json": '{"auroc": 0.81}', "results/table.csv": "seed,auroc\n1,0.81\n"})
-            resources.JobRunner(self.project, backend=jobs).launch(resources.JobSpec(
-                id="j-0001", ticket=1, command=("python3", "train.py"), cwd=str(self.project),
-                log=str(self.project / "results" / "logs" / "j-0001.log"),
-                expected_outputs=("results/metrics.json", "results/table.csv")))
+            self.launch_job(jobs, "j-0001", outputs=("results/metrics.json", "results/table.csv"), states=("running", "exited"),
+                            written={"results/metrics.json": '{"auroc": 0.81}', "results/table.csv": "seed,auroc\n1,0.81\n"})
             first = self.run_tick(poll_jobs=tick.poll_jobs)
             second = self.run_tick(poll_jobs=tick.poll_jobs)
-        self.assertEqual(first.jobs, [{"job": "j-0001", "ticket": 1, "was": "running", "now": "running"}])
+        self.assertEqual(first.jobs, [{"job": "j-0001", "ticket": 1, "was": "running", "now": "running", "error": None}])
         self.assertEqual(first.checks, [])
-        self.assertIn("1 job(s) live", first.why)
-        self.assertEqual(second.jobs, [{"job": "j-0001", "ticket": 1, "was": "running", "now": "exited"}])
+        self.assertIn("1 ticket(s) running with 1 job(s) live", first.why)
+        self.assertEqual(second.jobs, [{"job": "j-0001", "ticket": 1, "was": "running", "now": "exited", "error": None}])
         self.assertEqual(second.checks, [{"job": "j-0001", "ticket": 1, "outputs_ok": True, "problems": []}])
+
+    def test_a_job_that_cannot_be_polled_does_not_keep_the_next_one_unpolled(self):
+        self.ran()
+        self.add_ticket(1, status="running")
+        with resources.use_fake_jobs() as jobs:
+            self.launch_job(jobs, "j-0001")
+            self.launch_job(jobs, "j-0002")
+            with mock.patch.object(resources.JobRunner, "poll",
+                                   side_effect=[resources.JobError("no LoadState"), resources.JobState("running")]):
+                result = self.run_tick(poll_jobs=tick.poll_jobs)
+        self.assertEqual([(job["job"], job["now"]) for job in result.jobs], [("j-0001", None), ("j-0002", "running")])
+        self.assertIn("no LoadState", result.jobs[0]["error"])
+        self.assertEqual(result.problems, ["jobs: j-0001: JobError: no LoadState"])
+        self.assertTrue(result.relaunched)
 
     def test_an_output_that_does_not_parse_fails_the_check(self):
         self.ran()
         self.add_ticket(1, status="running")
         with resources.use_fake_jobs() as jobs:
-            jobs.script([resources.JobState("exited", result="success", exit_code=0)], outputs={"results/metrics.json": "auroc=0.81"})
-            resources.JobRunner(self.project, backend=jobs).launch(resources.JobSpec(
-                id="j-0002", ticket=1, command=("python3", "train.py"), cwd=str(self.project),
-                log=str(self.project / "results" / "logs" / "j-0002.log"),
-                expected_outputs=("results/metrics.json", "results/missing.csv")))
+            self.launch_job(jobs, "j-0002", outputs=("results/metrics.json", "results/missing.csv"), states=("exited",),
+                            written={"results/metrics.json": "auroc=0.81"})
             result = self.run_tick(poll_jobs=tick.poll_jobs)
         [check] = result.checks
         self.assertFalse(check["outputs_ok"])
@@ -473,32 +551,64 @@ class WorkTest(TickCase):
 
 
 class AnswerTest(TickCase):
-    def decision(self, identifier=2):
-        self.add_ticket(identifier, kind="decision", human_only=True)
-        self.journal("decision", {"ticket": identifier, "answer": "the held-out split", "decided_by": "human",
-                                  "rationale": None, "confidence": None}, ticket=identifier)
-
     def test_an_answer_after_the_run_ended_relaunches_even_a_stopped_run_with_the_window_closed(self):
         self.ran(ended="stopped")
-        self.decision()
+        self.add_ticket(2, kind="decision", human_only=True)
+        self.answered(2)
         self.fake.usage_text = usage_text(95, 95)
         result = self.run_tick()
         self.assertTrue(result.relaunched)
-        self.assertIn("a decision was answered", result.why)
+        self.assertIn("a decision ticket was answered", result.why)
 
     def test_an_answer_after_a_pause_relaunches(self):
         self.ran()
         self.journal("paused", {"resets_at": pacing.iso(NOW + HOUR), "window": "five_hour", "utilization": 1.0})
-        self.decision()
+        self.add_ticket(2, kind="decision", human_only=True)
+        self.answered(2)
         self.assertTrue(self.run_tick().relaunched)
+
+    def test_an_answer_after_a_stop_no_conductor_took_relaunches(self):
+        self.ran()
+        project.control(self.project, "stop", {"drain": False})
+        self.add_ticket(2, kind="decision", human_only=True)
+        self.answered(2)
+        self.assertTrue(self.run_tick().relaunched)
+
+    def test_an_answer_written_into_the_ticket_file_is_journaled_as_the_owner_s_and_relaunches(self):
+        self.ran(ended="stopped")
+        self.add_ticket(2, kind="decision", human_only=True, answer="the held-out split")
+        result = self.run_tick()
+        self.assertEqual(result.answers, [2])
+        self.assertEqual(self.events("decision")[-1]["payload"], {"ticket": 2, "answer": "the held-out split", "decided_by": "human",
+                                                                 "rationale": None, "confidence": None})
+        self.assertTrue(result.relaunched)
+        self.run_tick()
+        self.assertEqual(len(self.events("decision")), 1)
 
     def test_an_answer_the_last_run_already_took_does_not(self):
         self.ran()
-        self.decision()
+        self.add_ticket(2, kind="decision", human_only=True, status="done")
+        self.answered(2)
         self.journal("run_ended", {"reason": "frontier_empty"})
         result = self.run_tick()
         self.assertFalse(result.relaunched)
         self.assertIn("no work remains", result.why)
+
+    def test_an_answer_a_run_started_after_and_was_killed_in_does_not(self):
+        self.ran()
+        self.add_ticket(2, kind="decision", human_only=True, status="done")
+        self.answered(2)
+        self.ran()  # took the answer at its first wave, then was killed without an end
+        result = self.run_tick()
+        self.assertFalse(result.relaunched)
+        self.assertIn("no work remains", result.why)
+
+    def test_a_decision_that_names_no_ticket_answers_nothing(self):
+        self.ran(ended="goal_reached")
+        self.journal("decision", {"ticket": None, "answer": "auroc up to 0.9", "decided_by": "human", "rationale": None, "confidence": None})
+        result = self.run_tick()
+        self.assertFalse(result.relaunched)
+        self.assertIn("ended goal_reached", result.why)
 
 
 class FableVerdictTest(TickCase):
@@ -539,14 +649,12 @@ class FableVerdictTest(TickCase):
         self.assertTrue(result.relaunched)
         self.assertIn("2 ticket(s) owed a verdict", result.why)
 
-    def test_a_ticket_whose_verdicts_all_passed_owes_none(self):
-        for verdict_type in ("diff",):
-            self.journal("verdict", {"subject_kind": "ticket", "subject": "tickets/01-ticket-1.md", "verdict_type": verdict_type,
-                                     "pass": True, "session_id": "s", "model": "fable", "findings": []}, ticket=1)
-        self.now = self.resets + 60
+    def test_a_ticket_whose_verdicts_all_passed_is_owed_its_acceptance_which_needs_no_fable(self):
+        self.journal("verdict", {"subject_kind": "ticket", "subject": "tickets/01-ticket-1.md", "verdict_type": "diff",
+                                 "pass": True, "session_id": "s", "model": "fable", "findings": []}, ticket=1)
         result = self.run_tick()
-        self.assertFalse(result.relaunched)
-        self.assertIn("no work remains", result.why)
+        self.assertTrue(result.relaunched)
+        self.assertIn("1 ticket(s) owed their acceptance", result.why)
 
 
 # --- jobs, the report, the notifications --------------------------------------------------------------------------------
@@ -589,6 +697,14 @@ class NotificationTest(TickCase):
         self.journal("unpaused", {})
         self.journal("paused", {"resets_at": pacing.iso(NOW - 60), "window": "five_hour", "utilization": 1.0})
         self.ran()
+        self.run_tick()
+        self.assertEqual(self.said(), [])
+
+    def test_a_decision_answered_before_a_conductor_closed_it_is_not_sent(self):
+        self.ran()
+        self.add_ticket(2, kind="decision")
+        self.journal("decision_opened", {"ticket": 2, "blocking": None, "human_only": False}, ticket=2)
+        project.answer(self.project, 2, "the held-out split")
         self.run_tick()
         self.assertEqual(self.said(), [])
 
@@ -635,7 +751,7 @@ class ReportTest(TickCase):
         self.assertTrue(result.relaunched)
         self.assertIn("report failed", self.out.getvalue())
 
-    def test_a_refused_relaunch_is_said_and_kept_as_a_problem(self):
+    def test_a_refused_relaunch_is_a_problem_and_the_owner_is_told_once(self):
         self.ran()
         self.add_ticket(1)
         self.refusal = tick.UnitsOff("WAYLINE_UNITS=none: this process does not reach the user manager")
@@ -643,6 +759,11 @@ class ReportTest(TickCase):
         self.assertEqual((result.ended, result.relaunched), (tick.NOT_RELAUNCHED, False))
         self.assertIn("WAYLINE_UNITS=none", result.why)
         self.assertEqual(len(result.problems), 1)
+        self.assertEqual([(event, ticket) for event, ticket, _ in self.sent], [("relaunch_refused", None)])
+        self.assertIn("did not relaunch the conductor although 1 ticket(s) on the frontier", self.sent[0][2])
+        self.now += 15 * 60
+        self.run_tick()
+        self.assertEqual(len(self.sent), 1)
 
 
 # --- the verb -----------------------------------------------------------------------------------------------------------

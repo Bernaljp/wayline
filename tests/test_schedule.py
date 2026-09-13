@@ -186,6 +186,9 @@ class PickTest(unittest.TestCase):
         built = graph(entry(1, kind="decision", human_only=True), entry(2, kind="decision"), entry(3))
         self.assertEqual(ids(frontier(built)), [1, 2, 3])  # still on the frontier, so a paused project can be answered
         self.assertEqual(sorted(ids(schedule.pick(built, slots=3))), [2, 3])
+        self.assertEqual([schedule.awaits_owner(item) for item in built["tickets"]], [True, False, False])
+        self.assertEqual(schedule.held_back(built),
+                         ["  decision ticket 1 waits for the owner's answer: it is human-only, and no session answers it"])
 
 
 class HeldBackTest(unittest.TestCase):

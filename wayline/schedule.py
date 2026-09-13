@@ -18,7 +18,7 @@ from wayline.tickets import DECISION, HARDEST, SATISFIED, frontier, is_open_deci
 __all__ = [
     "NORMAL", "CHEAP_ONLY", "STOP", "CHEAP_MAX", "affordable",
     "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
-    "everything_free", "nothing_held", "launchable", "order_key", "pick", "held_back", "holds_model_work",
+    "everything_free", "nothing_held", "awaits_owner", "launchable", "order_key", "pick", "held_back", "holds_model_work",
 ]
 
 # The pacing actions of decision 5 (`wayline.pacing` computes which one holds). `stop` launches
@@ -185,15 +185,19 @@ def held_back(graph):
     only `frontier_empty` (its reasons are the spec's closed list), so the conductor says this
     aloud before it stops. Two of the frontier's rules can empty it with work still to do: a
     decision ticket nobody has answered, and a difficulty-5 blocker that is `done` and whose
-    quality verdict has not passed, which happens when the verdict could not be taken at all.
+    quality verdict has not passed, which happens when the verdict could not be taken at all. A
+    human-only decision ticket is on the frontier and still waits, for the owner (`awaits_owner`).
     """
     entries = {entry["id"]: entry for entry in graph["tickets"]}
-    ready = {entry["id"] for entry in frontier(graph)}
-    waiting = [entry for entry in graph["tickets"] if entry["status"] == "open" and entry["id"] not in ready]
-    if not waiting:
-        return []
-    lines = ["%d open ticket(s) are outside the frontier:" % len(waiting)]
-    lines.extend("  ticket %d waits on %s" % (entry["id"], _waits_on(entry, entries, graph)) for entry in waiting)
+    ready = frontier(graph)
+    taken = {entry["id"] for entry in ready}
+    waiting = [entry for entry in graph["tickets"] if entry["status"] == "open" and entry["id"] not in taken]
+    lines = []
+    if waiting:
+        lines.append("%d open ticket(s) are outside the frontier:" % len(waiting))
+        lines.extend("  ticket %d waits on %s" % (entry["id"], _waits_on(entry, entries, graph)) for entry in waiting)
+    lines.extend("  decision ticket %d waits for the owner's answer: it is human-only, and no session answers it" % entry["id"]
+                 for entry in ready if awaits_owner(entry))
     return lines
 
 
@@ -232,6 +236,15 @@ def _decision_above(entry, entries):
     return None
 
 
+def awaits_owner(entry):
+    """Whether only the owner can take this ticket: a `human_only` decision ticket, which no session answers.
+
+    It stays on the frontier, so a paused project can still be answered, but it is never picked and it
+    keeps no run going; the owner's answer is what the tick relaunches the conductor for (decision 7).
+    """
+    return entry["kind"] == DECISION and bool(entry.get("human_only"))
+
+
 def nothing_held(entry):
     """No launch is held: what `pick` is given while the hold on Fable's weekly window does not stand."""
     return False
@@ -246,11 +259,9 @@ def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_f
     The pacing action removes what it does not afford: everything under `stop`, difficulty 3 to 5
     under `cheap_only`. `held(entry)` names a launch the hold on Fable's weekly window keeps back
     (decision 15), dropped before anything is picked, so its slot goes to what else is launchable. A
-    `human_only` decision ticket is never picked: only the owner answers it, never a session (the tick
-    opens one when the login nears its end, decision 7).
+    ticket that `awaits_owner` is never picked.
     """
-    ready = [entry for entry in frontier(graph)
-             if affordable(entry, action) and not held(entry) and not (entry["kind"] == DECISION and entry.get("human_only"))]
+    ready = [entry for entry in frontier(graph) if affordable(entry, action) and not held(entry) and not awaits_owner(entry)]
     lengths = critical_path_lengths(graph)
     taken = list(running)
     chosen = []

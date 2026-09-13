@@ -43,6 +43,7 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
 from wayline.project import policy_for
 from wayline.tickets import next_id, read_ticket, tickets_dir, write_ticket
+from wayline.tickets import relative_path as ticket_relative_path
 
 __all__ = [
     "GateError",
@@ -65,7 +66,7 @@ __all__ = [
     "findings_text",
     "kill_argument",
     "take_verdict",
-    "ticket_asks",
+    "ticket_asks", "owed_asks",
     "UsageLimited",
     "verdict",
     "verdict_for",
@@ -809,6 +810,20 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
             verdict_type=RESULT, author_model=author_model, ticket=identifier,
         ))
     return asks
+
+
+def owed_asks(ticket, difficulty, author_model, commit, verdicts):
+    """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
+
+    `verdicts` is what the journal holds for the ticket (`replay.View.verdicts`). A ticket that earned
+    verdicts and is owed none is owed its acceptance, which a conductor killed between the last pass and
+    `ticket_accepted` never journaled. The conductor's restart and the tick both read it here, so what the
+    tick relaunches a conductor for is what that conductor then does.
+    """
+    earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
+                         outputs=ticket.get("outputs") or [])
+    passed = {item.get("verdict_type") for item in verdicts or () if item.get("pass")}
+    return earned, [ask for ask in earned if ask.verdict_type not in passed]
 
 
 # --- the kill argument (decision 11; BRIEF 3.2, 13.3) ------------------------------------------

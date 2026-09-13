@@ -1433,7 +1433,9 @@ class ClaudeCli:
 
         Returns `{"logged_in", "exit_code", "status"}`. research-notes/02 recorded exit 0 and `loggedIn:
         true` for a working login, and the docs give exit 1 for none; `status` is the JSON it printed
-        (`loggedIn`, `authMethod`, `subscriptionType`), None when it printed none. Raises `LaunchError`
+        (`loggedIn`, `authMethod`, `subscriptionType`), None when it printed none. `logged_in` is False
+        only when that JSON says `loggedIn: false`, True on exit 0 otherwise, and None for a nonzero exit
+        that says neither, which is a CLI that failed rather than a login that lapsed. Raises `LaunchError`
         when the executable cannot be run.
         """
         executable = self._executable()
@@ -1447,7 +1449,10 @@ class ClaudeCli:
         except ValueError:
             status = None
         status = status if isinstance(status, dict) else None
-        logged_in = done.returncode == 0 and (status is None or status.get("loggedIn") is not False)
+        if status is not None and status.get("loggedIn") is False:
+            logged_in = False
+        else:
+            logged_in = True if done.returncode == 0 else None
         return {"logged_in": logged_in, "exit_code": done.returncode, "status": status}
 
     def setup_token(self):
@@ -1466,7 +1471,13 @@ class ClaudeCli:
             return os.path.abspath(override)  # the child runs in another cwd
         found = shutil.which(self.executable)
         if found is None:
-            raise LaunchError("%s is not on PATH; install Claude Code or set WAYLINE_CLAUDE to the executable" % self.executable)
+            # The user manager's PATH, which the tick and a detached conductor start from, lacks the directory the
+            # installer puts the executable in (ticket 13), so it is looked for there before the launch is refused.
+            installed = Path.home() / ".local" / "bin" / self.executable
+            if installed.is_file() and os.access(installed, os.X_OK):
+                return str(installed)
+            raise LaunchError("%s is not on PATH or in ~/.local/bin; install Claude Code or set WAYLINE_CLAUDE to the executable"
+                              % self.executable)
         return found
 
     def _run(self, request, run_dir, session_id, message, on_start):

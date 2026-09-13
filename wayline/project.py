@@ -43,7 +43,7 @@ __all__ = [
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
-    "control", "answer", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
+    "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
     "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
 
@@ -1067,6 +1067,28 @@ def answer(project, identifier, text):
     write_ticket(ledger, fields, with_answer(body, text))
     return ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": "human",
                                           "rationale": None, "confidence": None}, ticket=identifier)
+
+
+def journal_written_answers(project, ledger, answers):
+    """Journal as the owner's every answer written into a decision ticket's `## Answer` section that the journal does not hold.
+
+    The file is where a person answers (decision 2), so an answer written there wins over the one the
+    journal held. `answers` is what the journal holds (`replay.View.answers`). The conductor calls this at
+    every wave, and the tick before it decides on a relaunch, since either may be the first to see the
+    edit (decision 5). Returns the payloads journaled, by ticket id.
+    """
+    journaled = {}
+    for ticket in read_tickets(project):
+        if ticket["kind"] != DECISION_KIND:
+            continue
+        _, body = read_ticket(tickets_dir(project) / filename(ticket))
+        written = answer_section(body)
+        known = answers.get(ticket["id"])
+        if written is not None and (known is None or str(known.get("answer") or "").strip() != written):
+            journaled[ticket["id"]] = ledger.append_event(DECISION, {
+                "ticket": ticket["id"], "answer": written, "decided_by": "human", "rationale": None, "confidence": None,
+            }, ticket=ticket["id"])["payload"]
+    return journaled
 
 
 # --- the verbs ------------------------------------------------------------------------------------------

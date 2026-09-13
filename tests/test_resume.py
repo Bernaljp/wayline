@@ -466,6 +466,15 @@ class AnswerTest(ControlCase):
         self.assertEqual(self.statuses(), {1: "done", 2: "done"})
         self.assertEqual([event["payload"]["ticket"] for event in self.events("ticket_launched")], [1])
 
+    def test_a_run_left_with_only_a_human_only_decision_ends_without_launching_it(self):
+        """No session answers it, so it keeps no run going; the owner's answer is what the tick relaunches for."""
+        self.decision_ticket()
+        _, driven = self.conductor_over()
+        result = self.until_quiet(driven)
+        self.assertEqual((result.ended, result.reason), (True, "frontier_empty"))
+        self.assertEqual(self.events("ticket_launched"), [])
+        self.assertIn("decision ticket 2 waits for the owner's answer", driven.out.getvalue())
+
     def test_a_hand_written_answer_wins_over_the_answer_the_journal_holds(self):
         self.decision_ticket(body="\n## Question\n\nWhich greeting?\n\n## Answer\n\nthe loud greeting\n")
         self.ledger.append_event("decision", {"ticket": 2, "answer": "the plain greeting", "decided_by": "human",
