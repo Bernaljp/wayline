@@ -363,12 +363,12 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `run_started` | `resume`, `harness_tag`, `autonomy`, `radius`, `pid` |
   | `run_ended` | `reason`: `frontier_empty`, `goal_reached`, `stopped`, `stall_strict`, `switched` |
   | `phase` | `from`, `to` (P0 to P8) |
-  | `pacing` | `five_hour`, `seven_day`, `fable` (Fable's weekly window, decision 15), `action`: `normal`, `cheap_only`, `stop` (written only on change) |
-  | `paused` | `resets_at`, `window`: `five_hour`, `seven_day`, `unknown`; `utilization`; `model` (`fable` for the hold of decision 15, absent for the whole-run pause) |
-  | `unpaused` | `model` when it ends the hold of decision 15, else none |
+  | `pacing` | `five_hour`, `seven_day`, `action`: `normal`, `cheap_only`, `stop` (written only on change) |
+  | `paused` | `resets_at`, `window`: `five_hour`, `seven_day`, `unknown`; `utilization` |
+  | `unpaused` | none |
   | `ticket_created` | `ticket`, `kind`, `proposed_by`, `origin`, `blocked_by` |
   | `assigned` | `ticket`, `role`, `skills` |
-  | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256`; `fallback_from` on a fallback launch (decision 15) |
+  | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256` |
   | `ticket_session` | `ticket`, `attempt`, `session_id`, `model` (from the stream's `system/init`) |
   | `ticket_result` | `ticket`, `attempt`, `session_id`, `status`, `turns`, `duration_ms`, `usage`, `permission_denials`, `valid` |
   | `ticket_resumed` | `ticket`, `attempt`, `session_id`, `reason`: `invalid_result`, `acceptance_failed`, `worker_died`, `timeout`, `readopted` |
@@ -380,13 +380,13 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `ticket_needs_human` | `ticket`, `question` |
   | `ticket_cancelled`, `ticket_rerun` | `ticket`, `by` |
   | `difficulty_raised` | `kind`, `from`, `to` |
-  | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings`; `fallback_from` when taken by fallback (decision 15) |
+  | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings` |
   | `finding` | `id`, `ticket`, `text`, `provenance`, `negative` |
   | `progress` | `metric`, `value`, `ticket`, `run_id`, `kept` |
   | `discarded` | `ticket`, `metric`, `best`, `sd`, `seeds` |
   | `proposal_admitted`, `proposal_parked` | `id`, `from`, `kind`, `ticket` or `reason`: `radius`, `duplicate`, `cap`, `blockers` |
   | `decision_opened` | `ticket`, `blocking`, `human_only` |
-  | `decision` | `ticket`, `answer`, `decided_by`: `human`, `decider`, `conductor` (the superseded close and the timeout of decision 15); `rationale`, `confidence`, `model`, `fallback_from` |
+  | `decision` | `ticket`, `answer`, `decided_by`: `human`, `decider`; `rationale`, `confidence` |
   | `job_launched` | `job`, `ticket`, `unit`, `gpu_uuids`, `cores`, `ram_gb`, `attempt` |
   | `job_finished` | `job`, `exit_code`, `seconds`, `outputs_ok` |
   | `job_retried` | `job`, `attempt`, `oom`: `host`, `gpu`; `overrides` |
@@ -398,7 +398,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `absorbed` | `slug`, `level`, `session_id`, `chunks`, `entries`, `coverage_pass` |
   | `consulted` | `slug`, `by`, `question_sha256`, `promote_requested`, `session_id` |
   | `notified` | `event`, `channel`: `notify-send`, `hermes`, `none`; `ok` |
-  | `control` | `command`: `pause`, `resume`, `stop`, `cancel`, `rerun`, `autonomy`, `pacing`, `model_fallback`; `args`, `by` |
+  | `control` | `command`: `pause`, `resume`, `stop`, `cancel`, `rerun`, `autonomy`, `pacing`; `args`, `by` |
   | `switched` | `from`, `to` |
   | `feedback` | `id`, `source`: `cli`, `dashboard`, `file` |
   | `change_record` | `id`, `scope_kind`: `local`, `global`; `mechanism`, `fixture` |
@@ -650,7 +650,6 @@ Numbered so the milestones can point at them. Every decision below either restat
 | `max_parallel_workers` | 2 | map ticket 20 |
 | `poll_seconds`, `heartbeat_stale_s`, `acceptance_timeout_s` | 60, 300, 600 | spec |
 | `pacing.stop_at`, `pacing.cheap_at` | 0.90, 0.80, both windows; Fable's weekly window takes `stop_at` alone | map ticket 20, spec, Fable fallback map |
-| `model_fallback` | `wait_under_hours` 12 (the ask recommends `wait` below it); `ask_timeout_hours` 2 (only for a project without the key, under `autonomous`) | Fable fallback map |
 | `context_pack.max_chars` | sonnet 120000; opus 200000; fable 300000 (about 30k, 50k, and 75k tokens) | spec, measured in M1 |
 | `escalation` | resume 1, tier_up 1, then split, then needs_human; `raise_after_failures` 2 | BRIEF 8.4, map ticket 24 |
 | `stall.waves` | 2 | BRIEF 9.7 |
@@ -684,6 +683,7 @@ The subscription counts Fable in a weekly window of its own, apart from the all-
 - **Asking the owner** ([Asking the owner when Fable is spent and nobody is at the laptop](https://github.com/Bernaljp/wayline/issues/95)): under `ask`, one decision ticket per spent window, keyed by the window's `resets_at`, opened when the hold first drops a launch (a spent week with no Fable work waiting asks nothing); `human_only` under every autonomy, because the decider runs on Fable; `blocking: null`, because the hold already holds Fable work. `decision_opened` notifies with the reset, what is held, the recommended answer, and `wayline answer <id> "<option>"`. The options: `fall back` and `wait` for this window; `always fall back` and `always wait`, which also journal `control model_fallback` with `auto` or `wait`. The answer text is matched against the options trimmed and case-insensitively, and an answer matching none counts as `wait` for this window, with a notification saying so. The recommended answer is `wait` when the reset is under `policy.model_fallback.wait_under_hours` (12) away, `fall back` otherwise. At the first wave past the reset, or on a `control` event setting the consent to `auto` or `wait`, the conductor closes the ticket with a `decision` carrying `answer: superseded` and `decided_by: conductor`, and a late `wayline answer` is refused as for any answered ticket. When nobody answers: an explicit `ask` never times out; a project without the key under `autonomous` gets `fall back` for this window after `policy.model_fallback.ask_timeout_hours` (2), journaled as a `decision` with `decided_by: conductor` and a rationale naming the timeout; otherwise the ticket waits for an answer or the reset.
 - **Judgments made by fallback** ([Re-taking judgments on Fable after the reset](https://github.com/Bernaljp/wayline/issues/96)): nothing is taken again after the reset. `decision` gains `model`, and `fallback_from` when the decider ran by fallback; `REPORT.md` lists every verdict and decider answer carrying `fallback_from` in its section "Judged on Opus while Fable was spent"; `wayline rerun <id>` re-asks a decision ticket on demand, answered on Fable once the window has reset.
 - **What `wayline status` and the dashboard show** ([What wayline status and the dashboard show while Fable is spent](https://github.com/Bernaljp/wayline/issues/98)): the window line gains `fable <N>`. While the hold stands, a second line follows: `fable    held until <reset>   consent <auto|ask|wait|ask (unset)>   waiting <n>   fallen back <m>`, where `ask (unset)` names a project without the key, `waiting` counts the Fable launches the hold holds, and `fallen back` counts the `ticket_launched`, `verdict`, and `decision` events carrying `fallback_from` since the hold's `paused`. The ask is listed with the other open decision tickets, adding `falls back at <time> unless answered` when the timeout applies. The overview reads the same view, the decisions view answers the ask on its form, and the dashboard gains the `model_fallback` action; no view of its own.
+- **Vocabulary the build adds.** `harness.json` gains `model_fallback`. The journal gains `pacing.fable`; `model` on `paused` and `unpaused` (`fable` for the hold, absent for the whole-run pause); `fallback_from` on `ticket_launched` and `verdict`; `model` and `fallback_from` on `decision`, whose `decided_by` gains `conductor` (the superseded close and the timeout); and the `control` command `model_fallback`, whose `args` carry `model_fallback`. The policy gains `model_fallback.wait_under_hours` (12; the ask recommends `wait` below it) and `model_fallback.ask_timeout_hours` (2; only for a project without the key, under `autonomous`). Each lands in the event table of decision 2 or the policy table of decision 14 in the same ticket as the code that writes or reads it, because the suite holds those tables and the code to each other.
 - **Build order** ([Where the fallback work lands in the ticket graph](https://github.com/Bernaljp/wayline/issues/99)): the hold lands first, in M1, before the tick; the fallback, the verdicts, and the ask follow in M5; the M5 overnight demo forces a Fable fallback with `--simulate-limit fable:<seconds>` rather than waiting for a genuinely spent week.
 
 ## Testing Decisions
