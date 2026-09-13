@@ -1,0 +1,11 @@
+{
+  "method": [{"text": "The model is a line fitted by least squares.", "locators": ["flat.tex:13", "eq-2"]}],
+  "claims": [{"text": "A line fits the points.", "locators": ["flat.tex:10"]}],
+  "results": [{"text": "The fit has an error of 0.1.", "locators": ["tab-1"]}],
+  "assumptions": [],
+  "limitations": [],
+  "flaws_found": [{"text": "The error of 0.1 is reported without a unit.", "locators": ["tab-1"]}],
+  "reusable_ideas": [],
+  "open_questions": [{"text": "Whether the lemma needs the appendix's inspection at all.", "locators": ["thm-1", "app-1"]}],
+  "relation_to_intent": [{"text": "The paper answers the intent for eight points only.", "locators": ["fig-1"]}]
+}

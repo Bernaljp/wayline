@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "slug": "suite-2026-tiny-absorb-paper",
+  "level": 2,
+  "existence": "verified",
+  "resolved_by": "arxiv",
+  "query": {"kind": "arxiv", "value": "2609.00001"},
+  "identifiers": {"arxiv_id": "2609.00001"},
+  "metadata": {"title": "A tiny paper for the absorb workflow"},
+  "abstract": null,
+  "relation_to_intent": "It fits the line the intent asks about.",
+  "deserves_l2_if": "The project needs the exact fitting procedure.",
+  "l2": {
+    "absorbed": "2026-09-13T12:30:00.000Z",
+    "fanout": "workflow",
+    "allow_rules": "narrow",
+    "session_ids": ["4f0c9a1e-0000-4000-8000-000000000001"],
+    "run_file": "/home/owner/.claude/projects/-home-owner-project/4f0c9a1e-0000-4000-8000-000000000001/workflows/wf_0001.json",
+    "manifest": "research/refs/suite-2026-tiny-absorb-paper/absorb/manifest.json",
+    "entries_path": "research/refs/suite-2026-tiny-absorb-paper/entries.jsonl",
+    "markdown_path": "research/refs/suite-2026-tiny-absorb-paper/dossier.md",
+    "chunks": 6,
+    "entries": 11,
+    "coverage": {"pass": true, "items": 11, "covered": 11, "missing": []},
+    "sections": {
+      "method": [{"text": "The model is a line fitted by least squares.", "locators": ["flat.tex:13"]}],
+      "claims": [], "results": [], "assumptions": [], "limitations": [],
+      "flaws_found": [{"text": "The error of 0.1 is reported without a unit.", "locators": ["tab-1"]}],
+      "reusable_ideas": [], "open_questions": [], "relation_to_intent": []
+    },
+    "unresolved_locators": [],
+    "failures": [],
+    "problems": [],
+    "cost": {"agents": 7, "tokens": 123456, "duration_ms": 45000},
+    "spot_check": {
+      "status": "queued",
+      "role": "critic",
+      "verdict_type": "depth_spot_check",
+      "author_model": "sonnet",
+      "items": ["eq-1", "eq-2", "sec-1", "sec-2", "sec-3"],
+      "flaws": 1,
+      "question": "Was refs/suite-2026-tiny-absorb-paper read in depth?",
+      "scope_limit": "Only the 5 item(s) and 1 claimed flaw(s) listed.",
+      "paths": ["research/refs/suite-2026-tiny-absorb-paper/entries.jsonl"],
+      "session_id": null,
+      "model": null,
+      "findings": []
+    }
+  },
+  "created": "2026-09-13T12:00:00.000Z",
+  "updated": "2026-09-13T12:30:00.000Z"
+}

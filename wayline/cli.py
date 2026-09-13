@@ -40,7 +40,7 @@ def lazy(module, attribute):
 VERBS = [
     Verb("init", "init <path> [--email <address>] | init --uninstall-units", "lay out a project, register it, make it the active one, and install the tick and dashboard user units", "project", lazy("wayline.project", "init_command")),
     Verb("intake", "intake [<material>...] [--goal <file>] [--from <spec>]", "phase P0: take what the owner has and write INTAKE.md, harness settings, and a measurable GOAL.json (also a skill)", "phases", lazy("wayline.intake", "intake_command")),
-    Verb("absorb", "absorb [--level 0] [--code <slug> <url>@<sha>] [--inventory <slug> [--pdf <path>]]", "phase P1: build the dossiers for the references, and one reference's inventory from its arXiv source or a PDF", "phases", lazy("wayline.dossier", "absorb_command")),
+    Verb("absorb", "absorb [--level 0|1|2 [<slug>...]] [--code <slug> <url>@<sha>] [--inventory <slug> [--pdf <path>]]", "phase P1: build the dossiers for the references (level 2 reads one promoted paper in full), and one reference's inventory from its arXiv source or a PDF", "phases", lazy("wayline.dossier", "absorb_command")),
     Verb("position", "position", "phase P2: write the position memo", "phases"),
     Verb("grill", "grill", "phase P2: ask the frontier of open questions in tiers (also a skill)", "phases"),
     Verb("specify", "specify", "phase P3: write SPEC.md with claims, experiments, and seams", "phases"),

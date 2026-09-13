@@ -1,0 +1,6 @@
+{
+  "entries": [
+    {"item_id": "sec-2", "locator": "flat.tex:11", "kind": "section", "content": "The model is a line, fitted by least squares.", "importance": 4, "relation_to_intent": "It is the method the intent asks about.", "oddities": []},
+    {"item_id": "eq-1", "locator": "flat.tex:13", "kind": "equation", "content": "y = m x + b", "importance": 5, "relation_to_intent": "", "oddities": []}
+  ]
+}

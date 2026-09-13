@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "slug": "suite-2026-tiny-absorb-paper",
+  "source_type": "latex",
+  "source": {
+    "kind": "tarball",
+    "url": "https://export.arxiv.org/src/2609.00001",
+    "arxiv_id": "2609.00001",
+    "version": "v1",
+    "etag": null,
+    "fetched": "2026-09-13T12:00:00.000Z",
+    "from_cache": false,
+    "bytes": null,
+    "files": 1,
+    "main": "flat.tex",
+    "flattened_by": "wayline",
+    "compiled": false
+  },
+  "provenance": {
+    "sections": "latex",
+    "equations": "latex",
+    "figures": "latex",
+    "tables": "latex",
+    "algorithms": "latex",
+    "theorems": "latex",
+    "appendices": "latex",
+    "references": "latex",
+    "metadata": "latex",
+    "raw_images": "latex",
+    "text_layer": "latex"
+  },
+  "counts": {
+    "sections": 4,
+    "appendices": 1,
+    "section_headings": 5,
+    "equations": 2,
+    "figures": 1,
+    "tables": 1,
+    "algorithms": 1,
+    "theorems": 1,
+    "references": 0,
+    "labels": 10,
+    "captions": 3,
+    "refs": 2,
+    "unresolved_inputs": 0
+  },
+  "environments": {
+    "equation": 1,
+    "align": 1,
+    "algorithm": 1,
+    "figure": 1,
+    "table": 1,
+    "lemma": 1
+  },
+  "page_count": null,
+  "text_layer": {
+    "path": "source/flat.tex",
+    "chars": 1220,
+    "provenance": "latex"
+  },
+  "sections": [
+    {
+      "id": "sec-1",
+      "kind": "section",
+      "locator": "flat.tex:8",
+      "provenance": "latex",
+      "number": "1",
+      "title": "Introduction",
+      "level": 1,
+      "confirm": true,
+      "label": "sec:intro"
+    },
+    {
+      "id": "sec-2",
+      "kind": "section",
+      "locator": "flat.tex:11",
+      "provenance": "latex",
+      "number": "2",
+      "title": "Method",
+      "level": 1,
+      "confirm": true,
+      "label": "sec:method"
+    },
+    {
+      "id": "sec-3",
+      "kind": "section",
+      "locator": "flat.tex:17",
+      "provenance": "latex",
+      "number": "2.1",
+      "title": "Fitting",
+      "level": 2,
+      "confirm": true,
+      "label": "sec:fit"
+    },
+    {
+      "id": "sec-4",
+      "kind": "section",
+      "locator": "flat.tex:31",
+      "provenance": "latex",
+      "number": "3",
+      "title": "Results",
+      "level": 1,
+      "confirm": true,
+      "label": "sec:results"
+    }
+  ],
+  "equations": [
+    {
+      "id": "eq-1",
+      "kind": "equation",
+      "locator": "flat.tex:13",
+      "provenance": "latex",
+      "environment": "equation",
+      "number": "1",
+      "latex": "\\begin{equation}\n  y = m x + b\n  \\label{eq:line}\n\\end{equation}",
+      "confirm": true,
+      "label": "eq:line"
+    },
+    {
+      "id": "eq-2",
+      "kind": "equation",
+      "locator": "flat.tex:19",
+      "provenance": "latex",
+      "environment": "align",
+      "number": "2-3",
+      "latex": "\\begin{align}\n  L &= \\sum_i (y_i - m x_i - b)^2 \\\\\n  \\hat m &= \\arg\\min_m L\n\\end{align}",
+      "confirm": true
+    }
+  ],
+  "figures": [
+    {
+      "id": "fig-1",
+      "kind": "figure",
+      "locator": "flat.tex:27",
+      "provenance": "latex",
+      "environment": "figure",
+      "number": "1",
+      "caption": "Points and the fitted line.",
+      "graphics": [
+        "figures/plot.png"
+      ],
+      "confirm": true,
+      "label": "fig:plot",
+      "file": "figures/fig-1.png"
+    }
+  ],
+  "tables": [
+    {
+      "id": "tab-1",
+      "kind": "table",
+      "locator": "flat.tex:33",
+      "provenance": "latex",
+      "environment": "table",
+      "number": "1",
+      "latex": "\\begin{table}\n\\caption{Errors per run.}\\label{tab:numbers}\n\\begin{tabular}{ll}\nrun & error \\\\\nfirst & 0.1\n\\end{tabular}\n\\end{table}",
+      "caption": "Errors per run.",
+      "confirm": true,
+      "label": "tab:numbers"
+    }
+  ],
+  "algorithms": [
+    {
+      "id": "alg-1",
+      "kind": "algorithm",
+      "locator": "flat.tex:23",
+      "provenance": "latex",
+      "environment": "algorithm",
+      "number": "1",
+      "latex": "\\begin{algorithm}\n\\caption{Fit, carefully}\\label{alg:fit}\nCompute the least-squares solution.\n\\end{algorithm}",
+      "caption": "Fit, carefully",
+      "confirm": true,
+      "label": "alg:fit"
+    }
+  ],
+  "theorems": [
+    {
+      "id": "thm-1",
+      "kind": "theorem",
+      "locator": "flat.tex:40",
+      "provenance": "latex",
+      "environment": "lemma",
+      "number": "1",
+      "latex": "\\begin{lemma}\\label{lem:tinier}\nSome tiny papers are tinier.\n\\end{lemma}",
+      "confirm": true,
+      "label": "lem:tinier"
+    }
+  ],
+  "appendices": [
+    {
+      "id": "app-1",
+      "kind": "appendix",
+      "locator": "flat.tex:44",
+      "provenance": "latex",
+      "number": "A",
+      "title": "Proof of the lemma",
+      "level": 1,
+      "confirm": true,
+      "label": "app:proof"
+    }
+  ],
+  "references": [],
+  "raw_images": [],
+  "metadata": {
+    "title": "A tiny paper for the absorb workflow",
+    "documentclass": "article"
+  },
+  "notes": [],
+  "created": "2026-09-13T12:00:00.000Z"
+}
