@@ -8,7 +8,7 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 
 ## What is left on 2026-09-13
 
-33 of the 57 tickets are closed: 01 to 13, 16, 17, 18, 20 to 25, 27, 28, 30, 32, 40, 41, 42, 44, 48, 49, and 52. Counting those as done, the 24 still open fall into seven waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, with each ticket's model and effort, is the order column of `.scratch/wayline/models.md`.
+33 of the 57 tickets are closed: 01 to 13, 16, 17, 18, 20 to 25, 27, 28, 30, 32, 40, 41, 42, 44, 48, 49, and 52. Counting those as done, the 24 still open fall into seven waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, step by step with each ticket's model and effort, is "Order from here" in `.scratch/wayline/models.md`.
 
 | Wave left | Tickets | Notes |
 |---|---|---|
@@ -116,7 +116,7 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 4. Never use `git stash` across worktrees; `refs/stash` is shared.
 5. Keep two or three sessions in flight at most: the subscription window is shared by every session, and one ticket typically costs a large part of a window.
 6. Run 01 to 05 one at a time on `master` directly (no worktree needed while nothing else runs): they define the modules everything else edits.
-7. The eight milestone demos (06, 15, 19, 26, 36, 43, 47, 53) are integration points: run each alone, on `master`, with the tree clean, and in milestone order, so that every tag from v0.1.0 to v1.0.0 contains the code of the tags before it (`upgrade` moves a project between tags and prints the changelog between them, which needs a straight line). 19 and 26 therefore wait for 15 (wave 9), and 39 and 29 wait for them; this costs no calendar time, since none of the four is on the critical path. The schedule that follows these rules step by step is the order column of `.scratch/wayline/models.md`.
+7. The eight milestone demos (06, 15, 19, 26, 36, 43, 47, 53) are integration points: run each alone, on `master`, with the tree clean, and in milestone order, so that every tag from v0.1.0 to v1.0.0 contains the code of the tags before it (`upgrade` moves a project between tags and prints the changelog between them, which needs a straight line). 19 and 26 therefore wait for 15 (wave 9), and 39 and 29 wait for them; this costs no calendar time, since none of the four is on the critical path. The schedule that follows these rules step by step is "Order from here" in `.scratch/wayline/models.md`.
 8. Same-module pairs: 09 before 08 and 10 (recorded as blocked-by edges, so the frontier query holds 08 and 10 until 09 closes), 38 before 45 in wave 10 (a note only), 54 before 55 (a blocked-by edge), and 57 beside 38 in wave 10 (a note only). Running such a pair together is allowed at the price of one real merge and a suite run on `master` afterwards; if the merge conflicts, start a session at the repo root and use `/resolving-merge-conflicts`.
 
 ### Removing ended sessions
