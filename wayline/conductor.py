@@ -501,12 +501,17 @@ class Conductor:
         except ConductorBusy as busy:
             raise ConductorError("%s; wayline stop --project %s stops it" % (busy, self.project)) from None
         try:
-            self.harness_tag, self.started_at = harness.get("harness_tag"), now_ts()
-            self._beat()
-            self.ledger.append_event(RUN_STARTED, {
-                "resume": bool(resume), "harness_tag": harness.get("harness_tag"),
-                "autonomy": harness.get("autonomy"), "radius": harness.get("radius"), "pid": os.getpid(),
-            })
+            with self.ledger.lock():
+                # Read again under the ledger's lock now that the heartbeat is held: `wayline switch
+                # --autonomy` lowers only while no conductor holds it, and a lowering written between
+                # the read above and the heartbeat must not be undone by the autonomy this run announces.
+                harness = read_harness(self.project)
+                self.harness_tag, self.started_at = harness.get("harness_tag"), now_ts()
+                self._beat()
+                self.ledger.append_event(RUN_STARTED, {
+                    "resume": bool(resume), "harness_tag": harness.get("harness_tag"),
+                    "autonomy": harness.get("autonomy"), "radius": harness.get("radius"), "pid": os.getpid(),
+                })
             self._read_usage()
             waves = []
             wait = self._idle if wait is None else wait

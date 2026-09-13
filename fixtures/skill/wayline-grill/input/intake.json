@@ -1,0 +1,27 @@
+{
+  "intent": "Find whether adding feature interaction terms improves held-out AUROC on the synthetic set.",
+  "references": [
+    "Interaction features for tabular classification",
+    "Depth versus width in small tabular networks",
+    "Label noise between annotation sources",
+    "A tabular benchmark someone mentioned"
+  ],
+  "data": [
+    "toy/make_synthetic.py generates the synthetic set",
+    "split_b is the held-out split"
+  ],
+  "constraints": [
+    "CPU only for the core comparison.",
+    "Use scikit-learn if it is installed here; I do not remember whether it is."
+  ],
+  "goal": {
+    "metric": "auroc",
+    "direction": "up",
+    "target": 0.85,
+    "held_out_split": "split_b",
+    "eval_command": "python3 toy/eval.py {artifact}",
+    "stop_when": "goal_reached"
+  },
+  "sample": "toy/predictions-sample.csv",
+  "rationale": "the owner's goal at intake"
+}

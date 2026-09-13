@@ -441,16 +441,20 @@ def structural(record, root, fixture_dir):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return list(getattr(module, record["fn"])(root))
-    if kind == "tool_used":
+    if kind in ("tool_used", "tool_not_used"):
+        # A recording of several turns of one session holds one trace per turn; the checks read them all.
         traces = sorted(root.glob("trace-*.jsonl"))
         if not traces:
             return ["no trace-*.jsonl in the recording"]
         pattern = re.compile(record.get("input_matches", ""))
-        for line in traces[0].read_text(encoding="utf-8").splitlines():
-            message = json.loads(line)
-            for block in (message.get("message") or {}).get("content") or []:
-                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == record["tool"]:
-                    if pattern.search(json.dumps(block.get("input"), ensure_ascii=False)):
-                        return []
-        return ["no %s call matching %r in the trace" % (record["tool"], record.get("input_matches"))]
+        used = False
+        for trace in traces:
+            for line in trace.read_text(encoding="utf-8").splitlines():
+                inner = json.loads(line).get("message")
+                for block in (inner.get("content") if isinstance(inner, dict) else None) or []:
+                    if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == record["tool"]:
+                        used = used or bool(pattern.search(json.dumps(block.get("input"), ensure_ascii=False)))
+        if kind == "tool_used":
+            return [] if used else ["no %s call matching %r in the trace" % (record["tool"], record.get("input_matches"))]
+        return ["a %s call matching %r is in the trace" % (record["tool"], record.get("input_matches"))] if used else []
     return ["check %r is not one this test evaluates" % kind]

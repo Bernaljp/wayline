@@ -43,7 +43,7 @@ __all__ = [
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
-    "control", "answer", "wait_for_conductor", "DRAIN_POLL_S",
+    "control", "answer", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
     "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
 
@@ -76,6 +76,14 @@ STYLE_JSON = Path("figures") / "style.json"
 JOURNAL = "journal.jsonl"
 FINDINGS = "findings.jsonl"
 MANIFEST = "manifest.json"
+
+# The autonomy settings from the least autonomous to the most (BRIEF 6.2), one line each, so what
+# the owner reads says what the setting does and not only its name.
+AUTONOMY = {
+    "interactive": "the owner answers every question the grill asks, approves the spec and the graph, answers every decision ticket, and is asked on every `needs_human` result.",
+    "checkpoints": "the owner approves the spec and the graph and answers decision tickets; waves run alone.",
+    "autonomous": "the decider resolves every open question, every decision ticket not in a human-only class, and every parked proposal, and never anything on the irreversible list.",
+}
 
 # `LIVE_JOB_STATUSES` (Implementation Decisions 6) is the job runner's, re-exported here because
 # the views were reading it from this module before the runner existed.
@@ -914,6 +922,58 @@ def wait_for_conductor(project):
         time.sleep(DRAIN_POLL_S)
 
 
+# --- autonomy ---------------------------------------------------------------------------------------------
+
+
+def set_autonomy(project, autonomy, by="cli"):
+    """`wayline switch --autonomy`: write the setting to `harness.json` and journal `control autonomy`.
+
+    Raising is allowed at any moment, from the command line, the grill, or the dashboard: a running
+    conductor applies the event at its next wave, and `harness.json` is what the next run starts
+    from. Lowering is allowed only while no conductor holds the project, because an autonomous run
+    is not to be lowered by a passing remark in the middle of it (BRIEF 6.2); with one running it is
+    refused and nothing is written. `harness.json` is written before the event is journaled, so a
+    crash between the two leaves a run that starts from the new setting rather than a journal the
+    next `run_started` contradicts. `by` is `cli`, or `dashboard` for its autonomy action.
+
+    While a conductor runs, the autonomy it holds is the journal's (`run_started` and the `control`
+    events after it), which a hand edit of `harness.json` does not change. A change is measured
+    against both, so an edited file cannot pass a lowering off as a raise, and a run the file already
+    names the new setting for is still raised.
+
+    Returns `{from, to, changed, conductor}`, `conductor` being the running conductor's heartbeat.
+    """
+    project = Path(project).resolve()
+    levels = list(AUTONOMY)
+    if autonomy not in levels:
+        raise ProjectError("autonomy is one of %s, got %r" % (", ".join(levels), autonomy))
+    ledger = Ledger(project)
+    with ledger.lock():
+        harness = read_harness(project)
+        written = harness["autonomy"]
+        holder = conductor_holder(project)
+        held = [written]
+        if holder is not None:
+            events, _ = ledger.read_events()
+            running = replay.replay(events).autonomy
+            if running in levels:
+                held.append(running)
+        report = {"from": held[-1], "to": autonomy, "changed": any(level != autonomy for level in held), "conductor": holder}
+        if not report["changed"]:
+            return report
+        if holder is not None and any(levels.index(autonomy) < levels.index(level) for level in held):
+            raise ProjectError(
+                "autonomy is lowered only while no conductor is running, and the conductor (pid %s) is running on %s at %s; "
+                "wayline stop --project %s, then wayline switch --autonomy %s once it has ended"
+                % (holder.get("pid", "?"), project, max(held, key=levels.index), project, autonomy))
+        if written != autonomy:
+            updated = dict(harness, autonomy=autonomy)
+            check(updated, load_schema("harness"), name=HARNESS_JSON)
+            atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
+        control(project, "autonomy", {"autonomy": autonomy}, by=by)
+    return report
+
+
 # --- steering a running conductor ------------------------------------------------------------------------
 
 
@@ -1075,11 +1135,26 @@ def status_command(args):
 
 
 def switch_command(args):
-    parser = argparse.ArgumentParser(prog="wayline switch", description="make another project the active one")
-    parser.add_argument("path", help="the project to switch to")
+    parser = argparse.ArgumentParser(
+        prog="wayline switch",
+        description="make another project the active one; with --autonomy instead, raise the project's autonomy, "
+                    "or lower it while no conductor is running")
+    parser.add_argument("path", nargs="?", help="the project to switch to")
+    parser.add_argument("--autonomy", choices=list(AUTONOMY), help="the autonomy to set on the project, instead of switching")
+    parser.add_argument("--project", help="with --autonomy, the project to set; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.autonomy is not None:
+        if options.path is not None:
+            print("wayline switch: give a project to switch to or --autonomy, not both (--project names the project --autonomy sets)",
+                  file=sys.stderr)
+            return 2
+        return _switch_autonomy(options)
+    if options.path is None or options.project is not None:
+        parser.print_usage(sys.stderr)
+        print("wayline switch: give the project to switch to, or --autonomy <level> (with --project for another project)", file=sys.stderr)
+        return 2
     try:
         previous = read_active()
         if previous is not None and is_project(previous) and previous.resolve() != Path(options.path).expanduser().resolve():
@@ -1099,6 +1174,27 @@ def switch_command(args):
             print("  was  %s" % moved["from"])
         if moved["drained"] is not None:
             print("  its conductor (pid %s) drained and ended" % moved["drained"].get("pid", "?"))
+    return 0
+
+
+def _switch_autonomy(options):
+    try:
+        project = find_project(options.project)
+        report = set_autonomy(project, options.autonomy)
+    except (ProjectError, ValidationError, OSError) as failure:
+        print("wayline switch: %s" % failure, file=sys.stderr)
+        return 1
+    if not report["changed"]:
+        print("autonomy is already %s on %s" % (report["to"], project))
+        return 0
+    levels = list(AUTONOMY)
+    direction = "raised" if levels.index(report["to"]) > levels.index(report["from"]) else "lowered"
+    print("autonomy %s from %s to %s on %s" % (direction, report["from"], report["to"], project))
+    print("  %s: %s" % (report["to"], AUTONOMY[report["to"]]))
+    if report["conductor"] is not None:
+        print("  journaled for the conductor (pid %s) to apply at its next wave" % report["conductor"].get("pid", "?"))
+    else:
+        print("  no conductor is running; the next run starts %s" % report["to"])
     return 0
 
 
