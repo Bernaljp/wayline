@@ -245,9 +245,12 @@ def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_f
     the second waits for the first to be integrated, which is what makes the conflict serialize.
     The pacing action removes what it does not afford: everything under `stop`, difficulty 3 to 5
     under `cheap_only`. `held(entry)` names a launch the hold on Fable's weekly window keeps back
-    (decision 15), dropped before anything is picked, so its slot goes to what else is launchable.
+    (decision 15), dropped before anything is picked, so its slot goes to what else is launchable. A
+    `human_only` decision ticket is never picked: only the owner answers it, never a session (the tick
+    opens one when the login nears its end, decision 7).
     """
-    ready = [entry for entry in frontier(graph) if affordable(entry, action) and not held(entry)]
+    ready = [entry for entry in frontier(graph)
+             if affordable(entry, action) and not held(entry) and not (entry["kind"] == DECISION and entry.get("human_only"))]
     lengths = critical_path_lengths(graph)
     taken = list(running)
     chosen = []

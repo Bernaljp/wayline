@@ -56,7 +56,7 @@
     },
     "context_pack": {"type": "array", "items": {"type": "string"}},
     "origin": {"type": ["string", "null"]},
-    "proposed_by": {"type": "string", "pattern": "^(planner|worker:[0-9]+|decider|human|evolve|verifier)$", "description": "BRIEF 8.2's five authors, plus the verifier: a failing kill argument files the writing ticket that scopes the claims down (Implementation Decisions 11), and no one else wrote it"},
+    "proposed_by": {"type": "string", "pattern": "^(planner|worker:[0-9]+|decider|human|evolve|verifier|tick)$", "description": "BRIEF 8.2's five authors, plus the verifier: a failing kill argument files the writing ticket that scopes the claims down (Implementation Decisions 11), and no one else wrote it; and the tick, which opens the human-only decision ticket when the login nears its end (Implementation Decisions 7)"},
     "demo": {"type": ["string", "null"]},
     "pinned_difficulty": {"oneOf": [{"$ref": "#/$defs/difficulty"}, {"type": "null"}], "description": "set by the human; escalation never changes it"},
     "retry": {
