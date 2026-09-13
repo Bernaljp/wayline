@@ -14,14 +14,17 @@ of `research/`: it holds the design tree in `research/DECISIONS.md`, works out w
 be asked, journals each answer, and writes each term into `research/CONTEXT.md`. Your work is the
 reading, the looking up, the asking, and turning what the owner says into those commands.
 
+Run every `wayline` command from the project root with `--project .`. Without it a verb acts on the
+machine's active project, which another terminal may have switched to a different one.
+
 ## Before the first tier
 
 Read `research/INTAKE.md` (the intent, the constraints, the human-only classes),
 `research/POSITION.md` (the closest prior work, the feasibility verdict, the goal feasibility, the
 hostile reviewer's objections, the three directions), `research/GOAL.json` when there is one, the
 dossiers under `research/refs/`, and `research/CONTEXT.md` and `research/DECISIONS.md` when they
-exist already, which means a grill is being picked up again. Then run `wayline grill` to see the
-tree as it stands.
+exist already, which means a grill is being picked up again. Then run `wayline grill --project .`
+to see the tree as it stands.
 
 When there is no `POSITION.md`, tell the owner in one line that the questions rest on the intake
 alone.
@@ -44,20 +47,20 @@ asks a question only once its prerequisites are settled, and that is what makes 
 Add prerequisites before the questions that need them, one command each:
 
 ```bash
-wayline grill ask "Which baseline do the claims compare against?" --option "logistic regression on the raw features" --option "gradient-boosted trees on the raw features" --recommend "logistic regression on the raw features" --evidence "paper-a reports its gains over a linear model (research/refs/paper-a/dossier.json)"
+wayline grill ask "Which baseline do the claims compare against?" --option "logistic regression on the raw features" --option "gradient-boosted trees on the raw features" --recommend "logistic regression on the raw features" --evidence "paper-a reports its gains over a linear model (research/refs/paper-a/dossier.json)" --project .
 ```
 
 ```bash
-wayline grill ask "Which interaction terms are in scope?" --requires Q1 --recommend "pairwise products only"
+wayline grill ask "Which interaction terms are in scope?" --requires Q1 --recommend "pairwise products only" --project .
 ```
 
 The verb prints each question's id (`Q1`, `Q2`, and so on). Every question gets a recommended
 answer; a question you cannot recommend an answer to is usually a fact you have not looked up yet.
 
 Mark a question `--human-only` when its answer falls in a class `harness.json` lists under
-`human_only`; a change to the goal or to the data always does. The decider never resolves it, even
-after the switch. Mark it `--irreversible` when its answer cannot be taken back: it spends a
-budget, deletes or overwrites data, or changes the goal.
+`human_only`; a change to the goal or to the data always does. Mark it `--irreversible` when its
+answer cannot be taken back: it spends a budget, deletes or overwrites data, or changes the goal.
+The decider never resolves either kind, even after the switch; both wait for the owner.
 
 ## Facts are looked up, decisions are asked
 
@@ -82,9 +85,9 @@ That is often what makes a recommendation obvious.
 
 ## Asking a tier
 
-Run `wayline grill`. It stamps the tier and prints it: every question whose prerequisites are
-settled, numbered, with its options, your recommended answer, and the evidence. Ask the owner that
-whole tier in one message, in that order and with those numbers:
+Run `wayline grill --project .`. It stamps the tier and prints it: every question whose
+prerequisites are settled, numbered, with its options, your recommended answer, and the evidence.
+Ask the owner that whole tier in one message, in that order and with those numbers:
 
 ```
 Tier 1: 3 questions. Answer by number, in any order; "yes" to a number takes the recommendation.
@@ -94,10 +97,10 @@ Tier 1: 3 questions. Answer by number, in any order; "yes" to a number takes the
    Recommended: logistic regression on the raw features, because paper-a reports its gains over a linear model and matching it keeps the comparison readable.
 ```
 
-Every question carries a line beginning `Recommended:` with its reason. Write `human-only` beside
-a question the decider will never take. Ask nothing that is not in the tier, and hold nothing in it
-back: asking one question at a time spends the owner's attention on round trips instead of on
-decisions, and that is the failure this skill exists to prevent.
+Every question carries a line beginning `Recommended:` with its reason. Write `human-only` or
+`irreversible` beside a question the decider will never take. Ask nothing that is not in the tier,
+and hold nothing in it back: asking one question at a time spends the owner's attention on round
+trips instead of on decisions, and that is the failure this skill exists to prevent.
 
 Say once, at the first tier, that the owner can tell you to decide the rest at any moment.
 
@@ -106,7 +109,7 @@ Say once, at the first tier, that the owner can tell you to decide the rest at a
 When the owner replies, record every answer before anything else, one command per answer:
 
 ```bash
-wayline grill answer Q1 "logistic regression on the raw features" --rationale "the owner took the recommendation: paper-a reports its gains over a linear model"
+wayline grill answer Q1 "logistic regression on the raw features" --rationale "the owner took the recommendation: paper-a reports its gains over a linear model" --project .
 ```
 
 - The answer is what the owner chose, in their words when they gave words. The rationale is their
@@ -116,8 +119,8 @@ wayline grill answer Q1 "logistic regression on the raw features" --rationale "t
 - A number the owner skipped stays open and is asked again in the next tier. A reply that asks you
   something back is not an answer: answer it, and ask the question again.
 - An answer that changes a settled one is a revision:
-  `wayline grill answer <id> "<new answer>" --rationale "<why>" --revise`. Tell the owner which later
-  answers rested on the old one.
+  `wayline grill answer <id> "<new answer>" --rationale "<why>" --revise --project .`. Tell the
+  owner which later answers rested on the old one.
 - An answer that opens a question the tree did not have is a new question: add it, requiring the
   question whose answer opened it.
 
@@ -126,12 +129,12 @@ meaning particular to this project, such as "held-out split" or "interaction ter
 the answers fixed, before the next tier:
 
 ```bash
-wayline grill term "Interaction term" "The product of two raw features, added to the model as a column of its own." --avoid "cross feature"
+wayline grill term "Interaction term" "The product of two raw features, added to the model as a column of its own." --avoid "cross feature" --project .
 ```
 
-Only then run `wayline grill` for the next tier, and ask it. The order matters: everything the
-owner settled is written before anything new is asked, so a conversation cut off at any moment has
-lost nothing.
+Only then run `wayline grill --project .` for the next tier, and ask it. The order matters:
+everything the owner settled is written before anything new is asked, so a conversation cut off at
+any moment has lost nothing.
 
 Run each command on its own, with nothing chained before or after it by `;`, `&&`, or a pipe. When
 nobody is there to approve commands, a chained command or a heredoc is refused whole and nothing is
@@ -139,7 +142,7 @@ written. With the owner at a terminal that asks before each command, the answers
 questions of one reply can go in as one batch, which is checked whole before anything is written:
 
 ```bash
-wayline grill --from - <<'EOF'
+wayline grill --project . --from - <<'EOF'
 {"answers": [{"id": "Q1", "answer": "logistic regression on the raw features", "rationale": "the owner took the recommendation"}],
  "terms": [{"term": "Interaction term", "definition": "The product of two raw features.", "avoid": ["cross feature"]}],
  "questions": []}
@@ -153,20 +156,21 @@ the rest", "go autonomous"), or with `wayline switch --autonomy autonomous` them
 tell you:
 
 1. Record the answers and terms that came in the same message first, as above.
-2. Run `wayline switch --autonomy autonomous`. It journals the switch and writes it to
+2. Run `wayline switch --autonomy autonomous --project .`. It journals the switch and writes it to
    `harness.json`.
 3. Do not answer the remaining questions yourself. They are the decider's, and the decider records
    its decisions as `decided-by: decider`, so the owner can audit and reverse each one. An answer
    you record through `wayline grill answer` is recorded as the owner's, which would be false.
-4. Run `wayline grill`. Under `autonomous` it lists what the decider takes and asks only the
-   human-only questions, which still wait for the owner. Ask those, if there are any.
+4. Run `wayline grill --project .`. Under `autonomous` it lists what the decider takes and asks only
+   the human-only and irreversible questions, which still wait for the owner. Ask those, if there
+   are any, and record the owner's answers to them as before.
 5. Tell the owner plainly what changed: the decider resolves every open question and every decision
    ticket that is not human-only, the report lists its decisions first, and nothing on the
    irreversible list is decided without them.
 
 Never lower autonomy, and never raise it on a remark that was not an instruction. When the owner
-wants it lowered, tell them how: stop the conductor (`wayline stop`), then
-`wayline switch --autonomy checkpoints` (or `interactive`) once it has ended.
+wants it lowered, tell them how: stop the conductor (`wayline stop --project .`), then
+`wayline switch --autonomy checkpoints --project .` (or `interactive`) once it has ended.
 
 ## When the grill is done
 

@@ -4,8 +4,8 @@ Each function takes the root a session ran in (the project, or `recorded/` for t
 returns the problems it found; an empty list passes. The grill is recorded as the turns of one
 session: turn n's result envelope is `result-<n>.json` and its trace `trace-<n>.jsonl`, and what
 the owner said is `input/prompt.md` for turn 1 and `input/replies/<n>.md` after it. The record's
-bullets are pinned here rather than read from `wayline.grill`, so a change to the code that drops
-one fails the fixture.
+bullets and the `decision` event's answer are pinned here rather than read from `wayline.grill`, so
+a change to the code that drops one fails the fixture.
 """
 
 import json
@@ -20,7 +20,14 @@ BULLETS = ("- answer: ", "- rationale: ", "- decided-by: ", "- confidence: ", "-
 TIER_CALL = re.compile(r"^wayline grill(\s+--(json|project(\s+\S+|=\S+)))*\s*$")
 TIER_LINE = re.compile(r"^tier (\d+): ", re.MULTILINE)
 TIER_QUESTION = re.compile(r"^\s+\d+\. (Q\d+)\b", re.MULTILINE)
-RECORDING = re.compile(r"^wayline grill (answer|term)\b")
+ANSWER_CALL = re.compile(r"^wayline grill answer (Q\d+)\b")
+BATCH_CALL = re.compile(r"^wayline grill\b.*\s--from\b")
+RECORDING = re.compile(r"^wayline grill (answer|term)\b|^wayline grill\b.*\s--from\b")
+# A numbered question in what the session said, and the words a question is recognized by in it.
+ITEM = re.compile(r"^\s*\**\s*(\d+)[.)]\s*(.*)$")
+WORD = re.compile(r"[a-z0-9_]{4,}")
+SHARED_WORDS = 0.6
+DECIDED_ID = re.compile(r"^(Q\d+) ")
 # Facts the toy project answers for itself: whether a library is installed, and how big the set is. A
 # decision that starts from such a fact ("scikit-learn is not installed: what fits the models?") is not one.
 FACT_QUESTIONS = re.compile(r"^(is|are|does|do|has|have)\b.*\b(install|available)|\bwhether\b.*\binstall|how many (rows|examples|samples)",
@@ -46,8 +53,21 @@ def _blocks(root):
     return found
 
 
+def _owners(record):
+    """A question only the owner settles, before the switch and after it: human-only, or irreversible."""
+    return bool(record.get("human_only")) or record.get("reversible") is False
+
+
+def _journal(root):
+    return [json.loads(line) for line in _text(root, "journal.jsonl").splitlines() if line.strip()]
+
+
+def _decision_answer(record):
+    return "%s %s Answer: %s" % (record["id"], record["question"], record["answer"])
+
+
 def _turns(root):
-    """Per turn, in order: the calls it made as `(command or tool, output)`, and its closing message."""
+    """Per turn, in order: the calls it made as `(tool, command, output)`, and its closing message."""
     turns = []
     for trace in sorted(Path(root).glob("trace-*.jsonl"), key=lambda path: int(path.stem.split("-")[1])):
         commands, outputs = {}, {}
@@ -65,9 +85,25 @@ def _turns(root):
                         content = "\n".join(part.get("text", "") for part in content if isinstance(part, dict))
                     outputs[block.get("tool_use_id")] = str(content or "")
         result = json.loads((Path(root) / ("result-%s.json" % trace.stem.split("-")[1])).read_text(encoding="utf-8"))
-        calls = [(tool, command, outputs.get(identifier, "")) for identifier, (tool, command) in commands.items()]
+        calls = [(tool, (command or "").strip() or None, outputs.get(identifier, "")) for identifier, (tool, command) in commands.items()]
         turns.append({"calls": calls, "said": result.get("result") or ""})
     return turns
+
+
+def _items(text):
+    """The numbered items of a message: `(first line, the whole item)`, an item running to the next one."""
+    items = []
+    for line in str(text).split("\n"):
+        found = ITEM.match(line)
+        if found is not None:
+            items.append([found.group(2), [line]])
+        elif items:
+            items[-1][1].append(line)
+    return [(first, "\n".join(lines)) for first, lines in items]
+
+
+def _words(text):
+    return set(WORD.findall(str(text).lower()))
 
 
 def every_record_is_a_valid_decision(root):
@@ -87,7 +123,7 @@ def every_record_is_a_valid_decision(root):
 
 
 def answers_are_whole_records(root):
-    """Every settled record carries question, answer, rationale, decided-by: human, confidence, and timestamp."""
+    """Every settled record carries question, answer, rationale, decided-by: human, confidence, timestamp, and its tier."""
     problems, settled = [], 0
     for record, markdown in _blocks(root):
         if record.get("answer") is None:
@@ -98,6 +134,8 @@ def answers_are_whole_records(root):
             problems.append("%s has no rationale" % name)
         if record.get("decided_by") != "human":
             problems.append("%s is decided by %r; nothing but the owner decides in a recorded grill" % (name, record.get("decided_by")))
+        elif not record.get("tier"):
+            problems.append("%s is settled as the owner's, and no tier ever asked it" % name)
         if "confidence" not in record or not record.get("timestamp"):
             problems.append("%s lacks its confidence or its timestamp" % name)
         if "### %s. " % name not in markdown:
@@ -108,6 +146,14 @@ def answers_are_whole_records(root):
     return problems
 
 
+def every_settled_record_is_journaled(root):
+    """A settled record with no `decision` event was written around `wayline grill`, which journals every answer."""
+    known = {(event.get("payload") or {}).get("answer") for event in _journal(root)
+             if event.get("event") == "decision" and event.get("ticket") is None}
+    return ["%s is settled in DECISIONS.md with no decision in the journal" % record["id"] for record, _ in _blocks(root)
+            if record.get("answer") is not None and _decision_answer(record) not in known]
+
+
 def prerequisites_settle_first(root):
     records = {record["id"]: record for record, _ in _blocks(root)}
     problems = []
@@ -115,27 +161,31 @@ def prerequisites_settle_first(root):
         if record.get("answer") is None:
             continue
         for need in record.get("requires") or []:
-            earlier = records[need]
-            if earlier.get("answer") is None or earlier["timestamp"] > record["timestamp"]:
+            earlier = records.get(need)
+            if earlier is None:
+                problems.append("%s requires %s, which DECISIONS.md does not hold" % (record["id"], need))
+            elif earlier.get("answer") is None or earlier["timestamp"] > record["timestamp"]:
                 problems.append("%s was settled before its prerequisite %s" % (record["id"], need))
     return problems
 
 
 def tiers_ask_the_whole_frontier(root):
-    """Each turn that opened a tier ends asking every question of it, numbered, each with `Recommended:`."""
+    """Each turn that opened a tier asks every question of it as a numbered item carrying a `Recommended:` line."""
+    records = {record["id"]: record for record, _ in _blocks(root)}
     problems, asked = [], 0
     for number, turn in enumerate(_turns(root), 1):
-        printed = [output for tool, command, output in turn["calls"] if command and TIER_CALL.match(command.strip()) and TIER_LINE.search(output)]
+        printed = [output for _, command, output in turn["calls"] if command and TIER_CALL.match(command) and TIER_LINE.search(output)]
         if not printed:
             continue
-        questions = TIER_QUESTION.findall(printed[-1])
         asked += 1
-        numbered = re.findall(r"(?m)^\s*\**\s*\d+[.)]", turn["said"])
-        recommended = len(re.findall(r"Recommended:", turn["said"]))
-        if len(numbered) < len(questions):
-            problems.append("turn %d printed a tier of %d questions and asked %d numbered ones" % (number, len(questions), len(numbered)))
-        if recommended < len(questions):
-            problems.append("turn %d asked a tier of %d questions with %d `Recommended:` lines" % (number, len(questions), recommended))
+        items = _items(turn["said"])
+        for identifier in TIER_QUESTION.findall(printed[-1]):
+            words = _words(records.get(identifier, {}).get("question", ""))
+            item = next((item for item in items if words and len(words & _words(item[0])) >= SHARED_WORDS * len(words)), None)
+            if item is None:
+                problems.append("turn %d printed %s in its tier and did not ask it as a numbered question" % (number, identifier))
+            elif "Recommended:" not in item[1]:
+                problems.append("turn %d asked %s with no `Recommended:` line" % (number, identifier))
     if asked < 2:
         problems.append("%d turn(s) asked a tier; the recording holds a first tier and a later one" % asked)
     return problems
@@ -146,14 +196,32 @@ def answers_are_written_before_the_next_tier(root):
     problems, highest = [], 0
     for number, turn in enumerate(_turns(root), 1):
         opened = None
-        for tool, command, output in turn["calls"]:
-            command = (command or "").strip()
+        for _, command, output in turn["calls"]:
+            command = command or ""
             if TIER_CALL.match(command):
                 tiers = [int(value) for value in TIER_LINE.findall(output)]
                 if tiers and max(tiers) > highest:
                     highest, opened = max(tiers), max(tiers)
             elif RECORDING.match(command) and opened is not None:
                 problems.append("turn %d recorded `%s` after it opened tier %d" % (number, command[:60], opened))
+    return problems
+
+
+def answers_follow_the_tier_that_asked_them(root):
+    """An answer recorded in turn n settles a question a tier printed in an earlier turn, which the owner then read."""
+    problems, printed = [], {}
+    for number, turn in enumerate(_turns(root), 1):
+        for _, command, _ in turn["calls"]:
+            command = command or ""
+            if BATCH_CALL.match(command):
+                problems.append("turn %d applied a --from batch, whose answers cannot be matched to the tier that asked them" % number)
+            found = ANSWER_CALL.match(command)
+            if found is not None and printed.get(found.group(1), number) >= number:
+                problems.append("turn %d answered %s, which no earlier turn asked in a tier" % (number, found.group(1)))
+        for _, command, output in turn["calls"]:
+            if command and TIER_CALL.match(command):
+                for identifier in TIER_QUESTION.findall(output):
+                    printed.setdefault(identifier, number)
     return problems
 
 
@@ -187,20 +255,23 @@ def goal_questions_stay_human_only(root):
 
 
 def the_switch_leaves_the_rest_to_the_decider(root):
-    """The owner's "decide the rest yourself" raised autonomy, and the session answered nothing after it."""
+    """The owner's "decide the rest yourself" raised autonomy, and nothing but the owner's own questions was settled after it."""
     root = Path(root)
     problems = []
     harness = json.loads((root / "harness.json").read_text(encoding="utf-8"))
     if harness.get("autonomy") != "autonomous":
         problems.append("harness.json autonomy is %r, not autonomous" % harness.get("autonomy"))
-    events = [json.loads(line) for line in _text(root, "journal.jsonl").splitlines() if line.strip()]
+    events = _journal(root)
     switches = [index for index, event in enumerate(events) if event["event"] == "control"
                 and event["payload"].get("command") == "autonomy" and event["payload"].get("args") == {"autonomy": "autonomous"}]
     if not switches:
         return problems + ["the journal holds no control event raising autonomy to autonomous"]
-    after = [event for event in events[switches[0]:] if event["event"] == "decision"]
-    problems += ["a decision was recorded after the switch: %s" % event["payload"]["answer"][:80] for event in after]
-    still_open = [record for record, _ in _blocks(root) if record.get("answer") is None and not record.get("human_only")]
-    if not still_open:
+    blocks = [record for record, _ in _blocks(root)]
+    owners = {record["id"] for record in blocks if _owners(record)}
+    for event in events[switches[0]:]:
+        found = DECIDED_ID.match(str((event.get("payload") or {}).get("answer") or "")) if event["event"] == "decision" else None
+        if found is not None and found.group(1) not in owners:
+            problems.append("a decision was recorded after the switch: %s" % event["payload"]["answer"][:80])
+    if not [record for record in blocks if record.get("answer") is None and not _owners(record)]:
         problems.append("no open question was left for the decider; the switch handed over nothing")
     return problems

@@ -14,11 +14,13 @@ from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
+from tests.test_conductor import ConductorCase, done, patch
 from tests.test_intake import structural
-from wayline import cli, replay
+from wayline import cli, replay, worker
+from wayline.conductor import Conductor
 from wayline.grill import GrillError, answer, frontier, read_records, render_decisions, with_answer, with_question
 from wayline.jsonschema import load_schema, validate
-from wayline.ledger import Ledger, make_event
+from wayline.ledger import Heartbeat, Ledger, make_event
 from wayline.project import init_project, read_harness, set_autonomy
 
 BASELINE = "Which baseline do the claims compare against?"
@@ -233,6 +235,23 @@ class AnswerTest(GrillCase):
         self.assertEqual(self.events("decision")[0]["payload"]["decided_by"], "decider")
         self.assertIn("- decided-by: decider", self.decisions_md())
 
+    def test_an_answer_the_journal_missed_is_journaled_by_the_next_grill(self):
+        with mock.patch.object(Ledger, "append_event", side_effect=OSError("no space left on device")):
+            code, _, err = self.grill("answer", "Q1", "logistic regression", "--rationale", "the recommendation")
+        self.assertEqual(code, 1, err)
+        self.assertEqual(self.records()["Q1"]["answer"], "logistic regression", "DECISIONS.md was written before the journal failed")
+        self.assertEqual(self.events("decision"), [])
+        self.ok()
+        [event] = self.events("decision")
+        self.assertTrue(event["payload"]["answer"].startswith("Q1 " + BASELINE))
+        self.ok()
+        self.assertEqual(len(self.events("decision")), 1, "an answer is journaled once")
+
+    def test_a_comment_opener_in_a_question_cannot_hide_its_record(self):
+        self.ok("ask", "Keep the <!-- marker in the output?", "--recommend", "no")
+        self.assertIn("### Q5. Keep the <\\!-- marker in the output?", self.decisions_md())
+        self.assertEqual(self.records()["Q5"]["question"], "Keep the <!-- marker in the output?")
+
     def test_the_decider_never_answers_a_human_only_question(self):
         with self.assertRaises(GrillError) as caught:
             answer(self.project, "Q4", "no", rationale="more margin", decided_by="decider")
@@ -308,6 +327,18 @@ class TermTest(GrillCase):
         self.assertLess(text.index("**Held-out split**"), text.index("## Flagged ambiguities"))
         self.assertTrue(text.endswith("## Flagged ambiguities\n\n- \"run\" meant a job once.\n"))
 
+    def test_an_entry_written_on_one_line_is_replaced_and_every_other_line_is_kept(self):
+        written = ("# Context\n\n## Language\n\n**Seed**: One random init.\n\n\n**Split**:\nThe rows.\n\n"
+                   "# Appendix\n\nA paragraph\nwrapped over two lines.\n")
+        Ledger(self.project).write_markdown("CONTEXT.md", written)
+        self.assertIn("replaced", self.ok("term", "Seed", "A generator seed."))
+        text = self.context_md()
+        self.assertEqual(text.count("**Seed**"), 1)
+        self.assertIn("## Language\n\n**Seed**:\nA generator seed.\n\n\n**Split**:\nThe rows.\n", text, "the blank lines between entries are kept")
+        self.ok("term", "Held-out split", "The rows of split_b.")
+        self.assertTrue(self.context_md().endswith(
+            "**Split**:\nThe rows.\n\n**Held-out split**:\nThe rows of split_b.\n\n# Appendix\n\nA paragraph\nwrapped over two lines.\n"))
+
     def test_a_term_with_a_definition_of_several_paragraphs_is_refused(self):
         code, _, err = self.grill("term", "Seed", "One.\n\nTwo.")
         self.assertEqual(code, 2)
@@ -343,6 +374,19 @@ class BatchTest(GrillCase):
         self.assertIn("Q3", err)
         self.assertEqual(self.decisions_md(), written)
         self.assertFalse((self.project / "research" / "CONTEXT.md").exists())
+        self.assertEqual(self.events("decision"), [])
+
+    def test_a_batch_value_of_the_wrong_type_is_refused_rather_than_crashing(self):
+        self.tree()
+        for batch in ({"terms": [{"term": "Seed", "definition": "One random initialization.", "avoid": 5}]},
+                      {"terms": [{"term": "Seed", "definition": "One random initialization.", "avoid": True}]},
+                      {"answers": [{"id": ["Q1"], "answer": "logistic regression", "rationale": "r"}]},
+                      {"answers": [{"id": "Q1", "answer": "logistic regression", "rationale": "r", "revise": "yes"}]},
+                      {"questions": [{"question": "Which metric?", "requires": "Q1"}]}):
+            with self.subTest(batch=batch):
+                code, out, err = self.grill("--from", "-", stdin=json.dumps(batch))
+                self.assertEqual(code, 2, out + err)
+                self.assertNotIn("Traceback", err)
         self.assertEqual(self.events("decision"), [])
 
     def test_a_batch_field_the_grill_does_not_know_is_refused(self):
@@ -412,6 +456,48 @@ class SwitchAutonomyTest(GrillCase):
         self.assertEqual(json.loads((self.project / "harness.json").read_text(encoding="utf-8"))["radius"], "moderate",
                          "the rest of harness.json is kept")
 
+    def test_an_irreversible_question_stays_the_owners_under_autonomous(self):
+        self.ok("ask", "Delete the raw data once the features are built?", "--irreversible", "--recommend", "no")
+        self.ok("ask", SEEDS, "--recommend", "three")
+        self.assertEqual(self.switch("--autonomy", "autonomous")[0], 0)
+        view = self.tier()
+        self.assertEqual([record["id"] for record in view["ask"]], ["Q1"])
+        self.assertEqual([record["id"] for record in view["decider"]], ["Q2"])
+        with self.assertRaises(GrillError) as caught:
+            answer(self.project, "Q1", "yes", rationale="it saves disk", decided_by="decider")
+        self.assertIn("irreversible", str(caught.exception))
+        self.assertEqual(self.events("decision"), [])
+
+    def edit_harness(self, autonomy):
+        path = self.project / "harness.json"
+        harness = json.loads(path.read_text(encoding="utf-8"))
+        path.write_text(json.dumps(dict(harness, autonomy=autonomy), indent=2) + "\n", encoding="utf-8")
+
+    def start_run(self, autonomy):
+        Ledger(self.project).append_event("run_started", {"resume": False, "harness_tag": "v0.0.0", "autonomy": autonomy,
+                                                          "radius": "moderate", "pid": 4242})
+        self.hold_the_conductor()
+
+    def test_a_hand_edited_harness_json_cannot_pass_a_lowering_off_as_a_raise(self):
+        self.edit_harness("autonomous")
+        self.start_run("autonomous")
+        self.edit_harness("interactive")
+        code, out, err = self.switch("--autonomy", "checkpoints")
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("wayline stop", err)
+        self.assertEqual(self.controls(), [])
+        self.assertEqual(replay.replay(self.events()).autonomy, "autonomous")
+
+    def test_a_run_the_file_already_names_the_new_autonomy_for_is_still_raised(self):
+        self.edit_harness("autonomous")
+        self.start_run("checkpoints")
+        code, out, err = self.switch("--autonomy", "autonomous")
+        self.assertEqual(code, 0, out + err)
+        self.assertNotIn("already", out)
+        self.assertIn("raised from checkpoints to autonomous", out)
+        self.assertEqual(len(self.controls()), 1)
+        self.assertEqual(replay.replay(self.events()).autonomy, "autonomous")
+
     def test_the_same_autonomy_again_changes_nothing(self):
         code, out, _ = self.switch("--autonomy", "checkpoints")
         self.assertEqual(code, 0)
@@ -431,6 +517,34 @@ class SwitchAutonomyTest(GrillCase):
         report = set_autonomy(self.project, "autonomous", by="dashboard")
         self.assertEqual((report["from"], report["to"], report["changed"]), ("checkpoints", "autonomous", True))
         self.assertEqual(self.controls()[0]["by"], "dashboard")
+
+
+class StartingConductorTest(ConductorCase):
+    """A lowering journaled while a conductor starts is the autonomy the run announces, not the one it first read."""
+
+    def test_a_lowering_written_between_the_conductors_read_and_its_heartbeat_holds(self):
+        set_autonomy(self.project, "autonomous")
+        original = Heartbeat.acquire
+
+        def acquire(heartbeat, *args, **kwargs):
+            set_autonomy(self.project, "checkpoints")  # no conductor holds the project yet, so a lowering is allowed
+            return original(heartbeat, *args, **kwargs)
+
+        with mock.patch.object(Heartbeat, "acquire", acquire), worker.use_fake() as fake:
+            fake.script(done(), patch=patch())
+            conductor = Conductor(self.project, out=io.StringIO())
+            conductor.run(wait=lambda seconds: conductor.settle())
+        self.assertEqual(self.payload("run_started")["autonomy"], "checkpoints")
+        self.assertEqual(replay.replay(self.events()).autonomy, "checkpoints")
+
+
+def journal_answer(root, record):
+    """The `decision` event `wayline grill answer` appends for a record, appended to a copied recording."""
+    event = make_event("decision", {"ticket": None, "answer": "%s %s Answer: %s" % (record["id"], record["question"], record["answer"]),
+                                    "decided_by": record["decided_by"], "rationale": record["rationale"],
+                                    "confidence": record["confidence"]}, ts=record["timestamp"])
+    with open(root / "research" / "journal.jsonl", "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event) + "\n")
 
 
 class RecordedGrillFixtureTest(ProjectTestCase):
@@ -461,13 +575,52 @@ class RecordedGrillFixtureTest(ProjectTestCase):
         records = read_records(root)
         for identifier in [record["id"] for record in frontier(records) if not record["human_only"]]:
             records, record = with_answer(records, identifier, "what the session liked", "the session chose", ts="2099-01-01T00:00:00.000Z")
-            event = make_event("decision", {"ticket": None, "answer": record["answer"], "decided_by": "human",
-                                            "rationale": record["rationale"], "confidence": None}, ts=record["timestamp"])
-            with open(root / "research" / "journal.jsonl", "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(event) + "\n")
+            journal_answer(root, record)
         (root / "research" / "DECISIONS.md").write_text(render_decisions(records), encoding="utf-8")
         failures = self.failures(root)
         self.assertTrue(any("after the switch" in problem for problem in failures), failures)
+
+    def test_the_owners_answer_to_a_human_only_question_after_the_switch_passes(self):
+        root = self.broken()
+        records, record = with_answer(read_records(root), "Q7", "the null control and the anti-claim", "the owner took the recommendation",
+                                      ts="2099-01-01T00:00:00.000Z")
+        journal_answer(root, record)
+        (root / "research" / "DECISIONS.md").write_text(render_decisions(records), encoding="utf-8")
+        self.assertEqual(self.failures(root), [])
+
+    def test_the_checks_catch_an_answer_no_earlier_tier_put_to_the_owner(self):
+        root = self.broken()
+        line = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_test", "name": "Bash",
+                                                              "input": {"command": 'wayline grill answer Q2 "moderate" --rationale "the session chose"'}}]}}
+        with open(root / "trace-1.jsonl", "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(line) + "\n")
+        failures = self.failures(root)
+        self.assertTrue(any("answered Q2, which no earlier turn asked" in problem for problem in failures), failures)
+
+    def test_the_checks_catch_a_tier_question_left_out_of_the_message(self):
+        root = self.broken()
+        path = root / "result-2.json"
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        asked = "Which flexible model without products is the second baseline?"
+        self.assertIn(asked, envelope["result"])
+        envelope["result"] = envelope["result"].replace(asked, "What else did I look up?")
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+        failures = self.failures(root)
+        self.assertTrue(any("turn 2 printed Q8" in problem for problem in failures), failures)
+
+    def test_the_checks_catch_a_record_written_around_the_verb(self):
+        root = self.broken()
+        records, _ = with_answer(read_records(root), "Q8", "a small network", "the session chose", ts="2099-01-01T00:00:00.000Z")
+        (root / "research" / "DECISIONS.md").write_text(render_decisions(records), encoding="utf-8")
+        failures = self.failures(root)
+        self.assertTrue(any("Q8 is settled in DECISIONS.md with no decision in the journal" in problem for problem in failures), failures)
+
+    def test_a_prerequisite_missing_from_the_file_is_reported_not_raised(self):
+        root = self.broken()
+        path = root / "research" / "DECISIONS.md"
+        path.write_text(path.read_text(encoding="utf-8").replace('"requires":[]', '"requires":["Q12"]', 1), encoding="utf-8")
+        failures = self.failures(root)
+        self.assertTrue(any("Q12" in problem for problem in failures), failures)
 
     def test_the_checks_catch_a_tier_asked_without_its_recommendations(self):
         root = self.broken()

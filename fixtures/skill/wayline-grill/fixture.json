@@ -87,6 +87,21 @@
       "tool": "Edit"
     },
     {
+      "check": "tool_not_used",
+      "tool": "Bash",
+      "input_matches": "write_text|write_bytes|\\.write\\(|os\\.(remove|unlink|rename|replace)|shutil\\.|>>?\\s*(research/|harness\\.json)"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "every_settled_record_is_journaled"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "answers_follow_the_tier_that_asked_them"
+    },
+    {
       "check": "python",
       "file": "checks.py",
       "fn": "every_record_is_a_valid_decision"
@@ -132,7 +147,7 @@
       "fn": "the_switch_leaves_the_rest_to_the_decider"
     }
   ],
-  "note": "The project is laid out by wayline init, with input/context/ copied into its root, `wayline intake --from input/intake.json` run there (the toy intent, four references, and a goal its eval_command measures on the sample), and input/research/ (a position memo written by hand in the shape of Implementation Decisions 10, because the critic arrives with ticket 29, and the four toy dossiers) written through the ledger. The grill is three turns of one session: input/prompt.md, then each of input/replies/ sent with --resume on the session id. Replies are the owner's: turn 2 answers the first tier, overturning one recommendation, skipping one question, and defining a term; turn 3 answers the carried question and says to decide the rest. The intake leaves open whether scikit-learn is installed, and the generator's code says how big the set is, so a grill that asks either has asked a fact. recorded/ holds per turn the result envelope and the trace with system/init reduced to the session id and the model, and the files the grill left: research/DECISIONS.md, research/CONTEXT.md, research/journal.jsonl, and harness.json.",
+  "note": "The project is laid out by wayline init, with input/context/ copied into its root, `wayline intake --from input/intake.json` run there (the toy intent, four references, and a goal its eval_command measures on the sample), and input/research/ (a position memo written by hand in the shape of Implementation Decisions 10, because the critic arrives with ticket 29, and the four toy dossiers) written through the ledger. The grill is three turns of one session: input/prompt.md, then each of input/replies/ sent with --resume on the session id. Replies are the owner's: turn 2 answers the first tier, overturning one recommendation, skipping one question, and defining a term; turn 3 answers the carried question and says to decide the rest. The intake leaves open whether scikit-learn is installed, and the generator's code says how big the set is, so a grill that asks either has asked a fact. recorded/ holds per turn the result envelope and the trace with system/init reduced to the session id and the model, and the files the grill left: research/DECISIONS.md, research/CONTEXT.md, research/journal.jsonl, and harness.json. subject.sha256 is the skill as it was recorded. After the recording, the code review of ticket 30 had the skill pass `--project .` on every command, because a verb without it acts on the machine's active project, and had the decider leave irreversible questions to the owner. The skill on disk therefore hashes differently, and the runner of ticket 44 re-runs this fixture.",
   "baseline": null,
   "quarantine": {
     "status": "active",

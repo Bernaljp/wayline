@@ -934,6 +934,11 @@ def set_autonomy(project, autonomy, by="cli"):
     crash between the two leaves a run that starts from the new setting rather than a journal the
     next `run_started` contradicts. `by` is `cli`, or `dashboard` for its autonomy action.
 
+    While a conductor runs, the autonomy it holds is the journal's (`run_started` and the `control`
+    events after it), which a hand edit of `harness.json` does not change. A change is measured
+    against both, so an edited file cannot pass a lowering off as a raise, and a run the file already
+    names the new setting for is still raised.
+
     Returns `{from, to, changed, conductor}`, `conductor` being the running conductor's heartbeat.
     """
     project = Path(project).resolve()
@@ -943,19 +948,26 @@ def set_autonomy(project, autonomy, by="cli"):
     ledger = Ledger(project)
     with ledger.lock():
         harness = read_harness(project)
-        current = harness["autonomy"]
+        written = harness["autonomy"]
         holder = conductor_holder(project)
-        report = {"from": current, "to": autonomy, "changed": current != autonomy, "conductor": holder}
-        if current == autonomy:
+        held = [written]
+        if holder is not None:
+            events, _ = ledger.read_events()
+            running = replay.replay(events).autonomy
+            if running in levels:
+                held.append(running)
+        report = {"from": held[-1], "to": autonomy, "changed": any(level != autonomy for level in held), "conductor": holder}
+        if not report["changed"]:
             return report
-        if levels.index(autonomy) < levels.index(current) and holder is not None:
+        if holder is not None and any(levels.index(autonomy) < levels.index(level) for level in held):
             raise ProjectError(
-                "autonomy is lowered only while no conductor is running, and the conductor (pid %s) is running on %s; "
+                "autonomy is lowered only while no conductor is running, and the conductor (pid %s) is running on %s at %s; "
                 "wayline stop --project %s, then wayline switch --autonomy %s once it has ended"
-                % (holder.get("pid", "?"), project, project, autonomy))
-        updated = dict(harness, autonomy=autonomy)
-        check(updated, load_schema("harness"), name=HARNESS_JSON)
-        atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
+                % (holder.get("pid", "?"), project, max(held, key=levels.index), project, autonomy))
+        if written != autonomy:
+            updated = dict(harness, autonomy=autonomy)
+            check(updated, load_schema("harness"), name=HARNESS_JSON)
+            atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
         control(project, "autonomy", {"autonomy": autonomy}, by=by)
     return report
 

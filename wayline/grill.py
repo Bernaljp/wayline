@@ -16,7 +16,7 @@ A tier is the tree's frontier asked at once: every open question whose prerequis
 are settled. `wayline grill` stamps each question a tier puts to the owner for the first time with
 that tier's number; a question left unanswered is asked again in the next tier and keeps its first
 number. Under autonomy `autonomous` the frontier is the decider's (ticket 31), so a tier asks the
-owner only the human-only questions the decider never resolves (decision 4).
+owner only the human-only and irreversible questions, which the decider never resolves (decision 4).
 """
 
 import argparse
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from wayline.cli import parse_args
 from wayline.jsonschema import load_schema, validate
-from wayline.ledger import DECISION, Ledger, LedgerError, now_ts
+from wayline.ledger import DECISION, Ledger, LedgerError, make_event, now_ts
 from wayline.project import ProjectError, find_project, read_harness
 
 __all__ = [
@@ -66,7 +66,8 @@ CONTEXT_HEAD = (
     "`wayline grill term` adds a term or replaces its definition; everything else in this file is kept as written.\n"
 )
 LANGUAGE = "## Language"
-_TERM = re.compile(r"^\*\*(.+)\*\*:\s*$")
+_TERM = re.compile(r"^\*\*(.+?)\*\*:")
+_SECTION_END = re.compile(r"^#{1,2}\s")
 
 
 class GrillError(ValueError):
@@ -153,19 +154,29 @@ def _questions(records):
     return {record["id"]: record for record in records if record.get("id")}
 
 
-def missing(record, records):
+def _owners(record):
+    """Whether only the owner settles a question: it is in a human-only class, or its answer cannot be taken back.
+
+    Decision 4 puts both out of the decider's reach, so under `autonomous` they are still the owner's.
+    """
+    return bool(record.get("human_only")) or record.get("reversible") is False
+
+
+def missing(record, records, questions=None):
     """The prerequisites of `record` that are not settled yet, in the order it names them."""
-    questions = _questions(records)
+    questions = _questions(records) if questions is None else questions
     return [need for need in record.get("requires") or [] if need not in questions or not _settled(questions[need])]
 
 
 def frontier(records):
     """The open questions whose prerequisites are all settled, in the order they were asked."""
-    return [record for record in records if record.get("id") and not _settled(record) and not missing(record, records)]
+    questions = _questions(records)
+    return [record for record in records if record.get("id") and not _settled(record) and not missing(record, records, questions)]
 
 
 def _waiting(records):
-    return [record for record in records if record.get("id") and not _settled(record) and missing(record, records)]
+    questions = _questions(records)
+    return [record for record in records if record.get("id") and not _settled(record) and missing(record, records, questions)]
 
 
 def _superseded(records):
@@ -259,8 +270,10 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
     An open question is settled in place and moves to the end of the settled records. A settled one
     is answered again only with `revise`, as a new record that supersedes it, so the old answer stays
     on the record. A question whose prerequisites are open is refused, and so is the decider on a
-    human-only question (decision 4).
+    human-only or irreversible question (decision 4).
     """
+    if not isinstance(identifier, str):
+        raise GrillError("a question's id is Q and a number, like Q3; got %r" % (identifier,))
     record = _questions(records).get(identifier)
     if record is None:
         raise GrillError("the design tree has no question %s" % (identifier,))
@@ -270,8 +283,10 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
         raise GrillError("confidence is a number from 0 to 1, or not stated; got %r" % (confidence,))
     if decided_by not in DECIDERS:
         raise GrillError("decided_by is one of %s, got %r" % (", ".join(DECIDERS), decided_by))
-    if decided_by == "decider" and record.get("human_only"):
-        raise GrillError("%s is human-only: the decider never resolves it, and it waits for the owner" % identifier)
+    revise = _flag(revise, "revise")
+    if decided_by == "decider" and _owners(record):
+        raise GrillError("%s is %s: the decider never resolves it, and it waits for the owner"
+                         % (identifier, "human-only" if record.get("human_only") else "irreversible"))
     answered = {"answer": text, "rationale": rationale, "confidence": confidence, "decided_by": decided_by, "timestamp": ts or now_ts()}
     position = sum(1 for other in records if _settled(other))
     if _settled(record):
@@ -295,11 +310,12 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
 def with_tier(records, autonomy):
     """`records` with the tier to ask stamped, the tier's number, and its questions.
 
-    The tier is the frontier, minus what the decider takes under `autonomous`. A frontier holding a
-    question no tier has asked opens the next tier and stamps those questions with it; one holding
-    only questions asked before is the tier already open. An empty frontier is no tier (None).
+    The tier is the frontier, minus what the decider takes under `autonomous`: everything but the
+    human-only and irreversible questions. A frontier holding a question no tier has asked opens the
+    next tier and stamps those questions with it; one holding only questions asked before is the tier
+    already open. An empty frontier is no tier (None).
     """
-    asked = [record for record in frontier(records) if autonomy != AUTONOMOUS or record.get("human_only")]
+    asked = [record for record in frontier(records) if autonomy != AUTONOMOUS or _owners(record)]
     if not asked:
         return records, None, []
     current = _current_tier(records)
@@ -318,8 +334,10 @@ def with_term(text, term, definition, avoid=()):
     """A CONTEXT.md text with one term added under `## Language`, or its definition replaced; and which.
 
     The entry has the glossary's own shape: `**Term**:`, the definition on one line, and an
-    `_Avoid_:` line when there are words to avoid. Everything outside the term's entry is kept.
-    Returns `(text, "added" | "replaced" | "unchanged")`.
+    `_Avoid_:` line when there are words to avoid. An existing entry is found whether its definition
+    follows on the same line or the next, and runs to the next blank line, term, or heading. Every
+    line outside that entry is kept as it was; a new entry goes at the end of `## Language`, which
+    ends at the next `#` or `##` heading. Returns `(text, "added" | "replaced" | "unchanged")`.
     """
     term = _text(term, "a term")
     if "\n" in term or "**" in term:
@@ -327,38 +345,32 @@ def with_term(text, term, definition, avoid=()):
     definition = _text(definition, "a term's definition")
     if re.search(r"\n\s*\n", definition):
         raise GrillError("a term's definition is one paragraph; the glossary keeps one sentence or two per term")
-    avoid = [avoid] if isinstance(avoid, str) else list(avoid or ())
-    words = [word.strip() for item in _strings(avoid, "avoid") for word in item.split(",") if word.strip()]
+    words = [word.strip() for item in _strings([avoid] if isinstance(avoid, str) else avoid, "avoid")
+             for word in item.split(",") if word.strip()]
     entry = ["**%s**:" % term, " ".join(definition.split())] + (["_Avoid_: %s" % ", ".join(words)] if words else [])
     lines = (text if text and text.strip() else CONTEXT_HEAD).rstrip("\n").split("\n")
     start = next((index for index, line in enumerate(lines) if line.strip() == LANGUAGE), None)
     if start is None:
         lines += ["", LANGUAGE]
         start = len(lines) - 1
-    end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")), len(lines))
-    blocks, block = [], []
-    for line in lines[start + 1:end]:
-        if line.strip():
-            block.append(line)
-        elif block:
-            blocks.append(block)
-            block = []
-    if block:
-        blocks.append(block)
-    outcome = "added"
-    for index, existing in enumerate(blocks):
-        found = _TERM.match(existing[0])
-        if found and found.group(1).strip().casefold() == term.casefold():
-            if existing == entry:
-                return text, "unchanged"
-            blocks[index], outcome = entry, "replaced"
-            break
-    else:
-        blocks.append(entry)
-    body = [""]
-    for existing in blocks:
-        body += existing + [""]
-    return "\n".join(lines[:start + 1] + body + lines[end:]).rstrip("\n") + "\n", outcome
+    end = next((index for index in range(start + 1, len(lines)) if _SECTION_END.match(lines[index])), len(lines))
+    for index in range(start + 1, end):
+        found = _TERM.match(lines[index])
+        if found is None or found.group(1).strip().casefold() != term.casefold():
+            continue
+        after = index + 1
+        while after < end and lines[after].strip() and not _TERM.match(lines[after]) and not lines[after].startswith("#"):
+            after += 1
+        if lines[index:after] == entry:
+            return text, "unchanged"
+        lines[index:after] = entry
+        return "\n".join(lines) + "\n", "replaced"
+    last = end
+    while last > start + 1 and not lines[last - 1].strip():
+        last -= 1
+    tail = lines[last:]
+    lines[last:] = [""] + entry + ([""] if tail and tail[0].strip() else []) + tail
+    return "\n".join(lines) + "\n", "added"
 
 
 # --- writing through the ledger -------------------------------------------------------------------
@@ -368,12 +380,29 @@ def _write_records(ledger, records):
     ledger.write_markdown(DECISIONS_MD, render_decisions(records))
 
 
-def _journal(ledger, record):
-    """The `decision` event of one settled record; a grill question has no ticket, so its id leads the answer."""
-    ledger.append_event(DECISION, {
-        "ticket": None, "answer": "%s %s Answer: %s" % (record["id"], record["question"], record["answer"]),
-        "decided_by": record["decided_by"], "rationale": record["rationale"], "confidence": record["confidence"],
-    }, ts=record["timestamp"])
+def _payload(record):
+    """The `decision` payload of one settled record; a grill question has no ticket, so its id leads the answer."""
+    return {"ticket": None, "answer": "%s %s Answer: %s" % (record["id"], record["question"], record["answer"]),
+            "decided_by": record["decided_by"], "rationale": record["rationale"], "confidence": record["confidence"]}
+
+
+def _journal_settled(ledger, records, now=()):
+    """Journal every settled question the journal does not hold yet; returns their ids.
+
+    DECISIONS.md is written first and the journal second, so a process killed in between leaves a
+    settled record with no `decision`. Every write of the grill calls this, and so that record is
+    journaled by the next one. The records named in `now`, settled by this call, carry their own
+    timestamp into the journal; one left behind by a crash is journaled at the time it is found.
+    """
+    events, _ = ledger.read_events()
+    known = {(event.get("payload") or {}).get("answer") for event in events if event.get("event") == DECISION and event.get("ticket") is None}
+    journaled = []
+    for record in records:
+        if not record.get("id") or not _settled(record) or _payload(record)["answer"] in known:
+            continue
+        ledger.append_event(DECISION, _payload(record), ts=record["timestamp"] if record["id"] in now else None)
+        journaled.append(record["id"])
+    return journaled
 
 
 def _read_context(ledger):
@@ -401,8 +430,9 @@ def answer(project, identifier, text, rationale, confidence=None, decided_by="hu
     with ledger.lock():
         records, record = with_answer(read_records(project), identifier, text, rationale, confidence=confidence,
                                       decided_by=decided_by, revise=revise, ts=now_ts())
+        make_event(DECISION, _payload(record), ts=record["timestamp"])  # an event the journal refuses writes nothing
         _write_records(ledger, records)
-        _journal(ledger, record)
+        _journal_settled(ledger, records, now=(record["id"],))
     return record
 
 
@@ -449,17 +479,17 @@ def apply_batch(project, batch):
         answered = []
         for entry in lists["answers"]:
             records, record = with_answer(records, entry.get("id"), entry.get("answer"), entry.get("rationale"),
-                                          confidence=entry.get("confidence"), revise=entry.get("revise") is True, ts=now_ts())
-            answered.append(record)
+                                          confidence=entry.get("confidence"), revise=entry.get("revise", False), ts=now_ts())
+            make_event(DECISION, _payload(record), ts=record["timestamp"])
+            answered.append(record["id"])
         before = context = _read_context(ledger)
         for entry in lists["terms"]:
-            context, _ = with_term(context, entry.get("term"), entry.get("definition"), entry.get("avoid") or ())
+            context, _ = with_term(context, entry.get("term"), entry.get("definition"), entry.get("avoid"))
         if lists["questions"] or lists["answers"]:
             _write_records(ledger, records)
         if context != before:
             ledger.write_markdown(CONTEXT_MD, context)
-        for record in answered:
-            _journal(ledger, record)
+        _journal_settled(ledger, records, now=answered)
     return {key: len(entries) for key, entries in lists.items()}
 
 
@@ -471,24 +501,26 @@ def render_decisions(records):
     superseded = _superseded(records)
     settled = [record for record in records if _settled(record)]
     still_open = [record for record in records if not _settled(record)]
+    questions = _questions(records)
     parts = ["# Decisions", "", INTRO, "", "## Settled", ""]
     if not settled:
         parts += ["Nothing is settled yet.", ""]
     for record in settled:
-        parts += _render_record(record, records, superseded)
+        parts += _render_record(record, records, superseded, questions)
     parts += ["## Open", ""]
     if not still_open:
         parts += ["Nothing is open.", ""]
     for record in still_open:
-        parts += _render_record(record, records, superseded)
+        parts += _render_record(record, records, superseded, questions)
     return "\n".join(parts).rstrip("\n") + "\n"
 
 
 def _line(text):
-    return " ".join(str(text).split())
+    """Text on one line of the markdown a person reads; a `<!--` in it would hide the rest of the record in a rendered view."""
+    return " ".join(str(text).split()).replace("<!--", "<\\!--")
 
 
-def _render_record(record, records, superseded):
+def _render_record(record, records, superseded, questions):
     name = record.get("id") or "Ticket %s" % record.get("ticket")
     lines = ["### %s. %s" % (name, _line(record["question"])), ""]
     if _settled(record):
@@ -501,7 +533,7 @@ def _render_record(record, records, superseded):
             "- timestamp: " + str(record["timestamp"]),
         ]
     elif record.get("id"):
-        needs = missing(record, records)
+        needs = missing(record, records, questions)
         lines.append("- waiting on: " + ", ".join(needs) if needs else "- open: its prerequisites are settled")
     if record.get("id"):
         lines.append("- tier: %s" % (record["tier"] if record.get("tier") else "not asked in a tier"))
@@ -540,18 +572,25 @@ def grill_view(project, stamp=True):
     """What `wayline grill` prints, as a structure: the tier to ask, the decider's share, what waits.
 
     With `stamp` the tier's new questions are stamped with its number in DECISIONS.md, which is what
-    asking a tier means; the dashboard passes `stamp=False` to look without asking.
+    asking a tier means, and a settled question a crash left unjournaled is journaled; the dashboard
+    passes `stamp=False` to look without asking, which reads without taking the ledger's lock.
     """
     project = Path(project).resolve()
     autonomy = read_harness(project)["autonomy"]
     ledger = Ledger(project)
-    with ledger.lock():
+    if stamp:
+        with ledger.lock():
+            records = read_records(project)
+            stamped, tier, asked = with_tier(records, autonomy)
+            if stamped != records:
+                _write_records(ledger, stamped)
+                records = stamped
+            _journal_settled(ledger, records)
+    else:
         records = read_records(project)
-        stamped, tier, asked = with_tier(records, autonomy)
-        if stamp and stamped != records:
-            _write_records(ledger, stamped)
-            records = stamped
+        _, tier, asked = with_tier(records, autonomy)
     superseded = _superseded(records)
+    questions = _questions(records)
     current = [record for record in records if record.get("id") and record["id"] not in superseded]
     return {
         "project": str(project),
@@ -560,8 +599,8 @@ def grill_view(project, stamp=True):
         "position": ("research/" + POSITION_MD) if ledger.path(POSITION_MD).is_file() else None,
         "tier": tier,
         "ask": asked,
-        "decider": [record for record in frontier(records) if autonomy == AUTONOMOUS and not record.get("human_only")],
-        "waiting": [dict(record, needs=missing(record, records)) for record in _waiting(records)],
+        "decider": [record for record in frontier(records) if autonomy == AUTONOMOUS and not _owners(record)],
+        "waiting": [dict(record, needs=missing(record, records, questions)) for record in _waiting(records)],
         "settled": sum(1 for record in current if _settled(record)),
         "total": len(current),
     }
@@ -594,7 +633,7 @@ def render_grill(view):
                 lines.append("       evidence: %s" % _line(item))
         lines.append("")
     if view["decider"]:
-        lines.append("autonomy is autonomous: the decider (ticket 31) resolves these %d open question%s, and never a human-only one"
+        lines.append("autonomy is autonomous: the decider (ticket 31) resolves these %d open question%s, and never a human-only or irreversible one"
                      % (len(view["decider"]), "" if len(view["decider"]) == 1 else "s"))
         lines += ["  %s  %s" % (record["id"], _line(record["question"])) for record in view["decider"]]
         lines.append("")
