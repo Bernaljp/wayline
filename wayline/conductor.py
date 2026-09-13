@@ -51,6 +51,13 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   resumed on Fable after the reset. `/usage` is read again before a wave launches Fable work, and
   `unpaused` with `model: fable` ends the hold at the reset, or earlier when a reading puts Fable
   under `stop_at`.
+- The fallback to Opus (ticket 55, decision 15). While the hold stands and the fallback consent is
+  `auto`, a launch on Fable runs on Opus at the same effort and budget under Opus's context cap,
+  every agent it defines on Fable moves with it, and `ticket_launched` carries `fallback_from`. A
+  Fable session the hold would keep waiting (refused before its first turn, stopped mid-work, or owed
+  a gate's resume) starts again as a fresh Opus session in the same attempt and worktree, never as a
+  resume of the Fable transcript. Under `wait`, and under `ask` until the ask is built, Fable work
+  waits as above; a verdict whose verifier is Fable waits under every consent until verdicts fall back.
 - A result's `proposals`, `decision_requests` and `goal_progress` are written into the ticket's
   `## Result` section so the owner sees them, and nothing else: admission is ticket 37, decision
   tickets are ticket 35, and keep-if-better is ticket 39.
@@ -81,10 +88,10 @@ from wayline.ledger import (
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
-from wayline.project import ProjectError, find_project, policy_for, read_harness
+from wayline.project import ProjectError, fallback_consent, find_project, policy_for, read_harness
 
 __all__ = [
-    "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "porcelain_entries",
+    "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "fallback_tier", "porcelain_entries",
     "dirty_outside_research", "refuse_to_start", "run_command", "WORKTREES", "RESEARCH", "BRANCH",
 ]
 
@@ -146,6 +153,26 @@ RESUME_LIMIT = (
     "window has reset since. Continue the ticket from where you left off, commit on the ticket branch, "
     "run `wayline accept`, and return the structured result."
 )
+# What a fresh Opus session is told when it takes over the work of a Fable session the hold keeps waiting (decision 15):
+# one that stopped before it returned its result, and one that returned and is owed a gate's resume.
+FALLBACK_PARTIAL = (
+    "An earlier session on this ticket ran on Fable and stopped before it returned its result, and Fable's weekly "
+    "window is spent. It left partial work in this worktree, on the ticket branch, committed or not. This session "
+    "continues the ticket on Opus: read what is already there (the status and the log of the ticket branch, and the "
+    "files in the touch set) and carry on from it rather than start over."
+)
+FALLBACK_RETURNED = (
+    "An earlier session on this ticket ran on Fable and returned its result, and the conductor's follow-up to it, "
+    "below, cannot go to Fable while Fable's weekly window is spent. Its work is in this worktree, on the ticket "
+    "branch. This session takes the follow-up on Opus: read what is already there (the status and the log of the "
+    "ticket branch, and the files in the touch set), then do what the follow-up asks, building on that work rather "
+    "than starting over."
+)
+FALLBACK_LAST_MESSAGE = "The conductor's last message to that session, which this session answers in its place:\n\n%s"
+# Where an attempt that fell back keeps the notes its prompt carries, so a restart that relaunches it says them again.
+FALLBACK_NOTES = "fallback.json"
+# What `_start_wanted` returns when it started a fresh Opus session in place of one the hold kept waiting on Fable.
+FALLEN_BACK = "fallen_back"
 REJECTED = (
     "the %s verdict failed: a fresh %s session that did not write this read it and found\n\n%s"
 )
@@ -157,6 +184,7 @@ ARRIVALS = {
     "resume": lambda args, by: "resumed by %s" % by,
     "stop": lambda args, by: "asked by %s to stop %s" % (by, "once the running workers return" if args.get("drain") else "at this wave"),
     "autonomy": lambda args, by: "autonomy is now %s" % args.get("autonomy"),
+    "model_fallback": lambda args, by: "fallback consent is now %s" % args.get("model_fallback"),
     "pacing": lambda args, by: "pacing thresholds: %s" % ", ".join("%s %s" % (key, args[key]) for key in ("stop_at", "cheap_at") if key in args),
 }
 
@@ -264,12 +292,27 @@ def tier_for(policy, difficulty, ticket_budget=None):
                              % (difficulty, ", ".join(sorted(map(str, tiers))) or "none"))
     budget = dict((policy.get("budget") or {}).get(tier.get("budget")) or {})
     budget.update({key: value for key, value in (ticket_budget or {}).items() if value is not None})
-    caps = (policy.get("context_pack") or {}).get("max_chars") or {}
     return Tier(
         model=tier["model"], effort=tier["effort"],
         max_turns=budget.get("max_turns"), max_minutes=budget.get("max_minutes"),
-        context_chars=caps.get(tier["model"], min(caps.values()) if caps else None),
+        context_chars=_context_cap(policy, tier["model"]),
     )
+
+
+def _context_cap(policy, model):
+    """`policy.context_pack.max_chars` for `model`; a model it does not name takes the smallest cap rather than none."""
+    caps = (policy.get("context_pack") or {}).get("max_chars") or {}
+    return caps.get(model, min(caps.values()) if caps else None)
+
+
+def fallback_tier(policy, tier):
+    """What a tier on Fable becomes while Fable work falls back (decision 15).
+
+    Opus, at the same effort and the same turns and minutes, under `context_pack.max_chars.opus`: the
+    difficulty and the budget are the ticket's, and only the model and its context cap change.
+    """
+    return Tier(model=pacing.OPUS, effort=tier.effort, max_turns=tier.max_turns, max_minutes=tier.max_minutes,
+                context_chars=_context_cap(policy, pacing.OPUS))
 
 
 # --- what a wave did ------------------------------------------------------------------------
@@ -333,11 +376,13 @@ class _Want:
 
     `stage` is the gate a resume answers (`invalid_result`, `acceptance_failed`), `worker_died` for
     the resume of a session that died, or `relaunch` for a worker that died before its session
-    started; `message` is what a resume says.
+    started; `message` is what a resume says. `answering` is the message the session that died was
+    itself answering, when it was a resume, which a fresh session taking its place is given (decision 15).
     """
 
     stage: str
     message: Optional[str] = None
+    answering: Optional[str] = None
 
 
 class _Stop(NamedTuple):
@@ -405,6 +450,8 @@ class _Attempt:
     integrating: bool = False
     # How many of the session stream's `rate_limit_event`s pacing has already folded in.
     limits_read: int = 0
+    # `fable` when the attempt's session runs on Opus because Fable work fell back (decision 15), else None.
+    fallback_from: Optional[str] = None
 
     @property
     def id(self):
@@ -449,6 +496,8 @@ class Conductor:
         # What was last said of `/usage` giving no reading and of verdicts waiting on the hold, so a week-long hold says each once.
         self._usage_trouble = None
         self._said_waiting = None
+        # The fallback consent as this wave read it, and the wave it read it for (decision 15).
+        self._consent = self._consent_wave = None
         self.resources_free = schedule.everything_free
         # What a run carries between waves: the working view folded from the journal, the byte
         # offset read so far, the attempts whose sessions are in flight, and the heartbeat.
@@ -648,7 +697,8 @@ class Conductor:
         ticket has no worker.
 
         While the hold on Fable's weekly window stands, a ticket whose tier is Fable is dropped
-        before the pick, so its slot goes to whatever else is launchable. When the pick would launch
+        before the pick, so its slot goes to whatever else is launchable, unless the fallback consent
+        is `auto`, when nothing is dropped and the Fable tickets launch on Opus (`_begin`). When the pick would launch
         Fable work and no hold stands, `/usage` is read first and the pick is made again under what
         it says: without the Fable tickets when it began the hold, and under the action it paced to.
         """
@@ -660,7 +710,7 @@ class Conductor:
             return schedule.pick(
                 graph, running=running, slots=max(0, self._slots() - busy), action=self.action,
                 root=self.project, free=self.resources_free, goal_tickets=goal_tickets,
-                held=self._on_fable if self.view.hold is not None else schedule.nothing_held,
+                held=self._on_fable if self.view.hold is not None and not self._falls_back() else schedule.nothing_held,
             )
 
         picks = pick()
@@ -697,6 +747,24 @@ class Conductor:
     def _held_on_fable(self, request):
         """Whether a session waits for the hold: it runs on Fable or defines an agent on Fable, and the hold stands."""
         return request is not None and worker.launches_on(request, pacing.FABLE) and self._fable_held()
+
+    def _falls_back(self):
+        """Whether Fable work falls back to Opus now: the hold stands and the fallback consent is `auto` (decision 15).
+
+        The consent is `project.fallback_consent`'s: a `control model_fallback` this run heard, else
+        `harness.json`, read once a wave, so a changed consent applies at the next wave and one wave
+        never falls back for one launch and waits for the next. `ask` waits, as a project without the
+        key does, until the ask of decision 15 is built.
+        """
+        if self.view.hold is None:
+            return False
+        if self._consent_wave != self.number:
+            try:
+                harness = read_harness(self.project)
+            except (ProjectError, ValueError, OSError):
+                harness = {}
+            self._consent, self._consent_wave = fallback_consent(harness, self.view)[0], self.number
+        return self._consent == pacing.AUTO
 
     def _slots(self):
         """`policy.max_parallel_workers`: how many workers this conductor runs at once."""
@@ -858,7 +926,7 @@ class Conductor:
             earned = gates.ticket_asks(ticket, entry.get("difficulty", ticket["difficulty"]), launched.model,
                                        tickets.relative_path(ticket), commit=self.view.integrated.get(identifier),
                                        outputs=ticket.get("outputs") or [])
-            passed = {item["verdict_type"] for item in self.view.verdicts.get(identifier, []) if item.get("pass")}
+            passed = self.view.passed(identifier)
             asks = [ask for ask in earned if ask.verdict_type not in passed]
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
@@ -874,9 +942,12 @@ class Conductor:
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
         attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
+        if replayed.fallback_from:
+            # Its session runs on Opus and is resumed there, whatever the hold and the consent say now.
+            attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), replayed.fallback_from
         attempt.stage, attempt.resumed = replayed.stage, bool(replayed.spent)
         attempt.session_id, attempt.session_journaled = replayed.session_id, replayed.session_id is not None
-        self._prepare(attempt)
+        self._prepare(attempt, self._fallback_notes(attempt) if replayed.fallback_from else ())
         session = replayed.sessions[-1]
         attempt.run_dir = self._session_path(attempt, session)
         attempt.stream_path = attempt.run_dir / "stream.jsonl" if attempt.run_dir else None
@@ -911,15 +982,18 @@ class Conductor:
         if attempt.session_id:
             message = why
             previous = attempt.run_dir / "prompt.md" if session.kind == "resume" and attempt.run_dir else None
-            if previous is not None and previous.is_file():
-                message += RESUME_DIED_MESSAGE % previous.read_text(encoding="utf-8").strip()
-            attempt.want = _Want(replay.WORKER_DIED, message)
+            answering = previous.read_text(encoding="utf-8").strip() if previous is not None and previous.is_file() else None
+            if answering:
+                message += RESUME_DIED_MESSAGE % answering
+            attempt.want = _Want(replay.WORKER_DIED, message, answering)
             doing = "%s; resuming session %s" % (what, attempt.session_id)
         else:
             attempt.want = _Want(RELAUNCH)
             doing = "%s before its session started; relaunching it" % what
         self.flight[attempt.id] = attempt
         started = self._start_wanted(attempt)
+        if started == FALLEN_BACK:
+            return  # a fresh session on Opus took its place, which `_fall_back_session` said
         self.say("  ticket %d: %s%s" % (attempt.id, doing, "" if started else " once the run may launch again"))
 
     def _adopted_returned(self, attempt):
@@ -947,9 +1021,11 @@ class Conductor:
         if attempt.terminated_at is not None and attempt.session_id:
             attempt.want = _Want(TIMEOUT, RESUME_TIMEOUT % attempt.tier.max_minutes)
             self.flight[attempt.id] = attempt
+            resumed_by = attempt.session_id
             started = self._start_wanted(attempt)
-            self.say("  ticket %d: resuming session %s out of time%s"
-                     % (attempt.id, attempt.session_id, "" if started else " once the run may launch again"))
+            if started != FALLEN_BACK:  # a fresh session on Opus took its place, which `_fall_back_session` said
+                self.say("  ticket %d: resuming session %s out of time%s"
+                         % (attempt.id, resumed_by, "" if started else " once the run may launch again"))
         else:
             self._died(attempt, replay.Session("launch" if attempt.run_dir == self._attempt_dir(attempt) else "resume"))
         return False
@@ -968,10 +1044,10 @@ class Conductor:
     def _attempt_dir(self, attempt):
         return worker.session_dir(self.project, attempt.id, attempt.number)
 
-    def _prepare(self, attempt):
+    def _prepare(self, attempt, notes=()):
         """The worktree, the prompt, and the request an attempt taken over needs for its next session."""
         self._add_worktree(attempt)
-        attempt.prompt = self._prompt(attempt)
+        attempt.prompt = self._prompt(attempt, notes)
         attempt.request = self._request(attempt, attempt.prompt)
 
     def _session_path(self, attempt, session):
@@ -1092,15 +1168,18 @@ class Conductor:
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
         attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
+        if attempt.tier.model == pacing.FABLE and self._falls_back():
+            attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), pacing.FABLE
         self._add_worktree(attempt)
         self._write_ticket(attempt, "running")
         attempt.prompt = self._prompt(attempt)
         attempt.request = self._request(attempt, attempt.prompt)
-        self.say("wave %d: ticket %d %s (%s, %s %s, attempt %d)" % (
+        self.say("wave %d: ticket %d %s (%s, %s %s, attempt %d)%s" % (
             self.number, attempt.id, attempt.ticket["title"], attempt.role.name,
-            attempt.tier.model, attempt.tier.effort, attempt.number))
+            attempt.tier.model, attempt.tier.effort, attempt.number,
+            ", falling back from %s" % attempt.fallback_from if attempt.fallback_from else ""))
 
-    def _prompt(self, attempt):
+    def _prompt(self, attempt, notes=()):
         """The prompt of decision 3; a locator resolves in the worktree first, then in the project."""
         return worker.assemble_prompt(
             attempt.ticket, attempt.role,
@@ -1108,13 +1187,17 @@ class Conductor:
             max_chars=attempt.tier.context_chars,
             budget={"max_turns": attempt.tier.max_turns, "max_minutes": attempt.tier.max_minutes},
             consult_max=(self.policy.get("consultant") or {}).get("max_questions_per_ticket", worker.CONSULT_MAX),
+            notes=notes,
         )
 
     def _request(self, attempt, prompt):
-        """The `LaunchRequest` of decision 3: the role's tools, the rendered guards, both add-dirs."""
+        """The `LaunchRequest` of decision 3: the role's tools, the rendered guards, both add-dirs.
+
+        An attempt that fell back launches every agent it defines on Fable on Opus with it (decision 15).
+        """
         run_dir = worker.session_dir(self.project, attempt.id, attempt.number)
         settings = gates.write_worker_settings(run_dir / "settings.json", self.harness_root)
-        return worker.LaunchRequest(
+        request = worker.LaunchRequest(
             role=attempt.role.name,
             model=attempt.tier.model,
             effort=attempt.tier.effort,
@@ -1130,16 +1213,23 @@ class Conductor:
             schema_path=self.harness_root / "schemas" / ((attempt.role.output_schema or "result") + ".json"),
             max_minutes=attempt.tier.max_minutes,
         )
+        if attempt.fallback_from:
+            # The role's own agent is on the tier's model, Opus already; this moves any other agent the launch defines on Fable.
+            request, _ = worker.fall_back(request)
+        return request
 
     def _journal_launch(self, attempt, started):
         attempt.started = True
-        self.ledger.append_event(TICKET_LAUNCHED, {
+        payload = {
             "ticket": attempt.id, "attempt": attempt.number, "role": attempt.role.name,
             "model": attempt.tier.model, "effort": attempt.tier.effort,
             "skills": list(attempt.ticket.get("skills") or []),
             "worktree": str(attempt.worktree), "pid": started.pid,
             "context_chars": attempt.prompt.context_chars, "prompt_sha256": attempt.prompt.sha256,
-        }, ticket=attempt.id)
+        }
+        if attempt.fallback_from:
+            payload["fallback_from"] = attempt.fallback_from
+        self.ledger.append_event(TICKET_LAUNCHED, payload, ticket=attempt.id)
 
     # --- the worker outcome (BRIEF 9.1) ---
 
@@ -1221,13 +1311,24 @@ class Conductor:
         return "session"
 
     def _start_wanted(self, attempt):
-        """Start the session an attempt waits for, unless the run holds model work or the hold holds it on Fable; whether it did."""
+        """Start the session an attempt waits for, unless the run holds model work or the hold holds it on Fable.
+
+        Under the fallback consent `auto` the hold holds nothing back: a session it would keep waiting on
+        Fable starts as a fresh Opus session in the same attempt instead (`_fall_back_session`). Returns
+        True when it started the session, `FALLEN_BACK` when a fresh Opus session took its place, and
+        False when nothing started.
+        """
         if attempt.want is None or attempt.want.stage == INTEGRATE or self._holds_launches():
             return False  # an integration is carried again by `_poll`, not started as a session
-        if self._held_on_fable(attempt.request) or self._holds_launches():
+        held = self._held_on_fable(attempt.request)
+        if self._holds_launches() or (held and not self._falls_back()):
             # Resumed, or relaunched, on Fable once the hold ends; and the `/usage` the hold read may have said `stop`.
             return False
         want, attempt.want = attempt.want, None
+        if held:
+            self._fall_back_session(attempt, want)
+            attempt.begun.wait()
+            return FALLEN_BACK
         if want.stage == RELAUNCH:
             self._journal_resumed(attempt, replay.WORKER_DIED)
             attempt.started = attempt.session_journaled = False
@@ -1240,6 +1341,56 @@ class Conductor:
             self._run_session(attempt, "resume", want.message)
         attempt.begun.wait()
         return True
+
+    def _fall_back_session(self, attempt, want):
+        """Start a session the hold keeps waiting on Fable as a fresh Opus session in the same attempt and worktree.
+
+        Never a resume: resuming a Fable transcript on Opus is unverified (decision 15). A session refused
+        before its first turn left nothing, and is launched again on Opus. One that stopped before it
+        returned (at the limit, or its worker died) left partial work in the worktree, and the prompt says
+        so, with the message it was answering when it was a resume. One that returned and is owed a gate's
+        resume is told it returned, and given the gate's message; the gate's one resume is spent as the
+        resume would have spent it. The launched session's stream, stderr, and result are kept in
+        `stopped-<n>/`, since the fresh launch writes over them, and the notes in `fallback.json`, so a
+        restart that relaunches the attempt says them again. `ticket_resumed` is journaled with no session
+        id, as for any relaunch in the same attempt, and the launch journals `ticket_launched` with `fallback_from`.
+        """
+        ran, gate = want.stage != RELAUNCH, want.stage in replay.GATES
+        returned = want.stage in (INVALID_RESULT, ACCEPTANCE_FAILED)
+        if ran:
+            self._keep_session(attempt, "stopped")
+        if gate:
+            attempt.stage, attempt.resumed = want.stage, True
+        attempt.session_id = None
+        self._journal_resumed(attempt, want.stage if gate else replay.WORKER_DIED)
+        attempt.started = attempt.session_journaled = False
+        attempt.tail = None
+        notes = [FALLBACK_RETURNED if returned else FALLBACK_PARTIAL] if ran else []
+        last = want.message if gate else want.answering
+        if ran and last:
+            notes.append(FALLBACK_LAST_MESSAGE % last)
+        if attempt.tier.model == pacing.FABLE:
+            attempt.tier = fallback_tier(self.policy, attempt.tier)
+        attempt.fallback_from = pacing.FABLE
+        if notes:
+            self.ledger.write_json(self._attempt_dir(attempt).relative_to(self.ledger.research) / FALLBACK_NOTES,
+                                   {"fallback_from": pacing.FABLE, "notes": notes})
+        attempt.prompt = self._prompt(attempt, notes)
+        attempt.request = self._request(attempt, attempt.prompt)
+        taken = ("its %s resume would run on Fable; a fresh session takes it" % want.stage if returned
+                 else "its session on Fable stopped before it returned; a fresh session continues its partial work" if ran
+                 else "its session on Fable never started work; it is launched again")
+        self.say("  ticket %d: Fable's weekly window is spent and the fallback consent is auto; %s on %s %s, in the same attempt"
+                 % (attempt.id, taken, attempt.tier.model, attempt.tier.effort))
+        self._run_session(attempt, "launch")
+
+    def _fallback_notes(self, attempt):
+        """The notes a fallback launch of this attempt carried in its prompt, from `fallback.json`; () when there are none."""
+        try:
+            notes = json.loads((self._attempt_dir(attempt) / FALLBACK_NOTES).read_text(encoding="utf-8")).get("notes")
+        except (OSError, ValueError, AttributeError):
+            return ()
+        return [note for note in notes if isinstance(note, str)] if isinstance(notes, list) else ()
 
     def _journal_resumed(self, attempt, reason):
         """`ticket_resumed` for the attempt's session, with the reason decision 2's table gives it."""
@@ -1424,34 +1575,37 @@ class Conductor:
             attempt.result_journaled = True
         kind = "launch" if attempt.run_dir in (None, self._attempt_dir(attempt)) else "resume"
         if kind == "launch" and not attempt.envelope.answered:
-            self._keep_refused(attempt)
+            self._keep_session(attempt, "refused")
             attempt.session_id, attempt.want = None, _Want(RELAUNCH)
             self.flight[attempt.id] = attempt
             started = self._start_wanted(attempt)
-            self.say("  ticket %d: the usage limit refused its session before its first turn; relaunching it%s"
-                     % (attempt.id, "" if started else " once the window allows"))
+            if started != FALLEN_BACK:  # a fresh session on Opus took its place, which `_fall_back_session` said
+                self.say("  ticket %d: the usage limit refused its session before its first turn; relaunching it%s"
+                         % (attempt.id, "" if started else " once the window allows"))
             return "session"
         self._died(attempt, replay.Session(kind), RESUME_LIMIT, "its session stopped at the usage limit")
         return "session"
 
-    def _keep_refused(self, attempt):
-        """Copy a refused session's stream, stderr, and result into `refused-<n>/` of its attempt, which the relaunch writes over.
+    def _keep_session(self, attempt, label):
+        """Copy the attempt's launched session's stream, stderr, and result into `<label>-<n>/`, which a relaunch writes over.
 
-        The journal's `ticket_session` and `ticket_result` name the refused session, so what it wrote is kept beside them.
+        `label` is `refused` for a session a limit refused before its first turn, and `stopped` for one whose
+        work a fresh session on Opus takes over (decision 15). The journal's `ticket_session` and
+        `ticket_result` name the session, so what it wrote is kept beside them.
         """
         base = self._attempt_dir(attempt)
         number = 1
-        while (base / ("refused-%d" % number)).exists():
+        while (base / ("%s-%d" % (label, number))).exists():
             number += 1
-        kept = base / ("refused-%d" % number)
+        kept = base / ("%s-%d" % (label, number))
         try:
             kept.mkdir(parents=True)
             for name in ("stream.jsonl", "stderr.txt", "result.json"):
                 if (base / name).is_file():
                     shutil.copy2(base / name, kept / name)
         except OSError as failure:
-            self.say("  ticket %d: the refused session could not be kept in %s (%s); its relaunch writes over it"
-                     % (attempt.id, kept.name, failure))
+            self.say("  ticket %d: the %s session could not be kept in %s (%s); its relaunch writes over it"
+                     % (attempt.id, label, kept.name, failure))
 
     def _pause(self, limit, source, written=None):
         """Journal `paused` for a hit limit, unless its window has reset already or the run is paused as long.
@@ -1940,19 +2094,26 @@ class Conductor:
         """Whether the integrator may not launch now: the run holds model work, or it runs on Fable while the hold stands.
 
         Its request defines the one agent, on its tier's model, so that model says whether it is on Fable.
-        The run is asked again after the hold, because the `/usage` the hold may read can say `stop`.
+        The run is asked again after the hold, because the `/usage` the hold may read can say `stop`, and
+        so is the tier, because under the fallback consent `auto` a hold that reading began moves it to Opus.
         """
         if self._holds_launches():
             return True
-        return (self._integrator_tier(attempt).model == pacing.FABLE and self._fable_held()) or self._holds_launches()
+        if self._integrator_tier(attempt).model == pacing.FABLE and self._fable_held() and not self._falls_back():
+            return True
+        return self._holds_launches()
 
     def _integrator_tier(self, attempt):
-        """`policy.roles.integrator`'s model and effort, with the ticket's own budget and the model's context cap."""
+        """`policy.roles.integrator`'s model and effort, with the ticket's own budget and the model's context cap.
+
+        On Fable while the hold stands under the fallback consent `auto`, it falls back to Opus like any launch.
+        """
         entry = (self.policy.get("roles") or {}).get(INTEGRATOR) or {}
         model, effort = entry.get("model") or attempt.tier.model, entry.get("effort") or attempt.tier.effort
         caps = (self.policy.get("context_pack") or {}).get("max_chars") or {}
-        return Tier(model=model, effort=effort, max_turns=attempt.tier.max_turns, max_minutes=attempt.tier.max_minutes,
+        tier = Tier(model=model, effort=effort, max_turns=attempt.tier.max_turns, max_minutes=attempt.tier.max_minutes,
                     context_chars=caps.get(model, attempt.tier.context_chars))
+        return fallback_tier(self.policy, tier) if tier.model == pacing.FABLE and self._falls_back() else tier
 
     # --- closing the ticket ---
 

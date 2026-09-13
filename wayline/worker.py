@@ -42,7 +42,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Union
@@ -55,7 +55,7 @@ from wayline.ledger import now_ts
 __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
     "launch", "resume", "pid_alive", "terminate", "usage", "simulate_limit", "simulated_limit", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
-    "launches_on", "stderr_tail", "stderr_of",
+    "launches_on", "fall_back", "stderr_tail", "stderr_of",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
@@ -569,7 +569,7 @@ class Prompt:
         return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
 
-def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX):
+def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX, notes=()):
     """The worker's prompt, assembled in the order of decision 3.
 
     One `/wayline-<skill>` line per assigned skill, the body of every skill after the first
@@ -577,6 +577,8 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
     the tier's cap with the cut announced, the role protocol, the result schema, and the contract
     lines. `roots` are the directories a locator resolves against, in order (the worktree and the
     project); `max_chars` is `policy.context_pack.max_chars` for the tier's model, None for no cap.
+    `notes` is what the conductor has to tell this session about the ticket's state before it starts
+    (a fresh session taking over a stopped one's partial work, decision 15), set under the ticket.
     """
     pack = _context_section(ticket.get("context_pack") or [], roots, max_chars)
     skills = _skill_section(ticket.get("skills") or [], roots, max_chars)
@@ -584,6 +586,7 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         "\n".join("/wayline-%s" % skill for skill in (ticket.get("skills") or [])),
         skills.text,
         _ticket_section(ticket, budget),
+        _notes_section(notes),
         pack.text,
         role.protocol,
         _result_section(ticket, role),
@@ -696,6 +699,12 @@ def _ticket_section(ticket, budget):
     if budget:
         lines.append("- budget: %s turns, %s minutes" % (budget.get("max_turns", "?"), budget.get("max_minutes", "?")))
     return "\n".join(lines)
+
+
+def _notes_section(notes):
+    """The conductor's notes under a heading of their own, or nothing when it has none."""
+    notes = [note.strip() for note in notes or () if isinstance(note, str) and note.strip()]
+    return "# Before you start\n\n" + "\n\n".join(notes) if notes else ""
 
 
 def _context_section(locators, roots, max_chars):
@@ -1901,6 +1910,29 @@ def launches_on(request, model):
     except ValueError:
         return False
     return isinstance(agents, dict) and any(isinstance(agent, dict) and agent.get("model") == model for agent in agents.values())
+
+
+def fall_back(request, model=pacing.FABLE, to=pacing.OPUS):
+    """The request as it launches while Fable work falls back (decision 15), and whether anything moved.
+
+    Returns `(request, moved)`. The launch's own `--model` and every agent its `--agents` defines on
+    `model` are moved to `to`; nothing else changes, so the effort, the budget, the tools, and the
+    prompt stay as they were, and the caller assembles the prompt under the context cap of the model
+    it falls back to. The request given is left as it was, and one with nothing on `model` comes back as it is.
+    """
+    as_text = isinstance(request.agent_json, str)
+    try:
+        agents = json.loads(request.agent_json) if as_text else request.agent_json
+    except ValueError:
+        agents = None
+    moved = agents
+    if isinstance(agents, dict):
+        moved = {name: dict(agent, model=to) if isinstance(agent, dict) and agent.get("model") == model else agent
+                 for name, agent in agents.items()}
+    if request.model != model and moved == agents:
+        return request, False
+    agent_json = request.agent_json if moved == agents else (json.dumps(moved) if as_text else moved)
+    return replace(request, model=to if request.model == model else request.model, agent_json=agent_json), True
 
 
 def _simulated_event(request):

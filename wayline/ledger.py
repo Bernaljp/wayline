@@ -132,6 +132,7 @@ K_SKILLS = "skills"
 K_WORKTREE = "worktree"
 K_CONTEXT_CHARS = "context_chars"
 K_PROMPT_SHA256 = "prompt_sha256"
+K_FALLBACK_FROM = "fallback_from"
 K_SESSION_ID = "session_id"
 K_STATUS = "status"
 K_TURNS = "turns"
@@ -223,7 +224,7 @@ EVENTS = {
     UNPAUSED: (K_MODEL,),
     TICKET_CREATED: (K_TICKET, K_KIND, K_PROPOSED_BY, K_ORIGIN, K_BLOCKED_BY),
     ASSIGNED: (K_TICKET, K_ROLE, K_SKILLS),
-    TICKET_LAUNCHED: (K_TICKET, K_ATTEMPT, K_ROLE, K_MODEL, K_EFFORT, K_SKILLS, K_WORKTREE, K_PID, K_CONTEXT_CHARS, K_PROMPT_SHA256),
+    TICKET_LAUNCHED: (K_TICKET, K_ATTEMPT, K_ROLE, K_MODEL, K_EFFORT, K_SKILLS, K_WORKTREE, K_PID, K_CONTEXT_CHARS, K_PROMPT_SHA256, K_FALLBACK_FROM),
     TICKET_SESSION: (K_TICKET, K_ATTEMPT, K_SESSION_ID, K_MODEL),
     TICKET_RESULT: (K_TICKET, K_ATTEMPT, K_SESSION_ID, K_STATUS, K_TURNS, K_DURATION_MS, K_USAGE, K_PERMISSION_DENIALS, K_VALID),
     TICKET_RESUMED: (K_TICKET, K_ATTEMPT, K_SESSION_ID, K_REASON),
@@ -275,6 +276,7 @@ PAYLOAD_ENUMS = {
     (PAUSED, K_WINDOW): ("five_hour", "seven_day", "unknown"),
     (PAUSED, K_MODEL): ("fable",),
     (UNPAUSED, K_MODEL): ("fable",),
+    (TICKET_LAUNCHED, K_FALLBACK_FROM): ("fable",),
     (TICKET_RESUMED, K_REASON): ("invalid_result", "acceptance_failed", "worker_died", "timeout", "readopted"),
     (ACCEPTANCE, K_WHERE): ("worktree", "rebased", "main"),
     (INTEGRATED, K_RESOLVED_BY): ("none", "integrator"),
@@ -285,7 +287,7 @@ PAYLOAD_ENUMS = {
     (JOB_RETRIED, K_OOM): ("host", "gpu"),
     (STALL, K_ACTION): ("replan", "stop"),
     (NOTIFIED, K_CHANNEL): ("notify-send", "hermes", "none"),
-    (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing"),
+    (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback"),
     (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file"),
     (CHANGE_RECORD, K_SCOPE_KIND): ("local", "global"),
 }

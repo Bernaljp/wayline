@@ -2,7 +2,7 @@
 
 Implementation Decisions 10 and BRIEF 6.4. `wayline intake` takes whatever the owner hands over
 (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) and writes three things:
-`research/INTAKE.md` with the sections of `SECTIONS`, the `autonomy`, `radius`, `budgets`, and
+`research/INTAKE.md` with the sections of `SECTIONS`, the `autonomy`, `radius`, `model_fallback`, `budgets`, and
 `human_only` classes in `harness.json` (the file the conductor rereads), and `research/GOAL.json`
 when a quantitative goal was stated and its `eval_command` printed the metric on a sample artifact.
 
@@ -31,7 +31,10 @@ from wayline.cli import parse_args
 from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import DECISION, Ledger, atomic_write
-from wayline.project import AUTONOMY, HARNESS_JSON, ProjectError, find_project, policy_for, read_harness
+from wayline.pacing import ASK, CONSENTS
+from wayline.project import (
+    AUTONOMY, HARNESS_JSON, MODEL_FALLBACK, UNSET_CONSENT, ProjectError, find_project, policy_for, read_harness, set_model_fallback,
+)
 
 __all__ = [
     "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "GoalCheck", "take_intake", "check_goal", "set_goal",
@@ -59,7 +62,7 @@ DEFAULT_HUMAN_ONLY = {
 }
 
 SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "materials", "autonomy", "radius",
-               "budgets", "human_only", "goal", "sample", "rationale")
+               "model_fallback", "budgets", "human_only", "goal", "sample", "rationale")
 LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_only")
 BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
 GOAL_OPTIONAL = {"dataset_or_split": None, "held_out_split": None, "baseline": None, "budget": None, "stop_when": "goal_reached"}
@@ -500,7 +503,7 @@ def normalize_spec(raw):
                 value = [value]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise IntakeError("%s is a list of strings" % key)
-        elif key in ("intent", "plan", "sample", "rationale", "autonomy", "radius"):
+        elif key in ("intent", "plan", "sample", "rationale", "autonomy", "radius", "model_fallback"):
             if not isinstance(value, str):
                 raise IntakeError("%s is a string" % key)
         elif key == "budgets":
@@ -511,6 +514,8 @@ def normalize_spec(raw):
         raise IntakeError("autonomy is one of %s, got %r" % (", ".join(AUTONOMY), spec["autonomy"]))
     if spec.get("radius") is not None and spec["radius"] not in RADIUS:
         raise IntakeError("radius is one of %s, got %r" % (", ".join(RADIUS), spec["radius"]))
+    if spec.get("model_fallback") is not None and spec["model_fallback"] not in CONSENTS:
+        raise IntakeError("model_fallback is one of %s, got %r" % (", ".join(CONSENTS), spec["model_fallback"]))
     return spec
 
 
@@ -550,6 +555,9 @@ def take_intake(project, spec, base=None, timeout_s=None):
     updated = dict(harness)
     updated["autonomy"] = spec.get("autonomy") or harness["autonomy"]
     updated["radius"] = spec.get("radius") or harness["radius"]
+    if spec.get("model_fallback"):
+        # Only a consent the owner stated is written: a project without the key behaves as `ask` and stays told apart from one.
+        updated["model_fallback"] = spec["model_fallback"]
     updated["human_only"] = list(classes)
     budgets = {key: harness.get("budgets", {}).get(key) for key in BUDGET_FIELDS}
     budgets.update({key: value for key, value in spec.get("budgets", {}).items() if value is not None})
@@ -574,6 +582,9 @@ def take_intake(project, spec, base=None, timeout_s=None):
             _write_goal(ledger, goal.goal, spec.get("rationale") or "set by the owner at intake")
             standing = None
         ledger.write_markdown(INTAKE_MD, render(gathered, updated, classes, goal, standing))
+    if spec.get("model_fallback"):
+        # `harness.json` says it already; a run still open that heard another consent is told as the switch tells it.
+        set_model_fallback(project, spec["model_fallback"])
     return {
         "intake": str(ledger.path(INTAKE_MD)),
         "harness": updated,
@@ -594,7 +605,7 @@ def render(gathered, harness, classes, goal, standing):
     """INTAKE.md: every section of `SECTIONS`, in order, none of them empty."""
     parts = ["# Intake", "",
              "What the owner handed over, normalized by `wayline intake`. `harness.json` holds the same "
-             "autonomy, radius, budgets, and human-only classes, and is the copy the conductor reads."]
+             "autonomy, radius, fallback consent, budgets, and human-only classes, and is the copy the conductor reads."]
 
     intent = list(gathered.intent)
     for shown, text in gathered.plans:
@@ -606,7 +617,7 @@ def render(gathered, harness, classes, goal, standing):
         "Data": _bullets(gathered.data, "Not stated."),
         "Code": _bullets(gathered.code, "None."),
         "Constraints": _bullets(gathered.constraints, "None stated."),
-        "Autonomy": "`%s`: %s" % (harness["autonomy"], AUTONOMY[harness["autonomy"]]),
+        "Autonomy": "`%s`: %s\n\n%s" % (harness["autonomy"], AUTONOMY[harness["autonomy"]], _consent(harness)),
         "Radius": "`%s`: %s" % (harness["radius"], RADIUS[harness["radius"]]),
         "Budgets": _budgets(harness.get("budgets") or {}),
         "Decisions that stay human-only": "The decider never resolves these; they wait for the owner.\n\n"
@@ -616,6 +627,14 @@ def render(gathered, harness, classes, goal, standing):
     for name in SECTIONS:
         parts += ["", "## " + name, "", sections[name].strip()]
     return "\n".join(parts) + "\n"
+
+
+def _consent(harness):
+    """The fallback consent, said beside the autonomy (decision 15), or that nobody stated one."""
+    consent = harness.get("model_fallback")
+    if consent in MODEL_FALLBACK:
+        return "Fallback consent `%s`: %s" % (consent, MODEL_FALLBACK[consent])
+    return "Fallback consent not stated, so the project behaves as under `%s`: %s" % (ASK, MODEL_FALLBACK[ASK])
 
 
 def _bullets(lines, empty):
@@ -680,6 +699,8 @@ def intake_command(args, stdin=None):
     parser.add_argument("--constraint", action="append", default=[], help="one constraint")
     parser.add_argument("--autonomy", choices=sorted(AUTONOMY))
     parser.add_argument("--radius", choices=sorted(RADIUS))
+    parser.add_argument("--model-fallback", choices=list(CONSENTS),
+                        help="the fallback consent: whether Fable work falls back to Opus while Fable's weekly window is spent")
     parser.add_argument("--gpu-hours", type=float)
     parser.add_argument("--wallclock-hours", type=float)
     parser.add_argument("--usage-windows", type=int)
@@ -734,7 +755,8 @@ def intake_command(args, stdin=None):
     counts, harness = report["counts"], report["harness"]
     print("intake  %s" % report["intake"])
     print("  references %d   data %d   code %d   constraints %d" % (counts["references"], counts["data"], counts["code"], counts["constraints"]))
-    print("  autonomy %s   radius %s   human-only %s" % (harness["autonomy"], harness["radius"], ", ".join(harness["human_only"])))
+    print("  autonomy %s   radius %s   fallback %s   human-only %s" % (harness["autonomy"], harness["radius"],
+          harness.get("model_fallback") or UNSET_CONSENT, ", ".join(harness["human_only"])))
     goal = report["goal"]
     if goal is None:
         print("  goal  none stated")
@@ -768,7 +790,8 @@ def _flag_fields(options):
     fields = {}
     if options.materials:
         fields["materials"] = list(options.materials)
-    for key, value in (("intent", options.intent), ("plan", options.plan), ("autonomy", options.autonomy), ("radius", options.radius)):
+    for key, value in (("intent", options.intent), ("plan", options.plan), ("autonomy", options.autonomy), ("radius", options.radius),
+                       ("model_fallback", options.model_fallback)):
         if value:
             fields[key] = value
     for key, value in (("references", options.reference), ("data", options.data), ("code", options.repo),

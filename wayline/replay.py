@@ -22,7 +22,8 @@ from wayline.ledger import (
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
     UNPAUSED, VERDICT, WAVE,
 )
-from wayline.pacing import FABLE  # the model a `paused` and an `unpaused` name for the hold on Fable's weekly window
+# The model a `paused` and an `unpaused` name for the hold on Fable's weekly window, and the fallback consents a `control` may set.
+from wayline.pacing import CONSENTS, FABLE
 
 __all__ = [
     "STATUS_AFTER", "GATES", "READOPTED", "WORKER_DIED", "SESSION", "RESULT", "JOBS", "ENDS_ATTEMPT",
@@ -100,6 +101,9 @@ class Attempt:
     model: Optional[str] = None
     effort: Optional[str] = None
     worktree: Optional[str] = None
+    # `fable` when the latest session was launched on Opus because Fable work fell back (decision 15), which the
+    # difficulty adjustment of decision 5 never counts; None otherwise.
+    fallback_from: Optional[str] = None
     sessions: list = field(default_factory=list)
     stage: str = "launch"
     spent: set = field(default_factory=set)
@@ -145,14 +149,20 @@ class TicketView:
         if number is None:
             return
         attempt = self.attempts.get(number)
-        if attempt is None or attempt.ended:
+        relaunched = attempt is not None and not attempt.ended
+        if not relaunched:
             attempt = self.attempts[number] = Attempt(number)
         pid = _int(payload.get("pid"))
         # A launch into an attempt that already ran is the relaunch of a worker that died before
-        # its session started: it replaces that session rather than following it.
-        attempt.pid, attempt.session_id, attempt.stage = pid, None, "launch"
+        # its session started: it replaces that session rather than following it. A relaunch that
+        # fell back to Opus (decision 15) may replace a session that ran, stopped, and answered a gate:
+        # the gate it answered stays the attempt's stage.
+        fallback_from = payload.get("fallback_from")
+        attempt.pid, attempt.session_id = pid, None
+        attempt.stage = attempt.stage if relaunched and fallback_from else "launch"
         attempt.role, attempt.model = payload.get("role"), payload.get("model")
         attempt.effort, attempt.worktree = payload.get("effort"), payload.get("worktree")
+        attempt.fallback_from = fallback_from
         attempt.sessions = [Session("launch", pid=pid, ts=ts)]
 
     def session(self, payload):
@@ -205,7 +215,10 @@ class View:
     window nor the owner's instruction ends with a conductor. `hold` is the hold on Fable's weekly
     window (`paused` with `model: fable` until `unpaused` with it, decision 15), which outlives a
     restart the same way; it holds only the launches on Fable, so a whole-run pause can start and
-    end inside it. `stall` is the stall counter of
+    end inside it. `model_fallback` is the fallback consent a `control model_fallback` set during
+    the run that is running, None before one arrives and once the run ends: a new run starts from
+    `harness.json`, which `wayline switch --fallback` writes before it journals the event, and a
+    control journaled while no run is open changes only what `harness.json` already says. `stall` is the stall counter of
     decision 5, rebuilt from the `wave` event the conductor journals at the end of every settling
     wave: progress resets it, and so does a `stall`, after which the count starts again. Nothing
     else does, so a run started with `--resume` and one started without rebuild the same view.
@@ -223,6 +236,7 @@ class View:
     pacing: dict = field(default_factory=_pacing)
     paused_by_owner: bool = False
     autonomy: Optional[str] = None
+    model_fallback: Optional[str] = None
     thresholds: dict = field(default_factory=dict)
     stall: int = 0
     run: Optional[dict] = None
@@ -248,11 +262,11 @@ class View:
             self.autonomy = payload.get("autonomy") or self.autonomy
             self.run = {"pid": payload.get("pid"), "resume": bool(payload.get("resume")),
                         "ts": event.get("ts"), "ended": None}
-            self.stop = self.switched = None
+            self.stop = self.switched = self.model_fallback = None
         elif name == RUN_ENDED:
             if self.run is not None:
                 self.run["ended"] = payload.get("reason")
-            self.stop = self.switched = None
+            self.stop = self.switched = self.model_fallback = None
         elif name == PAUSED:
             stands = {key: payload.get(key) for key in ("resets_at", "window", "utilization")}
             if payload.get("model") == FABLE:
@@ -336,6 +350,8 @@ class View:
             self.reruns[target] = payload.get("by")
         elif command == "autonomy" and args.get("autonomy"):
             self.autonomy = args["autonomy"]
+        elif command == "model_fallback" and args.get("model_fallback") in CONSENTS and self.run is not None and not self.run["ended"]:
+            self.model_fallback = args["model_fallback"]
         elif command == "pacing":
             self.thresholds.update({key: args[key] for key in ("stop_at", "cheap_at") if key in args})
 
@@ -352,6 +368,10 @@ class View:
             record["attempt"] = payload["attempt"]
         if name == JOB_FINISHED:
             record["exit_code"] = _int(payload.get("exit_code"))
+
+    def passed(self, identifier):
+        """The verdict types a ticket passed since it was last done."""
+        return {item["verdict_type"] for item in self.verdicts.get(identifier, []) if item.get("pass")}
 
     def in_flight(self):
         """`(ticket id, attempt)` for every attempt still owed its session's result or that result's carrying, by id."""

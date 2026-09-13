@@ -26,15 +26,18 @@ from string import Template
 from wayline import HARNESS_ROOT, POLICY_PATH, TAG, replay
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
-from wayline.ledger import CONTROL, DECISION, SWITCHED, Ledger, atomic_write, conductor_holder, now_ts
-from wayline.pacing import thresholds
+from wayline.ledger import (
+    ACCEPTANCE, CONTROL, DECISION, PAUSED, SWITCHED, TICKET_LAUNCHED, TICKET_RESULT, UNPAUSED, VERDICT, Ledger, atomic_write,
+    conductor_holder, now_ts,
+)
+from wayline.pacing import ASK, AUTO, CONSENTS, FABLE, WAIT, epoch, thresholds
 from wayline.resources import (
     LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
 )
 from wayline.tickets import DECISION as DECISION_KIND
 from wayline.tickets import (
     GRAPH, SATISFIED, answer_section, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
-    read_ticket, read_tickets, refresh_graph, tickets_dir, with_answer, write_ticket,
+    read_ticket, read_tickets, refresh_graph, tickets_dir, with_answer, write_ticket, relative_path,
 )
 
 __all__ = [
@@ -44,6 +47,7 @@ __all__ = [
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
     "control", "answer", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
+    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "fable_falls_back", "set_model_fallback", "hold_status", "render_hold",
     "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
 
@@ -84,6 +88,15 @@ AUTONOMY = {
     "checkpoints": "the owner approves the spec and the graph and answers decision tickets; waves run alone.",
     "autonomous": "the decider resolves every open question, every decision ticket not in a human-only class, and every parked proposal, and never anything on the irreversible list.",
 }
+
+# The fallback consent (Implementation Decisions 15), one line each, as the switch and the intake say what it does.
+MODEL_FALLBACK = {
+    AUTO: "while Fable's weekly window is spent, Fable work falls back to Opus without asking.",
+    ASK: "while Fable's weekly window is spent, Fable work waits for the owner's answer on falling back; until that ask is built (ticket 57), nobody is asked and it waits for the reset as under wait.",
+    WAIT: "while Fable's weekly window is spent, Fable work waits for the reset and never falls back.",
+}
+# How the owner is shown a project that never recorded a consent, which behaves as `ask`.
+UNSET_CONSENT = "ask (unset)"
 
 # `LIVE_JOB_STATUSES` (Implementation Decisions 6) is the job runner's, re-exported here because
 # the views were reading it from this module before the runner existed.
@@ -678,6 +691,7 @@ def status_view(project, refresh=True):
     if resource_problem:
         problems.append(resource_problem)
     active = read_active()
+    view = replay.replay(events)
     return {
         "project": str(project),
         "name": project.name,
@@ -690,7 +704,8 @@ def status_view(project, refresh=True):
         "jobs": live_jobs,
         "decisions": [_ticket_line(entry, tickets) for entry in _open_decisions(graph)],
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
-        "window": window_status(events, harness),
+        "window": window_status(events, harness, view),
+        "hold": hold_status(project, events, harness, graph, tickets, view),
         "goal": goal_progress(project, events),
         "resources": resources,
         "events": events[-10:],
@@ -749,7 +764,7 @@ def read_jobs(project):
     return jobs, problems
 
 
-def window_status(events, harness=None):
+def window_status(events, harness=None, view=None):
     """The usage windows as the journal last saw them: the pacing reading and whether a run is paused.
 
     The fold is the conductor's own (`replay.View`), so `status` and a conductor never disagree
@@ -757,7 +772,7 @@ def window_status(events, harness=None):
     the ones the conductor paces by: `harness.json`'s, under what a `control pacing` event set.
     """
     harness = harness or {}
-    view = replay.replay(events)
+    view = replay.replay(events) if view is None else view
     stop_at, cheap_at = thresholds(harness.get("pacing"), view.thresholds)
     pause = view.pause or {}
     return {
@@ -772,6 +787,99 @@ def window_status(events, harness=None):
         "stop_at": stop_at,
         "cheap_at": cheap_at,
     }
+
+
+# The events a launch or a judgment made by fallback carries `fallback_from` on (decision 15), which the hold line counts;
+# ticket 56 gives it to `verdict` and `decision`.
+FELL_BACK = (TICKET_LAUNCHED, VERDICT, DECISION)
+
+
+def hold_status(project, events, harness=None, graph=None, fields=None, view=None):
+    """The hold on Fable's weekly window as `status` shows it, or None while no hold stands (decision 15).
+
+    `consent` is the fallback consent the conductor falls back or waits by, and `stated` whether anyone
+    recorded it (`fallback_consent`). `waiting` counts the launches on Fable the hold holds
+    (`_waiting_on_fable`). `fallen_back` counts the `ticket_launched`, `verdict`, and `decision` events
+    carrying `fallback_from` since the `paused` that began the hold, an attempt's launches once: a
+    fallback launch refused and launched again, or relaunched after a restart, is still one piece of
+    Fable work on Opus. `line` is the hold line, which `status` prints under the window line and the
+    dashboard's overview shows. `view` is the journal already replayed, when the caller has it.
+    """
+    view = replay.replay(events) if view is None else view
+    if view.hold is None:
+        return None
+    consent, stated = fallback_consent(harness, view)
+    began = None
+    for index, event in enumerate(events):
+        payload = event.get("payload") or {}
+        if payload.get("model") != FABLE:
+            continue
+        if event.get("event") == UNPAUSED:
+            began = None
+        elif event.get("event") == PAUSED and began is None:
+            began = index
+    launches, fallen_back = set(), 0
+    for event in events[began or 0:]:
+        payload = event.get("payload") or {}
+        if event.get("event") not in FELL_BACK or not payload.get("fallback_from"):
+            continue
+        if event.get("event") == TICKET_LAUNCHED:
+            if (payload.get("ticket"), payload.get("attempt")) in launches:
+                continue
+            launches.add((payload.get("ticket"), payload.get("attempt")))
+        fallen_back += 1
+    hold = {
+        "resets_at": view.hold.get("resets_at"),
+        "consent": consent,
+        "stated": stated,
+        "waiting": _waiting_on_fable(project, events, view, graph or empty_graph(), fields or {}, consent == AUTO),
+        "fallen_back": fallen_back,
+    }
+    hold["line"] = render_hold(hold)
+    return hold
+
+
+def _waiting_on_fable(project, events, view, graph, fields, falls_back):
+    """How many launches on Fable the hold holds, as the journal and the ticket files tell it.
+
+    While the consent does not fall back: every frontier ticket whose tier is Fable, and every running
+    ticket whose Fable session waits to start again: one a limit stopped (its result journaled as
+    unusable) or one owed its acceptance resume (its result valid and the acceptance after it failed),
+    with nothing started since. Under every consent, until verdicts fall back too: every done ticket
+    whose verdicts run on Fable and have not all passed, counted once, since they wait whole.
+    """
+    from wayline import gates  # the gates import this module; the hold line is the one view that needs them
+
+    policy = policy_for(project)
+    tiers = policy.get("difficulty") or {}
+    waiting = 0
+    if not falls_back:
+        waiting += sum(1 for entry in frontier(graph) if (tiers.get(str(entry.get("difficulty"))) or {}).get("model") == FABLE)
+        failed = set()
+        for event in events:
+            payload = event.get("payload") or {}
+            key = (payload.get("ticket"), payload.get("attempt"))
+            if event.get("event") == TICKET_RESULT:
+                failed.discard(key)
+            elif event.get("event") == ACCEPTANCE:
+                (failed.discard if payload.get("pass") else failed.add)(key)
+        for entry in _with_status(graph, "running"):
+            known = view.tickets.get(entry["id"])
+            attempt = known.latest if known is not None else None
+            if (attempt is not None and attempt.model == FABLE and attempt.owed == replay.RESULT
+                    and (not attempt.sessions[-1].result.get("valid") or (entry["id"], attempt.number) in failed)):
+                waiting += 1
+    verifiers = policy.get("verifier") or {}
+    for entry in _with_status(graph, "done"):
+        known, ticket = view.tickets.get(entry["id"]), fields.get(entry["id"])
+        attempt = known.latest if known is not None else None
+        if attempt is None or ticket is None or (verifiers.get(attempt.model) or {}).get("model") != FABLE:
+            continue
+        asks = gates.ticket_asks(ticket, entry.get("difficulty"), attempt.model, relative_path(ticket),
+                                 commit=view.integrated.get(entry["id"]), outputs=ticket.get("outputs") or [])
+        if any(ask.verdict_type not in view.passed(entry["id"]) for ask in asks):
+            waiting += 1
+    return waiting
 
 
 def goal_progress(project, events):
@@ -825,6 +933,8 @@ def render_status(view):
     lines.extend(_render_jobs(view["jobs"]))
     lines.extend(_render_decisions(view["decisions"]))
     lines.append(_render_window(view["window"]))
+    if view.get("hold"):
+        lines.append(view["hold"]["line"])
     lines.append(_render_goal(view["goal"]))
     if view.get("resources") is not None:
         lines.extend(render_resources(view["resources"]))
@@ -885,6 +995,12 @@ def _render_window(window):
     for key in ("five_hour", "seven_day", "fable"):
         parts.append("%s %s" % (key, "unknown" if window[key] is None else _number(window[key])))
     return "   ".join(parts)
+
+
+def render_hold(hold):
+    """The hold line of decision 15: `fable    held until <reset>   consent <consent>   waiting <n>   fallen back <m>`."""
+    return "fable    held until %s   consent %s   waiting %d   fallen back %d" % (
+        hold["resets_at"] or "unknown", hold["consent"] if hold["stated"] else UNSET_CONSENT, hold["waiting"], hold["fallen_back"])
 
 
 def _render_goal(goal):
@@ -1022,6 +1138,90 @@ def set_autonomy(project, autonomy, by="cli"):
             check(updated, load_schema("harness"), name=HARNESS_JSON)
             atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
         control(project, "autonomy", {"autonomy": autonomy}, by=by)
+    return report
+
+
+# --- the fallback consent -------------------------------------------------------------------------------------
+
+
+def fallback_consent(harness, view=None):
+    """`(consent, stated)`: the fallback consent a project holds, and whether anyone stated it (decision 15).
+
+    A `control model_fallback` journaled during the run a replayed `view` is folding wins while that run
+    is open, because the switch and the dashboard's action journal it after writing `harness.json`, and a
+    hand edit of the file does not change what the run was told; once the run ends, and when a new run
+    starts, `harness.json` says it again. A project whose
+    `harness.json` has no `model_fallback` behaves as `ask`, and `stated` False is how it stays
+    distinguishable from an explicit `ask`.
+    """
+    if view is not None and view.model_fallback in CONSENTS:
+        return view.model_fallback, True
+    value = (harness or {}).get("model_fallback")
+    return (value, True) if value in CONSENTS else (ASK, False)
+
+
+def fable_falls_back(project, now=None):
+    """Whether a launch on Fable made outside the conductor falls back to Opus now (decision 15).
+
+    The journal's hold on Fable's weekly window stands, its reset is still ahead of `now` (no conductor may
+    be running to journal the `unpaused`), and the fallback consent is `auto`. The report's writer asks
+    this; the conductor asks the view it keeps between waves instead. Anything unreadable is no fallback.
+    """
+    try:
+        events, _ = Ledger(Path(project)).read_events()
+        harness = read_harness(project)
+    except (ProjectError, ValueError, OSError):
+        return False
+    view = replay.replay(events)
+    if view.hold is None:
+        return False
+    resets = epoch(view.hold.get("resets_at"))
+    if resets is not None and resets <= (time.time() if now is None else now):
+        return False
+    return fallback_consent(harness, view)[0] == AUTO
+
+
+def set_model_fallback(project, consent, by="cli"):
+    """`wayline switch --fallback`: write the consent to `harness.json`, then journal `control model_fallback`.
+
+    Any consent is accepted at any time, with a conductor running or not, since none of the three takes an
+    irreversible step. A running conductor applies the event at its next wave, and `harness.json` is what the
+    next run starts from; it is written first, so a crash between the two leaves a run that starts from the
+    new consent. `by` is `cli`, or `dashboard` for its `model_fallback` action.
+
+    A change is measured against `harness.json` and against the consent a run still open in the journal
+    holds, so neither a hand edit of the file nor an intake that wrote it can pass a change off as none. An explicit `ask` on a
+    project without the key is a change: it records that the owner answered.
+
+    Returns `{from, to, changed, conductor}`, `from` None for a project that never recorded a consent.
+    """
+    project = Path(project).resolve()
+    if consent not in CONSENTS:
+        raise ProjectError("the fallback consent is one of %s, got %r" % (", ".join(CONSENTS), consent))
+    ledger = Ledger(project)
+    with ledger.lock():
+        harness = read_harness(project)
+        written = harness.get("model_fallback")
+        holder = conductor_holder(project)
+        held = [written]
+        events, _ = ledger.read_events()
+        running = replay.replay(events).model_fallback
+        if running in CONSENTS:
+            held.append(running)
+        report = {"from": held[-1], "to": consent, "changed": any(value != consent for value in held), "conductor": holder}
+        if not report["changed"]:
+            return report
+        if written != consent:
+            updated = {}
+            for key, value in harness.items():
+                if key != "model_fallback":
+                    updated[key] = value
+                if key == "radius":
+                    updated["model_fallback"] = consent  # beside autonomy and radius, where the intake writes it
+            updated.setdefault("model_fallback", consent)
+            check(updated, load_schema("harness"), name=HARNESS_JSON)
+            atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
+        control(project, "model_fallback", {"model_fallback": consent}, by=by)
     return report
 
 
@@ -1189,13 +1389,22 @@ def switch_command(args):
     parser = argparse.ArgumentParser(
         prog="wayline switch",
         description="make another project the active one; with --autonomy instead, raise the project's autonomy, "
-                    "or lower it while no conductor is running")
+                    "or lower it while no conductor is running; with --fallback, set its fallback consent at any time")
     parser.add_argument("path", nargs="?", help="the project to switch to")
     parser.add_argument("--autonomy", choices=list(AUTONOMY), help="the autonomy to set on the project, instead of switching")
-    parser.add_argument("--project", help="with --autonomy, the project to set; the active one by default")
+    parser.add_argument("--fallback", choices=list(CONSENTS),
+                        help="the fallback consent to set on the project, instead of switching: whether Fable work falls back to "
+                             "Opus while Fable's weekly window is spent")
+    parser.add_argument("--project", help="with --autonomy or --fallback, the project to set; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.fallback is not None:
+        if options.path is not None or options.autonomy is not None:
+            print("wayline switch: give --fallback on its own, not with a project to switch to or --autonomy "
+                  "(--project names the project it sets)", file=sys.stderr)
+            return 2
+        return _switch_fallback(options)
     if options.autonomy is not None:
         if options.path is not None:
             print("wayline switch: give a project to switch to or --autonomy, not both (--project names the project --autonomy sets)",
@@ -1204,7 +1413,8 @@ def switch_command(args):
         return _switch_autonomy(options)
     if options.path is None or options.project is not None:
         parser.print_usage(sys.stderr)
-        print("wayline switch: give the project to switch to, or --autonomy <level> (with --project for another project)", file=sys.stderr)
+        print("wayline switch: give the project to switch to, or --autonomy <level> or --fallback <consent> (with --project for another project)",
+              file=sys.stderr)
         return 2
     try:
         previous = read_active()
@@ -1246,6 +1456,25 @@ def _switch_autonomy(options):
         print("  journaled for the conductor (pid %s) to apply at its next wave" % report["conductor"].get("pid", "?"))
     else:
         print("  no conductor is running; the next run starts %s" % report["to"])
+    return 0
+
+
+def _switch_fallback(options):
+    try:
+        project = find_project(options.project)
+        report = set_model_fallback(project, options.fallback)
+    except (ProjectError, ValidationError, OSError) as failure:
+        print("wayline switch: %s" % failure, file=sys.stderr)
+        return 1
+    if not report["changed"]:
+        print("the fallback consent is already %s on %s" % (report["to"], project))
+        return 0
+    print("fallback consent from %s to %s on %s" % (report["from"] or UNSET_CONSENT, report["to"], project))
+    print("  %s: %s" % (report["to"], MODEL_FALLBACK[report["to"]]))
+    if report["conductor"] is not None:
+        print("  journaled for the conductor (pid %s) to apply at its next wave" % report["conductor"].get("pid", "?"))
+    else:
+        print("  no conductor is running; the next run starts under %s" % report["to"])
     return 0
 
 

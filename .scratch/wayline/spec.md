@@ -368,7 +368,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `unpaused` | `model`: `fable` (the hold ended; absent when the whole-run pause ends) |
   | `ticket_created` | `ticket`, `kind`, `proposed_by`, `origin`, `blocked_by` |
   | `assigned` | `ticket`, `role`, `skills` |
-  | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256` |
+  | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256`; `fallback_from`: `fable` (a Fable launch that fell back to Opus, decision 15; absent otherwise) |
   | `ticket_session` | `ticket`, `attempt`, `session_id`, `model` (from the stream's `system/init`) |
   | `ticket_result` | `ticket`, `attempt`, `session_id`, `status`, `turns`, `duration_ms`, `usage`, `permission_denials`, `valid` |
   | `ticket_resumed` | `ticket`, `attempt`, `session_id`, `reason`: `invalid_result`, `acceptance_failed`, `worker_died`, `timeout`, `readopted` |
@@ -398,7 +398,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `absorbed` | `slug`, `level`, `session_id`, `chunks`, `entries`, `coverage_pass` |
   | `consulted` | `slug`, `by`, `question_sha256`, `promote_requested`, `session_id` |
   | `notified` | `event`, `channel`: `notify-send`, `hermes`, `none`; `ok`, `exit_code` |
-  | `control` | `command`: `pause`, `resume`, `stop`, `cancel`, `rerun`, `autonomy`, `pacing`; `args`, `by` |
+  | `control` | `command`: `pause`, `resume`, `stop`, `cancel`, `rerun`, `autonomy`, `pacing`, `model_fallback`; `args`, `by` |
   | `switched` | `from`, `to` |
   | `feedback` | `id`, `source`: `cli`, `dashboard`, `file` |
   | `change_record` | `id`, `scope_kind`: `local`, `global`; `mechanism`, `fixture` |
