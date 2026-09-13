@@ -473,10 +473,14 @@ class InitCommandTest(ProjectTestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("nothing to do", done.stdout)
 
-    def test_uninstall_units_names_the_ticket_that_installs_them(self):
-        done = self.run_cli("init", str(self.temp / "cli-study"), "--uninstall-units")
+    def test_with_the_units_off_init_leaves_the_manager_alone(self):
+        """The suite's `WAYLINE_UNITS=none` reaches the child: no unit is written, none is removed."""
+        done = self.run_cli("init", str(self.temp / "cli-study"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("units    skipped (WAYLINE_UNITS=none)", done.stdout)
+        done = self.run_cli("init", "--uninstall-units")
         self.assertEqual(done.returncode, 2)
-        self.assertIn("ticket 14", done.stderr)
+        self.assertIn("WAYLINE_UNITS=none", done.stderr)
 
     def test_the_email_flag_lands_in_harness_json(self):
         project = self.temp / "cli-study"

@@ -132,7 +132,8 @@
    "title": "The tick (verbatim prototype 29)",
    "blockers": [
     "10",
-    "13"
+    "13",
+    "54"
    ],
    "milestone": "M1"
   },
@@ -423,7 +424,10 @@
     "39",
     "40",
     "41",
-    "42"
+    "42",
+    "54",
+    "55",
+    "56"
    ],
    "milestone": "M5"
   },
@@ -528,13 +532,52 @@
     "52"
    ],
    "milestone": "M7"
+  },
+  "54": {
+   "number": 101,
+   "id": 5439744924,
+   "title": "Hold only Fable launches while Fable's weekly window is spent",
+   "blockers": [
+    "10"
+   ],
+   "milestone": "M1"
+  },
+  "55": {
+   "number": 102,
+   "id": 5439745249,
+   "title": "Fall back to Opus under the fallback consent",
+   "blockers": [
+    "30",
+    "54"
+   ],
+   "milestone": "M5"
+  },
+  "56": {
+   "number": 103,
+   "id": 5439745613,
+   "title": "Verdicts on Opus and the verdict principle",
+   "blockers": [
+    "24",
+    "55"
+   ],
+   "milestone": "M5"
+  },
+  "57": {
+   "number": 104,
+   "id": 5439745966,
+   "title": "Ask the owner when Fable is spent",
+   "blockers": [
+    "35",
+    "55"
+   ],
+   "milestone": "M5"
   }
  },
  "relationships": {
-  "sub_issues": 53,
+  "sub_issues": 57,
   "sub_issue_error": null,
-  "dependencies": 100,
-  "dependencies_total": 100,
+  "dependencies": 111,
+  "dependencies_total": 111,
   "dependency_error": null
  }
 }

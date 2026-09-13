@@ -491,10 +491,9 @@ class RefuseToStartTest(ConductorCase):
         self.assertNotIn("ticket_launched", [event["event"] for event in self.events()])
 
     def test_a_flag_a_later_ticket_builds_says_which(self):
-        for flag, owner in (("--detach", "ticket 13"), ("--simulate-limit", "ticket 10")):
+        for flag, owner in (("--simulate-limit", "ticket 10"), ("--simulate-failure", "ticket 38")):
             with self.subTest(flag=flag):
-                arguments = [flag] if flag != "--simulate-limit" else [flag, "5"]
-                code, _, err = run_verb(arguments + ["--project", str(self.project)])
+                code, _, err = run_verb([flag, "5", "--project", str(self.project)])
                 self.assertEqual(code, 2)
                 self.assertIn(owner, err)
 

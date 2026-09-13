@@ -38,7 +38,7 @@ def lazy(module, attribute):
 # The verb table of Implementation Decisions 1, grouped as the spec groups it, plus `job`, the
 # verb decisions 4 and 6 give experiment workers to write a job file for the runner.
 VERBS = [
-    Verb("init", "init <path> [--email <address>] [--uninstall-units]", "lay out a project, register it, make it the active one (the user units arrive with the tick)", "project", lazy("wayline.project", "init_command")),
+    Verb("init", "init <path> [--email <address>] | init --uninstall-units", "lay out a project, register it, make it the active one, and install the tick and dashboard user units", "project", lazy("wayline.project", "init_command")),
     Verb("intake", "intake [<material>...] [--goal <file>] [--from <spec>]", "phase P0: take what the owner has and write INTAKE.md, harness settings, and a measurable GOAL.json (also a skill)", "phases", lazy("wayline.intake", "intake_command")),
     Verb("absorb", "absorb [--level 0] [--code <slug> <url>@<sha>] [--inventory <slug> [--pdf <path>]]", "phase P1: build the dossiers for the references, and one reference's inventory from its arXiv source or a PDF", "phases", lazy("wayline.dossier", "absorb_command")),
     Verb("position", "position", "phase P2: write the position memo", "phases"),

@@ -983,16 +983,23 @@ def ask_email(given, path, stream=None):
 
 
 def init_command(args):
-    parser = argparse.ArgumentParser(prog="wayline init", description="lay out a project, register it, make it active")
-    parser.add_argument("path", help="the project directory; it is created when it does not exist")
+    parser = argparse.ArgumentParser(prog="wayline init", description="lay out a project, register it, make it active, and install the user units")
+    parser.add_argument("path", nargs="?", help="the project directory; it is created when it does not exist")
     parser.add_argument("--no-git", action="store_true", help="do not run git init even when the directory is not a repository")
     parser.add_argument("--email", help="the owner address the scout sends to the polite pools; git's is offered when this is omitted")
-    parser.add_argument("--uninstall-units", action="store_true", help="remove the user units (ticket 14 installs them)")
+    parser.add_argument("--uninstall-units", action="store_true",
+                        help="disable and remove the tick timer, the tick service, and the dashboard service, and nothing else")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    from wayline import tick  # it imports this module
     if options.uninstall_units:
-        print("wayline init: --uninstall-units needs the user units, which ticket 14 (the tick) installs", file=sys.stderr)
+        if options.path:
+            print("wayline init: --uninstall-units takes no path; the units belong to the machine, not to a project", file=sys.stderr)
+            return 2
+        return _uninstall_units(tick)
+    if not options.path:
+        print("wayline init: a path is needed (wayline init <path>), or --uninstall-units", file=sys.stderr)
         return 2
     try:
         report = init_project(options.path, git=not options.no_git, owner_email=ask_email(options.email, options.path))
@@ -1009,6 +1016,43 @@ def init_command(args):
         print("  note  %s" % note)
     if report["displaced"]:
         print("  active project moved from %s; wayline switch %s goes back" % (report["displaced"], report["displaced"]))
+    try:
+        units = tick.install_units()
+    except (tick.UnitError, OSError) as failure:
+        print("wayline init: the user units: %s" % failure, file=sys.stderr)
+        return 1
+    if units["skipped"]:
+        print("units    skipped (%s)" % units["skipped"])
+        return 0
+    print("units    %s" % units["directory"])
+    for name in units["written"]:
+        print("  wrote %s" % name)
+    if units["enabled"]:
+        print("  enabled %s" % " ".join(units["enabled"]))
+    for problem in units["problems"]:
+        print("  problem  %s" % problem)
+    note = tick.offer_env_file()
+    if note:
+        print("  note  %s" % note)
+    return 0
+
+
+def _uninstall_units(tick):
+    try:
+        report = tick.uninstall_units()
+    except (tick.UnitError, OSError) as failure:
+        print("wayline init: --uninstall-units: %s" % failure, file=sys.stderr)
+        return 1
+    if report["skipped"]:
+        print("wayline init: --uninstall-units does nothing with %s" % report["skipped"], file=sys.stderr)
+        return 2
+    print("units    %s" % report["directory"])
+    for name in report["removed"]:
+        print("  removed %s" % name)
+    if not report["removed"]:
+        print("  no wayline unit was installed")
+    for note in report["notes"]:
+        print("  note  %s" % note)
     return 0
 
 
