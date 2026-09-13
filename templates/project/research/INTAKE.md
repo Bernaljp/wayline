@@ -1,27 +1,45 @@
 # Intake
 
-What the owner has and what they want, in their own words. `wayline intake` fills this in with
-the owner; until then the headings are the questions.
+What the owner has and what they want, in their own words. `wayline intake` (or the
+`wayline-intake` skill) rewrites this file; until then the headings are the questions.
 
-## The intent
+## Intent
 
-One paragraph: what question this project answers, and what would count as an answer.
-
-## What exists already
-
-Data, code, notes, earlier results, and where each of them lives.
+What question this project answers, and what would count as an answer.
 
 ## References
 
-One line per paper, repository, or document worth absorbing, with a locator (a DOI, an arXiv id,
-a URL, or a path).
+One line per paper or document worth absorbing: a DOI, an arXiv id, a URL, a title, or a PDF.
+
+## Data
+
+What data exists, where it lives, what is held out, and what may not leave the machine.
+
+## Code
+
+The repositories the work builds on, each pinned to a commit.
 
 ## Constraints
 
-Hardware, deadlines, what must not be touched, and anything the harness must ask about rather
-than decide.
+Hardware, deadlines, licences, methods that are off the table, and what must not change.
 
-## Success
+## Autonomy
 
-How the owner will know the work is done, and the metric that says so if there is one. This is
-what `GOAL.json` is cut from.
+`interactive`, `checkpoints`, or `autonomous`.
+
+## Radius
+
+`strict`, `moderate`, or `exploratory`.
+
+## Budgets
+
+GPU hours, wall clock, and the usage windows the run may spend.
+
+## Decisions that stay human-only
+
+Decisions that change the goal or the data, and any class the owner adds.
+
+## Goal
+
+The metric, the target, and the command that measures it, if there is one. This is what
+`GOAL.json` is cut from.

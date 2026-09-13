@@ -10,7 +10,7 @@ from wayline.jsonschema import check, check_schema, load_schema, validate
 
 # The schemas this ticket ships; later tickets add the rest of Implementation Decisions 2's list.
 SHIPPED = ["journal_event", "ticket", "result", "harness", "policy", "job", "manifest", "decision",
-           "dossier", "registry_entry", "l1_record", "code_dossier", "verdict", "guidelines", "inventory",
+           "dossier", "registry_entry", "l1_record", "code_dossier", "verdict", "guidelines", "inventory", "goal",
            "claim_classes", "report_prose"]
 
 
