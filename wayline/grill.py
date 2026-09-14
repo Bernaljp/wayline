@@ -264,13 +264,16 @@ def _flag(value, what):
     return value
 
 
-def with_answer(records, identifier, text, rationale, confidence=None, decided_by="human", revise=False, ts=None):
+def with_answer(records, identifier, text, rationale, confidence=None, decided_by="human", revise=False, ts=None,
+                model=None, fallback_from=None):
     """`records` with one question settled, and the settled record.
 
     An open question is settled in place and moves to the end of the settled records. A settled one
     is answered again only with `revise`, as a new record that supersedes it, so the old answer stays
     on the record. A question whose prerequisites are open is refused, and so is the decider on a
-    human-only or irreversible question (decision 4).
+    human-only or irreversible question (decision 4). `model` is the model the answering session ran
+    on and `fallback_from` is `fable` when it ran on Opus in Fable's place (decision 15); an answer no
+    model gave carries neither, and a revision never inherits the ones before it.
     """
     if not isinstance(identifier, str):
         raise GrillError("a question's id is Q and a number, like Q3; got %r" % (identifier,))
@@ -284,10 +287,16 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
     if decided_by not in DECIDERS:
         raise GrillError("decided_by is one of %s, got %r" % (", ".join(DECIDERS), decided_by))
     revise = _flag(revise, "revise")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise GrillError("model is the name of the model the answer ran on, got %r" % (model,))
+    if fallback_from not in (None, "fable") or (fallback_from and model is None):
+        raise GrillError("fallback_from is fable, on an answer that names the model it ran on in Fable's place; got %r" % (fallback_from,))
     if decided_by == "decider" and _owners(record):
         raise GrillError("%s is %s: the decider never resolves it, and it waits for the owner"
                          % (identifier, "human-only" if record.get("human_only") else "irreversible"))
     answered = {"answer": text, "rationale": rationale, "confidence": confidence, "decided_by": decided_by, "timestamp": ts or now_ts()}
+    answered.update({key: value for key, value in (("model", model), ("fallback_from", fallback_from)) if value is not None})
+    base = {key: value for key, value in record.items() if key not in ("model", "fallback_from")}
     position = sum(1 for other in records if _settled(other))
     if _settled(record):
         if not revise:
@@ -296,13 +305,13 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
         later = _superseded(records).get(identifier)
         if later is not None:
             raise GrillError("%s was revised already by %s; revise %s instead" % (identifier, later, later))
-        revision = _check(dict(record, id=_next_id(records), tier=_current_tier(records) or None, supersedes=identifier, **answered))
+        revision = _check(dict(base, id=_next_id(records), tier=_current_tier(records) or None, supersedes=identifier, **answered))
         return records[:position] + [revision] + records[position:], revision
     needs = missing(record, records)
     if needs:
         raise GrillError("%s waits on %s, which %s not settled; a tier asks a question only once its prerequisites are"
                          % (identifier, ", ".join(needs), "is" if len(needs) == 1 else "are"))
-    settled = _check(dict(record, **answered))
+    settled = _check(dict(base, **answered))
     rest = [other for other in records if other is not record]
     return rest[:position] + [settled] + rest[position:], settled
 
@@ -382,8 +391,10 @@ def _write_records(ledger, records):
 
 def _payload(record):
     """The `decision` payload of one settled record; a grill question has no ticket, so its id leads the answer."""
-    return {"ticket": None, "answer": "%s %s Answer: %s" % (record["id"], record["question"], record["answer"]),
-            "decided_by": record["decided_by"], "rationale": record["rationale"], "confidence": record["confidence"]}
+    payload = {"ticket": None, "answer": "%s %s Answer: %s" % (record["id"], record["question"], record["answer"]),
+               "decided_by": record["decided_by"], "rationale": record["rationale"], "confidence": record["confidence"]}
+    payload.update({key: record[key] for key in ("model", "fallback_from") if record.get(key)})
+    return payload
 
 
 def _journal_settled(ledger, records, now=()):
@@ -421,15 +432,17 @@ def ask(project, question, **fields):
     return record
 
 
-def answer(project, identifier, text, rationale, confidence=None, decided_by="human", revise=False):
+def answer(project, identifier, text, rationale, confidence=None, decided_by="human", revise=False, model=None, fallback_from=None):
     """`wayline grill answer`: settle one question in DECISIONS.md and journal it as a `decision`.
 
-    The decider (ticket 31) settles through this function too, with `decided_by="decider"`.
+    The decider (ticket 31) settles through this function too, with `decided_by="decider"`, the `model`
+    its session ran on, and `fallback_from` when it ran on Opus while Fable's weekly window was spent
+    (decision 15), so the `decision` it journals records the model that made it.
     """
     ledger = Ledger(project)
     with ledger.lock():
         records, record = with_answer(read_records(project), identifier, text, rationale, confidence=confidence,
-                                      decided_by=decided_by, revise=revise, ts=now_ts())
+                                      decided_by=decided_by, revise=revise, ts=now_ts(), model=model, fallback_from=fallback_from)
         make_event(DECISION, _payload(record), ts=record["timestamp"])  # an event the journal refuses writes nothing
         _write_records(ledger, records)
         _journal_settled(ledger, records, now=(record["id"],))
@@ -529,6 +542,10 @@ def _render_record(record, records, superseded, questions):
             "- answer: " + _line(record["answer"]),
             "- rationale: " + (_line(record["rationale"]) if record.get("rationale") else "not stated"),
             "- decided-by: " + str(record["decided_by"]),
+        ] + ([
+            "- model: %s%s" % (record["model"], " in place of %s, whose weekly window was spent" % record["fallback_from"]
+                               if record.get("fallback_from") else ""),
+        ] if record.get("model") else []) + [
             "- confidence: " + ("not stated" if confidence is None else "%g" % confidence),
             "- timestamp: " + str(record["timestamp"]),
         ]

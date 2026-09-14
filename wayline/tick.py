@@ -56,7 +56,8 @@ from wayline.ledger import (
     TICKET_NEEDS_HUMAN, Ledger, atomic_write, conductor_holder,
 )
 from wayline.project import (
-    ProjectError, home, is_project, journal_written_answers, policy_for, read_active, read_harness, read_jobs,
+    ProjectError, fallback_consent, home, is_project, journal_written_answers, policy_for, read_active, read_harness,
+    read_jobs,
 )
 from wayline.resources import LIVE_JOB_STATUSES
 from wayline.schedule import awaits_owner
@@ -1176,7 +1177,8 @@ def work_remaining(project, graph, view, policy, fable_is_spent):
     ticket (a worker to re-adopt, a result to carry, the jobs it left), or a done ticket owed its verdicts
     or its acceptance. A job counts through its ticket, since a job whose ticket no longer runs is nothing a
     conductor acts on. A verdict queue that waits only on Fable is work once Fable's weekly window has reset
-    (decision 15); until then a conductor would hold all of it.
+    (decision 15); until then a conductor would hold all of it. `fable_is_spent` is whether Fable work waits:
+    the caller passes false under the fallback consent `auto`, where a conductor takes those verdicts on Opus.
     """
     work = []
     ready = [entry for entry in frontier(graph) if not awaits_owner(entry)]
@@ -1243,7 +1245,13 @@ def relaunch_decision(project, ledger, policy, reading, now):
         return None, "the last run ended %s, which only an answer or the owner undoes" % view.run["ended"]
     graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     stop_at, _ = thresholds_for(project, policy, view)
-    work, waiting = work_remaining(project, graph, view, policy, fable_spent(view, reading, stop_at, now))
+    try:
+        harness = read_harness(project)
+    except (ProjectError, ValueError, OSError):
+        harness = {}
+    # Under `auto` a conductor takes a verdict on Fable on Opus, so a queue that waits only on Fable is work now (decision 15).
+    waits_on_fable = fable_spent(view, reading, stop_at, now) and fallback_consent(harness, view)[0] != pacing.AUTO
+    work, waiting = work_remaining(project, graph, view, policy, waits_on_fable)
     if not work:
         return None, "no work remains" + ("; " + waiting if waiting else "")
     closed = window_closed(view, reading, stop_at, now)

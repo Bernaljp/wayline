@@ -642,6 +642,21 @@ class FableVerdictTest(TickCase):
         self.fake.usage_text = usage_text(10, 20, fable=97)
         self.assertFalse(self.run_tick().relaunched)
 
+    def test_under_auto_a_queue_waiting_only_on_fable_is_work_while_the_hold_stands(self):
+        """Ticket 56: under the fallback consent `auto` a conductor takes those verdicts on Opus, so they wait on nothing."""
+        project.set_model_fallback(self.project, "auto")
+        result = self.run_tick()
+        self.assertTrue(result.relaunched)
+        self.assertIn("1 ticket(s) owed a verdict", result.why)
+
+    def test_under_wait_and_ask_the_queue_still_waits(self):
+        for consent in ("wait", "ask"):
+            with self.subTest(consent=consent):
+                project.set_model_fallback(self.project, consent)
+                result = self.run_tick()
+                self.assertFalse(result.relaunched)
+                self.assertIn("1 ticket(s) wait for a verdict on Fable", result.why)
+
     def test_a_verdict_that_does_not_run_on_fable_is_work_while_the_hold_stands(self):
         self.add_ticket(2, status="done", difficulty=2, quality=["the file says hello"])
         self.done_on(2, "sonnet")  # a Sonnet author's quality verdict goes to Opus

@@ -47,7 +47,7 @@ __all__ = [
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
-    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "fable_falls_back", "set_model_fallback", "hold_status", "render_hold",
+    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "fable_hold", "fable_falls_back", "set_model_fallback", "hold_status", "render_hold",
     "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
 
@@ -789,8 +789,7 @@ def window_status(events, harness=None, view=None):
     }
 
 
-# The events a launch or a judgment made by fallback carries `fallback_from` on (decision 15), which the hold line counts;
-# ticket 56 gives it to `verdict` and `decision`.
+# The events a launch or a judgment made by fallback carries `fallback_from` on (decision 15), which the hold line counts.
 FELL_BACK = (TICKET_LAUNCHED, VERDICT, DECISION)
 
 
@@ -845,8 +844,9 @@ def _waiting_on_fable(project, events, view, graph, fields, falls_back):
     While the consent does not fall back: every frontier ticket whose tier is Fable, and every running
     ticket whose Fable session waits to start again: one a limit stopped (its result journaled as
     unusable) or one owed its acceptance resume (its result valid and the acceptance after it failed),
-    with nothing started since. Under every consent, until verdicts fall back too: every done ticket
-    whose verdicts run on Fable and have not all passed, counted once, since they wait whole.
+    with nothing started since, and every done ticket whose verdicts run on Fable and have not all
+    passed, counted once, since they wait whole. Under `auto` nothing waits: the tickets and their
+    verdicts alike are taken on Opus.
     """
     from wayline import gates  # the gates import this module; the hold line is the one view that needs them
 
@@ -869,6 +869,8 @@ def _waiting_on_fable(project, events, view, graph, fields, falls_back):
             if (attempt is not None and attempt.model == FABLE and attempt.owed == replay.RESULT
                     and (not attempt.sessions[-1].result.get("valid") or (entry["id"], attempt.number) in failed)):
                 waiting += 1
+    if falls_back:
+        return waiting
     verifiers = policy.get("verifier") or {}
     for entry in _with_status(graph, "done"):
         known, ticket = view.tickets.get(entry["id"]), fields.get(entry["id"])
@@ -1160,25 +1162,33 @@ def fallback_consent(harness, view=None):
     return (value, True) if value in CONSENTS else (ASK, False)
 
 
-def fable_falls_back(project, now=None):
-    """Whether a launch on Fable made outside the conductor falls back to Opus now (decision 15).
+def fable_hold(project, now=None):
+    """The hold on Fable's weekly window a session launched outside the conductor meets now, or None (decision 15).
 
-    The journal's hold on Fable's weekly window stands, its reset is still ahead of `now` (no conductor may
-    be running to journal the `unpaused`), and the fallback consent is `auto`. The report's writer asks
-    this; the conductor asks the view it keeps between waves instead. Anything unreadable is no fallback.
+    `{"resets_at", "consent", "stated"}` while the journal's hold stands and its reset is still ahead of `now`
+    (no conductor may be running to journal the `unpaused`), with the fallback consent it falls back or waits
+    by (`fallback_consent`). The report's writer and the gates outside the conductor ask this; the conductor
+    asks the view it keeps between waves instead. Anything unreadable is no hold.
     """
     try:
         events, _ = Ledger(Path(project)).read_events()
         harness = read_harness(project)
     except (ProjectError, ValueError, OSError):
-        return False
+        return None
     view = replay.replay(events)
     if view.hold is None:
-        return False
+        return None
     resets = epoch(view.hold.get("resets_at"))
     if resets is not None and resets <= (time.time() if now is None else now):
-        return False
-    return fallback_consent(harness, view)[0] == AUTO
+        return None
+    consent, stated = fallback_consent(harness, view)
+    return {"resets_at": view.hold.get("resets_at"), "consent": consent, "stated": stated}
+
+
+def fable_falls_back(project, now=None):
+    """Whether a launch on Fable made outside the conductor falls back to Opus now: a hold stands (`fable_hold`) under `auto`."""
+    hold = fable_hold(project, now)
+    return hold is not None and hold["consent"] == AUTO
 
 
 def set_model_fallback(project, consent, by="cli"):

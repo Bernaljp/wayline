@@ -20,6 +20,7 @@ from tests.test_conductor import ConductorCase, done, drive, patch
 from tests.test_fable_hold import HoldCase, journal_ts, refused, rejected_on_fable
 from tests.test_pacing import HOUR
 from tests.test_report import RunCase, verdict
+from tests.test_verdicts import passing
 from wayline import cli, dashboard, intake, pacing, project, replay, tickets, worker
 from wayline.conductor import Conductor
 from wayline.jsonschema import ValidationError, check, load_schema
@@ -309,10 +310,14 @@ class FallbackLaunchTest(FallbackCase):
         self.assertNotIn("fallback_from", self.launches(3)[0], "a launch that was on Opus all along did not fall back")
         self.assertIn("falling back from fable", driven.out.getvalue())
 
+        for _ in range(6):
+            self.fake.script(passing(), role="verifier")
         driven.settle()
-        self.assertEqual(sorted(driven.wave().done), [1, 2, 3])
-        self.assertEqual(self.statuses(), {1: "done", 2: "done", 3: "done"})
-        self.assertEqual(self.verifier_calls(), [], "every verdict here runs on Fable, and waits for ticket 56")
+        carried = driven.wave()
+        self.assertEqual((sorted(carried.done), sorted(carried.accepted)), ([1, 2, 3], [1, 2, 3]),
+                         "every verdict here runs on Fable, and under auto a fresh Opus session takes it (ticket 56)")
+        self.assertEqual({(call.kind, call.request.model, call.request.effort) for call in self.verifier_calls()}, {("launch", "opus", "high")})
+        self.assertEqual({item["payload"].get("fallback_from") for item in self.events("verdict")}, {"fable"})
         self.assertEqual({item["difficulty"] for item in tickets.read_tickets(self.project) if item["id"] in (1, 2)}, {4, 5},
                          "the difficulty is the ticket's, whatever model it ran on")
 
@@ -567,8 +572,8 @@ class HoldLineTest(HoldCase):
         set_model_fallback(self.project, "wait")
         self.assertEqual(self.hold_line(), "fable    held until %s   consent wait   waiting 4   fallen back 1" % RESETS)
         set_model_fallback(self.project, "auto")
-        self.assertEqual(self.hold_line(), "fable    held until %s   consent auto   waiting 1   fallen back 1" % RESETS,
-                         "under auto only ticket 2's verdict on Fable waits")
+        self.assertEqual(self.hold_line(), "fable    held until %s   consent auto   waiting 0   fallen back 1" % RESETS,
+                         "under auto nothing waits: ticket 2's verdict on Fable is taken on Opus too")
         self.assertEqual(dashboard.overview_view(self.project)["hold"]["line"], self.hold_line())
 
     def test_no_hold_line_while_no_hold_stands(self):
@@ -605,8 +610,9 @@ class WriterFallbackTest(RunCase):
             for _ in range(7):
                 fake.script(respond=lambda request, message: verdict(), role="verifier")
             verify_claims(self.project)
-            judged = [call.request.model for call in fake.calls if "Interaction terms carry" in call.request.prompt]
-        self.assertEqual(judged, ["fable"], "prose written on Opus is never judged on Opus")
+            judged = [(call.request.model, call.request.effort) for call in fake.calls if "Interaction terms carry" in call.request.prompt]
+        self.assertEqual(judged, [("opus", "high")],
+                         "Opus's prose goes to the Fable verifier the table gives it, a fresh Opus session while the hold stands")
 
     def test_under_wait_the_writer_stays_on_fable(self):
         self.hold(10)

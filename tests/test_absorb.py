@@ -513,7 +513,7 @@ class SpotCheckTest(AbsorbTestCase):
         verdict = take_spot_check(self.project, SLUG)
         self.assertTrue(verdict.passed)
         critic = self.fake.calls[-1].request
-        # The readers wrote on sonnet and the synthesizer on opus: the critic is on neither.
+        # The synthesizer wrote the flaws on opus, and the table's verifier for opus is fable.
         self.assertEqual((critic.role, critic.model), ("critic", "fable"))
         record = read_dossier(self.ledger, SLUG)["l2"]["spot_check"]
         self.assertEqual((record["status"], record["author_model"]), ("passed", "opus"))
@@ -525,12 +525,32 @@ class SpotCheckTest(AbsorbTestCase):
         with self.assertRaises(DossierError):
             take_spot_check(self.project, SLUG)
 
-    def test_a_policy_that_sends_every_author_to_an_author_s_model_is_a_problem(self):
+    def test_the_critic_may_run_on_the_synthesizer_s_own_model_in_a_fresh_session(self):
+        """Ticket 56: a verdict on the author's model is a verdict when its session carries none of the author's context."""
         (self.project / "harness.json").write_text(json.dumps(
-            {"policy": {"verifier": {"opus": {"model": "sonnet", "effort": "high"}}}}), encoding="utf-8")
+            {"policy": {"verifier": {"opus": {"model": "opus", "effort": "max"}}}}), encoding="utf-8")
         self.fake.script(respond=self.play_workflow(), role="absorb")
         report = self.absorb(fanout=WORKFLOW)
-        self.assertTrue(any("depth spot-check" in problem for problem in report["problems"]))
+        self.assertFalse([problem for problem in report["problems"] if "depth spot-check" in problem])
+        self.fake.script(Envelope(structured_output={"pass": True, "findings": [], "question_limit": "the listed items and flaws"}), role="critic")
+        take_spot_check(self.project, SLUG)
+        critic = self.fake.calls[-1]
+        self.assertEqual((critic.kind, critic.request.role, critic.request.model, critic.request.effort), ("launch", "critic", "opus", "max"))
+        self.assertIn("verdicts", critic.run_dir.parts, "a session of its own, not a resume of the absorb session or an agent inside it")
+        self.assertEqual(list(json.loads(critic.request.agent_text())), ["critic"])
+
+    def test_a_table_that_sends_the_synthesizer_to_haiku_is_a_problem_and_the_gate_refuses_it(self):
+        (self.project / "harness.json").write_text(json.dumps(
+            {"policy": {"verifier": {"opus": {"model": "haiku", "effort": "low"}}}}), encoding="utf-8")
+        self.fake.script(respond=self.play_workflow(), role="absorb")
+        report = self.absorb(fanout=WORKFLOW)
+        self.assertTrue(any("never runs on haiku" in problem for problem in report["problems"]))
+        spent = len(self.fake.calls)
+        with self.assertRaises(gates.GateError) as caught:
+            take_spot_check(self.project, SLUG)
+        self.assertIn("never goes to Haiku", str(caught.exception))
+        self.assertEqual(len(self.fake.calls), spent, "refused before a session was spent")
+        self.assertEqual(read_dossier(self.ledger, SLUG)["l2"]["spot_check"]["status"], "queued")
 
 
 class VerbTest(AbsorbTestCase):

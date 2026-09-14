@@ -52,7 +52,10 @@ the conductor fan-out each is a session of its own.
 
 `critic` has `may_judge` too, beside `verifier` and `fixture-judge`. The gate reads the role an ask
 names, refuses one without `may_judge`, and runs it on the verifier's tier for the author's model,
-so the depth spot-check of an L2 dossier is the critic's read of work the readers wrote on sonnet.
+so the depth spot-check of an L2 dossier is the critic's read on the verifier the table gives for the
+synthesizer's model. That may be the synthesizer's own model, in a fresh session carrying none of the
+dossier's context; it is never Haiku, and while Fable's weekly window is spent a critic on Fable runs
+on Opus at the same effort under the fallback consent, like any verdict on Fable.
 Ticket 29 gives the critic its other job, the position memo.
 
 ## Why `disallowed_tools` names tools the harness never asked for

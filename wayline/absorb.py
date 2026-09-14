@@ -896,25 +896,23 @@ def unresolved_locators(sections, entries, inventory):
 
 
 def _spot_check_author(policy):
-    """The author whose verifier tier the critic runs on, and a problem when no author gives a fresh model.
+    """The author whose verifier tier the critic runs on, and a problem when the spot-check cannot run on that tier.
 
-    The spot-check judges two authors' work: the items were read on the reader's model and the
-    flaws were written on the synthesizer's. A critic on either model would be that model judging
-    itself, which `gates.verifier_tier` refuses only for the one author it is told about. So both are
-    tried, the synthesizer first because the flaws are what the check exists for, and the first whose
-    verifier is neither author's model is taken.
+    The check exists for the flaws, and the flaws were written on the synthesizer's model, so the critic
+    runs on the verifier `policy.verifier` gives for that model. It may be the synthesizer's own model:
+    the critic is a fresh session carrying none of the dossier's context, which is what keeps it from
+    judging its own work (decision 11). A depth spot-check never runs on Haiku (decision 15), so a table
+    that gives Haiku is a problem, and the gate refuses the spot-check until the table names another model.
     """
-    authors = [_tier(policy, SYNTHESIZER)[0], _tier(policy, READER)[0]]
-    for author in authors:
-        try:
-            model, _ = gates.verifier_tier(policy, author)
-        except gates.GateError:
-            continue
-        if model not in authors:
-            return author, None
-    return authors[0], ("policy.verifier sends neither the synthesizer's %s nor the reader's %s to a model that wrote "
-                        "none of the dossier; the depth spot-check stays queued on %s's verifier and would judge its "
-                        "own model's work" % (authors[0], authors[1], authors[0]))
+    author = _tier(policy, SYNTHESIZER)[0]
+    try:
+        model, _ = gates.verifier_tier(policy, author)
+    except gates.GateError as failure:
+        return author, "the depth spot-check stays queued and cannot be taken: %s" % failure
+    if model == gates.HAIKU:
+        return author, ("policy.verifier sends the synthesizer's %s to haiku, and a depth spot-check never runs on haiku; "
+                        "it stays queued until the table names another model" % author)
+    return author, None
 
 
 def spot_check_ask(slug, inventory, entries, sections, author_model, text_layer_path=None):
@@ -966,7 +964,10 @@ def render_dossier_markdown(dossier, entries):
              "Coverage audit: %s, %d of %d inventory items covered%s." % (
                  "pass" if coverage["pass"] else "FAIL", coverage["covered"], coverage["items"],
                  "" if coverage["pass"] else "; missing %s" % ", ".join(coverage["missing"])),
-             "Depth spot-check: %s by the %s." % (l2["spot_check"]["status"], l2["spot_check"]["role"])]
+             "Depth spot-check: %s by the %s.%s" % (
+                 l2["spot_check"]["status"], l2["spot_check"]["role"],
+                 " Taken on %s in place of %s, whose weekly window was spent." % (l2["spot_check"].get("model"), l2["spot_check"]["fallback_from"])
+                 if l2["spot_check"].get("fallback_from") else "")]
     lines += ["- [%s] %s (%s)" % (finding.get("severity", "?"), finding.get("text", ""), finding.get("locator", "?"))
               for finding in l2["spot_check"].get("findings") or []]
     if l2["failures"]:
@@ -1111,8 +1112,14 @@ def absorb_level_2(project, slug, launcher=None, harness_root=None, ledger=None,
     }
 
 
-def take_spot_check(project, slug, harness_root=None, ledger=None, policy=None):
-    """Take the queued depth spot-check of `slug` through the gate and record its outcome in `dossier.json`."""
+def take_spot_check(project, slug, harness_root=None, ledger=None, policy=None, fall_back=None):
+    """Take the queued depth spot-check of `slug` through the gate and record its outcome in `dossier.json`.
+
+    While Fable's weekly window is spent, a critic whose table verifier is Fable runs on Opus at the table's
+    effort under the fallback consent `auto`, and the record carries `fallback_from`; under `wait`, or under
+    `ask` before an answer, the gate raises `gates.FableHeld` and the spot-check stays queued (decision 15).
+    `fall_back` decides for the caller instead, as `gates.take_verdict` reads it.
+    """
     project = Path(project).resolve()
     ledger = ledger_for(ledger if ledger is not None else project)
     dossier = read_dossier(ledger, slug)
@@ -1122,9 +1129,10 @@ def take_spot_check(project, slug, harness_root=None, ledger=None, policy=None):
     ask = gates.Ask(subject_kind="dossier", subject=_refs(slug), question=record["question"], paths=record["paths"],
                     scope_limit=record["scope_limit"], verdict_type=record["verdict_type"],
                     author_model=record["author_model"], role=record["role"])
-    taken = gates.verdict_for(ask, project=project, harness_root=Path(harness_root or HARNESS_ROOT), policy=policy, ledger=ledger)
+    taken = gates.verdict_for(ask, project=project, harness_root=Path(harness_root or HARNESS_ROOT), policy=policy, ledger=ledger,
+                              fall_back=fall_back)
     record.update({"status": "passed" if taken.passed else "failed", "session_id": taken.session_id,
-                   "model": taken.model, "findings": list(taken.findings)})
+                   "model": taken.model, "fallback_from": taken.fallback_from, "findings": list(taken.findings)})
     dossier["updated"] = now_ts()
     ledger.write_json(_refs(slug, "dossier.json"), dossier, schema="dossier")
     try:
@@ -1177,7 +1185,9 @@ def _render(report, verdict=None):
     if verdict is None:
         lines.append("spot-check queued for the %s" % report["spot_check"].role)
     else:
-        lines.append("spot-check %s (%s, %s)" % ("pass" if verdict.passed else "FAIL", verdict.model, verdict.session_id))
+        lines.append("spot-check %s (%s%s, %s)" % ("pass" if verdict.passed else "FAIL", verdict.model,
+                                                   " in place of %s" % verdict.fallback_from if verdict.fallback_from else "",
+                                                   verdict.session_id))
     for failure in report["failures"]:
         lines.append("  short      %s: %s" % (failure["chunk"] or "synthesizer", failure["reason"]))
     for problem in report["problems"]:

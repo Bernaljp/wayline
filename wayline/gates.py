@@ -21,9 +21,13 @@ through the launcher seam, on the model `policy.verifier` gives for the author's
 paths and the one question it answers, and returns the validated verdict after journaling it.
 `kill_argument` is the same gate twice: one session writes the strongest rejection memo, a second
 adjudicates it point by point, and a fail files the `writing` ticket that scopes the claims down.
-Nothing is acquitted by its author, so the verifier's model is never the author's, the session
-carries none of the author's skills, and the paths are the subject rather than anyone's account
-of it.
+Nothing is acquitted by its author: a verdict is always a fresh launch carrying none of the author's
+context (never the session that wrote the work, a resume of it, or a subagent inside it), with none
+of the author's skills, and the paths are the subject rather than anyone's account of it. The model
+table is the default choice of a verifier, not that rule, so a verdict may come from the author's own
+model in such a session. While Fable's weekly window is spent, a verdict whose table verifier is Fable
+is taken on Opus at the table's effort under the fallback consent `auto`, and waits otherwise
+(decision 15).
 """
 
 import json
@@ -41,7 +45,7 @@ from wayline import HARNESS_ROOT
 from wayline import pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
-from wayline.project import policy_for
+from wayline.project import fable_hold, policy_for
 from wayline.tickets import next_id, read_ticket, tickets_dir, write_ticket
 from wayline.tickets import relative_path as ticket_relative_path
 
@@ -68,12 +72,15 @@ __all__ = [
     "take_verdict",
     "ticket_asks", "owed_asks",
     "UsageLimited",
+    "FableHeld",
+    "HAIKU",
     "verdict",
     "verdict_for",
     "verdict_dir",
     "verdict_env",
     "verdict_prompt",
     "verifier_tier",
+    "verdict_tier",
 ]
 
 # The three guards of Implementation Decisions 4, in the order the template registers them.
@@ -413,6 +420,9 @@ CLAIM_SUPPORT = "claim_support"          # a sampled report claim: do its cited 
 DEPTH_SPOT_CHECK = "depth_spot_check"    # an L2 dossier: were its most important items and its flaws read in depth
 VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK)
 
+# The model a depth spot-check never runs on, whatever the table or a fallback would give it (decision 15).
+HAIKU = "haiku"
+
 # What an independent read of a done ticket reads, by the ticket's effective difficulty.
 DIFFICULTY_VERDICTS = {3: DIFF, 4: RESULT, 5: RESULT}
 
@@ -438,6 +448,21 @@ class UsageLimited(GateError):
     def __init__(self, message, limit=None):
         super().__init__(message)
         self.limit = limit
+
+
+class FableHeld(GateError):
+    """A verdict on Fable asked for while the hold on Fable's weekly window stands and the consent waits.
+
+    Nothing was launched. Under `wait`, or under `ask` before an answer, a verdict whose table verifier
+    is Fable waits for the reset (decision 15), so the gate raises this before a session is spent. It
+    is not a verdict against the subject: the ask stays queued, and it is taken once the window resets
+    or the consent falls back. `resets_at` is the hold's reset and `consent` the consent it waits under.
+    """
+
+    def __init__(self, message, resets_at=None, consent=None):
+        super().__init__(message)
+        self.resets_at = resets_at
+        self.consent = consent
 
 
 @dataclass
@@ -466,7 +491,8 @@ class Verdict:
     """One taken verdict: the record of the `verdict` schema, plus what it was about.
 
     `passed` is the schema's `pass`, spelled so it is not the keyword; `payload` spells it back
-    for the journal.
+    for the journal. `fallback_from` is `fable` on a verdict taken on Opus in place of a verifier on
+    Fable while Fable's weekly window was spent (decision 15).
     """
 
     subject_kind: str
@@ -478,37 +504,76 @@ class Verdict:
     session_id: Optional[str] = None
     model: Optional[str] = None
     ticket: Optional[int] = None
+    fallback_from: Optional[str] = None
 
     @property
     def payload(self):
-        """The `verdict` journal event's payload (Implementation Decisions 2)."""
-        return {
+        """The `verdict` journal event's payload (Implementation Decisions 2); `fallback_from` only on a verdict taken by fallback."""
+        payload = {
             "subject_kind": self.subject_kind, "subject": self.subject,
             "verdict_type": self.verdict_type, "pass": self.passed,
             "session_id": self.session_id, "model": self.model,
             "findings": [dict(finding) for finding in self.findings],
         }
+        if self.fallback_from:
+            payload["fallback_from"] = self.fallback_from
+        return payload
 
 
 def verifier_tier(policy, author_model):
     """The verifier's `(model, effort)` for an author on `author_model`, from `policy.verifier`.
 
-    A table that would send the work back to the model that wrote it is refused rather than
-    obeyed. Nothing is acquitted by its author (BRIEF 8.4), and a project's `harness.json.policy`
-    override is the one place that rule could be lost without anyone meaning to lose it.
+    The table is the default choice of a verifier, not the rule that makes a verdict one (decision 11):
+    an entry naming the author's own model is taken as it stands, because what keeps a verdict from
+    being the author's word is a fresh session carrying none of the author's context, and every verdict
+    `take_verdict` launches is one. An author the table does not name, and an effort the launcher does
+    not know, are refused by name.
     """
     table = (policy or {}).get("verifier") or {}
     entry = table.get(author_model)
     if not isinstance(entry, dict) or not entry.get("model") or not entry.get("effort"):
         raise GateError("policy.verifier gives no model and effort for an author on %r; it names %s"
                         % (author_model, ", ".join(sorted(table)) or "nothing"))
-    if entry["model"] == author_model:
-        raise GateError("policy.verifier sends work written on %s to a verifier on %s: a verdict from "
-                        "the model that wrote the work is not a verdict" % (author_model, entry["model"]))
     if entry["effort"] not in worker.EFFORTS:
         raise GateError("policy.verifier gives the effort %r for an author on %s; it is one of %s"
                         % (entry["effort"], author_model, ", ".join(worker.EFFORTS)))
     return entry["model"], entry["effort"]
+
+
+def verdict_tier(policy, author_model, fall_back=False):
+    """The `(model, effort, fallback_from)` a verdict on work written on `author_model` is taken at (decision 15).
+
+    The table's verifier, unless it is on Fable and `fall_back` is true: then Opus at the table's effort
+    (`fable high` becomes `opus high`), and `fallback_from` is `fable`. A verifier on any other model is
+    the table's under every consent, since Fable is the only model with a weekly window of its own.
+    """
+    model, effort = verifier_tier(policy, author_model)
+    if model == pacing.FABLE and fall_back:
+        return pacing.OPUS, effort, pacing.FABLE
+    return model, effort, None
+
+
+def _fall_back_for(project, policy, author_model, fall_back, what):
+    """Whether a verdict on work written on `author_model` falls back now: `fall_back` when the caller decided, else the hold.
+
+    The conductor decides from the consent it read for its wave, so one wave never falls back for one
+    verdict and waits for the next. Any other caller (the claim sampler, the depth spot-check, the kill
+    argument) passes None and the journal decides (`project.fable_hold`): no hold, or a verifier not on
+    Fable, takes the table's model; a hold under `auto` falls back; a hold under `wait`, or under `ask`
+    before an answer, raises `FableHeld` for `what` before any session is spent.
+    """
+    if fall_back is not None:
+        return bool(fall_back)
+    if verifier_tier(policy, author_model)[0] != pacing.FABLE:
+        return False
+    hold = fable_hold(project)
+    if hold is None:
+        return False
+    if hold["consent"] != pacing.AUTO:
+        raise FableHeld("%s runs on Fable, whose weekly window is held until %s; under the fallback consent %s it "
+                        "waits for the reset" % (what, hold["resets_at"], hold["consent"] if hold["stated"] else "ask (unset)"),
+                        resets_at=hold["resets_at"], consent=hold["consent"])
+    return True
 
 
 def verdict_dir(project, subject_kind, subject):
@@ -617,7 +682,7 @@ def findings_text(findings, empty="no finding was named"):
 
 def verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
             verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None, ledger=None,
-            cwd=None, memo=None, run_dir=None, role=VERIFIER):
+            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None):
     """One Type-B verdict, journaled: every verdict in the harness comes through here.
 
     A verdict is journaled because its session id and its model are the whole of what makes it
@@ -627,7 +692,7 @@ def verdict(subject_kind, subject, question, paths, scope_limit, *, project, aut
     taken = take_verdict(subject_kind, subject, question, paths, scope_limit, project=project,
                          author_model=author_model, verdict_type=verdict_type, ticket=ticket,
                          harness_root=harness_root, policy=policy, cwd=cwd, memo=memo,
-                         run_dir=run_dir, role=role)
+                         run_dir=run_dir, role=role, fall_back=fall_back)
     ledger_for(ledger or Path(project).resolve()).append_event(
         VERDICT, taken.payload, ticket=taken.ticket, session_id=taken.session_id)
     return taken
@@ -647,14 +712,20 @@ def verdict_for(ask, **context):
 
 def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
                  verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None,
-                 cwd=None, memo=None, run_dir=None, role=VERIFIER):
+                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None):
     """One verifier session, validated but not journaled; `verdict` is this plus the journal.
 
     `role` names the judging role, the verifier unless a decision names another; whichever it
     is, its sidecar has to carry `may_judge`, and it runs on the verifier's tier for the author.
 
-    The verifier runs on the model and effort `policy.verifier` gives for `author_model`, never on
-    the author's own model. The session is given the paths and the one question; a session that
+    The verifier runs on the model and effort `policy.verifier` gives for `author_model`, which may
+    be the author's own model: the session is always a fresh launch carrying none of the author's
+    context, never a resume of the authoring session or a subagent inside it. A verifier on Fable is
+    taken on Opus at the table's effort when `fall_back` is true (`verdict_tier`); `fall_back=None`
+    reads the hold from the journal and raises `FableHeld` before a session is spent when the verdict
+    waits (decision 15). A depth spot-check that would run on Haiku is refused.
+
+    The session is given the paths and the one question; a session that
     returns something the `verdict` schema refuses is resumed once with the reason, and a second
     unusable answer raises rather than counting as a fail. A verdict nobody could take is not a
     verdict against the subject. A session a usage window refused is never resumed, since a resume
@@ -675,7 +746,12 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
                         % (subject, question, scope_limit))
     project = Path(project).resolve()
     policy = policy_for(project, harness_root) if policy is None else policy
-    model, effort = verifier_tier(policy, author_model)
+    what = "the %s verdict on the %s %s" % (verdict_type, subject_kind, subject)
+    model, effort, fallback_from = verdict_tier(policy, author_model,
+                                                _fall_back_for(project, policy, author_model, fall_back, what))
+    if verdict_type == DEPTH_SPOT_CHECK and model == HAIKU:
+        raise GateError("%s would run on haiku, and a depth spot-check never goes to Haiku (decision 15); "
+                        "policy.verifier gives haiku for an author on %s" % (what, author_model))
     role = worker.read_role(role, harness_root, project)
     if role.may_judge is not True:
         raise GateError("%s: the %s role has to carry may_judge, and a Type-B verdict comes "
@@ -695,7 +771,6 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         schema_path=Path(harness_root).resolve() / "schemas" / (VERDICT_SCHEMA + ".json"),
         max_minutes=_budget(policy, "max_minutes"),
     )
-    what = "the %s verdict on the %s %s" % (verdict_type, subject_kind, subject)
     envelope = worker.launch(request)
     _raise_if_refused(envelope, model, what)
     problem = _unusable(envelope)
@@ -710,7 +785,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         subject_kind=subject_kind, subject=str(subject), verdict_type=verdict_type,
         passed=bool(returned["pass"]), question_limit=returned["question_limit"],
         findings=list(returned.get("findings") or []),
-        session_id=envelope.session_id, model=envelope.model, ticket=ticket,
+        session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
     )
 
 
@@ -850,11 +925,13 @@ WRITING_DIFFICULTY = 3
 
 
 def kill_argument(paths, *, project, author_model, subject_kind="paper", subject=None,
-                  harness_root=HARNESS_ROOT, policy=None, ledger=None, cwd=None):
+                  harness_root=HARNESS_ROOT, policy=None, ledger=None, cwd=None, fall_back=None):
     """The two-thread gate: one session writes the memo, a second adjudicates it, one verdict comes back.
 
-    Both threads are the verifier role on separate sessions, on the model `policy.verifier` gives
-    for the author's, so neither is the author and neither is the other. The adjudication is the
+    Both threads are the verifier role on separate fresh sessions, on the model `policy.verifier`
+    gives for the author's, so neither carries the author's context and neither carries the other's.
+    Whether a verifier on Fable falls back to Opus is decided once, before the memo is spent, and both
+    threads run on that model (decision 15). The adjudication is the
     one verdict: the memo is the case against the work rather than a judgment of it, and it is
     not journaled as a verdict, though its session is on disk in `memo/` beside the
     adjudication's. A fail scopes the claims down rather than blocking forever: a `writing`
@@ -870,8 +947,11 @@ def kill_argument(paths, *, project, author_model, subject_kind="paper", subject
     project = Path(project).resolve()
     subject = str(subject or paths[0])
     run_dir = verdict_dir(project, subject_kind, subject)
+    policy = policy_for(project, harness_root) if policy is None else policy
+    fall_back = _fall_back_for(project, policy, author_model, fall_back,
+                               "the kill argument on the %s %s" % (subject_kind, subject))
     common = dict(project=project, author_model=author_model, harness_root=harness_root,
-                  policy=policy, cwd=cwd)
+                  policy=policy, cwd=cwd, fall_back=fall_back)
     memo = take_verdict(subject_kind, subject, MEMO_QUESTION, paths, MEMO_SCOPE,
                         verdict_type=KILL_MEMO, run_dir=run_dir / "memo", **common)
     adjudication = verdict(subject_kind, subject, ADJUDICATION_QUESTION, paths, ADJUDICATION_SCOPE,
