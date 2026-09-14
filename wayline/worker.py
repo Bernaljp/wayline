@@ -54,10 +54,10 @@ from wayline.ledger import now_ts
 
 __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
-    "launch", "resume", "pid_alive", "terminate", "usage", "simulate_limit", "simulated_limit", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
+    "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "launches_on", "fall_back", "stderr_tail", "stderr_of",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
-    "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command",
+    "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command", "login_command", "auth_status_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
     "schema_bullets", "schema_section",
 ]
@@ -67,6 +67,8 @@ _log = logging.getLogger("wayline.worker")
 TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
 USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence")  # decision 5; research-notes/02 launch 4
 USAGE_TIMEOUT_S = 60
+AUTH_STATUS_ARGV = ("auth", "status", "--json")  # decision 7, the tick's login check; research-notes/02: exit 0 when logged in
+AUTH_STATUS_TIMEOUT_S = 30
 PROC = Path("/proc")  # where a pid's environment says which session it belongs to
 FALLBACK_MODEL = "sonnet"  # `--fallback-model`: overload only, never usage limits (decision 3)
 MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")  # what decision 3 passes as --model; the policy schema's enum
@@ -1350,6 +1352,16 @@ def setup_token_command():
     return "%s setup-token" % ClaudeCli.executable
 
 
+def login_command():
+    """How the tick names the command that signs the owner in again when it asks them to."""
+    return "%s auth login" % ClaudeCli.executable
+
+
+def auth_status_command():
+    """How the tick names the command whose answer says whether the login works."""
+    return "%s %s" % (ClaudeCli.executable, " ".join(AUTH_STATUS_ARGV[:2]))
+
+
 def setup_token():
     """Run `setup-token` at the owner's terminal through the real backend; returns its exit code."""
     return ClaudeCli().setup_token()
@@ -1425,6 +1437,33 @@ class ClaudeCli:
             raise LaunchError("%s -p /usage printed no result text (exit %d)" % (self.executable, done.returncode))
         return text
 
+    def auth_status(self, timeout=AUTH_STATUS_TIMEOUT_S):
+        """`claude auth status --json` (decision 7, the tick's login check): a local command, no model call.
+
+        Returns `{"logged_in", "exit_code", "status"}`. research-notes/02 recorded exit 0 and `loggedIn:
+        true` for a working login, and the docs give exit 1 for none; `status` is the JSON it printed
+        (`loggedIn`, `authMethod`, `subscriptionType`), None when it printed none. `logged_in` is False
+        only when that JSON says `loggedIn: false`, True on exit 0 otherwise, and None for a nonzero exit
+        that says neither, which is a CLI that failed rather than a login that lapsed. Raises `LaunchError`
+        when the executable cannot be run.
+        """
+        executable = self._executable()
+        try:
+            done = subprocess.run([executable, *AUTH_STATUS_ARGV], stdin=subprocess.DEVNULL, capture_output=True,
+                                  text=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as failure:
+            raise LaunchError("%s auth status did not run: %s" % (self.executable, failure))
+        try:
+            status = json.loads(done.stdout)
+        except ValueError:
+            status = None
+        status = status if isinstance(status, dict) else None
+        if status is not None and status.get("loggedIn") is False:
+            logged_in = False
+        else:
+            logged_in = True if done.returncode == 0 else None
+        return {"logged_in": logged_in, "exit_code": done.returncode, "status": status}
+
     def setup_token(self):
         """`claude setup-token` at the owner's terminal, for `init` to write `~/.wayline/env` from.
 
@@ -1441,7 +1480,13 @@ class ClaudeCli:
             return os.path.abspath(override)  # the child runs in another cwd
         found = shutil.which(self.executable)
         if found is None:
-            raise LaunchError("%s is not on PATH; install Claude Code or set WAYLINE_CLAUDE to the executable" % self.executable)
+            # The user manager's PATH, which the tick and a detached conductor start from, lacks the directory the
+            # installer puts the executable in (ticket 13), so it is looked for there before the launch is refused.
+            installed = Path.home() / ".local" / "bin" / self.executable
+            if installed.is_file() and os.access(installed, os.X_OK):
+                return str(installed)
+            raise LaunchError("%s is not on PATH or in ~/.local/bin; install Claude Code or set WAYLINE_CLAUDE to the executable"
+                              % self.executable)
         return found
 
     def _run(self, request, run_dir, session_id, message, on_start):
@@ -1589,12 +1634,19 @@ class FakeLauncher:
             self._loaded = None
             self._next_pid = 100000
             self.usage_text = None
+            self.auth = None
 
     def usage(self):
         """The scripted `/usage` text (`usage_text`), None when none was scripted; an exception put there is raised."""
         if isinstance(self.usage_text, BaseException):
             raise self.usage_text
         return self.usage_text
+
+    def auth_status(self):
+        """The scripted `claude auth status` (`auth`, shaped as `ClaudeCli.auth_status` returns it), None when unscripted; an exception put there is raised."""
+        if isinstance(self.auth, BaseException):
+            raise self.auth
+        return self.auth
 
     @staticmethod
     def _scripted(envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None, respond=None):
@@ -1869,6 +1921,11 @@ def terminate(pid, run_dir=None, hard=False):
 def usage():
     """The plan usage text `claude -p "/usage"` prints, through the selected backend (decision 5)."""
     return backend().usage()
+
+
+def auth_status():
+    """Whether the login works, as `claude auth status` says, through the selected backend (decision 7, the tick)."""
+    return backend().auth_status()
 
 
 # --- the simulated limit (decision 5; M1's demo) ----------------------------------------------------

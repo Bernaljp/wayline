@@ -84,11 +84,11 @@ from typing import NamedTuple, Optional
 
 from wayline import HARNESS_ROOT, gates, pacing, replay, schedule, tick, tickets, worker
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
+    ACCEPTANCE, CONTROL, FEEDBACK, FINDING, INTEGRATED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
-from wayline.project import ProjectError, fallback_consent, find_project, policy_for, read_harness
+from wayline.project import ProjectError, fallback_consent, find_project, journal_written_answers, policy_for, read_harness
 
 __all__ = [
     "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "fallback_tier", "porcelain_entries",
@@ -675,7 +675,9 @@ class Conductor:
             return
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
-        if not tickets.frontier(graph) and not running:
+        # A human-only decision ticket stays on the frontier for the owner and no session takes it, so it keeps no run
+        # going: the owner's answer is what the tick relaunches the conductor for (decision 7).
+        if not [entry for entry in tickets.frontier(graph) if not schedule.awaits_owner(entry)] and not running:
             for line in schedule.held_back(graph):
                 self.say(line)
             self.ledger.append_event(RUN_ENDED, {"reason": "frontier_empty"})
@@ -923,11 +925,8 @@ class Conductor:
             if any(queued.ticket == identifier for queued in self.verdicts):
                 continue
             ticket, _ = self._ticket(identifier)
-            earned = gates.ticket_asks(ticket, entry.get("difficulty", ticket["difficulty"]), launched.model,
-                                       tickets.relative_path(ticket), commit=self.view.integrated.get(identifier),
-                                       outputs=ticket.get("outputs") or [])
-            passed = self.view.passed(identifier)
-            asks = [ask for ask in earned if ask.verdict_type not in passed]
+            earned, asks = gates.owed_asks(ticket, entry.get("difficulty", ticket["difficulty"]), launched.model,
+                                           self.view.integrated.get(identifier), self.view.passed(identifier))
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -1764,17 +1763,13 @@ class Conductor:
         and it wins over the answer the journal held, because the file is where a person answers
         (decision 2). Nothing new is journaled for the ticket's closing: the `decision` is the record.
         """
+        written = journal_written_answers(self.project, self.ledger, self.view.answers)
+        for identifier in sorted(written):
+            self.say("  ticket %d: the answer written in its file is journaled as the owner's" % identifier)
         for ticket in tickets.read_tickets(self.project):
             if ticket["kind"] != tickets.DECISION:
                 continue
-            _, body = tickets.read_ticket(tickets.tickets_dir(self.project) / tickets.filename(ticket))
-            written = tickets.answer_section(body)
-            known = self.view.answers.get(ticket["id"])
-            if written is not None and (known is None or str(known.get("answer") or "").strip() != written):
-                known = self.ledger.append_event(DECISION, {
-                    "ticket": ticket["id"], "answer": written, "decided_by": "human", "rationale": None, "confidence": None,
-                }, ticket=ticket["id"])["payload"]
-                self.say("  ticket %d: the answer written in its file is journaled as the owner's" % ticket["id"])
+            known = written.get(ticket["id"]) or self.view.answers.get(ticket["id"])
             if known is not None and ticket["status"] not in tickets.SATISFIED + ("parked",):
                 self._set_status(ticket["id"], "done")
                 self.say("  ticket %d answered by the %s: %s" % (ticket["id"], known.get("decided_by"), known.get("answer")))

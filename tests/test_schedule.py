@@ -182,6 +182,14 @@ class PickTest(unittest.TestCase):
     def test_an_empty_frontier_picks_nothing(self):
         self.assertEqual(schedule.pick(graph(entry(1, status="done")), slots=2), [])
 
+    def test_a_human_only_decision_ticket_is_never_picked(self):
+        built = graph(entry(1, kind="decision", human_only=True), entry(2, kind="decision"), entry(3))
+        self.assertEqual(ids(frontier(built)), [1, 2, 3])  # still on the frontier, so a paused project can be answered
+        self.assertEqual(sorted(ids(schedule.pick(built, slots=3))), [2, 3])
+        self.assertEqual([schedule.awaits_owner(item) for item in built["tickets"]], [True, False, False])
+        self.assertEqual(schedule.held_back(built),
+                         ["  decision ticket 1 waits for the owner's answer: it is human-only, and no session answers it"])
+
 
 class HeldBackTest(unittest.TestCase):
     """Why the frontier is empty, when open tickets are left: what the conductor says before it stops."""
