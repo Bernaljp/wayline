@@ -28,6 +28,8 @@ from wayline.schedule import CHEAP_ONLY, NORMAL, STOP
 
 __all__ = [
     "FIVE_HOUR", "SEVEN_DAY", "UNKNOWN", "WINDOWS", "FABLE", "FABLE_LIMIT_TYPE", "READINGS", "AUTO", "ASK", "WAIT", "CONSENTS", "OPUS",
+    "FALL_BACK", "ALWAYS_FALL_BACK", "ALWAYS_WAIT", "ASK_OPTIONS", "ALWAYS", "SUPERSEDED", "ASK_ORIGIN",
+    "WAIT_UNDER_HOURS", "ASK_TIMEOUT_HOURS", "ask_origin", "ask_window", "ask_choice", "ask_falls_back", "ask_recommended", "ask_hours",
     "STOP_AT", "CHEAP_AT",
     "FALLBACK_PAUSE_S", "EVENT_SIGNAL", "API_SIGNAL", "MESSAGE_SIGNAL", "SUBAGENT_SIGNAL", "READING_SIGNAL",
     "SESSION_RE", "WEEK_RE", "FABLE_RE",
@@ -54,6 +56,19 @@ READINGS = WINDOWS + (FABLE,)
 # Opus, Sonnet, and Haiku share the all-models week.
 AUTO, ASK, WAIT = "auto", "ask", "wait"
 CONSENTS = (AUTO, ASK, WAIT)
+
+# The ask of decision 15: under `ask`, one decision ticket per spent window asks the owner. `fall back` and `wait` answer for
+# the window; `always fall back` and `always wait` also set the project's consent, to `auto` or `wait`. An answer matching no
+# option counts as `wait`. `superseded` is the answer the conductor closes an unanswered ask with, at the reset or on a change
+# of consent. The ticket's origin names the window's reset, which is what keys it: a replay or a restart never opens a second.
+FALL_BACK, ALWAYS_FALL_BACK, ALWAYS_WAIT = "fall back", "always fall back", "always wait"
+ASK_OPTIONS = (FALL_BACK, WAIT, ALWAYS_FALL_BACK, ALWAYS_WAIT)
+ALWAYS = {ALWAYS_FALL_BACK: AUTO, ALWAYS_WAIT: WAIT}
+SUPERSEDED = "superseded"
+ASK_ORIGIN = "fallback ask: Fable's weekly window resets at "
+# `policy.model_fallback` as decision 14 ships it: the ask recommends `wait` when the reset is under `wait_under_hours` away,
+# and a project without the key, under autonomy `autonomous`, falls back after `ask_timeout_hours` without an answer.
+WAIT_UNDER_HOURS, ASK_TIMEOUT_HOURS = 12, 2
 OPUS = "opus"
 HAIKU = "haiku"  # the model a depth spot-check never runs on (decision 15)
 
@@ -297,6 +312,50 @@ def _zone(name):
         except (ZoneInfoNotFoundError, ValueError):
             pass
     return datetime.now().astimezone().tzinfo
+
+
+# --- the ask of decision 15 ------------------------------------------------------------------
+
+
+def ask_origin(resets_at):
+    """The origin of the ask for the window resetting at `resets_at`, the hold's reset as the journal writes it."""
+    return ASK_ORIGIN + str(resets_at)
+
+
+def ask_window(origin):
+    """The reset an ask's origin names, or None when the origin is not an ask's."""
+    if isinstance(origin, str) and origin.startswith(ASK_ORIGIN) and len(origin) > len(ASK_ORIGIN):
+        return origin[len(ASK_ORIGIN):]
+    return None
+
+
+def ask_choice(answer):
+    """The option an answer to the ask matches, trimmed and case-insensitively; None when it matches none, which counts as `wait`."""
+    text = str(answer or "").strip().lower()
+    return text if text in ASK_OPTIONS else None
+
+
+def ask_falls_back(answer):
+    """Whether an answer to the ask falls back for its window: `fall back` or `always fall back`; every other answer waits."""
+    return ask_choice(answer) in (FALL_BACK, ALWAYS_FALL_BACK)
+
+
+def ask_recommended(resets, now, wait_under_hours=WAIT_UNDER_HOURS):
+    """The ask's recommended answer: `wait` when the reset (epoch seconds) is under `wait_under_hours` away, else `fall back`."""
+    if resets is not None and resets - now < wait_under_hours * 3600:
+        return WAIT
+    return FALL_BACK
+
+
+def ask_hours(policy):
+    """`(wait_under_hours, ask_timeout_hours)` from `policy.model_fallback`; a value that is not a number of hours is passed over."""
+    chosen = {"wait_under_hours": WAIT_UNDER_HOURS, "ask_timeout_hours": ASK_TIMEOUT_HOURS}
+    layer = (policy or {}).get("model_fallback")
+    for key in chosen:
+        value = layer.get(key) if isinstance(layer, dict) else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+            chosen[key] = value
+    return chosen["wait_under_hours"], chosen["ask_timeout_hours"]
 
 
 # --- a hit limit -----------------------------------------------------------------------------

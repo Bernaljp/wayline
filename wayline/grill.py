@@ -47,7 +47,8 @@ _ID = re.compile(r"^Q([1-9][0-9]*)\Z")
 # The order a record's keys are written in, so a diff of DECISIONS.md shows what changed and nothing else.
 FIELDS = ("id", "ticket", "question", "options", "recommended", "evidence", "requires", "human_only", "reversible",
           "tier", "supersedes", "answer", "rationale", "confidence", "decided_by", "timestamp")
-DECIDERS = ("human", "decider")
+# `conductor` is the conductor closing the ask of decision 15, superseded or answered at its timeout; the grill reads it back.
+DECIDERS = ("human", "decider", "conductor")
 
 # What a `--from` batch may carry, per list, and the order the lists are applied in.
 BATCH = {

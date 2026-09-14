@@ -30,9 +30,9 @@ take the defaults and say what you assumed.
 - **Autonomy**: `interactive`, `checkpoints` (the default), or `autonomous`, and beside it the fallback
   consent `model_fallback`, which says what becomes of Fable work while Fable's weekly window is spent:
   `auto` falls back to Opus without asking, `ask` waits for the owner's answer, asked once per spent
-  window (until that ask is built, nobody is asked and it waits for the reset), and
-  `wait` waits for the reset. Ask it with the autonomy and the budgets. When the owner does not say,
-  pass nothing: the project then records no consent and behaves as `ask`.
+  window by a human-only decision ticket, and `wait` waits for the reset. Ask it with the autonomy and
+  the budgets. When the owner does not say, pass nothing: the project then records no consent and
+  behaves as `ask`, except that under `autonomous` an ask nobody answers falls back after two hours.
 - **Radius**: `strict`, `moderate` (the default), or `exploratory`.
 - **Budgets**: GPU hours, wall clock hours, and the usage windows the run may spend.
 - **Decisions that stay human-only**: the classes the decider never resolves. `goal` and `data`

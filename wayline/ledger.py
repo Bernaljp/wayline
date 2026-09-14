@@ -284,7 +284,7 @@ PAYLOAD_ENUMS = {
     (VERDICT, K_SUBJECT_KIND): ("ticket", "claim", "figure", "spec", "dossier", "paper"),
     (VERDICT, K_FALLBACK_FROM): ("fable",),
     (PROPOSAL_PARKED, K_REASON): ("radius", "duplicate", "cap", "blockers"),
-    (DECISION, K_DECIDED_BY): ("human", "decider"),
+    (DECISION, K_DECIDED_BY): ("human", "decider", "conductor"),
     (DECISION, K_FALLBACK_FROM): ("fable",),
     (JOB_RETRIED, K_OOM): ("host", "gpu"),
     (STALL, K_ACTION): ("replan", "stop"),

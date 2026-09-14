@@ -124,6 +124,10 @@
     "stop_at": 0.9,
     "cheap_at": 0.8
   },
+  "model_fallback": {
+    "wait_under_hours": 12,
+    "ask_timeout_hours": 2
+  },
   "context_pack": {
     "max_chars": {
       "sonnet": 120000,

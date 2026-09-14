@@ -25,28 +25,40 @@ which the conductor and the tick journal). Each journals one `decision` with `de
 the conductor closes the ticket at its next wave, and the tick relaunches a conductor that is not
 running (decision 7).
 
+**The ask of decision 15** (ticket 57). Under the fallback consent `ask`, the conductor asks the owner whether
+Fable work falls back to Opus while Fable's weekly window is spent: `open_fable_ask` opens one decision ticket per
+spent window, keyed by the window's reset through its origin, `human_only` (the decider runs on Fable) and with
+`blocking: null` (the hold already holds the Fable work), and notifies with the reset, what is held, the recommended
+answer, and the command that answers it. `close_ask` is the conductor's own answer to one nobody answered:
+`superseded` at the reset or on a change of consent, or `fall back` at the timeout of a project that never recorded
+a consent, each journaled with `decided_by: conductor`.
+
 **The view.** `decisions_view` is `GET /api/projects/<id>/decisions`: the open decision tickets with
 their question, options, evidence, and what they pause; the decision log with the decider's
 decisions first; and the settings the page's controls start from.
 """
 
 import hashlib
+import time
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, grill, replay
+from wayline import HARNESS_ROOT, grill, pacing, replay
 from wayline.ledger import DECISION, DECISION_OPENED, TICKET_CREATED, TICKET_RERUN, Ledger
 from wayline.notify import notify as send_notification
-from wayline.project import AUTONOMY, ProjectError, answering_autonomy, pacing_thresholds, read_active, read_harness
+from wayline.project import (
+    AUTONOMY, ProjectError, answering_autonomy, ask_falls_back_at, fallback_consent, pacing_thresholds, policy_for, read_active,
+    read_harness,
+)
 from wayline.schedule import awaits_owner
 from wayline.tickets import (
     DECISION as DECISION_KIND, SATISFIED, TicketError, answer_section, build_graph, empty_graph, filename, next_id,
     open_decisions, paused_by, read_graph, read_ticket, read_tickets, refresh_graph, relative_path, section,
-    tickets_dir, write_ticket,
+    tickets_dir, with_answer, write_ticket,
 )
 
 __all__ = [
     "DECISION_HEADING", "BLOCKINGS", "PAUSABLE", "decision_record", "decision_question", "decision_body",
-    "open_decision", "open_requested", "requested_origin", "decisions_view", "decision_log", "decider_ready",
+    "open_decision", "open_requested", "requested_origin", "open_fable_ask", "close_ask", "decisions_view", "decision_log", "decider_ready",
 ]
 
 DECISION_HEADING = "## Decision"
@@ -149,6 +161,8 @@ def decision_body(record, paused=(), origin=None):
         lines += ["- evidence:"] + ["  - " + item for item in record["evidence"]]
     if record.get("blocking") == "all":
         lines.append("- blocking: `all`, so no other ticket launches until it is answered")
+    elif record.get("blocking") is None:
+        lines.append("- blocking: null, so no ticket waits on it")
     elif paused:
         lines.append("- blocking: `subgraph`, so %s and whatever waits on %s wait for the answer"
                      % (_named(paused), "it" if len(paused) == 1 else "them"))
@@ -177,7 +191,7 @@ def _decision_opened(events, identifier):
 
 def open_decision(project, question, options=(), recommended=None, evidence=(), blocking="subgraph", human_only=False,
                   reversible=True, pauses=(), blocked_by=(), proposed_by="planner", origin=None, title=None,
-                  context_pack=(), notify=None):
+                  context_pack=(), notify=None, announcement=None):
     """Open one decision ticket; returns `{"ticket", "opened", "paused"}`.
 
     `pauses` names the tickets that wait for the answer: each one not yet running or closed gets the
@@ -186,17 +200,21 @@ def open_decision(project, question, options=(), recommended=None, evidence=(), 
     decision ticket that already carries it is completed rather than opened again: its missing
     pause edges are added, its missing events journaled, and the owner notified only when
     `decision_opened` is journaled by this call. `notify(event, text, project, ticket)` is the
-    notifier, `wayline.notify.notify` by default.
+    notifier, `wayline.notify.notify` by default, and `announcement(ticket)` the text it is given in place of
+    the one this module writes. `blocking` None pauses nothing, which the ask of decision 15 opens with.
 
-    Raises `TicketError` for a question with no text, a `blocking` that is not `subgraph` or `all`,
-    a ticket named that does not exist, or edges that would form a cycle; nothing is written then.
+    Raises `TicketError` for a question with no text, a `blocking` that is not `subgraph`, `all`, or None,
+    a `blocking` None that names tickets to pause, a ticket named that does not exist, or edges that
+    would form a cycle; nothing is written then.
     """
     project = Path(project).resolve()
     question = _one_line(question or "")
     if not question:
         raise TicketError("a decision ticket needs a question")
-    if blocking not in BLOCKINGS:
-        raise TicketError("a decision ticket's blocking is subgraph or all, got %r" % (blocking,))
+    if blocking not in BLOCKINGS + (None,):
+        raise TicketError("a decision ticket's blocking is subgraph, all, or null, got %r" % (blocking,))
+    if blocking is None and pauses:
+        raise TicketError("a decision ticket with blocking null pauses no ticket, so it names none to pause")
     options = [_one_line(option) for option in options or () if str(option).strip()]
     evidence = [_one_line(item) for item in evidence or () if str(item).strip()]
     recommended = _one_line(recommended) if recommended and str(recommended).strip() else None
@@ -249,7 +267,7 @@ def open_decision(project, question, options=(), recommended=None, evidence=(), 
             ledger.append_event(DECISION_OPENED, {"ticket": identifier, "blocking": fields.get("blocking"),
                                                   "human_only": bool(fields.get("human_only"))}, ticket=identifier)
     if announce:
-        text = _notification(project, fields, asked, paused)
+        text = announcement(identifier) if announcement is not None else _notification(project, fields, asked, paused)
         (notify or send_notification)(DECISION_OPENED, text, project, identifier)
     return {"ticket": identifier, "opened": not found, "paused": paused}
 
@@ -299,6 +317,76 @@ def open_requested(project, requester, attempt, requests, notify=None):
     return reports
 
 
+# --- the ask of decision 15 ----------------------------------------------------------------------------
+
+
+def _hours(value):
+    return "%g" % value
+
+
+def open_fable_ask(project, resets_at, held=(), now=None, policy=None, notify=None):
+    """The ask of decision 15 about the window resetting at `resets_at`; the `open_decision` report.
+
+    `held` names the Fable launches the hold dropped (`ticket 4`, `the verdicts on ticket 3`), and `now` is the
+    conductor's clock, which the recommendation is measured from: `wait` when the reset is under
+    `policy.model_fallback.wait_under_hours` away, `fall back` otherwise. The origin names the reset, so a second
+    call about the same window opens nothing and a crash between the file and the events is finished.
+    """
+    project = Path(project).resolve()
+    now = time.time() if now is None else now
+    wait_under, _ = pacing.ask_hours(policy_for(project) if policy is None else policy)
+    resets = pacing.epoch(resets_at)
+    recommended = pacing.ask_recommended(resets, now, wait_under)
+    held = [_one_line(item) for item in held or () if str(item).strip()]
+    what = ", ".join(held) if held else "the Fable work that waits"
+    away = "in %s hour(s)" % _hours(round(max(0.0, resets - now) / 3600, 1)) if resets is not None else "at a time nobody read"
+    question = ("Fable's weekly window is spent until %s: does the Fable work it holds fall back to Opus, or wait for the reset?"
+                % resets_at)
+    evidence = [
+        "Fable's weekly window resets at %s, %s" % (resets_at, away),
+        "held on Fable: %s" % what,
+        "fall back and wait answer for this window; always fall back and always wait also set the project's fallback consent "
+        "to auto or wait",
+        "the recommended answer is wait when the reset is under %s hour(s) away (policy.model_fallback.wait_under_hours), "
+        "fall back otherwise" % _hours(wait_under),
+        "an answer that matches no option counts as wait for this window",
+    ]
+
+    def announcement(identifier):
+        return ("%s: Fable's weekly window is spent until %s, and it holds %s. Decision ticket %d (human only) asks whether that "
+                "work falls back to Opus; recommended: %s. Answer with wayline answer %d \"<option>\", the option one of %s, "
+                "or in the dashboard's decisions view." % (
+                    project.name, resets_at, what, identifier, recommended, identifier,
+                    ", ".join('"%s"' % option for option in pacing.ASK_OPTIONS)))
+
+    return open_decision(project, question, options=pacing.ASK_OPTIONS, recommended=recommended, evidence=evidence,
+                         blocking=None, human_only=True, proposed_by="conductor", origin=pacing.ask_origin(resets_at),
+                         title="Fall back to Opus while Fable is spent until %s?" % resets_at, notify=notify,
+                         announcement=announcement)
+
+
+def close_ask(project, identifier, answer, rationale):
+    """The conductor's answer to an ask of decision 15 nobody answered: `## Answer` in its file and a `decision` with `decided_by: conductor`.
+
+    `answer` is `superseded` or, at the timeout, `fall back`, and `rationale` says why. Returns the journaled payload,
+    or None when, under the ledger's lock, the ticket turned out answered already (in the journal or its file),
+    closed, or not a decision ticket: an owner's answer given in the meantime is never overwritten.
+    """
+    project = Path(project).resolve()
+    ledger = Ledger(project)
+    with ledger.lock():
+        found = {ticket["id"]: ticket for ticket in read_tickets(project)}.get(identifier)
+        if found is None or found["kind"] != DECISION_KIND or found["status"] in SATISFIED + ("parked",):
+            return None
+        fields, body = read_ticket(tickets_dir(project) / filename(found))
+        events, _ = ledger.read_events()
+        if identifier in replay.replay(events).answers or answer_section(body):
+            return None
+        write_ticket(ledger, fields, with_answer(body, answer))
+        return ledger.append_event(DECISION, {"ticket": identifier, "answer": answer, "decided_by": "conductor",
+                                              "rationale": rationale, "confidence": None}, ticket=identifier)["payload"]
+
+
 # --- the view ------------------------------------------------------------------------------------------
 
 
@@ -340,10 +428,13 @@ def decisions_view(project):
     # Who answers is decided under the autonomy a running conductor holds, and whether a decider can be launched at all.
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
     stop_at, cheap_at = pacing_thresholds(project, harness, view)
+    consent, stated = fallback_consent(harness, view)
+    policy = policy_for(project)
     active = read_active()
     return {
         "project": str(project),
-        "open": [_open_entry(entry, fields.get(entry["id"]) or {}, bodies.get(entry["id"]) or "", graph, view, answering, decider, problems)
+        "open": [_open_entry(entry, fields.get(entry["id"]) or {}, bodies.get(entry["id"]) or "", graph, view, answering, decider, problems,
+                             harness, policy)
                  for entry in open_decisions(graph)],
         "log": decision_log(events, records, fields, bodies),
         "controls": {
@@ -351,6 +442,9 @@ def decisions_view(project):
             "autonomy_levels": list(AUTONOMY),
             "stop_at": stop_at,
             "cheap_at": cheap_at,
+            "model_fallback": consent,
+            "model_fallback_stated": stated,
+            "model_fallback_levels": list(pacing.CONSENTS),
             "paused_by_owner": view.paused_by_owner,
             "active": active is not None and active.resolve() == project,
         },
@@ -358,7 +452,7 @@ def decisions_view(project):
     }
 
 
-def _open_entry(entry, ticket, body, graph, view, autonomy, decider, problems):
+def _open_entry(entry, ticket, body, graph, view, autonomy, decider, problems, harness=None, policy=None):
     identifier = entry["id"]
     try:
         record = decision_record(body) or {}
@@ -390,6 +484,8 @@ def _open_entry(entry, ticket, body, graph, view, autonomy, decider, problems):
         # Journaled and not yet closed by a conductor, or written into the file and not yet journaled.
         "answered": {"answer": answered.get("answer"), "decided_by": answered.get("decided_by")} if answered else None,
         "written": answer_section(body),
+        # The ask of decision 15 falls back unanswered at this time, where its timeout applies (ticket 57).
+        "falls_back_at": ask_falls_back_at(harness or {}, view, identifier, autonomy, policy),
     }
 
 

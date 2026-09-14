@@ -66,6 +66,13 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   left on the frontier keeps no run going: the owner's answer is what the tick relaunches for.
 - A result's `proposals` and `goal_progress` are written into the ticket's `## Result` section so
   the owner sees them, and nothing else: admission is ticket 37, and keep-if-better is ticket 39.
+- The ask of decision 15 (ticket 57). Under the fallback consent `ask`, the first wave whose hold drops a
+  launch on Fable opens one human-only decision ticket about the window, keyed by its reset, which
+  pauses nothing (`decisions.open_fable_ask`). Its answer, read at the next wave, falls back for the
+  window (`fall back`), waits (`wait`, and any answer matching no option, which the owner is told), or
+  also sets the consent (`always fall back`, `always wait`). An ask nobody answered is closed as
+  superseded at the first wave past its reset or on a change of consent to `auto` or `wait`, and on a
+  project that never recorded a consent, under `autonomous`, answered `fall back` at its timeout.
 - The Type-B gate of decision 11 (ticket 32): a done ticket's verdicts are queued and drained
   later in the same wave, and the ticket is `accepted` when every one of them passed.
 
@@ -93,7 +100,10 @@ from wayline.ledger import (
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
-from wayline.project import ProjectError, consent_for, fallback_consent, find_project, journal_written_answers, policy_for, read_harness
+from wayline.project import (
+    ProjectError, ask_falls_back_at, consent_for, fallback_consent, falls_back_now, find_project, journal_written_answers, policy_for,
+    read_harness,
+)
 
 __all__ = [
     "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "fallback_tier", "porcelain_entries",
@@ -503,6 +513,8 @@ class Conductor:
         self._said_waiting = None
         # The fallback consent as this wave read it, and the wave it read it for (decision 15).
         self._consent = self._consent_wave = None
+        # The launches on Fable the hold dropped in this wave, which the ask of decision 15 names when the consent asks.
+        self._dropped = []
         self.resources_free = schedule.everything_free
         # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
         # its own so a slow channel never holds a wave; a test stands in its own. `notifying` is those threads.
@@ -536,6 +548,7 @@ class Conductor:
         self.number += 1
         self.last_wave_at = now_ts()
         result = WaveResult(self.number)
+        self._dropped = []
         self._beat()
         arrived = self._tail()
         self._pace()  # what `run` start and the journal read, before anything below can start a session
@@ -551,6 +564,7 @@ class Conductor:
             if picks:
                 self._start(picks, result)
             self._drain_verdicts(result)
+        self._ask_owner()
         self._journal_wave(result)
         self._end(result)
         result.ledger_commit = self._commit_ledger()
@@ -735,6 +749,11 @@ class Conductor:
         picks = pick()
         if any(self._on_fable(entry) for entry in picks) and self._read_usage_before_fable():
             picks = pick()  # the reading may have begun the hold or moved the action: pick again under what it says
+        if self.view.hold is not None and not self._falls_back():
+            for entry in tickets.frontier(graph):
+                if (self._on_fable(entry) and schedule.affordable(entry, self.action)
+                        and not schedule.awaits_owner(entry, autonomy, decider)):
+                    self._held_back("ticket %d" % entry["id"])
         return picks
 
     def _on_fable(self, entry):
@@ -768,18 +787,103 @@ class Conductor:
         return request is not None and worker.launches_on(request, pacing.FABLE) and self._fable_held()
 
     def _falls_back(self):
-        """Whether Fable work falls back to Opus now: the hold stands and the fallback consent is `auto` (decision 15).
+        """Whether Fable work falls back to Opus now: the hold stands and the consent falls back (decision 15).
 
         The consent is `project.fallback_consent`'s: a `control model_fallback` this run heard, else
         `harness.json`, read once a wave, so a changed consent applies at the next wave and one wave
-        never falls back for one launch and waits for the next. `ask` waits, as a project without the
-        key does, until the ask of decision 15 is built.
+        never falls back for one launch and waits for the next. `auto` falls back and `wait` waits;
+        `ask`, and a project without the key, falls back once the ask about the hold's window is
+        answered `fall back` or `always fall back` (`project.falls_back_now`), and waits until then.
         """
         if self.view.hold is None:
             return False
         if self._consent_wave != self.number:
-            self._consent, self._consent_wave = consent_for(self.project, self.view)[0], self.number
-        return self._consent == pacing.AUTO
+            consent = consent_for(self.project, self.view)[0]
+            self._consent, self._consent_wave = (consent, falls_back_now(consent, self.view)), self.number
+        return self._consent[1]
+
+    def _held_back(self, what):
+        """Name a launch on Fable the hold dropped in this wave, for the ask of decision 15 (`_ask_owner`)."""
+        if what not in self._dropped:
+            self._dropped.append(what)
+
+    def _ask_owner(self):
+        """Under the fallback consent `ask`, open the ask about the hold's window once the hold dropped a launch (decision 15).
+
+        One decision ticket per spent window, keyed by the hold's `resets_at`: once the journal holds an ask about
+        that window nothing is opened again, and `open_decision`'s origin finishes one a crash left half written. A
+        spent week with no Fable work waiting drops nothing and asks nothing. `ask` covers a project without the key.
+        """
+        dropped, self._dropped = self._dropped, []
+        if not dropped or self.view.hold is None:
+            return
+        resets = self.view.hold.get("resets_at")
+        if resets is None or self.view.ask_for(resets) is not None or consent_for(self.project, self.view)[0] != pacing.ASK:
+            return
+        try:
+            report = decisions.open_fable_ask(self.project, resets, dropped, self.clock(), self.policy, notify=self.notify)
+        except (ValueError, OSError) as failure:
+            self.say("  the ask about Fable's weekly window could not be opened: %s" % failure)
+            return
+        self._tail()
+        self.say("  Fable's weekly window is spent until %s and the consent asks: decision ticket %d asks the owner whether %s "
+                 "falls back to Opus" % (resets, report["ticket"], ", ".join(dropped)))
+
+    def _settle_asks(self):
+        """Answer each ask of decision 15 nobody answered that the conductor closes, as a `decision` with `decided_by: conductor`.
+
+        At the first wave past the reset of the window it asks about, or at a wave whose consent no longer asks
+        (a `control model_fallback` set `auto` or `wait`, read as `_falls_back` reads it, so a consent set back to
+        `ask` before the wave closes nothing), it is closed with `answer: superseded`, and Fable work goes on as the
+        consent says. On a project that never recorded a consent, under autonomy `autonomous`, it is answered
+        `fall back` for its window once `policy.model_fallback.ask_timeout_hours` passed (`project.ask_falls_back_at`);
+        an explicit `ask` never times out. `_apply_answers` then closes the ticket as it closes any answered one.
+        """
+        now, closed = self.clock(), False
+        consent = consent_for(self.project, self.view)[0] if self.view.asks else None
+        for identifier, ask in sorted(self.view.asks.items()):
+            if identifier in self.view.answers:
+                continue
+            resets = pacing.epoch(ask["resets_at"])
+            if resets is not None and resets <= now:
+                answer, why = pacing.SUPERSEDED, "Fable's weekly window reset at %s before the ask was answered" % ask["resets_at"]
+            elif consent != pacing.ASK:
+                answer, why = pacing.SUPERSEDED, "the fallback consent was set to %s while the ask was open" % consent
+            else:
+                try:
+                    harness = read_harness(self.project)
+                except (ProjectError, ValueError, OSError):
+                    harness = {}
+                at = ask_falls_back_at(harness, self.view, identifier, self._autonomy(), self.policy)
+                if at is None or pacing.epoch(at) > now:
+                    continue
+                answer, why = pacing.FALL_BACK, (
+                    "no answer within policy.model_fallback.ask_timeout_hours (%g) on a project that never recorded a fallback "
+                    "consent, under autonomy autonomous: Fable work falls back to Opus until %s"
+                    % (pacing.ask_hours(self.policy)[1], ask["resets_at"]))
+            if decisions.close_ask(self.project, identifier, answer, why) is not None:
+                closed = True
+                self.say("  ticket %d, the ask about Fable's weekly window, closed by the conductor: %s (%s)" % (identifier, answer, why))
+        if closed:
+            self._tail()
+            self._consent_wave = None  # a timeout's `fall back` is read again before this wave launches anything
+
+    def _answered_ask(self, identifier, known):
+        """Say what the owner's answer to the ask of decision 15 does, at its closing; one that matches no option is also sent to the owner."""
+        ask = self.view.asks.get(identifier)
+        if ask is None or known.get("decided_by") != "human":
+            return
+        choice = pacing.ask_choice(known.get("answer"))
+        if choice is not None:
+            does = "falls back to Opus" if pacing.ask_falls_back(choice) else "waits for the reset"
+            also = "; the fallback consent is now %s" % pacing.ALWAYS[choice] if choice in pacing.ALWAYS else ""
+            self.say("  ticket %d: Fable work %s while Fable's weekly window is spent until %s%s" % (identifier, does, ask["resets_at"], also))
+            return
+        text = ("%s: the answer to decision ticket %d, \"%s\", matches none of %s, so it counts as wait: Fable work waits for the "
+                "reset at %s. wayline rerun %d asks again, and wayline switch --fallback auto falls back from the next wave."
+                % (self.project.name, identifier, known.get("answer"), ", ".join(pacing.ASK_OPTIONS), ask["resets_at"], identifier))
+        self.say("  ticket %d: the answer matches no option and counts as wait; the owner is told" % identifier)
+        self.notify(decisions.DECISION, text, self.project, identifier)
 
     def _slots(self):
         """`policy.max_parallel_workers`: how many workers this conductor runs at once."""
@@ -1336,6 +1440,8 @@ class Conductor:
         held = self._held_on_fable(attempt.request)
         if self._holds_launches() or (held and not self._falls_back()):
             # Resumed, or relaunched, on Fable once the hold ends; and the `/usage` the hold read may have said `stop`.
+            if held and not self._holds_launches():
+                self._held_back("ticket %d's session" % attempt.id)
             return False
         want, attempt.want = attempt.want, None
         if held:
@@ -1820,7 +1926,10 @@ class Conductor:
         answer a person wrote into the ticket's `## Answer` section is journaled here as theirs,
         and it wins over the answer the journal held, because the file is where a person answers
         (decision 2). Nothing new is journaled for the ticket's closing: the `decision` is the record.
+        The asks of decision 15 the conductor answers itself are answered first (`_settle_asks`), so an
+        answer written into the file of an ask closed as superseded is not taken.
         """
+        self._settle_asks()
         written = journal_written_answers(self.project, self.ledger)
         for identifier in sorted(written):
             self.say("  ticket %d: the answer written in its file is journaled as the owner's" % identifier)
@@ -1831,6 +1940,7 @@ class Conductor:
             if known is not None and ticket["status"] not in tickets.SATISFIED + ("parked",):
                 self._set_status(ticket["id"], "done")
                 self.say("  ticket %d answered by the %s: %s" % (ticket["id"], known.get("decided_by"), known.get("answer")))
+                self._answered_ask(ticket["id"], known)
 
     def _say_arrival(self, event):
         payload = event.get("payload") or {}
@@ -2153,6 +2263,7 @@ class Conductor:
         if self._holds_launches():
             return True
         if self._integrator_tier(attempt).model == pacing.FABLE and self._fable_held() and not self._falls_back():
+            self._held_back("ticket %d's integrator" % attempt.id)
             return True
         return self._holds_launches()
 
@@ -2238,6 +2349,8 @@ class Conductor:
             if (on_fable and not falls_back) or self._holds_launches() or self.action != schedule.NORMAL:
                 # The ticket's verdicts wait whole: on the hold, or on a refusal or a `/usage` reading met in this wave.
                 self.verdicts.append(entry)
+                if on_fable and not falls_back:
+                    self._held_back("the verdicts on ticket %d" % entry.ticket)
                 continue
             self._gate(entry, result, falls_back)
         waiting = (sorted(entry.ticket for entry in self.verdicts if self._verdicts_on_fable(entry))
@@ -2264,6 +2377,7 @@ class Conductor:
             except gates.FableHeld:
                 # The hold on Fable's weekly window waits under the consent: nothing was launched, and the rest stays queued.
                 self.verdicts.append(_Queued(entry.ticket, entry.attempt, entry.asks[index:]))
+                self._held_back("the verdicts on ticket %d" % entry.ticket)
                 self.say("  ticket %d: its %s verdict waits for Fable's weekly window" % (entry.ticket, ask.verdict_type))
                 return
             except gates.UsageLimited as refused:

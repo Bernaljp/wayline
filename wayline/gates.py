@@ -588,7 +588,7 @@ def fallback_now(project, what="a verdict on Fable"):
     hold = fable_hold(project)
     if hold is None:
         return False
-    if hold["consent"] != pacing.AUTO:
+    if not hold["falls_back"]:  # `auto`, or `ask` answered `fall back` for the window (`project.falls_back_now`)
         raise FableHeld("%s runs on Fable, whose weekly window is held until %s; under the fallback consent %s it "
                         "waits for the reset" % (what, hold["resets_at"], hold["consent"] if hold["stated"] else "ask (unset)"),
                         resets_at=hold["resets_at"], consent=hold["consent"])

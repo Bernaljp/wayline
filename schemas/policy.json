@@ -5,7 +5,7 @@
   "type": "object",
   "required": [
     "difficulty", "budget", "roles", "verifier", "max_parallel_workers", "poll_seconds", "heartbeat_stale_s",
-    "acceptance_timeout_s", "pacing", "context_pack", "escalation", "stall", "proposals", "goal", "absorb",
+    "acceptance_timeout_s", "pacing", "model_fallback", "context_pack", "escalation", "stall", "proposals", "goal", "absorb",
     "consultant", "kb", "provenance", "artifacts", "reservations", "jobs", "tick", "dashboard", "fixtures",
     "figures", "plot_index", "quiet_hours", "per_window_worker_budget"
   ],
@@ -49,6 +49,16 @@
       "properties": {
         "stop_at": {"type": "number", "minimum": 0, "maximum": 1},
         "cheap_at": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "model_fallback": {
+      "type": "object",
+      "description": "the ask of decision 15: it recommends wait when the reset is under wait_under_hours away, and a project without the model_fallback key under autonomous falls back after ask_timeout_hours unanswered",
+      "required": ["wait_under_hours", "ask_timeout_hours"],
+      "additionalProperties": false,
+      "properties": {
+        "wait_under_hours": {"type": "number", "minimum": 0},
+        "ask_timeout_hours": {"type": "number", "minimum": 0}
       }
     },
     "context_pack": {

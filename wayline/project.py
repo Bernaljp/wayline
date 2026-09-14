@@ -30,7 +30,7 @@ from wayline.ledger import (
     ACCEPTANCE, CONTROL, DECISION, PAUSED, SWITCHED, TICKET_LAUNCHED, TICKET_RESULT, UNPAUSED, VERDICT, Ledger, atomic_write,
     conductor_holder, now_ts,
 )
-from wayline.pacing import ASK, AUTO, CONSENTS, FABLE, WAIT, epoch, thresholds
+from wayline.pacing import ALWAYS, ASK, AUTO, CONSENTS, FABLE, WAIT, ask_choice, ask_falls_back, ask_hours, epoch, iso, thresholds
 from wayline.resources import (
     LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
 )
@@ -48,7 +48,8 @@ __all__ = [
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
-    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "fable_hold", "fable_falls_back", "set_model_fallback", "hold_status", "render_hold",
+    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "falls_back_now", "ask_falls_back_at", "fable_hold", "fable_falls_back",
+    "set_model_fallback", "hold_status", "render_hold",
     "steer_ticket", "set_pacing", "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
 
@@ -93,7 +94,7 @@ AUTONOMY = {
 # The fallback consent (Implementation Decisions 15), one line each, as the switch and the intake say what it does.
 MODEL_FALLBACK = {
     AUTO: "while Fable's weekly window is spent, Fable work falls back to Opus without asking.",
-    ASK: "while Fable's weekly window is spent, Fable work waits for the owner's answer on falling back; until that ask is built (ticket 57), nobody is asked and it waits for the reset as under wait.",
+    ASK: "while Fable's weekly window is spent, Fable work waits for the owner's answer on falling back, asked once per spent window by a human-only decision ticket.",
     WAIT: "while Fable's weekly window is spent, Fable work waits for the reset and never falls back.",
 }
 # How the owner is shown a project that never recorded a consent, which behaves as `ask`.
@@ -695,6 +696,7 @@ def status_view(project, refresh=True):
     view = replay.replay(events)
     from wayline.decisions import decider_ready  # the decisions module imports this one
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
+    policy = policy_for(project)
     return {
         "project": str(project),
         "name": project.name,
@@ -706,7 +708,9 @@ def status_view(project, refresh=True):
         "running": [_ticket_line(entry, tickets) for entry in _with_status(graph, "running")],
         "jobs": live_jobs,
         # Who answers each: the owner, or under `autonomous` the decider unless it is human-only or none is installed (ticket 35).
-        "decisions": [dict(_ticket_line(entry, tickets), awaits="owner" if awaits_owner(entry, answering, decider) else "decider")
+        # The ask of decision 15 adds when it falls back unanswered, where its timeout applies (ticket 57).
+        "decisions": [dict(_ticket_line(entry, tickets), awaits="owner" if awaits_owner(entry, answering, decider) else "decider",
+                           falls_back_at=ask_falls_back_at(harness, view, entry["id"], answering, policy))
                       for entry in _open_decisions(graph)],
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
         "window": window_status(events, harness, view),
@@ -836,7 +840,7 @@ def hold_status(project, events, harness=None, graph=None, fields=None, view=Non
         "resets_at": view.hold.get("resets_at"),
         "consent": consent,
         "stated": stated,
-        "waiting": _waiting_on_fable(project, events, view, graph or empty_graph(), fields or {}, consent == AUTO),
+        "waiting": _waiting_on_fable(project, events, view, graph or empty_graph(), fields or {}, falls_back_now(consent, view)),
         "fallen_back": fallen_back,
     }
     hold["line"] = render_hold(hold)
@@ -987,7 +991,8 @@ def _render_decisions(decisions):
     lines = ["open decision tickets (%d)" % len(decisions)]
     for entry in decisions:
         marks = [mark for mark in ("human_only" if entry.get("human_only") else "", "blocking %s" % entry["blocking"] if entry.get("blocking") else "") if mark]
-        lines.append("  #%-3d %s%s" % (entry["id"], entry["title"], ("  (%s)" % ", ".join(marks)) if marks else ""))
+        timeout = "  falls back at %s unless answered" % entry["falls_back_at"] if entry.get("falls_back_at") else ""
+        lines.append("  #%-3d %s%s%s" % (entry["id"], entry["title"], ("  (%s)" % ", ".join(marks)) if marks else "", timeout))
     lines.append("")
     return lines
 
@@ -1165,6 +1170,40 @@ def fallback_consent(harness, view=None):
     return (value, True) if value in CONSENTS else (ASK, False)
 
 
+def falls_back_now(consent, view):
+    """Whether Fable work falls back to Opus under `consent` while Fable's weekly window is spent (decision 15).
+
+    `auto` falls back and `wait` waits. Under `ask`, which a project that never recorded a consent behaves as, it is
+    the answer to the ask about the window the hold in `view` waits for: `fall back` or `always fall back`, given by
+    the owner or by the conductor at the ask's timeout. Before an answer, after any other, and with no hold to ask
+    about, it waits.
+    """
+    if consent == AUTO:
+        return True
+    if consent != ASK or view is None or view.hold is None:
+        return False
+    ticket = view.ask_for(view.hold.get("resets_at"))
+    answered = view.answers.get(ticket) if ticket is not None else None
+    return answered is not None and ask_falls_back(answered.get("answer"))
+
+
+def ask_falls_back_at(harness, view, ticket, autonomy, policy=None):
+    """When the ask on `ticket` falls back unanswered, as the journal writes a time; None when no timeout applies to it.
+
+    Only a project that never recorded a consent (`fallback_consent`), under autonomy `autonomous`, times out, once
+    `policy.model_fallback.ask_timeout_hours` have passed since the ask was opened (decision 15). An explicit `ask`
+    never does, the other autonomies wait for an answer or the reset, and an ask answered already, or closed by the
+    conductor, has no timeout left.
+    """
+    ask = view.asks.get(ticket)
+    if ask is None or ticket in view.answers or autonomy != "autonomous":
+        return None
+    if fallback_consent(harness, view)[1]:
+        return None
+    opened = epoch(ask.get("opened"))
+    return None if opened is None else iso(opened + ask_hours(policy)[1] * 3600)
+
+
 def consent_for(project, view=None):
     """The project's fallback consent as `(consent, stated)`: its `harness.json` under what the run in `view` heard.
 
@@ -1182,9 +1221,9 @@ def consent_for(project, view=None):
 def fable_hold(project, now=None):
     """The hold on Fable's weekly window a session launched outside the conductor meets now, or None (decision 15).
 
-    `{"resets_at", "consent", "stated"}` while the journal's hold stands and its reset is still ahead of `now`
-    (no conductor may be running to journal the `unpaused`), with the fallback consent it falls back or waits
-    by (`consent_for`). The report's writer and the gates outside the conductor ask this; the conductor asks
+    `{"resets_at", "consent", "stated", "falls_back"}` while the journal's hold stands and its reset is still ahead of
+    `now` (no conductor may be running to journal the `unpaused`), with the fallback consent (`consent_for`) and
+    whether it falls back under that consent and the answer to the ask about the window (`falls_back_now`). The report's writer and the gates outside the conductor ask this; the conductor asks
     the view it keeps between waves instead. A journal that cannot be read is no hold.
     """
     try:
@@ -1198,13 +1237,13 @@ def fable_hold(project, now=None):
     if resets is not None and resets <= (time.time() if now is None else now):
         return None
     consent, stated = consent_for(project, view)
-    return {"resets_at": view.hold.get("resets_at"), "consent": consent, "stated": stated}
+    return {"resets_at": view.hold.get("resets_at"), "consent": consent, "stated": stated, "falls_back": falls_back_now(consent, view)}
 
 
 def fable_falls_back(project, now=None):
-    """Whether a launch on Fable made outside the conductor falls back to Opus now: a hold stands (`fable_hold`) under `auto`."""
+    """Whether a launch on Fable made outside the conductor falls back to Opus now: a hold stands (`fable_hold`) and it falls back."""
     hold = fable_hold(project, now)
-    return hold is not None and hold["consent"] == AUTO
+    return hold is not None and hold["falls_back"]
 
 
 def set_model_fallback(project, consent, by="cli"):
@@ -1352,7 +1391,7 @@ def steer_ticket(project, command, identifier, by="cli"):
     return control(project, command, {"ticket": identifier}, by=by)
 
 
-def answer(project, identifier, text, rationale=None, confidence=None):
+def answer(project, identifier, text, rationale=None, confidence=None, by="cli"):
     """Answer a decision ticket: `## Answer` in its file, and `decision` with `decided_by: human` (decision 5).
 
     The command line, the dashboard's answer form, and a session running `wayline answer` all answer
@@ -1361,8 +1400,12 @@ def answer(project, identifier, text, rationale=None, confidence=None):
     answer alone, because the text under `## Answer` is what the file says the answer is.
 
     The conductor closes the ticket at its next wave. A ticket that is not an open decision ticket
-    is refused, and so is one already answered; `wayline rerun` asks a decision ticket's question again.
-    The checks and both writes hold the ledger's lock, so two answers given at once are never both taken.
+    is refused, and so is one already answered, or closed by the conductor; `wayline rerun` asks a decision
+    ticket's question again. The checks and both writes hold the ledger's lock, so two answers given at once
+    are never both taken. An answer to the ask of decision 15 that reads `always fall back` or `always wait`
+    also sets the fallback consent to `auto` or `wait` (`set_model_fallback`, told `by`), under the same lock and
+    before the answer is written, so a consent that cannot be set is refused with no answer journaled; an answer
+    whose write fails after it leaves an ask the next wave closes as superseded under the consent it set.
     """
     if isinstance(identifier, bool) or not isinstance(identifier, int):
         raise ProjectError("a ticket id is a whole number, got %r" % (identifier,))
@@ -1380,15 +1423,29 @@ def answer(project, identifier, text, rationale=None, confidence=None):
             raise ProjectError("%s has no ticket %s" % (project, identifier))
         if found["kind"] != DECISION_KIND:
             raise ProjectError("ticket %d is a %s ticket, and only a decision ticket takes an answer" % (identifier, found["kind"]))
+        events, _ = ledger.read_events()
+        view = replay.replay(events)
+        closed = view.answers.get(identifier) or {}
+        if closed.get("decided_by") == "conductor":
+            raise ProjectError("ticket %d was closed by the conductor (%s: %s) and takes no answer now; wayline switch --fallback "
+                               "auto|ask|wait sets what Fable work does while Fable's weekly window is spent"
+                               % (identifier, closed.get("answer"), closed.get("rationale") or "no reason given"))
         if found["status"] in SATISFIED + ("parked",):
             raise ProjectError("ticket %d is %s; wayline rerun %d asks its question again" % (identifier, found["status"], identifier))
         fields, body = read_ticket(tickets_dir(project) / filename(found))
-        events, _ = ledger.read_events()
-        if identifier in replay.replay(events).answers or answer_section(body):
+        if identifier in view.answers or answer_section(body):
             raise ProjectError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
+        _set_consent_by_answer(project, view, identifier, text, by)
         write_ticket(ledger, fields, with_answer(body, text))
         return ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": "human",
                                               "rationale": rationale, "confidence": confidence}, ticket=identifier)
+
+
+def _set_consent_by_answer(project, view, identifier, text, by):
+    """`always fall back` or `always wait` on the ask of decision 15 also journals `control model_fallback` with `auto` or `wait`."""
+    consent = ALWAYS.get(ask_choice(text)) if identifier in view.asks else None
+    if consent is not None:
+        set_model_fallback(project, consent, by=by)
 
 
 def journal_written_answers(project, ledger):
@@ -1396,7 +1453,9 @@ def journal_written_answers(project, ledger):
 
     The file is where a person answers (decision 2), so an answer written there wins over the one the
     journal held. The conductor calls this at every wave, and the tick before it decides on a relaunch,
-    since either may be the first to see the edit (decision 5). Returns the payloads journaled, by ticket id.
+    since either may be the first to see the edit (decision 5). Returns the payloads journaled, by ticket id. A ticket the
+    conductor closed (the ask of decision 15, superseded or answered at its timeout) takes no answer from its file, as it
+    takes none from `answer`; an `always` answer to the ask sets the consent, told `by: file`.
 
     The files and the journal are read under the ledger's lock. `answer` writes the file and then journals
     under that same lock, so an answer it is in the middle of giving is never journaled a second time from
@@ -1413,10 +1472,13 @@ def journal_written_answers(project, ledger):
         if not written:
             return journaled
         events, _ = ledger.read_events()
-        answers = replay.replay(events).answers
+        view = replay.replay(events)
         for identifier, text in sorted(written.items()):
-            known = answers.get(identifier)
+            known = view.answers.get(identifier)
+            if known is not None and known.get("decided_by") == "conductor":
+                continue
             if known is None or str(known.get("answer") or "").strip() != text:
+                _set_consent_by_answer(project, view, identifier, text, "file")
                 journaled[identifier] = ledger.append_event(DECISION, {
                     "ticket": identifier, "answer": text, "decided_by": "human", "rationale": None, "confidence": None,
                 }, ticket=identifier)["payload"]

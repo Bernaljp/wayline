@@ -387,7 +387,7 @@ class OpenDecisionTest(BranchCase):
         self.assertIn("(human only) asks: Which split is held out? It pauses every other ticket.", self.notified[0][2])
 
     def test_what_it_refuses_writes_nothing(self):
-        refusals = ((dict(question="  "), "needs a question"), (dict(blocking="some"), "subgraph or all"),
+        refusals = ((dict(question="  "), "needs a question"), (dict(blocking="some"), "subgraph, all, or null"),
                     (dict(pauses=[99]), "no ticket 99"), (dict(pauses=[3], blocked_by=[5]), "cycle"))
         for fields, message in refusals:
             with self.subTest(fields=fields):
@@ -501,7 +501,8 @@ class DecisionsViewTest(BranchCase):
         self.assertEqual(len(entry["evidence"]), 2)
         self.assertEqual(view["log"], [])
         self.assertEqual(view["controls"], {"autonomy": "checkpoints", "autonomy_levels": ["interactive", "checkpoints", "autonomous"],
-                                            "stop_at": 0.9, "cheap_at": 0.8, "paused_by_owner": False, "active": True})
+                                            "stop_at": 0.9, "cheap_at": 0.8, "model_fallback": "ask", "model_fallback_stated": False,
+                                            "model_fallback_levels": ["auto", "ask", "wait"], "paused_by_owner": False, "active": True})
         self.assertEqual(view["problems"], [])
 
     def test_under_autonomous_the_decider_takes_it_and_a_human_only_one_stays_the_owner_s(self):

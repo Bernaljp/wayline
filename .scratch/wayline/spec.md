@@ -386,7 +386,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `discarded` | `ticket`, `metric`, `best`, `sd`, `seeds` |
   | `proposal_admitted`, `proposal_parked` | `id`, `from`, `kind`, `ticket` or `reason`: `radius`, `duplicate`, `cap`, `blockers` |
   | `decision_opened` | `ticket`, `blocking`, `human_only` |
-  | `decision` | `ticket`, `answer`, `decided_by`: `human`, `decider`; `rationale`, `confidence`; `model` (the model the decider ran on, decision 15; absent on an answer no model gave); `fallback_from`: `fable` (the decider ran by fallback; absent otherwise) |
+  | `decision` | `ticket`, `answer`, `decided_by`: `human`, `decider`, `conductor` (the conductor closing the ask of decision 15: `answer: superseded`, or `fall back` at its timeout); `rationale`, `confidence`; `model` (the model the decider ran on, decision 15; absent on an answer no model gave); `fallback_from`: `fable` (the decider ran by fallback; absent otherwise) |
   | `job_launched` | `job`, `ticket`, `unit`, `gpu_uuids`, `cores`, `ram_gb`, `attempt` |
   | `job_finished` | `job`, `exit_code`, `seconds`, `outputs_ok` |
   | `job_retried` | `job`, `attempt`, `oom`: `host`, `gpu`; `overrides` |
@@ -650,6 +650,7 @@ Numbered so the milestones can point at them. Every decision below either restat
 | `max_parallel_workers` | 2 | map ticket 20 |
 | `poll_seconds`, `heartbeat_stale_s`, `acceptance_timeout_s` | 60, 300, 600 | spec |
 | `pacing.stop_at`, `pacing.cheap_at` | 0.90, 0.80, both windows; Fable's weekly window takes `stop_at` alone | map ticket 20, spec, Fable fallback map |
+| `model_fallback.wait_under_hours`, `model_fallback.ask_timeout_hours` | 12 (the ask recommends `wait` when the reset is nearer); 2 (only for a project without the key, under `autonomous`) | Fable fallback map |
 | `context_pack.max_chars` | sonnet 120000; opus 200000; fable 300000 (about 30k, 50k, and 75k tokens) | spec, measured in M1 |
 | `escalation` | resume 1, tier_up 1, then split, then needs_human; `raise_after_failures` 2 | BRIEF 8.4, map ticket 24 |
 | `stall.waves` | 2 | BRIEF 9.7 |

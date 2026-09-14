@@ -37,6 +37,12 @@
         <input id="cheap-at" type="number" min="0" max="1" step="any" required>
         <button type="submit" id="pacing-set" class="action">set pacing</button>
       </form>
+      <form id="model-fallback-form" class="inline">
+        <label for="model-fallback-select">fallback consent</label>
+        <select id="model-fallback-select"></select>
+        <button type="submit" id="model-fallback-set" class="action">set fallback consent</button>
+        <span id="model-fallback-current" class="note"></span>
+      </form>
       <p class="inline">
         <button type="button" id="switch-button" class="action">make this the active project</button>
         <span id="active-state" class="note"></span>
