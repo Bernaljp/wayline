@@ -56,7 +56,7 @@ from wayline.ledger import (
     TICKET_NEEDS_HUMAN, Ledger, atomic_write, conductor_holder,
 )
 from wayline.project import (
-    ProjectError, consent_for, home, is_project, journal_written_answers, policy_for, read_active, read_harness,
+    ProjectError, ask_falls_back_at, consent_for, falls_back_now, home, is_project, journal_written_answers, policy_for, read_active, read_harness,
     read_jobs,
 )
 from wayline.resources import LIVE_JOB_STATUSES
@@ -1195,6 +1195,15 @@ def work_remaining(project, graph, view, policy, fable_waits, autonomy=None, dec
     return work, waiting
 
 
+def ask_timed_out(project, view, policy, autonomy, now):
+    """Whether the ask about the hold's window is past the timeout a relaunched conductor answers `fall back` at (decision 15)."""
+    ticket = view.ask_for((view.hold or {}).get("resets_at")) if view.hold is not None else None
+    if ticket is None:
+        return False
+    at = ask_falls_back_at(_harness(project), view, ticket, autonomy, policy)
+    return at is not None and pacing.epoch(at) <= now
+
+
 def answered_since(events):
     """Whether the owner answered a decision ticket since a conductor last ran.
 
@@ -1238,10 +1247,12 @@ def relaunch_decision(project, ledger, policy, reading, now):
         return None, "the last run ended %s, which only an answer or the owner undoes" % view.run["ended"]
     graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     stop_at, _ = thresholds_for(project, policy, view)
-    # Under `auto` a conductor takes a verdict on Fable on Opus, so a queue that waits only on Fable is work now (decision 15).
-    fable_waits = fable_spent(view, reading, stop_at, now) and consent_for(project, view)[0] != pacing.AUTO
     # The autonomy the relaunched run starts from, which is `harness.json`'s and not the last run's.
     autonomy = _harness(project).get("autonomy")
+    # Under `auto`, or `ask` answered `fall back` for the window, a conductor takes a verdict on Fable on Opus, and so it does
+    # once the ask's timeout has passed, which only a conductor answers: a queue that waits only on Fable is work (decision 15).
+    fable_waits = (fable_spent(view, reading, stop_at, now) and not falls_back_now(consent_for(project, view)[0], view)
+                   and not ask_timed_out(project, view, policy, autonomy, now))
     from wayline.decisions import decider_ready  # the decisions module imports the notifier and the grill, which no other step needs
     work, waiting = work_remaining(project, graph, view, policy, fable_waits, autonomy, decider_ready(project=project))
     if not work:

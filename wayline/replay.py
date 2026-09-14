@@ -22,8 +22,9 @@ from wayline.ledger import (
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
     UNPAUSED, VERDICT, WAVE,
 )
-# The model a `paused` and an `unpaused` name for the hold on Fable's weekly window, and the fallback consents a `control` may set.
-from wayline.pacing import CONSENTS, FABLE
+# The model a `paused` and an `unpaused` name for the hold on Fable's weekly window, the fallback consents a `control` may set,
+# and the window a ticket's origin names when it is the ask of decision 15.
+from wayline.pacing import CONSENTS, FABLE, ask_window, epoch
 
 __all__ = [
     "STATUS_AFTER", "GATES", "READOPTED", "WORKER_DIED", "SESSION", "RESULT", "JOBS", "ENDS_ATTEMPT",
@@ -228,6 +229,12 @@ class View:
     it. A `switched` is kept for its run the same way. A `cancel` or a `rerun` names a ticket and
     outlives a restart, until `ticket_cancelled` or `ticket_rerun` says it was done. An answer
     stands until its ticket is rerun.
+
+    `asks` holds the ask of decision 15 by its ticket: the reset of the window it asks about and when it
+    was opened. The reset is the one its origin names until a later `paused` moves the reset of the hold
+    it asked about (a refusal that names the week's reset after one that named none): the ask moves with
+    it, so its answer still holds and nobody is asked twice about one spent week. A `paused` journaled
+    once that reset has passed begins another week's hold, and the ask stays with its own.
     """
 
     tickets: dict = field(default_factory=dict)
@@ -245,6 +252,7 @@ class View:
     cancels: dict = field(default_factory=dict)
     reruns: dict = field(default_factory=dict)
     answers: dict = field(default_factory=dict)
+    asks: dict = field(default_factory=dict)
     feedback: list = field(default_factory=list)
     jobs: dict = field(default_factory=dict)
     findings: set = field(default_factory=set)
@@ -258,6 +266,8 @@ class View:
         identifier = _int(payload.get("ticket", event.get("ticket")))
         if identifier is not None and (name in STATUS_AFTER or name in (TICKET_SESSION, TICKET_RESULT)):
             self._ticket_event(self.tickets.setdefault(identifier, TicketView(identifier)), name, payload, event.get("ts"))
+        if name == TICKET_CREATED and identifier is not None and ask_window(payload.get("origin")) is not None:
+            self.asks[identifier] = {"resets_at": ask_window(payload["origin"]), "opened": event.get("ts")}
         if name == RUN_STARTED:
             self.autonomy = payload.get("autonomy") or self.autonomy
             self.run = {"pid": payload.get("pid"), "resume": bool(payload.get("resume")),
@@ -270,6 +280,7 @@ class View:
         elif name == PAUSED:
             stands = {key: payload.get(key) for key in ("resets_at", "window", "utilization")}
             if payload.get("model") == FABLE:
+                self._move_asks(self.hold, stands, event.get("ts"))
                 self.hold = stands
             else:
                 self.pause = stands
@@ -368,6 +379,22 @@ class View:
             record["attempt"] = payload["attempt"]
         if name == JOB_FINISHED:
             record["exit_code"] = _int(payload.get("exit_code"))
+
+    def _move_asks(self, standing, stands, ts):
+        """Move the asks about a standing hold to the reset a later `paused` gives it, while that hold's reset is still ahead."""
+        if standing is None or standing.get("resets_at") == stands.get("resets_at"):
+            return
+        before, at = epoch(standing.get("resets_at")), epoch(ts)
+        if before is None or (at is not None and at >= before):
+            return
+        for ask in self.asks.values():
+            if ask["resets_at"] == standing.get("resets_at"):
+                ask["resets_at"] = stands.get("resets_at")
+
+    def ask_for(self, resets_at):
+        """The ticket id of the ask about the window resetting at `resets_at`, the latest opened; None when none was."""
+        found = [ticket for ticket, ask in self.asks.items() if ask["resets_at"] == resets_at]
+        return max(found) if found else None
 
     def passed(self, identifier):
         """The verdict types a ticket passed since it was last done."""

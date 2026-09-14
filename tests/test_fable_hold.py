@@ -79,6 +79,14 @@ class HoldCase(PacingCase):
             driven.settle()
         return results
 
+    def statuses(self):
+        """Every ticket's status but the ask's: a project that never recorded a consent is asked once the hold drops a launch.
+
+        The ask is ticket 57's, and `tests.test_fable_ask` asserts it; what these tests assert is the hold.
+        """
+        asks = {ticket["id"] for ticket in tickets.read_tickets(self.project) if pacing.ask_window(ticket.get("origin")) is not None}
+        return {identifier: status for identifier, status in super().statuses().items() if identifier not in asks}
+
     def holds(self):
         return [item["payload"] for item in self.events("paused") if item["payload"].get("model") == "fable"]
 

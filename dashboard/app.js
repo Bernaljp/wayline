@@ -163,6 +163,7 @@ function select(id) {
   // An edit to a control that was never set belongs to the project it was made on.
   dirty.autonomy = false;
   dirty.pacing = false;
+  dirty.model_fallback = false;
   every('decisions', state.pollViews, loadDecisions);
   showGraph();
   startTail();
@@ -610,7 +611,7 @@ function refreshViews() {
 // --- the controls (ticket 35) ------------------------------------------------------------------
 
 // A control the owner changed and has not set yet keeps what they chose while the views poll.
-const dirty = { autonomy: false, pacing: false };
+const dirty = { autonomy: false, pacing: false, model_fallback: false };
 
 function renderControls(controls) {
   const select = document.getElementById('autonomy-select');
@@ -625,12 +626,21 @@ function renderControls(controls) {
     document.getElementById('stop-at').value = controls.stop_at ?? '';
     document.getElementById('cheap-at').value = controls.cheap_at ?? '';
   }
+  if (!dirty.model_fallback) {
+    replace(document.getElementById('model-fallback-select'), (controls.model_fallback_levels || []).map((consent) => {
+      const option = el('option', { value: consent, text: consent });
+      option.selected = consent === controls.model_fallback;
+      return option;
+    }));
+  }
+  document.getElementById('model-fallback-current').textContent = controls.model_fallback
+    ? `now ${controls.model_fallback_stated ? controls.model_fallback : 'ask (unset)'}: what Fable work does while Fable's weekly window is spent` : '';
   document.getElementById('autonomy-current').textContent = controls.autonomy
     ? `now ${controls.autonomy}; raised at any time, lowered only while no conductor runs` : '';
   document.getElementById('active-state').textContent = controls.active ? 'this is the active project' : 'another project is active';
   document.getElementById('pause-state').textContent = controls.paused_by_owner
     ? 'paused by the owner: nothing that needs a model launches' : 'not paused by the owner';
-  for (const id of ['autonomy-set', 'pacing-set', 'pause-button', 'resume-button']) document.getElementById(id).disabled = !TOKEN;
+  for (const id of ['autonomy-set', 'pacing-set', 'model-fallback-set', 'pause-button', 'resume-button']) document.getElementById(id).disabled = !TOKEN;
   document.getElementById('switch-button').disabled = !TOKEN || Boolean(controls.active);
 }
 
@@ -650,6 +660,14 @@ function wireControls() {
     dirty.pacing = false;
     await perform('pacing', body,
       (done) => (done.changed ? `pacing set: stop at ${done.to.stop_at}, cheap only at ${done.to.cheap_at}` : 'the pacing thresholds are already these'));
+  });
+  document.getElementById('model-fallback-select').addEventListener('change', () => { dirty.model_fallback = true; });
+  document.getElementById('model-fallback-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const consent = document.getElementById('model-fallback-select').value;
+    dirty.model_fallback = false;
+    await perform('model_fallback', { model_fallback: consent },
+      (done) => (done.changed ? `fallback consent set from ${done.from || 'ask (unset)'} to ${done.to}` : `the fallback consent is already ${done.to}`));
   });
   document.getElementById('pause-button').addEventListener('click',
     () => perform('pause', {}, () => 'pause journaled: nothing that needs a model launches until resume'));
@@ -741,6 +759,7 @@ function decisionCard(decision, project) {
         ? (decision.human_only ? 'the owner only: it is human-only' : 'the owner')
         : 'the decider, unless the owner answers first'],
       ['recommended', decision.recommended],
+      ['falls back', decision.falls_back_at ? `at ${decision.falls_back_at} unless answered` : null],
       ['status', decision.status],
       ['asked by', decision.proposed_by],
       ['origin', decision.origin],
