@@ -824,23 +824,30 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
     authors = _finding_authors(context)
     writer_model = _prose_author(book, policy)
     outcome = {"claims": len(claims), "sampled": len(chosen), "already_verdicted": 0, "passed": [], "failed": [], "tickets": [],
-               "waiting": []}
+               "waiting": [], "fell_back": []}
+    try:
+        # Decided once for the pass, so a hold that begins or ends during it cannot split the claims between Fable and Opus.
+        fall_back, held = gates.fallback_now(project, "the claim verdicts"), False
+    except gates.FableHeld:
+        fall_back, held = False, True
     for claim in chosen:
         subject = claim_subject(claim)
         if subject in verdicted:
             outcome["already_verdicted"] += 1
             continue
         from_finding = claim.digest in authors
-        try:
-            taken = gates.verdict(
-                CLAIM, subject, CLAIM_QUESTION % _inline(claim.text), claim_paths(claim), CLAIM_SCOPE,
-                project=project, author_model=authors.get(claim.digest) or writer_model,
-                verdict_type=gates.CLAIM_SUPPORT, harness_root=harness_root, policy=policy, ledger=book,
-            )
-        except gates.FableHeld:
+        author = authors.get(claim.digest) or writer_model
+        if held and gates.verifies_on_fable(policy, author):
             outcome["waiting"].append(subject)
             continue
+        taken = gates.verdict(
+            CLAIM, subject, CLAIM_QUESTION % _inline(claim.text), claim_paths(claim), CLAIM_SCOPE,
+            project=project, author_model=author, verdict_type=gates.CLAIM_SUPPORT, harness_root=harness_root,
+            policy=policy, ledger=book, fall_back=fall_back,
+        )
         verdicted.add(subject)
+        if taken.fallback_from:
+            outcome["fell_back"].append(subject)
         if taken.passed:
             outcome["passed"].append(subject)
             continue
@@ -1498,6 +1505,10 @@ def report_command(args):
     try:
         rendered = render_report(project, offline=options.offline, draft=not options.no_draft)
         verified = verify_claims(project) if options.verify and rendered.lint.passed else None
+        if verified and verified["fell_back"]:
+            # The report lists the verdicts taken by fallback from the journal, which the sampling has just added to;
+            # nothing the writer or the classifier read changed, so the render launches nothing.
+            rendered = render_report(project, offline=True, draft=False)
     except (ProvenanceError, gates.GateError, worker.LaunchError, worker.RoleError, tickets.TicketError) as failure:
         print("wayline report: %s" % failure, file=sys.stderr)
         return 1
@@ -1524,8 +1535,9 @@ def _render_outcome(outcome, asked_to_verify):
         lines.append("note      %s" % note)
     verified = outcome["verify"]
     if verified is not None:
-        lines.append("verifier  %d of %d tagged claims sampled: %d passed, %d failed, %d already had a verdict%s" % (
+        lines.append("verifier  %d of %d tagged claims sampled: %d passed, %d failed, %d already had a verdict%s%s" % (
             verified["sampled"], verified["claims"], len(verified["passed"]), len(verified["failed"]), verified["already_verdicted"],
+            ", %d judged on Opus in place of Fable" % len(verified["fell_back"]) if verified.get("fell_back") else "",
             ", %d wait for Fable's weekly window" % len(verified["waiting"]) if verified.get("waiting") else ""))
         if verified["tickets"]:
             lines.append("          writing ticket(s) filed: %s" % ", ".join(map(str, verified["tickets"])))

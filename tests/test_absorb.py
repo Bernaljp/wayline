@@ -539,9 +539,22 @@ class SpotCheckTest(AbsorbTestCase):
         self.assertIn("verdicts", critic.run_dir.parts, "a session of its own, not a resume of the absorb session or an agent inside it")
         self.assertEqual(list(json.loads(critic.request.agent_text())), ["critic"])
 
-    def test_a_table_that_sends_the_synthesizer_to_haiku_is_a_problem_and_the_gate_refuses_it(self):
+    def test_a_synthesizer_whose_verifier_is_haiku_is_judged_on_the_readers_verifier(self):
         (self.project / "harness.json").write_text(json.dumps(
             {"policy": {"verifier": {"opus": {"model": "haiku", "effort": "low"}}}}), encoding="utf-8")
+        self.fake.script(respond=self.play_workflow(), role="absorb")
+        report = self.absorb(fanout=WORKFLOW)
+        self.assertFalse([problem for problem in report["problems"] if "depth spot-check" in problem])
+        self.fake.script(Envelope(structured_output={"pass": True, "findings": [], "question_limit": "the listed items and flaws"}), role="critic")
+        take_spot_check(self.project, SLUG)
+        critic = self.fake.calls[-1].request
+        self.assertEqual((critic.model, critic.effort), ("opus", "high"), "the readers wrote on sonnet, whose verifier is opus high")
+        self.assertEqual(read_dossier(self.ledger, SLUG)["l2"]["spot_check"]["author_model"], "sonnet")
+
+    def test_a_table_that_sends_both_authors_to_haiku_is_a_problem_and_the_gate_refuses_it(self):
+        (self.project / "harness.json").write_text(json.dumps(
+            {"policy": {"verifier": {"opus": {"model": "haiku", "effort": "low"},
+                                     "sonnet": {"model": "haiku", "effort": "low"}}}}), encoding="utf-8")
         self.fake.script(respond=self.play_workflow(), role="absorb")
         report = self.absorb(fanout=WORKFLOW)
         self.assertTrue(any("never runs on haiku" in problem for problem in report["problems"]))

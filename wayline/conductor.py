@@ -88,7 +88,7 @@ from wayline.ledger import (
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
-from wayline.project import ProjectError, fallback_consent, find_project, journal_written_answers, policy_for, read_harness
+from wayline.project import ProjectError, consent_for, fallback_consent, find_project, journal_written_answers, policy_for, read_harness
 
 __all__ = [
     "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "fallback_tier", "porcelain_entries",
@@ -761,11 +761,7 @@ class Conductor:
         if self.view.hold is None:
             return False
         if self._consent_wave != self.number:
-            try:
-                harness = read_harness(self.project)
-            except (ProjectError, ValueError, OSError):
-                harness = {}
-            self._consent, self._consent_wave = fallback_consent(harness, self.view)[0], self.number
+            self._consent, self._consent_wave = consent_for(self.project, self.view)[0], self.number
         return self._consent == pacing.AUTO
 
     def _slots(self):
@@ -2191,15 +2187,9 @@ class Conductor:
 
     def _verdicts_on_fable(self, entry):
         """Whether any verdict a done ticket earned runs on Fable: its verifier's tier for the author names Fable."""
-        for ask in entry.asks:
-            try:
-                if gates.verifier_tier(self.policy, ask.author_model)[0] == pacing.FABLE:
-                    return True
-            except gates.GateError:
-                continue  # the gate refuses it by name when it is taken
-        return False
+        return any(gates.verifies_on_fable(self.policy, ask.author_model) for ask in entry.asks)
 
-    def _gate(self, entry, result, fall_back=False):
+    def _gate(self, entry, result, fall_back):
         """One done ticket's verdicts, in order; every one of them has to pass before it is accepted.
 
         `fall_back` is this wave's answer for a verdict on Fable (`_drain_verdicts`), handed to the gate so
@@ -2209,6 +2199,11 @@ class Conductor:
             try:
                 verdict = gates.verdict_for(ask, project=self.project, harness_root=self.harness_root,
                                             policy=self.policy, ledger=self.ledger, fall_back=fall_back)
+            except gates.FableHeld:
+                # The hold on Fable's weekly window waits under the consent: nothing was launched, and the rest stays queued.
+                self.verdicts.append(_Queued(entry.ticket, entry.attempt, entry.asks[index:]))
+                self.say("  ticket %d: its %s verdict waits for Fable's weekly window" % (entry.ticket, ask.verdict_type))
+                return
             except gates.UsageLimited as refused:
                 # A closed window, not a verdict: what is left of the ticket's verdicts stays queued, to be launched again.
                 self._pause(refused.limit, "ticket %d's %s verdict" % (entry.ticket, ask.verdict_type))

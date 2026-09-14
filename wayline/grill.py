@@ -289,6 +289,8 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
     revise = _flag(revise, "revise")
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise GrillError("model is the name of the model the answer ran on, got %r" % (model,))
+    if model is not None and decided_by == "human":
+        raise GrillError("an answer the owner gave ran on no model, so it carries neither model nor fallback_from")
     if fallback_from not in (None, "fable") or (fallback_from and model is None):
         raise GrillError("fallback_from is fable, on an answer that names the model it ran on in Fable's place; got %r" % (fallback_from,))
     if decided_by == "decider" and _owners(record):

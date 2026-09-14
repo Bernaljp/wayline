@@ -15,7 +15,10 @@ events, the ticket statuses, `dossier.json`, `DECISIONS.md`, and the report sect
 
 import io
 import json
+import os
 import time
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 from tests.test_absorb import SLUG, WORKFLOW, AbsorbTestCase
 from tests.test_conductor import drive
@@ -24,11 +27,10 @@ from tests.test_grill import GrillCase
 from tests.test_pacing import HOUR
 from tests.test_report import RunCase, verdict
 from tests.test_verdicts import GateCase, failing, passing
-from wayline import gates, grill, replay, tickets, worker
-from wayline import pacing
+from wayline import cli, gates, grill, pacing, replay, tickets, worker
 from wayline.absorb import take_spot_check
 from wayline.conductor import Conductor
-from wayline.dossier import read_dossier
+from wayline.dossier import absorb_command, read_dossier
 from wayline.grill import GrillError
 from wayline.ledger import LedgerError, make_event
 from wayline.project import policy_for, set_model_fallback
@@ -36,6 +38,7 @@ from wayline.provenance import verify_claims
 from wayline.worker import Envelope
 
 HELD_HOURS = 10
+HARNESS = {"harness_tag": "v0.0.0", "autonomy": "autonomous", "radius": "moderate"}
 
 # Every kind of verdict passes the one gate: (subject_kind, verdict_type, the judging role).
 KINDS = (
@@ -81,6 +84,9 @@ class PrincipleTest(GateCase):
         self.assertEqual((launch.kind, resume.kind), ("launch", "resume"))
         self.assertEqual(resume.session_id, taken.session_id)
         self.assertEqual(resume.run_dir.parent, launch.run_dir)
+
+    def test_the_models_the_rules_name_are_the_launchers_aliases(self):
+        self.assertLessEqual({pacing.FABLE, pacing.OPUS, pacing.HAIKU}, set(worker.MODEL_ALIASES))
 
     def test_the_tier_moves_only_a_verifier_on_fable(self):
         policy = policy_for(self.project)
@@ -271,6 +277,29 @@ class ConductorVerdictFallbackTest(FallbackCase):
         self.assertEqual(len(self.verifier_calls()), 1, "a verdict taken by fallback is not taken again after the reset")
         self.assertEqual(replay.replay(self.events()).passed(1), {gates.RESULT})
 
+    def test_a_hold_the_gate_meets_after_the_wave_decided_keeps_the_verdict_queued(self):
+        self.add(1, difficulty=3)
+        driven = self.conductor()
+        self.script(1)
+        self.fake.script(passing(), role="verifier")
+        taken = gates.verdict_for
+        met = []
+
+        def gate(ask, **context):
+            if not met:
+                met.append(ask.verdict_type)
+                raise gates.FableHeld("held since the wave read the consent")
+            return taken(ask, **context)
+
+        with mock.patch.object(gates, "verdict_for", side_effect=gate):
+            drive(driven)
+        self.assertEqual(met, ["diff"])
+        self.assertIn("its diff verdict waits for Fable's weekly window", driven.out.getvalue())
+        self.assertNotIn("could not be taken", driven.out.getvalue())
+        self.assertEqual((self.verifier_calls(), self.statuses()), ([], {1: "done"}), "still queued, not dropped")
+        self.assertEqual(driven.wave().accepted, [1], "the next wave takes it")
+        self.assertEqual(len(self.verifier_calls()), 1)
+
     def test_a_restart_takes_under_auto_the_verdict_a_conductor_held_under_wait(self):
         self.add(1, difficulty=3)
         self.hold_journaled(HELD_HOURS)
@@ -328,7 +357,7 @@ class ClaimFallbackTest(RunCase):
         hold(self.book)
         set_model_fallback(self.project, "auto")
         outcome = self.verify()
-        self.assertEqual((len(outcome["passed"]), outcome["waiting"]), (7, []))
+        self.assertEqual((len(outcome["passed"]), outcome["waiting"], len(outcome["fell_back"])), (7, [], 2))
         self.assertEqual(self.tiers(), {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "high"), "Interaction terms carry": ("opus", "max")})
         fell_back = [payload for payload in self.claim_verdicts() if payload.get("fallback_from")]
         self.assertEqual(len(fell_back), 2, "the claims of the two findings written on Opus, tickets 2 and 4")
@@ -346,6 +375,23 @@ class ClaimFallbackTest(RunCase):
         self.assertEqual((second["already_verdicted"], sorted(second["passed"]), second["waiting"]), (5, sorted(first["waiting"]), []))
         self.assertEqual({call.request.model for call in self.calls}, {"fable"})
 
+    def test_report_verify_lists_the_claims_it_judged_by_fallback_in_the_report_it_leaves(self):
+        hold(self.book)
+        set_model_fallback(self.project, "auto")
+        renders = len(self.events("report_rendered"))
+        out = io.StringIO()
+        with worker.use_fake() as fake:
+            for _ in range(7):
+                fake.script(respond=lambda request, message: verdict(), role="verifier")
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                code = cli.main(["report", "--project", str(self.project), "--verify"])
+            roles = {call.request.role for call in fake.calls}
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("2 judged on Opus in place of Fable", out.getvalue())
+        self.assertEqual(self.section(6).count("- Verdict `claim_support` on the claim"), 2)
+        self.assertEqual(len(self.events("report_rendered")), renders + 2, "rendered once more after the sampling")
+        self.assertEqual(roles, {"verifier"}, "the second render launches nothing")
+
     def test_a_claim_judged_by_fallback_is_not_judged_again_after_the_reset(self):
         hold(self.book)
         set_model_fallback(self.project, "auto")
@@ -361,8 +407,7 @@ class SpotCheckFallbackTest(AbsorbTestCase):
     def absorbed_under(self, consent):
         self.fake.script(respond=self.play_workflow(), role="absorb")
         self.absorb(fanout=WORKFLOW)
-        (self.project / "harness.json").write_text(json.dumps({"harness_tag": "v0.0.0", "autonomy": "autonomous", "radius": "moderate"}),
-                                                    encoding="utf-8")
+        (self.project / "harness.json").write_text(json.dumps(HARNESS), encoding="utf-8")
         set_model_fallback(self.project, consent)
         hold(self.ledger)
 
@@ -376,6 +421,22 @@ class SpotCheckFallbackTest(AbsorbTestCase):
         self.assertEqual((record["status"], record["model"], record["fallback_from"]), ("passed", "claude-opus-5", "fable"))
         self.assertEqual(taken.payload["fallback_from"], "fable")
         self.assertIn("Taken on claude-opus-5 in place of fable", (self.refs / "dossier.md").read_text(encoding="utf-8"))
+
+    def test_the_verb_prints_the_read_and_the_spot_check_that_waits_and_exits_0(self):
+        (self.project / "harness.json").write_text(json.dumps(HARNESS), encoding="utf-8")
+        set_model_fallback(self.project, "wait")
+        hold(self.ledger)
+        self.fake.script(respond=self.play_workflow(), role="absorb")
+        config = self.temp / "claude-config"
+        self.projects_dir = config / "projects"
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(config)}), redirect_stdout(out):
+            code = absorb_command(["--level", "2", SLUG, "--project", str(self.project), "--spot-check"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("coverage   pass", out.getvalue())
+        self.assertIn("spot-check queued for the critic: the depth_spot_check verdict", out.getvalue())
+        self.assertIn("waits for the reset", out.getvalue())
+        self.assertEqual([call.request.role for call in self.fake.calls], ["absorb"])
 
     def test_under_wait_it_stays_queued_and_no_session_is_spent(self):
         self.absorbed_under("wait")
@@ -435,12 +496,13 @@ class DecisionModelTest(GrillCase):
         owner = [event["payload"] for event in self.events("decision")][-1]
         self.assertEqual((owner["decided_by"], "model" in owner, "fallback_from" in owner), ("human", False, False))
 
-    def test_a_fallback_naming_no_model_or_another_model_is_refused(self):
+    def test_a_fallback_naming_no_model_or_another_model_and_a_model_on_the_owners_answer_are_refused(self):
         grill.ask(self.project, self.QUESTION)
-        for model, fallback_from in ((None, "fable"), ("claude-opus-5", "opus")):
-            with self.subTest(model=model, fallback_from=fallback_from):
+        for decided_by, model, fallback_from in (("decider", None, "fable"), ("decider", "claude-opus-5", "opus"),
+                                                 ("human", "claude-opus-5", None), ("human", "claude-opus-5", "fable")):
+            with self.subTest(decided_by=decided_by, model=model, fallback_from=fallback_from):
                 with self.assertRaises(GrillError):
-                    grill.answer(self.project, "Q1", "three", "why", decided_by="decider", model=model, fallback_from=fallback_from)
+                    grill.answer(self.project, "Q1", "three", "why", decided_by=decided_by, model=model, fallback_from=fallback_from)
         self.assertEqual(self.events("decision"), [])
 
     def test_the_journal_takes_fallback_from_only_as_fable(self):

@@ -47,7 +47,7 @@ __all__ = [
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
-    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "fable_hold", "fable_falls_back", "set_model_fallback", "hold_status", "render_hold",
+    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "fable_hold", "fable_falls_back", "set_model_fallback", "hold_status", "render_hold",
     "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
 
@@ -850,27 +850,25 @@ def _waiting_on_fable(project, events, view, graph, fields, falls_back):
     """
     from wayline import gates  # the gates import this module; the hold line is the one view that needs them
 
+    if falls_back:
+        return 0
     policy = policy_for(project)
     tiers = policy.get("difficulty") or {}
-    waiting = 0
-    if not falls_back:
-        waiting += sum(1 for entry in frontier(graph) if (tiers.get(str(entry.get("difficulty"))) or {}).get("model") == FABLE)
-        failed = set()
-        for event in events:
-            payload = event.get("payload") or {}
-            key = (payload.get("ticket"), payload.get("attempt"))
-            if event.get("event") == TICKET_RESULT:
-                failed.discard(key)
-            elif event.get("event") == ACCEPTANCE:
-                (failed.discard if payload.get("pass") else failed.add)(key)
-        for entry in _with_status(graph, "running"):
-            known = view.tickets.get(entry["id"])
-            attempt = known.latest if known is not None else None
-            if (attempt is not None and attempt.model == FABLE and attempt.owed == replay.RESULT
-                    and (not attempt.sessions[-1].result.get("valid") or (entry["id"], attempt.number) in failed)):
-                waiting += 1
-    if falls_back:
-        return waiting
+    waiting = sum(1 for entry in frontier(graph) if (tiers.get(str(entry.get("difficulty"))) or {}).get("model") == FABLE)
+    failed = set()
+    for event in events:
+        payload = event.get("payload") or {}
+        key = (payload.get("ticket"), payload.get("attempt"))
+        if event.get("event") == TICKET_RESULT:
+            failed.discard(key)
+        elif event.get("event") == ACCEPTANCE:
+            (failed.discard if payload.get("pass") else failed.add)(key)
+    for entry in _with_status(graph, "running"):
+        known = view.tickets.get(entry["id"])
+        attempt = known.latest if known is not None else None
+        if (attempt is not None and attempt.model == FABLE and attempt.owed == replay.RESULT
+                and (not attempt.sessions[-1].result.get("valid") or (entry["id"], attempt.number) in failed)):
+            waiting += 1
     verifiers = policy.get("verifier") or {}
     for entry in _with_status(graph, "done"):
         known, ticket = view.tickets.get(entry["id"]), fields.get(entry["id"])
@@ -1162,17 +1160,30 @@ def fallback_consent(harness, view=None):
     return (value, True) if value in CONSENTS else (ASK, False)
 
 
+def consent_for(project, view=None):
+    """The project's fallback consent as `(consent, stated)`: its `harness.json` under what the run in `view` heard.
+
+    One reader for the conductor (once a wave), the tick (before it relaunches one), and every launch outside
+    the conductor (`fable_hold`), so the three never disagree about the consent. A `harness.json` that cannot
+    be read is a consent nobody stated, which waits as `ask` does.
+    """
+    try:
+        harness = read_harness(project)
+    except (ProjectError, ValueError, OSError):
+        harness = {}
+    return fallback_consent(harness, view)
+
+
 def fable_hold(project, now=None):
     """The hold on Fable's weekly window a session launched outside the conductor meets now, or None (decision 15).
 
     `{"resets_at", "consent", "stated"}` while the journal's hold stands and its reset is still ahead of `now`
     (no conductor may be running to journal the `unpaused`), with the fallback consent it falls back or waits
-    by (`fallback_consent`). The report's writer and the gates outside the conductor ask this; the conductor
-    asks the view it keeps between waves instead. Anything unreadable is no hold.
+    by (`consent_for`). The report's writer and the gates outside the conductor ask this; the conductor asks
+    the view it keeps between waves instead. A journal that cannot be read is no hold.
     """
     try:
         events, _ = Ledger(Path(project)).read_events()
-        harness = read_harness(project)
     except (ProjectError, ValueError, OSError):
         return None
     view = replay.replay(events)
@@ -1181,7 +1192,7 @@ def fable_hold(project, now=None):
     resets = epoch(view.hold.get("resets_at"))
     if resets is not None and resets <= (time.time() if now is None else now):
         return None
-    consent, stated = fallback_consent(harness, view)
+    consent, stated = consent_for(project, view)
     return {"resets_at": view.hold.get("resets_at"), "consent": consent, "stated": stated}
 
 

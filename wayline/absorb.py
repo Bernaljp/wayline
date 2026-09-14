@@ -899,20 +899,26 @@ def _spot_check_author(policy):
     """The author whose verifier tier the critic runs on, and a problem when the spot-check cannot run on that tier.
 
     The check exists for the flaws, and the flaws were written on the synthesizer's model, so the critic
-    runs on the verifier `policy.verifier` gives for that model. It may be the synthesizer's own model:
-    the critic is a fresh session carrying none of the dossier's context, which is what keeps it from
-    judging its own work (decision 11). A depth spot-check never runs on Haiku (decision 15), so a table
-    that gives Haiku is a problem, and the gate refuses the spot-check until the table names another model.
+    runs on the verifier `policy.verifier` gives for that model, or for the reader's when the table gives
+    the synthesizer's none it can take. It may be the author's own model: the critic is a fresh session
+    carrying none of the dossier's context, which is what keeps it from judging its own work (decision 11).
+    A depth spot-check never runs on Haiku (decision 15), so a table that gives neither author a verifier
+    other than Haiku is a problem, and the gate refuses the spot-check until the table names another model.
     """
-    author = _tier(policy, SYNTHESIZER)[0]
-    try:
-        model, _ = gates.verifier_tier(policy, author)
-    except gates.GateError as failure:
-        return author, "the depth spot-check stays queued and cannot be taken: %s" % failure
-    if model == gates.HAIKU:
-        return author, ("policy.verifier sends the synthesizer's %s to haiku, and a depth spot-check never runs on haiku; "
-                        "it stays queued until the table names another model" % author)
-    return author, None
+    authors = [_tier(policy, SYNTHESIZER)[0], _tier(policy, READER)[0]]
+    reasons = []
+    for author in authors:
+        try:
+            model, _ = gates.verifier_tier(policy, author)
+        except gates.GateError as failure:
+            reasons.append(str(failure))
+            continue
+        if model == pacing.HAIKU:
+            reasons.append("policy.verifier sends %s to haiku" % author)
+            continue
+        return author, None
+    return authors[0], ("the depth spot-check stays queued and cannot be taken: it never runs on haiku, and neither the "
+                        "synthesizer's %s nor the reader's %s gets another verifier (%s)" % (authors[0], authors[1], "; ".join(reasons)))
 
 
 def spot_check_ask(slug, inventory, entries, sections, author_model, text_layer_path=None):
@@ -966,7 +972,8 @@ def render_dossier_markdown(dossier, entries):
                  "" if coverage["pass"] else "; missing %s" % ", ".join(coverage["missing"])),
              "Depth spot-check: %s by the %s.%s" % (
                  l2["spot_check"]["status"], l2["spot_check"]["role"],
-                 " Taken on %s in place of %s, whose weekly window was spent." % (l2["spot_check"].get("model"), l2["spot_check"]["fallback_from"])
+                 " Taken on %s in place of %s, whose weekly window was spent." % (l2["spot_check"].get("model") or "an unnamed model",
+                                                                                  l2["spot_check"]["fallback_from"])
                  if l2["spot_check"].get("fallback_from") else "")]
     lines += ["- [%s] %s (%s)" % (finding.get("severity", "?"), finding.get("text", ""), finding.get("locator", "?"))
               for finding in l2["spot_check"].get("findings") or []]
@@ -1153,10 +1160,15 @@ def level_2_command(options):
         print("wayline absorb --level 2: name exactly one slug; a level-2 read is one paper at a time", file=sys.stderr)
         return 2
     slug = options.slugs[0]
+    waits = None
     try:
         project = find_project(options.project)
         report = absorb_level_2(project, slug, fanout=options.fanout)
-        verdict = take_spot_check(project, slug) if options.spot_check else None
+        try:
+            verdict = take_spot_check(project, slug) if options.spot_check else None
+        except gates.FableHeld as held:
+            # Not a verdict against the dossier: the spot-check stays queued for the reset, and the read stands (decision 15).
+            verdict, waits = None, str(held)
     except (DossierError, ProjectError, ValidationError, gates.GateError, worker.LaunchError, worker.RoleError,
             LedgerError, OSError) as failure:
         print("wayline absorb --level 2: %s" % failure, file=sys.stderr)
@@ -1165,13 +1177,15 @@ def level_2_command(options):
         shown = dict(report, spot_check=dict(vars(report["spot_check"])))
         if verdict is not None:
             shown["spot_check_verdict"] = verdict.payload
+        if waits:
+            shown["spot_check_waits"] = waits
         print(json.dumps(shown, ensure_ascii=False, indent=2))
     else:
-        print(_render(report, verdict))
+        print(_render(report, verdict, waits))
     return 0 if report["pass"] and (verdict is None or verdict.passed) else 1
 
 
-def _render(report, verdict=None):
+def _render(report, verdict=None, waits=None):
     coverage = report["coverage"]
     lines = [
         "absorbed   %s at level 2 by the %s fan-out%s" % (report["slug"], report["fanout"],
@@ -1183,7 +1197,7 @@ def _render(report, verdict=None):
         "cost       %s agent(s), %s token(s), %s ms" % (report["cost"]["agents"], report["cost"]["tokens"], report["cost"]["duration_ms"]),
     ]
     if verdict is None:
-        lines.append("spot-check queued for the %s" % report["spot_check"].role)
+        lines.append("spot-check queued for the %s%s" % (report["spot_check"].role, ": %s" % waits if waits else ""))
     else:
         lines.append("spot-check %s (%s%s, %s)" % ("pass" if verdict.passed else "FAIL", verdict.model,
                                                    " in place of %s" % verdict.fallback_from if verdict.fallback_from else "",

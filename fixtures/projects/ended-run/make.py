@@ -169,7 +169,7 @@ def main():
 
     event("run_started", {"resume": False, "harness_tag": "v0.0.0", "autonomy": "autonomous", "radius": "moderate", "pid": 40401})
     event("pacing", {"five_hour": 0.18, "seven_day": 0.34, "action": "normal"})
-    event("paused", {"resets_at": "2026-09-11T22:00:00Z", "window": "seven_day", "utilization": 1.0, "model": "fable"})
+    event("paused", {"resets_at": "2026-09-11T23:27:00Z", "window": "seven_day", "utilization": 1.0, "model": "fable"})
     event("decision", {"ticket": 10, "answer": "20000 rows", "decided_by": "human",
                        "rationale": "Enough rows for three seeds to separate by more than one standard deviation.", "confidence": 1.0}, ticket=10)
     event("decision", {"ticket": 8, "answer": "split_b", "decided_by": "decider",

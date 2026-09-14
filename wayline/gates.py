@@ -73,7 +73,8 @@ __all__ = [
     "ticket_asks", "owed_asks",
     "UsageLimited",
     "FableHeld",
-    "HAIKU",
+    "fallback_now",
+    "verifies_on_fable",
     "verdict",
     "verdict_for",
     "verdict_dir",
@@ -420,9 +421,6 @@ CLAIM_SUPPORT = "claim_support"          # a sampled report claim: do its cited 
 DEPTH_SPOT_CHECK = "depth_spot_check"    # an L2 dossier: were its most important items and its flaws read in depth
 VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK)
 
-# The model a depth spot-check never runs on, whatever the table or a fallback would give it (decision 15).
-HAIKU = "haiku"
-
 # What an independent read of a done ticket reads, by the ticket's effective difficulty.
 DIFFICULTY_VERDICTS = {3: DIFF, 4: RESULT, 5: RESULT}
 
@@ -553,19 +551,40 @@ def verdict_tier(policy, author_model, fall_back=False):
     return model, effort, None
 
 
-def _fall_back_for(project, policy, author_model, fall_back, what):
-    """Whether a verdict on work written on `author_model` falls back now: `fall_back` when the caller decided, else the hold.
+def verifies_on_fable(policy, author_model):
+    """Whether the table's verifier for work written on `author_model` is Fable.
 
-    The conductor decides from the consent it read for its wave, so one wave never falls back for one
-    verdict and waits for the next. Any other caller (the claim sampler, the depth spot-check, the kill
-    argument) passes None and the journal decides (`project.fable_hold`): no hold, or a verifier not on
-    Fable, takes the table's model; a hold under `auto` falls back; a hold under `wait`, or under `ask`
-    before an answer, raises `FableHeld` for `what` before any session is spent.
+    A table the gate refuses is not: the gate refuses it by name when the verdict is taken, which is where
+    the owner should read why.
+    """
+    try:
+        return verifier_tier(policy, author_model)[0] == pacing.FABLE
+    except GateError:
+        return False
+
+
+def _fall_back_for(project, policy, author_model, fall_back, what):
+    """Whether a verdict on work written on `author_model` falls back now: `fall_back` when the caller decided, else `fallback_now`.
+
+    The conductor decides from the consent it read for its wave, and the claim sampler once for its pass,
+    so neither falls back for one verdict and waits for the next. A caller that passes None (the depth
+    spot-check, the kill argument) has the journal decide, and only for a verifier on Fable: a verifier on
+    any other model is the table's.
     """
     if fall_back is not None:
         return bool(fall_back)
     if verifier_tier(policy, author_model)[0] != pacing.FABLE:
         return False
+    return fallback_now(project, what)
+
+
+def fallback_now(project, what="a verdict on Fable"):
+    """Whether a verdict whose verifier is Fable, taken outside the conductor, falls back to Opus now (decision 15).
+
+    False while no hold stands (`project.fable_hold`), so it is taken on Fable, and true under a hold and the
+    consent `auto`. Under a hold and `wait`, or `ask` before an answer, it raises `FableHeld` for `what`
+    before any session is spent.
+    """
     hold = fable_hold(project)
     if hold is None:
         return False
@@ -749,7 +768,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     what = "the %s verdict on the %s %s" % (verdict_type, subject_kind, subject)
     model, effort, fallback_from = verdict_tier(policy, author_model,
                                                 _fall_back_for(project, policy, author_model, fall_back, what))
-    if verdict_type == DEPTH_SPOT_CHECK and model == HAIKU:
+    if verdict_type == DEPTH_SPOT_CHECK and model == pacing.HAIKU:
         raise GateError("%s would run on haiku, and a depth spot-check never goes to Haiku (decision 15); "
                         "policy.verifier gives haiku for an author on %s" % (what, author_model))
     role = worker.read_role(role, harness_root, project)
