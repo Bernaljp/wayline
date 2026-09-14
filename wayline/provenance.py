@@ -386,6 +386,7 @@ SECTIONS = (
     "Goal trajectory",
     "Findings by claim",
     "Tickets closed: done and accepted",
+    "Judged on Opus while Fable was spent",
     "Negative results",
     "Papers by level, and promotions not read in full",
     "Not pursued",
@@ -798,10 +799,13 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
     """Sample the tagged claims of `research/REPORT.md` and take one Type-B verdict on each.
 
     Every verdict goes through `gates.verdict` with `subject_kind: claim`, so it is journaled with
-    its session and its model, and the verifier's model is never the author's: the ticket that wrote
-    the finding for a finding's sentence, the writer for the prose. A claim that already has a
-    verdict is not read again. A failing claim files one `writing` ticket, unless an open one for the
-    same claim is already there. Returns what happened, as a dict.
+    its session and its model, on the verifier the table gives for the claim's author: the ticket that
+    wrote the finding for a finding's sentence, the writer for the prose. While Fable's weekly window is
+    spent, a claim whose verifier is Fable is judged by a fresh Opus session at the table's effort under
+    the fallback consent `auto`; otherwise it waits, listed under `waiting`, for a later pass (decision 15).
+    A claim that already has a verdict is not read again, whatever model took it. A failing claim files
+    one `writing` ticket, unless an open one for the same claim is already there. Returns what happened,
+    as a dict.
     """
     project = Path(project).resolve()
     book = Ledger(project)
@@ -819,19 +823,31 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
                  if event.get("event") == ledger.VERDICT and (event.get("payload") or {}).get("subject_kind") == CLAIM}
     authors = _finding_authors(context)
     writer_model = _prose_author(book, policy)
-    outcome = {"claims": len(claims), "sampled": len(chosen), "already_verdicted": 0, "passed": [], "failed": [], "tickets": []}
+    outcome = {"claims": len(claims), "sampled": len(chosen), "already_verdicted": 0, "passed": [], "failed": [], "tickets": [],
+               "waiting": [], "fell_back": []}
+    try:
+        # Decided once for the pass, so a hold that begins or ends during it cannot split the claims between Fable and Opus.
+        fall_back, held = gates.fallback_now(project, "the claim verdicts"), False
+    except gates.FableHeld:
+        fall_back, held = False, True
     for claim in chosen:
         subject = claim_subject(claim)
         if subject in verdicted:
             outcome["already_verdicted"] += 1
             continue
         from_finding = claim.digest in authors
+        author = authors.get(claim.digest) or writer_model
+        if held and gates.verifies_on_fable(policy, author):
+            outcome["waiting"].append(subject)
+            continue
         taken = gates.verdict(
             CLAIM, subject, CLAIM_QUESTION % _inline(claim.text), claim_paths(claim), CLAIM_SCOPE,
-            project=project, author_model=authors.get(claim.digest) or writer_model,
-            verdict_type=gates.CLAIM_SUPPORT, harness_root=harness_root, policy=policy, ledger=book,
+            project=project, author_model=author, verdict_type=gates.CLAIM_SUPPORT, harness_root=harness_root,
+            policy=policy, ledger=book, fall_back=fall_back,
         )
         verdicted.add(subject)
+        if taken.fallback_from:
+            outcome["fell_back"].append(subject)
         if taken.passed:
             outcome["passed"].append(subject)
             continue
@@ -1212,6 +1228,36 @@ def _closed(context):
     return _records(lines)
 
 
+def _fell_back(context):
+    """Every verdict and decision taken on Opus in place of Fable while its weekly window was spent (decision 15).
+
+    Nothing is taken again after the reset, so this is where the owner reads which judgments ran by fallback.
+    """
+    lines = []
+    for event in context.events:
+        payload = event.get("payload") or {}
+        if not payload.get("fallback_from"):
+            continue
+        if event.get("event") == ledger.VERDICT:
+            ticket = event.get("ticket")
+            lines.append("- Verdict `%s` on the %s `%s`%s: %s on %s in place of %s, session `%s` (%s)" % (
+                payload.get("verdict_type"), payload.get("subject_kind"), payload.get("subject"),
+                " (ticket %s)" % ticket if ticket is not None else "", "passed" if payload.get("pass") else "failed",
+                payload.get("model") or "an unnamed model", payload["fallback_from"],
+                payload.get("session_id") or event.get("session_id") or "unknown", _when(event)))
+        elif event.get("event") == ledger.DECISION:
+            ticket = payload.get("ticket")
+            title = (context.tickets.get(ticket) or {}).get("title")
+            subject = "the grill" if ticket is None else "ticket %s%s" % (ticket, ", *%s*" % title if title else "")
+            lines.append("- Decision by the %s on %s: **%s** on %s in place of %s (%s)" % (
+                payload.get("decided_by"), subject, _inline(payload.get("answer")), payload.get("model") or "an unnamed model",
+                payload["fallback_from"], _when(event)))
+    if not lines:
+        return _records(["Nothing was judged by fallback: every verdict and decision ran on the model its table gives."])
+    return _records(["Taken on Opus while Fable's weekly window was spent, under the fallback consent. None of them is "
+                     "taken again on Fable after the reset.", ""] + lines)
+
+
 def _negative_section(context, prose):
     negative = [finding for finding in context.findings if finding.get("negative")]
     if not negative:
@@ -1352,7 +1398,7 @@ def _events(context):
 def _body(context, prose):
     sections = (
         _decider_decisions(context), _open_questions(context), _trajectory(context),
-        _findings_section(context, prose), _closed(context), _negative_section(context, prose),
+        _findings_section(context, prose), _closed(context), _fell_back(context), _negative_section(context, prose),
         _papers(context), _not_pursued(context), _global_changes(context), _resources(context), _events(context),
     )
     lines = []
@@ -1459,6 +1505,10 @@ def report_command(args):
     try:
         rendered = render_report(project, offline=options.offline, draft=not options.no_draft)
         verified = verify_claims(project) if options.verify and rendered.lint.passed else None
+        if verified and verified["fell_back"]:
+            # The report lists the verdicts taken by fallback from the journal, which the sampling has just added to;
+            # nothing the writer or the classifier read changed, so the render launches nothing.
+            rendered = render_report(project, offline=True, draft=False)
     except (ProvenanceError, gates.GateError, worker.LaunchError, worker.RoleError, tickets.TicketError) as failure:
         print("wayline report: %s" % failure, file=sys.stderr)
         return 1
@@ -1485,8 +1535,10 @@ def _render_outcome(outcome, asked_to_verify):
         lines.append("note      %s" % note)
     verified = outcome["verify"]
     if verified is not None:
-        lines.append("verifier  %d of %d tagged claims sampled: %d passed, %d failed, %d already had a verdict" % (
-            verified["sampled"], verified["claims"], len(verified["passed"]), len(verified["failed"]), verified["already_verdicted"]))
+        lines.append("verifier  %d of %d tagged claims sampled: %d passed, %d failed, %d already had a verdict%s%s" % (
+            verified["sampled"], verified["claims"], len(verified["passed"]), len(verified["failed"]), verified["already_verdicted"],
+            ", %d judged on Opus in place of Fable" % len(verified["fell_back"]) if verified.get("fell_back") else "",
+            ", %d wait for Fable's weekly window" % len(verified["waiting"]) if verified.get("waiting") else ""))
         if verified["tickets"]:
             lines.append("          writing ticket(s) filed: %s" % ", ".join(map(str, verified["tickets"])))
     elif asked_to_verify:

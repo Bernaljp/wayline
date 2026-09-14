@@ -7,7 +7,7 @@
       "job": null,
       "run_id": "t1-a1",
       "ticket": 1,
-      "ts": "2026-09-11T21:02:00.000Z"
+      "ts": "2026-09-11T21:03:00.000Z"
     },
     {
       "path": "results/baseline/seed-1/summary.json",
@@ -16,7 +16,7 @@
       "job": "j-0001",
       "run_id": "t2-a1",
       "ticket": 2,
-      "ts": "2026-09-11T22:09:00.000Z"
+      "ts": "2026-09-11T22:10:00.000Z"
     },
     {
       "path": "results/baseline/seed-2/summary.json",
@@ -25,7 +25,7 @@
       "job": "j-0001",
       "run_id": "t2-a1",
       "ticket": 2,
-      "ts": "2026-09-11T22:10:00.000Z"
+      "ts": "2026-09-11T22:11:00.000Z"
     },
     {
       "path": "results/baseline/seed-3/summary.json",
@@ -34,7 +34,7 @@
       "job": "j-0001",
       "run_id": "t2-a1",
       "ticket": 2,
-      "ts": "2026-09-11T22:11:00.000Z"
+      "ts": "2026-09-11T22:12:00.000Z"
     },
     {
       "path": "results/baseline/summary.json",
@@ -43,7 +43,7 @@
       "job": "j-0001",
       "run_id": "t2-a1",
       "ticket": 2,
-      "ts": "2026-09-11T22:12:00.000Z"
+      "ts": "2026-09-11T22:13:00.000Z"
     },
     {
       "path": "results/interactions/summary.json",
@@ -52,7 +52,7 @@
       "job": "j-0002",
       "run_id": "t3-a1",
       "ticket": 3,
-      "ts": "2026-09-12T00:45:00.000Z"
+      "ts": "2026-09-12T00:47:00.000Z"
     },
     {
       "path": "results/depth/summary.json",
@@ -61,7 +61,7 @@
       "job": "j-0003",
       "run_id": "t4-a1",
       "ticket": 4,
-      "ts": "2026-09-12T01:49:00.000Z"
+      "ts": "2026-09-12T01:51:00.000Z"
     }
   ]
 }

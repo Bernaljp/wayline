@@ -56,7 +56,8 @@ from wayline.ledger import (
     TICKET_NEEDS_HUMAN, Ledger, atomic_write, conductor_holder,
 )
 from wayline.project import (
-    ProjectError, home, is_project, journal_written_answers, policy_for, read_active, read_harness, read_jobs,
+    ProjectError, consent_for, home, is_project, journal_written_answers, policy_for, read_active, read_harness,
+    read_jobs,
 )
 from wayline.resources import LIVE_JOB_STATUSES
 from wayline.schedule import awaits_owner
@@ -1156,18 +1157,11 @@ def owed_verdicts(project, graph, view, policy):
                                        view.integrated.get(entry["id"]), view.passed(entry["id"]))
         if earned:
             owed.append({"ticket": entry["id"], "verdicts": len(asks),
-                         "on_fable": any(_verifies_on_fable(gates, policy, ask) for ask in asks)})
+                         "on_fable": any(gates.verifies_on_fable(policy, ask.author_model) for ask in asks)})
     return owed
 
 
-def _verifies_on_fable(gates, policy, ask):
-    try:
-        return gates.verifier_tier(policy, ask.author_model)[0] == pacing.FABLE
-    except gates.GateError:
-        return False  # the gate refuses the table by name when the verdict is taken
-
-
-def work_remaining(project, graph, view, policy, fable_is_spent, autonomy=None, decider=True):
+def work_remaining(project, graph, view, policy, fable_waits, autonomy=None, decider=True):
     """What a relaunched conductor would find to do, as phrases, and what waits on Fable instead (None when nothing does).
 
     Work is what keeps a conductor from ending its run: a ticket on the frontier that a session may take
@@ -1175,7 +1169,9 @@ def work_remaining(project, graph, view, policy, fable_is_spent, autonomy=None, 
     the conductor), a running ticket (a worker to re-adopt, a result to carry, the jobs it left), or a done
     ticket owed its verdicts or its acceptance. A job counts through its ticket, since a job whose ticket no
     longer runs is nothing a conductor acts on. A verdict queue that waits only on Fable is work once
-    Fable's weekly window has reset (decision 15); until then a conductor would hold all of it.
+    Fable's weekly window has reset (decision 15); until then a conductor would hold all of it. `fable_waits` is
+    whether Fable work waits now: Fable's weekly window is spent and the fallback consent is not `auto`, under which
+    a conductor takes those verdicts on Opus instead. It is not whether the window is spent.
     """
     work = []
     ready = [entry for entry in frontier(graph) if not awaits_owner(entry, autonomy, decider)]
@@ -1192,7 +1188,7 @@ def work_remaining(project, graph, view, policy, fable_is_spent, autonomy=None, 
     if accepting:
         work.append("%d ticket(s) owed their acceptance" % len(accepting))
     waiting = None
-    if judging and fable_is_spent and all(item["on_fable"] for item in judging):
+    if judging and fable_waits and all(item["on_fable"] for item in judging):
         waiting = "%d ticket(s) wait for a verdict on Fable, whose weekly window is spent" % len(judging)
     elif judging:
         work.append("%d ticket(s) owed a verdict" % len(judging))
@@ -1242,11 +1238,12 @@ def relaunch_decision(project, ledger, policy, reading, now):
         return None, "the last run ended %s, which only an answer or the owner undoes" % view.run["ended"]
     graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     stop_at, _ = thresholds_for(project, policy, view)
+    # Under `auto` a conductor takes a verdict on Fable on Opus, so a queue that waits only on Fable is work now (decision 15).
+    fable_waits = fable_spent(view, reading, stop_at, now) and consent_for(project, view)[0] != pacing.AUTO
     # The autonomy the relaunched run starts from, which is `harness.json`'s and not the last run's.
     autonomy = _harness(project).get("autonomy")
     from wayline.decisions import decider_ready  # the decisions module imports the notifier and the grill, which no other step needs
-    work, waiting = work_remaining(project, graph, view, policy, fable_spent(view, reading, stop_at, now), autonomy,
-                                   decider_ready(project=project))
+    work, waiting = work_remaining(project, graph, view, policy, fable_waits, autonomy, decider_ready(project=project))
     if not work:
         return None, "no work remains" + ("; " + waiting if waiting else "")
     closed = window_closed(view, reading, stop_at, now)

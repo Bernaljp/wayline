@@ -21,6 +21,8 @@
     "rationale": {"type": ["string", "null"]},
     "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
     "decided_by": {"enum": ["human", "decider", null]},
+    "model": {"type": ["string", "null"], "description": "the model the decider's session ran on (decision 15); absent on an answer no model gave"},
+    "fallback_from": {"enum": ["fable", null], "description": "fable when the decider ran on Opus while Fable's weekly window was spent (decision 15)"},
     "reversible": {"type": "boolean"},
     "timestamp": {"type": ["string", "null"]}
   }

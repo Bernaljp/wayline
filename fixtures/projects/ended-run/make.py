@@ -9,7 +9,9 @@ one by the owner, an open decision ticket and a `needs_human` ticket, kept goal 
 discarded change, four findings over manifested results (one of them negative), tickets `done`
 and `accepted`, a difficulty-5 ticket, parked proposals, a paper read in full, a paper promoted and
 not read, a promotion waiting on a decision, a reference that did not resolve, a global change
-record under `autonomous`, GPU jobs, a closed window, and `run_ended`.
+record under `autonomous`, GPU jobs, a closed window, and `run_ended`. Fable's weekly window was spent
+when the run began, under the fallback consent `auto`, so the decider's answer and ticket 2's diff verdict
+ran on Opus in Fable's place (decision 15) until the window reset.
 """
 
 import json
@@ -167,11 +169,12 @@ def main():
 
     event("run_started", {"resume": False, "harness_tag": "v0.0.0", "autonomy": "autonomous", "radius": "moderate", "pid": 40401})
     event("pacing", {"five_hour": 0.18, "seven_day": 0.34, "action": "normal"})
+    event("paused", {"resets_at": "2026-09-11T23:27:00Z", "window": "seven_day", "utilization": 1.0, "model": "fable"})
     event("decision", {"ticket": 10, "answer": "20000 rows", "decided_by": "human",
                        "rationale": "Enough rows for three seeds to separate by more than one standard deviation.", "confidence": 1.0}, ticket=10)
     event("decision", {"ticket": 8, "answer": "split_b", "decided_by": "decider",
                        "rationale": "split_b holds out whole annotation sources, so a gain on it cannot come from leakage between the two label sources.",
-                       "confidence": 0.8}, ticket=8)
+                       "confidence": 0.8, "model": "claude-opus-5", "fallback_from": "fable"}, ticket=8)
     for slug, level, _, _, _ in REFS:
         event("absorbed", {"slug": slug, "level": 0})
     event("promoted", {"slug": "paper-a", "from_level": 1, "to_level": 2, "trigger": PRIMARY_AT_INTAKE})
@@ -213,16 +216,18 @@ def main():
                 event("finding", {"id": number, "ticket": owner, "text": text, "provenance": provenance, "negative": negative},
                       ticket=owner, minutes=0)
 
-    def closed(identifier, verdict_model=None, verdict_type="result"):
+    def closed(identifier, verdict_model=None, verdict_type="result", fallback_from=None):
         event("acceptance", {"ticket": identifier, "attempt": 1, "where": "main", "pass": True,
                              "results": [{"command": "python -m unittest", "exit_code": 0}]}, ticket=identifier)
         event("integrated", {"ticket": identifier, "commit": "%07x" % (0x4c2f9a0 + identifier), "resolved_by": "none"}, ticket=identifier)
         event("ticket_done", {"ticket": identifier}, ticket=identifier)
         finding(identifier)
         if verdict_model:
-            event("verdict", {"subject_kind": "ticket", "subject": "research/tickets/%02d" % identifier, "verdict_type": verdict_type,
-                              "pass": True, "session_id": session(60 + identifier), "model": verdict_model, "findings": []},
-                  ticket=identifier, session_id=session(60 + identifier))
+            payload = {"subject_kind": "ticket", "subject": "research/tickets/%02d" % identifier, "verdict_type": verdict_type,
+                       "pass": True, "session_id": session(60 + identifier), "model": verdict_model, "findings": []}
+            if fallback_from:
+                payload["fallback_from"] = fallback_from
+            event("verdict", payload, ticket=identifier, session_id=session(60 + identifier))
             event("ticket_accepted", {"ticket": identifier}, ticket=identifier)
 
     entries = []
@@ -234,10 +239,11 @@ def main():
     job(2, "j-0001", 2700)
     manifest("results/baseline/")
     event("progress", {"metric": "auroc", "value": 0.812, "ticket": 2, "run_id": "t2-a1", "kept": True}, ticket=2)
-    closed(2, "claude-fable-5", "diff")
+    closed(2, "claude-opus-5", "diff", fallback_from="fable")
 
     event("paused", {"resets_at": "2026-09-12T02:00:00Z", "window": "five_hour", "utilization": 0.92})
     event("unpaused", {}, minutes=65)
+    event("unpaused", {"model": "fable"})
     event("pacing", {"five_hour": 0.05, "seven_day": 0.51, "action": "normal"})
 
     worked(3, "experimenter", "fable", "max", 41, 25, status="running")
