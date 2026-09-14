@@ -4,7 +4,8 @@ The gate is driven with the fake launcher over a real project, and what is asser
 next component and the owner can see: the journal's `verdict` and `ticket_accepted` events, the
 ticket statuses in the files, the prompt the session was handed, and the launch line's model.
 
-The one rule that holds under every other assertion: the verifier's model is never the author's.
+The one rule that holds under every other assertion: a verdict is a fresh launch carrying none of the
+author's context, whichever model the table gives it.
 """
 
 import io
@@ -105,17 +106,16 @@ class VerifierTableTest(unittest.TestCase):
         self.assertEqual(gates.verifier_tier(self.policy, "opus"), ("fable", "high"))
         self.assertEqual(gates.verifier_tier(self.policy, "fable"), ("opus", "max"))
 
-    def test_the_verifier_is_never_the_authors_own_model(self):
+    def test_the_shipped_table_sends_no_author_to_its_own_model(self):
         for author in ("sonnet", "opus", "fable"):
             with self.subTest(author=author):
                 self.assertNotEqual(gates.verifier_tier(self.policy, author)[0], author)
 
-    def test_an_override_that_names_the_authors_model_is_refused(self):
+    def test_an_override_that_names_the_authors_model_is_taken(self):
+        """The table is the default choice, not the rule: a fresh session on the author's model is a verdict (ticket 56)."""
         overridden = dict(self.policy, verifier=dict(self.policy["verifier"],
                                                      opus={"model": "opus", "effort": "max"}))
-        with self.assertRaises(GateError) as caught:
-            gates.verifier_tier(overridden, "opus")
-        self.assertIn("not a verdict", str(caught.exception))
+        self.assertEqual(gates.verifier_tier(overridden, "opus"), ("opus", "max"))
 
     def test_an_author_the_table_does_not_name_is_refused_by_name(self):
         with self.assertRaises(GateError) as caught:
@@ -309,7 +309,7 @@ class VerdictGateTest(GateCase):
         self.assertEqual((request.model, request.effort), ("opus", "high"))
         self.assertEqual(request.role, "verifier")
 
-    def test_the_author_and_the_verifier_never_share_a_model(self):
+    def test_under_the_shipped_table_each_author_is_read_on_another_model(self):
         for author, expected in (("sonnet", "opus"), ("opus", "fable"), ("fable", "opus")):
             with self.subTest(author=author):
                 self.take(passing(), author_model=author)
@@ -447,7 +447,7 @@ class KillArgumentTest(GateCase):
         self.assertIn("found no case to make", self.calls[1].request.prompt)
         self.assertEqual([item["id"] for item in tickets.read_tickets(self.project)], [1])
 
-    def test_the_verifier_is_never_the_author_in_either_thread(self):
+    def test_both_threads_run_on_the_verifier_the_table_gives_the_author(self):
         self.run_gate(self.memo(), passing(), author_model="fable")
         for call in self.calls:
             self.assertEqual(call.request.model, "opus")

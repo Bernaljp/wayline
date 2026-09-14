@@ -123,6 +123,7 @@
             "paths": {"type": "array", "items": {"type": "string"}},
             "session_id": {"type": ["string", "null"]},
             "model": {"type": ["string", "null"]},
+            "fallback_from": {"enum": ["fable", null], "description": "fable when the critic ran on Opus in place of a verifier on Fable (decision 15)"},
             "findings": {"type": "array", "items": {"type": "object"}}
           }
         }

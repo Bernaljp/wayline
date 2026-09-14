@@ -380,13 +380,13 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `ticket_needs_human` | `ticket`, `question` |
   | `ticket_cancelled`, `ticket_rerun` | `ticket`, `by` |
   | `difficulty_raised` | `kind`, `from`, `to` |
-  | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings` |
+  | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings`; `fallback_from`: `fable` (a verdict taken on Opus in place of a verifier on Fable, decision 15; absent otherwise) |
   | `finding` | `id`, `ticket`, `text`, `provenance`, `negative` |
   | `progress` | `metric`, `value`, `ticket`, `run_id`, `kept` |
   | `discarded` | `ticket`, `metric`, `best`, `sd`, `seeds` |
   | `proposal_admitted`, `proposal_parked` | `id`, `from`, `kind`, `ticket` or `reason`: `radius`, `duplicate`, `cap`, `blockers` |
   | `decision_opened` | `ticket`, `blocking`, `human_only` |
-  | `decision` | `ticket`, `answer`, `decided_by`: `human`, `decider`; `rationale`, `confidence` |
+  | `decision` | `ticket`, `answer`, `decided_by`: `human`, `decider`; `rationale`, `confidence`; `model` (the model the decider ran on, decision 15; absent on an answer no model gave); `fallback_from`: `fable` (the decider ran by fallback; absent otherwise) |
   | `job_launched` | `job`, `ticket`, `unit`, `gpu_uuids`, `cores`, `ram_gb`, `attempt` |
   | `job_finished` | `job`, `exit_code`, `seconds`, `outputs_ok` |
   | `job_retried` | `job`, `attempt`, `oom`: `host`, `gpu`; `overrides` |

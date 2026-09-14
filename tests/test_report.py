@@ -360,7 +360,7 @@ class ReportTest(RunCase):
     def test_the_sections_are_in_the_order_of_decision_11(self):
         headings = re.findall(r"^## (\d+)\. (.*)$", self.text(), re.M)
         self.assertEqual([title for _, title in headings], list(SECTIONS))
-        self.assertEqual(len(SECTIONS), 11)
+        self.assertEqual(len(SECTIONS), 12)
 
     def test_decider_decisions_come_first_with_rationale_and_confidence(self):
         first = self.section(1)
@@ -414,42 +414,43 @@ class ReportTest(RunCase):
         self.assertNotIn("Ticket 4,", accepted)
 
     def test_negative_results_are_tagged_claims(self):
-        sixth = self.section(6)
-        self.assertIn("Depth alone does not reach the goal.[^", sixth)
-        self.assertRegex(sixth, r"`f-0004` \(ticket 4\): Doubling the model depth .*baseline\.\[\^\d+\]\[\^\d+\]")
+        seventh = self.section(7)
+        self.assertIn("Depth alone does not reach the goal.[^", seventh)
+        self.assertRegex(seventh, r"`f-0004` \(ticket 4\): Doubling the model depth .*baseline\.\[\^\d+\]\[\^\d+\]")
 
     def test_papers_by_level_and_the_promotions_not_read_in_full(self):
-        seventh = self.section(7)
-        self.assertIn("- Level 2 (2): `paper-a`, `paper-b`", seventh)
-        self.assertIn("- Level 0 (1): `paper-d` (unresolved)", seventh)
-        self.assertIn("`paper-b`: promoted to level 2 on `consultant_question`", seventh)
-        self.assertIn("`paper-c`: a promotion beyond the phase's reading budget waits on decision ticket 11", seventh)
-        self.assertNotIn("`paper-a`: promoted", seventh, "paper-a was absorbed at level 2")
+        eighth = self.section(8)
+        self.assertIn("- Level 2 (2): `paper-a`, `paper-b`", eighth)
+        self.assertIn("- Level 0 (1): `paper-d` (unresolved)", eighth)
+        self.assertIn("`paper-b`: promoted to level 2 on `consultant_question`", eighth)
+        self.assertIn("`paper-c`: a promotion beyond the phase's reading budget waits on decision ticket 11", eighth)
+        self.assertNotIn("`paper-a`: promoted", eighth, "paper-a was absorbed at level 2")
 
     def test_parked_proposals_are_listed_as_not_pursued(self):
-        eighth = self.section(8)
-        self.assertIn("Proposal `p-0002` from ticket 3 (analysis): parked, reason `cap`", eighth)
-        self.assertIn("Proposal `p-0003` from ticket 4 (experiment): parked, reason `radius`", eighth)
-        self.assertIn("Ticket 9, *Probe the calibration of the interaction model* (analysis): parked", eighth)
-        self.assertNotIn("p-0001", eighth)
+        ninth = self.section(9)
+        self.assertIn("Proposal `p-0002` from ticket 3 (analysis): parked, reason `cap`", ninth)
+        self.assertIn("Proposal `p-0003` from ticket 4 (experiment): parked, reason `radius`", ninth)
+        self.assertIn("Ticket 9, *Probe the calibration of the interaction model* (analysis): parked", ninth)
+        self.assertNotIn("p-0001", ninth)
 
     def test_global_changes_are_proposed_under_autonomous(self):
-        ninth = self.section(9)
-        self.assertIn("none was applied", ninth)
-        self.assertIn("Change record `c-0001`: mechanism `prompt`", ninth)
-        self.assertNotIn("c-0002", ninth, "a local change is not a global proposal")
+        tenth = self.section(10)
+        self.assertIn("none was applied", tenth)
+        self.assertIn("Change record `c-0001`: mechanism `prompt`", tenth)
+        self.assertNotIn("c-0002", tenth, "a local change is not a global proposal")
 
     def test_resources_spent(self):
-        tenth = self.section(10)
-        self.assertIn("the run paused 1 time(s)", tenth)
-        self.assertIn("Highest utilization read: five_hour 0.92, seven_day 0.51.", tenth)
-        self.assertIn("Ticket 3: 41 turns in 1 session(s), 25.0 minutes", tenth)
-        self.assertIn("Jobs: 3 finished, 2.25 GPU-hours, 18.0 core-hours.", tenth)
+        eleventh = self.section(11)
+        self.assertIn("the run paused 1 time(s)", eleventh)
+        self.assertIn("Fable's weekly window held the launches on Fable 1 time(s), while everything else kept launching.", eleventh)
+        self.assertIn("Highest utilization read: fable 1, five_hour 0.92, seven_day 0.51.", eleventh)
+        self.assertIn("Ticket 3: 41 turns in 1 session(s), 25.0 minutes", eleventh)
+        self.assertIn("Jobs: 3 finished, 2.25 GPU-hours, 18.0 core-hours.", eleventh)
 
     def test_the_runs_events(self):
-        eleventh = self.section(11)
-        self.assertIn("| `run_ended` | 1 |", eleventh)
-        self.assertRegex(eleventh, r"- 2026-09-11 20:01Z `run_started` resume false")
+        twelfth = self.section(12)
+        self.assertIn("| `run_ended` | 1 |", twelfth)
+        self.assertRegex(twelfth, r"- 2026-09-11 20:01Z `run_started` resume false")
 
     def test_report_rendered_is_journaled_with_the_digest_and_the_counts(self):
         payload = self.events("report_rendered")[-1]["payload"]

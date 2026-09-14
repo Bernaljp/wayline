@@ -55,6 +55,7 @@ READINGS = WINDOWS + (FABLE,)
 AUTO, ASK, WAIT = "auto", "ask", "wait"
 CONSENTS = (AUTO, ASK, WAIT)
 OPUS = "opus"
+HAIKU = "haiku"  # the model a depth spot-check never runs on (decision 15)
 
 # `policy.pacing` as decision 14 ships it; a project's `harness.json` and a `control pacing` override them.
 STOP_AT, CHEAP_AT = 0.90, 0.80
