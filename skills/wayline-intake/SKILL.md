@@ -1,6 +1,6 @@
 ---
 name: wayline-intake
-description: "Phase P0 of a wayline run. Turns whatever the owner has (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) into research/INTAKE.md, the autonomy, radius, budgets, and human-only classes in harness.json, and research/GOAL.json when a quantitative goal is stated and a script can measure it. Use it at the start of a project, and whenever the owner wants to add or replace the goal."
+description: "Phase P0 of a wayline run. Turns whatever the owner has (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) into research/INTAKE.md, the autonomy, radius, fallback consent, budgets, and human-only classes in harness.json, and research/GOAL.json when a quantitative goal is stated and a script can measure it. Use it at the start of a project, and whenever the owner wants to add or replace the goal."
 ---
 
 # Intake
@@ -27,7 +27,12 @@ take the defaults and say what you assumed.
 - **Code**: the repositories the work builds on; the verb pins each to its commit.
 - **Constraints**: deadlines, hardware, licences, methods that are off the table, and anything the
   owner said must not change.
-- **Autonomy**: `interactive`, `checkpoints` (the default), or `autonomous`.
+- **Autonomy**: `interactive`, `checkpoints` (the default), or `autonomous`, and beside it the fallback
+  consent `model_fallback`, which says what becomes of Fable work while Fable's weekly window is spent:
+  `auto` falls back to Opus without asking, `ask` waits for the owner's answer, asked once per spent
+  window (until that ask is built, nobody is asked and it waits for the reset), and
+  `wait` waits for the reset. Ask it with the autonomy and the budgets. When the owner does not say,
+  pass nothing: the project then records no consent and behaves as `ask`.
 - **Radius**: `strict`, `moderate` (the default), or `exploratory`.
 - **Budgets**: GPU hours, wall clock hours, and the usage windows the run may spend.
 - **Decisions that stay human-only**: the classes the decider never resolves. `goal` and `data`
@@ -49,7 +54,7 @@ wayline intake --intent "the owner's paragraph" --plan plan.md \
   --reference "arXiv:1706.03762" --reference "papers/model.pdf" \
   --data "data/expression.csv" --data "split_b is held out and never leaves this machine" \
   --repo ../analysis --constraint "no GPU before October" \
-  --autonomy checkpoints --radius moderate --gpu-hours 10 --wallclock-hours 48 --usage-windows 4 \
+  --autonomy checkpoints --radius moderate --model-fallback ask --gpu-hours 10 --wallclock-hours 48 --usage-windows 4 \
   --human-only "baselines: which baselines the claims are compared against"
 ```
 
@@ -64,7 +69,7 @@ wayline intake --from - <<'EOF'
  "data": ["data/expression.csv", "split_b is held out and never leaves this machine"],
  "code": ["../analysis"],
  "constraints": ["no GPU before October"],
- "autonomy": "checkpoints", "radius": "moderate",
+ "autonomy": "checkpoints", "radius": "moderate", "model_fallback": "ask",
  "budgets": {"gpu_hours": 10, "wallclock_hours": 48, "usage_windows": 4},
  "human_only": ["baselines: which baselines the claims are compared against"],
  "goal": null, "sample": null}
@@ -72,7 +77,7 @@ EOF
 ```
 
 Leave out, or set to null, whatever the owner did not say; the verb writes "not stated" rather
-than a guess, and keeps the project's current autonomy and radius. Paths are relative to where you
+than a guess, and keeps the project's current autonomy, radius, and fallback consent. Paths are relative to where you
 run it. The verb prints what it wrote; read `research/INTAKE.md` back and tell the owner what it
 says and what you assumed.
 

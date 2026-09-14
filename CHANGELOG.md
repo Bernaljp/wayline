@@ -4,6 +4,28 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+Fall back to Opus under the fallback consent (ticket 55, M5 Overnight and report).
+
+- `harness.json` gains `model_fallback`, the fallback consent: `auto`, `ask`, or `wait`. The intake asks it beside the autonomy and the budgets (`--model-fallback`, or `model_fallback` in the spec), says it under Autonomy in `INTAKE.md`, and writes it only when the owner states it, so a project without the key behaves as `ask` and stays distinguishable from an explicit `ask` (`project.fallback_consent` returns whether it was stated).
+- `wayline switch --fallback auto|ask|wait` (`project.set_model_fallback`, the function the dashboard's action will call) writes `harness.json` first and then journals `control` with `command: model_fallback` and `args: {model_fallback}`, at any time, with a conductor running or not. A running conductor applies it at its next wave: a `control model_fallback` holds for the run it arrived in, and a new run starts from `harness.json`.
+- While the hold stands under `auto`, a ticket whose tier is Fable launches on Opus at the same effort, turns, and minutes (`conductor.fallback_tier`), its context pack cut at `context_pack.max_chars.opus`, with every agent its `--agents` defines on Fable moved to Opus (`worker.fall_back`); `ticket_launched` carries `fallback_from: fable`. An integrator on Fable falls back the same way, and so does the report's writer, whose prose cache records `fallback_from` so the claim verdicts judge that prose as Opus's.
+- Under `auto`, a Fable session the hold would keep waiting starts again as a fresh Opus session in the same attempt and worktree, never as a resume of the Fable transcript. That covers a session refused before its first turn, one stopped mid-work, one that died, and one owed a gate's resume.
+  - A session that stopped before it returned is said to have left partial work there, and gets the message it was answering when it was a resume.
+  - A session that returned and is owed its `invalid_result` or `acceptance_failed` resume is told it returned, and gets the gate's message; the gate's one resume stays spent.
+  - The launched session's files are kept in `stopped-<n>/`, and the notes in `fallback.json`, so a restart that relaunches the attempt says them again.
+  - After a restart, an attempt that fell back is resumed on Opus whatever the consent says by then.
+  - Under `wait`, and under `ask` until ticket 57 asks, Fable work waits as ticket 54 built. A verdict whose verifier is Fable waits under every consent until ticket 56.
+- A fallback attempt counts toward the ticket's escalation like any other. The replayed attempt carries `fallback_from`, which ticket 38's difficulty adjustment reads to leave it uncounted.
+- While the hold stands, `wayline status` and the dashboard overview print `fable    held until <reset>   consent <auto|ask|wait|ask (unset)>   waiting <n>   fallen back <m>`. `waiting` counts the Fable work the consent keeps waiting: frontier tickets on Fable, Fable sessions stopped at the limit, and Fable sessions owed their acceptance resume. It also counts the done tickets whose verdicts wait on Fable. `fallen back` counts the events carrying `fallback_from` since the hold's `paused`, counting each attempt's fallback launches once.
+- A review pass fixed these before the ticket landed:
+  - A `control model_fallback` from a run that had ended kept overriding `harness.json`. The replayed consent now holds only while its run is open, and an intake during a run that heard another consent journals the one it writes.
+  - A gate's message was dropped when its resume stopped at the limit and fell back.
+  - A restart relaunched a fallen-back attempt without its partial-work note.
+  - The partial-work note told a session that had returned its result that it had stopped.
+  - The owner-facing text for `ask` promised a question that ticket 57 has yet to build.
+  - The hold line counted relaunches twice and missed a held acceptance resume.
+  - The conductor now reads the consent once a wave, and `status` replays the journal once.
+
 Tags, pins, upgrade, rollback, and promotion (ticket 46, M6 Evolve).
 
 - `wayline run` now refuses to start when the harness checkout is not at the project's pin, `harness.json.harness_tag`, and prints the `wayline upgrade --to <tag> --project <path>` command that fixes it. When the checkout sits on another tag, it also prints the command that moves the project to that tag instead. The check lists every tag on the checkout's commit (`git tag --points-at HEAD`) rather than the one `git describe --tags --exact-match` would pick, so a commit carrying two tags matches either pin. `WAYLINE_UNPINNED=1` skips the check. The suite sets it in `tests/__init__.py`, beside `WAYLINE_UNITS=none`, because it runs between tags and a shallow clone has none; a development checkout running untagged work needs it too.

@@ -812,17 +812,17 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
     return asks
 
 
-def owed_asks(ticket, difficulty, author_model, commit, verdicts):
+def owed_asks(ticket, difficulty, author_model, commit, passed):
     """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
 
-    `verdicts` is what the journal holds for the ticket (`replay.View.verdicts`). A ticket that earned
-    verdicts and is owed none is owed its acceptance, which a conductor killed between the last pass and
-    `ticket_accepted` never journaled. The conductor's restart and the tick both read it here, so what the
-    tick relaunches a conductor for is what that conductor then does.
+    `passed` is the verdict types the journal holds as passed since the ticket was last done
+    (`replay.View.passed`). A ticket that earned verdicts and is owed none is owed its acceptance, which a
+    conductor killed between the last pass and `ticket_accepted` never journaled. The conductor's restart
+    and the tick both read it here, so what the tick relaunches a conductor for is what that conductor then does.
     """
     earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
                          outputs=ticket.get("outputs") or [])
-    passed = {item.get("verdict_type") for item in verdicts or () if item.get("pass")}
+    passed = set(passed or ())
     return earned, [ask for ask in earned if ask.verdict_type not in passed]
 
 

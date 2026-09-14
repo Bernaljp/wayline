@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "harness",
-  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
+  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, the fallback consent, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
   "type": "object",
   "required": ["harness_tag", "autonomy", "radius"],
   "additionalProperties": false,
@@ -9,6 +9,11 @@
     "harness_tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
     "autonomy": {"type": "string", "enum": ["interactive", "checkpoints", "autonomous"]},
     "radius": {"type": "string", "enum": ["strict", "moderate", "exploratory"]},
+    "model_fallback": {
+      "type": "string",
+      "enum": ["auto", "ask", "wait"],
+      "description": "the fallback consent (Implementation Decisions 15): whether Fable work falls back to Opus while Fable's weekly window is spent; a project without the key behaves as ask"
+    },
     "human_only": {
       "type": "array",
       "description": "the decision classes the decider never resolves (Implementation Decisions 4): goal and data always, plus the classes the owner added at intake",

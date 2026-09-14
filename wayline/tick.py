@@ -1154,7 +1154,7 @@ def owed_verdicts(project, graph, view, policy):
             continue
         ticket = fields[entry["id"]]
         earned, asks = gates.owed_asks(ticket, entry.get("difficulty", ticket["difficulty"]), launched.model,
-                                       view.integrated.get(entry["id"]), view.verdicts.get(entry["id"], []))
+                                       view.integrated.get(entry["id"]), view.passed(entry["id"]))
         if earned:
             owed.append({"ticket": entry["id"], "verdicts": len(asks),
                          "on_fable": any(_verifies_on_fable(gates, policy, ask) for ask in asks)})

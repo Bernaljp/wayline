@@ -34,7 +34,7 @@ from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, pacing, tickets, w
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, now_ts
-from wayline.project import ProjectError, find_project, policy_for, read_harness
+from wayline.project import ProjectError, fable_falls_back, find_project, policy_for, read_harness
 
 __all__ = [
     "ProvenanceError", "MANIFEST", "FINDINGS", "FINDINGS_MD", "RUN_ID_RE",
@@ -818,7 +818,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
     verdicted = {(event.get("payload") or {}).get("subject") for event in context.events
                  if event.get("event") == ledger.VERDICT and (event.get("payload") or {}).get("subject_kind") == CLAIM}
     authors = _finding_authors(context)
-    writer_model = _role_tier(policy, WRITER)[0]
+    writer_model = _prose_author(book, policy)
     outcome = {"claims": len(claims), "sampled": len(chosen), "already_verdicted": 0, "passed": [], "failed": [], "tickets": []}
     for claim in chosen:
         subject = claim_subject(claim)
@@ -840,6 +840,17 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
         if filed is not None:
             outcome["tickets"].append(filed)
     return outcome
+
+
+def _prose_author(book, policy):
+    """The model the cached prose was written on: Opus when the writer fell back (decision 15), else `policy.roles.writer`'s."""
+    try:
+        cached = book.read_json(PROSE_CACHE)
+    except (OSError, ValueError):
+        cached = None
+    if isinstance(cached, dict) and cached.get("fallback_from") == pacing.FABLE:
+        return pacing.OPUS
+    return _role_tier(policy, WRITER)[0]
 
 
 def _finding_authors(context):
@@ -913,7 +924,8 @@ def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, of
     """The writer's prose for `evidence`, as `(prose, note)`: from the cache when the evidence is unchanged.
 
     One `writer` session through the launcher, read-only, on the model `policy.roles.writer` gives,
-    with the `report_prose` schema; a group the prompt did not name is dropped. The answer is cached
+    or on Opus at the same effort while Fable's weekly window is spent under the fallback consent
+    `auto` (decision 15), with the `report_prose` schema; a group the prompt did not name is dropped. The answer is cached
     under `research/.cache/report_prose.json` with the hash of the evidence, so a render that changes
     nothing the writer read launches nothing. `offline` launches nothing: prose drafted for other
     evidence is not used, and `note` says why the report has none.
@@ -947,8 +959,9 @@ def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, of
         "groups": [group for group in returned["groups"] if group["group"] in named],
         "negative_results": returned["negative_results"] if evidence["negative"] else "",
     }
+    fell_back = request.model != _role_tier(policy, WRITER)[0]
     book.write_json(PROSE_CACHE, {"schema_version": 1, "input_sha256": key, "session_id": envelope.session_id,
-                                  "model": envelope.model, "prose": prose})
+                                  "model": envelope.model, "fallback_from": pacing.FABLE if fell_back else None, "prose": prose})
     return prose, None
 
 
@@ -1546,6 +1559,8 @@ def _request(project, role, policy, harness_root, prompt, schema, budget, run_di
     lets it stop.
     """
     model, effort = _role_tier(policy, role.name)
+    if model == pacing.FABLE and fable_falls_back(project):
+        model = pacing.OPUS  # Fable's weekly window is spent and the consent is auto: the same effort, on Opus (decision 15)
     sizes = (policy.get("budget") or {}).get(budget) or {}
     allowed, disallowed = list(role.allowed_tools), list(role.disallowed_tools)
     if read_only:

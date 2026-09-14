@@ -53,7 +53,7 @@ VERBS = [
     Verb("rerun", "rerun <id>", "journal a control event rerunning a ticket", "controls", lazy("wayline.project", "rerun_command")),
     Verb("status", "status [--project <path>] [--json]", "print the frontier, running tickets and jobs, open decisions, the window, the goal, the last events", "views", lazy("wayline.project", "status_command")),
     Verb("answer", "answer <id> \"<text>\"", "answer a decision ticket from the command line", "views", lazy("wayline.project", "answer_command")),
-    Verb("switch", "switch <path> | --autonomy <level>", "make another project the active one, or raise its autonomy", "views", lazy("wayline.project", "switch_command")),
+    Verb("switch", "switch <path> | --autonomy <level> | --fallback auto|ask|wait", "make another project the active one, or set its autonomy or its fallback consent", "views", lazy("wayline.project", "switch_command")),
     Verb("feedback", "feedback \"<text>\"", "file feedback for the evolve loop", "views"),
     Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services", lazy("wayline.dashboard", "serve_command")),
     Verb("tick", "tick [--project <path>]", "the recurrent job that relaunches work after windows, answers, and jobs", "services", lazy("wayline.tick", "tick_command")),
