@@ -1128,8 +1128,7 @@ def notify_refused(project, ledger, machine, reason, failure, say):
 
 def journal_answers(project, ledger, say):
     """Journal as the owner's any answer written into a decision ticket's `## Answer` section (decision 5); by ticket id."""
-    events, _ = ledger.read_events()
-    written = journal_written_answers(project, ledger, replay.replay(events).answers)
+    written = journal_written_answers(project, ledger)
     for identifier in sorted(written):
         say("  ticket %d: the answer written in its file is journaled as the owner's" % identifier)
     return written
@@ -1168,18 +1167,18 @@ def _verifies_on_fable(gates, policy, ask):
         return False  # the gate refuses the table by name when the verdict is taken
 
 
-def work_remaining(project, graph, view, policy, fable_is_spent):
+def work_remaining(project, graph, view, policy, fable_is_spent, autonomy=None, decider=True):
     """What a relaunched conductor would find to do, as phrases, and what waits on Fable instead (None when nothing does).
 
     Work is what keeps a conductor from ending its run: a ticket on the frontier that a session may take
-    (a `human_only` decision ticket waits for the owner, whose answer relaunches the conductor), a running
-    ticket (a worker to re-adopt, a result to carry, the jobs it left), or a done ticket owed its verdicts
-    or its acceptance. A job counts through its ticket, since a job whose ticket no longer runs is nothing a
-    conductor acts on. A verdict queue that waits only on Fable is work once Fable's weekly window has reset
-    (decision 15); until then a conductor would hold all of it.
+    (a decision ticket that awaits the owner under `autonomy` and `decider` waits for them, and their answer relaunches
+    the conductor), a running ticket (a worker to re-adopt, a result to carry, the jobs it left), or a done
+    ticket owed its verdicts or its acceptance. A job counts through its ticket, since a job whose ticket no
+    longer runs is nothing a conductor acts on. A verdict queue that waits only on Fable is work once
+    Fable's weekly window has reset (decision 15); until then a conductor would hold all of it.
     """
     work = []
-    ready = [entry for entry in frontier(graph) if not awaits_owner(entry)]
+    ready = [entry for entry in frontier(graph) if not awaits_owner(entry, autonomy, decider)]
     if ready:
         work.append("%d ticket(s) on the frontier" % len(ready))
     running = {entry["id"] for entry in graph["tickets"] if entry["status"] == "running"}
@@ -1243,7 +1242,11 @@ def relaunch_decision(project, ledger, policy, reading, now):
         return None, "the last run ended %s, which only an answer or the owner undoes" % view.run["ended"]
     graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     stop_at, _ = thresholds_for(project, policy, view)
-    work, waiting = work_remaining(project, graph, view, policy, fable_spent(view, reading, stop_at, now))
+    # The autonomy the relaunched run starts from, which is `harness.json`'s and not the last run's.
+    autonomy = _harness(project).get("autonomy")
+    from wayline.decisions import decider_ready  # the decisions module imports the notifier and the grill, which no other step needs
+    work, waiting = work_remaining(project, graph, view, policy, fable_spent(view, reading, stop_at, now), autonomy,
+                                   decider_ready(project=project))
     if not work:
         return None, "no work remains" + ("; " + waiting if waiting else "")
     closed = window_closed(view, reading, stop_at, now)

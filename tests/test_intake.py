@@ -19,8 +19,9 @@ from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from wayline import cli
+from wayline import cli, intake
 from wayline.dossier import read_intake
+from wayline.intake import IntakeError, drop_material, dropped_materials
 from wayline.jsonschema import check, load_schema
 from wayline.ledger import Ledger
 from wayline.project import init_project, read_harness
@@ -397,6 +398,78 @@ class SpecOnStdinTest(IntakeTestCase):
         code, _, err = run("--project", str(self.project), "the intent", str(self.owner / "missing" / "refs.md"))
         self.assertEqual(code, 2)
         self.assertIn("refs.md", err)
+
+
+class DashboardDropTest(IntakeTestCase):
+    """The dashboard's drop zone (ticket 35): a file kept under `research/intake/`, taken into INTAKE.md, and kept by every later intake."""
+
+    INTENT = "Find whether the interaction term helps."
+    REFERENCES = b"- 10.1234/wayline.drop.one\n- arXiv:2401.00002\n"
+
+    def setUp(self):
+        super().setUp()
+        code, _, err = run("--intent", self.INTENT, "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+
+    def test_a_reference_list_goes_under_the_references_and_every_other_section_is_kept(self):
+        before = self.intake_md()
+        report = drop_material(self.project, "refs.md", self.REFERENCES)
+        self.assertEqual({key: report[key] for key in ("path", "size", "already", "taken")},
+                         {"path": "research/intake/refs.md", "size": len(self.REFERENCES), "already": False, "taken": ["References"]})
+        self.assertEqual((self.project / "research" / "intake" / "refs.md").read_bytes(), self.REFERENCES)
+        self.assertEqual(self.section("References"),
+                         "- 10.1234/wayline.drop.one\n- arXiv:2401.00002\n\nRead from `research/intake/refs.md` as a reference list.")
+        self.assertEqual([item for item in sections(self.intake_md()) if item[0] != "References"],
+                         [item for item in sections(before) if item[0] != "References"])
+
+    def test_a_plan_goes_under_the_intent_and_a_data_file_under_the_data(self):
+        self.assertEqual(drop_material(self.project, "plan.md", b"First fit the baseline.\nThen add the interaction term.\n")["taken"], ["Intent"])
+        intent = self.section("Intent")
+        self.assertTrue(intent.startswith(self.INTENT))
+        self.assertIn("The owner's plan, from `research/intake/plan.md`:\n\n> First fit the baseline.\n> Then add the interaction term.", intent)
+        self.assertEqual(drop_material(self.project, "table.csv", b"gene,cell\nA,1\n")["taken"], ["Data"])
+        self.assertEqual(self.section("Data"), "- `research/intake/table.csv` (a file, 14 bytes)")
+
+    def test_the_same_bytes_twice_are_kept_once_and_other_bytes_of_the_same_name_beside_them(self):
+        drop_material(self.project, "refs.md", self.REFERENCES)
+        text = self.intake_md()
+        again = drop_material(self.project, "refs.md", self.REFERENCES)
+        self.assertEqual((again["path"], again["already"], again["taken"]), ("research/intake/refs.md", True, []))
+        self.assertEqual(self.intake_md(), text)
+        other = drop_material(self.project, "refs.md", b"- 10.1234/wayline.drop.two\n")
+        self.assertEqual((other["path"], other["already"], other["taken"]), ("research/intake/refs-2.md", False, ["References"]))
+        self.assertIn("- 10.1234/wayline.drop.two", self.section("References"))
+
+    def test_without_an_intake_the_file_waits_and_the_next_intake_takes_it(self):
+        (self.project / "research" / "INTAKE.md").unlink()
+        self.assertIsNone(drop_material(self.project, "refs.md", self.REFERENCES)["taken"])
+        self.assertFalse((self.project / "research" / "INTAKE.md").exists())
+        code, _, err = run("--intent", self.INTENT, "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        self.assertIn("- 10.1234/wayline.drop.one", self.section("References"))
+
+    def test_a_later_intake_keeps_what_was_dropped_and_lists_it_once_when_it_is_named_again(self):
+        drop_material(self.project, "refs.md", self.REFERENCES)
+        kept = self.project / "research" / "intake" / "refs.md"
+        code, _, err = run("--intent", "A narrower intent.", "--reference", "10.5555/named.at.intake", str(kept), "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        references = self.section("References")
+        self.assertIn("- 10.5555/named.at.intake", references)
+        self.assertEqual(references.count("10.1234/wayline.drop.one"), 1)
+        self.assertEqual(dropped_materials(self.project), [kept])
+
+    def test_what_the_drop_refuses_keeps_nothing(self):
+        for name, data, message in ((".hidden", b"x", "plain file name"), ("a/b.md", b"x", "plain file name"), ("", b"x", "plain file name"),
+                                    ("empty.md", b"", "empty")):
+            with self.subTest(name=name):
+                with self.assertRaises(IntakeError) as caught:
+                    drop_material(self.project, name, data)
+                self.assertIn(message, str(caught.exception))
+        with mock.patch.object(intake, "DROP_MAX_BYTES", 4):
+            with self.assertRaises(IntakeError) as caught:
+                drop_material(self.project, "big.md", b"12345")
+        self.assertIn("wayline intake <path>", str(caught.exception))
+        self.assertEqual(dropped_materials(self.project), [])
 
 
 class RecordedIntakeFixtureTest(IntakeTestCase):

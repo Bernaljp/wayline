@@ -34,6 +34,7 @@ from wayline.pacing import ASK, AUTO, CONSENTS, FABLE, WAIT, epoch, thresholds
 from wayline.resources import (
     LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
 )
+from wayline.schedule import awaits_owner
 from wayline.tickets import DECISION as DECISION_KIND
 from wayline.tickets import (
     GRAPH, SATISFIED, answer_section, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
@@ -48,7 +49,7 @@ __all__ = [
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
     "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "fable_falls_back", "set_model_fallback", "hold_status", "render_hold",
-    "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
+    "steer_ticket", "set_pacing", "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
 
 HARNESS_JSON = "harness.json"
@@ -692,6 +693,8 @@ def status_view(project, refresh=True):
         problems.append(resource_problem)
     active = read_active()
     view = replay.replay(events)
+    from wayline.decisions import decider_ready  # the decisions module imports this one
+    answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
     return {
         "project": str(project),
         "name": project.name,
@@ -702,7 +705,9 @@ def status_view(project, refresh=True):
         "frontier": [_ticket_line(entry, tickets) for entry in frontier(graph)],
         "running": [_ticket_line(entry, tickets) for entry in _with_status(graph, "running")],
         "jobs": live_jobs,
-        "decisions": [_ticket_line(entry, tickets) for entry in _open_decisions(graph)],
+        # Who answers each: the owner, or under `autonomous` the decider unless it is human-only or none is installed (ticket 35).
+        "decisions": [dict(_ticket_line(entry, tickets), awaits="owner" if awaits_owner(entry, answering, decider) else "decider")
+                      for entry in _open_decisions(graph)],
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
         "window": window_status(events, harness, view),
         "hold": hold_status(project, events, harness, graph, tickets, view),
@@ -1225,6 +1230,73 @@ def set_model_fallback(project, consent, by="cli"):
     return report
 
 
+# --- the pacing thresholds -------------------------------------------------------------------------------
+
+
+def pacing_thresholds(project, harness=None, view=None, harness_root=None):
+    """`(stop_at, cheap_at)` as the conductor paces by them: `policy.pacing`, under `harness.json`'s, under a `control pacing` event's."""
+    harness = read_harness(project) if harness is None else harness
+    view = replay.replay(Ledger(Path(project)).read_events()[0]) if view is None else view
+    return thresholds(policy_for(project, harness_root).get("pacing"), harness.get("pacing"), view.thresholds)
+
+
+def answering_autonomy(project, harness, view):
+    """The autonomy decision tickets are answered under now (ticket 35).
+
+    While a conductor holds the project it is the one that run holds, from the journal (`run_started`, then
+    `control autonomy`), which a hand edit of `harness.json` does not change; otherwise `harness.json`'s, which is
+    what the next run starts from.
+    """
+    if view.autonomy in AUTONOMY and conductor_holder(project) is not None:
+        return view.autonomy
+    return harness.get("autonomy")
+
+
+def set_pacing(project, stop_at=None, cheap_at=None, by="cli"):
+    """`wayline switch --stop-at/--cheap-at`: write the pacing thresholds to `harness.json`, then journal `control pacing`.
+
+    The thresholds are fractions of a usage window (decision 5): at `stop_at` nothing that needs a model
+    launches, and at `cheap_at` only difficulty 1 and 2 do. Either may be given alone, and the other keeps
+    what the project holds; a `cheap_at` above the `stop_at` it would pair with is refused. Allowed at any
+    time, as the fallback consent is: a running conductor applies the event at its next wave, and
+    `harness.json` is what the next run starts from, written first so a crash between the two leaves a run
+    that starts from the new thresholds. The change is measured against what the conductor paces by, which
+    is `policy.pacing` under `harness.json`'s under those a `control pacing` set, and against the first two alone.
+    `by` is `cli`, or `dashboard` for its pacing action.
+
+    Returns `{from, to, changed, conductor}`, each threshold pair as `{stop_at, cheap_at}`.
+    """
+    given = {key: value for key, value in (("stop_at", stop_at), ("cheap_at", cheap_at)) if value is not None}
+    if not given:
+        raise ProjectError("give stop_at, cheap_at, or both")
+    for key, value in given.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+            raise ProjectError("%s is a fraction from 0 to 1, got %r" % (key, value))
+    project = Path(project).resolve()
+    ledger = Ledger(project)
+    with ledger.lock():
+        harness = read_harness(project)
+        events, _ = ledger.read_events()
+        base = policy_for(project).get("pacing")
+        held = dict(zip(("stop_at", "cheap_at"), thresholds(base, harness.get("pacing"), replay.replay(events).thresholds)))
+        written = dict(zip(("stop_at", "cheap_at"), thresholds(base, harness.get("pacing"))))
+        target = dict(held, **given)
+        if target["cheap_at"] > target["stop_at"]:
+            raise ProjectError("cheap_at %g is above stop_at %g: the cheap tiers are what launches before the stop, not after it"
+                               % (target["cheap_at"], target["stop_at"]))
+        holder = conductor_holder(project)
+        report = {"from": held, "to": target, "changed": held != target or written != target, "conductor": holder}
+        if not report["changed"]:
+            return report
+        if written != target:
+            updated = dict(harness, pacing=dict(harness.get("pacing") or {}, **target))
+            check(updated, load_schema("harness"), name=HARNESS_JSON)
+            atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
+        if held != target:
+            control(project, "pacing", dict(target), by=by)
+    return report
+
+
 # --- steering a running conductor ------------------------------------------------------------------------
 
 
@@ -1242,52 +1314,91 @@ def control(project, command, args=None, by="cli"):
         ticket=ticket if isinstance(ticket, int) and not isinstance(ticket, bool) else None)
 
 
-def answer(project, identifier, text):
+def steer_ticket(project, command, identifier, by="cli"):
+    """`wayline cancel <id>` and `wayline rerun <id>`: journal the control event for a ticket the project has.
+
+    The conductor ends the ticket's running worker at its next wave, then parks the ticket (`cancel`) or
+    opens it for a new attempt (`rerun`). A ticket id the project does not have is refused, and nothing is
+    journaled. `by` is `cli`, or `dashboard` for its cancel and rerun actions.
+    """
+    if command not in ("cancel", "rerun"):
+        raise ProjectError("a ticket is steered with cancel or rerun, got %r" % (command,))
+    if isinstance(identifier, bool) or not isinstance(identifier, int):
+        raise ProjectError("a ticket id is a whole number, got %r" % (identifier,))
+    project = Path(project).resolve()
+    if identifier not in {ticket["id"] for ticket in read_tickets(project)}:
+        raise ProjectError("%s has no ticket %d" % (project, identifier))
+    return control(project, command, {"ticket": identifier}, by=by)
+
+
+def answer(project, identifier, text, rationale=None, confidence=None):
     """Answer a decision ticket: `## Answer` in its file, and `decision` with `decided_by: human` (decision 5).
+
+    The command line, the dashboard's answer form, and a session running `wayline answer` all answer
+    through this. `rationale` and `confidence` are the owner's own reasons and certainty when they gave
+    them, which a session carries over from the conversation; they are journaled, and the file keeps the
+    answer alone, because the text under `## Answer` is what the file says the answer is.
 
     The conductor closes the ticket at its next wave. A ticket that is not an open decision ticket
     is refused, and so is one already answered; `wayline rerun` asks a decision ticket's question again.
+    The checks and both writes hold the ledger's lock, so two answers given at once are never both taken.
     """
-    project = Path(project).resolve()
-    ledger = Ledger(project)
-    found = {ticket["id"]: ticket for ticket in read_tickets(project)}.get(identifier)
-    if found is None:
-        raise ProjectError("%s has no ticket %s" % (project, identifier))
-    if found["kind"] != DECISION_KIND:
-        raise ProjectError("ticket %d is a %s ticket, and only a decision ticket takes an answer" % (identifier, found["kind"]))
-    if found["status"] in SATISFIED + ("parked",):
-        raise ProjectError("ticket %d is %s; wayline rerun %d asks its question again" % (identifier, found["status"], identifier))
-    fields, body = read_ticket(tickets_dir(project) / filename(found))
-    events, _ = ledger.read_events()
-    if identifier in replay.replay(events).answers or answer_section(body):
-        raise ProjectError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
+    if isinstance(identifier, bool) or not isinstance(identifier, int):
+        raise ProjectError("a ticket id is a whole number, got %r" % (identifier,))
     text = str(text).strip()
     if not text:
         raise ProjectError("an answer needs some text")
-    write_ticket(ledger, fields, with_answer(body, text))
-    return ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": "human",
-                                          "rationale": None, "confidence": None}, ticket=identifier)
+    rationale = (str(rationale).strip() or None) if rationale is not None else None
+    if confidence is not None and (isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1):
+        raise ProjectError("confidence is a number from 0 to 1, got %r" % (confidence,))
+    project = Path(project).resolve()
+    ledger = Ledger(project)
+    with ledger.lock():
+        found = {ticket["id"]: ticket for ticket in read_tickets(project)}.get(identifier)
+        if found is None:
+            raise ProjectError("%s has no ticket %s" % (project, identifier))
+        if found["kind"] != DECISION_KIND:
+            raise ProjectError("ticket %d is a %s ticket, and only a decision ticket takes an answer" % (identifier, found["kind"]))
+        if found["status"] in SATISFIED + ("parked",):
+            raise ProjectError("ticket %d is %s; wayline rerun %d asks its question again" % (identifier, found["status"], identifier))
+        fields, body = read_ticket(tickets_dir(project) / filename(found))
+        events, _ = ledger.read_events()
+        if identifier in replay.replay(events).answers or answer_section(body):
+            raise ProjectError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
+        write_ticket(ledger, fields, with_answer(body, text))
+        return ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": "human",
+                                              "rationale": rationale, "confidence": confidence}, ticket=identifier)
 
 
-def journal_written_answers(project, ledger, answers):
+def journal_written_answers(project, ledger):
     """Journal as the owner's every answer written into a decision ticket's `## Answer` section that the journal does not hold.
 
     The file is where a person answers (decision 2), so an answer written there wins over the one the
-    journal held. `answers` is what the journal holds (`replay.View.answers`). The conductor calls this at
-    every wave, and the tick before it decides on a relaunch, since either may be the first to see the
-    edit (decision 5). Returns the payloads journaled, by ticket id.
+    journal held. The conductor calls this at every wave, and the tick before it decides on a relaunch,
+    since either may be the first to see the edit (decision 5). Returns the payloads journaled, by ticket id.
+
+    The files and the journal are read under the ledger's lock. `answer` writes the file and then journals
+    under that same lock, so an answer it is in the middle of giving is never journaled a second time from
+    the file, without the rationale the owner gave.
     """
     journaled = {}
-    for ticket in read_tickets(project):
-        if ticket["kind"] != DECISION_KIND:
-            continue
-        _, body = read_ticket(tickets_dir(project) / filename(ticket))
-        written = answer_section(body)
-        known = answers.get(ticket["id"])
-        if written is not None and (known is None or str(known.get("answer") or "").strip() != written):
-            journaled[ticket["id"]] = ledger.append_event(DECISION, {
-                "ticket": ticket["id"], "answer": written, "decided_by": "human", "rationale": None, "confidence": None,
-            }, ticket=ticket["id"])["payload"]
+    with ledger.lock():
+        written = {}
+        for ticket in read_tickets(project):
+            if ticket["kind"] == DECISION_KIND:
+                text = answer_section(read_ticket(tickets_dir(project) / filename(ticket))[1])
+                if text is not None:
+                    written[ticket["id"]] = text
+        if not written:
+            return journaled
+        events, _ = ledger.read_events()
+        answers = replay.replay(events).answers
+        for identifier, text in sorted(written.items()):
+            known = answers.get(identifier)
+            if known is None or str(known.get("answer") or "").strip() != text:
+                journaled[identifier] = ledger.append_event(DECISION, {
+                    "ticket": identifier, "answer": text, "decided_by": "human", "rationale": None, "confidence": None,
+                }, ticket=identifier)["payload"]
     return journaled
 
 
@@ -1411,16 +1522,27 @@ def switch_command(args):
     parser = argparse.ArgumentParser(
         prog="wayline switch",
         description="make another project the active one; with --autonomy instead, raise the project's autonomy, "
-                    "or lower it while no conductor is running; with --fallback, set its fallback consent at any time")
+                    "or lower it while no conductor is running; with --fallback, set its fallback consent at any time; "
+                    "with --stop-at or --cheap-at, set its pacing thresholds at any time")
     parser.add_argument("path", nargs="?", help="the project to switch to")
     parser.add_argument("--autonomy", choices=list(AUTONOMY), help="the autonomy to set on the project, instead of switching")
     parser.add_argument("--fallback", choices=list(CONSENTS),
                         help="the fallback consent to set on the project, instead of switching: whether Fable work falls back to "
                              "Opus while Fable's weekly window is spent")
-    parser.add_argument("--project", help="with --autonomy or --fallback, the project to set; the active one by default")
+    parser.add_argument("--stop-at", type=float, metavar="FRACTION",
+                        help="the pacing threshold at which nothing that needs a model launches, from 0 to 1, instead of switching")
+    parser.add_argument("--cheap-at", type=float, metavar="FRACTION",
+                        help="the pacing threshold at which only difficulty 1 and 2 launch, from 0 to 1, instead of switching")
+    parser.add_argument("--project", help="with --autonomy, --fallback, --stop-at, or --cheap-at, the project to set; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.stop_at is not None or options.cheap_at is not None:
+        if options.path is not None or options.autonomy is not None or options.fallback is not None:
+            print("wayline switch: give --stop-at and --cheap-at on their own, not with a project to switch to, --autonomy, or --fallback "
+                  "(--project names the project they set)", file=sys.stderr)
+            return 2
+        return _switch_pacing(options)
     if options.fallback is not None:
         if options.path is not None or options.autonomy is not None:
             print("wayline switch: give --fallback on its own, not with a project to switch to or --autonomy "
@@ -1435,7 +1557,8 @@ def switch_command(args):
         return _switch_autonomy(options)
     if options.path is None or options.project is not None:
         parser.print_usage(sys.stderr)
-        print("wayline switch: give the project to switch to, or --autonomy <level> or --fallback <consent> (with --project for another project)",
+        print("wayline switch: give the project to switch to, or --autonomy <level>, --fallback <consent>, or --stop-at/--cheap-at <fraction> "
+              "(with --project for another project)",
               file=sys.stderr)
         return 2
     try:
@@ -1497,6 +1620,25 @@ def _switch_fallback(options):
         print("  journaled for the conductor (pid %s) to apply at its next wave" % report["conductor"].get("pid", "?"))
     else:
         print("  no conductor is running; the next run starts under %s" % report["to"])
+    return 0
+
+
+def _switch_pacing(options):
+    try:
+        project = find_project(options.project)
+        report = set_pacing(project, stop_at=options.stop_at, cheap_at=options.cheap_at)
+    except (ProjectError, ValidationError, OSError) as failure:
+        print("wayline switch: %s" % failure, file=sys.stderr)
+        return 1
+    after = "stop_at %g, cheap_at %g" % (report["to"]["stop_at"], report["to"]["cheap_at"])
+    if not report["changed"]:
+        print("the pacing thresholds are already %s on %s" % (after, project))
+        return 0
+    print("pacing thresholds from stop_at %g, cheap_at %g to %s on %s" % (report["from"]["stop_at"], report["from"]["cheap_at"], after, project))
+    if report["conductor"] is not None:
+        print("  journaled for the conductor (pid %s) to apply at its next wave" % report["conductor"].get("pid", "?"))
+    else:
+        print("  no conductor is running; the next run paces by them")
     return 0
 
 
@@ -1581,23 +1723,21 @@ def _ticket_verb(command, args, description):
     if project is None:
         return 1
     try:
-        known = {ticket["id"] for ticket in read_tickets(project)}
-    except (ValueError, OSError) as failure:
+        steer_ticket(project, command, options.id)
+    except (ProjectError, ValueError, OSError) as failure:
         print("wayline %s: %s" % (command, failure), file=sys.stderr)
         return 1
-    if options.id not in known:
-        print("wayline %s: %s has no ticket %d" % (command, project, options.id), file=sys.stderr)
-        return 1
-    control(project, command, {"ticket": options.id})
     print("%s of ticket %d journaled for %s" % (command, options.id, project))
     return 0
 
 
 def answer_command(args):
     """`wayline answer <id> "<text>"`."""
-    parser = _verb_parser("answer", "answer a decision ticket")
+    parser = _verb_parser("answer", "answer a decision ticket; a session answering for the owner passes what they said as --rationale")
     parser.add_argument("id", type=int, help="the decision ticket")
     parser.add_argument("text", help="the answer")
+    parser.add_argument("--rationale", help="why, in the owner's words; journaled with the answer")
+    parser.add_argument("--confidence", type=float, help="how sure the owner is, from 0 to 1; journaled with the answer")
     options, code = parse_args(parser, args)
     if options is None:
         return code
@@ -1605,7 +1745,7 @@ def answer_command(args):
     if project is None:
         return 1
     try:
-        answer(project, options.id, options.text)
+        answer(project, options.id, options.text, rationale=options.rationale, confidence=options.confidence)
     except (ProjectError, ValueError, OSError) as failure:
         print("wayline answer: %s" % failure, file=sys.stderr)
         return 1

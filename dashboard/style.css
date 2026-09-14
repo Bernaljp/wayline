@@ -1,4 +1,4 @@
-/* The read-only dashboard: no framework, no build step (Implementation Decisions 8).
+/* The dashboard: no framework, no build step (Implementation Decisions 8).
    One column, monospace figures, and enough contrast to read on a laptop in either theme. */
 
 :root {
@@ -45,7 +45,7 @@ h2 { margin: 24px 0 8px; font-size: 14px; font-weight: 600; text-transform: uppe
 
 nav { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
-button.tab {
+button.tab, button.action {
   font: inherit;
   color: var(--ink);
   background: var(--panel);
@@ -55,7 +55,7 @@ button.tab {
   cursor: pointer;
 }
 button.tab[aria-current="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
-button.tab:disabled { color: var(--dim); cursor: not-allowed; }
+button.tab:disabled, button.action:disabled { color: var(--dim); cursor: not-allowed; }
 
 .note { margin: 8px 0 0; color: var(--dim); font-size: 12px; }
 
@@ -115,3 +115,28 @@ ul.outputs li { padding: 2px 0; word-break: break-all; }
   dl.fields { grid-template-columns: 1fr; }
   dl.fields dt { margin-top: 8px; }
 }
+
+/* The actions of ticket 35: the controls, the answer forms, and the intake drop zone. */
+form.inline, p.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+select, textarea, input[type="number"] {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+input[type="number"] { width: 6em; }
+#action-note { min-height: 1.5em; }
+
+.decision { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+.decision h4 { margin: 0 0 4px; font-size: 14px; }
+.decision h5 { margin: 8px 0 2px; font-size: 12px; color: var(--dim); }
+.decision .question { font-weight: 600; margin: 4px 0 8px; }
+.answer-form { display: grid; gap: 6px; margin-top: 8px; max-width: 60em; }
+.answer-form label.option { display: block; }
+.answer-form textarea { width: 100%; resize: vertical; }
+.answer-form button { justify-self: start; }
+
+.drop { border-style: dashed; text-align: center; }
+.drop.over { border-color: var(--accent); color: var(--accent); }

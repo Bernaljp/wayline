@@ -33,7 +33,7 @@ from wayline.project import ProjectError, find_project, read_harness
 __all__ = [
     "GrillError", "DECISIONS_MD", "CONTEXT_MD", "read_records", "parse_records", "render_decisions", "frontier",
     "missing", "with_question", "with_answer", "with_tier", "with_term", "ask", "answer", "settle_term",
-    "apply_batch", "grill_view", "render_grill", "grill_command",
+    "apply_batch", "grill_view", "render_grill", "grill_command", "machine_line", "record_payload", "superseded_by",
 ]
 
 DECISIONS_MD = "DECISIONS.md"
@@ -179,7 +179,7 @@ def _waiting(records):
     return [record for record in records if record.get("id") and not _settled(record) and missing(record, records, questions)]
 
 
-def _superseded(records):
+def superseded_by(records):
     return {record["supersedes"]: record["id"] for record in records if record.get("supersedes")}
 
 
@@ -293,7 +293,7 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
         if not revise:
             raise GrillError("%s is settled (%r); a changed answer is a revision: wayline grill answer %s \"<answer>\" "
                              "--rationale \"<why>\" --revise" % (identifier, record["answer"], identifier))
-        later = _superseded(records).get(identifier)
+        later = superseded_by(records).get(identifier)
         if later is not None:
             raise GrillError("%s was revised already by %s; revise %s instead" % (identifier, later, later))
         revision = _check(dict(record, id=_next_id(records), tier=_current_tier(records) or None, supersedes=identifier, **answered))
@@ -380,7 +380,7 @@ def _write_records(ledger, records):
     ledger.write_markdown(DECISIONS_MD, render_decisions(records))
 
 
-def _payload(record):
+def record_payload(record):
     """The `decision` payload of one settled record; a grill question has no ticket, so its id leads the answer."""
     return {"ticket": None, "answer": "%s %s Answer: %s" % (record["id"], record["question"], record["answer"]),
             "decided_by": record["decided_by"], "rationale": record["rationale"], "confidence": record["confidence"]}
@@ -398,9 +398,9 @@ def _journal_settled(ledger, records, now=()):
     known = {(event.get("payload") or {}).get("answer") for event in events if event.get("event") == DECISION and event.get("ticket") is None}
     journaled = []
     for record in records:
-        if not record.get("id") or not _settled(record) or _payload(record)["answer"] in known:
+        if not record.get("id") or not _settled(record) or record_payload(record)["answer"] in known:
             continue
-        ledger.append_event(DECISION, _payload(record), ts=record["timestamp"] if record["id"] in now else None)
+        ledger.append_event(DECISION, record_payload(record), ts=record["timestamp"] if record["id"] in now else None)
         journaled.append(record["id"])
     return journaled
 
@@ -430,7 +430,7 @@ def answer(project, identifier, text, rationale, confidence=None, decided_by="hu
     with ledger.lock():
         records, record = with_answer(read_records(project), identifier, text, rationale, confidence=confidence,
                                       decided_by=decided_by, revise=revise, ts=now_ts())
-        make_event(DECISION, _payload(record), ts=record["timestamp"])  # an event the journal refuses writes nothing
+        make_event(DECISION, record_payload(record), ts=record["timestamp"])  # an event the journal refuses writes nothing
         _write_records(ledger, records)
         _journal_settled(ledger, records, now=(record["id"],))
     return record
@@ -480,7 +480,7 @@ def apply_batch(project, batch):
         for entry in lists["answers"]:
             records, record = with_answer(records, entry.get("id"), entry.get("answer"), entry.get("rationale"),
                                           confidence=entry.get("confidence"), revise=entry.get("revise", False), ts=now_ts())
-            make_event(DECISION, _payload(record), ts=record["timestamp"])
+            make_event(DECISION, record_payload(record), ts=record["timestamp"])
             answered.append(record["id"])
         before = context = _read_context(ledger)
         for entry in lists["terms"]:
@@ -498,7 +498,7 @@ def apply_batch(project, batch):
 
 def render_decisions(records):
     """DECISIONS.md: the settled records in the order they were settled, then the open ones."""
-    superseded = _superseded(records)
+    superseded = superseded_by(records)
     settled = [record for record in records if _settled(record)]
     still_open = [record for record in records if not _settled(record)]
     questions = _questions(records)
@@ -554,10 +554,10 @@ def _render_record(record, records, superseded, questions):
         lines.append("- supersedes: " + record["supersedes"])
     if record.get("id") in superseded:
         lines.append("- superseded-by: " + superseded[record["id"]])
-    return lines + ["", _machine(record), ""]
+    return lines + ["", machine_line(record), ""]
 
 
-def _machine(record):
+def machine_line(record):
     """The record as the one-line comment `parse_records` reads: compact JSON that no character can end early."""
     text = json.dumps(_ordered(record), ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     for character in "<>\x85  ":
@@ -589,7 +589,7 @@ def grill_view(project, stamp=True):
     else:
         records = read_records(project)
         _, tier, asked = with_tier(records, autonomy)
-    superseded = _superseded(records)
+    superseded = superseded_by(records)
     questions = _questions(records)
     current = [record for record in records if record.get("id") and record["id"] not in superseded]
     return {

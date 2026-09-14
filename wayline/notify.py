@@ -12,10 +12,16 @@ null when the channel timed out. `channel: none` means no channel could run at a
 
 wayline does not depend on hermes and ships no Telegram sender: the interpreter is whatever `init`
 detected, and without one the notifier stops at `notify-send`.
+
+`WAYLINE_NOTIFY=none` keeps every channel off: both `notified` lines are journaled as always, the
+second with `channel: none`, and nothing reaches a desktop or a phone. The test suite sets it, as it
+sets `WAYLINE_UNITS=none`, because the conductor notifies as it opens a decision ticket (ticket 35)
+and a test project laid out by `init` may carry the owner's own hermes interpreter.
 """
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -34,6 +40,8 @@ SUBJECT = "[wayline]"
 # `notify-send` answers at once or not at all; `hermes send` goes over the network to Telegram.
 NOTIFY_SEND_TIMEOUT_S = 15
 HERMES_TIMEOUT_S = 120
+# The variable that turns every channel off (`none`); a `run` passed in is a test's own channel and still runs.
+NOTIFY_ENV = "WAYLINE_NOTIFY"
 
 
 def notify_send_argv(summary, body):
@@ -50,6 +58,7 @@ def notify(event, text, project=None, ticket=None, run=None):
     `project` is the project whose journal records it, the active one by default; with none, the
     owner is still notified and nothing is journaled. `run(argv, timeout)` stands in for
     `subprocess.run` in tests. The result is `{"event", "channel", "ok", "exit_code", "journaled"}`.
+    With `WAYLINE_NOTIFY=none` and no `run`, no channel is tried.
     """
     outcome = {"event": event, "channel": NO_CHANNEL, "ok": False, "exit_code": None, "journaled": False}
     try:
@@ -61,6 +70,8 @@ def notify(event, text, project=None, ticket=None, run=None):
         hermes = _hermes_python(project)
         if hermes:
             attempts.append((HERMES, hermes_argv(hermes, str(text)), HERMES_TIMEOUT_S))
+        if run is None and os.environ.get(NOTIFY_ENV) == NO_CHANNEL:
+            attempts = []
         for channel, argv, timeout in attempts:
             ran, code = _attempt(argv, timeout, run)
             if not ran:

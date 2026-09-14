@@ -11,6 +11,7 @@
   <h1>wayline</h1>
   <nav id="tabs" aria-label="projects"></nav>
   <p id="transport" class="note"></p>
+  <p id="action-note" class="note" role="status" aria-live="polite"></p>
   <p><button type="button" id="tick-log-button">tick log</button></p>
 </header>
 
@@ -18,6 +19,42 @@
   <section id="overview" aria-labelledby="overview-heading">
     <h2 id="overview-heading">Overview</h2>
     <div id="overview-body" class="panel">loading...</div>
+  </section>
+
+  <section id="controls" aria-labelledby="controls-heading">
+    <h2 id="controls-heading">Controls</h2>
+    <div id="controls-body" class="panel">
+      <form id="autonomy-form" class="inline">
+        <label for="autonomy-select">autonomy</label>
+        <select id="autonomy-select"></select>
+        <button type="submit" id="autonomy-set" class="action">set autonomy</button>
+        <span id="autonomy-current" class="note"></span>
+      </form>
+      <form id="pacing-form" class="inline">
+        <label for="stop-at">stop at</label>
+        <input id="stop-at" type="number" min="0" max="1" step="any" required>
+        <label for="cheap-at">cheap only at</label>
+        <input id="cheap-at" type="number" min="0" max="1" step="any" required>
+        <button type="submit" id="pacing-set" class="action">set pacing</button>
+      </form>
+      <p class="inline">
+        <button type="button" id="switch-button" class="action">make this the active project</button>
+        <span id="active-state" class="note"></span>
+      </p>
+      <p class="inline">
+        <button type="button" id="pause-button" class="action">pause</button>
+        <button type="button" id="resume-button" class="action">resume</button>
+        <span id="pause-state" class="note"></span>
+      </p>
+    </div>
+  </section>
+
+  <section id="decisions" aria-labelledby="decisions-heading">
+    <h2 id="decisions-heading">Decisions</h2>
+    <div class="panel">
+      <div id="decisions-open">loading...</div>
+      <div id="decisions-log"></div>
+    </div>
   </section>
 
   <section id="graph" aria-labelledby="graph-heading">
@@ -42,6 +79,16 @@
     <div id="outputs-body" class="panel">loading...</div>
   </section>
 
+  <section id="intake" aria-labelledby="intake-heading">
+    <h2 id="intake-heading">Intake</h2>
+    <div id="intake-drop" class="panel drop">
+      <p>Drop files here: a reference PDF, a reference list, a plan, or a small data file. Each is kept under
+      <code>research/intake/</code> and added to <code>INTAKE.md</code>.</p>
+      <p><label for="intake-file">or choose files</label> <input id="intake-file" type="file" multiple></p>
+    </div>
+    <ul id="intake-list" class="outputs"></ul>
+  </section>
+
   <section id="journal" aria-labelledby="journal-heading">
     <h2 id="journal-heading">Journal</h2>
     <p id="journal-note" class="note"></p>
@@ -50,7 +97,7 @@
 </main>
 
 <footer>
-  <p class="note">Read-only in M1.</p>
+  <p class="note">Every action needs the token carried by the URL <code>wayline serve</code> printed.</p>
 </footer>
 
 <!-- Pinned, checked in, and served as static assets; never imported by the harness. See vendor/VENDOR.md. -->

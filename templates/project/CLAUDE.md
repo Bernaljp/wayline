@@ -12,6 +12,12 @@ cite, and `REPORT.md` is the answer.
 the window, the goal, and the last events. `wayline run` is the conductor. Settings are in
 `harness.json`, which pins the harness tag above; `wayline upgrade` moves the pin.
 
+A decision ticket (`kind: decision`) is a question for the owner, and while it is open the tickets
+that wait on it do not launch. A session the owner is working in answers one for them with
+`wayline answer <id> "<answer>" --rationale "<their reasons>" --project .`, which journals the
+answer as the owner's at once; the dashboard's decisions view and an `## Answer` section written
+at the end of the ticket file answer it too.
+
 A worker writes only inside its ticket's touch set, runs `wayline accept` before it stops, and
 commits on its ticket branch. It never integrates, never closes a ticket, and never edits
 `research/`.

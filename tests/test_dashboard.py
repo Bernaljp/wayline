@@ -1104,9 +1104,11 @@ class SettingsTest(ProjectTestCase):
         dashboard_path().write_text("{ not json", encoding="utf-8")
         self.assertTrue(read_settings()["token"])
 
-    def test_the_url_carries_the_token_only_when_the_bind_needs_one(self):
+    def test_the_url_carries_the_token_on_every_bind(self):
+        """The views on loopback need none, but every action does (ticket 35), and the page sends the one its own URL carries."""
         loopback = {"port": 8765, "bind": LOOPBACK, "token": "secret"}
-        self.assertEqual(dashboard_url(loopback), "http://127.0.0.1:8765/")
+        self.assertEqual(dashboard_url(loopback), "http://127.0.0.1:8765/?token=secret")
+        self.assertEqual(dashboard_url(dict(loopback, token=None)), "http://127.0.0.1:8765/")
         wide = {"port": 8765, "bind": "0.0.0.0", "token": "secret"}
         self.assertIn("token=secret", dashboard_url(wide))
         self.assertNotIn("0.0.0.0", dashboard_url(wide), "0.0.0.0 is an address to listen on, not one to dial")
@@ -1136,7 +1138,8 @@ class ServeLinesTest(ProjectTestCase):
         self.assertIn("-L 8765:127.0.0.1:8765 box", text)
         self.assertIn(str(project), text)
         self.assertIn("active", text)
-        self.assertNotIn("secret", text, "a loopback bind needs no token, so it prints none")
+        self.assertIn("http://127.0.0.1:8765/?token=secret", text, "the views on loopback need no token, but the actions do")
+        self.assertIn("every action needs the token the URL carries", text)
 
     def test_a_wider_bind_prints_the_token_and_says_it_is_needed(self):
         settings = {"port": 8765, "bind": "0.0.0.0", "token": "secret", "poll_journal_s": 2, "poll_views_s": 5}

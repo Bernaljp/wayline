@@ -4,6 +4,30 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+Decision tickets end to end and the dashboard's actions (ticket 35, M4 Front door).
+
+- `wayline.decisions.open_decision` opens a decision ticket: the question, the options, the recommended answer, and the evidence under `## Decision`, with the machine copy as a `decision` record on the grill's `<!-- wayline:decision {...} -->` line; `blocking` and `human_only` in the frontmatter; the new ticket added to the `blocked_by` of every ticket it pauses that is not running or closed; then `ticket_created`, `decision_opened`, and a notification. A second call with the same `origin` finishes what a crash left undone instead of opening another ticket. The conductor opens one for each `decision_requests` entry of a valid result, pausing the tickets that wait on the ticket that asked.
+- Under autonomy `interactive` and `checkpoints` the owner answers every decision ticket, so the conductor launches no session for one, and one left on the frontier keeps no run going (`schedule.awaits_owner(entry, autonomy)`); under `autonomous` only a human-only one waits for the owner. The tick measures work under `harness.json`'s autonomy, which is the one a relaunched run starts from, and `wayline status` and the dashboard overview say who answers each open decision ticket.
+- `wayline answer` takes `--rationale` and `--confidence`, which a session answering for the owner passes from the conversation, and its checks and writes hold the ledger's lock. The project's `CLAUDE.md` block tells a session to answer with the verb.
+- `wayline switch --stop-at/--cheap-at` (`project.set_pacing`) writes the pacing thresholds to `harness.json`, then journals `control pacing`. `project.steer_ticket` is what `wayline cancel`, `wayline rerun`, and their dashboard actions call.
+- The dashboard serves `GET /api/projects/<id>/decisions`: the open decision tickets with their options, evidence, and what they pause; the decision log, the decider's decisions first; and the settings the controls start from. It also takes `POST /api/projects/<id>/actions/<name>` for `answer`, `autonomy`, `pause`, `resume`, `switch`, `cancel`, `rerun`, `pacing`, and `intake`, each calling the verb's function in-process and each requiring the token in the `X-Wayline-Token` header whatever the bind. `wayline serve` now prints the URL with the token on loopback too, since the page sends the one its address carries. The page gains the controls, the decisions view with an answer form per open decision ticket, cancel and rerun buttons on the ticket page, and the intake drop zone.
+- The intake drop zone keeps a file under `research/intake/` (`intake.drop_material`, up to 64 MB) and adds it to `INTAKE.md` the way `wayline intake` reads a material; every later `wayline intake` takes the files kept there.
+- `WAYLINE_NOTIFY=none` keeps the notifier's channels off, and the suite sets it.
+- `fixtures/projects/decision-branch/` (rebuilt by its `make.py`) is the graph the tests and the live record in `docs/verification/m4.md` run.
+- A review pass fixed these before the ticket landed:
+  - Under `autonomous` a decision ticket was launched on the `decider` role, which ticket 31 has not installed, and failed before it started. Until the role reads (`decisions.decider_ready`), every decision ticket waits for the owner.
+  - The conductor or the tick could read an answer from the ticket file while `wayline answer` was between its two writes and journal it a second time, without the rationale. The written answers are now read under the ledger's lock.
+  - A worker's question that read `## Answer` was taken as the owner's answer. A question that starts with `#` is escaped in the body.
+  - The decision requests of a session resumed after a failed acceptance were never opened. A request is now told apart by its question, so the same question asked again in the same attempt opens nothing twice.
+  - The notifier ran inside the wave, so a slow channel held every outcome and launch. It now runs on a thread, which `settle` and the end of `run` wait for.
+  - A request the ledger refused failed the ticket that asked it.
+  - Who answers each decision ticket followed `harness.json` while a conductor ran on the journal's autonomy.
+  - `set_pacing` left out `policy.pacing`, so with the thresholds only in the policy a real change wrote nothing.
+  - A dropped PDF ran `pdftotext` under the ledger's lock.
+  - A switch that met a conductor after its check held the request for the whole drain.
+  - `serve` and `run` printed the URL that carries the token into kept output. They now print it only at a terminal.
+  - On the page: a stale poll could draw one project's decisions under another's tab, unsaved control edits followed the owner across tabs, and a threshold off the 0.01 grid blocked the pacing form.
+
 Fall back to Opus under the fallback consent (ticket 55, M5 Overnight and report).
 
 - `harness.json` gains `model_fallback`, the fallback consent: `auto`, `ask`, or `wait`. The intake asks it beside the autonomy and the budgets (`--model-fallback`, or `model_fallback` in the spec), says it under Autonomy in `INTAKE.md`, and writes it only when the owner states it, so a project without the key behaves as `ask` and stays distinguishable from an explicit `ask` (`project.fallback_consent` returns whether it was stated).
