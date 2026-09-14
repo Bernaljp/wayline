@@ -1,4 +1,4 @@
-// The read-only dashboard's front end (Implementation Decisions 8). No framework, no build step.
+// The dashboard's front end (Implementation Decisions 8): the views, and since ticket 35 the actions. No framework, no build step.
 //
 // Transport is polling, which research-notes 08 measured as the cheaper and more robust of the two
 // through an ssh tunnel: the journal tail asks for the bytes after an offset every 2 s, every other
@@ -22,6 +22,7 @@ const state = {
   tags: {},
   since: null, // null means "the tail has not read this project yet": ask by line count, not offset
 
+  openSignature: null, // the open decision tickets last drawn, so a poll that changed nothing leaves their forms alone
   ticket: null, // the ticket id whose page is open, or null when the graph is showing
   log: null, // { kind, id, since } of the log tail that is open, or null
 
@@ -158,6 +159,11 @@ function select(id) {
   every('overview', state.pollViews, loadOverview);
   every('graph', state.pollViews, loadGraph);
   every('outputs', state.pollViews, loadOutputs);
+  state.openSignature = null;
+  // An edit to a control that was never set belongs to the project it was made on.
+  dirty.autonomy = false;
+  dirty.pacing = false;
+  every('decisions', state.pollViews, loadDecisions);
   showGraph();
   startTail();
 }
@@ -211,7 +217,7 @@ function renderOverview(view) {
   parts.push(table(['id', 'ticket', 'status', 'unit'], (view.jobs || []).map((job) => [job.id, job.ticket, job.status, job.unit || job.backend])));
   // `blocking` is the scope a decision pauses ("subgraph" or "all"), not a list of ids.
   parts.push(el('h3', { text: `open decisions (${(view.decisions || []).length})` }));
-  parts.push(table(['id', 'title', 'blocking', 'asks'], (view.decisions || []).map((entry) => [entry.id, entry.title, entry.blocking || '', entry.human_only ? 'the human' : 'the decider'])));
+  parts.push(table(['id', 'title', 'blocking', 'asks'], (view.decisions || []).map((entry) => [entry.id, entry.title, entry.blocking || '', entry.awaits === 'decider' ? 'the decider' : 'the owner'])));
   if ((view.problems || []).length) {
     parts.push(el('h3', { text: `problems (${view.problems.length})` }));
     parts.push(el('ul', { class: 'problems' }, view.problems.map((problem) => el('li', { text: problem }))));
@@ -287,6 +293,7 @@ function renderTicket(view) {
       ['role', f.role],
       ['blocked by', (f.blocked_by || []).length ? f.blocked_by.join(', ') : 'nothing'],
     ]),
+    ticketActions(f),
     el('h3', { text: 'body' }),
     renderMarkdown(view.body),
     el('h3', { text: `context pack (${(view.context_pack || []).length})` }),
@@ -539,6 +546,299 @@ function short(value) {
   return text.length <= 40 ? text : `${text.slice(0, 37)}...`;
 }
 
+// --- the actions (ticket 35) --------------------------------------------------------------------
+//
+// Every action is a POST with the token in the X-Wayline-Token header, which the server asks for on
+// every bind and takes from nowhere else. The page holds the token only when its own URL carries it,
+// as the URL `wayline serve` prints does; without it the controls stay off and the page says why.
+
+function projectPath(suffix) {
+  return `/api/projects/${encodeURIComponent(state.project)}${suffix}`;
+}
+
+// `project` is the project the action is for: the one whose view drew the form, else the selected one.
+async function act(name, body, headers, project) {
+  const target = project || state.project;
+  if (!TOKEN) throw new Error('actions need the token: open the URL wayline serve printed, which carries it');
+  if (!target) throw new Error('no project is selected');
+  const sent = { 'X-Wayline-Token': TOKEN, ...(headers || {}) };
+  let payload = body;
+  if (!(body instanceof Blob)) {
+    sent['Content-Type'] = 'application/json';
+    payload = JSON.stringify(body || {});
+  }
+  const response = await fetch(`/api/projects/${encodeURIComponent(target)}/actions/${name}`, { method: 'POST', cache: 'no-store', headers: sent, body: payload });
+  let reply;
+  try {
+    reply = await response.json();
+  } catch (failure) {
+    reply = { ok: false, error: `${response.status} ${response.statusText}` };
+  }
+  if (!response.ok || !reply.ok) throw new Error(reply.error || `${response.status} ${response.statusText}`);
+  return reply;
+}
+
+function say(text, failed) {
+  const note = document.getElementById('action-note');
+  note.textContent = text;
+  note.className = failed ? 'note problems' : 'note';
+}
+
+// Take one action, say what came of it, and poll the views again at once instead of at their next tick, whether it
+// was taken or refused: a refused change shows the value that stands.
+async function perform(name, body, said, project) {
+  try {
+    const reply = await act(name, body, null, project);
+    say(said ? said(reply) : `${name}: done`);
+    return reply;
+  } catch (failure) {
+    say(`${name}: ${failure.message || failure}`, true);
+    return null;
+  } finally {
+    refreshViews();
+  }
+}
+
+function refreshViews() {
+  state.tags = {};
+  loadProjects();
+  loadOverview();
+  loadDecisions();
+  loadGraph();
+}
+
+// --- the controls (ticket 35) ------------------------------------------------------------------
+
+// A control the owner changed and has not set yet keeps what they chose while the views poll.
+const dirty = { autonomy: false, pacing: false };
+
+function renderControls(controls) {
+  const select = document.getElementById('autonomy-select');
+  if (!dirty.autonomy) {
+    replace(select, (controls.autonomy_levels || []).map((level) => {
+      const option = el('option', { value: level, text: level });
+      option.selected = level === controls.autonomy;
+      return option;
+    }));
+  }
+  if (!dirty.pacing) {
+    document.getElementById('stop-at').value = controls.stop_at ?? '';
+    document.getElementById('cheap-at').value = controls.cheap_at ?? '';
+  }
+  document.getElementById('autonomy-current').textContent = controls.autonomy
+    ? `now ${controls.autonomy}; raised at any time, lowered only while no conductor runs` : '';
+  document.getElementById('active-state').textContent = controls.active ? 'this is the active project' : 'another project is active';
+  document.getElementById('pause-state').textContent = controls.paused_by_owner
+    ? 'paused by the owner: nothing that needs a model launches' : 'not paused by the owner';
+  for (const id of ['autonomy-set', 'pacing-set', 'pause-button', 'resume-button']) document.getElementById(id).disabled = !TOKEN;
+  document.getElementById('switch-button').disabled = !TOKEN || Boolean(controls.active);
+}
+
+function wireControls() {
+  document.getElementById('autonomy-select').addEventListener('change', () => { dirty.autonomy = true; });
+  for (const id of ['stop-at', 'cheap-at']) document.getElementById(id).addEventListener('input', () => { dirty.pacing = true; });
+  document.getElementById('autonomy-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const level = document.getElementById('autonomy-select').value;
+    dirty.autonomy = false;
+    await perform('autonomy', { autonomy: level },
+      (done) => (done.changed ? `autonomy set from ${done.from} to ${done.to}` : `autonomy is already ${done.to}`));
+  });
+  document.getElementById('pacing-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const body = { stop_at: Number(document.getElementById('stop-at').value), cheap_at: Number(document.getElementById('cheap-at').value) };
+    dirty.pacing = false;
+    await perform('pacing', body,
+      (done) => (done.changed ? `pacing set: stop at ${done.to.stop_at}, cheap only at ${done.to.cheap_at}` : 'the pacing thresholds are already these'));
+  });
+  document.getElementById('pause-button').addEventListener('click',
+    () => perform('pause', {}, () => 'pause journaled: nothing that needs a model launches until resume'));
+  document.getElementById('resume-button').addEventListener('click',
+    () => perform('resume', {}, () => 'resume journaled: the conductor launches again at its next wave'));
+  document.getElementById('switch-button').addEventListener('click', () => perform('switch', {}, (done) => (done.draining
+    ? `the conductor on ${done.from} is draining; this project becomes the active one once it has ended`
+    : `${done.to} is the active project`)));
+}
+
+function ticketActions(f) {
+  const buttons = [
+    ['cancel', `Cancel ticket ${f.id}? Its worker is ended and the ticket is parked.`],
+    ['rerun', `Rerun ticket ${f.id}? Its worker is ended and the ticket opens for a new attempt.`],
+  ].map(([name, question]) => {
+    const button = el('button', { type: 'button', class: 'action', text: name });
+    button.disabled = !TOKEN;
+    button.addEventListener('click', () => {
+      if (window.confirm(question)) perform(name, { ticket: f.id }, () => `${name} of ticket ${f.id} journaled; the conductor applies it at its next wave`);
+    });
+    return button;
+  });
+  return el('p', { class: 'inline' }, buttons);
+}
+
+// --- the decisions view (ticket 35) ------------------------------------------------------------
+
+// What the owner has typed into an answer form, per project and ticket, so that a redraw of the open
+// decisions never loses a half-written answer.
+const drafts = {};
+
+async function loadDecisions() {
+  const project = state.project;
+  if (!project) return;
+  try {
+    const view = await get(projectPath('/decisions'));
+    // A tab switched while this poll was out: the view is another project's, and its forms must not be drawn under this one.
+    if (view && project === state.project) renderDecisions(view, project);
+  } catch (failure) {
+    if (project !== state.project) return;
+    state.openSignature = null;
+    replace(document.getElementById('decisions-open'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+  }
+}
+
+function renderDecisions(view, project) {
+  renderControls(view.controls || {});
+  const open = view.open || [];
+  // Redrawn only when it changed: a redraw replaces the form under the owner's cursor.
+  const signature = JSON.stringify([project, open]);
+  if (signature !== state.openSignature) {
+    state.openSignature = signature;
+    const cards = [el('h3', { text: `open decision tickets (${open.length})` })];
+    if (!open.length) cards.push(el('p', { class: 'note', text: 'none: nothing waits for an answer' }));
+    for (const decision of open) cards.push(decisionCard(decision, project));
+    replace(document.getElementById('decisions-open'), cards);
+  }
+  const log = view.log || [];
+  const parts = [el('h3', { text: `decision log (${log.length}), the decider's first` })];
+  parts.push(log.length
+    ? table(['decided by', 'ticket', 'question', 'answer', 'rationale', 'when'], log.map((entry) => [
+      entry.decided_by + (entry.superseded ? ' (superseded)' : ''),
+      entry.ticket === null ? (entry.id || '') : `#${entry.ticket}`,
+      entry.question || '',
+      entry.answer,
+      entry.rationale || '',
+      (entry.ts || '').replace('T', ' ').replace('Z', ''),
+    ]))
+    : el('p', { class: 'note', text: 'no decision yet' }));
+  if ((view.problems || []).length) {
+    parts.push(el('h3', { text: `problems (${view.problems.length})` }));
+    parts.push(el('ul', { class: 'problems' }, view.problems.map((problem) => el('li', { text: problem }))));
+  }
+  replace(document.getElementById('decisions-log'), parts);
+}
+
+function decisionCard(decision, project) {
+  const key = `${project}:${decision.id}`;
+  const draft = drafts[key] || (drafts[key] = { choice: '', text: '', rationale: '' });
+  let pauses = 'no ticket waits on it yet';
+  if (decision.blocking === 'all') pauses = 'every other ticket waits for the answer';
+  else if ((decision.pauses || []).length) pauses = `ticket(s) ${decision.pauses.join(', ')} wait for the answer`;
+  const card = el('article', { class: 'decision', 'data-id': String(decision.id) }, [
+    el('h4', { text: `#${decision.id} ${decision.title || ''}` }),
+    el('p', { class: 'question', text: decision.question || '' }),
+    fields([
+      ['pauses', pauses],
+      ['answered by', decision.awaits === 'owner'
+        ? (decision.human_only ? 'the owner only: it is human-only' : 'the owner')
+        : 'the decider, unless the owner answers first'],
+      ['recommended', decision.recommended],
+      ['status', decision.status],
+      ['asked by', decision.proposed_by],
+      ['origin', decision.origin],
+    ]),
+  ]);
+  if ((decision.evidence || []).length) {
+    card.appendChild(el('h5', { text: 'evidence' }));
+    card.appendChild(el('ul', {}, decision.evidence.map((item) => el('li', { text: item }))));
+  }
+  if (decision.answered) {
+    card.appendChild(el('p', { class: 'note', text: `answered by the ${decision.answered.decided_by}: ${decision.answered.answer}. The conductor closes it at its next wave, and the tick relaunches one when none runs.` }));
+    return card;
+  }
+  if (decision.written) {
+    card.appendChild(el('p', { class: 'note', text: `an answer is written in the ticket file: ${decision.written}. The next wave or tick journals it as the owner's.` }));
+    return card;
+  }
+  const form = el('form', { class: 'answer-form' });
+  for (const option of decision.options || []) {
+    const input = el('input', { type: 'radio', name: `choice-${decision.id}`, value: option });
+    input.checked = draft.choice === option;
+    input.addEventListener('change', () => { draft.choice = option; });
+    form.appendChild(el('label', { class: 'option' }, [input, document.createTextNode(` ${option}${option === decision.recommended ? ' (recommended)' : ''}`)]));
+  }
+  const text = el('textarea', {
+    rows: '2', placeholder: (decision.options || []).length ? 'or an answer in your own words' : 'the answer', 'aria-label': `the answer to ticket ${decision.id}`,
+  });
+  text.value = draft.text;
+  text.addEventListener('input', () => { draft.text = text.value; });
+  const rationale = el('textarea', { rows: '2', placeholder: 'why (optional; journaled with the answer)', 'aria-label': `why, for ticket ${decision.id}` });
+  rationale.value = draft.rationale;
+  rationale.addEventListener('input', () => { draft.rationale = rationale.value; });
+  const submit = el('button', { type: 'submit', class: 'action', text: `answer ticket ${decision.id}` });
+  submit.disabled = !TOKEN;
+  form.append(text, rationale, submit);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const answer = draft.text.trim() || draft.choice;
+    if (!answer) {
+      say(`ticket ${decision.id}: choose an option or write an answer`, true);
+      return;
+    }
+    const body = { ticket: decision.id, answer };
+    if (draft.rationale.trim()) body.rationale = draft.rationale.trim();
+    submit.disabled = true;
+    const reply = await perform('answer', body,
+      () => `ticket ${decision.id} answered: ${answer}. It is journaled as your decision, and the conductor closes the ticket at its next wave.`,
+      project);
+    if (reply) delete drafts[key];
+    else submit.disabled = !TOKEN;
+  });
+  card.appendChild(form);
+  return card;
+}
+
+// --- the intake drop zone (ticket 35) ----------------------------------------------------------
+
+async function upload(files) {
+  const list = document.getElementById('intake-list');
+  for (const file of Array.from(files || [])) {
+    const row = el('li', { text: `${file.name}: sending ${humanSize(file.size)}...` });
+    list.prepend(row);
+    try {
+      const reply = await act('intake', file, { 'X-Wayline-Filename': encodeURIComponent(file.name), 'Content-Type': 'application/octet-stream' });
+      let where = 'INTAKE.md already lists it';
+      if (reply.taken === null) where = 'there is no INTAKE.md yet, so the next wayline intake takes it';
+      else if (reply.taken.length) where = `added to INTAKE.md under ${reply.taken.join(', ')}`;
+      row.textContent = `${file.name}: kept as ${reply.path} (${humanSize(reply.size)}); ${where}`;
+    } catch (failure) {
+      row.textContent = `${file.name}: ${failure.message || failure}`;
+      row.className = 'problems';
+    }
+  }
+  refreshViews();
+}
+
+function wireIntake() {
+  const zone = document.getElementById('intake-drop');
+  for (const type of ['dragenter', 'dragover']) {
+    zone.addEventListener(type, (event) => {
+      event.preventDefault();
+      zone.classList.add('over');
+    });
+  }
+  for (const type of ['dragleave', 'drop']) zone.addEventListener(type, () => zone.classList.remove('over'));
+  zone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    upload(event.dataTransfer.files);
+  });
+  const input = document.getElementById('intake-file');
+  input.addEventListener('change', () => {
+    upload(input.files).then(() => { input.value = ''; });
+  });
+}
+
 // --- start ---------------------------------------------------------------------------------------
 
+wireControls();
+wireIntake();
+if (!TOKEN) say('Actions need the dashboard token: open the URL wayline serve printed, which carries it. The views work without it.');
 every('projects', 5, loadProjects);

@@ -58,9 +58,14 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   a gate's resume) starts again as a fresh Opus session in the same attempt and worktree, never as a
   resume of the Fable transcript. Under `wait`, and under `ask` until the ask is built, Fable work
   waits as above; a verdict whose verifier is Fable waits under every consent until verdicts fall back.
-- A result's `proposals`, `decision_requests` and `goal_progress` are written into the ticket's
-  `## Result` section so the owner sees them, and nothing else: admission is ticket 37, decision
-  tickets are ticket 35, and keep-if-better is ticket 39.
+- Decision tickets (ticket 35, `wayline.decisions`). Each of a valid result's `decision_requests`
+  opens a decision ticket that pauses the tickets waiting on the one that asked, journals
+  `decision_opened`, and notifies the owner. Every wave journals an answer written into a decision
+  ticket's file and marks an answered decision ticket `done`, which releases what it paused. Under
+  autonomy `interactive` and `checkpoints` no session is launched for a decision ticket, and one
+  left on the frontier keeps no run going: the owner's answer is what the tick relaunches for.
+- A result's `proposals` and `goal_progress` are written into the ticket's `## Result` section so
+  the owner sees them, and nothing else: admission is ticket 37, and keep-if-better is ticket 39.
 - The Type-B gate of decision 11 (ticket 32): a done ticket's verdicts are queued and drained
   later in the same wave, and the ticket is `accepted` when every one of them passed.
 
@@ -82,7 +87,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, gates, pacing, replay, schedule, tick, tickets, worker
+from wayline import HARNESS_ROOT, decisions, gates, notify, pacing, replay, schedule, tick, tickets, worker
 from wayline.ledger import (
     ACCEPTANCE, CONTROL, FEEDBACK, FINDING, INTEGRATED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
@@ -499,6 +504,10 @@ class Conductor:
         # The fallback consent as this wave read it, and the wave it read it for (decision 15).
         self._consent = self._consent_wave = None
         self.resources_free = schedule.everything_free
+        # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
+        # its own so a slow channel never holds a wave; a test stands in its own. `notifying` is those threads.
+        self.notify = self._notify_in_background
+        self.notifying = []
         # What a run carries between waves: the working view folded from the journal, the byte
         # offset read so far, the attempts whose sessions are in flight, and the heartbeat.
         self.view = replay.View()
@@ -591,12 +600,16 @@ class Conductor:
         finally:
             self.heartbeat.release()
             self.heartbeat = None
+            for thread in list(self.notifying):  # what this run claimed to the owner is sent before it returns
+                thread.join()
 
     def settle(self, timeout=None):
         """Wait until every session this conductor started has returned; the next wave carries them."""
         for attempt in list(self.flight.values()):
             if attempt.thread is not None:
                 attempt.thread.join(timeout)
+        for thread in list(self.notifying):
+            thread.join(timeout)
 
     def _idle(self, seconds):
         """Wait up to `seconds` for something the next wave can act on, looking every `POLL_S`."""
@@ -675,10 +688,11 @@ class Conductor:
             return
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
-        # A human-only decision ticket stays on the frontier for the owner and no session takes it, so it keeps no run
+        autonomy, decider = self._autonomy(), decisions.decider_ready(self.harness_root, self.project)
+        # A decision ticket the owner answers stays on the frontier for them and no session takes it, so it keeps no run
         # going: the owner's answer is what the tick relaunches the conductor for (decision 7).
-        if not [entry for entry in tickets.frontier(graph) if not schedule.awaits_owner(entry)] and not running:
-            for line in schedule.held_back(graph):
+        if not [entry for entry in tickets.frontier(graph) if not schedule.awaits_owner(entry, autonomy, decider)] and not running:
+            for line in schedule.held_back(graph, autonomy, decider):
                 self.say(line)
             self.ledger.append_event(RUN_ENDED, {"reason": "frontier_empty"})
             result.ended, result.reason = True, "frontier_empty"
@@ -707,12 +721,15 @@ class Conductor:
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         busy = sum(1 for attempt in self.flight.values() if attempt.running or attempt.adopted)
         goal_tickets = self._goal_tickets()
+        autonomy = self._autonomy()
+        decider = decisions.decider_ready(self.harness_root, self.project)
 
         def pick():
             return schedule.pick(
                 graph, running=running, slots=max(0, self._slots() - busy), action=self.action,
                 root=self.project, free=self.resources_free, goal_tickets=goal_tickets,
                 held=self._on_fable if self.view.hold is not None and not self._falls_back() else schedule.nothing_held,
+                autonomy=autonomy, decider=decider,
             )
 
         picks = pick()
@@ -1248,6 +1265,7 @@ class Conductor:
             if problem is not None:
                 self._fail(attempt, "the resumed session returned no usable result: %s" % problem, "tier_up")
                 return "failed"
+            self._open_requested(attempt)  # what the resumed session asked is asked, whether or not its work passes now
             if not self._accept(attempt, "worktree", attempt.worktree)["pass"]:
                 self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", "tier_up")
                 return "failed"
@@ -1393,13 +1411,48 @@ class Conductor:
             "ticket": attempt.id, "attempt": attempt.number, "session_id": attempt.session_id, "reason": reason,
         }, ticket=attempt.id, session_id=attempt.session_id)
 
+    def _open_requested(self, attempt):
+        """Wave step 5: each of a valid result's `decision_requests` opens a decision ticket, pausing what waits on this one.
+
+        A request the ledger refuses (a question with no text) is said aloud and left in the ticket's
+        `## Result` section, where every request is written; it does not fail the work that asked it.
+        """
+        requests = attempt.result.get("decision_requests") or []
+        if not requests:
+            return
+        try:
+            reports = decisions.open_requested(self.project, attempt.id, attempt.number, requests, notify=self.notify)
+        except (ValueError, OSError) as failure:  # a ticket the schema or the ledger refuses fails nothing the worker did
+            self.say("  ticket %d asked a decision that could not be opened: %s" % (attempt.id, failure))
+            return
+        for report in reports:
+            if report["opened"]:
+                self.say("  ticket %d asked a decision: decision ticket %d, pausing %s" % (
+                    attempt.id, report["ticket"],
+                    "ticket(s) %s" % ", ".join(str(item) for item in report["paused"]) if report["paused"] else "no ticket yet"))
+
+    def _notify_in_background(self, event, text, project=None, ticket=None):
+        """`wayline.notify.notify` on a thread of its own: hermes may take two minutes, and a wave does not wait for it.
+
+        The notifier journals its claim before any channel runs and never raises. `settle` and the end of `run` wait
+        for these threads, so what a run claimed to the owner is sent before the run returns.
+        """
+        thread = threading.Thread(target=notify.notify, args=(event, text), kwargs={"project": project, "ticket": ticket},
+                                  name="wayline-notify")
+        self.notifying = [item for item in self.notifying if item.is_alive()] + [thread]
+        thread.start()
+        return thread
+
     def _act_on(self, attempt):
         """What the result's own status asks for: `done`, `running`, or `failed` for the wave's count.
 
         The status is read before the acceptance is run, because only the worker can report that it
         is blocked or that it needs a person, and a ticket in either state must not spend its one
-        resume on gates that were never going to pass.
+        resume on gates that were never going to pass. The decision tickets the result asks for are
+        opened first, whatever its status, since a question is worth asking whether or not the work
+        that raised it passes.
         """
+        self._open_requested(attempt)
         outside = attempt.result.get("touched_outside_declared") or []
         blocked_on = attempt.result.get("blocked_on")
         if outside or blocked_on:
@@ -1721,6 +1774,15 @@ class Conductor:
             harness = {}
         return pacing.thresholds(self.policy.get("pacing"), harness.get("pacing"), self.view.thresholds)
 
+    def _autonomy(self):
+        """The autonomy this run holds: the journal's (`run_started`, then `control autonomy`), else `harness.json`'s."""
+        if self.view.autonomy:
+            return self.view.autonomy
+        try:
+            return read_harness(self.project).get("autonomy")
+        except (ProjectError, ValueError, OSError):
+            return None
+
     def _wait_seconds(self):
         """How long `run` waits before the next wave: `policy.poll_seconds`, or less when a pause or the hold resets sooner."""
         seconds = self._poll_seconds()
@@ -1759,7 +1821,7 @@ class Conductor:
         and it wins over the answer the journal held, because the file is where a person answers
         (decision 2). Nothing new is journaled for the ticket's closing: the `decision` is the record.
         """
-        written = journal_written_answers(self.project, self.ledger, self.view.answers)
+        written = journal_written_answers(self.project, self.ledger)
         for identifier in sorted(written):
             self.say("  ticket %d: the answer written in its file is journaled as the owner's" % identifier)
         for ticket in tickets.read_tickets(self.project):
@@ -2576,6 +2638,7 @@ def announce_dashboard(project, out=None):
         "off": "  (%s; wayline serve runs it by hand)" % detail,
         "failed": "  (%s did not start: %s; wayline init installs it, wayline serve runs it by hand)" % (tick.DASHBOARD_SERVICE, detail),
     }
-    print("dashboard  %s%s" % (dashboard.dashboard_url(settings), notes[state]), file=out)
+    # The token only at a terminal: a detached run's output goes to the user journal, which is kept.
+    print("dashboard  %s%s" % (dashboard.dashboard_url(settings, with_token=dashboard.is_terminal(out)), notes[state]), file=out)
     print("  " + dashboard.tunnel_line(settings["port"]), file=out)
     return state

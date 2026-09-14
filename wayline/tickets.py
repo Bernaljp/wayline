@@ -27,8 +27,8 @@ __all__ = [
     "DECISION", "HARDEST", "RESULT_HEADING",
     "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
-    "frontier", "open_decisions", "is_open_decision", "by_status", "empty_graph", "tickets_dir",
-    "with_result", "with_result_note", "result_notes", "ANSWER_HEADING", "SUPERSEDED_ANSWER_HEADING", "answer_section", "with_answer", "retire_answer",
+    "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
+    "with_result", "with_result_note", "result_notes", "ANSWER_HEADING", "SUPERSEDED_ANSWER_HEADING", "section", "answer_section", "with_answer", "retire_answer",
 ]
 
 RESEARCH = "research"
@@ -160,11 +160,13 @@ def next_id(project):
 
 
 def result_notes(result):
-    """The lines of a result that no code reads yet, one short sentence each, or an empty list.
+    """The lines of a result the ticket body keeps beside its summary, one short sentence each, or an empty list.
 
-    A worker may return proposals, decision requests, and goal progress before the tickets that
-    act on them exist (37, 35, and 39). They are written into the ticket body and said aloud
-    rather than dropped, because a proposal nobody ever sees is worse than one that waits.
+    A worker may return proposals and goal progress before the tickets that act on them exist (37
+    and 39). They are written into the ticket body and said aloud rather than dropped, because a
+    proposal nobody ever sees is worse than one that waits. A decision request is written here too,
+    though the conductor opens a decision ticket for it (ticket 35), so the body of the ticket that
+    asked says what its attempt asked.
     """
     notes = []
     progress = result.get("goal_progress")
@@ -176,8 +178,7 @@ def result_notes(result):
                      % ", ".join("%s (%s)" % (item.get("title"), item.get("kind")) for item in proposals))
     requests = result.get("decision_requests") or []
     if requests:
-        notes.append("asked %s (ticket 35 opens decision tickets)"
-                     % "; ".join(item.get("question", "") for item in requests))
+        notes.append("asked %s" % "; ".join(item.get("question", "") for item in requests))
     return notes
 
 
@@ -207,11 +208,11 @@ def with_result_note(body, lines):
     return text + "\n\n" + "\n".join(lines) + "\n"
 
 
-def answer_section(body):
-    """The text under a ticket body's `## Answer` heading, up to the next heading of its level; None without one."""
+def section(body, heading):
+    """The text under the first line of a ticket body that is `heading`, up to the next heading of level one or two; None without one."""
     lines = body.split("\n")
     for index, line in enumerate(lines):
-        if line.strip() != ANSWER_HEADING:
+        if line.strip() != heading:
             continue
         taken = []
         for rest in lines[index + 1:]:
@@ -220,6 +221,11 @@ def answer_section(body):
             taken.append(rest)
         return "\n".join(taken).strip() or None
     return None
+
+
+def answer_section(body):
+    """The text under a ticket body's `## Answer` heading, up to the next heading of its level; None without one."""
+    return section(body, ANSWER_HEADING)
 
 
 def with_answer(body, text):
@@ -420,9 +426,10 @@ def frontier(graph):
     - An open decision ticket pauses what it holds: with `blocking: subgraph` every ticket that
       waits on it, however far down the blocking edges; with `blocking: all` everything. Both
       leave the decision tickets themselves in the frontier, because a paused project must still
-      be able to answer the question that paused it (the decider of ticket 35 is launched for one
-      like any other ticket). A decision ticket is open until it is `done`, `accepted`, or
-      `parked`; the answer paths that close one arrive with ticket 35.
+      be able to answer the question that paused it (the owner answers one, or under autonomy
+      `autonomous` the decider of ticket 31 answers one that is not human-only). A decision ticket
+      is open until it is `done`, `accepted`, or `parked`; the conductor marks an answered one
+      `done` at its next wave (ticket 35).
     """
     entries = graph["tickets"]
     by_id = {entry["id"]: entry for entry in entries}
@@ -461,6 +468,14 @@ def open_decisions(graph):
 def is_open_decision(entry):
     """Whether this graph entry is a decision ticket still waiting for an answer."""
     return entry["kind"] == DECISION and entry["status"] not in SATISFIED + ("parked",)
+
+
+def paused_by(graph, identifiers):
+    """The ids of the graph that wait on any of these tickets, down the blocking edges, transitively.
+
+    For a decision ticket with `blocking: subgraph` this is what it pauses while it is open.
+    """
+    return _paused_by(graph["tickets"], [{"id": identifier} for identifier in identifiers])
 
 
 def _paused_by(entries, decisions):

@@ -19,6 +19,7 @@ __all__ = [
     "NORMAL", "CHEAP_ONLY", "STOP", "CHEAP_MAX", "affordable",
     "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
     "everything_free", "nothing_held", "awaits_owner", "launchable", "order_key", "pick", "held_back", "holds_model_work",
+    "AUTONOMOUS",
 ]
 
 # The pacing actions of decision 5 (`wayline.pacing` computes which one holds). `stop` launches
@@ -27,6 +28,8 @@ NORMAL = "normal"
 CHEAP_ONLY = "cheap_only"
 STOP = "stop"
 CHEAP_MAX = 2
+# The one autonomy under which a decision ticket that is not human-only is the decider's rather than the owner's.
+AUTONOMOUS = "autonomous"
 
 
 def holds_model_work(action):
@@ -178,7 +181,7 @@ def order_key(entry, lengths, action=NORMAL, goal_tickets=()):
     )
 
 
-def held_back(graph):
+def held_back(graph, autonomy=None, decider=True):
     """Why each open ticket is outside the frontier, one line each, or `[]` when none is.
 
     An empty frontier with open tickets left is not the end of the work, and `run_ended` can say
@@ -186,7 +189,7 @@ def held_back(graph):
     aloud before it stops. Two of the frontier's rules can empty it with work still to do: a
     decision ticket nobody has answered, and a difficulty-5 blocker that is `done` and whose
     quality verdict has not passed, which happens when the verdict could not be taken at all. A
-    human-only decision ticket is on the frontier and still waits, for the owner (`awaits_owner`).
+    decision ticket that `awaits_owner` under `autonomy` and `decider` is on the frontier and still waits, for the owner.
     """
     entries = {entry["id"]: entry for entry in graph["tickets"]}
     ready = frontier(graph)
@@ -196,8 +199,16 @@ def held_back(graph):
     if waiting:
         lines.append("%d open ticket(s) are outside the frontier:" % len(waiting))
         lines.extend("  ticket %d waits on %s" % (entry["id"], _waits_on(entry, entries, graph)) for entry in waiting)
-    lines.extend("  decision ticket %d waits for the owner's answer: it is human-only, and no session answers it" % entry["id"]
-                 for entry in ready if awaits_owner(entry))
+    for entry in ready:
+        if not awaits_owner(entry, autonomy, decider):
+            continue
+        if entry.get("human_only"):
+            why = "it is human-only, and no session answers it"
+        elif autonomy is not None and autonomy != AUTONOMOUS:
+            why = "under autonomy %s the owner answers every decision ticket" % autonomy
+        else:
+            why = "no decider role is installed to answer it (ticket 31)"
+        lines.append("  decision ticket %d waits for the owner's answer: %s" % (entry["id"], why))
     return lines
 
 
@@ -236,13 +247,22 @@ def _decision_above(entry, entries):
     return None
 
 
-def awaits_owner(entry):
-    """Whether only the owner can take this ticket: a `human_only` decision ticket, which no session answers.
+def awaits_owner(entry, autonomy=None, decider=True):
+    """Whether only the owner can take this ticket: a decision ticket that no session answers.
+
+    A `human_only` decision ticket always waits for the owner. Under autonomy `interactive` and
+    `checkpoints` every decision ticket does, because the owner answers every one of them; only under
+    `autonomous` does the decider take the rest (decision 10, ticket 31). `autonomy` None is a caller
+    that cannot say, and then only the human-only ones wait. `decider` False says no decider role can be
+    read (`decisions.decider_ready`), and then every decision ticket waits for the owner, since a session
+    launched on a role that is not there fails before it starts.
 
     It stays on the frontier, so a paused project can still be answered, but it is never picked and it
     keeps no run going; the owner's answer is what the tick relaunches the conductor for (decision 7).
     """
-    return entry["kind"] == DECISION and bool(entry.get("human_only"))
+    if entry["kind"] != DECISION:
+        return False
+    return bool(entry.get("human_only")) or (autonomy is not None and autonomy != AUTONOMOUS) or not decider
 
 
 def nothing_held(entry):
@@ -250,7 +270,8 @@ def nothing_held(entry):
     return False
 
 
-def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_free, goal_tickets=(), held=nothing_held):
+def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_free, goal_tickets=(), held=nothing_held,
+         autonomy=None, decider=True):
     """The tickets this wave launches, in the order it launches them (wave steps 7 to 9).
 
     Up to `slots` of them (`policy.max_parallel_workers`). Each pick joins the running set before
@@ -259,9 +280,10 @@ def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_f
     The pacing action removes what it does not afford: everything under `stop`, difficulty 3 to 5
     under `cheap_only`. `held(entry)` names a launch the hold on Fable's weekly window keeps back
     (decision 15), dropped before anything is picked, so its slot goes to what else is launchable. A
-    ticket that `awaits_owner` is never picked.
+    ticket that `awaits_owner` under `autonomy` and `decider` is never picked.
     """
-    ready = [entry for entry in frontier(graph) if affordable(entry, action) and not held(entry) and not awaits_owner(entry)]
+    ready = [entry for entry in frontier(graph)
+             if affordable(entry, action) and not held(entry) and not awaits_owner(entry, autonomy, decider)]
     lengths = critical_path_lengths(graph)
     taken = list(running)
     chosen = []

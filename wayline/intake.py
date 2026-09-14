@@ -13,9 +13,14 @@ writer of `research/` (decision 2) and a model that wrote `INTAKE.md` itself wou
 A goal is a human decision (decision 4 puts goal changes on the irreversible list), so every goal
 this module writes is journaled as a `decision` with `decided_by: human`, and a goal that cannot be
 measured is rejected with the reason rather than written: missing, fails, no number, or invalid.
+
+The dashboard's intake drop zone (ticket 35) hands a file over one at a time: `drop_material` keeps
+it under `research/intake/` and adds it to `INTAKE.md` the way this verb reads a material, and every
+later `wayline intake` takes the files kept there along with what it is given.
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -35,10 +40,11 @@ from wayline.pacing import ASK, CONSENTS
 from wayline.project import (
     AUTONOMY, HARNESS_JSON, MODEL_FALLBACK, UNSET_CONSENT, ProjectError, find_project, policy_for, read_harness, set_model_fallback,
 )
+from wayline.tickets import section
 
 __all__ = [
     "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "GoalCheck", "take_intake", "check_goal", "set_goal",
-    "describe_goal", "intake_command",
+    "describe_goal", "intake_command", "DROP_DIR", "DROP_MAX_BYTES", "dropped_materials", "drop_material",
 ]
 
 INTAKE_MD = "INTAKE.md"
@@ -72,6 +78,11 @@ TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ""}
 TEXT_MAX_BYTES = 1_000_000
 PDF_HEAD_BYTES = 4_000_000
 PDFTOTEXT_TIMEOUT_S = 30
+# Where a file the owner drops on the dashboard is kept, under `research/`, and the largest one the drop takes:
+# data larger than that stays where it is, and `wayline intake <path>` on the workstation points at it.
+DROP_DIR = "intake"
+DROP_MAX_BYTES = 64 * 1024 * 1024
+_DROP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+ -]{0,127}\Z")
 
 _DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>,;)\]]+)", re.IGNORECASE)  # as the scout reads one
 _NUMBER = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
@@ -545,7 +556,7 @@ def take_intake(project, spec, base=None, timeout_s=None):
     """
     project = Path(project).resolve()
     base = Path(base or os.getcwd())
-    spec = normalize_spec(spec)
+    spec = _with_dropped(normalize_spec(spec), project, base)
     gathered = gather(spec, project, base)
     if not gathered.intent and not gathered.plans:
         raise IntakeError("an intake needs the intent: a paragraph (--intent, or text as an argument) or a plan (--plan)")
@@ -609,8 +620,7 @@ def render(gathered, harness, classes, goal, standing):
 
     intent = list(gathered.intent)
     for shown, text in gathered.plans:
-        quoted = "\n".join(("> " + line) if line.strip() else ">" for line in text.splitlines())
-        intent.append("The owner's plan, from `%s`:\n\n%s" % (shown, quoted))
+        intent.append(_plan_text(shown, text))
     sections = {
         "Intent": "\n\n".join(intent),
         "References": _bullets(gathered.references, "None.") + _prose(gathered.reference_notes),
@@ -627,6 +637,12 @@ def render(gathered, harness, classes, goal, standing):
     for name in SECTIONS:
         parts += ["", "## " + name, "", sections[name].strip()]
     return "\n".join(parts) + "\n"
+
+
+def _plan_text(shown, text):
+    """A plan quoted whole under the intent, with where it came from."""
+    quoted = "\n".join(("> " + line) if line.strip() else ">" for line in text.splitlines())
+    return "The owner's plan, from `%s`:\n\n%s" % (shown, quoted)
 
 
 def _consent(harness):
@@ -680,6 +696,122 @@ def replace_section(text, heading, body):
     end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")), len(lines))
     replaced = lines[:start + 1] + ["", body.strip()] + ([""] + lines[end:] if end < len(lines) else [])
     return "\n".join(replaced) + "\n"
+
+
+# --- the dashboard's drop ---------------------------------------------------------------------------------
+
+
+def dropped_materials(project):
+    """The files the owner dropped on the dashboard, kept under `research/intake/`, in name order."""
+    directory = Ledger(project).path(DROP_DIR)
+    if not directory.is_dir():
+        return []
+    return sorted(child for child in directory.iterdir() if child.is_file() and not child.name.startswith("."))
+
+
+def _with_dropped(spec, project, base):
+    """The spec with every dropped file it does not name already added to its materials, so an intake keeps what was dropped."""
+    named = set()
+    for key in ("materials", "references", "data", "code", "plan"):
+        items = spec.get(key) or []
+        for item in [items] if isinstance(items, str) else items:
+            path = _as_path(item, base)
+            if path is not None:
+                named.add(path)
+    extra = [str(path) for path in dropped_materials(project) if path.resolve() not in named]
+    return dict(spec, materials=list(spec.get("materials", [])) + extra) if extra else spec
+
+
+def drop_material(project, name, data):
+    """Keep one file the owner dropped on the dashboard under `research/intake/`, and take it into `INTAKE.md`.
+
+    The dashboard's intake action calls this with the file's name and its bytes. The file is written
+    through the ledger, since `research/` is the ledger's. A name that is not a plain file name is
+    refused, and so is an empty file or one over `DROP_MAX_BYTES`. A name another file already holds
+    gets a numbered name beside it; the same bytes dropped twice are kept once.
+
+    When `INTAKE.md` exists the file is added to it as `wayline intake` reads a material: a PDF or a
+    reference list under the references, a plan under the intent, anything else under the data,
+    and every other line of the file kept as it was. Without one the file waits, and the next
+    `wayline intake` takes it. Returns `{path, size, sha256, already, taken}`: `already` when those
+    bytes were kept before, and `taken` the `INTAKE.md` sections the file was added to, which is
+    None when there is no `INTAKE.md` yet.
+    """
+    project = Path(project).resolve()
+    name = str(name or "").strip()
+    if not _DROP_NAME.match(name) or Path(name).name != name:
+        raise IntakeError("a dropped file needs a plain file name (letters, digits, and . _ + - or spaces, not starting with a dot), got %r" % name)
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        raise IntakeError("%s is empty, so nothing was kept" % name)
+    if len(data) > DROP_MAX_BYTES:
+        raise IntakeError("%s is %s, over the %s the drop takes; run wayline intake <path> on the workstation for a file this large"
+                          % (name, _size(len(data)), _size(DROP_MAX_BYTES)))
+    data = bytes(data)
+    ledger = Ledger(project)
+    with ledger.lock():
+        relative, already = _drop_path(ledger, name, data)
+        if not already:
+            ledger.write_bytes(relative, data)
+    # Read outside the lock: a PDF's first page goes through `pdftotext`, which may run to its timeout, and every other
+    # writer of the ledger would wait on it. `INTAKE.md` is read again under the lock, so a write in between is kept.
+    gathered = gather({"materials": [str(ledger.path(relative))]}, project, project)
+    with ledger.lock():
+        taken = _take_dropped(ledger, gathered)
+    return {"path": "research/" + relative, "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+            "already": already, "taken": taken}
+
+
+def _drop_path(ledger, name, data):
+    """Where under `research/` a dropped file is kept, and whether those very bytes are already kept there."""
+    stem, suffix = os.path.splitext(name)
+    for number in range(1, 1000):
+        relative = "%s/%s" % (DROP_DIR, name if number == 1 else "%s-%d%s" % (stem, number, suffix))
+        target = ledger.path(relative)
+        if not target.exists():
+            return relative, False
+        if target.is_file() and target.read_bytes() == data:
+            return relative, True
+    raise IntakeError("a thousand different files named %s have been dropped; rename this one" % name)
+
+
+def _take_dropped(ledger, gathered):
+    """Add one kept file, as `gather` read it, to `INTAKE.md`; the sections it was added to, or None without an `INTAKE.md`."""
+    try:
+        text = ledger.path(INTAKE_MD).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    updated, taken = text, []
+    for heading, lines, notes, empty in (("References", gathered.references, gathered.reference_notes, "None."),
+                                         ("Data", gathered.data, [], "Not stated."), ("Code", gathered.code, [], "None.")):
+        if lines:
+            changed = _with_bullets(updated, heading, lines, notes, empty)
+            if changed != updated:
+                updated, taken = changed, taken + [heading]
+    for shown, plan in gathered.plans:
+        intent = section(updated, "## Intent") or ""
+        addition = _plan_text(shown, plan)
+        if addition not in intent:
+            updated = replace_section(updated, "Intent", "\n\n".join(part for part in (intent, addition) if part))
+            taken.append("Intent")
+    if updated != text:
+        ledger.write_markdown(INTAKE_MD, updated)
+    return taken
+
+
+def _with_bullets(text, heading, lines, notes, empty):
+    """`text` with `lines` added at the end of the list that opens `## heading`, the lines listed already left out, and `notes` after it."""
+    body = section(text, "## " + heading) or ""
+    rows = [] if body.strip() == empty else body.split("\n")
+    end = 0
+    while end < len(rows) and (rows[end].startswith("- ") or (end and rows[end].startswith("  ") and rows[end].strip())):
+        end += 1
+    listed = {row[2:].strip() for row in rows[:end] if row.startswith("- ")}
+    new = ["- " + line for line in lines if line not in listed]
+    if not new:
+        return text
+    rest = "\n".join(rows[end:]).strip()
+    parts = ["\n".join(rows[:end] + new), rest, "\n".join(note for note in notes if note not in rest)]
+    return replace_section(text, heading, "\n\n".join(part for part in parts if part))
 
 
 # --- the verb -------------------------------------------------------------------------------------------

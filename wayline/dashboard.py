@@ -1,9 +1,10 @@
-"""The dashboard server (Implementation Decisions 8): the read-only views of M1.
+"""The dashboard server (Implementation Decisions 8): the views of M1 and the actions of M4.
 
 The dashboard is a client of the same functions the command calls, bound to localhost and reached
-from the laptop through `ssh -L`. It reads; it never writes the ledger. `wayline serve` starts it,
-prints the tunnel line, and stays in the foreground; `wayline-dashboard.service`, which `init`
-installs and `run` starts when it is not active, keeps it alive (ticket 13).
+from the laptop through `ssh -L`. Its views read and never write the ledger; its actions call the
+verbs' own functions in this process, which write through the ledger as the verbs do. `wayline
+serve` starts it, prints the tunnel line, and stays in the foreground; `wayline-dashboard.service`,
+which `init` installs and `run` starts when it is not active, keeps it alive (ticket 13).
 
 Three decisions from `research-notes/08-dashboard-transport.md` are carried here as written, because
 they were measured rather than guessed:
@@ -29,9 +30,19 @@ machine or through the owner's tunnel). Bound wider, every request needs the ran
 own to a `<link>` or a `<script>`, so the first request that presents the token in the URL is
 answered with it in a `SameSite=Strict` cookie, and the page's own assets and polls carry that: the
 rule stays "every request needs the token" rather than "the page loads and its stylesheet does
-not". The actions of Implementation Decisions 8 will always require the token in the header,
-whatever the bind, because a page open on the laptop could otherwise POST to the forwarded port,
-and a cookie alone must never be enough to act; they arrive with ticket 35.
+not". The actions of Implementation Decisions 8 require the token in the header, whatever the
+bind, because a page open on the laptop could otherwise POST to the forwarded port, and a cookie
+alone must never be enough to act. So the URL `serve` prints carries the token on every bind: the
+page reads it from its own address and sends it with each action.
+
+**The actions** (ticket 35) are `POST /api/projects/<id>/actions/<name>` for `answer`, `autonomy`,
+`pause`, `resume`, `switch`, `cancel`, `rerun`, `pacing`, and `intake`. Each calls the function its
+verb calls and nothing else, so no action runs a shell. A JSON object carries the arguments, and
+`intake` takes the dropped file itself as the body, with its name in `X-Wayline-Filename`. The reply
+is JSON too: `{"ok": true, "action": ...}` with what the function reported, or `{"ok": false,
+"error": ...}` under a 4xx status that says why nothing was done. A `switch` away from a project
+whose conductor has to drain answers 202 at once and finishes in a thread, because the drain lasts
+as long as that conductor's running workers do.
 """
 
 import argparse
@@ -52,11 +63,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from wayline import HARNESS_ROOT, TAG, dag
-from wayline.ledger import Ledger, atomic_write
+from wayline import HARNESS_ROOT, TAG, dag, decisions
+from wayline.ledger import Ledger, atomic_write, conductor_holder
 from wayline.project import (
-    FINDINGS, HARNESS_JSON, RESEARCH, ProjectError, active_path, home, is_project, policy_for,
-    read_active, read_harness, read_jobs, read_projects, status_view,
+    FINDINGS, HARNESS_JSON, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for,
+    read_active, read_harness, read_jobs, read_projects, set_autonomy, set_pacing, status_view, steer_ticket, switch_project,
 )
 from wayline.provenance import FINDINGS_MD, MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
 from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
@@ -69,6 +80,7 @@ __all__ = [
     "graph_svg", "tickets_view", "ticket_view", "log_path", "log_tail",
     "outputs_view", "byte_range", "download_target",
     "static_file", "tunnel_line", "serve_lines", "make_server", "serve", "serve_command",
+    "ACTIONS", "FILENAME_HEADER", "JSON_BODY_MAX", "SWITCH_REPLY_S", "ActionConflict", "run_action", "dashboard_url", "is_terminal",
 ]
 
 STATIC_ROOT = HARNESS_ROOT / "dashboard"
@@ -111,12 +123,25 @@ CONTENT_TYPES = {
 JSON_TYPE = "application/json; charset=utf-8"
 TEXT_TYPE = "text/plain; charset=utf-8"
 
+# The actions of Implementation Decisions 8 this dashboard takes (ticket 35), in the order the spec lists them.
+ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "intake")
+ACTION_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/actions/(?P<name>[^/]+)/?$")
+# The header an intake drop names its file in, and the largest JSON body any other action reads.
+FILENAME_HEADER = "X-Wayline-Filename"
+JSON_BODY_MAX = 64 * 1024
+# How long a switch with no conductor to drain waits for its thread before it answers 202 all the same.
+SWITCH_REPLY_S = 5.0
+
 
 class DashboardError(ValueError):
     """A request the dashboard cannot serve, or a server it cannot start."""
 
 
 # --- the per-machine dashboard settings ---------------------------------------------------------
+
+
+class ActionConflict(DashboardError):
+    """An action that cannot be taken now, because another like it is still under way (409)."""
 
 
 def dashboard_path():
@@ -967,17 +992,28 @@ def tunnel_line(port, workstation=None):
     return "ssh -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes -N -L %d:%s:%d %s" % (port, LOOPBACK, port, workstation)
 
 
-def dashboard_url(settings, host=None):
-    """The URL to open, carrying the token when the bind needs one.
+def is_terminal(stream):
+    """Whether output to `stream` is read at a terminal rather than kept: a unit's output goes to the user journal."""
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError):
+        return False
 
-    A wider bind prints the machine's own name rather than the bind address, because `0.0.0.0` is
-    an address to listen on and not one a laptop can dial.
+
+def dashboard_url(settings, host=None, with_token=True):
+    """The URL to open, carrying the token.
+
+    Bound to loopback the views need no token, but every action needs it whatever the bind (ticket
+    35), and the page sends the one its own address carries, so a URL without it would open a
+    dashboard that cannot act. `with_token` False leaves it out, for output that is kept rather than
+    read at a terminal. A wider bind prints the machine's own name rather than the bind address,
+    because `0.0.0.0` is an address to listen on and not one a laptop can dial.
     """
     if host is None:
         wide = requires_token(settings["bind"])
         host = (socket.gethostname() or settings["bind"]) if wide else LOOPBACK
     url = "http://%s:%d/" % (host, settings["port"])
-    return url if not requires_token(settings["bind"]) else "%s?%s=%s" % (url, TOKEN_QUERY, settings["token"])
+    return "%s?%s=%s" % (url, TOKEN_QUERY, settings["token"]) if settings.get("token") and with_token else url
 
 
 def requires_token(bind):
@@ -985,10 +1021,16 @@ def requires_token(bind):
     return bind not in (LOOPBACK, "localhost", "::1")
 
 
-def serve_lines(settings, view, workstation=None):
-    """What `wayline serve` prints at start: the URL, the tunnel line, and the tabs it will serve."""
-    lines = ["wayline %s dashboard  %s" % (TAG, dashboard_url(settings))]
+def serve_lines(settings, view, workstation=None, with_token=True):
+    """What `wayline serve` prints at start: the URL, the tunnel line, and the tabs it will serve.
+
+    `with_token` False prints the URL without the token and says where the token is, which is what
+    `serve` does when its output is not a terminal: `wayline-dashboard.service` writes to the user journal.
+    """
+    lines = ["wayline %s dashboard  %s" % (TAG, dashboard_url(settings, with_token=with_token))]
     lines.append("  " + tunnel_line(settings["port"], workstation))
+    if not with_token:
+        lines.append("  the URL that carries the token is printed only at a terminal; the token is in %s" % dashboard_path())
     if requires_token(settings["bind"]):
         lines.append("  bound to %s: every request needs the token above (it lives in %s)" % (settings["bind"], dashboard_path()))
     projects = view.get("projects", [])
@@ -998,7 +1040,7 @@ def serve_lines(settings, view, workstation=None):
         for project in projects:
             marks = [mark for mark in ("active" if project["active"] else "", "" if project["readable"] else "path is gone") if mark]
             lines.append("  %-16s %s%s" % (project["id"], project["path"], ("  (%s)" % ", ".join(marks)) if marks else ""))
-    lines.append("  read-only in this milestone; ctrl-c stops the server")
+    lines.append("  every action needs the token the URL carries; ctrl-c stops the server")
     # The column padding is how the eye finds a field; it must not survive to the end of a line.
     return [line.rstrip() for line in lines]
 
@@ -1027,6 +1069,8 @@ class DashboardServer(ThreadingHTTPServer):
         self.readings_ttl_s = readings_ttl_s
         self.memo = Memo(ttl=memo_ttl)
         self.stopping = threading.Event()
+        # Held while a switch waits for a draining conductor, so a second switch is refused rather than queued behind it.
+        self.switching = threading.Lock()
         super().__init__(address, handler)
 
     def shutdown(self):
@@ -1035,7 +1079,7 @@ class DashboardServer(ThreadingHTTPServer):
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    """The small path table of Implementation Decisions 8. Read-only: `GET` and nothing else."""
+    """The small path table of Implementation Decisions 8: the views over `GET`, the actions over `POST`."""
 
     protocol_version = "HTTP/1.1"
     server_version = "wayline/" + TAG
@@ -1057,6 +1101,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/logs/(?P<kind>[a-z]+)/(?P<log_id>.+)$"), "api_logs"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/outputs/?$"), "api_outputs"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/download/(?P<relpath>.+)$"), "api_download"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/decisions/?$"), "api_decisions"),
+        (ACTION_ROUTE, "api_action_get"),
     )
 
     def log_message(self, *args):
@@ -1086,6 +1132,71 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (OSError, ValueError) as failure:
             # A ledger a hand broke must not take the server down: the other tabs still answer.
             return self._text(HTTPStatus.INTERNAL_SERVER_ERROR, "%s\n" % failure)
+
+    def do_POST(self):
+        """An action (ticket 35): the token in its header, a body within its cap, then the verb's own function."""
+        parsed = urlparse(self.path)
+        self.carry_token = False
+        match = ACTION_ROUTE.match(parsed.path)
+        if match is None:
+            self.close_connection = True  # the body is not read, so the connection cannot carry another request
+            return self._text(HTTPStatus.NOT_FOUND, "no such action: %s (POST /api/projects/<id>/actions/<name>)\n" % parsed.path)
+        name = match.group("name")
+        if not self._action_authorized():
+            self.close_connection = True
+            return self._action_reply(HTTPStatus.FORBIDDEN, {
+                "ok": False, "action": name,
+                "error": "an action needs the dashboard's token in the %s header; open the URL wayline serve printed, which "
+                         "carries it (it is kept in %s)" % (TOKEN_HEADER, dashboard_path())})
+        if name not in ACTIONS:
+            self.close_connection = True
+            return self._action_reply(HTTPStatus.NOT_FOUND, {
+                "ok": False, "action": name, "error": "no action %r; the actions are %s" % (name, ", ".join(ACTIONS))})
+        body = self._action_body(name)
+        if body is None:
+            return None
+        try:
+            project = self._project(match.group("project"))
+            status, report = run_action(name, project, body, self.headers, self.server)
+        except ActionConflict as failure:
+            return self._action_reply(HTTPStatus.CONFLICT, {"ok": False, "action": name, "error": str(failure)})
+        except ValueError as failure:  # a request the action cannot take, or a verb's own refusal (ProjectError, TicketError)
+            return self._action_reply(HTTPStatus.BAD_REQUEST, {"ok": False, "action": name, "error": str(failure)})
+        except OSError as failure:
+            return self._action_reply(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "action": name, "error": str(failure)})
+        return self._action_reply(status, dict(report, ok=True, action=name))
+
+    def _action_authorized(self):
+        """Whether this request may act: the token in the `X-Wayline-Token` header, and nothing else stands in for it.
+
+        Not the URL and not the cookie, which a browser attaches to requests a page it did not write
+        makes to the forwarded port; not the loopback bind, which the tunnel reaches from the laptop.
+        A server started with no token acts for no one.
+        """
+        token = (getattr(self.server, "token", None) or "").encode("utf-8")
+        offered = (self.headers.get(TOKEN_HEADER) or "").encode("utf-8", "replace")
+        return bool(token) and secrets.compare_digest(offered, token)
+
+    def _action_body(self, name):
+        """The request body, or None once a refusal was sent: a `Content-Length` within the action's cap, read whole."""
+        def refuse(code, error):
+            self.close_connection = True
+            self._action_reply(code, {"ok": False, "action": name, "error": error})
+            return None
+
+        if self.headers.get("Transfer-Encoding"):
+            return refuse(HTTPStatus.LENGTH_REQUIRED, "an action's body is sent with a Content-Length, not a transfer encoding")
+        raw = (self.headers.get("Content-Length") or "0").strip()
+        if not raw.isdigit():
+            return refuse(HTTPStatus.BAD_REQUEST, "Content-Length is %r, which is not a byte count" % raw)
+        length, cap = int(raw), _intake_cap() if name == "intake" else JSON_BODY_MAX
+        if length > cap:
+            return refuse(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the body is %d bytes, over the %d an %s action takes%s" % (
+                length, cap, name, "; run wayline intake <path> on the workstation for a file this large" if name == "intake" else ""))
+        data = self.rfile.read(length) if length else b""
+        if len(data) != length:
+            return refuse(HTTPStatus.BAD_REQUEST, "the body ended after %d of its %d bytes" % (len(data), length))
+        return data
 
     def _authorized(self, query):
         """Whether this request may be answered: the token in the header, the URL, or the cookie.
@@ -1246,6 +1357,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return None
         return self._json(outputs_view(path), tag)
 
+    def api_decisions(self, query, project):
+        """The decisions view (ticket 35), tagged by the ledger, which holds `DECISIONS.md` and `harness.json`, and by the active pointer."""
+        path = self._project(project)
+        tag = etag("decisions", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)), _active_version())
+        if self._not_modified(tag):
+            return None
+        return self._json(decisions.decisions_view(path), tag)
+
+    def api_action_get(self, query, project, name):
+        """An action asked for with `GET`: 405, with the method it takes."""
+        return self._send(HTTPStatus.METHOD_NOT_ALLOWED, b"an action is a POST with the token in the X-Wayline-Token header\n",
+                          TEXT_TYPE, (("Allow", "POST"),))
+
     def api_download(self, query, project, relpath):
         """A single file, ranged, or a directory streamed as a zip (Implementation Decisions 8)."""
         path = self._project(project)
@@ -1337,6 +1461,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise DashboardError("no registered project with the id %r (GET /api/projects lists them)" % project_id)
         return path.resolve()
 
+    def _action_reply(self, code, value):
+        return self._send(code, json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-store"),))
+
     def _not_modified(self, tag):
         """Answer 304 when the client already holds this version (RFC 9110 section 13.1.2)."""
         offered = self.headers.get("If-None-Match")
@@ -1366,6 +1493,134 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if body and self.command != "HEAD":
             self.wfile.write(body)
         return None
+
+
+# --- the actions (ticket 35) --------------------------------------------------------------------------
+
+
+def _intake_cap():
+    from wayline.intake import DROP_MAX_BYTES  # the intake imports the gates, which no view needs
+    return DROP_MAX_BYTES
+
+
+def _fields(body, required=(), optional=()):
+    """The JSON object an action's body carries; anything else, a missing key, or a key the action does not take is refused."""
+    if not body.strip():
+        value = {}
+    else:
+        try:
+            value = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as failure:
+            raise DashboardError("an action's body is a JSON object: %s" % failure) from None
+    if not isinstance(value, dict):
+        raise DashboardError("an action's body is a JSON object, got %s" % type(value).__name__)
+    unknown = sorted(set(value) - set(required) - set(optional))
+    if unknown:
+        raise DashboardError("this action does not take %s; it takes %s" % (
+            ", ".join(unknown), ", ".join(tuple(required) + tuple(optional)) or "nothing"))
+    missing = [key for key in required if key not in value]
+    if missing:
+        raise DashboardError("this action needs %s" % ", ".join(missing))
+    return value
+
+
+def _string(fields, key, required=True):
+    value = fields.get(key)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str):
+        raise DashboardError("%s is a string, got %r" % (key, value))
+    return value
+
+
+def run_action(name, project, body, headers=None, server=None):
+    """Take one action on one project: `(status, report)`, the report being what the verb's function returned.
+
+    `body` is the raw request body. The functions are the ones the verbs call, told `by="dashboard"`
+    wherever the journal records who asked: `project.answer`, `set_autonomy`, `control`,
+    `switch_project`, `steer_ticket`, `set_pacing`, and `intake.drop_material`. Raises
+    `DashboardError` for a body the action cannot take and `ActionConflict` for a switch already under
+    way, and lets a verb's own refusal (a `ValueError`) through, which the handler answers with 400.
+    """
+    project = Path(project).resolve()
+    if name == "intake":
+        from wayline.intake import IntakeError, drop_material  # the intake imports the gates, which no view needs
+        named = (headers or {}).get(FILENAME_HEADER)
+        if not named:
+            raise DashboardError("an intake drop names its file in the %s header" % FILENAME_HEADER)
+        try:
+            return HTTPStatus.OK, drop_material(project, unquote(named), body)
+        except IntakeError as failure:
+            raise DashboardError(str(failure)) from None
+    if name == "answer":
+        fields = _fields(body, ("ticket", "answer"), ("rationale", "confidence"))
+        event = answer(project, fields["ticket"], _string(fields, "answer"),
+                       rationale=_string(fields, "rationale", required=False), confidence=fields.get("confidence"))
+        return HTTPStatus.OK, {"decision": event["payload"], "conductor": conductor_holder(project)}
+    if name == "autonomy":
+        fields = _fields(body, ("autonomy",))
+        return HTTPStatus.OK, set_autonomy(project, _string(fields, "autonomy"), by="dashboard")
+    if name in ("pause", "resume"):
+        _fields(body)
+        event = control(project, name, by="dashboard")
+        return HTTPStatus.OK, {"control": event["payload"], "conductor": conductor_holder(project)}
+    if name in ("cancel", "rerun"):
+        fields = _fields(body, ("ticket",))
+        event = steer_ticket(project, name, fields["ticket"], by="dashboard")
+        return HTTPStatus.OK, {"control": event["payload"], "conductor": conductor_holder(project)}
+    if name == "pacing":
+        fields = _fields(body, (), ("stop_at", "cheap_at"))
+        return HTTPStatus.OK, set_pacing(project, stop_at=fields.get("stop_at"), cheap_at=fields.get("cheap_at"), by="dashboard")
+    if name == "switch":
+        _fields(body)
+        return _switch(project, server)
+    raise DashboardError("no action %r; the actions are %s" % (name, ", ".join(ACTIONS)))
+
+
+def _switch(project, server):
+    """Make `project` the active one, as `wayline switch <path>` does, told `by="dashboard"`.
+
+    The switch always runs on a thread of its own, because `switch_project` waits for a conductor on the
+    project being left to drain, which lasts as long as that conductor's running workers do. With a
+    conductor holding that project the reply is 202 at once, with its heartbeat. Without one the reply
+    waits for the thread, up to `SWITCH_REPLY_S`, and is 200 with what it did or 400 with its refusal; a
+    conductor the tick starts in between turns the switch into a drain, and the reply into 202, rather
+    than holding the request. The tabs show the new active project once the thread has moved the pointer.
+    One switch at a time: another is refused while one lasts.
+    """
+    lock = getattr(server, "switching", None) or threading.Lock()
+    if not lock.acquire(blocking=False):
+        raise ActionConflict("a switch is already waiting for a conductor to drain; the active project changes once it has ended")
+    outcome = {}
+    try:
+        previous = read_active()
+        previous = previous.resolve() if previous is not None else None
+        leaving = previous if previous is not None and previous != project and is_project(previous) else None
+        draining = conductor_holder(leaving) if leaving is not None else None
+    except BaseException:
+        lock.release()
+        raise
+
+    def switch():
+        try:
+            outcome["report"] = switch_project(project, by="dashboard")
+        except Exception as failure:  # the reply raises it when it still waits; otherwise this line is all that says it
+            outcome["failure"] = failure
+            print("wayline serve: the switch to %s failed: %s" % (project, failure), file=sys.stderr, flush=True)
+        finally:
+            lock.release()
+
+    thread = threading.Thread(target=switch, name="wayline-switch", daemon=True)
+    thread.start()
+    if draining is None:
+        thread.join(SWITCH_REPLY_S)
+        if not thread.is_alive():
+            if "failure" in outcome:
+                raise outcome["failure"]
+            return HTTPStatus.OK, dict(outcome["report"], draining=None)
+        draining = conductor_holder(leaving) if leaving is not None else None
+    return HTTPStatus.ACCEPTED, {"from": str(previous) if previous is not None else None, "to": str(project), "moved": False,
+                                 "drained": None, "draining": draining}
 
 
 def _poll(project, key, default):
@@ -1497,7 +1752,7 @@ def serve(bind=None, port=None, project=None, workstation=None, out=None):
         return 1
     settings["port"] = server.server_address[1]
     record_settings(settings)
-    for line in serve_lines(settings, projects_view(settings=settings), workstation):
+    for line in serve_lines(settings, projects_view(settings=settings), workstation, with_token=is_terminal(out)):
         print(line, file=out)
     out.flush()
     try:
@@ -1511,7 +1766,7 @@ def serve(bind=None, port=None, project=None, workstation=None, out=None):
 
 
 def serve_command(args):
-    parser = argparse.ArgumentParser(prog="wayline serve", description="the read-only dashboard, bound to localhost")
+    parser = argparse.ArgumentParser(prog="wayline serve", description="the dashboard, bound to localhost")
     parser.add_argument("--bind", help="the address to bind; 127.0.0.1 by default, and anything wider needs the token on every request")
     parser.add_argument("--port", type=int, help="the port; harness.json's dashboard.port (8765) by default")
     parser.add_argument("--project", help="the project whose dashboard settings are read; the active one by default")

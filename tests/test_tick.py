@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.projects import ProjectTestCase
-from wayline import cli, notify, pacing, project, resources, tick, tickets, worker
+from wayline import cli, decisions, notify, pacing, project, resources, tick, tickets, worker
 from wayline.ledger import Ledger
 
 NOW = 1_789_000_000
@@ -492,9 +492,29 @@ class WorkTest(TickCase):
         self.assertIn("no work remains", result.why)
 
     def test_a_decision_ticket_a_session_may_take_is_work(self):
+        """Under `autonomous` the decider takes a decision ticket that is not human-only, so it is work to relaunch for."""
+        self.ran(ended="frontier_empty", autonomy="autonomous")
+        project.set_autonomy(self.project, "autonomous")
+        self.add_ticket(1, kind="decision")
+        with mock.patch.object(decisions, "decider_ready", return_value=True):
+            self.assertTrue(self.run_tick().relaunched)
+
+    def test_without_a_decider_role_a_decision_ticket_is_not_work_even_under_autonomous(self):
+        self.ran(ended="frontier_empty", autonomy="autonomous")
+        project.set_autonomy(self.project, "autonomous")
+        self.add_ticket(1, kind="decision")
+        with mock.patch.object(decisions, "decider_ready", return_value=False):
+            result = self.run_tick()
+        self.assertFalse(result.relaunched)
+        self.assertIn("no work remains", result.why)
+
+    def test_under_checkpoints_every_decision_ticket_waits_for_the_owner_and_is_not_work(self):
+        """The relaunched run starts from `harness.json`'s autonomy, under which the owner answers every decision ticket (ticket 35)."""
         self.ran(ended="frontier_empty")
         self.add_ticket(1, kind="decision")
-        self.assertTrue(self.run_tick().relaunched)
+        result = self.run_tick()
+        self.assertFalse(result.relaunched)
+        self.assertIn("no work remains", result.why)
 
     def test_a_pending_job_file_is_not_work_on_its_own(self):
         """Nothing launches a pending job of a ticket that no longer runs, so a relaunch would only end at its first wave."""
