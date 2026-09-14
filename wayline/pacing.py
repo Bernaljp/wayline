@@ -27,7 +27,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from wayline.schedule import CHEAP_ONLY, NORMAL, STOP
 
 __all__ = [
-    "FIVE_HOUR", "SEVEN_DAY", "UNKNOWN", "WINDOWS", "FABLE", "FABLE_LIMIT_TYPE", "READINGS", "STOP_AT", "CHEAP_AT",
+    "FIVE_HOUR", "SEVEN_DAY", "UNKNOWN", "WINDOWS", "FABLE", "FABLE_LIMIT_TYPE", "READINGS", "AUTO", "ASK", "WAIT", "CONSENTS", "OPUS",
+    "STOP_AT", "CHEAP_AT",
     "FALLBACK_PAUSE_S", "EVENT_SIGNAL", "API_SIGNAL", "MESSAGE_SIGNAL", "SUBAGENT_SIGNAL", "READING_SIGNAL",
     "SESSION_RE", "WEEK_RE", "FABLE_RE",
     "Reading", "Windows", "Usage", "Limit",
@@ -46,6 +47,14 @@ FABLE = "fable"
 FABLE_LIMIT_TYPE = "seven_day_overage_included"
 # Every reading a `pacing` event carries: the two windows every model draws on, then Fable's.
 READINGS = WINDOWS + (FABLE,)
+
+# The fallback consent (decision 15), the owner's standing answer for a project on Fable work while Fable's weekly
+# window is spent: `auto` falls back without asking, `ask` asks the owner, `wait` never falls back. A project whose
+# `harness.json` has no `model_fallback` behaves as `ask`. Opus is the one model Fable work falls back to, because
+# Opus, Sonnet, and Haiku share the all-models week.
+AUTO, ASK, WAIT = "auto", "ask", "wait"
+CONSENTS = (AUTO, ASK, WAIT)
+OPUS = "opus"
 
 # `policy.pacing` as decision 14 ships it; a project's `harness.json` and a `control pacing` override them.
 STOP_AT, CHEAP_AT = 0.90, 0.80
