@@ -48,8 +48,10 @@ def main():
             entry["delay"] = 600
     (SCRATCH / "fake-worker.json").write_text(json.dumps(script, indent=2) + "\n", encoding="utf-8")
 
+    # Unpinned, units off, and no notifications: the fixture pins v0.0.0, and a recording touches nothing of the owner's.
     environment = dict(os.environ, WAYLINE_HOME=str(SCRATCH / "home"), WAYLINE_LAUNCHER="fake",
-                       WAYLINE_FAKE_SCRIPT=str(SCRATCH / "fake-worker.json"))
+                       WAYLINE_FAKE_SCRIPT=str(SCRATCH / "fake-worker.json"), WAYLINE_UNPINNED="1",
+                       WAYLINE_UNITS="none", WAYLINE_NOTIFY="none")
     subprocess.run([sys.executable, "-m", "wayline", "init", str(project)], cwd=HARNESS, env=environment,
                    check=True, capture_output=True, timeout=120)
     conductor = subprocess.Popen([sys.executable, "-m", "wayline", "run", "--project", str(project)],

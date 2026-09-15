@@ -146,6 +146,8 @@ class ReadoptionTest(ReadoptionCase):
         self.assertEqual(carried.done, [1])
         self.assertEqual(self.ticket()["status"], "done")
         self.assertEqual((self.project / "hello.txt").read_text(encoding="utf-8"), "hello\n")
+        # The launcher writes `result.json` for the sessions it waits on; a re-adopted one gets it from the conductor.
+        self.assertEqual(json.loads((self.run_dir() / "result.json").read_text(encoding="utf-8"))["session_id"], SESSION)
 
     def test_a_worker_that_finished_while_no_conductor_watched_is_carried_from_its_stream(self):
         self.killed()
@@ -154,6 +156,7 @@ class ReadoptionTest(ReadoptionCase):
         self.assertEqual(self.resumed(), [("readopted", SESSION)])
         self.assertEqual(self.calls, [])
         self.assertEqual(self.ticket()["status"], "done")
+        self.assertEqual(json.loads((self.run_dir() / "result.json").read_text(encoding="utf-8"))["subtype"], "success")
 
     def test_a_dead_worker_whose_session_started_is_resumed_by_its_session_id(self):
         self.killed()

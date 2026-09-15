@@ -541,7 +541,8 @@ function gib(bytes) {
 }
 
 function short(value) {
-  if (Array.isArray(value)) return value.slice(0, 3).join(',') + (value.length > 3 ? '...' : '');
+  // A list's items read the way a value does, so an object inside it, however deep, never prints [object Object].
+  if (Array.isArray(value)) return value.slice(0, 3).map((item) => (item !== null && typeof item === 'object' ? short(item) : item)).join(',') + (value.length > 3 ? '...' : '');
   if (value !== null && typeof value === 'object') return `{${Object.keys(value).length} keys}`;
   const text = String(value);
   return text.length <= 40 ? text : `${text.slice(0, 37)}...`;

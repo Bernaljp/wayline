@@ -1078,7 +1078,7 @@ class Conductor:
             if attempt.stream_path is None or not attempt.stream_path.is_file():
                 raise ConductorError("ticket %d's result is journaled and its stream is gone; a person has to look"
                                      % attempt.id)
-            attempt.envelope = worker.read_envelope(attempt.stream_path, attempt.request.schema_path)
+            attempt.envelope = worker.read_envelope(attempt.stream_path, attempt.request.schema_path, record=True)
             attempt.result_journaled = True
             self.say("  ticket %d: carrying the result its worker returned before the restart" % attempt.id)
         elif attempt.tail.result is not None or self._alive(attempt):
@@ -1122,7 +1122,7 @@ class Conductor:
         """
         attempt.tail.read()
         if attempt.tail.result is not None:
-            attempt.envelope = worker.read_envelope(attempt.stream_path, attempt.request.schema_path)
+            attempt.envelope = worker.read_envelope(attempt.stream_path, attempt.request.schema_path, record=True)
             return True
         if self._alive(attempt):
             if attempt.terminated_at is None and self._over_budget(attempt):
