@@ -14,5 +14,5 @@
 - [x] One ticket asks the worker to write outside its touch set; the envelope's `permission_denials` names the write, the result reports the path, and both are in the journal.
 - [x] The conductor is killed with SIGKILL mid-wave and `wayline run --resume` brings every ticket to `done` with the re-adoption or resume path journaled.
 - [ ] `wayline run --simulate-limit 300` pauses the run with `resets_at`; the tick (at one-minute cadence for the test) relaunches it after the reset and the journal shows `run_started` with `resume: true` written by the tick's launch.
-- [ ] The dashboard is opened through `ssh -L` from the laptop during the run and shows the tabs, the frontier, the running tickets, and the journal tail.
+- [x] The dashboard is opened through `ssh -L` from the laptop during the run and shows the tabs, the frontier, the running tickets, and the journal tail.
 - [x] `docs/verification/m1.md` records the context-pack sizes per launch, the first-time pass outcomes, and the caps kept or revised in `policy.json`, plus the commands and journal excerpts for each step above; the repository is tagged `v0.2.0`.
