@@ -1,6 +1,6 @@
 # Wayline tickets: what can run in parallel, and what waits
 
-Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
+Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
 
 ## The rule
 
@@ -26,7 +26,7 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 
 | Wave | Tickets | Notes |
 |---|---|---|
-| 1 | 01 (M0, #2) | The foundation. Nothing else can start. |
+| 1 | 01 (M0, #2), 58 (M5, #114) | The foundation: nothing else could start. 58, added on 2026-09-16, has no blocker, since the dashboard it restyles is done. |
 | 2 | 02 (M0, #3), 03 (M0, #4), 04 (M0, #5) | Three independent slices on top of 01: init, the launcher, the guards. |
 | 3 | 05 (M0, #6), 11 (M1, #12), 16 (M2, #17), 18 (M2, #19), 20 (M3, #21) | First wide wave: the conductor, the dashboard, resources, the manifest, the scout are in different modules and merge cleanly. |
 | 4 | 06 (M0, #7), 07 (M1, #8), 12 (M1, #13), 17 (M2, #18), 21 (M3, #22), 23 (M3, #24), 25 (M3, #26), 27 (M4, #28), 32 (M4, #33), 48 (M7, #49), 52 (M7, #53) | Widest wave. 06 is the M0 live demo; the rest fan out across M1 to M7. |
@@ -92,7 +92,7 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 | 42 Dashboard outputs, downloads, and logs | #43 | 5 | 12 | 43, 45 |
 | 43 M5 overnight demo: the toy project end to end across a window boundary | #44 | 11 | 14, 36, 37, 38, 39, 40, 41, 42, 54, 55, 56 | 47, 50, 51 |
 | 44 Fixture format and runner (verbatim prototype 32) | #45 | 6 | 03, 09 | 45, 46 |
-| 45 Feedback, change records, harness tickets, and local skills | #46 | 10 | 34, 42, 44 | 47 |
+| 45 Feedback, change records, harness tickets, and local skills | #46 | 10 | 34, 42, 44, 58 | 47 |
 | 46 Tags, pins, upgrade, rollback, and promotion | #47 | 7 | 27, 44 | 47 |
 | 47 M6 demo: feedback to a tagged harness change and back | #48 | 12 | 43, 45, 46 | nothing (a milestone demo) |
 | 48 The plot index | #49 | 4 | 20 | 49 |
@@ -105,6 +105,7 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 | 55 Fall back to Opus under the fallback consent | #102 | 8 | 30, 54 | 43, 56, 57 |
 | 56 Verdicts on Opus and the verdict principle | #103 | 9 | 24, 55 | 43 |
 | 57 Ask the owner when Fable is spent | #104 | 10 | 35, 55 | nothing |
+| 58 A design pass over the dashboard | #114 | 1 | nothing | 45 |
 
 ## Running tickets in parallel without corrupting git
 
