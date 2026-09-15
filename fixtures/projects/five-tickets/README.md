@@ -26,6 +26,11 @@ With `max_parallel_workers` at its policy value of 2 the run is three waves:
 rather than by order, because the launches of one wave overlap. Each entry writes its ticket's
 files, commits them on the ticket branch, and returns a `done` result.
 
+Ticket 4 also probes the touch-set guard: its `## What to do` asks the worker to try one write
+outside its touch set and report the hook's refusal as a finding, which is what the M1 demo shows
+live in the envelope's `permission_denials`, the result, and the journal. The fake entry returns
+that finding without the refusal behind it.
+
 ## From a shell
 
 Copy it out first. Running it in place would put a git repository inside the harness checkout,

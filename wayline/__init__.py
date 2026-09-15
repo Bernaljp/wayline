@@ -7,7 +7,7 @@ what counts as done; models decide only content. This package is the harness; th
 
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 TAG = "v" + __version__
 
 HARNESS_ROOT = Path(__file__).resolve().parent.parent

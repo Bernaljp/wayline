@@ -1213,13 +1213,20 @@ def _failed_task(message):
             "error": patch.get("error") if isinstance(patch.get("error"), str) else None}
 
 
-def read_envelope(stream_path, schema_path, exit_code=None, errors=()):
+def read_envelope(stream_path, schema_path, exit_code=None, errors=(), record=False):
     """The envelope of a stream on disk, with `structured_output` re-validated against `schema_path`.
 
     Works for a stream another process wrote (the conductor re-adopting a worker by pid and
-    stream file); `exit_code` is None when the process is not this caller's.
+    stream file); `exit_code` is None when the process is not this caller's. With `record`, a
+    result the stream holds is written to `result.json` beside it when no file is there yet: the
+    launcher writes that file only for the sessions it waited on, so a worker whose conductor died
+    would otherwise leave none for a reader after the fact.
     """
-    return _envelope_from(parse_stream(stream_path), Path(stream_path), schema_path, exit_code, errors)
+    parsed = parse_stream(stream_path)
+    beside = Path(stream_path).parent / "result.json"
+    if record and parsed.result is not None and not beside.exists():
+        _write_text(beside, json.dumps(parsed.result, indent=2) + "\n")
+    return _envelope_from(parsed, Path(stream_path), schema_path, exit_code, errors)
 
 
 class StreamTail:

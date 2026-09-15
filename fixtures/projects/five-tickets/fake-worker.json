@@ -76,6 +76,12 @@
         "outputs_written": ["reports/beta.md"],
         "commands_run": ["wayline accept"],
         "checks": {"grep -qx beta reports/beta.md": "pass", "grep -qx 'beta extended' reports/beta.md": "pass"},
+        "findings": [
+          {
+            "text": "The write to escaped.txt was refused, verbatim: touch_set_guard: Write to escaped.txt is outside the ticket touch set (reports/beta.md). Write only under the listed paths, or report that the ticket needs a wider touch set.",
+            "provenance": "research/tickets/04-extend-the-beta-report.md#what-to-do"
+          }
+        ],
         "cost": {"turns": 3, "minutes": 1}
       },
       "num_turns": 3,

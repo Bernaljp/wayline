@@ -2,7 +2,35 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
-## Unreleased
+## v0.2.0 (2026-09-15)
+
+M1 Frontier and windows is live: the five-ticket graph ran on two real workers with its touch-set
+conflict serialized, the touch-set guard refused a worker's write outside its touch set, a conductor
+killed with SIGKILL mid-wave was resumed by re-adopting its two live workers, a simulated usage limit
+paused a run that the tick relaunched under the user manager, and the read-only dashboard showed the
+tabs, the frontier, the running tickets, and the journal tail. `docs/verification/m1.md` records the
+runs. The entries below it, down to v0.1.0, are everything else this tag carries.
+
+The M1 demo, live (ticket 15, M1 Frontier and windows).
+
+- Ticket 4 of `fixtures/projects/five-tickets/` gains a `## What to do` section, packed into its
+  context, asking the worker to try one write outside its touch set and report the hook's refusal
+  as a finding; its `fake-worker.json` entry returns that finding. The live run's envelope named
+  the refused `Write` in `permission_denials`, and the journal carries it in `ticket_result` and
+  `finding`.
+- The dashboard's journal tail printed an event whose payload holds a list of objects (every
+  `acceptance` event's `results`) as `[object Object]`; an object inside a list now reads as its
+  key count, as a bare object already did.
+- A worker re-adopted after its conductor died left no `result.json` when it returned after the kill,
+  because only the launching thread wrote that file. The conductor now writes it from the stream when
+  it carries a re-adopted or already-journaled result (`worker.read_envelope(..., record=True)`).
+- `fixtures/conductor/m1-kill-resume/` is recorded again from the changed five-ticket project, so its
+  ticket 4 carries the section its finding's provenance names. `record.py` now sets
+  `WAYLINE_UNPINNED`, `WAYLINE_UNITS=none`, and `WAYLINE_NOTIFY=none` itself, since the pin check of
+  ticket 46 refused its conductor.
+- `docs/verification/m1.md` records the two live runs: context-pack sizes per launch, first-time
+  pass outcomes, the caps in `policy.json` (kept), the kill and re-adoption, the pause and the
+  tick's relaunch, the dashboard as a browser rendered it, and what differed from the notes.
 
 Ask the owner when Fable is spent (ticket 57, M5 Overnight and report).
 
