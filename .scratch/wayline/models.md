@@ -1,12 +1,12 @@
 # Wayline tickets: which model and effort to implement each one
 
-Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. 54 was cut as opus high and regraded fable xhigh the same day, because the hold it builds has to replay. Each issue also carries a `model:` label with its row of this table.
+Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. Ticket 58, a design pass over the dashboard, was added on 2026-09-16 from the owner's verdict in the M1 demo and graded the same way. 54 was cut as opus high and regraded fable xhigh the same day, because the hold it builds has to replay. Each issue also carries a `model:` label with its row of this table.
 
 | Difficulty | Model | Effort | Tickets | Label |
 |---|---|---|---|---|
 | 1 | sonnet | low | none | |
 | 2 | sonnet | medium | 12, 16, 18, 23, 25, 37, 41, 42, 48 (9) | `model:sonnet-medium` |
-| 3 | opus | high | the other 34 | `model:opus-high` |
+| 3 | opus | high | the other 35 | `model:opus-high` |
 | 4 | fable | xhigh | 01, 03, 07, 30, 31, 32, 43, 45, 50, 53, 54 (11) | `model:fable-xhigh` |
 | 5 | fable | max | 05, 09, 34 (3) | `model:fable-max` |
 
@@ -49,7 +49,7 @@ On 2026-09-13, 33 of the 57 tickets are closed, and this schedule takes the 24 s
 | 7 | 26 opus high | The M3 demo, alone. |
 | 8 | 29 opus high, 38 opus high, 39 opus high | 29 waits for 26, 38 for 34, and 39 for 19. |
 | 9 | 36 opus high | The M4 demo, alone. |
-| 10 | 45 fable xhigh | After 38. |
+| 10 | 45 fable xhigh | After 38, and after 58 (opus high, added on 2026-09-16), which waits for nothing and can run beside any earlier step. |
 | 11 | 43 fable xhigh | The M5 overnight demo, alone, started at the top of a window in the evening. |
 | 12 | 50 fable xhigh, 51 opus high | Both wait for 43. |
 | 13 | 47 opus high | The M6 demo, alone. |
@@ -116,6 +116,7 @@ On 2026-09-13, 33 of the 57 tickets are closed, and this schedule takes the 24 s
 | 55 Fall back to Opus under the fallback consent | #102 | 8 | 3 | opus | high | The consent through intake, `switch --fallback`, and `control`, and the launch mapping with its escalation rule; decision 15 gives every value. |
 | 56 Verdicts on Opus and the verdict principle | #103 | 9 | 3 | opus | high | A rule change in the gates and the spot-check, fallback verdicts under each consent, and one report section. |
 | 57 Ask the owner when Fable is spent | #104 | 10 | 3 | opus | high | A decision ticket opened by code with four options, a superseded close, and a timeout under a fake clock; one dashboard action. |
+| 58 A design pass over the dashboard | #114 | 1 | 3 | opus | high | Every view restyled at once under the no-build, no-CDN rule with the dashboard's behavior and tests unchanged; renders in a real browser before and after, and the owner's acceptance through the tunnel. |
 
 ## Working the window
 

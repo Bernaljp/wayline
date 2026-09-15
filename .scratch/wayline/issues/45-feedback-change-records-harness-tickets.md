@@ -2,7 +2,7 @@
 
 **What to build:** The owner says what should have gone better, from the dashboard, the command line, or a file, and the harness changes itself under test: each item becomes a change record with journal evidence and the fixture that will prove it, each record becomes a harness ticket that runs through the conductor, a local change is applied at once and used from the next wave (including a model-authored skill that the librarian starts assigning), a global change lands on a harness branch with the tests and the fixture suite green, and under `autonomous` a global change is proposed in the report rather than applied.
 
-**Blocked by:** 34 (Plan: the planner, plan-time checks, and ticket assignment), 42 (Dashboard outputs, downloads, and logs), 44 (Fixture format and runner (verbatim prototype 32))
+**Blocked by:** 34 (Plan: the planner, plan-time checks, and ticket assignment), 42 (Dashboard outputs, downloads, and logs), 44 (Fixture format and runner (verbatim prototype 32)), 58 (A design pass over the dashboard; added on 2026-09-16, so the feedback form and its view are built in the dashboard's designed style)
 
 **Status:** ready-for-agent
 
