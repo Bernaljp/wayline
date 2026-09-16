@@ -326,7 +326,11 @@ def verify_citations(project, memo, scout=None, say=lambda text: None):
         text = _one_line(row["reference"])
         slug = _as_slug(text)
         if slug not in dossiers:
-            reference = parse_reference(text)
+            try:
+                reference = parse_reference(text)
+            except ValueError as failure:
+                dropped.append(dict(row, reason="it names nothing the scout can read: %s" % failure))
+                continue
             slug = index.get(_reference_key(reference))
             if slug is None and reference.kind in ("doi", "arxiv", "title"):
                 if scout is None:

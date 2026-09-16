@@ -590,7 +590,8 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         _ticket_section(ticket, budget),
         _notes_section(notes),
         pack.text,
-        role.protocol,
+        # A role with more than one job (the critic) keeps the section named after the result it returns here.
+        protocol_for(role.protocol, role.output_schema or "result"),
         _result_section(ticket, role),
         _contract_section(ticket, consult_max),
     ]

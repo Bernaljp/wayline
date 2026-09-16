@@ -94,6 +94,14 @@ class CriticRoleTest(unittest.TestCase):
         self.assertIn("question_limit", prompt)
         self.assertNotIn("## Position", prompt)
 
+    def test_a_review_ticket_gets_the_verdict_protocol_only(self):
+        ticket = {"id": 7, "title": "Review the dossier", "kind": "review", "role": "critic", "difficulty": 2,
+                  "touches": [], "acceptance": [], "skills": [], "blocked_by": [], "status": "ready", "attempt": 0}
+        prompt = worker.assemble_prompt(ticket, self.role).text
+        self.assertIn("## Verdict", prompt)
+        self.assertNotIn("## Position", prompt)
+        self.assertNotIn("position memo", prompt)
+
 
 class CheckMemoTest(unittest.TestCase):
     """What the schema cannot say: the ranking, the radius, the revised target, one row per reference."""
@@ -305,6 +313,13 @@ class CitationTest(PositionCase):
         self.assertEqual(written_slugs, [])
         self.assertEqual(sorted(path.name for path in (self.project / "research" / "refs").iterdir()),
                          ["paper-a", "paper-b", "paper-c", "paper-d"])
+
+    def test_a_reference_that_is_only_markup_is_dropped_not_raised(self):
+        value = memo()
+        value["prior_work"] = [{"reference": "<>", "reports": "r", "bearing": "b", "locator": None}]
+        kept, dropped, _ = position.verify_citations(self.project, value, scout=self.scout)
+        self.assertEqual(kept, [])
+        self.assertTrue(dropped[0]["reason"].startswith("it names nothing the scout can read"), dropped)
 
     def test_two_names_for_one_dossier_keep_one_row(self):
         value = memo()
