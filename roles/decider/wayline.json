@@ -1,0 +1,19 @@
+{
+  "id": "decider",
+  "scope_kind": "global",
+  "capability_summary": "Resolves one open decision after the autonomy switch from DECISIONS.md, POSITION.md, GOAL.json, the dossiers, and the query pack, with rationale and confidence; read-only, never on the irreversible list.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": [],
+  "sha256": "6e83c647c83d7d0487d0750ff94c6895ccc45bb41696106981af37187e601205",
+  "may_judge": false,
+  "output_schema": "decision",
+  "allowed_tools": ["Read", "Glob", "Grep"],
+  "disallowed_tools": [
+    "Edit", "Write", "NotebookEdit", "Bash", "Agent", "WebFetch", "WebSearch", "mcp__*", "Workflow", "Skill",
+    "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete", "CronList", "Monitor",
+    "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger", "ScheduleWakeup", "TaskCreate",
+    "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "EnterPlanMode", "ExitPlanMode"
+  ]
+}

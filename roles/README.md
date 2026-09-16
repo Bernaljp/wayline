@@ -58,6 +58,28 @@ dossier's context; it is never Haiku, and while Fable's weekly window is spent a
 on Opus at the same effort under the fallback consent, like any verdict on Fable.
 Ticket 29 gives the critic its other job, the position memo.
 
+## The decider is launched by the grill and the conductor, one decision per session
+
+`decider` (ticket 31) is outside the librarian's reach too (`kinds` empty), and it is not a judge:
+`may_judge` is false, and its `output_schema` is `decision`, the record of `DECISIONS.md` and of a
+decision ticket's body. `wayline.decider` launches it, once per open decision, on
+`policy.roles.decider` (`fable`, `max`): `wayline grill --decide-rest` walks the design tree's
+frontier with it after the autonomy switch, and the conductor launches it in wave step 5 for every
+open decision ticket that is not human-only and at the end of the wave for every parked proposal.
+A decision ticket is therefore never picked as a worker: it has no touch set, no acceptance, and
+nothing to commit, so the session runs in the project itself with `Read`, `Glob`, and `Grep` only,
+and the touch-set guard blocks any write it might try, as it does for the verifier.
+
+Its prompt is assembled by `wayline.decider.decider_prompt`: the one decision (the question, the
+options, the recommendation, the evidence, the prerequisites' answers), the irreversible list and
+the project's human-only classes, and the records inlined in order (`DECISIONS.md`, `POSITION.md`,
+`GOAL.json`, the L0 and L1 records, the query pack), cut at the context cap with the cut announced.
+The session hands back a decision on the irreversible list with `answer: null`, and code refuses one
+it did give anyway (`decider.irreversible_class`): a refused decision becomes the owner's, as a
+human-only question in the tree with a human-only decision ticket beside it, or as a decision
+ticket turned human-only. While Fable's weekly window is spent it falls back to Opus at the same
+effort under the fallback consent, and the decision records the model and the session it came from.
+
 ## Why `disallowed_tools` names tools the harness never asked for
 
 `--settings` adds to the owner's user configuration rather than replacing it, so a worker starts

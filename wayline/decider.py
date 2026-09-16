@@ -1,0 +1,686 @@
+"""The decider (Implementation Decisions 10, 4, and 5; BRIEF 6.2). Built by ticket 31.
+
+After the autonomy switch, a max-effort session on the `decider` role resolves what the owner left
+open: every open question of the grill's design tree, every decision ticket not marked human-only,
+and, at the end of each wave, every parked proposal. One session per decision, launched through the
+worker launcher (seam 1) on `policy.roles.decider` (`fable`, `max`), with `decision.json` as its
+schema and, in its prompt, `DECISIONS.md`, `POSITION.md`, `GOAL.json`, the L0 and L1 records, and
+the query pack. Every decision it makes is written with rationale, confidence, and
+`decided-by: decider`, the model it ran on, and its session, so the owner can audit and reverse any
+of them in the morning: a grill question through `wayline grill answer <id> ... --revise`, a decision
+ticket through `wayline rerun <id>`.
+
+**The line it never crosses.** Nothing on the irreversible list of decision 4 is the decider's:
+deleting or overwriting data, pushing, exceeding or raising a budget, spending money, changing the
+goal or the data, changing the harness globally, and any network write; nor a question the grill
+marked human-only or irreversible, which `grill.with_answer` refuses it outright. The session is
+told the line and hands such a decision back with `answer: null`; and code checks every answer it
+does give against the list (`irreversible_class`), because the session's own reading is not the
+guard. A refused answer turns the decision into a human-only one: a grill question is marked
+`human_only` in `DECISIONS.md` and a human-only decision ticket is opened for it (origin `grill
+<id>`), so the owner sees it in the dashboard and the report and answers it there or in the grill,
+either of which settles the question; a decision ticket becomes human-only in its own file.
+
+**Where it is launched from.** `wayline grill --decide-rest` (`decide_rest`) resolves the design
+tree's frontier one question at a time until only the owner's questions are left; the conductor
+(`decide_ticket`, `decide_proposal`) launches it for open decision tickets in wave step 5 and for
+parked proposals at the end of the wave, under the pacing and the hold on Fable's weekly window
+like any model work. While Fable's window is spent the decider falls back to Opus at the same effort
+as decision 15 says (`decider_tier`), and the decision records `fallback_from: fable`.
+"""
+
+import json
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+from wayline import HARNESS_ROOT, decisions, gates, grill, pacing, worker
+from wayline.jsonschema import ValidationError, check, load_schema
+from wayline.ledger import DECISION, Ledger, now_ts
+from wayline.project import ProjectError, policy_for, read_harness
+from wayline.tickets import TicketError
+
+__all__ = [
+    "DECIDER", "DECISION_SCHEMA", "IRREVERSIBLE", "DeciderError", "Subject", "Outcome", "decider_tier", "decides_on_fable",
+    "irreversible_class", "refusal", "records_text", "decider_prompt", "take_decision", "decide_question", "decide_ticket",
+    "decide_proposal", "decide_rest", "decided_proposals", "render_decided",
+]
+
+DECIDER = "decider"
+DECISION_SCHEMA = "decision"
+SESSIONS = "decider"            # <project>/research/sessions/decider/<subject>/<n>
+DECIDER_BUDGET = "medium"       # policy.budget: the turns and minutes one decision may take; a read-only session needs no more
+GRILL_ORIGIN = grill.TICKET_ORIGIN   # the origin of the decision ticket opened for a refused grill question: `grill Q8`
+PROPOSAL_ANSWER = "proposal %s: %s"  # the `decision` a parked proposal gets, its id leading the answer, as a grill question's id does
+ADMIT, KEEP_PARKED = "admit", "keep parked"
+RESUME_DECISION = (
+    "The decision you returned could not be recorded: %s. Return it again through the structured output, "
+    "as the decision schema asks, and change nothing else about it."
+)
+# The room the prompt keeps under the context cap for everything that is not a record: the question, the protocol, the schema.
+PROMPT_ROOM = 20000
+RECORDS_MIN = 20000
+
+# The irreversible list of decision 4, as classes a code check reads off an answer's words. Each pattern
+# names a change verb with its object, so an answer that keeps the goal, reads the data, or fetches a source
+# is not caught by the noun alone; the session is told the list too, and the two readings are both refusals.
+IRREVERSIBLE = (
+    ("delete or overwrite data",
+     r"\b(delet(?:e|es|ing)|eras(?:e|es|ing)|wip(?:e|es|ing)|purg(?:e|es|ing)|overwrit(?:e|es|ing|ten)|truncat(?:e|es|ing)"
+     r"|rm -r\w*|git clean|drop(?:s|ping)? (?:the |every |all )?(?:table|column|row|data|result|file|checkpoint)s?"
+     r"|discard(?:s|ing)? (?:the |every |all )?(?:result|data|file|checkpoint|run)s?)\b"),
+    ("push",
+     r"\b(force[- ]push(?:es|ed|ing)?|git push|push(?:es|ed|ing)? (?:it |them |the \w+ )?(?:to |onto )?(?:main|master|origin|upstream|the remote|a shared branch)"
+     r"|publish(?:es|ed|ing)? (?:the |a )?(?:branch|release|package|tag))\b"),
+    ("budgets",
+     r"\b(exceed(?:s|ed|ing)? (?:the |its |our )?(?:[\w-]+ )?(?:budget|allowance|quota|cap)"
+     r"|(?:rais(?:e|es|ing)|increas(?:e|es|ing)|doubl(?:e|es|ing)|extend(?:s|ing)?|lift(?:s|ing)?|remov(?:e|es|ing)) (?:the |its |our )?(?:[\w-]+ )?(?:budget|cap|allowance|quota|usage window)"
+     r"|more (?:gpu|cpu|compute|wall[- ]?clock) (?:hours|time) than|over (?:the |its |our )?budget|beyond (?:the |its |our )?budget)\b"),
+    ("spending",
+     r"\b(spend(?:s|ing)? (?:money|dollars|credits)|pay(?:s|ing)? for|purchas(?:e|es|ing)"
+     r"|buy(?:s|ing)? (?:a |an |the |more )?(?:credits?|licen[cs]es?|subscriptions?|gpus?|instances?|api keys?|compute|time)"
+     r"|paid (?:tier|plan|api|account)|credit card|rent(?:s|ing)? (?:a |an |the |more )?(?:gpus?|instances?|servers?|machines?)"
+     r"|cloud (?:instances?|credits))\b"),
+    ("goal",
+     r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|redefin(?:e|es|ing)|relax(?:es|ing)?|lower(?:s|ing)?|rais(?:e|es|ing)|drop(?:s|ping)?"
+     r"|swap(?:s|ping)?|revis(?:e|es|ing)|rewrit(?:e|es|ing)|switch(?:es|ing)?|set(?:s|ting)?|mov(?:e|es|ing)|loosen(?:s|ing)?|tighten(?:s|ing)?)"
+     r" (?:the |our |its |a |an )?(?:new )?(?:goal|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
+     r"|the goal becomes|a new goal|a new target)\b"),
+    ("data",
+     r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|swap(?:s|ping)?|drop(?:s|ping)?|re-?split(?:s|ting)?|redefin(?:e|es|ing)|regenerat(?:e|es|ing)"
+     r"|augment(?:s|ing)?|relabel(?:s|l?ing)?|mov(?:e|es|ing)|switch(?:es|ing)?|shrink(?:s|ing)?|subsampl(?:e|es|ing)|filter(?:s|ing)?|clean(?:s|ing)?)"
+     r" (?:the |our |its |to (?:a |an )?)?(?:new |different |another )?(?:data(?:set)?|training (?:set|data)|test (?:set|data)|held[- ]out (?:set|split|data)|hold[- ]out (?:set|split)|split_[a-z0-9]+|splits?)"
+     r"|hold(?:s|ing)? out (?:a |the |another )?(?:different|new)|leav(?:e|es|ing) the machine|off the machine"
+     r"|export(?:s|ing)? (?:the |any |our )?data|shar(?:e|es|ing) (?:the |any |our )?data|upload(?:s|ing)? (?:the |any |our )?data)\b"),
+    ("global harness change",
+     r"\b((?:edit(?:s|ing)?|chang(?:e|es|ing)|modif(?:y|ies|ying)|patch(?:es|ing)?|rewrit(?:e|es|ing)|updat(?:e|es|ing)|bump(?:s|ing)?|promot(?:e|es|ing))"
+     r" (?:the |a |an )?(?:global |harness |shipped )?(?:harness|policy\.json|global policy|~/\.wayline|wayline itself|wayline's (?:code|policy|roles?|skills?|hooks?)|shipped (?:roles?|skills?|policy))"
+     r"|harness[- ]wide|in the harness itself|for every project)\b"),
+    ("network write",
+     r"\b(upload(?:s|ed|ing)?|post(?:s|ed|ing)? (?:it |them |the \w+ )?to|submit(?:s|ted|ting)? (?:it |them |the \w+ )?to"
+     r"|send(?:s|ing)? (?:it |them |the \w+ )?to (?:a |the |an )?(?:server|api|service|endpoint|slack|telegram|e-?mail|webhook|channel)"
+     r"|curl -x post|curl -d|curl --data|wget --post|webhook"
+     r"|publish(?:es|ed|ing)? (?:to|on) (?:the )?(?:web|internet|github|pypi|hugging ?face|zenodo|arxiv|osf)"
+     r"|push(?:es|ed|ing)? to (?:hugging ?face|pypi|docker ?hub|a registry))\b"),
+)
+_PATTERNS = tuple((name, re.compile(pattern, re.IGNORECASE)) for name, pattern in IRREVERSIBLE)
+
+
+class DeciderError(ValueError):
+    """A decision nobody could take: a role that cannot be read, a session that returned no usable record."""
+
+
+@dataclass
+class Subject:
+    """One decision the decider is asked for: a grill question, a decision ticket, or a parked proposal."""
+
+    kind: str                      # question | ticket | proposal
+    key: str                       # Q8 | 2 | the proposal's id
+    question: str
+    options: list = field(default_factory=list)
+    recommended: Optional[str] = None
+    evidence: list = field(default_factory=list)
+    requires: list = field(default_factory=list)   # (id, question, answer) of the settled prerequisites
+    reversible: bool = True
+    slug: str = ""                 # the session directory's name under research/sessions/decider/
+
+    @property
+    def name(self):
+        return {"question": "the grill's %s", "ticket": "decision ticket %s", "proposal": "parked proposal %s"}[self.kind] % self.key
+
+    @classmethod
+    def from_record(cls, record, records=()):
+        """A grill question from its `DECISIONS.md` record, with its prerequisites' answers pulled from `records`."""
+        questions = {other["id"]: other for other in records if other.get("id")}
+        requires = [(need, questions[need]["question"], questions[need].get("answer"))
+                    for need in record.get("requires") or [] if need in questions]
+        return cls(kind="question", key=record["id"], question=record["question"], options=list(record.get("options") or []),
+                   recommended=record.get("recommended"), evidence=list(record.get("evidence") or []), requires=requires,
+                   reversible=record.get("reversible", True) is not False, slug=record["id"].lower())
+
+    @classmethod
+    def from_ticket(cls, fields, body, record=None):
+        """A decision ticket from its file: the record when the body carries one, else its `## Decision` text."""
+        record = record or {}
+        return cls(kind="ticket", key=str(fields["id"]), question=decisions.decision_question(fields, body),
+                   options=list(record.get("options") or []), recommended=record.get("recommended"),
+                   evidence=list(record.get("evidence") or []) + (["asked by: %s" % fields["origin"]] if fields.get("origin") else []),
+                   reversible=record.get("reversible", True) is not False, slug="ticket-%d" % fields["id"])
+
+    @classmethod
+    def from_proposal(cls, proposal):
+        """A parked proposal, asked as the admission question the rules could not answer (decision 5)."""
+        identifier = str(proposal.get("id"))
+        evidence = ["parked because: %s" % proposal.get("reason", "no reason recorded")]
+        for key in ("kind", "proposed_by", "origin", "blocked_by", "touches", "demo"):
+            if proposal.get(key):
+                evidence.append("%s: %s" % (key, proposal[key] if isinstance(proposal[key], str) else json.dumps(proposal[key])))
+        if proposal.get("path"):
+            evidence.append("the proposal as parked: %s" % proposal["path"])
+        return cls(kind="proposal", key=identifier,
+                   question="Is the parked proposal %s, \"%s\", admitted to the run?" % (identifier, proposal.get("title")),
+                   options=[ADMIT, KEEP_PARKED], recommended=KEEP_PARKED, evidence=evidence,
+                   slug="proposal-" + re.sub(r"[^a-z0-9]+", "-", identifier.lower()).strip("-"))
+
+
+@dataclass
+class Outcome:
+    """What one launch of the decider came to, for the caller's report and the wave's count."""
+
+    subject: Subject
+    status: str                    # decided | refused | failed
+    answer: Optional[str] = None
+    rationale: Optional[str] = None
+    confidence: Optional[float] = None
+    model: Optional[str] = None
+    fallback_from: Optional[str] = None
+    session_id: Optional[str] = None
+    why: Optional[str] = None      # the refusal, or the failure
+    ticket: Optional[int] = None   # the human-only decision ticket a refusal opened or turned over
+
+    @property
+    def line(self):
+        """One line for the console and the report of `--decide-rest`."""
+        if self.status == "decided":
+            return "%s  decided: %s (confidence %s, on %s%s)" % (
+                self.subject.name, self.answer, "not stated" if self.confidence is None else "%g" % self.confidence,
+                self.model or "an unnamed model", " in place of %s" % self.fallback_from if self.fallback_from else "")
+        if self.status == "refused":
+            return "%s  refused, and turned over to the owner%s: %s" % (
+                self.subject.name, " as decision ticket %d" % self.ticket if self.ticket else "", self.why)
+        return "%s  not decided: %s" % (self.subject.name, self.why)
+
+
+# --- the tier and the line ------------------------------------------------------------------------
+
+
+def decider_tier(policy, fall_back=False):
+    """The `(model, effort, fallback_from)` the decider runs at: `policy.roles.decider`, Opus in Fable's place when `fall_back`."""
+    entry = ((policy or {}).get("roles") or {}).get(DECIDER) or {}
+    model, effort = entry.get("model"), entry.get("effort")
+    if model not in worker.MODEL_ALIASES or effort not in worker.EFFORTS:
+        raise DeciderError("policy.roles.decider names no model and effort the launcher knows; got %r" % (entry,))
+    if model == pacing.FABLE and fall_back:
+        return pacing.OPUS, effort, pacing.FABLE
+    return model, effort, None
+
+
+def decides_on_fable(policy):
+    """Whether the decider's tier is Fable, so the hold on Fable's weekly window holds it (decision 15)."""
+    try:
+        return decider_tier(policy)[0] == pacing.FABLE
+    except DeciderError:
+        return False
+
+
+def _falls_back(project, policy, fall_back, what):
+    """Whether this launch falls back now: the caller's word, else the journal's, and only for a decider on Fable."""
+    if fall_back is not None:
+        return bool(fall_back)
+    if not decides_on_fable(policy):
+        return False
+    return gates.fallback_now(project, what)
+
+
+def irreversible_class(answer, question=""):
+    """The class of the irreversible list an answer falls in, or None: the code check of decision 4.
+
+    The answer's own words are read first; the question's are read with them only for the goal and the
+    data, whose change is often named in the question and taken with a bare option in the answer.
+    """
+    text = " ".join(str(answer or "").split())
+    if not text:
+        return None
+    for name, pattern in _PATTERNS:
+        if pattern.search(text):
+            return name
+    both = " ".join(str(question or "").split()) + " " + text
+    for name, pattern in _PATTERNS:
+        if name in ("goal", "data") and pattern.search(both) and _bare_choice(text):
+            return name
+    return None
+
+
+def _bare_choice(text):
+    """An answer that only picks (`yes`, `the second`, `raise it`) and so means what the question says."""
+    return len(text.split()) <= 3
+
+
+def refusal(subject, returned):
+    """Why a returned decision is not the decider's to make, or None when it is.
+
+    Three readings refuse it: the session's own (`answer` null, `reversible` false, or `human_only` true),
+    the code check on the answer's class, and a subject the grill marked irreversible, which never reaches
+    a launch but is refused here too in case a record was edited by hand.
+    """
+    answer = returned.get("answer")
+    rationale = (returned.get("rationale") or "").strip()
+    if not subject.reversible:
+        return "the question is irreversible, so it is the owner's"
+    if returned.get("human_only") is True:
+        return "the decider read it as a human-only class%s" % (": " + rationale if rationale else "")
+    if returned.get("reversible") is False:
+        return "the decider read its answer as one that cannot be taken back%s" % (": " + rationale if rationale else "")
+    if answer is None or not str(answer).strip():
+        return "the decider gave no answer%s" % (": " + rationale if rationale else "")
+    found = irreversible_class(answer, subject.question)
+    if found is not None:
+        return "its answer falls in a class on the irreversible list (%s): %s" % (found, " ".join(str(answer).split()))
+    return None
+
+
+# --- the prompt -----------------------------------------------------------------------------------
+
+
+def _fence(text):
+    fence = "```"
+    while fence in text:
+        fence += "`"
+    return fence
+
+
+def _read(ledger, relative):
+    try:
+        return ledger.path(relative).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
+def _dossier_lines(ledger):
+    """One line per reference at level 0 or 1 (and the path of a level-2 one): the L0 and L1 records."""
+    from wayline.dossier import REFS, LEVEL_2, _all_slugs, read_dossier  # the dossier module imports the launcher and the fetcher
+    lines = []
+    for slug in _all_slugs(ledger):
+        try:
+            dossier = read_dossier(ledger, slug)
+        except ValueError as failure:
+            lines.append("- `%s`: [wayline: its dossier could not be read: %s]" % (slug, failure))
+            continue
+        metadata = dossier.get("metadata") or {}
+        level = dossier.get("level", 0)
+        parts = ["- `%s` (level %s): %s" % (slug, level, metadata.get("title") or "untitled")]
+        if metadata.get("year"):
+            parts.append("(%s)" % metadata["year"])
+        facts = []
+        if dossier.get("existence"):
+            facts.append("existence: %s" % (dossier["existence"] if isinstance(dossier["existence"], str) else json.dumps(dossier["existence"])))
+        if dossier.get("relation_to_intent"):
+            facts.append("relation to the intent: %s" % dossier["relation_to_intent"])
+        if dossier.get("deserves_l2_if"):
+            facts.append("worth a full read if: %s" % dossier["deserves_l2_if"])
+        if dossier.get("abstract"):
+            facts.append("abstract: %s" % dossier["abstract"])
+        lines.append(" ".join(parts) + (". " + "; ".join(facts) if facts else ""))
+        lines.append("  path: research/%s/%s/dossier.json%s" % (REFS, slug, ", and dossier.md with the full read" if level >= LEVEL_2 else ""))
+    return lines or ["[wayline: no reference has a dossier yet; the answer rests on the intake and the position memo alone]"]
+
+
+def records_text(project, max_chars=None):
+    """The records the decider reads, inlined in order and cut at `max_chars` with every cut announced.
+
+    `DECISIONS.md` first, whole when it fits, because the settled decisions bind the answer; then the
+    position memo, the goal, the L0 and L1 records, and the query pack. Returns `(text, cut)`.
+    """
+    ledger = Ledger(project)
+    entries = [
+        ("research/DECISIONS.md", _read(ledger, grill.DECISIONS_MD), "[wayline: there is no DECISIONS.md; nothing is settled yet]"),
+        ("research/POSITION.md", _read(ledger, grill.POSITION_MD),
+         "[wayline: there is no position memo; the tree rests on INTAKE.md alone]"),
+        ("research/GOAL.json", _read(ledger, "GOAL.json"), "[wayline: no goal is stated]"),
+        ("the L0 and L1 records (research/refs/<slug>/dossier.json)", "\n".join(_dossier_lines(ledger)), None),
+        ("research/kb/query_pack.md", _read(ledger, "kb/query_pack.md"), "[wayline: there is no query pack; no reference was absorbed]"),
+    ]
+    cap = None if max_chars is None else max(RECORDS_MIN, int(max_chars) - PROMPT_ROOM)
+    rendered, used, cut = ["# The records", "", "Read them in this order; what DECISIONS.md settles binds the answer."], 0, False
+    for heading, text, absent in entries:
+        rendered.extend(["", "## %s" % heading, ""])
+        if text is None or not text.strip():
+            rendered.append(absent)
+            continue
+        text = text.rstrip("\n")
+        if cap is not None and used >= cap:
+            rendered.append("[wayline: left out at the context cap; open the path yourself if the answer needs it.]")
+            cut = True
+            continue
+        note = None
+        if cap is not None and used + len(text) > cap:
+            left_out = len(text) - (cap - used)
+            text, cut = text[: cap - used], True
+            note = "[wayline: cut here at the context cap; %d character(s) are missing. Open the path for the rest.]" % left_out
+        used += len(text)
+        fence = _fence(text)
+        rendered.extend([fence, text, fence])
+        if note:
+            rendered.extend(["", note])
+    return "\n".join(rendered) + "\n", cut
+
+
+def decider_prompt(role, subject, records, harness, cut=False):
+    """The decider's prompt: the decision, the line, the records, the paths it may open, the protocol, the schema."""
+    lines = ["# The decision you are being asked for", "", "- subject: %s" % subject.name,
+             "- the question: %s" % subject.question.strip().replace("\n", "\n  ")]
+    if subject.options:
+        lines.append("- options: %s" % " | ".join(" ".join(option.split()) for option in subject.options))
+    lines.append("- recommended: %s" % (" ".join(subject.recommended.split()) if subject.recommended else "none was given"))
+    for item in subject.evidence:
+        lines.append("- evidence: %s" % " ".join(str(item).split()))
+    for identifier, question, answer in subject.requires:
+        lines.append("- rests on %s, %s: settled as %s" % (identifier, " ".join(question.split()),
+                                                           " ".join(str(answer).split()) if answer else "open"))
+    lines += [
+        "",
+        "Decide this one thing, from the records below, and answer nothing wider. The owner raised autonomy to "
+        "`autonomous` and reads your decision in the morning; write the rationale for them.",
+        "",
+        "# The line",
+        "",
+        "The irreversible list is not yours to decide: deleting or overwriting data; pushing or force-pushing; exceeding "
+        "or raising a compute or usage budget; spending money; changing the goal or the data; changing the harness "
+        "globally; any network write. The human-only classes of this project are: %s. An answer that falls in any of "
+        "these, or that cannot be taken back, is the owner's: return `answer: null` with `reversible: false` (or "
+        "`human_only: true`), and put what you would have answered in the rationale. The harness checks every answer "
+        "against the list as well." % _classes(harness),
+        "",
+    ]
+    parts = ["\n".join(lines), records]
+    if cut:
+        parts.append("[wayline: the records were cut at the context cap; the paths below hold the rest.]")
+    parts.append("\n".join([
+        "# The paths you may open",
+        "",
+        "The project is `%s`; open these with the Read tool when a record points into them:" % harness.get("_project", "the project"),
+        "",
+        "- `research/INTAKE.md`: the intent, the constraints, the human-only classes as the owner stated them",
+        "- `research/CONTEXT.md`: the vocabulary the grill settled",
+        "- `research/refs/<slug>/dossier.json`, and `dossier.md` for a reference read in full",
+        "- `research/tickets/<n>-<slug>.md`: the ticket a decision request came from",
+    ]))
+    parts.append(role.protocol)
+    parts.append(worker.schema_section("# The decision", role.output_schema or DECISION_SCHEMA, closing=[
+        "",
+        "`decided_by` is `decider`, `timestamp` is null (the harness stamps it), and `reversible` is true unless the "
+        "answer cannot be taken back.",
+    ]))
+    return "\n\n".join(part.strip("\n") for part in parts if part and part.strip()) + "\n"
+
+
+def _classes(harness):
+    classes = [name for name in (harness.get("human_only") or []) if isinstance(name, str)]
+    return ", ".join("`%s`" % name for name in classes) if classes else "`goal` and `data`"
+
+
+# --- one launch -----------------------------------------------------------------------------------
+
+
+def session_dir(project, slug):
+    """`research/sessions/decider/<subject>/<n>`, the first free number, so a subject decided twice keeps both streams."""
+    base = Path(project) / "research" / "sessions" / SESSIONS / (slug or "subject")
+    number = 1
+    while (base / str(number)).exists():
+        number += 1
+    return base / str(number)
+
+
+def _budget(policy, key):
+    return ((policy.get("budget") or {}).get(DECIDER_BUDGET) or {}).get(key)
+
+
+def _context_cap(policy, model):
+    caps = (policy.get("context_pack") or {}).get("max_chars") or {}
+    return caps.get(model, min(caps.values()) if caps else None)
+
+
+def _raise_if_refused(envelope, model, what):
+    """Raise `gates.UsageLimited` for a session a usage window stopped without a usable answer (decision 15)."""
+    if envelope.valid:
+        return
+    limit = pacing.hit_limit(envelope, worker.stderr_of(envelope), time.time(), model=model)
+    if limit is None:
+        return
+    window = "Fable's weekly window" if limit.model == pacing.FABLE else "the %s window" % limit.window
+    until = pacing.iso(limit.resets_at) if limit.resets_at is not None else "an unknown time"
+    raise gates.UsageLimited("%s was refused by the usage limit on %s until %s" % (what, window, until), limit)
+
+
+def _unusable(envelope):
+    """Why this envelope is not a decision the harness can record, or None when it is one."""
+    if not envelope.valid:
+        return "; ".join(envelope.errors) or "the session returned no structured decision"
+    try:
+        check(envelope.structured_output, load_schema(DECISION_SCHEMA), name="decision")
+    except ValidationError as failure:
+        return str(failure)
+    returned = envelope.structured_output
+    if not (returned.get("rationale") or "").strip():
+        return "the decision carries no rationale, and a decision nobody can audit is a guess"
+    if returned.get("answer") is not None and not str(returned["answer"]).strip():
+        return "the decision's answer is empty; give one, or null with the reason it is the owner's"
+    return None
+
+
+def take_decision(subject, *, project, harness_root=HARNESS_ROOT, policy=None, fall_back=None, launcher=None):
+    """One decider session on `subject`, validated but not written: `(record, envelope, model, fallback_from)`.
+
+    A session that returns something the `decision` schema refuses, or a decision with no rationale, is
+    resumed once with the reason; a second unusable answer raises `DeciderError`. A session a usage window
+    refused raises `gates.UsageLimited` and is launched again later, fresh, never resumed. `fall_back` is
+    the conductor's word for its wave; None reads the hold from the journal and raises `gates.FableHeld`
+    before a session is spent when the decider waits (decision 15).
+    """
+    project = Path(project).resolve()
+    policy = policy_for(project, harness_root) if policy is None else policy
+    what = "the decider on %s" % subject.name
+    model, effort, fallback_from = decider_tier(policy, _falls_back(project, policy, fall_back, what))
+    role = worker.read_role(DECIDER, harness_root, project)
+    harness = dict(read_harness(project), _project=str(project))
+    records, cut = records_text(project, _context_cap(policy, model))
+    prompt = decider_prompt(role, subject, records, harness, cut)
+    run_dir = session_dir(project, subject.slug)
+    request = worker.LaunchRequest(
+        role=role.name, model=model, effort=effort, prompt=prompt,
+        agent_json=role.agent_json(model, effort, _budget(policy, "max_turns")),
+        allowed_tools=list(role.allowed_tools), disallowed_tools=list(role.disallowed_tools),
+        settings_path=gates.write_worker_settings(run_dir / "settings.json", harness_root),
+        add_dirs=[str(Path(harness_root).resolve()), str(project)],
+        cwd=project,
+        env=gates.verdict_env(project, run_dir),
+        schema_path=Path(harness_root).resolve() / "schemas" / (DECISION_SCHEMA + ".json"),
+        max_minutes=_budget(policy, "max_minutes"),
+    )
+    launch = launcher or worker.launch
+    envelope = launch(request)
+    _raise_if_refused(envelope, model, what)
+    problem = _unusable(envelope)
+    if problem is not None and envelope.session_id:
+        envelope = worker.resume(request, envelope.session_id, RESUME_DECISION % problem)
+        _raise_if_refused(envelope, model, what)
+        problem = _unusable(envelope)
+    if problem is not None:
+        raise DeciderError("%s could not decide: %s" % (what, problem))
+    return envelope.structured_output, envelope, model, fallback_from
+
+
+def _outcome(subject, returned, envelope, model, fallback_from):
+    return Outcome(subject, "decided", answer=str(returned["answer"]).strip(), rationale=returned["rationale"].strip(),
+                   confidence=returned.get("confidence"), model=envelope.model or model, fallback_from=fallback_from,
+                   session_id=envelope.session_id)
+
+
+# --- the three subjects ---------------------------------------------------------------------------
+
+
+def decide_question(project, record, records=(), *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, launcher=None,
+                    notify=None):
+    """Resolve one open question of the design tree; returns the `Outcome`.
+
+    A decision is written through `grill.answer` with `decided_by: decider`, the model, and the session. A
+    refusal marks the question human-only in `DECISIONS.md` and opens a human-only decision ticket for it,
+    pausing nothing, with the decider's reading as evidence. A launch nobody could take (`DeciderError`, a
+    role or a file that cannot be read) is a failed outcome and the question stays as it was; a usage window
+    that refused it, or the hold on Fable's window, raises out to the caller.
+    """
+    project = Path(project).resolve()
+    subject = Subject.from_record(record, records)
+    try:
+        returned, envelope, model, fallback_from = take_decision(
+            subject, project=project, harness_root=harness_root, policy=policy, fall_back=fall_back, launcher=launcher)
+    except (DeciderError, worker.LaunchError, worker.RoleError, ProjectError, OSError) as failure:
+        return Outcome(subject, "failed", why=str(failure))
+    why = refusal(subject, returned)
+    if why is not None:
+        grill.turn_over(project, record["id"], "the decider was refused it: %s" % why)
+        try:
+            opened = decisions.open_decision(
+                project, record["question"], options=subject.options, recommended=subject.recommended,
+                evidence=subject.evidence + ["the decider was refused it: %s" % why], blocking=None, human_only=True,
+                reversible=subject.reversible, proposed_by=DECIDER, origin=GRILL_ORIGIN + record["id"],
+                title="%s: %s" % (record["id"], record["question"]), notify=notify)
+            ticket = opened["ticket"]
+        except (TicketError, ProjectError, OSError) as failure:
+            ticket = None
+            why += " (no decision ticket could be opened for it: %s)" % failure
+        return Outcome(subject, "refused", why=why, ticket=ticket, session_id=envelope.session_id,
+                       model=envelope.model or model, fallback_from=fallback_from)
+    outcome = _outcome(subject, returned, envelope, model, fallback_from)
+    try:
+        grill.answer(project, record["id"], outcome.answer, outcome.rationale, confidence=outcome.confidence, decided_by=DECIDER,
+                     model=outcome.model, fallback_from=fallback_from, session_id=outcome.session_id)
+    except (grill.GrillError, ProjectError, OSError) as failure:
+        return Outcome(subject, "failed", why="the answer could not be recorded: %s" % failure, session_id=outcome.session_id)
+    return outcome
+
+
+def decide_ticket(project, fields, body, record=None, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, launcher=None,
+                  notify=None):
+    """Resolve one open decision ticket; returns the `Outcome`.
+
+    A decision is written through `decisions.decide`: `## Answer` in the ticket's file and a `decision` with
+    `decided_by: decider`, which the conductor closes as it closes the owner's. A refusal turns the ticket
+    human-only (`decisions.turn_over`) and notifies the owner.
+    """
+    project = Path(project).resolve()
+    subject = Subject.from_ticket(fields, body, record)
+    identifier = fields["id"]
+    try:
+        returned, envelope, model, fallback_from = take_decision(
+            subject, project=project, harness_root=harness_root, policy=policy, fall_back=fall_back, launcher=launcher)
+    except (DeciderError, worker.LaunchError, worker.RoleError, ProjectError, OSError) as failure:
+        return Outcome(subject, "failed", why=str(failure))
+    why = refusal(subject, returned)
+    if why is not None:
+        decisions.turn_over(project, identifier, why, notify=notify)
+        return Outcome(subject, "refused", why=why, ticket=identifier, session_id=envelope.session_id,
+                       model=envelope.model or model, fallback_from=fallback_from)
+    outcome = _outcome(subject, returned, envelope, model, fallback_from)
+    try:
+        decisions.decide(project, identifier, outcome.answer, outcome.rationale, confidence=outcome.confidence, model=outcome.model,
+                         fallback_from=fallback_from, session_id=outcome.session_id)
+    except (ProjectError, OSError) as failure:
+        return Outcome(subject, "failed", why="the answer could not be recorded: %s" % failure, session_id=outcome.session_id)
+    outcome.ticket = identifier
+    return outcome
+
+
+def decide_proposal(project, proposal, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, launcher=None):
+    """Reconsider one parked proposal at the end of a wave; returns the `Outcome`.
+
+    The decision is journaled as a `decision` with no ticket, its answer `proposal <id>: admit` or `keep
+    parked`, which is what ticket 37's admission reads to admit it within the cap. A refusal (a proposal
+    whose admission would cross the line) is journaled the same way as `keep parked`, with the refusal as the
+    rationale: nothing is opened for the owner, because a parked proposal is listed in the report already.
+    """
+    project = Path(project).resolve()
+    subject = Subject.from_proposal(proposal)
+    try:
+        returned, envelope, model, fallback_from = take_decision(
+            subject, project=project, harness_root=harness_root, policy=policy, fall_back=fall_back, launcher=launcher)
+    except (DeciderError, worker.LaunchError, worker.RoleError, ProjectError, OSError) as failure:
+        return Outcome(subject, "failed", why=str(failure))
+    why = refusal(subject, returned)
+    if why is not None:
+        outcome = Outcome(subject, "refused", answer=KEEP_PARKED, rationale="the decider was refused it: %s" % why, why=why,
+                          model=envelope.model or model, fallback_from=fallback_from, session_id=envelope.session_id)
+    else:
+        outcome = _outcome(subject, returned, envelope, model, fallback_from)
+        if outcome.answer.strip().lower() != ADMIT:
+            outcome.answer = KEEP_PARKED if outcome.answer.strip().lower() != KEEP_PARKED else outcome.answer
+    payload = {"ticket": None, "answer": PROPOSAL_ANSWER % (subject.key, outcome.answer), "decided_by": DECIDER,
+               "rationale": outcome.rationale, "confidence": outcome.confidence}
+    payload.update({key: value for key, value in (("model", outcome.model), ("fallback_from", outcome.fallback_from)) if value})
+    Ledger(project).append_event(DECISION, payload, session_id=outcome.session_id)
+    return outcome
+
+
+def decided_proposals(events):
+    """The ids of the parked proposals the decider already answered, read off the journal's `decision` events."""
+    found = set()
+    prefix = PROPOSAL_ANSWER.split("%s")[0]
+    for event in events:
+        payload = event.get("payload") or {}
+        answer = payload.get("answer") or ""
+        if event.get("event") == DECISION and payload.get("decided_by") == DECIDER and payload.get("ticket") is None \
+                and answer.startswith(prefix):
+            found.add(answer[len(prefix):].split(":", 1)[0])
+    return found
+
+
+# --- the verb: wayline grill --decide-rest ---------------------------------------------------------
+
+
+def decide_rest(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, launcher=None, notify=None, out=None):
+    """Resolve the design tree's frontier until only the owner's questions are left; returns the report.
+
+    Under autonomy `autonomous` only: under any other the verb refuses, naming the switch. Each decision
+    is one session, and the frontier is read again after each, because an answer settles the prerequisites
+    of questions behind it. A question the decider could not take (`failed`) is left as it was and not tried
+    again in this call; a usage window that refused a launch, or the hold on Fable's window while the consent
+    waits, ends the call with what it decided so far and the reason in `stopped`.
+    """
+    project = Path(project).resolve()
+    harness = read_harness(project)
+    if harness.get("autonomy") != grill.AUTONOMOUS:
+        raise grill.GrillError("autonomy is %s: the decider resolves the rest only under autonomous; raise it with "
+                               "wayline switch --autonomy autonomous --project %s" % (harness.get("autonomy"), project))
+    say = (lambda text: print(text, file=out)) if out is not None else (lambda text: None)
+    report = {"project": str(project), "decided": [], "refused": [], "failed": [], "stopped": None, "left": []}
+    tried = set()
+    while True:
+        records = grill.read_records(project)
+        share = [record for record in grill.decider_share(records) if record["id"] not in tried]
+        if not share:
+            break
+        record = share[0]
+        tried.add(record["id"])
+        say("deciding %s: %s" % (record["id"], " ".join(record["question"].split())))
+        try:
+            outcome = decide_question(project, record, records, harness_root=harness_root, policy=policy, fall_back=fall_back,
+                                      launcher=launcher, notify=notify)
+        except gates.FableHeld as held:
+            report["stopped"] = "Fable's weekly window is held until %s and the consent waits: %s" % (held.resets_at, held)
+            break
+        except gates.UsageLimited as refused:
+            report["stopped"] = "the usage limit refused the launch: %s" % refused
+            break
+        say("  " + outcome.line)
+        report[outcome.status].append(outcome)
+    records = grill.read_records(project)
+    report["left"] = [record["id"] for record in grill.decider_share(records)]
+    return report
+
+
+def render_decided(report):
+    """The text `wayline grill --decide-rest` prints before the tier."""
+    lines = ["decider  %s" % report["project"]]
+    for name in ("decided", "refused", "failed"):
+        lines += ["  " + outcome.line for outcome in report[name]]
+    if not (report["decided"] or report["refused"] or report["failed"]):
+        lines.append("  nothing was open for the decider")
+    if report["stopped"]:
+        lines.append("  stopped: %s" % report["stopped"])
+    if report["left"]:
+        lines.append("  still open for the decider: %s" % ", ".join(report["left"]))
+    lines.append("  every decision is in research/DECISIONS.md as decided-by: decider, and journaled; reverse one with "
+                 "wayline grill answer <id> \"<answer>\" --rationale \"<why>\" --revise")
+    return "\n".join(lines)

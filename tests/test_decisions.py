@@ -737,9 +737,10 @@ class AwaitsOwnerTest(unittest.TestCase):
             with self.subTest(autonomy=autonomy):
                 self.assertEqual([schedule.awaits_owner(entry, autonomy) for entry in entries], expected)
 
-    def test_no_decision_ticket_is_picked_under_checkpoints(self):
+    def test_no_decision_ticket_is_picked_under_any_autonomy(self):
+        """The decider is launched on a decision ticket by wave step 5, never picked as a worker (ticket 31)."""
         self.assertEqual([entry["id"] for entry in schedule.pick(self.graph(), slots=3, autonomy="checkpoints")], [3])
-        self.assertEqual(sorted(entry["id"] for entry in schedule.pick(self.graph(), slots=3, autonomy="autonomous")), [2, 3])
+        self.assertEqual(sorted(entry["id"] for entry in schedule.pick(self.graph(), slots=3, autonomy="autonomous")), [3])
 
     def test_held_back_says_why_each_decision_ticket_waits(self):
         self.assertEqual(schedule.held_back(self.graph(), "checkpoints"), [

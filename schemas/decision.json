@@ -23,6 +23,7 @@
     "decided_by": {"enum": ["human", "decider", "conductor", null], "description": "conductor on a decision ticket the conductor closed: the ask of decision 15 superseded, or answered at its timeout"},
     "model": {"type": ["string", "null"], "description": "the model the decider's session ran on (decision 15); absent on an answer no model gave"},
     "fallback_from": {"enum": ["fable", null], "description": "fable when the decider ran on Opus while Fable's weekly window was spent (decision 15)"},
+    "session_id": {"type": ["string", "null"], "description": "the decider's session, so its answer can be read back in full; absent on an answer no session gave"},
     "reversible": {"type": "boolean"},
     "timestamp": {"type": ["string", "null"]}
   }
