@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "spec",
+  "description": "The research spec of phase P3 (Implementation Decisions 10, specify): what the planner returns in its specify protocol and what research/spec.json holds, from which code renders research/SPEC.md. The schema holds the shape; the Type-A checks of wayline.specify hold the rest (every section non-empty, every claim with an experiment, every experiment naming a claim, every metric naming a script, every anti-claim naming the experiment that would confirm it, and every id resolving), so a draft that fails them is returned to the planner with the failures rather than refused as malformed.",
+  "type": "object",
+  "required": ["title", "question", "claims", "anti_claims", "methods", "experiments", "baselines", "data", "metrics",
+               "success_criteria", "budgets", "out_of_scope", "risks", "seams"],
+  "additionalProperties": false,
+  "properties": {
+    "title": {"type": "string", "pattern": "\\S", "description": "the project's research question as a title, one line"},
+    "question": {"type": "string", "pattern": "\\S", "description": "the research question the spec answers, in a paragraph"},
+    "claims": {
+      "type": "array",
+      "description": "what the project sets out to show; each is tested by the experiments it names",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "experiments"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^C[1-9][0-9]*$"},
+          "text": {"type": "string", "pattern": "\\S"},
+          "experiments": {"type": "array", "items": {"type": "string", "pattern": "^E[1-9][0-9]*$"}, "description": "the experiments that test this claim; at least one"}
+        }
+      }
+    },
+    "anti_claims": {
+      "type": "array",
+      "description": "what the project does not claim, or what would show a claim wrong; each names the experiment that would confirm it",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "confirmed_by"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^A[1-9][0-9]*$"},
+          "text": {"type": "string", "pattern": "\\S"},
+          "confirmed_by": {"type": ["string", "null"], "pattern": "^E[1-9][0-9]*$", "description": "the experiment whose outcome would confirm this anti-claim"}
+        }
+      }
+    },
+    "methods": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "pattern": "\\S"},
+          "text": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    },
+    "experiments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "claims", "design", "baselines", "data", "metrics", "success"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^E[1-9][0-9]*$"},
+          "claims": {"type": "array", "items": {"type": "string", "pattern": "^C[1-9][0-9]*$"}, "description": "the claims this experiment defends; at least one"},
+          "design": {"type": "string", "pattern": "\\S", "description": "what is run, on what, compared with what, repeated how"},
+          "baselines": {"type": "array", "items": {"type": "string", "pattern": "^B[1-9][0-9]*$"}},
+          "data": {"type": "array", "items": {"type": "string", "pattern": "^D[1-9][0-9]*$"}},
+          "metrics": {"type": "array", "items": {"type": "string"}, "description": "names from metrics[].name"},
+          "success": {"type": "string", "pattern": "\\S", "description": "the outcome that supports its claims, stated so a script can tell"},
+          "budget": {"type": ["string", "null"], "description": "what this experiment may spend, when it is a share of the budgets"}
+        }
+      }
+    },
+    "baselines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^B[1-9][0-9]*$"},
+          "text": {"type": "string", "pattern": "\\S"},
+          "source": {"type": ["string", "null"], "description": "where it comes from: a decision id, a dossier slug, a path"}
+        }
+      }
+    },
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^D[1-9][0-9]*$"},
+          "text": {"type": "string", "pattern": "\\S"},
+          "source": {"type": ["string", "null"], "description": "where it comes from: a generator script, a path, a dataset name"}
+        }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "definition", "script"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+          "definition": {"type": "string", "pattern": "\\S"},
+          "script": {"type": ["string", "null"], "description": "the command or script that computes it on an artifact; the planner cuts a ticket for one that does not exist yet"}
+        }
+      }
+    },
+    "success_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["text", "experiments"],
+        "additionalProperties": false,
+        "properties": {
+          "text": {"type": "string", "pattern": "\\S"},
+          "experiments": {"type": "array", "items": {"type": "string", "pattern": "^E[1-9][0-9]*$"}}
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "required": ["gpu_hours", "wallclock_hours", "usage_windows", "notes"],
+      "additionalProperties": false,
+      "properties": {
+        "gpu_hours": {"type": ["number", "null"], "minimum": 0},
+        "wallclock_hours": {"type": ["number", "null"], "minimum": 0},
+        "usage_windows": {"type": ["number", "null"], "minimum": 0},
+        "notes": {"type": ["string", "null"]}
+      }
+    },
+    "out_of_scope": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["text", "mitigation"],
+        "additionalProperties": false,
+        "properties": {
+          "text": {"type": "string", "pattern": "\\S"},
+          "mitigation": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "seams": {
+      "type": "array",
+      "description": "the interfaces the tickets meet at, which the planner cuts tickets along and tests at",
+      "items": {
+        "type": "object",
+        "required": ["name", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "pattern": "\\S"},
+          "text": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    }
+  }
+}

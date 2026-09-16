@@ -1,0 +1,19 @@
+{
+  "id": "planner",
+  "scope_kind": "global",
+  "capability_summary": "Drafts the research spec (claims, anti-claims, experiments per claim, baselines, data, metrics, budgets, risks, seams) from DECISIONS.md, POSITION.md, GOAL.json, the dossiers, and the query pack; read-only, returns a structured record.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": [],
+  "sha256": "5fe49abd758a4f9bb42ef338eba91aee2bfff690e4e7fd9df0f2db67e1d8af34",
+  "may_judge": false,
+  "output_schema": "spec",
+  "allowed_tools": ["Read", "Glob", "Grep"],
+  "disallowed_tools": [
+    "Edit", "Write", "NotebookEdit", "Bash", "Agent", "WebFetch", "WebSearch", "mcp__*", "Workflow", "Skill",
+    "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete", "CronList", "Monitor",
+    "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger", "ScheduleWakeup", "TaskCreate",
+    "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "EnterPlanMode", "ExitPlanMode"
+  ]
+}

@@ -84,6 +84,16 @@ decision records the model and the session it came from: a grill question in its
 record, a decision ticket in its `## Answer`, the journal, and a record appended to `DECISIONS.md`,
 a parked proposal in the journal alone.
 
+## The planner is launched by the phase verbs, one protocol per phase
+
+`planner` (ticket 33) is launched by code too (`kinds` empty) and does not judge. Its protocol file,
+`prompts/roles/planner.md`, holds one `## <Phase>` section per phase, and the verb that launches it
+gives the session only its own (`wayline.specify.protocol_for`). `wayline specify` launches it on
+`policy.roles.planner` (`fable`, `xhigh`) with the `spec` schema and the decider's records, reading
+only: code writes what it returns as `research/spec.json`, renders `research/SPEC.md`, runs the
+structural checks, and asks the verifier for the `spec_coverage` verdict, returning the draft to the
+same session once per gate. Ticket 34 gives it its plan protocol, and the tickets it cuts.
+
 ## Why `disallowed_tools` names tools the harness never asked for
 
 `--settings` adds to the owner's user configuration rather than replacing it, so a worker starts
