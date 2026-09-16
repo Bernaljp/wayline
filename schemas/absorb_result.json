@@ -20,6 +20,22 @@
           "missing": {"type": "array", "items": {"type": "string"}, "description": "the obligation items no entry answered"}
         }
       }
+    },
+    "consultations": {
+      "type": "array",
+      "description": "the readers' clarification questions and the consultant's answers; code validates each answer against consultant_answer and records it as any consultation is recorded",
+      "items": {
+        "type": "object",
+        "required": ["chunk", "question", "answer"],
+        "additionalProperties": false,
+        "properties": {
+          "chunk": {"type": "string", "pattern": "\\S", "description": "the chunk whose reader asked"},
+          "question": {"type": "string", "pattern": "\\S"},
+          "answer": {"type": ["object", "null"], "description": "the consultant's answer; null when none was asked or none came back"},
+          "session_id": {"type": ["string", "null"], "description": "the consultant's own session, when it ran as one (the conductor fan-out)"},
+          "reason": {"type": "string", "description": "why answer is null"}
+        }
+      }
     }
   }
 }

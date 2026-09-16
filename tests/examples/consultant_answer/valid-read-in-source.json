@@ -1,0 +1,7 @@
+{
+  "answer": "The dot products are scaled by 1 over the square root of d_k, because large dot products push the softmax into regions with tiny gradients.",
+  "locators": ["source/flat.tex:267", "eq-1"],
+  "confidence": 0.95,
+  "not_in_source": false,
+  "promote_requested": false
+}

@@ -1,16 +1,17 @@
 export const meta = {
   name: 'absorb',
-  description: 'Read one promoted paper in full: one reader per chunk with its obligation list, then one synthesizer over every entry',
+  description: 'Read one promoted paper in full: one reader per chunk with its obligation list, the consultant for any question a reader asks, then one synthesizer over every entry',
   whenToUse: 'Only when a wayline absorb session starts it with the args code wrote; it reads no manifest itself',
   phases: [
     { title: 'Read', detail: 'one reader per chunk, one retry for the items it left out' },
+    { title: 'Consult', detail: 'the consultant answers each clarification question a reader asked, up to the limit' },
     { title: 'Synthesize', detail: 'the dossier prose from every entry, a locator on every sentence' },
   ],
 }
 
-// The schemas are the harness's schemas/dossier_entry_list.json and schemas/dossier_sections.json
-// without their annotations; tests/test_absorb.py holds the copies equal. A script has no file
-// access, so they cannot be read at run time.
+// The schemas are the harness's schemas/dossier_entry_list.json, schemas/dossier_sections.json, and
+// schemas/consultant_answer.json without their annotations; tests/test_absorb.py holds the copies
+// equal. A script has no file access, so they cannot be read at run time.
 const ENTRY_LIST_SCHEMA = /* wayline:schema dossier_entry_list */ {
   "type": "object",
   "required": ["entries"],
@@ -40,7 +41,8 @@ const ENTRY_LIST_SCHEMA = /* wayline:schema dossier_entry_list */ {
           {"properties": {"kind": {"enum": ["section", "equation", "table", "algorithm", "theorem", "appendix"]}}}
         ]
       }
-    }
+    },
+    "question": {"type": "string", "pattern": "\\S", "description": "one clarification question about something the chunk leans on and does not carry (a symbol defined elsewhere, a setting given in another section); the consultant answers it from the whole dossier. Absent when there is none"}
   }
 } /* /wayline:schema */
 
@@ -61,6 +63,19 @@ const SECTIONS_SCHEMA = /* wayline:schema dossier_sections */ {
   }
 } /* /wayline:schema */
 
+const CONSULTANT_ANSWER_SCHEMA = /* wayline:schema consultant_answer */ {
+  "type": "object",
+  "required": ["answer", "locators", "confidence", "not_in_source", "promote_requested"],
+  "additionalProperties": false,
+  "properties": {
+    "answer": {"type": "string", "pattern": "\\S", "description": "the answer in the paper's own terms; when not_in_source is true, what the dossier does and does not say about the question"},
+    "locators": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "where the answer was read, relative to the dossier directory: <file>:<line>, a page of a PDF, or an inventory item id such as eq-3"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "0 is a guess, 1 is read verbatim"},
+    "not_in_source": {"type": "boolean", "description": "true when nothing in the dossier's files answers the question"},
+    "promote_requested": {"type": "boolean", "description": "true when the dossier is below level 2 and a full read of the paper would answer the question"}
+  }
+} /* /wayline:schema */
+
 // The session passes `args` as an object or, as the live M3 session did, as the JSON text of one.
 const input = typeof args === 'string' ? JSON.parse(args) : args
 if (!input || typeof input !== 'object' || !Array.isArray(input.chunks) || input.chunks.length === 0) {
@@ -73,6 +88,8 @@ for (const chunk of input.chunks) {
 }
 const reader = input.reader || {}
 const synthesizer = input.synthesizer || {}
+// Optional: without it a reader's clarification question is returned unanswered.
+const consultant = input.consultant || null
 
 function imageLine(chunk) {
   const images = chunk.images || []
@@ -113,11 +130,12 @@ const read = await pipeline(
   chunk => agent(readerPrompt(chunk), readerOptions(chunk, `read:${chunk.id}`)),
   async (first, chunk) => {
     const missing = missingFrom(chunk, first)
-    if (missing.length === 0) return { chunk, entries: first.entries, retried: false }
+    if (missing.length === 0) return { chunk, entries: first.entries, retried: false, question: first.question || null }
     const again = await agent(retryPrompt(chunk, missing), readerOptions(chunk, `retry:${chunk.id}`))
     const kept = (first && first.entries) || []
     const added = ((again && again.entries) || []).filter(entry => missing.includes(entry.item_id))
-    return { chunk, entries: kept.concat(added), retried: true }
+    const question = (first && first.question) || (again && again.question) || null
+    return { chunk, entries: kept.concat(added), retried: true, question }
   },
 )
 
@@ -135,6 +153,38 @@ read.forEach((outcome, index) => {
 })
 log(`${entries.length} entries from ${input.chunks.length} chunk(s); ${failures.length} chunk(s) came back short`)
 
+// A reader's clarification question goes to the consultant, which answers from the dossier
+// directory; the answers come back to code, which validates and records each one.
+const asked = []
+read.forEach((outcome, index) => {
+  if (outcome && typeof outcome.question === 'string' && outcome.question.trim()) {
+    asked.push({ chunk: input.chunks[index].id, question: outcome.question })
+  }
+})
+const consultations = []
+if (asked.length > 0) {
+  phase('Consult')
+  const limit = consultant ? consultant.max_questions : 0
+  const taken = asked.slice(0, limit)
+  for (const skipped of asked.slice(taken.length)) {
+    const reason = consultant ? `past the ${limit} question(s) one absorb may ask` : 'no consultant was given to this run'
+    consultations.push({ chunk: skipped.chunk, question: skipped.question, answer: null, reason })
+  }
+  const answers = await parallel(taken.map(asking => () => agent(
+    [
+      asking.question,
+      `[wayline: this question is about the paper \`${input.slug}\`. Its dossier is the directory \`${consultant.dossier}\`; answer from the files in it alone, and return the consultant_answer through the structured output.]`,
+    ].join('\n\n'),
+    { agentType: 'consultant', schema: CONSULTANT_ANSWER_SCHEMA, model: consultant.model, effort: consultant.effort, label: `consult:${asking.chunk}`, phase: 'Consult' },
+  )))
+  taken.forEach((asking, index) => {
+    const answer = answers[index] || null
+    const consultation = { chunk: asking.chunk, question: asking.question, answer }
+    if (!answer) consultation.reason = 'the consultant returned nothing'
+    consultations.push(consultation)
+  })
+}
+
 phase('Synthesize')
 let sections = null
 if (entries.length === 0) {
@@ -151,4 +201,4 @@ if (entries.length === 0) {
   if (!sections) failures.push({ chunk: null, reason: 'the synthesizer returned nothing', missing: [] })
 }
 
-return { entries, sections, failures }
+return { entries, sections, failures, consultations }

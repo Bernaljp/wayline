@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from wayline import HARNESS_ROOT, gates, pacing, worker
+from wayline import HARNESS_ROOT, consult, gates, pacing, worker
 from wayline.dossier import LEVEL_2, REFS, SOURCE, DossierError, read_dossier
 from wayline.jsonschema import ValidationError, load_schema, validate
 from wayline.ledger import LedgerError, ledger_for, now_ts
@@ -63,7 +63,7 @@ SESSIONS = "sessions/absorb"     # research/sessions/absorb/<slug>/<n>/
 WORKFLOW = "workflow"
 CONDUCTOR = "conductor"
 FANOUTS = (WORKFLOW, CONDUCTOR)
-CHUNK_MAX_CHARS = 30000          # the fallback when a policy carries no `absorb.chunk_max_chars`
+CHUNK_MAX_CHARS = 20000          # the fallback when a policy carries no `absorb.chunk_max_chars`
 
 ITEM_KEYS = ("sections", "appendices", "equations", "figures", "tables", "algorithms", "theorems")
 HEADING_KEYS = ("sections", "appendices")
@@ -79,7 +79,8 @@ CRITIC = "critic"
 # The session only starts the workflow and waits, so it runs on the cheapest tier; the readers
 # and the synthesizer run on theirs, from `policy.roles`.
 SESSION_MODEL, SESSION_EFFORT = "sonnet", "low"
-ROLE_FALLBACKS = {READER: ("sonnet", "medium"), SYNTHESIZER: ("opus", "high")}
+CONSULTANT = consult.ROLE
+ROLE_FALLBACKS = {READER: ("sonnet", "medium"), SYNTHESIZER: ("opus", "high"), CONSULTANT: consult.TIER}
 NARROW, BROAD = "narrow", "broad"
 READ_TOOLS = ("Read", "Glob", "Grep")
 # `claude -p` stays open while a workflow runs, up to a 10 minute idle ceiling (research-notes 04);
@@ -356,6 +357,12 @@ on it. Every entry has:
 A figure's entry also has `what_it_shows` (read off the image itself, not the caption),
 `supports_cited_claim` (the claim that cites the figure, and whether what it shows supports it),
 and `anything_odd` (axes, scales, error bars, or panels that mislead; empty when nothing does).
+
+When an item leans on something this chunk does not carry (a symbol defined in another section, a
+setting given elsewhere), you may put one clarification question in `question`, beside the
+entries: the consultant answers it from the whole dossier, and the answer is recorded for the
+paper. Write your entries from what you were given either way; leave `question` out when you
+have none.
 """
 
 
@@ -509,14 +516,21 @@ def _settings(context, run_dir):
 
 
 def workflow_args(context):
-    """The `args` the saved workflow takes: the chunks to read, and the tiers the policy gives the two roles."""
+    """The `args` the saved workflow takes: the chunks to read, and the tiers the policy gives its roles.
+
+    `consultant` also carries how many of the readers' questions one absorb may ask, which is
+    `policy.consultant.max_questions_per_ticket`, and the dossier directory it answers from.
+    """
     reader, synthesizer = _tier(context.policy, READER), _tier(context.policy, SYNTHESIZER)
+    consultant = _tier(context.policy, CONSULTANT)
     return {
         "slug": context.slug,
         "manifest": _project_path(context.slug, ABSORB_DIR, MANIFEST),
         "intent": context.intent_path,
         "reader": {"model": reader[0], "effort": reader[1]},
         "synthesizer": {"model": synthesizer[0], "effort": synthesizer[1]},
+        "consultant": {"model": consultant[0], "effort": consultant[1], "dossier": _project_path(context.slug),
+                       "max_questions": consult.question_limit(context.policy)},
         "chunks": [{"id": chunk["id"], "path": chunk["path"], "images": chunk["images"], "obligations": chunk["obligations"]}
                    for chunk in context.manifest["chunks"]],
     }
@@ -560,6 +574,7 @@ def workflow_fanout(context):
         session = worker.read_role(SESSION_ROLE, context.harness_root, context.project)
         readers = worker.read_role(READER, context.harness_root, context.project)
         synthesizers = worker.read_role(SYNTHESIZER, context.harness_root, context.project)
+        consultants = worker.read_role(CONSULTANT, context.harness_root, context.project)
     except worker.RoleError as failure:
         outcome.problems.append(str(failure))
         return outcome
@@ -567,6 +582,7 @@ def workflow_fanout(context):
     agents.update(session.agent_json(SESSION_MODEL, SESSION_EFFORT))
     agents.update(readers.agent_json(*_tier(context.policy, READER)))
     agents.update(synthesizers.agent_json(*_tier(context.policy, SYNTHESIZER)))
+    agents.update(consultants.agent_json(*_tier(context.policy, CONSULTANT)))
     narrow = list(session.allowed_tools)
     for rules, allowed in ((NARROW, narrow), (BROAD, [_broaden(rule) for rule in narrow])):
         run_dir = context.base_dir / ("session-%s" % rules)
@@ -720,7 +736,7 @@ def conductor_fanout(context):
         return outcome
     model, effort = _tier(context.policy, READER)
     image_tools = [tool for tool in readers.disallowed_tools if tool not in READ_TOOLS]
-    entries, failures = [], []
+    entries, failures, asked = [], [], []
     for chunk in context.manifest["chunks"]:
         run_dir = context.base_dir / chunk["id"]
         prompt = (context.project / chunk["path"]).read_text(encoding="utf-8")
@@ -731,7 +747,7 @@ def conductor_fanout(context):
             schema_path=context.harness_root / "schemas" / "dossier_entry_list.json",
             max_minutes=_minutes(context.policy, "small"),
         )
-        got, reason = _read_chunk(context, request, chunk, outcome)
+        got, reason = _read_chunk(context, request, chunk, outcome, asked)
         missing = [item for item in chunk["obligations"] if item not in {entry["item_id"] for entry in got}]
         entries.extend(dict(entry, chunk_id=chunk["id"]) for entry in got)
         if missing or reason:
@@ -761,8 +777,35 @@ def conductor_fanout(context):
                              % ("; ".join(envelope.errors) if envelope is not None else "it could not be launched"), "missing": []})
     else:
         failures.append({"chunk": None, "reason": "no reader returned an entry, so the synthesizer was not launched", "missing": []})
-    outcome.result = {"entries": entries, "sections": sections, "failures": failures}
+    outcome.result = {"entries": entries, "sections": sections, "failures": failures,
+                      "consultations": _consult_readers(context, asked, outcome)}
     return outcome
+
+
+def _consult_readers(context, asked, outcome):
+    """The conductor fan-out's consultant: one session per reader question, up to the policy's limit.
+
+    The answers are returned unrecorded, as the workflow's are, so `absorb_level_2` records both alike.
+    """
+    limit = consult.question_limit(context.policy)
+    consultations = []
+    for index, item in enumerate(asked):
+        if index >= limit:
+            consultations.append(dict(item, answer=None, reason="past the %d question(s) one absorb may ask" % limit))
+            continue
+        try:
+            request = consult.consult_request(context.project, context.slug, item["question"], LEVEL_2,
+                                              harness_root=context.harness_root, policy=context.policy)
+        except (worker.RoleError, OSError) as failure:
+            consultations.append(dict(item, answer=None, reason="the consultant could not be launched: %s" % failure))
+            continue
+        envelope = _launch(context, request, outcome)
+        if envelope is None or not envelope.valid:
+            reason = "; ".join(envelope.errors) if envelope is not None else "it could not be launched"
+            consultations.append(dict(item, answer=None, reason="the consultant returned no answer: %s" % (reason or "no structured output")))
+            continue
+        consultations.append(dict(item, answer=envelope.structured_output, session_id=envelope.session_id))
+    return consultations
 
 
 def _launch(context, request, outcome):
@@ -799,11 +842,22 @@ def _record(envelope, outcome):
     _add_usage(outcome.cost, envelope)
 
 
-def _read_chunk(context, request, chunk, outcome):
-    """One reader and at most one resume: `(entries, reason)`, the reason None when nothing went wrong."""
+def _question(envelope, chunk, asked):
+    """Note the reader's clarification question, once per chunk."""
+    question = (envelope.structured_output or {}).get("question") if envelope is not None and envelope.valid else None
+    if isinstance(question, str) and question.strip() and chunk["id"] not in {item["chunk"] for item in asked}:
+        asked.append({"chunk": chunk["id"], "question": question})
+
+
+def _read_chunk(context, request, chunk, outcome, asked):
+    """One reader and at most one resume: `(entries, reason)`, the reason None when nothing went wrong.
+
+    A clarification question the reader asked, at launch or on the resume, is appended to `asked`.
+    """
     envelope = _launch(context, request, outcome)
     if envelope is None:
         return [], "the reader could not be launched"
+    _question(envelope, chunk, asked)
     got = list(envelope.structured_output["entries"]) if envelope.valid else []
     missing = [item for item in chunk["obligations"] if item not in {entry["item_id"] for entry in got}]
     if envelope.valid and not missing:
@@ -814,6 +868,7 @@ def _read_chunk(context, request, chunk, outcome):
         return got, "the reader returned no valid entries and no session to resume: %s" % "; ".join(envelope.errors)
     message = MISSING_RESUME % ", ".join(missing) if envelope.valid else INVALID_RESUME % ("; ".join(envelope.errors) or "no structured output")
     resumed = _resume(context, request, envelope.session_id, message, outcome)
+    _question(resumed, chunk, asked)
     if resumed is None or not resumed.valid:
         return got, "the reader's resume returned no valid entries: %s" % ("; ".join(resumed.errors) if resumed is not None else "it could not be resumed")
     have = {entry["item_id"] for entry in got}
@@ -1086,6 +1141,8 @@ def absorb_level_2(project, slug, launcher=None, harness_root=None, ledger=None,
     if author_problem:
         problems.append(author_problem)
     ask, chosen, flaws = spot_check_ask(slug, inventory, entries, sections, author, manifest["text_layer"])
+    session_id = outcome.session_ids[-1] if outcome.session_ids else None
+    consulted = _record_consultations(ledger, slug, outcome.result.get("consultations") or [], session_id, problems)
 
     ledger.write_bytes(_refs(slug, ENTRIES), "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries).encode("utf-8"))
     dossier["l2"] = {
@@ -1104,7 +1161,6 @@ def absorb_level_2(project, slug, launcher=None, harness_root=None, ledger=None,
     dossier["updated"] = now_ts()
     ledger.write_json(_refs(slug, "dossier.json"), dossier, schema="dossier")
     ledger.write_markdown(_refs(slug, DOSSIER_MD), render_dossier_markdown(dossier, entries))
-    session_id = outcome.session_ids[-1] if outcome.session_ids else None
     ledger.append_event("absorbed", {
         "slug": slug, "level": LEVEL_2, "session_id": session_id, "chunks": len(manifest["chunks"]),
         "entries": len(entries), "coverage_pass": coverage["pass"],
@@ -1115,8 +1171,31 @@ def absorb_level_2(project, slug, launcher=None, harness_root=None, ledger=None,
         "failures": dossier["l2"]["failures"], "problems": problems,
         "unresolved_locators": dossier["l2"]["unresolved_locators"], "cost": dict(outcome.cost),
         "session_ids": list(outcome.session_ids), "run_file": outcome.run_file, "spot_check": ask,
-        "pass": coverage["pass"] and sections is not None,
+        "consultations": consulted, "pass": coverage["pass"] and sections is not None,
     }
+
+
+def _record_consultations(ledger, slug, consultations, session_id, problems):
+    """Record every answered reader question as `wayline consult` records one; returns how many were.
+
+    The asker is the chunk's reader (`absorb:<chunk>`); the session is the consultant's own when it ran
+    as one, and the absorb session's otherwise, which is where a workflow agent's transcript lives.
+    An unanswered or unusable consultation is a problem of the read, never a failure of its coverage.
+    """
+    recorded = 0
+    for item in consultations:
+        if not isinstance(item, dict) or item.get("answer") is None:
+            reason = item.get("reason") if isinstance(item, dict) else None
+            problems.append("a reader's question went unanswered: %s" % (reason or "no reason given"))
+            continue
+        try:
+            consult.record_exchange(ledger, slug, item["question"], item["answer"], "absorb:%s" % item["chunk"],
+                                    item.get("session_id") or session_id)
+        except (consult.ConsultError, DossierError, LedgerError, ValidationError) as failure:
+            problems.append("the consultant's answer to the reader of %s was not recorded: %s" % (item["chunk"], failure))
+            continue
+        recorded += 1
+    return recorded
 
 
 def take_spot_check(project, slug, harness_root=None, ledger=None, policy=None, fall_back=None):
@@ -1196,6 +1275,8 @@ def _render(report, verdict=None, waits=None):
         "sections   %s" % ("written" if report["sections"] else "MISSING"),
         "cost       %s agent(s), %s token(s), %s ms" % (report["cost"]["agents"], report["cost"]["tokens"], report["cost"]["duration_ms"]),
     ]
+    if report.get("consultations"):
+        lines.append("consulted  %d reader question(s) answered, in qa_log.md" % report["consultations"])
     if verdict is None:
         lines.append("spot-check queued for the %s%s" % (report["spot_check"].role, ": %s" % waits if waits else ""))
     else:

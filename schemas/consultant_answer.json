@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "consultant_answer",
+  "description": "The consultant's answer to one question about one dossier (Implementation Decisions 9, map ticket 41): the answer, where in the dossier it was read, how sure the consultant is, whether the dossier is silent on it, and whether a full read of the paper would answer it. Both entry points return it: `wayline consult`, and an agent() call in a Workflow script. Code validates it again and holds one rule the schema leaves out (a top-level oneOf is not a tool input schema): an answer read in the source names at least one locator.",
+  "type": "object",
+  "required": ["answer", "locators", "confidence", "not_in_source", "promote_requested"],
+  "additionalProperties": false,
+  "properties": {
+    "answer": {"type": "string", "pattern": "\\S", "description": "the answer in the paper's own terms; when not_in_source is true, what the dossier does and does not say about the question"},
+    "locators": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "where the answer was read, relative to the dossier directory: <file>:<line>, a page of a PDF, or an inventory item id such as eq-3"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "0 is a guess, 1 is read verbatim"},
+    "not_in_source": {"type": "boolean", "description": "true when nothing in the dossier's files answers the question"},
+    "promote_requested": {"type": "boolean", "description": "true when the dossier is below level 2 and a full read of the paper would answer the question"}
+  }
+}

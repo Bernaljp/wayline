@@ -2,6 +2,39 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
+## v0.4.0 (2026-09-17)
+
+M3 Dossiers is live: ten references got L0 records, four got L1 skims, and UMAP was promoted as the
+primary paper and read in full. All 81 of its inventory items were covered and all 15 figures
+described, and its code at `release-0.5.12` was verified by installing it and running a test. The
+consultant answered seven questions with locators, one of them a reader's question from inside the
+absorb workflow. One level-1 question promoted a paper, another opened a decision ticket beyond the
+phase's budget, and a sixth question from one ticket was refused. `docs/verification/m3.md` records
+the runs (ticket 26).
+
+- The `consultant` role (read-only, `policy.roles.consultant`, sonnet medium) and the
+  `consultant_answer` schema (`answer`, `locators`, `confidence`, `not_in_source`,
+  `promote_requested`). Code also refuses an answer that says it was read in the source but names
+  no locator.
+- `wayline consult <slug> "<question>" [--json]` (`wayline.consult`) launches it through the
+  launcher. The dossier directory goes in as `--add-dir`, and the asking worker's
+  `TICKET_ACCEPTANCE_FILE` and `TICKET_TOUCHES` are blanked so that its stop guard does not hold the
+  consultant. The ledger appends every exchange to `refs/<slug>/qa_log.md` and journals `consulted`.
+  `promote_requested` is the `consultant_question` trigger of `dossier.promote`. Under
+  `WAYLINE_TICKET`, the question past `policy.consultant.max_questions_per_ticket` is refused before
+  any launch (exit 1).
+- A reader of an L2 absorb may return one clarification `question` beside its entries.
+  `workflows/absorb.js` puts it to the consultant with `agent(question, {agentType: 'consultant',
+  schema})`, the conductor fan-out launches the consultant, and both return `consultations`, which
+  code validates and records the same way. `absorb_result` gains `consultations`, the reader's list
+  schema gains `question`, and the absorb session's `--agents` gains `consultant`.
+- A code dossier's recipe skips a test file that defines no test, and runs a pytest-style test file
+  (one that imports pytest, or sits under a `conftest.py`) with `python -m pytest` after installing
+  pytest into the recipe's venv.
+- `policy.absorb.chunk_max_chars` goes from 30,000 to 20,000, from the M3 measurements; the other
+  OPEN-16 numbers stand.
+- `__version__` is 0.4.0 (it had stayed at 0.2.0 through the v0.3.0 tag).
+
 ## v0.3.0 (2026-09-16)
 
 M2 Hardware is live: an `experiment` ticket's worker wrote a three-member job array and returned
