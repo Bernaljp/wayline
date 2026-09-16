@@ -94,6 +94,28 @@ only: code writes what it returns as `research/spec.json`, renders `research/SPE
 structural checks, and asks the verifier for the `spec_coverage` verdict, returning the draft to the
 same session once per gate. Ticket 34 gives it its plan protocol, and the tickets it cuts.
 
+## The consultant answers one question about one dossier
+
+`consultant` (ticket 26) is launched by code as well (`kinds` empty), on `policy.roles.consultant`
+(`sonnet`, `medium`), read-only, with the `consultant_answer` schema: `answer`, `locators`,
+`confidence`, `not_in_source`, and `promote_requested`. It has two entry points. `wayline consult
+<slug> "<question>"` (`wayline.consult.ask`) launches it from the project root with the question as
+the prompt and `research/refs/<slug>` as `--add-dir`. It is the only form a worker calls, and the
+`coder`, `experimenter`, `analyst`, and `writer` have `Bash(wayline consult *)` for it. The
+request blanks the asking worker's `TICKET_ACCEPTANCE_FILE` and `TICKET_TOUCHES`, which the nested
+launch would otherwise inherit: the stop guard would hold the consultant until the worker's own
+acceptance ran. Inside `workflows/absorb.js` the consultant is an `agent()` call that answers a
+reader's clarification question, and the script returns the answer to code.
+
+Code validates every answer again, including the rule the schema leaves out: an answer read in
+the source names a locator. The ledger then appends the exchange to `refs/<slug>/qa_log.md`, one
+line each, and journals `consulted`. `promote_requested: true` is the `consultant_question`
+trigger of `dossier.promote`, so a question an L1 skim cannot answer promotes the paper inside the
+phase's budget, or opens a decision ticket beyond it. A question asked under `WAYLINE_TICKET` counts
+against that ticket, and the one past `policy.consultant.max_questions_per_ticket` (5) is refused
+before a session starts. One L2 absorb may put as many reader questions to the consultant as one
+ticket may ask.
+
 ## Why `disallowed_tools` names tools the harness never asked for
 
 `--settings` adds to the owner's user configuration rather than replacing it, so a worker starts

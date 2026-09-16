@@ -374,18 +374,63 @@ def data_requirements_of(dest):
 _NOT_A_CHECK = frozenset({"__init__.py", "conftest.py"})
 
 
+def _parsed(path):
+    try:
+        return ast.parse(Path(path).read_text(encoding="utf-8", errors="replace"))
+    except (OSError, SyntaxError, ValueError):
+        return None
+
+
+def _holds_a_test(path):
+    """Whether a file defines a test: a `test*` function, or a `Test*` or `*TestCase` class.
+
+    UMAP's `umap/tests/test_umap.py` is empty at 0.5.12, and the smallest file is not a proof of
+    anything when it holds no test.
+    """
+    tree = _parsed(path)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            return True
+        if isinstance(node, ast.ClassDef):
+            bases = [base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", "") for base in node.bases]
+            if node.name.startswith("Test") or any(name.endswith("TestCase") for name in bases):
+                return True
+    return False
+
+
+def _needs_pytest(path, dest):
+    """Whether a test file is written for pytest: it imports pytest, or a `conftest.py` sits above it."""
+    tree = _parsed(path)
+    for node in ast.walk(tree) if tree is not None else ():
+        names = [alias.name for alias in node.names] if isinstance(node, ast.Import) else \
+            [node.module or ""] if isinstance(node, ast.ImportFrom) else []
+        if any(name == "pytest" or name.startswith("pytest.") or name.startswith("_pytest") for name in names):
+            return True
+    dest = Path(dest).resolve()
+    directory = Path(path).resolve().parent
+    while directory.is_relative_to(dest):
+        if (directory / "conftest.py").is_file():
+            return True
+        if directory == dest:
+            break
+        directory = directory.parent
+    return False
+
+
 def _pick_check(dest, tests, scripts):
     """The smallest test or example, by file size: the "verified" recipe runs the cheapest proof.
 
-    `tests` also carries `conftest.py` and every `__init__.py` under `tests/` (research-notes 06
-    counts the whole directory), neither of which holds a test to run; the recipe skips both and
-    picks the smallest file that might actually contain one.
+    `tests` also carries `conftest.py`, every `__init__.py`, and the data files under `tests/`
+    (research-notes 06 counts the whole directory), none of which holds a test to run; the recipe
+    skips them, and any test file that defines no test, and picks the smallest file that does.
     """
     dest = Path(dest)
     candidates = [
         ((dest / relpath).stat().st_size, relpath, "test")
         for relpath in tests
-        if Path(relpath).name not in _NOT_A_CHECK
+        if relpath.endswith(".py") and Path(relpath).name not in _NOT_A_CHECK and _holds_a_test(dest / relpath)
     ]
     candidates += [((dest / relpath).stat().st_size, relpath, "script") for relpath in scripts if relpath.endswith(".py")]
     if not candidates:
@@ -427,6 +472,7 @@ def run_recipe(url, sha, dest, tests, scripts):
             return _recipe_record(install_command, install.returncode, checked_path, None, None, log), False
         run = _run_check(venv_python, Path(dest), checked_path, kind, work)
         run_command = run["command"]
+        log.extend(run.get("setup") or [])
         log.append(_transcript(run_command, run["result"]))
         verified = install.returncode == 0 and run["result"].returncode == 0
         return _recipe_record(install_command, install.returncode, checked_path, run_command, run["result"].returncode, log), verified
@@ -434,7 +480,31 @@ def run_recipe(url, sha, dest, tests, scripts):
         shutil.rmtree(work, ignore_errors=True)
 
 
+PYTEST_INSTALL = "pip install pytest"
+
+
 def _run_check(venv_python, dest, checked_path, kind, work):
+    """Run the picked file; a pytest-style test runs under pytest, installed into the venv first.
+
+    Most research code tests with pytest and its fixtures, which a plain unittest runner cannot
+    call, so a test that imports pytest or sits under a `conftest.py` gets pytest in the recipe's
+    venv (unless the venv already sees one) and is run as `python -m pytest -q <file>`.
+    """
+    if kind == "test" and _needs_pytest(dest / checked_path, dest):
+        command = "python -m pytest -q -p no:cacheprovider %s" % checked_path
+        setup = []
+        present = subprocess.run([str(venv_python), "-c", "import pytest"], capture_output=True, text=True)
+        if present.returncode != 0:
+            installed = subprocess.run(
+                [sys.executable, "-m", "pip", "--python", str(venv_python), "install", "pytest"], capture_output=True, text=True,
+            )
+            setup.append(_transcript(PYTEST_INSTALL, installed))
+            if installed.returncode != 0:
+                skipped = subprocess.CompletedProcess(command, installed.returncode, "", "not run: pytest could not be installed\n")
+                return {"command": command, "result": skipped, "setup": setup}
+        result = subprocess.run([str(venv_python), "-m", "pytest", "-q", "-p", "no:cacheprovider", str(dest / checked_path)],
+                                capture_output=True, text=True, cwd=str(dest))
+        return {"command": command, "result": result, "setup": setup}
     if kind == "test":
         runner = work / "_wayline_check_runner.py"
         runner.write_text(_MICRO_RUNNER, encoding="utf-8")

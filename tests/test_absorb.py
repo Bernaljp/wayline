@@ -19,7 +19,7 @@ from unittest import mock
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT, SCHEMAS_DIR
 from wayline import gates, worker
 from wayline.absorb import (
-    ARGS_MARKER, CONDUCTOR, WORKFLOW, absorb_level_2, audit_coverage, chunk_inventory, find_run_file,
+    ARGS_MARKER, CONDUCTOR, READING_RULES, WORKFLOW, absorb_level_2, audit_coverage, chunk_inventory, find_run_file,
     spot_check_ask, take_spot_check, text_layer, write_chunks,
 )
 from wayline.dossier import DossierError, absorb_command, read_dossier
@@ -101,7 +101,7 @@ class AbsorbTestCase(unittest.TestCase):
             "created": "2026-09-13T12:00:00.000Z",
         }, schema="dossier")
 
-    def play_workflow(self, drop=(), sections_value=None, session_id="session-1", status="completed"):
+    def play_workflow(self, drop=(), sections_value=None, session_id="session-1", status="completed", consultations=None):
         """A `respond` for the absorb session that does what `absorb.js` would, and writes its run file."""
 
         def respond(request, message):
@@ -110,6 +110,8 @@ class AbsorbTestCase(unittest.TestCase):
             entries = [dict(entry_for(known[item_id]), chunk_id=chunk["id"])
                        for chunk in args["chunks"] for item_id in chunk["obligations"] if item_id not in drop]
             result = {"entries": entries, "sections": sections() if sections_value is None else sections_value, "failures": []}
+            if consultations is not None:
+                result["consultations"] = consultations
             run = self.projects_dir / "-tmp-project" / session_id / "workflows"
             run.mkdir(parents=True, exist_ok=True)
             (run / "wf_0001.json").write_text(json.dumps({
@@ -255,19 +257,20 @@ class WorkflowScriptTest(unittest.TestCase):
         return {key: value for key, value in schema.items() if key not in ANNOTATIONS}
 
     def test_the_embedded_schemas_are_the_schema_files(self):
-        for name in ("dossier_entry_list", "dossier_sections"):
+        for name in ("dossier_entry_list", "dossier_sections", "consultant_answer"):
             with self.subTest(schema=name):
                 self.assertEqual(self.embedded(name), self.schema_file(name))
 
     def test_the_list_s_entry_is_the_dossier_entry_schema(self):
         self.assertEqual(self.schema_file("dossier_entry_list")["properties"]["entries"]["items"], self.schema_file("dossier_entry"))
 
-    def test_the_script_is_the_saved_workflow_absorb_over_the_two_roles(self):
+    def test_the_script_is_the_saved_workflow_absorb_over_its_three_roles(self):
         self.assertTrue(self.script.startswith("export const meta = {\n  name: 'absorb',"))
         self.assertIn("pipeline(", self.script)
         self.assertIn("agentType: 'reader'", self.script)
         self.assertIn("agentType: 'synthesizer'", self.script)
-        self.assertIn("return { entries, sections, failures }", self.script)
+        self.assertIn("agentType: 'consultant', schema: CONSULTANT_ANSWER_SCHEMA", self.script)
+        self.assertIn("return { entries, sections, failures, consultations }", self.script)
         for forbidden in ("Date.now", "Math.random", "new Date()", "require(", "import "):
             self.assertNotIn(forbidden, self.script)
 
@@ -315,10 +318,37 @@ class WorkflowFanoutTest(AbsorbTestCase):
         self.assertIsNone(request.schema_path)
         agents = request.agent_json
         self.assertEqual({name: (agents[name]["model"], agents[name]["effort"]) for name in agents},
-                         {"absorb": ("sonnet", "low"), "reader": ("sonnet", "medium"), "synthesizer": ("opus", "high")})
+                         {"absorb": ("sonnet", "low"), "reader": ("sonnet", "medium"), "synthesizer": ("opus", "high"),
+                          "consultant": ("sonnet", "medium")})
         args = args_from(request.prompt)
         self.assertEqual(args["reader"], {"model": "sonnet", "effort": "medium"})
+        self.assertEqual(args["consultant"], {"model": "sonnet", "effort": "medium", "max_questions": 5,
+                                              "dossier": "research/refs/%s" % SLUG})
         self.assertEqual(sum(len(chunk["obligations"]) for chunk in args["chunks"]), 11)
+
+    def test_a_reader_s_question_answered_in_the_workflow_is_logged_and_journaled(self):
+        answer = {"answer": "x is the input of eq-1.", "locators": ["source/flat.tex:13"], "confidence": 0.9,
+                  "not_in_source": False, "promote_requested": False}
+        consultations = [
+            {"chunk": "c-002", "question": "What is x in eq-2?", "answer": answer},
+            {"chunk": "c-003", "question": "Which unit is the error in?", "answer": None, "reason": "the consultant returned nothing"},
+            {"chunk": "c-004", "question": "Where is y defined?", "answer": dict(answer, locators=[])},
+        ]
+        self.fake.script(respond=self.play_workflow(consultations=consultations), role="absorb")
+        report = self.absorb(fanout=WORKFLOW)
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["consultations"], 1)
+        log = (self.refs / "qa_log.md").read_text(encoding="utf-8")
+        self.assertIn("absorb:c-002", log)
+        self.assertIn("What is x in eq-2?", log)
+        self.assertNotIn("Where is y defined?", log)
+        events, _ = self.ledger.read_events()
+        consulted = [event for event in events if event["event"] == "consulted"]
+        self.assertEqual([event["payload"]["by"] for event in consulted], ["absorb:c-002"])
+        self.assertEqual(consulted[0]["payload"]["session_id"], "session-1")
+        self.assertTrue(any("unanswered: the consultant returned nothing" in problem for problem in report["problems"]))
+        self.assertTrue(any("c-004" in problem and "locator" in problem for problem in report["problems"]))
+        self.assertEqual(read_dossier(self.ledger, SLUG)["l2"]["problems"], report["problems"])
 
     def test_a_missing_item_fails_the_audit_with_the_missing_items(self):
         self.fake.script(respond=self.play_workflow(drop=("eq-2", "tab-1")), role="absorb")
@@ -378,7 +408,7 @@ class WorkflowFanoutTest(AbsorbTestCase):
 class ConductorFanoutTest(AbsorbTestCase):
     """The fallback: one reader launch per chunk and one synthesizer, behind the same function."""
 
-    def reader(self, drop=(), only_missing=False):
+    def reader(self, drop=(), only_missing=False, question=None):
         known = items_by_id()
 
         def respond(request, message):
@@ -386,9 +416,58 @@ class ConductorFanoutTest(AbsorbTestCase):
                 wanted = re.findall(r"([a-z]+-[0-9]+)", message.split(":", 1)[1].split(".", 1)[0])
             else:
                 wanted = OBLIGATION.findall(request.prompt.split("## The obligation list", 1)[1].split("\n## ", 1)[0])
-            return Envelope(structured_output={"entries": [entry_for(known[item]) for item in wanted if item not in drop]})
+            result = {"entries": [entry_for(known[item]) for item in wanted if item not in drop]}
+            if question:
+                result["question"] = question
+            return Envelope(structured_output=result)
 
         return respond
+
+    def test_a_reader_s_question_is_put_to_the_consultant_and_recorded(self):
+        self.fake.script(respond=self.reader(question="What is x in eq-1?"), role="reader")
+        self.script_readers(count=5)
+        self.fake.script(Envelope(structured_output=sections()), role="synthesizer")
+        self.fake.script(Envelope(session_id="consultant-1", structured_output={
+            "answer": "The input.", "locators": ["source/flat.tex:13"], "confidence": 0.8,
+            "not_in_source": False, "promote_requested": False}), role="consultant")
+        self.assertIn("`question`", READING_RULES)
+        report = self.absorb(fanout=CONDUCTOR)
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["consultations"], 1)
+        consultant = [call.request for call in self.fake.calls if call.request.role == "consultant"]
+        self.assertEqual(len(consultant), 1)
+        self.assertTrue(consultant[0].prompt.startswith("What is x in eq-1?"))
+        self.assertEqual([Path(path) for path in consultant[0].add_dirs], [self.refs])
+        events, _ = self.ledger.read_events()
+        consulted = [event for event in events if event["event"] == "consulted"]
+        self.assertEqual((consulted[0]["payload"]["by"], consulted[0]["session_id"]), ("absorb:c-001", "consultant-1"))
+
+    def test_once_the_usage_limit_refuses_the_consultant_no_further_question_is_put_to_it(self):
+        for number in range(2):
+            self.fake.script(respond=self.reader(question="Question %d?" % number), role="reader")
+        self.script_readers(count=4)
+        self.fake.script(Envelope(structured_output=sections()), role="synthesizer")
+        self.fake.script(Envelope(api_error_status=429, is_error=True, exit_code=1, session_id="refused",
+                                  errors=["You've hit your session limit · resets 3:45pm (UTC)"]), role="consultant")
+        report = self.absorb(fanout=CONDUCTOR)
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["consultations"], 0)
+        self.assertEqual(len([call for call in self.fake.calls if call.request.role == "consultant"]), 1)
+        self.assertEqual(len([problem for problem in report["problems"] if "usage limit refused the consultant" in problem]), 2)
+
+    def test_questions_past_the_limit_are_not_put_to_the_consultant(self):
+        (self.project / "harness.json").write_text(json.dumps({"policy": {"consultant": {"max_questions_per_ticket": 1}}}), encoding="utf-8")
+        for number in range(2):
+            self.fake.script(respond=self.reader(question="Question %d?" % number), role="reader")
+        self.script_readers(count=4)
+        self.fake.script(Envelope(structured_output=sections()), role="synthesizer")
+        self.fake.script(Envelope(structured_output={
+            "answer": "Yes.", "locators": ["source/flat.tex:13"], "confidence": 0.8,
+            "not_in_source": False, "promote_requested": False}), role="consultant")
+        report = self.absorb(fanout=CONDUCTOR)
+        self.assertEqual(report["consultations"], 1)
+        self.assertEqual(len([call for call in self.fake.calls if call.request.role == "consultant"]), 1)
+        self.assertTrue(any("past the 1 question(s)" in problem for problem in report["problems"]))
 
     def script_readers(self, count=6, **options):
         for _ in range(count):

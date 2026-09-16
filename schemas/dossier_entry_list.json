@@ -30,6 +30,7 @@
           {"properties": {"kind": {"enum": ["section", "equation", "table", "algorithm", "theorem", "appendix"]}}}
         ]
       }
-    }
+    },
+    "question": {"type": "string", "pattern": "\\S", "description": "one clarification question about something the chunk leans on and does not carry (a symbol defined elsewhere, a setting given in another section); the consultant answers it from the whole dossier. Absent when there is none"}
   }
 }

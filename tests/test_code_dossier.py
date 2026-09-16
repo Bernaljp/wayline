@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tests.paths import FIXTURES_DIR
@@ -24,7 +25,7 @@ from wayline import cli
 from wayline.code_dossier import (
     CodeDossierError, absorb_code, clone_at_sha, code_dossier, configs_of, data_requirements_of,
     detect_language, entry_points_of, git_metadata, parse_code_reference, python_inventory,
-    scripts_of, tests_of,
+    _holds_a_test, _needs_pytest, _pick_check, _run_check, scripts_of, tests_of,
 )
 from wayline.jsonschema import load_schema, validate
 from wayline.ledger import Ledger
@@ -247,6 +248,68 @@ class VerbTest(ProjectTestCase):
         code, _, complaint = self.run_verb("absorb", "--code", "nowhere", "%s@%s" % (REPO_URL, "0" * 40), "--project", str(self.project))
         self.assertEqual(code, 1)
         self.assertIn("wayline absorb --code:", complaint)
+
+
+class CheckPickTest(unittest.TestCase):
+    """Which file the recipe runs, and how: a file with no test is skipped, a pytest file runs under pytest."""
+
+    def setUp(self):
+        self.dest = Path(tempfile.mkdtemp(prefix="wayline-check-test-"))
+        self.addCleanup(shutil.rmtree, self.dest, ignore_errors=True)
+        (self.dest / "pkg" / "tests").mkdir(parents=True)
+
+    def write(self, relpath, text):
+        path = self.dest / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return relpath
+
+    def test_an_empty_test_file_and_a_data_file_are_not_checks(self):
+        empty = self.write("pkg/tests/test_empty.py", "")
+        data = self.write("tests/data.txt", "1")
+        helper = self.write("pkg/tests/test_helpers.py", "VALUE = 1\n")
+        real = self.write("pkg/tests/test_real.py", "def test_one():\n    assert 1 + 1 == 2\n")
+        self.assertEqual(_pick_check(self.dest, [data, empty, helper, real], []), (real, "test"))
+
+    def test_a_test_class_counts_as_a_test(self):
+        self.assertTrue(_holds_a_test(self.dest / self.write("t1.py", "import unittest\nclass Core(unittest.TestCase):\n    pass\n")))
+        self.assertTrue(_holds_a_test(self.dest / self.write("t2.py", "class TestCore:\n    pass\n")))
+        self.assertFalse(_holds_a_test(self.dest / self.write("t3.py", "def helper():\n    pass\n")))
+        self.assertFalse(_holds_a_test(self.dest / self.write("t4.py", "def broken(:\n")))
+
+    def test_a_file_importing_pytest_or_under_a_conftest_is_a_pytest_file(self):
+        self.assertTrue(_needs_pytest(self.dest / self.write("a/test_a.py", "import pytest\n"), self.dest))
+        self.assertTrue(_needs_pytest(self.dest / self.write("b/test_b.py", "from pytest import raises\n"), self.dest))
+        self.write("pkg/conftest.py", "")
+        self.assertTrue(_needs_pytest(self.dest / self.write("pkg/tests/test_c.py", "def test_c(iris):\n    pass\n"), self.dest))
+        self.assertFalse(_needs_pytest(self.dest / self.write("d/test_d.py", "import unittest\n"), self.dest))
+
+    def test_a_pytest_file_gets_pytest_in_the_venv_and_runs_under_it(self):
+        relpath = self.write("pkg/tests/test_p.py", "import pytest\ndef test_p():\n    pass\n")
+        calls = []
+
+        def run(argv, **options):
+            calls.append(argv)
+            missing = argv[1:] == ["-c", "import pytest"]
+            return subprocess.CompletedProcess(argv, 1 if missing else 0, "", "")
+
+        with unittest.mock.patch("wayline.code_dossier.subprocess.run", side_effect=run):
+            outcome = _run_check(Path("/venv/bin/python3"), self.dest, relpath, "test", self.dest)
+        self.assertEqual(outcome["command"], "python -m pytest -q -p no:cacheprovider pkg/tests/test_p.py")
+        self.assertEqual(outcome["result"].returncode, 0)
+        self.assertEqual(calls[1][-4:], ["--python", "/venv/bin/python3", "install", "pytest"])
+        self.assertEqual(calls[2][:4], ["/venv/bin/python3", "-m", "pytest", "-q"])
+        self.assertIn("$ pip install pytest", outcome["setup"][0])
+
+    def test_a_failed_pytest_install_is_the_check_s_failure(self):
+        relpath = self.write("pkg/tests/test_p.py", "import pytest\ndef test_p():\n    pass\n")
+        with unittest.mock.patch("wayline.code_dossier.subprocess.run",
+                                 side_effect=lambda argv, **options: subprocess.CompletedProcess(argv, 1, "", "no network")):
+            outcome = _run_check(Path("/venv/bin/python3"), self.dest, relpath, "test", self.dest)
+        self.assertEqual(outcome["command"], "python -m pytest -q -p no:cacheprovider pkg/tests/test_p.py")
+        self.assertEqual(outcome["result"].returncode, 1)
+        self.assertIn("not run", outcome["result"].stderr)
+        self.assertIn("no network", outcome["setup"][0])
 
 
 if __name__ == "__main__":  # pragma: no cover

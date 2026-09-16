@@ -50,7 +50,7 @@
   "absorb": {
     "l1_max_chars": 40000,
     "l2_per_phase": {"P1": 3, "P3": 2, "P5": 2},
-    "chunk_max_chars": 30000,
+    "chunk_max_chars": 20000,
     "fanout": "workflow",
     "workflow_concurrency": 16
   },
