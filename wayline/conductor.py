@@ -89,14 +89,14 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, decider, decisions, gates, notify, pacing, proposals, replay, schedule, tick, tickets, worker
+from wayline import HARNESS_ROOT, decider, decisions, gates, notify, pacing, proposals, replay, resources, schedule, tick, tickets, worker
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, FEEDBACK, FINDING, INTEGRATED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
+    ACCEPTANCE, CONTROL, FEEDBACK, FINDING, INTEGRATED, JOB_FAILED, JOB_FINISHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
@@ -188,6 +188,10 @@ FALLBACK_LAST_MESSAGE = "The conductor's last message to that session, which thi
 FALLBACK_NOTES = "fallback.json"
 # What `_start_wanted` returns when it started a fresh Opus session in place of one the hold kept waiting on Fable.
 FALLEN_BACK = "fallen_back"
+# What `_act_on` returns for a valid `running` result: its branch is integrated and its jobs left to the poller (ticket 19).
+RUNNING = "running_jobs"
+# How much of a failed job's log the journal and the ticket's failure output carry.
+LOG_TAIL_CHARS = 4000
 REJECTED = (
     "the %s verdict failed: a fresh %s session that did not write this read it and found\n\n%s"
 )
@@ -361,6 +365,8 @@ class WaveResult:
     # a settling wave, and whether it filed anything is what the stall counter reads.
     outcomes: int = 0
     findings: int = 0
+    # The jobs that exited 0 with outputs that parsed: progress, like a finding, for the stall counter (ticket 19).
+    jobs_finished: int = 0
 
     @property
     def touched(self):
@@ -520,6 +526,10 @@ class Conductor:
         self._dropped = []
         self._proposal_cap = {}
         self.resources_free = schedule.everything_free
+        # The job runner of decision 6, made when a wave first has a job to poll or launch, and the machine readings the
+        # free-slot rule places pending jobs by (`resources.read_readings`), which a test replaces with a recorded one.
+        self.jobs_runner = None
+        self.readings = None
         # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
         # its own so a slow channel never holds a wave; a test stands in its own. `notifying` is those threads.
         self.notify = self._notify_in_background
@@ -562,7 +572,10 @@ class Conductor:
             self._take_over(result)
         self._apply_controls(arrived, first)
         self._unpause_at_reset()
+        # Jobs need no model, so they are polled, retried, closed, and launched whatever the pacing says (wave steps 2 and 8).
+        self._poll_jobs(result)
         self._poll(result)
+        self._place_jobs(result)
         self._pace()
         if not self._holds_launches():
             self._decide(result)
@@ -679,7 +692,7 @@ class Conductor:
         """The `wave` event of a settling wave, which is what lets a restart rebuild the stall counter."""
         if result.outcomes:
             self.ledger.append_event(WAVE, {"number": self.number, "outcomes": result.outcomes,
-                                            "progressed": bool(result.done or result.findings)})
+                                            "progressed": bool(result.done or result.findings or result.jobs_finished)})
 
     def _end(self, result):
         """`run_ended`: once a stop has been applied, or once the frontier is empty, nothing runs, and no verdict is queued.
@@ -1261,6 +1274,8 @@ class Conductor:
             return
         self.flight.pop(attempt.id, None)
         result.findings += attempt.findings
+        if outcome not in ("done", "running"):
+            self._cancel_jobs(attempt.id)  # the jobs a failed attempt wrote never run
         {"done": result.done, "running": result.running}.get(outcome, result.failed).append(attempt.id)
 
     def _journal_session(self, attempt):
@@ -1354,6 +1369,348 @@ class Conductor:
             payload["fallback_from"] = attempt.fallback_from
         self.ledger.append_event(TICKET_LAUNCHED, payload, ticket=attempt.id)
 
+    # --- jobs (decision 6, wave step 2; ticket 19) ---
+
+    def _runner(self):
+        """The job runner, made once a wave has a job to poll or launch; its backend is `WAYLINE_JOBS`'s or the machine's."""
+        if self.jobs_runner is None:
+            self.jobs_runner = resources.JobRunner(self.project)
+        return self.jobs_runner
+
+    def _job_records(self):
+        """Every job file under `research/jobs/`, in id order; one that does not read is said and passed over."""
+        records = []
+        for path in sorted((self.ledger.research / "jobs").glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as failure:
+                self.say("  the job file %s does not read: %s" % (path.name, failure))
+                continue
+            if isinstance(record, dict) and record.get("id"):
+                records.append(record)
+        return records
+
+    def _owed_jobs(self):
+        """`{ticket: (attempt, [job ids])}` for every ticket whose latest attempt is owed its jobs (a running result, integrated)."""
+        owed = {}
+        for identifier, known in self.view.tickets.items():
+            attempt = known.latest
+            if attempt is None or attempt.owed != replay.JOBS or known.status != "running":
+                continue
+            result = attempt.sessions[-1].result or {}
+            owed[identifier] = (attempt.number, [str(job) for job in result.get("jobs") or []])
+        return owed
+
+    def _jobs_problem(self, attempt):
+        """Why a `running` result's jobs cannot be left to the poller, or None: each is a pending job file of this ticket."""
+        named = attempt.result.get("jobs") or []
+        if not named:
+            return "the result says running and names no job; a running result lists the job ids `wayline job add` printed"
+        for job in named:
+            try:
+                record = self.ledger.read_json("jobs/%s.json" % job)
+            except (OSError, ValueError):
+                return "the result names job %s, and research/jobs/%s.json does not exist; write it with wayline job add" % (job, job)
+            if record.get("ticket") != attempt.id:
+                return "the result names job %s, which belongs to ticket %s" % (job, record.get("ticket"))
+            if record.get("status") != "pending":
+                return "the result names job %s, which is %s and not pending; a job is launched by the conductor" % (job, record.get("status"))
+        return None
+
+    def _leave_running(self, attempt):
+        """A running result whose branch is on `main`: its jobs wait for the poller, and its worktree goes.
+
+        A job path the worker spelled inside its worktree is spelled in the project instead, since the
+        worktree is removed and the same files are on `main` now.
+        """
+        worktree, jobs = str(attempt.worktree), [str(job) for job in attempt.result.get("jobs") or []]
+        for job in jobs:
+            record = self.ledger.read_json("jobs/%s.json" % job)
+            moved = _moved_out_of(record, worktree, str(self.project))
+            if moved != record:
+                self.ledger.write_json("jobs/%s.json" % job, moved, schema="job")
+                self.say("  job %s named paths in the worktree of ticket %d; they now name the project" % (job, attempt.id))
+        self._write_ticket(attempt, "running", attempt.result)
+        self._remove_worktree(attempt.id)
+        self._tail()
+        self.say("  ticket %d is running %d job(s): %s" % (attempt.id, len(jobs), ", ".join(jobs)))
+
+    def _poll_jobs(self, result):
+        """Wave step 2: every job launched and not concluded is polled, and each one that ended is concluded.
+
+        A job the journal names as launched (or retried) and nothing since is not concluded, whatever
+        its file says: the tick polls jobs too, and writes what it read, and the conclusion (outputs,
+        the ladder, the ticket) is this conductor's alone. Then every owed ticket whose jobs all
+        exited 0 with outputs that parse is done.
+        """
+        concluded = False
+        for record in self._job_records():
+            if (self.view.jobs.get(record["id"]) or {}).get("status") != "running":
+                continue
+            state = self._job_state(record)
+            if state is None or not state.terminal:
+                continue
+            record = self._runner().read(record["id"]) or record
+            # Read again for every job: concluding the one before may have failed its ticket.
+            self._conclude_job(record, state, self._owed_jobs(), result)
+            concluded = True
+        if concluded:
+            self._tail()
+        for identifier, (number, jobs) in sorted(self._owed_jobs().items()):
+            if jobs and all(self._job_done(job) for job in jobs):
+                self._close_jobs(identifier, number, jobs, result)
+
+    def _job_state(self, record):
+        """What the job is now: polled while its file says running, else what the file already recorded."""
+        if record.get("status") == "running":
+            try:
+                return self._runner().poll(resources.handle_for(record))
+            except (resources.JobError, OSError, ValueError) as failure:
+                self.say("  job %s could not be polled: %s" % (record["id"], failure))
+                return None
+        if record.get("status") not in resources.JOB_STATES:
+            return None
+        attempts = record.get("attempts") or [{}]
+        tail = resources.log_tail(record["log"]) if record["status"] in ("oom_gpu", "failed") else None
+        result = attempts[-1].get("result")
+        reason = "wallclock" if result == "timeout" else (
+            "exited %s" % attempts[-1].get("exit_code") if result == "exit-code" else result)
+        return resources.JobState(record["status"], result=result, exit_code=attempts[-1].get("exit_code"),
+                                  reason=reason, log_tail=tail or None)
+
+    def _job_done(self, job):
+        known = self.view.jobs.get(job) or {}
+        return known.get("status") == "exited" and known.get("exit_code") == 0
+
+    def _conclude_job(self, record, state, owed, result):
+        """One job that ended: its outputs checked and manifested, its ladder stepped, or its failure journaled."""
+        job, ticket = record["id"], record["ticket"]
+        mine = ticket in owed and job in owed[ticket][1]
+        result.outcomes += 1
+        if state.name == "exited" and (state.exit_code or 0) == 0:
+            problems = [problem for problem in (self._output_problem(record, output) for output in record.get("expected_outputs") or [])
+                        if problem is not None]
+            self.ledger.append_event(JOB_FINISHED, {"job": job, "exit_code": 0, "seconds": _job_seconds(record),
+                                                    "outputs_ok": not problems}, ticket=ticket, job=job)
+            self._cleanup_job(record)
+            if problems:
+                self._job_failed(record, "its outputs do not parse: %s" % "; ".join(problems), "")
+                if mine:
+                    self._fail_jobs(ticket, owed[ticket], "job %s exited 0 and %s" % (job, "; ".join(problems)), result)
+                return
+            if mine:
+                self._manifest_outputs(record, owed[ticket][0])
+                result.jobs_finished += 1
+            self.say("  job %s (ticket %d) exited 0 in %ss; outputs %s" % (
+                job, ticket, _job_seconds(record), ", ".join(record.get("expected_outputs") or []) or "none expected"))
+            return
+        tail = (state.log_tail or resources.log_tail(record["log"]))[-LOG_TAIL_CHARS:]
+        if state.oom is not None and mine:
+            step = self._retry_step(record, state.oom)
+            if step is not None:
+                self._retry_job(record, state.oom, step)
+                return
+            why = "the %s OOM ladder is exhausted after %d attempt(s)" % (state.oom, len(record.get("attempts") or []))
+        elif state.oom is not None:
+            why = "a %s OOM" % state.oom
+        else:
+            why = state.reason or state.name
+        self._cleanup_job(record)
+        if record.get("status") == "killed" and not mine:
+            return  # cancelled by the harness, which journaled `job_cancelled` then
+        self._job_failed(record, why, tail)
+        if mine:
+            self._fail_jobs(ticket, owed[ticket], "job %s failed: %s" % (job, why), result, tail)
+
+    def _output_problem(self, record, output):
+        """`resources.output_problem`, and one more: an output the manifest cannot name lies outside the project."""
+        problem = resources.output_problem(record["cwd"], output)
+        if problem is not None:
+            return problem
+        path = Path(output) if os.path.isabs(output) else Path(record["cwd"]) / output
+        if not _inside(path, self.project):
+            return "%s lies outside the project, so the manifest cannot name it" % output
+        return None
+
+    def _manifest_outputs(self, record, number):
+        from wayline import provenance  # the provenance module pulls in the gates and the report
+        for output in record.get("expected_outputs") or []:
+            path = Path(output) if os.path.isabs(output) else Path(record["cwd"]) / output
+            relative = os.path.relpath(os.path.realpath(path), os.path.realpath(self.project))
+            provenance.register_artifact(self.ledger, relative, record["id"], "t%d-a%d" % (record["ticket"], number), record["ticket"])
+
+    def _job_failed(self, record, reason, tail):
+        self.ledger.append_event(JOB_FAILED, {"job": record["id"], "reason": reason, "log_tail": tail},
+                                 ticket=record["ticket"], job=record["id"])
+        self.say("  job %s (ticket %d) failed: %s" % (record["id"], record["ticket"], reason))
+
+    def _cleanup_job(self, record):
+        try:
+            self._runner().cleanup(resources.handle_for(record))
+        except (resources.JobError, OSError) as failure:
+            self.say("  job %s could not be cleaned up: %s" % (record["id"], failure))
+
+    def _retry_step(self, record, oom):
+        """The next footprint step after an OOM (decision 6), reading the machine only for a host OOM's doubling."""
+        double = (self.policy.get("jobs") or {}).get("host_oom_first_doubles_memory", True)
+        cap = 0.0
+        if oom == "host" and double and float((record.get("devices") or {}).get("ram_gb") or 0) > 0:
+            others = [other for other in self._job_records() if other["status"] == "running" and other["id"] != record["id"]]
+            try:
+                cap = resources.ram_cap_gb(self._read_readings(), others)
+            except (resources.ResourceError, OSError, ValueError) as failure:
+                self.say("  the free RAM could not be read (%s); job %s steps its ladder instead" % (failure, record["id"]))
+        return resources.next_retry(record, oom, cap, double_first=double)
+
+    def _retry_job(self, record, oom, step):
+        """Relaunch an OOM'd job at once on the devices it just freed, under the next step, and journal `job_retried`."""
+        job, number = record["id"], len(record.get("attempts") or []) + 1
+        self.ledger.append_event(JOB_RETRIED, {"job": job, "attempt": number, "oom": oom, "overrides": step},
+                                 ticket=record["ticket"], job=job)
+        self._cleanup_job(record)
+        # The log is appended to, so the attempt that ran out of memory is moved aside: the OOM rule reads only the last
+        # bytes of the log, and the next attempt's failure must not be read by the signature this one left.
+        log = Path(record["log"])
+        try:
+            log.replace(log.with_name("%s.%d%s" % (log.stem, number - 1, log.suffix)))
+        except OSError:
+            pass  # no log to keep, which the next attempt's tail reads as empty
+        ahead = dict(record, attempts=list(record.get("attempts") or []) + [{"overrides": step}])
+        devices = dict(record["devices"])
+        if resources.RAM_OVERRIDE in step:
+            devices["ram_gb"] = step[resources.RAM_OVERRIDE]
+        self.say("  job %s (ticket %d) ran out of %s memory; retrying it as attempt %d with %s" % (
+            job, record["ticket"], "host" if oom == "host" else "GPU", number, json.dumps(step, sort_keys=True)))
+        self._launch_job(dict(record, devices=devices), resources.effective_overrides(ahead), step,
+                         tuple(devices.get("gpu_indices") or ()))
+
+    def _launch_job(self, record, overrides, step, gpu_indices):
+        """Launch one job file's command under `overrides`; a launch the runner refuses fails the job and its ticket."""
+        spec = resources.spec_from_record(record)
+        argv, environment = resources.apply_overrides(spec.command, spec.env, overrides)
+        spec = replace(spec, command=tuple(argv), env=environment)
+        try:
+            return self._runner().launch(spec, gpu_indices=gpu_indices, overrides=step)
+        except (resources.JobError, OSError, ValueError) as failure:
+            self._job_failed(record, "the launch was refused: %s" % failure, "")
+            self._tail()
+            owed = self._owed_jobs()
+            if record["ticket"] in owed:
+                self._fail_jobs(record["ticket"], owed[record["ticket"]], "job %s could not be launched: %s"
+                                % (record["id"], failure), None)
+            return None
+
+    def _fail_jobs(self, identifier, owed, reason, result, tail=""):
+        """Fail an experiment ticket from its jobs: the other jobs are cancelled, and the log tail is the failure output."""
+        number, jobs = owed
+        for job in jobs:
+            record = self._runner().read(job)
+            if record is not None and record.get("status") in resources.LIVE_JOB_STATUSES:
+                self._runner().kill(resources.handle_for(record))
+        ticket, body = self._ticket(identifier)
+        note = [reason] + (["", "The end of the job's log:", "", "```", tail.rstrip("\n"), "```"] if tail else [])
+        self.ledger.append_event(TICKET_FAILED, {"ticket": identifier, "attempt": number, "reason": reason, "next": "resume"},
+                                 ticket=identifier)
+        self._set_status(identifier, "failed", note)
+        self._tail()
+        if result is not None:
+            result.failed.append(identifier)
+        self.say("  ticket %d failed: %s (next: resume)" % (identifier, reason))
+
+    def _close_jobs(self, identifier, number, jobs, result):
+        """An experiment ticket whose jobs all exited 0 with their outputs manifested: done, and its verdicts queued."""
+        ticket, body = self._ticket(identifier)
+        known = self.view.tickets[identifier].latest
+        attempt = _Attempt(ticket, body, number, self._worktree(identifier))
+        attempt.difficulty = ticket.get("pinned_difficulty") or ticket["difficulty"]
+        attempt.tier = Tier(model=known.model, effort=known.effort)
+        attempt.commit = self.view.integrated.get(identifier)
+        self._set_status(identifier, "done", ["Every job exited 0 and its outputs parsed: %s." % ", ".join(jobs)])
+        self.ledger.append_event(TICKET_DONE, {"ticket": identifier}, ticket=identifier)
+        self._tail()
+        if known.model:
+            self._queue_verdicts(attempt)
+        result.done.append(identifier)
+        self.say("  ticket %d done: its %d job(s) exited 0 and their outputs are in the manifest" % (identifier, len(jobs)))
+
+    def _place_jobs(self, result):
+        """Launch as many pending jobs of the owed tickets as the free-slot rule places; journal why the others wait."""
+        owed = self._owed_jobs()
+        wanted = {job for _, jobs in owed.values() for job in jobs}
+        if not wanted:
+            return
+        records = self._job_records()
+        pending = [record for record in records if record["id"] in wanted and record.get("status") == "pending"]
+        if not pending:
+            return
+        running = [record for record in records if record.get("status") == "running"]
+        try:
+            readings = self._read_readings()
+        except (resources.ResourceError, OSError, ValueError) as failure:
+            self.say("  the machine could not be read (%s); %d job(s) wait" % (failure, len(pending)))
+            return
+        requests = {}
+        for record in pending:
+            ticket, _ = self._ticket(record["ticket"])
+            requests[record["id"]] = resources.job_request(record, ticket.get("resources"))
+        jobs_policy = self.policy.get("jobs") or {}
+        placements, waiting = resources.place_jobs(
+            pending, running, readings, requests,
+            util_threshold=jobs_policy.get("gpu_util_free_below", resources.DEFAULT_GPU_UTIL_FREE_BELOW))
+        by_id = {record["id"]: record for record in pending}
+        for job, reason in sorted(waiting.items()):
+            never = resources.never_fits(requests[job], readings)
+            if never is not None and self._is_owed(by_id[job]):
+                waiting.pop(job)
+                self._runner().write(dict(self._runner().read(job) or by_id[job], status="failed"))
+                self._job_failed(by_id[job], never, "")
+                self._tail()
+                self._fail_jobs(by_id[job]["ticket"], self._owed_jobs()[by_id[job]["ticket"]],
+                                "job %s can never be placed: %s" % (job, never), result)
+        for placement in placements:
+            current = self._runner().read(placement.job)
+            if current is None or current.get("status") != "pending" or not self._is_owed(current):
+                continue  # its ticket failed a moment ago, and the job was cancelled with it
+            record = dict(by_id[placement.job], devices={
+                "gpu_uuids": list(placement.gpu_uuids), "gpu_indices": list(placement.gpu_indices),
+                "cores": list(placement.cores), "ram_gb": placement.ram_gb})
+            if self._launch_job(record, resources.effective_overrides(record), {}, placement.gpu_indices) is not None:
+                self.say("  job %s (ticket %d) launched on %s, cores %s" % (
+                    placement.job, record["ticket"], "GPU %s" % ",".join(map(str, placement.gpu_indices)) if placement.gpu_indices else "no GPU",
+                    resources._range_text(placement.cores)))
+        for job, reason in sorted(waiting.items()):
+            if job not in self._owed_ids():
+                continue
+            if _waiting_kind((self.view.jobs.get(job) or {}).get("waiting")) == _waiting_kind(reason):
+                continue  # the same wait, whatever the load or the free RAM reads this wave
+            self.ledger.append_event(JOB_WAITING, {"job": job, "ticket": by_id[job]["ticket"], "reason": reason},
+                                     ticket=by_id[job]["ticket"], job=job)
+            self.say("  job %s (ticket %d) waits: %s" % (job, by_id[job]["ticket"], reason))
+        self._tail()
+
+    def _owed_ids(self):
+        return {job for _, jobs in self._owed_jobs().values() for job in jobs}
+
+    def _is_owed(self, record):
+        """Whether a job file belongs to a ticket still owed its jobs, as the view says now."""
+        owed = self._owed_jobs().get(record.get("ticket"))
+        return owed is not None and record.get("id") in owed[1]
+
+    def _read_readings(self):
+        """The machine as the free-slot rule reads it: `self.readings()` when a test set one, else `resources.read_readings`."""
+        if self.readings is not None:
+            return self.readings()
+        jobs_policy = self.policy.get("jobs") or {}
+        return resources.read_readings(read_harness(self.project),
+                                       gpu_util_samples=jobs_policy.get("gpu_util_samples", resources.DEFAULT_GPU_UTIL_SAMPLES))
+
+    def _cancel_jobs(self, identifier):
+        """End every job of a cancelled or rerun ticket that is still on the machine or waiting to be."""
+        for record in self._job_records():
+            if record.get("ticket") == identifier and record.get("status") in resources.LIVE_JOB_STATUSES:
+                self._runner().kill(resources.handle_for(record))
+                self.say("  job %s of ticket %d cancelled" % (record["id"], identifier))
+
     # --- the worker outcome (BRIEF 9.1) ---
 
     def _advance(self, attempt):
@@ -1388,7 +1745,7 @@ class Conductor:
                     return "failed"
                 return self._want_resume(attempt, INVALID_RESULT, RESUME_INVALID % problem)
             carried = self._act_on(attempt)
-            if carried != "done":
+            if carried not in ("done", RUNNING):
                 return carried
             record = self._accept(attempt, "worktree", attempt.worktree)
             if not record["pass"]:
@@ -1398,9 +1755,18 @@ class Conductor:
     def _finish(self, attempt):
         """The branch's commits integrated and the ticket closed: `done`, `failed`, or `session` while the integrator waits."""
         self._stop_integrator(attempt)
+        running = attempt.result.get("status") == "running"
+        if running:
+            problem = self._jobs_problem(attempt)
+            if problem is not None:
+                self._fail(attempt, problem, self._next_step(attempt))
+                return "failed"
         if not self._committed(attempt):
             return "failed"
         outcome = self._integrate(attempt)
+        if outcome == "done" and running:
+            self._leave_running(attempt)
+            return "running"
         if outcome == "done":
             self._close(attempt)
         return outcome
@@ -1418,12 +1784,15 @@ class Conductor:
 
     def _journal_result(self, attempt):
         envelope = attempt.envelope
-        self.ledger.append_event(TICKET_RESULT, {
+        payload = {
             "ticket": attempt.id, "attempt": attempt.number, "session_id": attempt.session_id,
             "status": attempt.result.get("status"), "turns": envelope.num_turns,
             "duration_ms": envelope.duration_ms, "usage": envelope.usage,
             "permission_denials": envelope.permission_denials, "valid": self._invalid(attempt) is None,
-        }, ticket=attempt.id, session_id=attempt.session_id)
+        }
+        if attempt.result.get("status") == "running":
+            payload["jobs"] = [str(job) for job in attempt.result.get("jobs") or []]
+        self.ledger.append_event(TICKET_RESULT, payload, ticket=attempt.id, session_id=attempt.session_id)
 
     def _want_resume(self, attempt, stage, message):
         """Spend a gate's one resume (BRIEF 9.1): now, or as soon as the run may start model work."""
@@ -1604,12 +1973,15 @@ class Conductor:
             return "done"
         summary = (attempt.result.get("summary") or "").strip()
         if status == "running":
-            # Decision 5: a running result records its job ids and leaves the ticket running for
-            # the poller. Until ticket 17 builds one, this run simply has nothing left to advance.
-            self._write_ticket(attempt, "running", attempt.result)
-            self.say("  ticket %d left job(s) running (%s); the poller arrives with ticket 17"
-                     % (attempt.id, ", ".join(attempt.result.get("jobs") or []) or "none named"))
-            return "running"
+            # Decision 5: a running result names its jobs, and its branch is integrated like a done one's before
+            # they launch, so the jobs run the code on `main`; the job poller then closes the ticket (ticket 19).
+            problem = self._jobs_problem(attempt)
+            if problem is None:
+                return RUNNING
+            if attempt.stage in (INVALID_RESULT, TIMEOUT):
+                self._fail(attempt, "the result was still unusable after one resume: %s" % problem, "tier_up")
+                return "failed"
+            return self._want_resume(attempt, INVALID_RESULT, RESUME_INVALID % problem)
         if status == "failed":
             self._fail(attempt, summary or "the worker reported a failure and left no summary",
                        self._next_step(attempt))
@@ -2014,6 +2386,7 @@ class Conductor:
         if attempt is not None:
             self._terminate(attempt)
             self.flight.pop(identifier, None)
+        self._cancel_jobs(identifier)
         if command == "cancel":
             self.ledger.append_event(TICKET_CANCELLED, {"ticket": identifier, "by": by}, ticket=identifier)
             self._set_status(identifier, "parked")
@@ -2314,8 +2687,19 @@ class Conductor:
     # --- closing the ticket ---
 
     def _close(self, attempt):
-        """The findings, the status, `ticket_done`, and the worktree the ticket no longer needs."""
+        """The findings, the status, `ticket_done`, and the worktree the ticket no longer needs.
+
+        A finding's provenance must resolve in the manifest (decision 6): a cited file on `main` that the
+        manifest does not name yet is registered for this attempt, and a finding citing nothing that is
+        either is refused, said, and noted on the ticket, without failing the work that filed it.
+        """
+        refused = []
         for index, finding in enumerate(attempt.result.get("findings") or [], start=1):
+            problem = self._unresolved(attempt, finding["provenance"])
+            if problem is not None:
+                refused.append("A finding was refused: %s (%s)" % (problem, finding["text"]))
+                self.say("  ticket %d: a finding was refused: %s" % (attempt.id, problem))
+                continue
             record = {
                 "id": "t%d-a%d-f%d" % (attempt.id, attempt.number, index),
                 "ticket": attempt.id,
@@ -2328,11 +2712,27 @@ class Conductor:
             self.ledger.append_record(FINDINGS, record)
             self.ledger.append_event(FINDING, record, ticket=attempt.id)
             attempt.findings += 1
+        if refused:
+            attempt.body = tickets.with_result_note(attempt.body, refused)
         self._write_ticket(attempt, "done", attempt.result)
         self.ledger.append_event(TICKET_DONE, {"ticket": attempt.id}, ticket=attempt.id)
         self._queue_verdicts(attempt)
         self._remove_worktree(attempt.id)
         self.say("  ticket %d done" % attempt.id)
+
+    def _unresolved(self, attempt, provenance):
+        """Why a finding's `<path>#<locator>` does not resolve in the manifest, registering a cited file on `main`; None when it does."""
+        from wayline import provenance as provenance_module  # the provenance module pulls in the gates and the report
+        artifact, sep, locator = str(provenance).partition("#")
+        if not sep or not artifact or not locator:
+            return "provenance %r is not <path>#<locator>" % provenance
+        if artifact in provenance_module.manifest_paths(provenance_module.read_manifest(self.ledger)):
+            return None
+        path = self.project / artifact
+        if Path(artifact).is_absolute() or ".." in Path(artifact).parts or not _inside(path, self.project) or not path.is_file():
+            return "provenance %r cites %s, which is neither in manifest.json nor a file in the project" % (provenance, artifact)
+        provenance_module.register_artifact(self.ledger, artifact, None, "t%d-a%d" % (attempt.id, attempt.number), attempt.id)
+        return None
 
     # --- the decider (decision 10; ticket 31) ---
 
@@ -2734,6 +3134,37 @@ class Conductor:
 # --- the resume message and the touch set ---------------------------------------------------
 
 
+def _job_seconds(record):
+    """How long the job's last attempt ran, from its two timestamps; 0 when either is missing."""
+    attempts = record.get("attempts") or [{}]
+    started, ended = _parse_ts(attempts[-1].get("started_at")), _parse_ts(attempts[-1].get("ended_at"))
+    if started is None or ended is None:
+        return 0
+    return max(0, int(round((ended - started).total_seconds())))
+
+
+def _waiting_kind(reason):
+    """What a wait is for, without the readings in its text: `needs 4 core(s)` of `needs 4 core(s) and the load is 7.5 ...`."""
+    return None if reason is None else reason.split(" and ")[0]
+
+
+def _inside(path, root):
+    """Whether `path`, symlinks resolved, lies under `root`."""
+    real, base = os.path.realpath(path), os.path.realpath(root)
+    return real == base or real.startswith(base + os.sep)
+
+
+def _moved_out_of(value, old, new):
+    """`value` with every string that names `old` or a path under it naming the same path under `new` instead."""
+    if isinstance(value, dict):
+        return {key: _moved_out_of(item, old, new) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_moved_out_of(item, old, new) for item in value]
+    if isinstance(value, str) and (value == old or value.startswith(old + os.sep)):
+        return new + value[len(old):]
+    return value
+
+
 def _session_started(run_dir):
     """When the session in `run_dir` started, as the launcher recorded it in `env.json`, or None."""
     try:
@@ -2885,8 +3316,9 @@ def run_command(args):
         # neither the frontier nor the running set and nothing else here would mention it.
         print("ticket(s) %s were done and failed their quality verdict; the journal carries the findings"
               % ", ".join(str(identifier) for identifier in rejected))
+    running = [identifier for identifier in running if identifier not in done and identifier not in failed]
     if running:
-        print("ticket(s) %s left jobs running; nothing here can advance them until the job poller lands"
+        print("ticket(s) %s still have jobs running; the next run polls them"
               % ", ".join(str(identifier) for identifier in running))
     return 1 if failed or rejected else 0
 

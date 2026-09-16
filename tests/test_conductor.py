@@ -18,8 +18,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
+from tests import machine
 from tests.projects import ProjectTestCase
-from wayline import conductor, project, tickets, worker
+from wayline import conductor, project, resources, tickets, worker
 from wayline.conductor import Conductor, ConductorError, WaveResult
 from wayline.ledger import Ledger
 from wayline.worker import Envelope, Patch
@@ -129,6 +130,7 @@ class ConductorCase(ProjectTestCase):
             for envelope, applied in scripted:
                 fake.script(envelope, patch=applied)
             self.conductor = Conductor(self.project, out=io.StringIO())
+            self.conductor.readings = machine.recorded
             results = drive(self.conductor, waves)
             self.calls = list(fake.calls)  # the fake is reset when the block ends
         return results
@@ -145,7 +147,7 @@ class WholePathTest(ConductorCase):
         self.assertEqual(self.sequence(), [
             "ticket_launched", "ticket_session", "ticket_result",
             "acceptance", "acceptance", "acceptance",
-            "integrated", "finding", "ticket_done", "wave", "run_ended",
+            "integrated", "manifest", "finding", "ticket_done", "wave", "run_ended",
         ])
 
     def test_the_acceptance_ran_in_all_three_places_and_passed(self):
@@ -417,16 +419,31 @@ class ResultStatusTest(ConductorCase):
         self.assertEqual(self.payload("ticket_needs_human")["question"], "which split is held out?")
         self.assertEqual(self.ticket()["status"], "needs_human")
 
-    def test_a_running_result_records_its_jobs_and_leaves_the_ticket_running(self):
-        """Decision 5: a running result records the job ids and leaves the ticket for the poller."""
+    def test_a_running_result_is_integrated_and_leaves_the_ticket_running_for_its_jobs(self):
+        """Decision 5: a running result records the job ids, its branch reaches main, and the poller takes the ticket."""
+        resources.add_jobs(self.project, {"command": ["/bin/true"]}, ticket=1, backend="fake")
         envelope = done()
-        envelope.structured_output.update({"status": "running", "jobs": ["j-0001"]})
-        result = combined(self.conduct((envelope, None)))
+        envelope.structured_output.update({"status": "running", "jobs": ["t1-1"]})
+        with resources.use_fake_jobs() as jobs:
+            jobs.script(["running"], job_id="t1-1")
+            result = combined(self.conduct((envelope, patch())))
         self.assertEqual(self.ticket()["status"], "running")
         self.assertEqual((result.running, result.failed, result.done), ([1], [], []))
         self.assertFalse(result.ended, "a ticket is still running, so the run is not over")
-        self.assertNotIn("acceptance", self.sequence())
-        self.assertIn("Jobs: `j-0001`", self.body())
+        self.assertIn("integrated", self.sequence())
+        self.assertEqual(self.payload("ticket_result")["jobs"], ["t1-1"])
+        self.assertEqual(self.payload("job_launched")["attempt"], 1)
+        self.assertFalse(self.worktree().exists())
+        self.assertIn("Jobs: `t1-1`", self.body())
+
+    def test_a_running_result_naming_no_job_file_is_resumed_once_with_the_reason(self):
+        envelope = done()
+        envelope.structured_output.update({"status": "running", "jobs": ["j-0001"]})
+        self.conduct((envelope, patch()), (envelope, None))
+        resumed = self.events("ticket_resumed")
+        self.assertEqual([event["payload"]["reason"] for event in resumed], ["invalid_result"])
+        self.assertIn("research/jobs/j-0001.json does not exist", self.calls[1].message)
+        self.assertEqual(self.ticket()["status"], "failed")
 
     def test_what_no_ticket_reads_yet_is_written_into_the_ticket_rather_than_dropped(self):
         self.conduct((done(
@@ -510,8 +527,9 @@ class RunLoopTest(ConductorCase):
     def conduct_run(self, *scripted, **options):
         with worker.use_fake() as fake:
             for envelope in scripted:
-                fake.script(envelope, patch=patch() if envelope.structured_output.get("status") == "done" else None)
+                fake.script(envelope, patch=patch() if envelope.structured_output.get("status") in ("done", "running") else None)
             conductor = Conductor(self.project, out=io.StringIO())
+            conductor.readings = machine.recorded
             return conductor.run(wait=lambda seconds: conductor.settle(), **options)
 
     def test_the_run_journals_its_start_and_stops_when_the_frontier_empties(self):
@@ -526,9 +544,12 @@ class RunLoopTest(ConductorCase):
 
     def test_a_run_with_nothing_it_can_advance_keeps_polling_rather_than_ending(self):
         """A running ticket holds the run open: the job poller, the tick, or a control event may yet move it."""
+        resources.add_jobs(self.project, {"command": ["/bin/true"]}, ticket=1, backend="fake")
         envelope = done()
-        envelope.structured_output.update({"status": "running", "jobs": ["j-0001"]})
-        waves = self.conduct_run(envelope, max_waves=4)
+        envelope.structured_output.update({"status": "running", "jobs": ["t1-1"]})
+        with resources.use_fake_jobs() as jobs:
+            jobs.script(["running"], job_id="t1-1")
+            waves = self.conduct_run(envelope, max_waves=4)
         self.assertEqual(len(waves), 4)
         self.assertFalse(waves[-1].touched)
         self.assertFalse(waves[-1].ended)

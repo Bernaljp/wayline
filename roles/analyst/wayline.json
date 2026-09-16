@@ -1,0 +1,26 @@
+{
+  "id": "analyst",
+  "scope_kind": "global",
+  "capability_summary": "Analyses the manifested results of finished experiments and files findings whose provenance the manifest resolves.",
+  "applicability_tags": {"kinds": ["analysis"], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "f32402feb00ebe291e1808baec563e025595dfb49757d7db33596dfcea5f2331",
+  "may_judge": false,
+  "output_schema": "result",
+  "allowed_tools": [
+    "Read", "Edit", "Write", "Glob", "Grep",
+    "Bash(python *)", "Bash(python3 *)",
+    "Bash(git add *)", "Bash(git commit *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)",
+    "Bash(ls *)", "Bash(cat *)",
+    "Bash(wayline accept*)", "Bash(wayline consult *)"
+  ],
+  "disallowed_tools": [
+    "WebFetch", "WebSearch", "NotebookEdit",
+    "mcp__*", "Workflow", "Skill", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "Bash(wayline job add*)"
+  ]
+}

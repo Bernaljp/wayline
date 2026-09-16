@@ -17,7 +17,7 @@ from typing import Optional
 
 from wayline.ledger import (
     CONTROL, DECISION, FEEDBACK, FINDING, INTEGRATED, JOB_CANCELLED, JOB_FAILED, JOB_FINISHED,
-    JOB_LAUNCHED, JOB_RETRIED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, STALL, SWITCHED,
+    JOB_LAUNCHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, STALL, SWITCHED,
     TICKET_ACCEPTED, TICKET_BLOCKED, TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED,
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
     UNPAUSED, VERDICT, WAVE,
@@ -69,6 +69,7 @@ JOB_STATUS_AFTER = {
     JOB_FINISHED: "exited",
     JOB_FAILED: "failed",
     JOB_CANCELLED: "cancelled",
+    JOB_WAITING: "pending",
 }
 
 
@@ -108,6 +109,8 @@ class Attempt:
     sessions: list = field(default_factory=list)
     stage: str = "launch"
     spent: set = field(default_factory=set)
+    # Whether `integrated` named this attempt's branch: a `running` result owes its jobs only after it.
+    integrated: bool = False
     ended: Optional[str] = None
 
     @property
@@ -119,7 +122,8 @@ class Attempt:
         if latest is None or latest.result is None:
             return SESSION
         if latest.result.get("status") == "running" and latest.result.get("valid"):
-            return JOBS
+            # A `running` result is integrated before its jobs launch (ticket 19): until then it is still carried.
+            return JOBS if self.integrated else RESULT
         return RESULT
 
 
@@ -318,6 +322,9 @@ class View:
             self.findings.add(payload["id"])
         elif name == INTEGRATED and identifier is not None:
             self.integrated[identifier] = payload.get("commit")
+            ticket = self.tickets.get(identifier)
+            if ticket is not None and ticket.latest is not None and not ticket.latest.ended:
+                ticket.latest.integrated = True
         elif name in JOB_STATUS_AFTER:
             self._job(name, payload, event)
         return self
@@ -379,6 +386,10 @@ class View:
             record["attempt"] = payload["attempt"]
         if name == JOB_FINISHED:
             record["exit_code"] = _int(payload.get("exit_code"))
+        if name == JOB_WAITING:
+            record["waiting"] = payload.get("reason")
+        else:
+            record.pop("waiting", None)
 
     def _move_asks(self, standing, stands, ts):
         """Move the asks about a standing hold to the reset a later `paused` gives it, while that hold's reset is still ahead."""

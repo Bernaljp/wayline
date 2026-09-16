@@ -26,4 +26,4 @@ bin/wayline status --project /tmp/one-ticket
 What to look for afterwards: `hello.txt` on `main`, `git -C /tmp/one-ticket log --oneline` showing
 the worker's commit under a `ledger: wave 1` commit, an empty `.worktrees/`, and a journal that
 runs `ticket_launched`, `ticket_session`, `ticket_result`, three `acceptance` events,
-`integrated`, `finding`, `ticket_done`, `run_ended`.
+`integrated`, `manifest` (the cited file registered), `finding`, `ticket_done`, `run_ended`.

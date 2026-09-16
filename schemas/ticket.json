@@ -64,8 +64,8 @@
       "description": "experiment tickets only: the footprint ladders of Implementation Decisions 6",
       "additionalProperties": false,
       "properties": {
-        "host_oom": {"type": "array", "items": {"type": "object"}},
-        "gpu_oom": {"type": "array", "items": {"type": "object"}}
+        "host_oom": {"type": "array", "items": {"type": ["object", "string"], "description": "an override object, or in a ticket file (scalar lists only) the same step spelled \"--batch-size=16 NAME=value\""}},
+        "gpu_oom": {"type": "array", "items": {"type": ["object", "string"], "description": "an override object, or in a ticket file (scalar lists only) the same step spelled \"--batch-size=16 NAME=value\""}}
       }
     }
   },
