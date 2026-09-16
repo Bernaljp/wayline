@@ -36,7 +36,6 @@ owner's user manager; `use_fake_systemd()` stands in for the manager and the two
 """
 
 import argparse
-import csv
 import fcntl
 import getpass
 import json
@@ -59,7 +58,7 @@ from wayline.project import (
     ProjectError, ask_falls_back_at, consent_for, falls_back_now, home, is_project, journal_written_answers, policy_for, read_active, read_harness,
     read_jobs,
 )
-from wayline.resources import LIVE_JOB_STATUSES
+from wayline.resources import LIVE_JOB_STATUSES, output_problem
 from wayline.schedule import awaits_owner
 from wayline.tickets import DECISION as DECISION_KIND
 from wayline.tickets import SATISFIED, frontier, is_open_decision, next_id, read_tickets, refresh_graph, write_ticket
@@ -990,24 +989,6 @@ def due_checks(project):
                     if problem is not None]
         checked.append({"job": job["id"], "ticket": job["ticket"], "outputs_ok": not problems, "problems": problems})
     return checked
-
-
-def output_problem(cwd, output):
-    """What is wrong with one expected output: missing, or not parsing as the JSON or CSV its name says. None when nothing is."""
-    path = Path(output) if os.path.isabs(output) else Path(cwd) / output
-    if not path.is_file():
-        return "%s is missing" % output
-    try:
-        if path.suffix.lower() == ".json":
-            with open(path, encoding="utf-8") as handle:
-                json.load(handle)
-        elif path.suffix.lower() == ".csv":
-            with open(path, newline="", encoding="utf-8") as handle:
-                if next(csv.reader(handle), None) is None:
-                    return "%s is an empty CSV" % output
-    except (OSError, ValueError, csv.Error) as failure:
-        return "%s does not parse: %s" % (output, failure)
-    return None
 
 
 def report_due(events):

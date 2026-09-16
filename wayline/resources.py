@@ -15,6 +15,7 @@ cannot read them back after the session that launched it is gone.
 """
 
 import argparse
+import csv
 import json
 import os
 import shlex
@@ -43,6 +44,8 @@ __all__ = [
     "log_tail", "gpu_oom_in", "resolve_gpu_indices", "job_record", "spec_from_record", "handle_for",
     "SystemdRun", "Setsid", "FakeJobs", "SYSTEMD_RUN", "SETSID", "FAKE_JOBS",
     "user_manager_reachable", "jobs_backend", "use_fake_jobs", "JobRunner", "add_jobs", "job_command",
+    "output_problem", "read_readings", "Placement", "job_request", "place_jobs", "ram_cap_gb", "apply_overrides",
+    "ladder_position", "next_retry", "effective_overrides", "RAM_OVERRIDE", "parse_step",
 ]
 
 # --- paths and commands, overridable by tests -------------------------------------------------
@@ -59,6 +62,7 @@ COMPUTE_APPS_FIELDS = "pid,used_memory"
 DEFAULT_GPU_UTIL_FREE_BELOW = 20
 DEFAULT_GPU_UTIL_SAMPLES = 2
 DEFAULT_GPU_SAMPLE_INTERVAL_S = 0.2
+GIB = 1024 ** 3
 
 # The OOM signature table (Implementation Decisions 6): a GPU OOM's last 64 KB of log holds one of
 # these; a plain `Result=oom-kill` with an empty log is a host RAM kill instead.
@@ -330,6 +334,16 @@ class CoreAllocator:
         for core in cores:
             self._free.remove(core)
         self._held[job_id] = tuple(sorted(cores))
+
+    def take(self, job_id, cores):
+        """Hand a job the exact cores it names, or None when any of them is not in the free pool."""
+        if job_id in self._held:
+            raise ResourceError("job %r already holds cores %s" % (job_id, self._held[job_id]))
+        cores = sorted(set(int(core) for core in cores))
+        if not cores or not set(cores) <= set(self._free):
+            return None
+        self._take(job_id, cores)
+        return self._held[job_id]
 
     def release(self, job_id):
         cores = self._held.pop(job_id, None)
@@ -1036,6 +1050,7 @@ class FakeJobs:
         self.queue = []
         self.calls = []  # (kind, job id) per call, in order, for assertions
         self.live = {}   # job id -> the remaining states, the outputs, and whether they were written
+        self.launched = []  # every `JobSpec` launched, in order, with the GPU indices it was given
 
     def script(self, states, outputs=None, log=None, job_id=None):
         """Queue one job's answers. `states` are `JobState`s or the names of `JOB_STATES`."""
@@ -1062,6 +1077,7 @@ class FakeJobs:
         if entry.log is not None:
             Path(spec.log).write_text(entry.log, encoding="utf-8")
         self.calls.append(("launch", spec.id))
+        self.launched.append((spec, tuple(gpu_indices)))
         self.live[spec.id] = {"states": list(entry.states), "outputs": entry.outputs, "written": False, "cwd": spec.cwd}
         return JobHandle(id=spec.id, backend=self.name, log=spec.log, cwd=spec.cwd,
                          unit=unit_name(spec.id), gpu_indices=tuple(gpu_indices), cores=tuple(spec.cores),
@@ -1237,12 +1253,17 @@ class JobRunner:
 
     # --- the four calls ---
 
-    def launch(self, spec, gpu_indices=None):
-        """Start one job, record it, and hand back the handle its poll needs."""
+    def launch(self, spec, gpu_indices=None, overrides=None):
+        """Start one job, record it, and hand back the handle its poll needs.
+
+        `overrides` is the footprint step the launch runs under (decision 6), which the new attempt
+        records. The argv and environment to launch are the caller's: the job file keeps the command
+        the worker declared, and the step is applied to it again at every launch (`apply_overrides`).
+        """
         spec.check()
         indices = resolve_gpu_indices(spec.gpu_uuids) if gpu_indices is None else tuple(gpu_indices)
         handle = self.backend.launch(spec, indices)
-        self._record_launch(spec, handle, indices)
+        self._record_launch(spec, handle, indices, overrides)
         return handle
 
     def poll(self, handle):
@@ -1339,16 +1360,20 @@ class JobRunner:
             return None
         return self._ledger.write_json(self.relpath(record["id"]), record, schema="job")
 
-    def _record_launch(self, spec, handle, indices):
+    def _record_launch(self, spec, handle, indices, overrides=None):
         if self._ledger is None:
             return None
         record = self.read(spec.id) or job_record(spec, gpu_indices=indices)
         record.update(backend=handle.backend, unit=handle.unit, status="running")
-        record["devices"]["gpu_indices"] = [int(index) for index in indices]
+        # The devices the job was launched on, which a placement chose: the next placement reads them as held.
+        record["devices"] = {
+            "gpu_uuids": list(spec.gpu_uuids), "gpu_indices": [int(index) for index in indices],
+            "cores": [int(core) for core in spec.cores], "ram_gb": spec.ram_gb,
+        }
         record["attempts"] = list(record.get("attempts") or []) + [{
             "n": len(record.get("attempts") or []) + 1,
             "started_at": handle.started_at or now_ts(),
-            "ended_at": None, "result": None, "exit_code": None, "oom": None, "overrides": {},
+            "ended_at": None, "result": None, "exit_code": None, "oom": None, "overrides": dict(overrides or {}),
         }]
         self.write(record)
         self._ledger.append_event("job_launched", {
@@ -1442,7 +1467,7 @@ def add_jobs(project, spec, ticket=None, backend=None):
             stray = sorted(set(member) - set(MEMBER_FIELDS))
             if stray:
                 raise JobError("member %d has no field(s) %s" % (index, ", ".join(stray)))
-        fields = dict(base, **(member or {}))
+        fields = _with_ticket_defaults(project, dict(base, **(member or {})), ticket)
         # A spec's own `id` names the array, not its members: an array whose members inherited it
         # would write every one of them to the same job file, and the last would be the only one.
         named = (member or {}).get("id") if members is not None else fields.get("id")
@@ -1462,6 +1487,49 @@ def add_jobs(project, spec, ticket=None, backend=None):
     for record in records:
         ledger.write_json("jobs/%s.json" % record["id"], record, schema="job")
     return records
+
+
+def _with_ticket_defaults(project, fields, ticket):
+    """A member's fields, with what its ticket declares where the spec is silent (ticket 19).
+
+    The ticket's `resources.ram_gb` and `resources.wallclock_minutes` become the job's `MemoryMax` and
+    `RuntimeMaxSec`, and the ticket's `retry` its footprint ladder. The GPU and core counts stay on the
+    ticket: the conductor places the job on free devices when it launches (`place_jobs`).
+    """
+    ticket_id = fields.get("ticket", ticket)
+    if ticket_id is None or isinstance(ticket_id, bool) or not isinstance(ticket_id, int):
+        return fields
+    from wayline import tickets  # the ticket reader is not needed by the runner itself
+    found = next((entry for entry in tickets.read_tickets(project) if entry["id"] == ticket_id), None)
+    if found is None:
+        return fields
+    resources, fields = found.get("resources") or {}, dict(fields)
+    devices = fields.get("devices")
+    if resources.get("ram_gb") is not None and (devices is None or isinstance(devices, dict)) and "ram_gb" not in (devices or {}):
+        fields["devices"] = dict(devices or {}, ram_gb=resources["ram_gb"])
+    if fields.get("wallclock_minutes") is None and resources.get("wallclock_minutes") is not None:
+        fields["wallclock_minutes"] = resources["wallclock_minutes"]
+    if fields.get("retry") is None and found.get("retry"):
+        fields["retry"] = {kind: [parse_step(step) for step in steps or []] for kind, steps in found["retry"].items()}
+    return fields
+
+
+def parse_step(step):
+    """One footprint step as an override object: an object as it is, a ticket file's `"--batch-size=16 NAME=v"` split.
+
+    A value that reads as a whole number becomes one, `true` becomes the bare flag, and the rest stay text.
+    """
+    if isinstance(step, dict):
+        return dict(step)
+    if not isinstance(step, str):
+        raise JobError("a retry step is an object or a string of key=value pairs, got %r" % (step,))
+    overrides = {}
+    for token in shlex.split(step):
+        key, sep, value = token.partition("=")
+        if not sep or not key:
+            raise JobError("retry step %r: %r is not key=value" % (step, token))
+        overrides[key] = True if value == "true" else int(value) if value.lstrip("-").isdigit() else value
+    return overrides
 
 
 def _array_id(spec, base, ticket):
@@ -1627,3 +1695,241 @@ def job_command(args):
     for record in records:
         print("job  %s  ticket %d  %s" % (record["id"], record["ticket"], record["log"]))
     return 0
+
+
+# --- outputs, placement, and the footprint ladder (ticket 19) ------------------------------------------
+
+
+def output_problem(cwd, output):
+    """What is wrong with one expected output: missing, or not parsing as the JSON or CSV its name says. None when nothing is."""
+    path = Path(output) if os.path.isabs(output) else Path(cwd) / output
+    if not path.is_file():
+        return "%s is missing" % output
+    try:
+        if path.suffix.lower() == ".json":
+            with open(path, encoding="utf-8") as handle:
+                json.load(handle)
+        elif path.suffix.lower() == ".csv":
+            with open(path, newline="", encoding="utf-8") as handle:
+                if next(csv.reader(handle), None) is None:
+                    return "%s is an empty CSV" % output
+    except (OSError, ValueError, csv.Error) as failure:
+        return "%s does not parse: %s" % (output, failure)
+    return None
+
+
+def read_readings(harness, gpu_util_samples=DEFAULT_GPU_UTIL_SAMPLES, sample_interval_s=DEFAULT_GPU_SAMPLE_INTERVAL_S):
+    """What `place_jobs` reads from the machine: the reservation, GPU samples, the load, the cores, and the free RAM.
+
+    The conductor reads this only in a wave that has a pending job to place; a test hands `place_jobs`
+    a recorded reading instead.
+    """
+    gpu_processes = read_gpu_processes()
+    return {
+        "reservation": reservation_from_harness(harness, gpu_processes=gpu_processes),
+        "gpus": sample_gpu_utilization(n=gpu_util_samples, interval_s=sample_interval_s),
+        "loadavg1": read_loadavg1(),
+        "nproc": os.cpu_count() or 1,
+        "mem_available_bytes": read_mem_available_bytes(),
+    }
+
+
+@dataclass(frozen=True)
+class Placement:
+    """Where one pending job runs: the GPUs it takes whole, its cores, and its `MemoryMax` in GB."""
+
+    job: str
+    gpu_uuids: tuple
+    gpu_indices: tuple
+    cores: tuple
+    ram_gb: float
+
+
+def job_request(record, resources=None):
+    """`{"gpu", "cpu", "ram_gb"}` a pending job asks for: its own devices where it names them, else its ticket's `resources`.
+
+    A job file written by `wayline job add` usually leaves the GPUs and cores to the conductor, and the
+    ticket's `resources` (`gpu`, `cpu`, `ram_gb`) say how many. A job with neither asks for one core.
+    """
+    devices, resources = record.get("devices") or {}, resources or {}
+    return {
+        "gpu": len(devices.get("gpu_uuids") or []) or int(resources.get("gpu") or 0),
+        "cpu": len(devices.get("cores") or []) or int(resources.get("cpu") or 1),
+        "ram_gb": float(devices.get("ram_gb") or resources.get("ram_gb") or 0),
+    }
+
+
+def place_jobs(pending, running, readings, requests, util_threshold=DEFAULT_GPU_UTIL_FREE_BELOW):
+    """The free-slot rule of decision 6 over the pending jobs, in order: `(placements, waiting)`.
+
+    `pending` and `running` are job records, `readings` is `read_readings`'s shape, and `requests`
+    maps a job id to its `job_request`. A GPU is free when `gpu_free` says so and neither a running
+    job, a job placed earlier in this call, nor the reservation holds it, so one GPU job runs at a
+    time on a one-GPU box and every job takes its GPUs whole. Cores come from a `CoreAllocator` over
+    the unreserved cores no running job holds, so `CPUAffinity` never names a reserved core; a job
+    that names its own cores gets them only when every one is in that pool. The load and the RAM
+    committed grow with each placement, since a job placed a moment ago is not in any reading yet.
+    `waiting` maps each job left pending to the reason, and a job that waits does not stop the ones
+    after it: CPU jobs fill the remaining cores while a GPU job waits for its card.
+    """
+    reservation = readings["reservation"]
+    nproc = int(readings["nproc"])
+    samples = readings.get("gpus") or []
+    gpus = samples[-1] if samples else []
+    held = set(reservation.gpu_indices)
+    running_cores = set()
+    committed = 0
+    for record in running:
+        devices = record.get("devices") or {}
+        held.update(devices.get("gpu_indices") or [])
+        running_cores.update(devices.get("cores") or [])
+        committed += int(float(devices.get("ram_gb") or 0) * GIB)
+    allocator = CoreAllocator(core_pool(nproc, reservation.cores, running_cores))
+    load = float(readings["loadavg1"])
+    available = int(readings["mem_available_bytes"])
+    placements, waiting = [], {}
+    for record in pending:
+        job_id, request = record["id"], requests[record["id"]]
+        devices = record.get("devices") or {}
+        named_gpus = list(devices.get("gpu_uuids") or [])
+        chosen = []
+        if request["gpu"]:
+            free = [gpu for gpu in gpus if gpu["index"] not in held and gpu_free(
+                gpu, _utilization(samples, gpu["uuid"]), False, reserve_mib=reservation.extra_gpu_mib,
+                util_threshold=util_threshold)]
+            if named_gpus:
+                chosen = [gpu for gpu in free if gpu["uuid"] in named_gpus]
+                if len(chosen) < len(named_gpus):
+                    missing = sorted(set(named_gpus) - {gpu["uuid"] for gpu in chosen})
+                    waiting[job_id] = "GPU %s is not free" % ", ".join(missing)
+                    continue
+            elif len(free) < request["gpu"]:
+                waiting[job_id] = ("needs %d GPU(s) and %d of %d is free" % (request["gpu"], len(free), len(gpus)) if gpus
+                                   else "needs %d GPU(s) and this machine reports none" % request["gpu"])
+                continue
+            else:
+                chosen = free[:request["gpu"]]
+        cores_needed = request["cpu"]
+        outside = nproc - len(reservation.cores)
+        if load + cores_needed > outside:
+            waiting[job_id] = "needs %d core(s) and the load is %s of the %d cores outside the reservation" % (
+                cores_needed, _number(round(load, 2)), outside)
+            continue
+        named_cores = list(devices.get("cores") or [])
+        if named_cores:
+            cores = allocator.take(job_id, named_cores)
+            if cores is None:
+                waiting[job_id] = "needs cores %s, and not all of them are free outside the reservation" % _range_text(named_cores)
+                continue
+        else:
+            cores = allocator.allocate(job_id, cores_needed)
+            if cores is None:
+                waiting[job_id] = "needs %d core(s) and %d are free outside the reservation" % (cores_needed, len(allocator.free))
+                continue
+        need = int(request["ram_gb"] * GIB)
+        if not ram_free(available, reservation.ram_bytes, committed, need):
+            allocator.release(job_id)
+            waiting[job_id] = "needs %s of RAM and %s is free over the reservation and the running jobs" % (
+                _gib(need), _gib(available - reservation.ram_bytes - committed))
+            continue
+        held.update(gpu["index"] for gpu in chosen)
+        load += cores_needed
+        committed += need
+        placements.append(Placement(job_id, tuple(gpu["uuid"] for gpu in chosen), tuple(gpu["index"] for gpu in chosen),
+                                    tuple(cores), request["ram_gb"]))
+    return placements, waiting
+
+
+def _utilization(samples, uuid):
+    history = [next((reading["utilization_gpu"] for reading in sample if reading["uuid"] == uuid), None) for sample in samples]
+    return [value for value in history if value is not None]
+
+
+def ram_cap_gb(readings, running):
+    """What a host-OOM retry may double `MemoryMax` up to: the free RAM less the reservation and the running jobs' share, in GB."""
+    committed = sum(int(float((record.get("devices") or {}).get("ram_gb") or 0) * GIB) for record in running)
+    return max(0.0, (int(readings["mem_available_bytes"]) - readings["reservation"].ram_bytes - committed) / GIB)
+
+
+# The key the host-OOM doubling records in an attempt's `overrides`: `MemoryMax`, which the job's devices carry.
+RAM_OVERRIDE = "ram_gb"
+
+
+def apply_overrides(command, env, overrides):
+    """`(argv, env)` with a footprint step applied (decision 6): what the experiment worker declared in `retry`.
+
+    A key that starts with `-` is an argument: its value replaces the one after the flag (or after
+    `flag=`), and a flag the command lacks is appended with its value; `true` appends the bare flag.
+    Any other key is an environment variable, except `ram_gb`, which is `MemoryMax` and lives in the
+    job's devices.
+    """
+    argv, environment = [str(part) for part in command], dict(env or {})
+    for key, value in (overrides or {}).items():
+        if key == RAM_OVERRIDE:
+            continue
+        if not key.startswith("-"):
+            environment[key] = str(value)
+            continue
+        if value is True:
+            if key not in argv[1:]:
+                argv.append(key)
+            continue
+        text = str(value)
+        if key in argv[1:]:
+            index = argv.index(key, 1)
+            if index + 1 < len(argv):
+                argv[index + 1] = text
+            else:
+                argv.append(text)
+        elif any(part.startswith(key + "=") for part in argv[1:]):
+            argv = argv[:1] + [key + "=" + text if part.startswith(key + "=") else part for part in argv[1:]]
+        else:
+            argv += [key, text]
+    return argv, environment
+
+
+def ladder_position(record):
+    """How far a job climbed its footprint ladder, read from its attempts: `{"host", "gpu", "doubled"}`.
+
+    Every attempt after the first was a retry of the one before it, and its `overrides` are the step
+    that started it: `{"ram_gb": x}` alone for the host-OOM doubling, else a step of the ladder of the
+    OOM that ended the attempt before.
+    """
+    position = {"host": 0, "gpu": 0, "doubled": False}
+    attempts = record.get("attempts") or []
+    for before, attempt in zip(attempts, attempts[1:]):
+        overrides = attempt.get("overrides") or {}
+        if set(overrides) == {RAM_OVERRIDE}:
+            position["doubled"] = True
+        elif before.get("oom") in ("host", "gpu"):
+            position[before["oom"]] += 1
+    return position
+
+
+def next_retry(record, oom, cap_gb, double_first=True):
+    """The overrides of the next step after an OOM of kind `oom` (`host` or `gpu`), or None when the ladder is exhausted.
+
+    A host OOM first doubles `MemoryMax` up to `cap_gb`, once, when the job has a `MemoryMax` and the
+    doubling would raise it (`policy.jobs.host_oom_first_doubles_memory`); then, like a GPU OOM, it steps
+    the ticket's ladder for that kind.
+    """
+    position = ladder_position(record)
+    if oom == "host" and double_first and not position["doubled"]:
+        ram = float((record.get("devices") or {}).get("ram_gb") or 0)
+        doubled = round(min(ram * 2, cap_gb), 3)
+        if ram > 0 and doubled > ram:
+            return {RAM_OVERRIDE: doubled}
+    ladder = ((record.get("retry") or {}).get(oom + "_oom")) or []
+    step = position[oom]
+    return dict(ladder[step]) if step < len(ladder) else None
+
+
+def effective_overrides(record):
+    """The overrides a job's next launch runs under: the latest step of each ladder it climbed, the GPU's last."""
+    position, retry = ladder_position(record), record.get("retry") or {}
+    merged = {}
+    for kind in ("host", "gpu"):
+        ladder = retry.get(kind + "_oom") or []
+        if 0 < position[kind] <= len(ladder):
+            merged.update(ladder[position[kind] - 1])
+    return merged

@@ -108,3 +108,14 @@ tool also stops the `/wayline-<skill>` lines at the top of the prompt from expan
 assumption is that it does not, because those lines are expanded into the prompt by the CLI
 before the session starts. If the live run shows otherwise, `Skill` comes off this list and the
 skills' bodies are inlined instead.
+
+## The experimenter and the analyst
+
+`experimenter` takes `experiment` tickets and never runs the experiment: it commits the script,
+writes one job file per run with `wayline job add` (the only role with that rule, beside
+`nvidia-smi` to look at the card), and returns `status: running` with the job ids. The conductor
+integrates its branch, places each job on free devices by the free-slot rule, polls the jobs every
+wave, steps the ticket's `retry` ladder on an out-of-memory job, and closes the ticket once every
+job exited 0 and its outputs parsed and were manifested (ticket 19). `analyst` takes `analysis`
+tickets: it reads the manifested results in the project's `results/` and files findings whose
+provenance the manifest resolves; `wayline job add` is on its removal list.

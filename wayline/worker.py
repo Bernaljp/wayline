@@ -1572,6 +1572,8 @@ class Scripted:
     ticket: Optional[str] = None
     role: Optional[str] = None
     respond: Optional[Callable] = None  # `respond(request, message) -> Envelope`, in place of `envelope`
+    # Job specs the session pipes to `wayline job add` before it returns, as an experimenter does (ticket 19).
+    jobs: list = field(default_factory=list)
 
     def matches(self, request):
         if self.ticket is not None and str(request.env.get("WAYLINE_TICKET")) != self.ticket:
@@ -1608,7 +1610,7 @@ class FakeLauncher:
     Script with `script(envelope, patch=, delay=, alive=, died=, ticket=, role=)` in a test, or
     with the JSON list in `WAYLINE_FAKE_SCRIPT` for a demo (entries `{"envelope": {...}, "patch":
     {"files": {...}, "message": "...", "commit": true}, "delay": 0, "alive": null, "died": false,
-    "ticket": null, "role": null}`). A call takes the first entry whose `ticket` and `role`
+    "ticket": null, "role": null, "jobs": []}`; `jobs` are the specs the session pipes to `wayline job add`). A call takes the first entry whose `ticket` and `role`
     match it (an entry with neither matches any call), so parallel launches are keyed by
     `WAYLINE_TICKET` when the script says so and by order otherwise. Fields left None on a
     scripted envelope are filled the way a real session would fill them; the scripted
@@ -1656,7 +1658,7 @@ class FakeLauncher:
         return self.auth
 
     @staticmethod
-    def _scripted(envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None, respond=None):
+    def _scripted(envelope, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None, respond=None, jobs=None):
         if respond is not None and not callable(respond):
             raise LaunchError("respond is a function of (request, message) returning an Envelope, got %r" % (respond,))
         if envelope is None and respond is None:
@@ -1678,10 +1680,13 @@ class FakeLauncher:
             raise LaunchError("delay is a number of seconds, got %r" % (delay,))
         if role is not None and not isinstance(role, str):
             raise LaunchError("role is a string or null")
-        return Scripted(envelope, patch, float(delay), alive, bool(died), None if ticket is None else str(ticket), role, respond)
+        if jobs is not None and (not isinstance(jobs, list) or not all(isinstance(spec, dict) for spec in jobs)):
+            raise LaunchError("jobs is a list of job specs, as `wayline job add` reads them, got %r" % (jobs,))
+        return Scripted(envelope, patch, float(delay), alive, bool(died), None if ticket is None else str(ticket), role, respond,
+                        list(jobs or []))
 
-    def script(self, envelope=None, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None, respond=None):
-        entry = self._scripted(envelope, patch, delay, alive, died, ticket, role, respond)
+    def script(self, envelope=None, patch=None, delay=0.0, alive=None, died=False, ticket=None, role=None, respond=None, jobs=None):
+        entry = self._scripted(envelope, patch, delay, alive, died, ticket, role, respond, jobs)
         with self._lock:
             self.queue.append(entry)
         return entry
@@ -1699,10 +1704,10 @@ class FakeLauncher:
         for entry in entries:
             if not isinstance(entry, dict) or "envelope" not in entry:
                 raise LaunchError("%s: every entry is an object with an envelope" % path)
-            unknown = sorted(set(entry) - {"envelope", "patch", "delay", "alive", "died", "ticket", "role"})
+            unknown = sorted(set(entry) - {"envelope", "patch", "delay", "alive", "died", "ticket", "role", "jobs"})
             if unknown:
                 raise LaunchError("%s: entry has no field(s) %s" % (path, ", ".join(unknown)))
-            parsed.append(cls._scripted(entry["envelope"], entry.get("patch"), entry.get("delay"), entry.get("alive"), entry.get("died", False), entry.get("ticket"), entry.get("role")))
+            parsed.append(cls._scripted(entry["envelope"], entry.get("patch"), entry.get("delay"), entry.get("alive"), entry.get("died", False), entry.get("ticket"), entry.get("role"), jobs=entry.get("jobs")))
         return parsed
 
     def load(self, path):
@@ -1809,6 +1814,8 @@ class FakeLauncher:
                 on_start(Started(pid, run_dir, stream_path))
             if scripted.patch is not None:
                 _apply_patch(Path(request.cwd), scripted.patch)
+            if scripted.jobs:
+                _add_jobs(request, scripted.jobs)
             if scripted.delay:
                 hold.ended.wait(scripted.delay)  # `release` ends it as a finished worker, `terminate` as a killed one
         finally:
@@ -1861,6 +1868,16 @@ def _rate_limit_info(event):
     if windows:
         info["unifiedWindows"] = windows
     return info
+
+
+def _add_jobs(request, specs):
+    """What `wayline job add` does for a session, for each spec a fake experimenter pipes to it, in its environment."""
+    from wayline import resources  # the job runner reads the ticket files; only a scripted experimenter needs it here
+    project, ticket = request.env.get("WAYLINE_PROJECT"), request.env.get("WAYLINE_TICKET")
+    if not project:
+        raise LaunchError("a scripted job needs WAYLINE_PROJECT in the session environment")
+    for spec in specs:
+        resources.add_jobs(project, spec, ticket=None if ticket is None else int(ticket))
 
 
 def _apply_patch(cwd, patch):

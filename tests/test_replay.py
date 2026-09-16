@@ -89,8 +89,9 @@ class SessionTest(unittest.TestCase):
             launched(3, pid=4003),
             # 4: its result came back and its outcome was never carried.
             launched(4, pid=4004), session(4, "s-4"), result(4, session_id="s-4"),
-            # 5: its worker left jobs running.
+            # 5: its worker left jobs running, and its branch was integrated before they launched.
             launched(5, pid=4005), session(5, "s-5"), result(5, status="running", session_id="s-5"),
+            event("integrated", {"ticket": 5, "commit": "c5", "resolved_by": "none"}, ticket=5),
             # 6: an invalid result, and the resume that answers it still running.
             launched(6, pid=4006), session(6, "s-6"), result(6, valid=False, session_id="s-6"),
             resumed(6, "invalid_result", "s-6"),
@@ -100,6 +101,8 @@ class SessionTest(unittest.TestCase):
             launched(8, pid=4008), resumed(8, "worker_died"), launched(8, pid=4108),
             # 9: dead after its session started, and resumed by session id.
             launched(9, pid=4009), session(9, "s-9"), resumed(9, "worker_died", "s-9"),
+            # 10: a running result a conductor died before integrating, which is still carried.
+            launched(10, pid=4010), session(10, "s-10"), result(10, status="running", session_id="s-10"),
         ])
 
     def attempt(self, ticket):
@@ -112,11 +115,11 @@ class SessionTest(unittest.TestCase):
         })
 
     def test_owed_says_what_a_restarted_conductor_still_owes_each_attempt(self):
-        self.assertEqual({ticket: self.attempt(ticket).owed for ticket in range(1, 10)}, {
+        self.assertEqual({ticket: self.attempt(ticket).owed for ticket in range(1, 11)}, {
             1: None, 2: "session", 3: "session", 4: "result", 5: "jobs",
-            6: "session", 7: "session", 8: "session", 9: "session",
+            6: "session", 7: "session", 8: "session", 9: "session", 10: "result",
         })
-        self.assertEqual([ticket for ticket, _ in self.view.in_flight()], [2, 3, 4, 6, 7, 8, 9])
+        self.assertEqual([ticket for ticket, _ in self.view.in_flight()], [2, 3, 4, 6, 7, 8, 9, 10])
 
     def test_a_resume_that_starts_a_process_is_a_session_and_a_re_adoption_starts_none(self):
         self.assertEqual([(item.kind, item.reason) for item in self.attempt(6).sessions],

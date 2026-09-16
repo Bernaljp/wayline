@@ -1,0 +1,26 @@
+{
+  "id": "experimenter",
+  "scope_kind": "global",
+  "capability_summary": "Prepares one experiment ticket's detached jobs with wayline job add and returns status running with their ids.",
+  "applicability_tags": {"kinds": ["experiment"], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "1c5cf713744d2ffb4d185584e970c0eacbb9ef26b233ad8b1dfddafb64a466fa",
+  "may_judge": false,
+  "output_schema": "result",
+  "allowed_tools": [
+    "Read", "Edit", "Write", "Glob", "Grep",
+    "Bash(python *)", "Bash(python3 *)", "Bash(/usr/bin/python3 *)",
+    "Bash(git add *)", "Bash(git commit *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)",
+    "Bash(ls *)", "Bash(cat *)", "Bash(nvidia-smi *)",
+    "Bash(wayline job add*)", "Bash(wayline accept*)", "Bash(wayline consult *)"
+  ],
+  "disallowed_tools": [
+    "WebFetch", "WebSearch", "NotebookEdit",
+    "mcp__*", "Workflow", "Skill", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "Bash(systemd-run *)", "Bash(nohup *)", "Bash(setsid *)"
+  ]
+}
