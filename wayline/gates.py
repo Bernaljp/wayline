@@ -420,7 +420,8 @@ KILL_MEMO = "kill_argument_memo"         # the first thread: the strongest rejec
 KILL_ARGUMENT = "kill_argument"          # the second thread: the memo adjudicated point by point
 CLAIM_SUPPORT = "claim_support"          # a sampled report claim: do its cited artifacts support it
 DEPTH_SPOT_CHECK = "depth_spot_check"    # an L2 dossier: were its most important items and its flaws read in depth
-VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK)
+SPEC_COVERAGE = "spec_coverage"          # the spec: does every claim have an experiment, and every experiment defend a claim
+VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK, SPEC_COVERAGE)
 
 # What an independent read of a done ticket reads, by the ticket's effective difficulty.
 DIFFICULTY_VERDICTS = {3: DIFF, 4: RESULT, 5: RESULT}
