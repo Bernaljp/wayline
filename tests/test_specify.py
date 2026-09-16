@@ -466,11 +466,55 @@ class InteractiveTest(SpecifyCase):
         self.assertEqual(specify.spec_state(self.project)["state"], "unasked")
 
 
+class ReviewFindingsTest(SpecifyCase):
+    """What the review of ticket 33 found: no stuck revise, no lost verdict, no phase moving back."""
+
+    def test_an_unchanged_redraft_is_refused_and_the_owner_can_still_confirm_that_version(self):
+        self.script(planned(draft()), planned(draft()))
+        self.specify()
+        [ticket] = self.confirmation()
+        project.answer(self.project, ticket["id"], "revise: add a sweep")
+        report = self.specify()
+        self.assertIn("returned the spec unchanged", report["stopped"])
+        self.assertEqual(len(self.calls(gates.VERIFIER)), 1, "no verdict is spent on an unchanged draft")
+        self.assertEqual(report["state"]["state"], "revise")
+        state = specify.confirm(self.project, "confirm")
+        self.assertEqual(state["state"], "confirmed", "the last answer wins")
+        self.assertEqual(self.phases()[-1], ("P3", "P4"))
+
+    def test_the_deciders_placeholder_revise_carries_its_rationale(self):
+        self.script(planned(draft()))
+        self.specify()
+        [ticket] = self.confirmation()
+        project.answer(self.project, ticket["id"], specify.REVISE, rationale="E2 does not test C2")
+        state = specify.spec_state(self.project)
+        self.assertEqual(state["feedback"], "(the reason given: E2 does not test C2)")
+
+    def test_a_spec_whose_verdict_was_never_taken_is_judged_not_redrafted(self):
+        self.script(planned(draft()), verdicts=(Envelope(structured_output=None, is_error=True, errors=["killed"]),))
+        report = self.specify()
+        self.assertIsNotNone(report["stopped"])
+        self.assertEqual(report["state"]["state"], "unverified")
+        self.script(verdicts=(verdict(),))
+        report = self.specify()
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual(len(self.calls(specify.PLANNER)), 1, "the planner was not launched again")
+        self.assertTrue(report["did"][0].startswith("the verifier passed research/SPEC.md"))
+        self.assertEqual(report["state"]["state"], "pending")
+
+    def test_the_phase_never_moves_back(self):
+        self.ledger.append_event("phase", {"from": "P4", "to": "P5"})
+        self.script(planned(draft()))
+        self.specify()
+        self.assertEqual(self.phases(), [("P4", "P5")])
+
+
 class ConfirmationWordsTest(unittest.TestCase):
     def test_which_answers_confirm(self):
-        for text in ("confirm", "Confirm the spec", "yes, go ahead", "OK", "approved.", "lgtm"):
+        for text in ("confirm", "Confirm the spec", "yes, go ahead", "OK", "approved.", "lgtm", "I confirm", "Looks good"):
             self.assertTrue(specify._confirms(text), text)
-        for text in ("revise: add a claim", "no", "not yet, confirm E2 first", "", None):
+        for text in ("revise: add a claim", "no", "not yet, confirm E2 first", "", None, "ok, but drop C3",
+                     "yes after removing E2"):
             self.assertFalse(specify._confirms(text), text)
         self.assertEqual(specify._what_to_change("revise: add a claim"), "add a claim")
         self.assertEqual(specify._what_to_change("drop E3"), "drop E3")

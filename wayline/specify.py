@@ -19,7 +19,9 @@ fails them is returned to the same planner session once with the failures; a sec
 call and writes nothing. The Type-B gate is one verifier session (`gates.verdict`, `spec_coverage`)
 on the spec as written; a fail returns the draft to the planner once with the findings, and the
 redraft is checked and judged again. A second fail leaves the spec written and unconfirmed, with both
-verdicts journaled, and the next `wayline specify` drafts it anew with the last findings.
+verdicts journaled, and the next `wayline specify` drafts it anew with the last findings. A spec
+written and never judged (its verifier stopped by a window) is judged, not redrafted, on the next run.
+The phase never moves back.
 
 **The confirmation**, by autonomy. Under `checkpoints` a decision ticket "Confirm the spec" is opened
 with `blocking: all` and origin `specify: confirm research/SPEC.md at <sha>`; the phase advances on its
@@ -28,7 +30,10 @@ is opened and the decider answers it at once (`decider.decide_ticket`); a refusa
 Under `interactive` no ticket is opened: the session that ran the verb asks the owner, and records the
 answer with `wayline specify confirm` or `wayline specify revise "<what to change>"`, journaled as a
 `decision` with no ticket whose answer leads with `spec <sha>:`. An answer that confirms journals
-`phase P3 -> P4`; any other answer is what to change, and the next `wayline specify` redrafts with it.
+`phase P3 -> P4`; any other answer is what to change, and the next `wayline specify` redrafts with it
+(and stops, spending no verdict, when the redraft comes back unchanged). An answer confirms only when it
+says nothing else ("ok, but drop C3" is a change), and the last answer given to a version wins, so the
+owner can still confirm a version they first sent back.
 
 `spec_state` reads all of this back from the files and the journal, so the verb is safe to run again
 at any point: it drafts, asks, waits, or advances, whichever the ledger says is owed.
@@ -41,7 +46,7 @@ import re
 import sys
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, decider, decisions, gates, grill, pacing, replay, worker
+from wayline import HARNESS_ROOT, decider, decisions, gates, grill, pacing, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, PHASE, Ledger, LedgerError
@@ -51,7 +56,7 @@ from wayline.tickets import DECISION as DECISION_KIND, TicketError, answer_secti
 
 __all__ = [
     "PLANNER", "SPEC_SCHEMA", "SPEC_MD", "SPEC_JSON", "SECTIONS", "SpecifyError", "planner_tier", "protocol_for",
-    "check_draft", "render_spec", "check_spec", "spec_sha", "spec_state", "specify_prompt", "draft_spec", "specify",
+    "check_draft", "render_spec", "check_spec", "spec_sha", "spec_state", "specify_prompt", "draft_spec", "judge_spec", "specify",
     "confirm", "advance", "render_report", "specify_command",
 ]
 
@@ -69,8 +74,12 @@ TITLE = "Confirm the spec"
 CONFIRM = "confirm"
 REVISE = "revise: <what to change, in a sentence>"
 ANSWER_PREFIX = "spec %s: "        # the interactive answer's `decision`, keyed by the spec it answers
-# The first word of an answer that confirms the spec; any other answer is what to change.
-CONFIRMING = frozenset(("confirm", "confirmed", "confirms", "yes", "ok", "okay", "approve", "approved", "accept", "accepted", "lgtm"))
+# An answer confirms the spec when it holds one of these words and nothing but these and the fillers
+# below ("yes, go ahead", "I confirm the spec", "looks good"); any other answer is what to change, so
+# "ok, but drop C3" is a change and never a confirmation that loses it.
+CONFIRMING = frozenset(("confirm", "confirmed", "confirms", "yes", "ok", "okay", "approve", "approved", "accept", "accepted",
+                        "lgtm", "good", "fine"))
+FILLERS = frozenset(("i", "it", "the", "this", "spec", "go", "ahead", "looks", "as", "is", "please", "all"))
 INTERACTIVE, CHECKPOINTS, AUTONOMOUS = "interactive", "checkpoints", "autonomous"
 
 # The sections of SPEC.md, in order: (the key in spec.json, the heading). "Question" leads because a
@@ -397,7 +406,7 @@ def _confirmation_ticket(project, sha):
 
 def _confirms(answer):
     words = re.findall(r"[a-z]+", str(answer or "").lower())
-    return bool(words) and words[0] in CONFIRMING
+    return any(word in CONFIRMING for word in words) and all(word in CONFIRMING or word in FILLERS for word in words)
 
 
 def _what_to_change(answer):
@@ -428,37 +437,47 @@ def spec_state(project, events=None):
         failed = [verdict for verdict in verdicts if not verdict.get("pass")]
         state["findings"] = list(failed[-1].get("findings") or []) if failed else []
         return state
+    ticket = _confirmation_ticket(project, sha)
+    state["ticket"] = ticket["id"] if ticket is not None else None
+    # The last answer given to this version wins, through its ticket or without one: an owner who asked
+    # for a change and then changed their mind confirms it with `wayline specify confirm`.
     answer = None
     prefix = ANSWER_PREFIX % sha
     for event in events:
         payload = event.get("payload") or {}
-        if event.get("event") == DECISION and payload.get("ticket") is None and str(payload.get("answer") or "").startswith(prefix):
-            answer = {"answer": payload["answer"][len(prefix):], "decided_by": payload.get("decided_by")}
-    ticket = _confirmation_ticket(project, sha)
-    if ticket is not None:
-        state["ticket"] = ticket["id"]
-        known = replay.replay(events).answers.get(ticket["id"])
+        if event.get("event") != DECISION:
+            continue
+        text = str(payload.get("answer") or "")
+        if payload.get("ticket") is None and text.startswith(prefix):
+            answer = dict(payload, answer=text[len(prefix):])
+        elif ticket is not None and payload.get("ticket") == ticket["id"]:
+            answer = dict(payload)
+    if answer is None and ticket is not None:
         written = answer_section(read_ticket(tickets_dir(project) / filename(ticket))[1])
-        if known is not None:
-            answer = {"answer": known.get("answer"), "decided_by": known.get("decided_by")}
-        elif written is not None:
+        if written is not None:
             answer = {"answer": written, "decided_by": "human"}
     if answer is None:
         state["state"] = "pending" if ticket is not None else "unasked"
         return state
-    state.update(answer=answer["answer"], decided_by=answer["decided_by"])
+    state.update(answer=answer["answer"], decided_by=answer.get("decided_by"))
     if _confirms(answer["answer"]):
         state["state"] = "confirmed"
-    else:
-        state["state"], state["feedback"] = "revise", _what_to_change(answer["answer"])
+        return state
+    change = _what_to_change(answer["answer"])
+    if change == _what_to_change(REVISE):
+        change = ""  # the option's placeholder, as the decider may pick it: the change is in the rationale
+    rationale = str(answer.get("rationale") or "").strip()
+    if rationale:
+        change = (change + " (the reason given: %s)" % rationale).strip()
+    state["state"], state["feedback"] = "revise", change or "no change was named; read the answer on the ticket"
     return state
 
 
 def _move_phase(ledger, events, to):
     """Journal `phase` to `to` unless the journal is there already; returns whether it moved."""
     now = current_phase(events)
-    if now == to:
-        return False
+    if now is not None and PHASES.index(now) >= PHASES.index(to):
+        return False  # never backwards: a spec redrafted in a later phase leaves the phase where it is
     ledger.append_event(PHASE, {"from": now, "to": to})
     return True
 
@@ -645,12 +664,28 @@ def _judge(project, sha, author_model, harness_root, policy, fall_back):
                          policy=policy, fall_back=fall_back)
 
 
-def draft_spec(project, *, change=None, harness_root=HARNESS_ROOT, policy=None, fall_back=None, say=lambda text: None):
+def judge_spec(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, say=lambda text: None):
+    """The verdict alone, on a spec that was written and passes its checks but was never judged; returns it.
+
+    What a verifier session a usage window or the hold on Fable's window stopped leaves owed: the draft
+    stands, so only the verdict is taken. The author is the planner's tier as it stands now.
+    """
+    project = Path(project).resolve()
+    policy = policy_for(project, harness_root) if policy is None else policy
+    model = planner_tier(policy, _falls_back_now(project, policy, fall_back))[0]
+    sha = spec_sha(project)
+    say("research/SPEC.md (%s) was written and never judged; asking the verifier" % sha)
+    return sha, _judge(project, sha, model, harness_root, policy, fall_back)
+
+
+def draft_spec(project, *, change=None, unchanged_from=None, harness_root=HARNESS_ROOT, policy=None, fall_back=None,
+               say=lambda text: None):
     """Draft, check, write, and judge the spec; returns `(sha, verdict)`, the verdict the last one taken.
 
-    `change` is what the owner or a failed verdict asked to change. Raises `SpecifyError` when the draft
-    fails its gates as the module says, `gates.UsageLimited` when a window refused a session, and
-    `gates.FableHeld` when the planner (or its verifier) waits for Fable's weekly window.
+    `change` is what the owner or a failed verdict asked to change. `unchanged_from` is the spec the owner
+    asked to change: a draft identical to it is refused before a verdict is spent on it. Raises
+    `SpecifyError` when the draft fails its gates as the module says, `gates.UsageLimited` when a window
+    refused a session, and `gates.FableHeld` when the planner (or its verifier) waits for Fable's weekly window.
     """
     project = Path(project).resolve()
     ledger = Ledger(project)
@@ -668,6 +703,9 @@ def draft_spec(project, *, change=None, harness_root=HARNESS_ROOT, policy=None, 
     say("drafting the spec: the planner on %s at %s%s" % (session.model, session.effort,
                                                          " in place of fable" if session.fallback_from else ""))
     draft = session.draft(prompt)
+    if unchanged_from is not None and draft == unchanged_from:
+        raise SpecifyError("the planner returned the spec unchanged, so the change asked for was not made; answer the "
+                           "confirmation again (wayline specify confirm, or revise with a clearer change)")
     sha = _write(ledger, draft)
     say("  wrote research/SPEC.md (%s); asking the verifier" % sha)
     verdict = _judge(project, sha, session.model, harness_root, policy, fall_back)
@@ -727,9 +765,9 @@ def confirm(project, text, rationale=None, by="cli"):
     if not text:
         raise SpecifyError("an answer to the spec's confirmation needs some text")
     state = spec_state(project)
-    if state["state"] not in ("unasked", "pending"):
+    if state["state"] not in ("unasked", "pending", "revise"):
         raise SpecifyError("the spec is %s, so there is nothing to confirm; %s" % (state["state"], _next(state)))
-    if state["ticket"] is not None:
+    if state["state"] == "pending":
         answer_ticket(project, state["ticket"], text, rationale=rationale, by=by)
     else:
         Ledger(project).append_event(DECISION, {"ticket": None, "answer": ANSWER_PREFIX % state["sha"] + text,
@@ -767,7 +805,23 @@ def specify(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, 
     report = {"project": str(project), "autonomy": autonomy, "did": [], "stopped": None, "failures": []}
     journal_written_answers(project, ledger)
     state = spec_state(project)
-    if state["state"] in ("none", "unverified", "revise"):
+    if state["state"] == "unverified" and not state["findings"] and not check_spec(project):
+        try:
+            sha, verdict = judge_spec(project, harness_root=harness_root, policy=policy, fall_back=fall_back, say=say)
+        except gates.FableHeld as held:
+            report["stopped"] = "Fable's weekly window is held until %s and the consent waits: %s" % (held.resets_at, held)
+        except gates.UsageLimited as refused:
+            report["stopped"] = "the usage limit refused a session: %s" % refused
+        except (gates.GateError, worker.LaunchError, worker.RoleError) as failure:
+            report["stopped"] = str(failure)
+        else:
+            report["did"].append("the verifier %s research/SPEC.md at %s (%s)"
+                                 % ("passed" if verdict.passed else "failed", sha, verdict.model or "no model named"))
+            if not verdict.passed:
+                report["stopped"] = "the verifier failed the spec; the next wayline specify redrafts it with the findings"
+                report["failures"] = [gates.findings_text(verdict.findings)]
+        state = spec_state(project)
+    elif state["state"] in ("none", "unverified", "revise"):
         change = None
         if state["state"] == "revise":
             change = "The %s asked: %s" % ("owner" if state["decided_by"] == "human" else state["decided_by"] or "owner",
@@ -775,8 +829,9 @@ def specify(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, 
         elif state["findings"]:
             change = "The last verifier failed the spec on these findings:\n\n" + gates.findings_text(state["findings"])
         try:
-            sha, verdict = draft_spec(project, change=change, harness_root=harness_root, policy=policy,
-                                      fall_back=fall_back, say=say)
+            previous = _read_json(ledger, SPEC_JSON) if state["state"] == "revise" else None
+            sha, verdict = draft_spec(project, change=change, unchanged_from=previous, harness_root=harness_root,
+                                      policy=policy, fall_back=fall_back, say=say)
         except SpecifyError as failure:
             report.update(stopped=str(failure), failures=failure.failures)
         except gates.FableHeld as held:
