@@ -45,7 +45,7 @@ __all__ = [
     "SystemdRun", "Setsid", "FakeJobs", "SYSTEMD_RUN", "SETSID", "FAKE_JOBS",
     "user_manager_reachable", "jobs_backend", "use_fake_jobs", "JobRunner", "add_jobs", "job_command",
     "output_problem", "read_readings", "Placement", "job_request", "place_jobs", "ram_cap_gb", "apply_overrides",
-    "ladder_position", "next_retry", "effective_overrides", "RAM_OVERRIDE", "parse_step",
+    "ladder_position", "next_retry", "effective_overrides", "RAM_OVERRIDE", "parse_step", "never_fits",
 ]
 
 # --- paths and commands, overridable by tests -------------------------------------------------
@@ -1519,17 +1519,24 @@ def parse_step(step):
 
     A value that reads as a whole number becomes one, `true` becomes the bare flag, and the rest stay text.
     """
-    if isinstance(step, dict):
-        return dict(step)
-    if not isinstance(step, str):
+    if not isinstance(step, (dict, str)):
         raise JobError("a retry step is an object or a string of key=value pairs, got %r" % (step,))
+    if isinstance(step, dict):
+        return _step_without_ram(dict(step))
     overrides = {}
-    for token in shlex.split(step):
+    for token in shlex.split(step) if isinstance(step, str) else ():
         key, sep, value = token.partition("=")
         if not sep or not key:
             raise JobError("retry step %r: %r is not key=value" % (step, token))
         overrides[key] = True if value == "true" else int(value) if value.lstrip("-").isdigit() else value
-    return overrides
+    return _step_without_ram(overrides)
+
+
+def _step_without_ram(step):
+    """Refuse `ram_gb` in a ladder step: it is the host-OOM doubling's own key, which the ladder position reads."""
+    if RAM_OVERRIDE in step:
+        raise JobError("a retry step may not set %s; the host OOM doubles MemoryMax itself before it steps the ladder" % RAM_OVERRIDE)
+    return step
 
 
 def _array_id(spec, base, ticket):
@@ -1638,6 +1645,8 @@ def _retry(value, job_id):
         for step in steps:
             if not isinstance(step, dict):
                 raise JobError("job %s: retry.%s holds override objects, got %r" % (job_id, name, step))
+            if RAM_OVERRIDE in step:
+                raise JobError("job %s: retry.%s may not set %s; the host OOM doubles MemoryMax itself" % (job_id, name, RAM_OVERRIDE))
         ladders[name] = list(steps)
     return ladders
 
@@ -1838,6 +1847,24 @@ def place_jobs(pending, running, readings, requests, util_threshold=DEFAULT_GPU_
         placements.append(Placement(job_id, tuple(gpu["uuid"] for gpu in chosen), tuple(gpu["index"] for gpu in chosen),
                                     tuple(cores), request["ram_gb"]))
     return placements, waiting
+
+
+def never_fits(request, readings):
+    """Why a request can never be placed on this machine, whatever frees up; None when it could be.
+
+    More GPUs than the machine reports (when it reports any), or more cores than lie outside the
+    reservation. RAM is not judged here: `MemAvailable` moves with everything else on the box.
+    """
+    reservation = readings["reservation"]
+    samples = readings.get("gpus") or []
+    gpus = samples[-1] if samples else []
+    usable = [gpu for gpu in gpus if gpu["index"] not in reservation.gpu_indices]
+    if gpus and request["gpu"] > len(usable):
+        return "it asks for %d GPU(s) and this machine has %d outside the reservation" % (request["gpu"], len(usable))
+    outside = int(readings["nproc"]) - len(reservation.cores)
+    if request["cpu"] > outside:
+        return "it asks for %d core(s) and this machine has %d outside the reservation" % (request["cpu"], outside)
+    return None
 
 
 def _utilization(samples, uuid):

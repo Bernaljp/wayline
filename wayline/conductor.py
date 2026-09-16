@@ -365,6 +365,8 @@ class WaveResult:
     # a settling wave, and whether it filed anything is what the stall counter reads.
     outcomes: int = 0
     findings: int = 0
+    # The jobs that exited 0 with outputs that parsed: progress, like a finding, for the stall counter (ticket 19).
+    jobs_finished: int = 0
 
     @property
     def touched(self):
@@ -690,7 +692,7 @@ class Conductor:
         """The `wave` event of a settling wave, which is what lets a restart rebuild the stall counter."""
         if result.outcomes:
             self.ledger.append_event(WAVE, {"number": self.number, "outcomes": result.outcomes,
-                                            "progressed": bool(result.done or result.findings)})
+                                            "progressed": bool(result.done or result.findings or result.jobs_finished)})
 
     def _end(self, result):
         """`run_ended`: once a stop has been applied, or once the frontier is empty, nothing runs, and no verdict is queued.
@@ -1272,6 +1274,8 @@ class Conductor:
             return
         self.flight.pop(attempt.id, None)
         result.findings += attempt.findings
+        if outcome not in ("done", "running"):
+            self._cancel_jobs(attempt.id)  # the jobs a failed attempt wrote never run
         {"done": result.done, "running": result.running}.get(outcome, result.failed).append(attempt.id)
 
     def _journal_session(self, attempt):
@@ -1439,7 +1443,6 @@ class Conductor:
         the ladder, the ticket) is this conductor's alone. Then every owed ticket whose jobs all
         exited 0 with outputs that parse is done.
         """
-        owed = self._owed_jobs()
         concluded = False
         for record in self._job_records():
             if (self.view.jobs.get(record["id"]) or {}).get("status") != "running":
@@ -1448,7 +1451,8 @@ class Conductor:
             if state is None or not state.terminal:
                 continue
             record = self._runner().read(record["id"]) or record
-            self._conclude_job(record, state, owed, result)
+            # Read again for every job: concluding the one before may have failed its ticket.
+            self._conclude_job(record, state, self._owed_jobs(), result)
             concluded = True
         if concluded:
             self._tail()
@@ -1468,8 +1472,11 @@ class Conductor:
             return None
         attempts = record.get("attempts") or [{}]
         tail = resources.log_tail(record["log"]) if record["status"] in ("oom_gpu", "failed") else None
-        return resources.JobState(record["status"], result=attempts[-1].get("result"),
-                                  exit_code=attempts[-1].get("exit_code"), log_tail=tail or None)
+        result = attempts[-1].get("result")
+        reason = "wallclock" if result == "timeout" else (
+            "exited %s" % attempts[-1].get("exit_code") if result == "exit-code" else result)
+        return resources.JobState(record["status"], result=result, exit_code=attempts[-1].get("exit_code"),
+                                  reason=reason, log_tail=tail or None)
 
     def _job_done(self, job):
         known = self.view.jobs.get(job) or {}
@@ -1493,6 +1500,7 @@ class Conductor:
                 return
             if mine:
                 self._manifest_outputs(record, owed[ticket][0])
+                result.jobs_finished += 1
             self.say("  job %s (ticket %d) exited 0 in %ss; outputs %s" % (
                 job, ticket, _job_seconds(record), ", ".join(record.get("expected_outputs") or []) or "none expected"))
             return
@@ -1560,6 +1568,13 @@ class Conductor:
         self.ledger.append_event(JOB_RETRIED, {"job": job, "attempt": number, "oom": oom, "overrides": step},
                                  ticket=record["ticket"], job=job)
         self._cleanup_job(record)
+        # The log is appended to, so the attempt that ran out of memory is moved aside: the OOM rule reads only the last
+        # bytes of the log, and the next attempt's failure must not be read by the signature this one left.
+        log = Path(record["log"])
+        try:
+            log.replace(log.with_name("%s.%d%s" % (log.stem, number - 1, log.suffix)))
+        except OSError:
+            pass  # no log to keep, which the next attempt's tail reads as empty
         ahead = dict(record, attempts=list(record.get("attempts") or []) + [{"overrides": step}])
         devices = dict(record["devices"])
         if resources.RAM_OVERRIDE in step:
@@ -1643,7 +1658,19 @@ class Conductor:
             pending, running, readings, requests,
             util_threshold=jobs_policy.get("gpu_util_free_below", resources.DEFAULT_GPU_UTIL_FREE_BELOW))
         by_id = {record["id"]: record for record in pending}
+        for job, reason in sorted(waiting.items()):
+            never = resources.never_fits(requests[job], readings)
+            if never is not None and self._is_owed(by_id[job]):
+                waiting.pop(job)
+                self._runner().write(dict(self._runner().read(job) or by_id[job], status="failed"))
+                self._job_failed(by_id[job], never, "")
+                self._tail()
+                self._fail_jobs(by_id[job]["ticket"], self._owed_jobs()[by_id[job]["ticket"]],
+                                "job %s can never be placed: %s" % (job, never), result)
         for placement in placements:
+            current = self._runner().read(placement.job)
+            if current is None or current.get("status") != "pending" or not self._is_owed(current):
+                continue  # its ticket failed a moment ago, and the job was cancelled with it
             record = dict(by_id[placement.job], devices={
                 "gpu_uuids": list(placement.gpu_uuids), "gpu_indices": list(placement.gpu_indices),
                 "cores": list(placement.cores), "ram_gb": placement.ram_gb})
@@ -1652,12 +1679,22 @@ class Conductor:
                     placement.job, record["ticket"], "GPU %s" % ",".join(map(str, placement.gpu_indices)) if placement.gpu_indices else "no GPU",
                     resources._range_text(placement.cores)))
         for job, reason in sorted(waiting.items()):
-            if (self.view.jobs.get(job) or {}).get("waiting") == reason:
+            if job not in self._owed_ids():
                 continue
+            if _waiting_kind((self.view.jobs.get(job) or {}).get("waiting")) == _waiting_kind(reason):
+                continue  # the same wait, whatever the load or the free RAM reads this wave
             self.ledger.append_event(JOB_WAITING, {"job": job, "ticket": by_id[job]["ticket"], "reason": reason},
                                      ticket=by_id[job]["ticket"], job=job)
             self.say("  job %s (ticket %d) waits: %s" % (job, by_id[job]["ticket"], reason))
         self._tail()
+
+    def _owed_ids(self):
+        return {job for _, jobs in self._owed_jobs().values() for job in jobs}
+
+    def _is_owed(self, record):
+        """Whether a job file belongs to a ticket still owed its jobs, as the view says now."""
+        owed = self._owed_jobs().get(record.get("ticket"))
+        return owed is not None and record.get("id") in owed[1]
 
     def _read_readings(self):
         """The machine as the free-slot rule reads it: `self.readings()` when a test set one, else `resources.read_readings`."""
@@ -3104,6 +3141,11 @@ def _job_seconds(record):
     if started is None or ended is None:
         return 0
     return max(0, int(round((ended - started).total_seconds())))
+
+
+def _waiting_kind(reason):
+    """What a wait is for, without the readings in its text: `needs 4 core(s)` of `needs 4 core(s) and the load is 7.5 ...`."""
+    return None if reason is None else reason.split(" and ")[0]
 
 
 def _inside(path, root):

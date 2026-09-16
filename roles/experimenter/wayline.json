@@ -5,7 +5,7 @@
   "applicability_tags": {"kinds": ["experiment"], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "medium",
   "fixtures": [],
-  "sha256": "1c5cf713744d2ffb4d185584e970c0eacbb9ef26b233ad8b1dfddafb64a466fa",
+  "sha256": "2e9ddc2355fea3bd33e0f3f630efff66b7885ea1ba1191429a2ad5d9fc323be6",
   "may_judge": false,
   "output_schema": "result",
   "allowed_tools": [

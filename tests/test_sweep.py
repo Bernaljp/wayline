@@ -172,6 +172,9 @@ class SweepTest(SweepCase):
         attempts = self.job("t1-3")["attempts"]
         self.assertEqual([(item["oom"], item["overrides"]) for item in attempts], [("gpu", {}), (None, {"--batch-size": 256})])
         self.assertIn("4096", self.job("t1-3")["command"], "the job file keeps the command the worker declared")
+        logs = self.project / "results" / "logs"
+        self.assertIn("CUDA_ERROR_OUT_OF_MEMORY", (logs / "t1-3.1.log").read_text(encoding="utf-8"))
+        self.assertFalse((logs / "t1-3.log").exists(), "the retry's log starts empty, so an old signature is never read again")
         self.assertEqual(self.job("t1-3")["status"], "exited")
 
     def test_every_expected_output_is_in_the_manifest_with_its_job_and_run(self):
@@ -260,6 +263,51 @@ class LadderTest(SweepCase):
         self.assertEqual(self.status(1), "failed")
 
 
+class FailedAttemptTest(SweepCase):
+    """An experimenter whose attempt fails before its jobs launch: the jobs it wrote never run."""
+
+    def test_the_jobs_of_a_failed_attempt_are_cancelled_before_they_launch(self):
+        script = json.loads((SWEEP / "fake-worker.json").read_text(encoding="utf-8"))
+        script[0]["patch"]["files"]["sweep/stray.txt"] = "left behind\n"
+        script[0]["patch"]["commit"] = False
+        path = self.temp / "fake-worker.json"
+        path.write_text(json.dumps(script), encoding="utf-8")
+        with worker.use_fake() as fake, resources.use_fake_jobs() as jobs:
+            fake.load(path)
+            self.drive(machine.recorded, 5)
+            self.launched = list(jobs.launched)
+        self.assertEqual(self.status(1), "failed")
+        self.assertIn("uncommitted", self.events("ticket_failed")[-1]["payload"]["reason"])
+        self.assertEqual(sorted(self.by_job("job_cancelled")), sorted(RATES))
+        self.assertEqual({self.job(job)["status"] for job in RATES}, {"killed"})
+        self.assertEqual(self.launched, [])
+
+
+class TickPolledTest(SweepCase):
+    """The tick polls jobs too and records what it read; the conductor concludes them once, and fails the ticket once."""
+
+    def test_two_ended_jobs_the_tick_recorded_fail_the_ticket_once_and_nothing_is_retried(self):
+        path = tickets.tickets_dir(self.project) / "01-sweep-the-learning-rate.md"
+        path.write_text(path.read_text(encoding="utf-8").replace("  gpu: 1\n", "  gpu: 0\n"), encoding="utf-8")
+        from wayline import tick
+        with worker.use_fake() as fake, resources.use_fake_jobs() as jobs:
+            fake.load(SWEEP / "fake-worker.json")
+            jobs.script([JobState("failed", result="timeout", exit_code=15, reason="wallclock")], job_id="t1-1")
+            jobs.script([gpu_oom()], log=OOM_TAIL, job_id="t1-2")
+            jobs.script(["running"], job_id="t1-3")
+            self.drive(machine.recorded, 2)
+            self.assertEqual(sorted(self.by_job("job_launched")), sorted(RATES), "no GPU asked, so all three run at once")
+            polled = {entry["job"]: entry["now"] for entry in tick.poll_jobs(self.project)}
+            self.assertEqual(polled, {"t1-1": "failed", "t1-2": "oom_gpu", "t1-3": "running"})
+            self.drive(machine.recorded, 2)
+        self.assertEqual(len(self.events("ticket_failed")), 1)
+        self.assertEqual(self.by_job("job_failed")["t1-1"][0]["reason"], "wallclock")
+        self.assertEqual(self.by_job("job_failed")["t1-2"][0]["reason"], "a gpu OOM")
+        self.assertNotIn("job_retried", self.names())
+        self.assertEqual(list(self.by_job("job_cancelled")), ["t1-3"])
+        self.assertEqual(self.status(1), "failed")
+
+
 class PausedTest(SweepCase):
     """M2 criterion 9: with the window closed, a wave still launches and polls jobs and runs machine checks."""
 
@@ -278,12 +326,23 @@ class ReservationTest(SweepCase):
     """M2 criterion 8, through the conductor: a job whose core request exceeds the free cores waits."""
 
     def test_a_job_that_cannot_get_its_cores_waits_and_is_journaled_once(self):
-        self.run_sweep(lambda jobs: None, readings=lambda: machine.recorded(nproc=10), waves=5)
+        loads = iter([6.5, 7.25, 6.0, 7.0, 6.75, 6.5])
+        self.run_sweep(lambda jobs: None, readings=lambda: machine.recorded(nproc=16, loadavg1=next(loads)), waves=6)
         waiting = self.by_job("job_waiting")
         self.assertEqual(waiting["t1-1"], [{"job": "t1-1", "ticket": 1,
-                                            "reason": "needs 4 core(s) and the load is 1.5 of the 2 cores outside the reservation"}])
+                                            "reason": "needs 4 core(s) and the load is 6.5 of the 8 cores outside the reservation"}],
+                         "a load that moves is the same wait, journaled once")
         self.assertEqual(self.launched, [])
         self.assertEqual(self.status(1), "running")
+
+    def test_a_request_larger_than_the_machine_fails_the_ticket_at_once(self):
+        self.run_sweep(lambda jobs: None, readings=lambda: machine.recorded(nproc=10), waves=5)
+        self.assertEqual(self.by_job("job_failed")["t1-1"][0]["reason"],
+                         "it asks for 4 core(s) and this machine has 2 outside the reservation")
+        self.assertEqual(self.status(1), "failed")
+        self.assertEqual(sorted(self.by_job("job_cancelled")), ["t1-2", "t1-3"])
+        self.assertNotIn("job_waiting", self.names())
+        self.assertEqual(self.launched, [])
 
 
 class RestartTest(SweepCase):

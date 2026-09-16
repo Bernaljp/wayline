@@ -128,6 +128,11 @@ class OverridesTest(unittest.TestCase):
         with self.assertRaises(JobError):
             parse_step("--batch-size 16")
 
+    def test_a_ladder_step_may_not_set_the_memory_the_doubling_sets(self):
+        for step in ("ram_gb=64", {"ram_gb": 64}):
+            with self.assertRaises(JobError):
+                parse_step(step)
+
 
 def with_attempts(*attempts, ram_gb=4, host=(), gpu=()):
     return {"devices": {"ram_gb": ram_gb}, "retry": {"host_oom": list(host), "gpu_oom": list(gpu)},

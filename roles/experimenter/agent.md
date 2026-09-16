@@ -26,8 +26,12 @@ How you work:
 - Commit the script on the ticket branch. The jobs run from the project root after the conductor
   fast-forwards `main` to your branch, so a path in a job is relative to the project root, as it
   is in your worktree.
-- Write the jobs with `wayline job add`, one call, the spec as JSON on stdin. A sweep is one spec
-  with `members`: every member inherits the base fields and overrides what differs.
+- Write the job spec as a JSON file in the touch set, commit it with the script, and run
+  `wayline job add <that file>` once. A sweep is one spec with `members`: every member inherits
+  the base fields and overrides what differs.
+- Smoke output goes under `results/`, which the repository ignores; anything else left
+  uncommitted in the touch set fails the ticket, since the conductor integrates the branch and
+  not the working tree.
 - Return `status: running` with the job ids `wayline job add` printed. Nothing else finishes the
   ticket: not a finding, not a claim that the run went well.
 

@@ -2,6 +2,40 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
+## v0.3.0 (2026-09-16)
+
+M2 Hardware is live: an `experiment` ticket's worker wrote a three-member job array and returned
+`running`, the conductor ran the members one GPU job at a time on cores outside the reservation,
+retried the one that ran out of GPU memory with the ticket's smaller batch, manifested every output,
+and closed the ticket, and the `analysis` ticket then filed findings on the manifested results, all
+with real sessions and real `systemd-run` units. `docs/verification/m2.md` records the runs (ticket
+19).
+
+- The job step of the wave (decision 5, steps 2 and 8), which runs whatever the pacing says: every
+  job launched and not concluded is polled; one that exited 0 has its outputs checked (JSON and CSV
+  parse) and registered in `manifest.json` with its job and run; an OOM steps the footprint ladder
+  (a host OOM first doubles `MemoryMax` up to the free RAM over the reservation) and is relaunched at
+  once, the log of the attempt that failed moved aside; an exhausted ladder or any other failure
+  journals `job_failed` with the log tail, cancels the ticket's other jobs, and fails the ticket with
+  the tail as its failure output. A ticket whose jobs all exited 0 is `done` and its verdicts queued.
+- A `running` result names its jobs (`ticket_result` gains `jobs`), passes the machine acceptance,
+  and is integrated like a done one before its jobs launch, so the jobs run the code on `main`.
+  The jobs of a failed attempt never launch.
+- The free-slot rule over pending jobs (`resources.place_jobs`): GPUs whole and one job per card,
+  cores from the unreserved pool (a `CPUAffinity` never names a reserved core), the load and the RAM
+  counted with every placement; a job that waits is journaled once per cause (`job_waiting`, new),
+  and one that can never fit fails.
+- New roles `experimenter` (the only role with `Bash(wayline job add*)` and `Bash(nvidia-smi *)`)
+  and `analyst`; proposals of those kinds default to them.
+- `wayline job add` takes the ticket's `resources` (`ram_gb`, `wallclock_minutes`) and `retry` where
+  the spec is silent. A ticket file spells a ladder step `"--batch-size=16"`, since its frontmatter
+  lists hold scalars only; `ram_gb` is refused as a step.
+- The conductor manifests a file a finding cites and refuses a finding whose provenance resolves to
+  nothing, noting the refusal on the ticket.
+- A job that finished with its outputs counts as progress for the stall counter.
+- `fixtures/projects/sweep/`, run by `tests/test_sweep.py` with the fake worker (whose script gained
+  `jobs`, the specs it pipes to `wayline job add`) and the fake job runner on a recorded machine.
+
 ## v0.2.0 (2026-09-15)
 
 M1 Frontier and windows is live: the five-ticket graph ran on two real workers with its touch-set

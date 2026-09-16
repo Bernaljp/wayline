@@ -42,5 +42,6 @@ demo: "Three jobs, one per learning rate, each writing its JSON under results/sw
 with `--batch-size 4096` on the `0.3` member only (the sweep's deliberately oversized
 configuration: its first attempt runs out of GPU memory, and the ticket's `retry` ladder runs it
 again at 256) and the default batch on the other two. Each member's `expected_outputs` is its own
-`--out` path. Record the three settings in `sweep/plan.md`, commit it, and return `status: running`
+`--out` path. Record the three settings in `sweep/plan.md`, write the job spec to
+`sweep/jobs.json`, commit both, run `wayline job add sweep/jobs.json`, and return `status: running`
 with the three job ids.
