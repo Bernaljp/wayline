@@ -86,13 +86,21 @@ a parked proposal in the journal alone.
 
 ## The planner is launched by the phase verbs, one protocol per phase
 
-`planner` (ticket 33) is launched by code too (`kinds` empty) and does not judge. Its protocol file,
-`prompts/roles/planner.md`, holds one `## <Phase>` section per phase, and the verb that launches it
-gives the session only its own (`wayline.specify.protocol_for`). `wayline specify` launches it on
+`planner` (tickets 33 and 34) is launched by code too (`kinds` empty) and does not judge. Its protocol
+file, `prompts/roles/planner.md`, holds one `## <Phase>` section per phase, and the verb that launches
+it gives the session only its own (`wayline.specify.protocol_for`). `wayline specify` launches it on
 `policy.roles.planner` (`fable`, `xhigh`) with the `spec` schema and the decider's records, reading
 only: code writes what it returns as `research/spec.json`, renders `research/SPEC.md`, runs the
 structural checks, and asks the verifier for the `spec_coverage` verdict, returning the draft to the
-same session once per gate. Ticket 34 gives it its plan protocol, and the tickets it cuts.
+same session once per gate. `wayline plan` launches it the same way in its plan protocol, with the
+`plan` schema (the sidecar's `output_schema` stays `spec`; each verb passes its own), on
+`research/SPEC.md`, `GOAL.json`, the query pack, the registry, and the journal's failures: code
+numbers the tickets it returns, has the librarian assign a role and skills to each, runs the
+plan-time checks (the machine criteria in a checkout of `main`), writes `research/tickets/` and
+`graph.json`, opens the decision tickets it reports, and asks for the graph's confirmation by the
+autonomy. A plan that fails the checks is returned to the same session once. `--replan` and `--split`
+launch it again over the graph as it stands, which is what the conductor calls at a stall and at the
+`split` rung of the escalation ladder.
 
 ## The consultant answers one question about one dossier
 

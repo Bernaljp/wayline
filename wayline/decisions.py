@@ -47,8 +47,8 @@ from wayline import HARNESS_ROOT, grill, pacing, replay
 from wayline.ledger import DECISION, DECISION_OPENED, TICKET_CREATED, TICKET_RERUN, Ledger
 from wayline.notify import notify as send_notification
 from wayline.project import (
-    AUTONOMY, ProjectError, answering_autonomy, ask_falls_back_at, fallback_consent, pacing_thresholds, policy_for, read_active,
-    read_harness,
+    AUTONOMY, ProjectError, answering_autonomy, ask_falls_back_at, fallback_consent, graph_answered, pacing_thresholds, policy_for,
+    read_active, read_harness,
 )
 from wayline.schedule import awaits_owner
 from wayline.tickets import (
@@ -465,6 +465,7 @@ def decide(project, identifier, answer, rationale, confidence=None, model=None, 
                        answer=answer, rationale=rationale, confidence=confidence, decided_by="decider", timestamp=event["ts"])
         settled.update({key: value for key, value in (("model", model), ("fallback_from", fallback_from), ("session_id", session_id)) if value})
         grill.append_ticket_record(project, settled)
+        graph_answered(project, ledger, fields, answer)  # a graph the decider sent back is parked at once (ticket 34)
         return event["payload"]
 
 

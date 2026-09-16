@@ -57,7 +57,7 @@ from wayline.tickets import DECISION as DECISION_KIND, TicketError, answer_secti
 __all__ = [
     "PLANNER", "SPEC_SCHEMA", "SPEC_MD", "SPEC_JSON", "SECTIONS", "SpecifyError", "planner_tier", "protocol_for",
     "check_draft", "render_spec", "check_spec", "spec_sha", "spec_state", "specify_prompt", "draft_spec", "judge_spec", "specify",
-    "confirm", "advance", "render_report", "specify_command",
+    "confirm", "advance", "render_report", "specify_command", "confirms", "what_to_change", "move_phase", "context_cap", "current_phase",
 ]
 
 PLANNER = "planner"
@@ -406,12 +406,12 @@ def _confirmation_ticket(project, sha):
     return None
 
 
-def _confirms(answer):
+def confirms(answer):
     words = re.findall(r"[a-z]+", str(answer or "").lower())
     return any(word in CONFIRMING for word in words) and all(word in CONFIRMING or word in FILLERS for word in words)
 
 
-def _what_to_change(answer):
+def what_to_change(answer):
     text = str(answer or "").strip()
     return re.sub(r"^revise\s*[:,-]?\s*", "", text, flags=re.IGNORECASE).strip() or text
 
@@ -462,11 +462,11 @@ def spec_state(project, events=None):
         state["state"] = "pending" if ticket is not None else "unasked"
         return state
     state.update(answer=answer["answer"], decided_by=answer.get("decided_by"))
-    if _confirms(answer["answer"]):
+    if confirms(answer["answer"]):
         state["state"] = "confirmed"
         return state
-    change = _what_to_change(answer["answer"])
-    if change == _what_to_change(REVISE):
+    change = what_to_change(answer["answer"])
+    if change == what_to_change(REVISE):
         change = ""  # the option's placeholder, as the decider may pick it: the change is in the rationale
     rationale = str(answer.get("rationale") or "").strip()
     if rationale:
@@ -475,7 +475,7 @@ def spec_state(project, events=None):
     return state
 
 
-def _move_phase(ledger, events, to):
+def move_phase(ledger, events, to):
     """Journal `phase` to `to` unless the journal is there already; returns whether it moved."""
     now = current_phase(events)
     if now is not None and PHASES.index(now) >= PHASES.index(to):
@@ -499,7 +499,7 @@ def advance(project, events=None):
     now = current_phase(events)
     if now is not None and PHASES.index(now) >= PHASES.index(PLAN_PHASE):
         return False
-    return _move_phase(ledger, events, PLAN_PHASE)
+    return move_phase(ledger, events, PLAN_PHASE)
 
 
 # --- the prompt -----------------------------------------------------------------------------------------
@@ -696,12 +696,12 @@ def draft_spec(project, *, change=None, unchanged_from=None, harness_root=HARNES
         raise SpecifyError("%s has no research/GOAL.json; the spec answers a goal, so run wayline intake first" % project)
     events, _ = ledger.read_events()
     session = _Session(project, harness_root, policy, fall_back, say)
-    records, cut = decider.records_text(project, _context_cap(policy, session.model))
+    records, cut = decider.records_text(project, context_cap(policy, session.model))
     harness = read_harness(project)
     open_questions = [record for record in grill.read_records(project)
                       if record.get("id") and record.get("answer") is None]
     prompt = specify_prompt(session.role, records, harness, project, open_questions, change, cut)
-    _move_phase(ledger, events, SPECIFY_PHASE)
+    move_phase(ledger, events, SPECIFY_PHASE)
     say("drafting the spec: the planner on %s at %s%s" % (session.model, session.effort,
                                                          " in place of fable" if session.fallback_from else ""))
     draft = session.draft(prompt)
@@ -720,7 +720,7 @@ def draft_spec(project, *, change=None, unchanged_from=None, harness_root=HARNES
     return sha, _judge(project, sha, session.model, harness_root, policy, fall_back)
 
 
-def _context_cap(policy, model):
+def context_cap(policy, model):
     caps = (policy.get("context_pack") or {}).get("max_chars") or {}
     return caps.get(model, min(caps.values()) if caps else None)
 

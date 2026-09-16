@@ -11,11 +11,11 @@
   },
   "origin": {
     "project": null,
-    "ticket": 27,
+    "ticket": 34,
     "session_id": null,
     "journal_ts": null,
     "change_record": null,
-    "reason": "seed: ticket 27 registered the five interactive skills; ticket 34 records the spec this fixture cuts and the plan-time Type-A checks"
+    "reason": "seed: ticket 27 registered the five interactive skills; ticket 34 filled in the spec this fixture cuts (input/context/, the toy spec confirmed, toy/ at the root), the plan-time Type-A checks as python checks, and the live run of wayline plan over it under recorded/"
   },
   "launch": {
     "model": "fable",
@@ -24,7 +24,15 @@
     "max_turns": 200,
     "output_format": "stream-json",
     "json_schema": null,
-    "fallback_model": "fable"
+    "fallback_model": "fable",
+    "tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(wayline plan*)",
+      "Bash(wayline status*)",
+      "Bash(wayline answer*)"
+    ]
   },
   "input": {
     "prompt": "input/prompt.md",
@@ -36,9 +44,61 @@
     {
       "check": "file_exists",
       "path": "research/graph.json"
+    },
+    {
+      "check": "file_exists",
+      "path": "research/plan.json"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline plan"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Write"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Edit"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "the_graph_passes_the_plan_time_checks"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "every_ticket_has_a_role_and_skills"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "every_assignment_is_journaled"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "every_ticket_was_journaled_as_created"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "decisions_carry_their_records"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "the_plan_record_matches_the_tickets"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "the_graph_is_gated_by_the_autonomy"
     }
   ],
-  "note": "Every plan-time Type-A check of Implementation Decisions 10 is a structural check on the written graph, and they arrive with the planner in ticket 34.",
+  "note": "The project under input/context/ is the one ticket 33's tests plan over: the recorded grill's DECISIONS.md and CONTEXT.md, the toy spec (fixtures/specify/draft.json) written as research/spec.json and SPEC.md, judged and confirmed in the journal so the phase is P4, GOAL.json, a query pack, toy/ at the root, and harness.json at autonomy checkpoints. The skill's session runs `wayline plan --project .`, which launches the planner through the launcher on the spec, the query pack, the registry, and the journal; the checks read what the verb wrote: the tickets, graph.json, plan.json, the journal's assigned and ticket_created events, the decision tickets' records, and the blocking-all confirmation ticket. recorded/ holds the live run of ticket 34: the verb run from the command line over this project with the real launcher, not a skill session, so the fixture stays unrunnable (agent null) until a skill session is recorded; the python checks run on recorded/ in the suite.",
   "baseline": null,
   "quarantine": {
     "status": "active",

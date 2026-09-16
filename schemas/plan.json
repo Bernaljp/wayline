@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "plan",
+  "description": "The ticket graph of phase P4 (Implementation Decisions 10, plan): what the planner returns in its plan protocol, and what research/plan.json keeps beside the ids it became. Tickets carry a key rather than an id, because code numbers them from the next free id when it writes tickets/NN-slug.md; a blocked_by or pauses entry is another ticket's key, or #<id> for a ticket the project already holds. The librarian assigns role and skills, so neither is here; status, proposed_by, and the ids are code's. The schema holds the shape; the plan-time Type-A checks of wayline.plan hold the rest (a DAG, every ticket with a demo, machine criteria, a touch set under the project, a context pack, a role, and skills, no criterion that passes at the base commit, a docs ticket after every code ticket that adds public API), so a plan that fails them is returned to the planner with the failures rather than refused as malformed.",
+  "type": "object",
+  "required": ["tickets", "decisions", "notes"],
+  "additionalProperties": false,
+  "properties": {
+    "tickets": {
+      "type": "array",
+      "description": "the work tickets, in the order they are numbered; a decision ticket is never here, it is under decisions",
+      "items": {
+        "type": "object",
+        "required": ["key", "title", "kind", "difficulty", "blocked_by", "touches", "acceptance", "context_pack", "origin", "demo"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$", "description": "the ticket's name inside this plan (T1, T2, ...), which blocked_by and pauses entries use"},
+          "title": {"type": "string", "pattern": "\\S"},
+          "kind": {"type": "string", "enum": ["dossier", "lit", "code", "docs", "experiment", "analysis", "figure", "writing", "review", "harness"]},
+          "difficulty": {"type": "integer", "minimum": 1, "maximum": 5, "description": "by the rubric of BRIEF 8.4, which sets the model, the effort, and the budget"},
+          "blocked_by": {"type": "array", "items": {"$ref": "#/$defs/reference"}, "description": "the tickets this one waits on: keys of this plan, or #<id> of tickets the project already holds"},
+          "touches": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the touch set: paths under the project the ticket may write, a directory with a trailing slash; never research/"},
+          "resources": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "description": "experiment and analysis tickets: what one job of the ticket needs, for the free-slot rule",
+            "properties": {
+              "gpu": {"type": "integer", "minimum": 0},
+              "cpu": {"type": "integer", "minimum": 1},
+              "ram_gb": {"type": "number", "minimum": 0},
+              "wallclock_minutes": {"type": "integer", "minimum": 1}
+            }
+          },
+          "inputs": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+          "outputs": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+          "acceptance": {
+            "type": "object",
+            "required": ["machine"],
+            "additionalProperties": false,
+            "properties": {
+              "machine": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "Type-A gates: shell commands run from the project root that must exit 0 once the ticket is done, and fail at the base commit"},
+              "quality": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "Type-B gates: the question a verifier answers about the result, when the ticket needs a verdict"}
+            }
+          },
+          "goal_metric": {
+            "type": ["object", "null"],
+            "required": ["reports", "expected_direction"],
+            "additionalProperties": false,
+            "description": "when the ticket reports the goal's metric: which, and the direction the goal wants",
+            "properties": {
+              "reports": {"type": "string", "pattern": "\\S"},
+              "expected_direction": {"type": "string", "enum": ["up", "down"]}
+            }
+          },
+          "context_pack": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the locators the worker is given, smallest first: a path, path:first-last, or path#heading"},
+          "origin": {"type": "string", "pattern": "\\S", "description": "what in the spec the ticket comes from, as a locator: research/SPEC.md#e1-claims-c1"},
+          "demo": {"type": "string", "pattern": "\\S", "description": "what a person would watch to believe the ticket is done"},
+          "notes": {"type": ["string", "null"], "description": "free prose for the worker, written into the ticket body"},
+          "adds_public_api": {"type": "boolean", "description": "a code ticket that adds a function, a class, a command, or a file another ticket or a person calls; such a ticket is followed by a docs ticket"},
+          "tags": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "what the ticket works with, which the librarian matches against the skills' applicability tags",
+            "properties": {
+              "data_types": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+              "libraries": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+              "venues": {"type": "array", "items": {"type": "string", "pattern": "\\S"}}
+            }
+          },
+          "retry": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "description": "experiment tickets only: the footprint ladders of Implementation Decisions 6, each step an override object or its spelling \"--batch-size=16 NAME=value\"",
+            "properties": {
+              "host_oom": {"type": "array", "items": {"type": ["object", "string"]}},
+              "gpu_oom": {"type": "array", "items": {"type": ["object", "string"]}}
+            }
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "one decision ticket per choice the spec leaves open, with what it pauses",
+      "items": {
+        "type": "object",
+        "required": ["question", "options", "recommended", "evidence", "blocking", "human_only", "pauses"],
+        "additionalProperties": false,
+        "properties": {
+          "question": {"type": "string", "pattern": "\\S"},
+          "options": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+          "recommended": {"type": ["string", "null"]},
+          "evidence": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+          "blocking": {"type": "string", "enum": ["subgraph", "all"], "description": "subgraph pauses the tickets it names and whatever waits on them; all pauses every ticket"},
+          "human_only": {"type": "boolean", "description": "true when the answer changes the goal or the data, or falls in a class the project lists under human_only"},
+          "pauses": {"type": "array", "items": {"$ref": "#/$defs/reference"}, "description": "the tickets that wait for the answer: keys of this plan, or #<id> of tickets the project already holds"},
+          "origin": {"type": ["string", "null"], "description": "what in the spec leaves the choice open, as a locator"}
+        }
+      }
+    },
+    "notes": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "what the planner could not cut or had to take a side on: a kind no role covers, a choice taken with the recommended answer"}
+  },
+  "$defs": {
+    "reference": {"type": "string", "pattern": "^(#[1-9][0-9]*|[A-Za-z][A-Za-z0-9_-]*)$", "description": "a key of this plan, or #<id> for a ticket the project already holds"}
+  }
+}
