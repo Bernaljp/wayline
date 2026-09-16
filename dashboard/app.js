@@ -287,6 +287,7 @@ function renderOverview(view) {
       ['ram slot', ram ? `${gib(ram.free_bytes)} free, ${gib(ram.committed_bytes)} committed` : null],
       ['gpu slots', gpus ? (gpus.length ? `${gpus.filter((gpu) => gpu.free).length} free of ${gpus.length}` : 'none detected (CPU-only)') : null],
     ]),
+    el('hr', { class: 'rule' }),
   ];
   parts.push(el('div', { class: 'chips' }, counts.length
     ? counts.map(([status, count]) => el('span', { class: `chip s-${status}`, text: `${status} ${count}` }))
@@ -299,7 +300,7 @@ function renderOverview(view) {
   const jobRows = (view.jobs || []).map((job) => [job.id, job.ticket, job.status, job.unit || job.backend]);
   // `blocking` is the scope a decision pauses ("subgraph" or "all"), not a list of ids.
   const decisionRows = (view.decisions || []).map((entry) => [entry.id, entry.title, entry.blocking || '', entry.awaits === 'decider' ? 'the decider' : 'the owner']);
-  parts.push(el('div', { class: 'grid' }, [
+  parts.push(el('div', { class: 'grid panes' }, [
     el('div', {}, [
       subhead('frontier', frontierRows.length),
       tableOrNone(['id', 'kind', 'd', 'role', 'title'], frontierRows,
@@ -337,6 +338,7 @@ function showGraph() {
   document.getElementById('logs').hidden = true;
   stopLog();
   state.ticket = null;
+  buildIndex();
 }
 
 function showTicket() {
@@ -344,6 +346,7 @@ function showTicket() {
   document.getElementById('ticket').hidden = false;
   document.getElementById('logs').hidden = true;
   stopLog();
+  buildIndex();
 }
 
 async function loadGraph() {
@@ -720,6 +723,7 @@ function openLog(kind, id) {
   document.getElementById('graph').hidden = true;
   document.getElementById('ticket').hidden = true;
   document.getElementById('logs').hidden = false;
+  buildIndex();
   state.log = { kind, id, since: null, written: false };
   document.getElementById('logs-tail').textContent = '';
   noteText('logs-note', `${logName(kind, id)}: reading`);
@@ -1363,10 +1367,96 @@ function wireFolds() {
   }
 }
 
+// --- the index -----------------------------------------------------------------------------------
+//
+// Every section the page is showing, in order, as a list down the left. The list is read off the
+// page rather than written out, so a section added to it, or the ticket page and the log tail
+// taking the graph's place, shows up here without a second edit. A jump to a folded section opens it:
+// asking to go somewhere is asking to see it.
+
+function sectionsShown() {
+  return [...document.querySelectorAll('main > section')].filter((section) => !section.hidden);
+}
+
+function buildIndex() {
+  const list = document.getElementById('index-list');
+  if (!list) return;
+  replace(list, sectionsShown().map((section) => {
+    const heading = section.querySelector('h2');
+    const link = el('a', { href: `#${section.id}`, 'data-section': section.id, text: heading ? heading.textContent : section.id });
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      jumpTo(section.id);
+    });
+    return el('li', {}, [link]);
+  }));
+  markCurrent();
+}
+
+function jumpTo(id) {
+  const section = document.getElementById(id);
+  if (!section || section.hidden) return;
+  if (section.classList.contains('folded')) {
+    fold(id, false);
+    const now = foldedNow();
+    now.delete(id);
+    remember(STORE.folded, [...now].join(','));
+  }
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  section.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+  // Where the keyboard is follows where the eye was sent.
+  const heading = section.querySelector('h2');
+  if (heading) {
+    heading.setAttribute('tabindex', '-1');
+    heading.focus({ preventScroll: true });
+  }
+}
+
+// The section being read is the last one whose top has passed under the header.
+function markCurrent() {
+  const line = headerHeight() + 24;
+  let current = null;
+  for (const section of sectionsShown()) {
+    if (section.getBoundingClientRect().top <= line) current = section.id;
+  }
+  if (!current && sectionsShown().length) current = sectionsShown()[0].id;
+  for (const link of document.querySelectorAll('#index-list a')) {
+    link.setAttribute('aria-current', String(link.dataset.section === current));
+  }
+}
+
+// The header is sticky and its height depends on how its tabs wrap, so it is measured rather than
+// assumed, for the index to sit under it and for a jump to land below it.
+function headerHeight() {
+  const header = document.querySelector('header');
+  return header ? header.getBoundingClientRect().height : 0;
+}
+
+function measureHeader() {
+  document.documentElement.style.setProperty('--header-h', `${Math.ceil(headerHeight())}px`);
+}
+
+function wireIndex() {
+  buildIndex();
+  measureHeader();
+  let pending = false;
+  window.addEventListener('scroll', () => {
+    if (pending) return;
+    pending = true;
+    window.requestAnimationFrame(() => {
+      pending = false;
+      markCurrent();
+    });
+  }, { passive: true });
+  window.addEventListener('resize', measureHeader);
+  if (window.ResizeObserver) new ResizeObserver(measureHeader).observe(document.querySelector('header'));
+}
+
 // --- start ---------------------------------------------------------------------------------------
 
 wireTheme();
 wireFolds();
+wireIndex();
 wireGraph();
 wireControls();
 wireIntake();

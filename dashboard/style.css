@@ -1,6 +1,9 @@
 /* The dashboard: no framework, no build step, nothing fetched from outside the workstation
    (Implementation Decisions 8). Ticket 58 is the design pass over what ticket 15's demo showed.
 
+   The look is the one the owner picked of three explored on 2026-09-16, "console": monospace for
+   the interface, square corners, hairlines instead of shadows, and tight rows.
+
    One type scale, one spacing scale, one set of colors, declared as tokens here and used by name
    everywhere below. Both themes are written together so a color that reads in one reads in the
    other. The fonts are the ones the laptop already has: a web font would be a fetch.
@@ -15,8 +18,8 @@
   /* Type. Body is 14px: this is a laptop screen at arm's length, read in rows, not a phone. */
   --text-xs: 11px;
   --text-sm: 12px;
-  --text-md: 14px;
-  --text-lg: 16px;
+  --text-md: 13px;
+  --text-lg: 15px;
   --text-xl: 20px;
 
   /* Space, in fours. Every margin, gap, and padding below is one of these. */
@@ -27,49 +30,57 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --radius-1: 6px;
-  --radius-2: 10px;
-  --radius-pill: 999px;
+  --radius-1: 3px;
+  --radius-2: 4px;
+  --radius-pill: 3px;
+
+  /* The index down the left, and the page it sits beside. */
+  --index-w: 168px;
+  --page: calc(var(--measure) + var(--index-w) + var(--space-5));
+  --header-h: 88px;
 
   /* The width the page reads at. Wider than this, and one row of a table becomes a walk of the eye. */
-  --measure: 1180px;
+  --measure: 1240px;
   --gutter: var(--space-5);
 
-  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --ui: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* Rendered markdown (a ticket's body, a findings file) is prose to be read, not a value to be
+     scanned, so it keeps a proportional face. */
+  --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
-  --bg: #f1f3f7;
-  --surface: #ffffff;
-  --surface-2: #f6f8fb;
-  --ink: #0f172a;
-  --ink-2: #334155;
-  --dim: #5b6b80;
-  --line: #e3e8ef;
-  --line-strong: #c9d2df;
-  --accent: #1d4ed8;
-  --accent-ink: #1d4ed8;
-  --accent-soft: #eaf0ff;
+  --bg: #eef0ee;
+  --surface: #fbfbf9;
+  --surface-2: #f1f2ef;
+  --ink: #14181d;
+  --ink-2: #2f3742;
+  --dim: #5d6670;
+  --line: #dcdfd9;
+  --line-strong: #b8bdb5;
+  --accent: #0f766e;
+  --accent-ink: #0b5f58;
+  --accent-soft: #dcefec;
   /* What is legible on top of --accent: 4.5:1 against it in either theme. */
   --on-accent: #ffffff;
-  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.04);
+  --shadow: none;
 
-  --done: #15803d;
-  --running: #a25d07;
-  --failed: #b42318;
-  --paused: #7e22ce;
+  --done: #116b3d;
+  --running: #8a5a00;
+  --failed: #a52725;
+  --paused: #6d28a8;
 
   /* The graph's fills, one per status of `wayline.dag.STATUS_COLOR`. The server sends its own
      values as presentation attributes; the rules under "the graph" map each one onto these, so
      `graph.svg` answers byte for byte as it did and the palette is applied in the browser. */
-  --node-open: #e6ebf3;
-  --node-running: #fbe3ab;
-  --node-done: #bdf0cd;
-  --node-accepted: #8fe0ab;
-  --node-failed: #f9c9c4;
-  --node-blocked: #dfe5ee;
-  --node-needs-human: #fbd3a8;
-  --node-parked: #dcdfe6;
-  --node-frontier: #bcd7fb;
+  --node-open: #e4e7e2;
+  --node-running: #f3dfae;
+  --node-done: #bfe8cd;
+  --node-accepted: #95dcae;
+  --node-failed: #f2c9c6;
+  --node-blocked: #dfe2dc;
+  --node-needs-human: #f4d3ab;
+  --node-parked: #dcdcd8;
+  --node-frontier: #b9ddd7;
 }
 
 /* Night and day. The page follows the system until the owner says otherwise in the header, and
@@ -79,66 +90,66 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0d1420;
-    --surface: #151d2c;
-    --surface-2: #1b2534;
-    --ink: #eef2f8;
-    --ink-2: #cbd5e1;
-    --dim: #93a1b5;
-    --line: #253145;
-    --line-strong: #37445c;
-    --accent: #4d7fe0;
-    --accent-ink: #a8c6ff;
-    --accent-soft: #1b2a45;
-    --on-accent: #0b1220;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --bg: #0b0f14;
+    --surface: #11161d;
+    --surface-2: #161d26;
+    --ink: #d7e0ea;
+    --ink-2: #b3c0ce;
+    --dim: #7f8b99;
+    --line: #1f2731;
+    --line-strong: #2e3945;
+    --accent: #2f9e8f;
+    --accent-ink: #5fd3c0;
+    --accent-soft: #10241f;
+    --on-accent: #05100e;
+    --shadow: none;
 
-    --done: #5fd18b;
-    --running: #e3b341;
-    --failed: #f98c82;
-    --paused: #c39bf5;
+    --done: #57c98c;
+    --running: #d8a944;
+    --failed: #e8737d;
+    --paused: #b98ce0;
 
-    --node-open: #26334a;
-    --node-running: #4b3a12;
-    --node-done: #14472c;
-    --node-accepted: #176135;
-    --node-failed: #5d2320;
-    --node-blocked: #222d40;
-    --node-needs-human: #563617;
-    --node-parked: #1f2937;
-    --node-frontier: #1e3a63;
+    --node-open: #1b242e;
+    --node-running: #3f320f;
+    --node-done: #123b27;
+    --node-accepted: #14512e;
+    --node-failed: #4d1f1f;
+    --node-blocked: #19212a;
+    --node-needs-human: #472c13;
+    --node-parked: #171d25;
+    --node-frontier: #123630;
   }
 }
 
 :root[data-theme="dark"] {
-    --bg: #0d1420;
-    --surface: #151d2c;
-    --surface-2: #1b2534;
-    --ink: #eef2f8;
-    --ink-2: #cbd5e1;
-    --dim: #93a1b5;
-    --line: #253145;
-    --line-strong: #37445c;
-    --accent: #4d7fe0;
-    --accent-ink: #a8c6ff;
-    --accent-soft: #1b2a45;
-    --on-accent: #0b1220;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --bg: #0b0f14;
+    --surface: #11161d;
+    --surface-2: #161d26;
+    --ink: #d7e0ea;
+    --ink-2: #b3c0ce;
+    --dim: #7f8b99;
+    --line: #1f2731;
+    --line-strong: #2e3945;
+    --accent: #2f9e8f;
+    --accent-ink: #5fd3c0;
+    --accent-soft: #10241f;
+    --on-accent: #05100e;
+    --shadow: none;
 
-    --done: #5fd18b;
-    --running: #e3b341;
-    --failed: #f98c82;
-    --paused: #c39bf5;
+    --done: #57c98c;
+    --running: #d8a944;
+    --failed: #e8737d;
+    --paused: #b98ce0;
 
-    --node-open: #26334a;
-    --node-running: #4b3a12;
-    --node-done: #14472c;
-    --node-accepted: #176135;
-    --node-failed: #5d2320;
-    --node-blocked: #222d40;
-    --node-needs-human: #563617;
-    --node-parked: #1f2937;
-    --node-frontier: #1e3a63;
+    --node-open: #1b242e;
+    --node-running: #3f320f;
+    --node-done: #123b27;
+    --node-accepted: #14512e;
+    --node-failed: #4d1f1f;
+    --node-blocked: #19212a;
+    --node-needs-human: #472c13;
+    --node-parked: #171d25;
+    --node-frontier: #123630;
 }
 
 :root[data-theme="light"] { color-scheme: light; }
@@ -153,7 +164,7 @@ body {
   padding: 0 0 var(--space-6);
   background: var(--bg);
   color: var(--ink);
-  font: var(--text-md) / 1.55 var(--sans);
+  font: var(--text-md) / 1.55 var(--ui);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -168,7 +179,7 @@ header {
 }
 
 .bar {
-  max-width: var(--measure);
+  max-width: var(--page);
   margin: 0 auto;
   padding: var(--space-3) var(--gutter);
   display: flex;
@@ -192,7 +203,7 @@ h1 { margin: 0; font-size: var(--text-lg); font-weight: 650; letter-spacing: 0.0
 nav { display: flex; flex-wrap: wrap; gap: var(--space-2); flex: 1 1 auto; min-width: 0; }
 
 .meta {
-  max-width: var(--measure);
+  max-width: var(--page);
   margin: 0 auto;
   padding: 0 var(--gutter) var(--space-3);
   display: flex;
@@ -204,9 +215,52 @@ nav { display: flex; flex-wrap: wrap; gap: var(--space-2); flex: 1 1 auto; min-w
 
 /* --- panels and headings ------------------------------------------------------------------------ */
 
-main { max-width: var(--measure); margin: 0 auto; padding: var(--space-5) var(--gutter) 0; }
+/* The index and the sections, side by side. */
+.layout {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: grid;
+  grid-template-columns: var(--index-w) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
 
-section { margin: 0 0 var(--space-5); }
+main { min-width: 0; padding: var(--space-5) 0 0; }
+
+section { margin: 0 0 var(--space-5); scroll-margin-top: calc(var(--header-h) + var(--space-3)); }
+
+#index {
+  position: sticky;
+  top: var(--header-h);
+  padding-top: var(--space-5);
+  max-height: calc(100vh - var(--header-h) - var(--space-5));
+  overflow-y: auto;
+}
+/* The project tabs' `nav` rule lays its children out in a row; the index is a column. */
+#index nav { display: block; }
+#index .index-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+#index ol { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--line-strong); }
+#index a {
+  display: block;
+  padding: var(--space-1) var(--space-3);
+  margin-left: -1px;
+  border-left: 2px solid transparent;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: var(--text-sm);
+  text-transform: lowercase;
+  transition: color 150ms ease-out, border-color 150ms ease-out;
+}
+#index a:hover { color: var(--accent-ink); border-left-color: var(--line-strong); }
+#index a[aria-current="true"] { color: var(--accent-ink); border-left-color: var(--accent); font-weight: 700; }
+h2[tabindex="-1"]:focus { outline: none; }
 
 .view-head {
   display: flex;
@@ -425,7 +479,7 @@ dl.fields + .chips { margin-top: var(--space-4); }
 .graph svg a.node:hover rect.stripe, .graph svg a.node:focus-visible rect.stripe { stroke: none; }
 .graph svg .node-id { font-size: 13px; font-weight: 700; }
 .graph svg .node-status { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; fill: var(--ink-2); text-transform: uppercase; }
-.graph svg .node-name { font-size: 12px; font-weight: 500; font-family: var(--sans); fill: var(--ink-2); }
+.graph svg .node-name { font-size: 12px; font-weight: 500; font-family: var(--ui); fill: var(--ink-2); }
 
 .s-fill-done, .s-fill-accepted { fill: var(--done); }
 .s-fill-running { fill: var(--running); }
@@ -501,7 +555,7 @@ dl.fields + .chips { margin-top: var(--space-4); }
 /* --- buttons and the actions of ticket 35 --------------------------------------------------------------------- */
 
 button.tab, button.action, button.ghost {
-  font: 500 var(--text-sm) / 1.5 var(--sans);
+  font: 500 var(--text-sm) / 1.5 var(--ui);
   color: var(--ink);
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
@@ -539,7 +593,8 @@ a { color: var(--accent-ink); }
 
 /* One control per row: its label, its inputs, and the line that says what it does now. */
 .control { padding: var(--space-3) 0; border-top: 1px solid var(--line); }
-.control:first-child { border-top: 0; padding-top: 0; }
+/* By type rather than by position: the panel's own status line comes before the first control. */
+.control:first-of-type { border-top: 0; padding-top: 0; }
 .control:last-child { padding-bottom: 0; }
 form.inline, p.inline { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0; }
 dl.fields + p.inline { margin-top: var(--space-4); }
@@ -547,7 +602,7 @@ form.inline label { font-size: var(--text-sm); color: var(--dim); min-width: 8.5
 .control .note { margin: var(--space-1) 0 0; }
 
 select, textarea, input[type="number"], input[type="file"] {
-  font: var(--text-sm) / 1.5 var(--sans);
+  font: var(--text-sm) / 1.5 var(--ui);
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line-strong);
@@ -581,7 +636,7 @@ input[type="number"] { width: 7em; font-family: var(--mono); }
 .decision ul { margin: 0; padding-left: var(--space-5); font-size: var(--text-sm); color: var(--ink-2); }
 .answer-form { display: grid; gap: var(--space-2); margin-top: var(--space-3); max-width: 62ch; }
 .answer-form label.option { display: flex; gap: var(--space-2); align-items: baseline; font-size: var(--text-sm); }
-.answer-form textarea { width: 100%; resize: vertical; font-family: var(--sans); }
+.answer-form textarea { width: 100%; resize: vertical; font-family: var(--ui); }
 .answer-form button { justify-self: start; }
 
 /* --- outputs and intake --------------------------------------------------------------------------------------- */
@@ -599,7 +654,7 @@ ul.outputs li {
 ul.outputs li:last-child { border-bottom: 0; }
 /* The words that stand in for an empty list keep their own shape inside one. */
 ul.outputs li.state, ol.tail li.state { display: inline-block; border-bottom: 0; }
-ol.tail li.state { border-top: 0; font-family: var(--sans); }
+ol.tail li.state { border-top: 0; font-family: var(--ui); }
 ul.outputs a { font-family: var(--mono); overflow-wrap: anywhere; }
 ul.outputs .note { margin: 0; font-family: var(--mono); font-size: var(--text-xs); }
 
@@ -616,7 +671,7 @@ ul.outputs .note { margin: 0; font-family: var(--mono); font-size: var(--text-xs
 .drop p:last-child { margin-bottom: 0; }
 .drop.over { border-color: var(--accent); background: var(--accent-soft); }
 input[type="file"]::file-selector-button {
-  font: 500 var(--text-sm) / 1.5 var(--sans);
+  font: 500 var(--text-sm) / 1.5 var(--ui);
   color: var(--ink);
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
@@ -632,7 +687,7 @@ code { font: var(--text-sm) / 1.5 var(--mono); background: var(--surface-2); bor
 
 /* --- rendered markdown ------------------------------------------------------------------------------------------ */
 
-.markdown { max-width: 78ch; color: var(--ink-2); }
+.markdown { max-width: 78ch; color: var(--ink-2); font-family: var(--prose); }
 .markdown > :first-child { margin-top: 0; }
 .markdown :is(h1, h2, h3, h4) {
   margin: var(--space-4) 0 var(--space-2);
@@ -653,13 +708,18 @@ code { font: var(--text-sm) / 1.5 var(--mono); background: var(--surface-2); bor
 .markdown table { margin: var(--space-2) 0; }
 
 footer {
-  max-width: var(--measure);
+  max-width: var(--page);
   margin: 0 auto;
   padding: var(--space-5) var(--gutter) 0;
 }
 footer .note { margin: 0; }
 
 /* --- the narrow width -------------------------------------------------------------------------------------------- */
+
+@media (max-width: 960px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  #index { display: none; }
+}
 
 @media (max-width: 720px) {
   :root { --gutter: var(--space-4); }
@@ -675,3 +735,39 @@ footer .note { margin: 0; }
     transition-duration: 1ms !important;
   }
 }
+
+
+/* The overview's four tables, each in a pane with its own frame, so one does not run into the next. */
+.grid.panes > div {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+}
+.grid.panes > div h3.sub { margin-top: 0; padding-bottom: var(--space-2); border-bottom: 1px solid var(--line); }
+
+/* --- the console look: where it departs from the rules above ------------------------------------------------------------------------ */
+
+body { font-family: var(--ui); }
+.panel { padding: var(--space-3); box-shadow: none; }
+h1 { font-weight: 700; letter-spacing: 0.04em; text-transform: lowercase; }
+h2 { letter-spacing: 0.14em; }
+h3.sub { letter-spacing: 0.1em; font-size: var(--text-xs); }
+h3.sub .count { border-radius: 3px; }
+th, td { padding-block: var(--space-1); }
+th { border-bottom: 1px solid var(--line-strong); }
+tbody tr:hover { background: var(--accent-soft); }
+.tail { box-shadow: none; }
+.tail li { padding: 0; }
+button.tab, button.action, button.ghost { border-radius: 3px; font-family: var(--ui); text-transform: lowercase; }
+button.tab { border-radius: 3px; }
+.chip { border-radius: 3px; }
+.state { border-radius: 3px; }
+.decision { border-left-width: 2px; border-radius: 0; }
+.node-card { border-radius: 3px; box-shadow: none; border-color: var(--accent); }
+.graph svg a.node rect:first-of-type { rx: 3px; }
+.graph svg .node-id { font-weight: 700; }
+.graph svg .node-name { font-family: var(--mono); }
+dl.fields dt { letter-spacing: 0.1em; }
+dl.fields dd { font-size: var(--text-sm); }
+select, textarea, input[type="number"], input[type="file"] { border-radius: 3px; font-family: var(--ui); }

@@ -31,6 +31,10 @@
   </div>
 </header>
 
+<div class="layout">
+<!-- The sections, listed from the page itself so the list cannot drift from what is on it. -->
+<aside id="index" aria-label="sections"><nav><p class="index-title">sections</p><ol id="index-list"></ol></nav></aside>
+
 <main>
   <section id="overview" aria-labelledby="overview-heading">
     <div class="view-head"><button type="button" class="fold" data-folds="overview" aria-expanded="true" aria-controls="overview"></button><h2 id="overview-heading">Overview</h2></div>
@@ -141,6 +145,7 @@
     <ol id="journal-tail" class="tail" reversed></ol>
   </section>
 </main>
+</div>
 
 <!-- The card a graph node shows while the pointer or the keyboard is on it. -->
 <div id="node-card" class="node-card" role="status" hidden></div>
