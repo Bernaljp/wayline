@@ -1,0 +1,19 @@
+{
+  "id": "dedup-judge",
+  "scope_kind": "global",
+  "capability_summary": "Answers whether a proposed ticket and one already in the graph, close in title, are the same admission or two, with no tools, and returns duplicate or distinct with the reason.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "fd1b02d9cad427f5701371710a8afa270024d4d776aaebcbad3b4d53b321fa17",
+  "may_judge": true,
+  "output_schema": "dedup_verdict",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}

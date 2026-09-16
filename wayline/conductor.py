@@ -94,7 +94,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, decider, decisions, gates, notify, pacing, replay, schedule, tick, tickets, worker
+from wayline import HARNESS_ROOT, decider, decisions, gates, notify, pacing, proposals, replay, schedule, tick, tickets, worker
 from wayline.ledger import (
     ACCEPTANCE, CONTROL, FEEDBACK, FINDING, INTEGRATED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
@@ -518,6 +518,7 @@ class Conductor:
         self._consent = self._consent_wave = None
         # The launches on Fable the hold dropped in this wave, which the ask of decision 15 names when the consent asks.
         self._dropped = []
+        self._proposal_cap = {}
         self.resources_free = schedule.everything_free
         # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
         # its own so a slow channel never holds a wave; a test stands in its own. `notifying` is those threads.
@@ -552,6 +553,7 @@ class Conductor:
         self.last_wave_at = now_ts()
         result = WaveResult(self.number)
         self._dropped = []
+        self._proposal_cap = {}  # the per-radius count admitted this wave (ticket 37), shared across every result it carries
         self._beat()
         arrived = self._tail()
         self._pace()  # what `run` start and the journal read, before anything below can start a session
@@ -1375,6 +1377,7 @@ class Conductor:
                 self._fail(attempt, "the resumed session returned no usable result: %s" % problem, "tier_up")
                 return "failed"
             self._open_requested(attempt)  # what the resumed session asked is asked, whether or not its work passes now
+            self._admit_proposals(attempt)  # and what it proposed, whether or not its work passes now
             if not self._accept(attempt, "worktree", attempt.worktree)["pass"]:
                 self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", "tier_up")
                 return "failed"
@@ -1542,6 +1545,29 @@ class Conductor:
                     attempt.id, report["ticket"],
                     "ticket(s) %s" % ", ".join(str(item) for item in report["paused"]) if report["paused"] else "no ticket yet"))
 
+    def _admit_proposals(self, attempt):
+        """Wave step 5: each of a valid result's `proposals` is admitted or parked (ticket 37).
+
+        A proposal the ledger refuses (a launch failure of the dedup judge) is said aloud and left
+        for a later wave to retry; it does not fail the work that proposed it.
+        """
+        requested = attempt.result.get("proposals") or []
+        if not requested:
+            return
+        try:
+            outcomes = proposals.admit_proposals(
+                self.project, requested, origin_ticket=attempt.id, origin_prefix="ticket %d attempt %d" % (attempt.id, attempt.number),
+                proposed_by="worker:%d" % attempt.id, policy=self.policy, harness_root=self.harness_root,
+                wave_cap=self._proposal_cap, notify=self.notify)
+        except (ValueError, OSError) as failure:
+            self.say("  ticket %d proposed ticket(s) that could not be admitted: %s" % (attempt.id, failure))
+            return
+        for outcome in outcomes:
+            if outcome["outcome"] == "admitted":
+                self.say("  ticket %d proposed a ticket: admitted as ticket %d" % (attempt.id, outcome["ticket"]))
+            else:
+                self.say("  ticket %d proposed a ticket: parked (%s)" % (attempt.id, outcome["reason"]))
+
     def _notify_in_background(self, event, text, project=None, ticket=None):
         """`wayline.notify.notify` on a thread of its own: hermes may take two minutes, and a wave does not wait for it.
 
@@ -1564,6 +1590,7 @@ class Conductor:
         that raised it passes.
         """
         self._open_requested(attempt)
+        self._admit_proposals(attempt)
         outside = attempt.result.get("touched_outside_declared") or []
         blocked_on = attempt.result.get("blocked_on")
         if outside or blocked_on:
@@ -2396,31 +2423,42 @@ class Conductor:
     def _reconsider_parked(self, result):
         """The end of the wave: under `autonomous`, the decider reconsiders every parked proposal not yet reconsidered.
 
-        Parked proposals are ticket 37's (`research/proposals/`); until it lands there are none. Each answer is a
-        `decision` with no ticket, `proposal <id>: admit` or `keep parked`, which the admission reads; one already
-        answered is not asked again. The same pacing and hold rules as `_decide`.
+        Each answer is a `decision` with no ticket, `proposal <id>: admit` or `keep parked`. `decide_proposal`
+        (ticket 31) only journals that opinion; `proposals.apply_admitted` (ticket 37) reads it back afterward and
+        actually admits an `admit` within the cap, or leaves it parked for a later wave's cap to allow it. One
+        already reconsidered is not asked again. The same pacing and hold rules as `_decide`.
         """
         if not self._decider_takes():
             return
         parked = decisions.parked_proposals(self.project)
-        if not parked:
+        if parked:
+            events, _ = self.ledger.read_events()
+            taken = decider.reconsidered(self.project, events)
+            for proposal in parked:
+                if str(proposal["id"]) in taken or self._holds_launches() or self.action != schedule.NORMAL:
+                    continue
+                outcome, stopped = self._launch_decider(
+                    "the decider on parked proposal %s" % proposal["id"], lambda falls_back: decider.decide_proposal(
+                        self.project, proposal, harness_root=self.harness_root, policy=self.policy, fall_back=falls_back,
+                        notify=self.notify))
+                if stopped:
+                    return
+                if outcome is None:
+                    continue
+                if outcome.status == "failed":
+                    self.say("  parked proposal %s: the decider could not reconsider it: %s" % (proposal["id"], outcome.why))
+                    continue
+                self.say("  %s" % outcome.line)
+                result.reconsidered.append(str(proposal["id"]))
+        try:
+            admitted = proposals.apply_admitted(self.project, policy=self.policy, harness_root=self.harness_root,
+                                                wave_cap=self._proposal_cap, notify=self.notify)
+        except (ValueError, OSError) as failure:
+            self.say("  a proposal the decider admitted could not be taken up: %s" % failure)
             return
-        events, _ = self.ledger.read_events()
-        taken = decider.reconsidered(self.project, events)
-        for proposal in parked:
-            if str(proposal["id"]) in taken or self._holds_launches() or self.action != schedule.NORMAL:
-                continue
-            outcome, stopped = self._launch_decider("the decider on parked proposal %s" % proposal["id"], lambda falls_back: decider.decide_proposal(
-                self.project, proposal, harness_root=self.harness_root, policy=self.policy, fall_back=falls_back, notify=self.notify))
-            if stopped:
-                return
-            if outcome is None:
-                continue
-            if outcome.status == "failed":
-                self.say("  parked proposal %s: the decider could not reconsider it: %s" % (proposal["id"], outcome.why))
-                continue
-            self.say("  %s" % outcome.line)
-            result.reconsidered.append(str(proposal["id"]))
+        for outcome in admitted:
+            if outcome["outcome"] == "admitted":
+                self.say("  parked proposal %s: admitted as ticket %d" % (outcome["id"], outcome["ticket"]))
 
     # --- the Type-B gate (decision 11) ---
 
@@ -2518,12 +2556,35 @@ class Conductor:
                      % (entry.ticket, ask.verdict_type, "passed" if verdict.passed else "failed",
                         verdict.model or "an unnamed model", verdict.session_id or "unknown",
                         ", falling back from %s" % verdict.fallback_from if verdict.fallback_from else ""))
+            self._admit_verdict_proposals(entry.ticket, ask, verdict)
             if not verdict.passed:
                 self._reject(entry, verdict)
                 result.rejected.append(entry.ticket)
                 return
         self._accept_ticket(entry, verdict)
         result.accepted.append(entry.ticket)
+
+    def _admit_verdict_proposals(self, ticket, ask, verdict):
+        """Admission on the critic's and the verifier's `proposals` (ticket 37), the same rules as a worker's result's.
+
+        `proposed_by` is `verifier` for both roles the schema names it: the critic's depth spot-check
+        is a Type-B verdict like the verifier's own, and the ticket schema names one author for both.
+        """
+        if not verdict.proposals:
+            return
+        try:
+            outcomes = proposals.admit_proposals(
+                self.project, verdict.proposals, origin_ticket=ticket,
+                origin_prefix="ticket %d's %s verdict" % (ticket, ask.verdict_type), proposed_by="verifier",
+                policy=self.policy, harness_root=self.harness_root, wave_cap=self._proposal_cap, notify=self.notify)
+        except (ValueError, OSError) as failure:
+            self.say("  ticket %d's %s verdict proposed ticket(s) that could not be admitted: %s" % (ticket, ask.verdict_type, failure))
+            return
+        for outcome in outcomes:
+            if outcome["outcome"] == "admitted":
+                self.say("  ticket %d's %s verdict proposed a ticket: admitted as ticket %d" % (ticket, ask.verdict_type, outcome["ticket"]))
+            else:
+                self.say("  ticket %d's %s verdict proposed a ticket: parked (%s)" % (ticket, ask.verdict_type, outcome["reason"]))
 
     def _accept_ticket(self, entry, verdict):
         """`done` to `accepted`: the one transition a passing quality verdict makes (decision 2)."""

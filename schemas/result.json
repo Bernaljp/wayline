@@ -46,7 +46,8 @@
           "kind": {"type": "string", "enum": ["dossier", "lit", "code", "docs", "experiment", "analysis", "figure", "writing", "review", "decision", "harness"]},
           "why": {"type": "string"},
           "blocked_by": {"type": "array", "items": {"type": "integer", "minimum": 1}},
-          "radius": {"type": "string", "enum": ["strict", "moderate", "exploratory"]}
+          "radius": {"type": "string", "enum": ["strict", "moderate", "exploratory"]},
+          "touches": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the touch set the proposed ticket would take; used by admission's duplicate check (ticket 37)"}
         }
       }
     },

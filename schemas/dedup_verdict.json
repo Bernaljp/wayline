@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dedup_verdict",
+  "description": "The dedup judge's answer (ticket 37, Implementation Decisions 5): whether a proposed ticket and one already in the graph, close enough in title to ask about, are the same admission or two.",
+  "type": "object",
+  "required": ["verdict", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {"type": "string", "enum": ["duplicate", "distinct"], "description": "duplicate when the proposed ticket would do the same work as the one it was compared to"},
+    "reason": {"type": "string", "pattern": "\\S", "description": "one paragraph: what the two titles and rationales share or do not"}
+  }
+}
