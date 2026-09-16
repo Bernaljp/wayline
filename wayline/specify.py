@@ -58,6 +58,7 @@ __all__ = [
     "PLANNER", "SPEC_SCHEMA", "SPEC_MD", "SPEC_JSON", "SECTIONS", "SpecifyError", "planner_tier", "protocol_for",
     "check_draft", "render_spec", "check_spec", "spec_sha", "spec_state", "specify_prompt", "draft_spec", "judge_spec", "specify",
     "confirm", "advance", "render_report", "specify_command", "confirms", "what_to_change", "move_phase", "context_cap", "current_phase",
+    "PlannerSession", "falls_back_now", "session_dir",
 ]
 
 PLANNER = "planner"
@@ -148,12 +149,13 @@ def planner_tier(policy, fall_back=False):
     return model, effort, None
 
 
-def _falls_back_now(project, policy, fall_back):
+def falls_back_now(project, policy, fall_back, what="the planner's specify session"):
+    """Whether this planner launch falls back to Opus now: the caller's word, else the journal's hold, and only for a planner on Fable."""
     if fall_back is not None:
         return bool(fall_back)
     if planner_tier(policy)[0] != pacing.FABLE:
         return False
-    return gates.fallback_now(project, "the planner's specify session")
+    return gates.fallback_now(project, what)
 
 
 def protocol_for(protocol, phase):
@@ -548,91 +550,107 @@ def specify_prompt(role, records, harness, project, open_questions=(), change=No
 # --- the draft ------------------------------------------------------------------------------------------
 
 
-def _session_dir(project):
-    base = Path(project) / "research" / SESSIONS
+def session_dir(project, sessions=SESSIONS):
+    """`research/<sessions>/<n>`, the first free number: where one planner session's stream and records go."""
+    base = Path(project) / "research" / sessions
     number = 1
     while (base / str(number)).exists():
         number += 1
     return base / str(number)
 
 
-def _budget(policy, key):
-    return ((policy.get("budget") or {}).get(PLANNER_BUDGET) or {}).get(key)
+class PlannerSession:
+    """One planner session of a phase verb, and the mechanics every such verb shares.
 
+    The launch through the worker launcher (seam 1) on `policy.roles.planner`, Opus in Fable's place
+    when the hold says so; the resume of the same session with a gate's message; the record the
+    session returned, kept beside its stream as `<prefix>-<n>.json` for the owner to read; and whether
+    an envelope holds a record the verb's schema accepts. A verb subclasses it with its own gates:
+    specify's draft, checks, and verdict below, and the plan-time checks of `wayline.plan`.
+    """
 
-def _unusable(envelope):
-    if not envelope.valid:
-        return "; ".join(envelope.errors) or "the session returned no structured spec"
-    try:
-        check(envelope.structured_output, load_schema(SPEC_SCHEMA), name="the spec")
-    except ValidationError as failure:
-        return str(failure)
-    return None
-
-
-class _Session:
-    """One planner session and its one allowance of each return: invalid output, failed checks, failed verdict."""
+    error = SpecifyError                     # what a session that cannot go on raises
+    schema = SPEC_SCHEMA                     # the record the session returns
+    sessions = SESSIONS                      # research/<sessions>/<n>
+    what = "the planner's specify session"   # named in the hold on Fable's window and in a refusal
 
     def __init__(self, project, harness_root, policy, fall_back, say):
         self.project, self.harness_root, self.policy, self.say = project, harness_root, policy, say
         self.ledger = Ledger(project)
-        self.model, self.effort, self.fallback_from = planner_tier(policy, _falls_back_now(project, policy, fall_back))
+        self.model, self.effort, self.fallback_from = planner_tier(policy, falls_back_now(project, policy, fall_back, self.what))
         self.role = worker.read_role(PLANNER, harness_root, project)
-        self.run_dir = _session_dir(project)
+        self.run_dir = session_dir(project, self.sessions)
         self.request = None
         self.session_id = None
-        self.drafts = 0
+        self.kept = 0
 
-    def _launch(self, prompt):
+    def budget(self, key):
+        return ((self.policy.get("budget") or {}).get(PLANNER_BUDGET) or {}).get(key)
+
+    def start(self, prompt):
         self.request = worker.LaunchRequest(
             role=self.role.name, model=self.model, effort=self.effort, prompt=prompt,
-            agent_json=self.role.agent_json(self.model, self.effort, _budget(self.policy, "max_turns")),
+            agent_json=self.role.agent_json(self.model, self.effort, self.budget("max_turns")),
             allowed_tools=list(self.role.allowed_tools), disallowed_tools=list(self.role.disallowed_tools),
             settings_path=gates.write_worker_settings(self.run_dir / "settings.json", self.harness_root),
             add_dirs=[str(Path(self.harness_root).resolve()), str(self.project)],
             cwd=self.project,
             env=gates.verdict_env(self.project, self.run_dir),
-            schema_path=Path(self.harness_root).resolve() / "schemas" / (SPEC_SCHEMA + ".json"),
-            max_minutes=_budget(self.policy, "max_minutes"),
+            schema_path=Path(self.harness_root).resolve() / "schemas" / (self.schema + ".json"),
+            max_minutes=self.budget("max_minutes"),
         )
         return self._taken(worker.launch(self.request))
 
-    def _resume(self, message):
+    def continue_with(self, message):
         if not self.session_id:
-            raise SpecifyError("the planner's session has no id to be resumed with")
+            raise self.error("the planner's session has no id to be resumed with")
         return self._taken(worker.resume(self.request, self.session_id, message))
 
     def _taken(self, envelope):
-        gates.raise_if_refused(envelope, self.model, "the planner's specify session")
+        gates.raise_if_refused(envelope, self.model, self.what)
         self.session_id = envelope.session_id or self.session_id
         return envelope
 
-    def _keep(self, draft):
-        """The draft as the session returned it, kept beside its stream for the owner to read."""
-        self.drafts += 1
-        relative = "%s/draft-%d.json" % (Path(self.run_dir).relative_to(self.ledger.research), self.drafts)
-        self.ledger.write_json(relative, draft)
+    def keep(self, record, prefix):
+        """The record as the session returned it, kept beside its stream for the owner to read."""
+        self.kept += 1
+        relative = "%s/%s-%d.json" % (Path(self.run_dir).relative_to(self.ledger.research), prefix, self.kept)
+        self.ledger.write_json(relative, record)
+
+    def unusable(self, envelope):
+        """Why this envelope is not a record the verb can act on, or None when it is one."""
+        if not envelope.valid:
+            return "; ".join(envelope.errors) or "the session returned no structured %s" % self.schema
+        try:
+            check(envelope.structured_output, load_schema(self.schema), name="the " + self.schema)
+        except ValidationError as failure:
+            return str(failure)
+        return None
+
+
+class _Session(PlannerSession):
+    """The specify session and its one allowance of each return: invalid output, failed checks, failed verdict."""
 
     def draft(self, prompt):
         """A draft that passed the schema and the Type-A checks, with each gate's one return spent as needed."""
-        envelope = self._launch(prompt)
-        problem = _unusable(envelope)
+        envelope = self.start(prompt)
+        problem = self.unusable(envelope)
         if problem is not None:
             self.say("  the draft could not be read (%s); returned to the planner once" % problem)
-            envelope = self._resume(RESUME_INVALID % problem)
-            problem = _unusable(envelope)
+            envelope = self.continue_with(RESUME_INVALID % problem)
+            problem = self.unusable(envelope)
         if problem is not None:
             raise SpecifyError("the planner returned no spec the schema accepts: %s" % problem)
         return self.checked(envelope.structured_output)
 
     def checked(self, draft, returned=False):
         """`draft` once it passes the Type-A checks; a failing one goes back once, a second failure raises."""
-        self._keep(draft)
+        self.keep(draft, "draft")
         failures = check_draft(draft, _goal(self.ledger))
         if failures and not returned:
             self.say("  the draft failed %d structural check(s); returned to the planner once" % len(failures))
-            envelope = self._resume(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
-            problem = _unusable(envelope)
+            envelope = self.continue_with(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
+            problem = self.unusable(envelope)
             if problem is not None:
                 raise SpecifyError("the planner's redraft could not be read: %s" % problem, failures)
             return self.checked(envelope.structured_output, returned=True)
@@ -642,11 +660,11 @@ class _Session:
 
     def revise(self, findings):
         """The draft again after a failed verdict, checked; its Type-A allowance is spent already."""
-        envelope = self._resume(RESUME_FINDINGS % gates.findings_text(findings))
-        problem = _unusable(envelope)
+        envelope = self.continue_with(RESUME_FINDINGS % gates.findings_text(findings))
+        problem = self.unusable(envelope)
         if problem is not None:
             raise SpecifyError("the planner's redraft after the verdict could not be read: %s" % problem)
-        self._keep(envelope.structured_output)
+        self.keep(envelope.structured_output, "draft")
         failures = check_draft(envelope.structured_output, _goal(self.ledger))
         if failures:
             raise SpecifyError("the redraft after the verdict failed its structural checks; the spec as written stands "
@@ -674,7 +692,7 @@ def judge_spec(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=Non
     """
     project = Path(project).resolve()
     policy = policy_for(project, harness_root) if policy is None else policy
-    model = planner_tier(policy, _falls_back_now(project, policy, fall_back))[0]
+    model = planner_tier(policy, falls_back_now(project, policy, fall_back))[0]
     sha = spec_sha(project)
     say("research/SPEC.md (%s) was written and never judged; asking the verifier" % sha)
     return sha, _judge(project, sha, model, harness_root, policy, fall_back)

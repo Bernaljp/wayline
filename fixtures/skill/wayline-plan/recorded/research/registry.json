@@ -1,0 +1,512 @@
+{
+  "generated": "2026-09-16T23:03:43.216Z",
+  "harness_root": "/home/bernaljp/Documents/SpecDrivenResearch/.claude/worktrees/ticket-34-plan-planner-checks",
+  "entries": [
+    {
+      "id": "absorb",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/absorb",
+      "sha256": "400cc04149bd6234ae156d1e4f4d9579eed4c633b991bfca4fb812569a385217",
+      "capability_summary": "The one headless session of an L2 absorb: starts the saved absorb workflow with code's arguments and reports how it ended.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "small",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "analyst",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/analyst",
+      "sha256": "f32402feb00ebe291e1808baec563e025595dfb49757d7db33596dfcea5f2331",
+      "capability_summary": "Analyses the manifested results of finished experiments and files findings whose provenance the manifest resolves.",
+      "applicability_tags": {
+        "kinds": [
+          "analysis"
+        ],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "classifier",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/classifier",
+      "sha256": "be20cf084d68e838049151f4c0db82590b8c739e7d55cd1409a1127f2807ee7a",
+      "capability_summary": "Sorts a numbered batch of report sentences into claims, definitions, transitions, and method descriptions, with no tools, and returns one class per sentence.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "small",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "coder",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/coder",
+      "sha256": "d8df0f6a5670bc736d86b406ab568d3fb7400177d168bda7eff455973e1b4d1d",
+      "capability_summary": "Implements one code ticket in its worktree and returns the structured result.",
+      "applicability_tags": {
+        "kinds": [
+          "code",
+          "docs",
+          "harness"
+        ],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "consultant",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/consultant",
+      "sha256": "88601ea17c35430fdbeea29dd4842cc8992b7790b9b0ab4e817a86818520d72a",
+      "capability_summary": "Answers one question about one dossier from its files, with locators, a confidence, and not-in-source; read-only.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "small",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "critic",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/critic",
+      "sha256": "341b668b0968ad679483048b35b23e35153dbfea3274dd0fc606e8536933c4bc",
+      "capability_summary": "Reads another session's work against its source and returns a verdict with located findings; read-only.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "decider",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/decider",
+      "sha256": "6e83c647c83d7d0487d0750ff94c6895ccc45bb41696106981af37187e601205",
+      "capability_summary": "Resolves one open decision after the autonomy switch from DECISIONS.md, POSITION.md, GOAL.json, the dossiers, and the query pack, with rationale and confidence; read-only, never on the irreversible list.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "large",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "dedup-judge",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/dedup-judge",
+      "sha256": "fd1b02d9cad427f5701371710a8afa270024d4d776aaebcbad3b4d53b321fa17",
+      "capability_summary": "Answers whether a proposed ticket and one already in the graph, close in title, are the same admission or two, with no tools, and returns duplicate or distinct with the reason.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "small",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "experimenter",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/experimenter",
+      "sha256": "2e9ddc2355fea3bd33e0f3f630efff66b7885ea1ba1191429a2ad5d9fc323be6",
+      "capability_summary": "Prepares one experiment ticket's detached jobs with wayline job add and returns status running with their ids.",
+      "applicability_tags": {
+        "kinds": [
+          "experiment"
+        ],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "fixture-judge",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/fixture-judge",
+      "sha256": "a897a97dc3c82e58276eff9619de791aacda9a0070572f188c7b480e0265d6d6",
+      "capability_summary": "Answers one fixture's rubric question about one recorded output from the fields the fixture shows it, with no tools, and returns pass or fail with the reason.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "small",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "integrator",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/integrator",
+      "sha256": "6fda46f27ab90fd9987da8d77ae0abeb921508809e97491b2c73d75156a21463",
+      "capability_summary": "Finishes one ticket branch's conflicted rebase onto main, editing only the conflicting paths.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "planner",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/planner",
+      "sha256": "0d1d81b8f8f96853d9ace9db90c8d30a3e80fb8ff52e1a6d7bc9abf42ccf26b4",
+      "capability_summary": "Drafts the research spec (claims, anti-claims, experiments per claim, baselines, data, metrics, budgets, risks, seams) from DECISIONS.md, POSITION.md, GOAL.json, the dossiers, and the query pack; read-only, returns a structured record.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "large",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "reader",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/reader",
+      "sha256": "438b31b7b66caaf2eddaf9a6ad180cdfd2b9452a9e7c23421e0156b2ebedea64",
+      "capability_summary": "Reads a capped input (an L1 skim, or one absorb chunk) with no tools and returns a short structured record.",
+      "applicability_tags": {
+        "kinds": [
+          "dossier"
+        ],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "small",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "synthesizer",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/synthesizer",
+      "sha256": "eeb26b9e41dafbf58e36e163b99bddc7e3686f9746f96ca211a03f380abf8232",
+      "capability_summary": "Writes an L2 dossier's prose sections from the absorb readers' entries, with a locator on every sentence.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "verifier",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/verifier",
+      "sha256": "84a4cf8456849b02ffcdd9ab3e4c0389d544b565c91667fa1fe5a5974bf05915",
+      "capability_summary": "Answers one Type-B question about one subject from the paths it was given, reading only, and returns the verdict.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "writer",
+      "kind": "role",
+      "scope_kind": "global",
+      "path": "roles/writer",
+      "sha256": "b0423703e7bf14741565112c1fe89993a70b1e523da26db981a68a589c8ddf26",
+      "capability_summary": "Writes report and paper prose under C8 from the findings and the knowledge base, ending every claim sentence with a provenance tag that resolves.",
+      "applicability_tags": {
+        "kinds": [
+          "writing"
+        ],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "large",
+      "fixtures": [],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "evolve",
+      "kind": "skill",
+      "scope_kind": "global",
+      "path": "skills/wayline-evolve",
+      "sha256": "56f6b9d3ef526f42521691cd152b78e7c59f221863cafb317b18263aa9593bba",
+      "capability_summary": "A shell until ticket 45: turns owner feedback and the post-run retrospective into change records, one harness ticket per record, and a fixture that fails on the old behaviour.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "large",
+      "fixtures": [
+        "skill/wayline-evolve"
+      ],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "grill",
+      "kind": "skill",
+      "scope_kind": "global",
+      "path": "skills/wayline-grill",
+      "sha256": "269d927cdbd42916641b71bd36950589990ab8d4b9509c14e5c34ba3bd1c8f5e",
+      "capability_summary": "Phase P2: asks the frontier of the design tree in tiers with a recommended answer each, looks facts up instead of asking them, and lands every answer in DECISIONS.md and every settled term in CONTEXT.md.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [
+        "skill/wayline-grill"
+      ],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "intake",
+      "kind": "skill",
+      "scope_kind": "global",
+      "path": "skills/wayline-intake",
+      "sha256": "24df40cdec7a637450a29b0874f20cc8c2588352f75983a7cc14dc9c5197fab0",
+      "capability_summary": "Phase P0: turns whatever the owner has into research/INTAKE.md, records autonomy, radius, the fallback consent, budgets, and the human-only decision classes, and writes GOAL.json only when a script can measure the goal.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "medium",
+      "fixtures": [
+        "skill/wayline-intake"
+      ],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "paper",
+      "kind": "skill",
+      "scope_kind": "global",
+      "path": "skills/wayline-paper",
+      "sha256": "d09f9c36f835d778c8b1ca1b250c32d1389007191a4e36494ede0d60b6247f26",
+      "capability_summary": "A shell until ticket 53: drafts the manuscript from the ledger under a venue's guidelines, with a provenance tag on every claim sentence.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "large",
+      "fixtures": [
+        "skill/wayline-paper"
+      ],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    },
+    {
+      "id": "plan",
+      "kind": "skill",
+      "scope_kind": "global",
+      "path": "skills/wayline-plan",
+      "sha256": "2ba961726eb03c10cff7aa8aed6bea42da17dfe2c5f1f89ed363d92ef8defaad",
+      "capability_summary": "Phase P4: cuts SPEC.md into research/tickets/ and graph.json, calls the librarian for a role and skills per ticket, opens a decision ticket wherever a choice remains, and passes the plan-time Type-A checks.",
+      "applicability_tags": {
+        "kinds": [],
+        "data_types": [],
+        "libraries": [],
+        "venues": []
+      },
+      "cost_hint": "large",
+      "fixtures": [
+        "skill/wayline-plan"
+      ],
+      "outcome": {
+        "assigned": 0,
+        "passed_first_time": 0,
+        "failed": 0,
+        "last_used": null
+      },
+      "assignable": true
+    }
+  ],
+  "notes": []
+}

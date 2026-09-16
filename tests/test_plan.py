@@ -20,7 +20,6 @@ from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_specify import DRAFT, GOAL, INPUT, RECORDED, run
 from wayline import cli, decider, plan, project, registry, specify, tickets, worker
-from wayline.frontmatter import dump_document
 from wayline.ledger import Ledger
 from wayline.tickets import read_ticket, read_tickets, tickets_dir, write_ticket
 from wayline.worker import Envelope
@@ -71,6 +70,20 @@ class PlannerRoleTest(unittest.TestCase):
         self.assertEqual(schema["title"], "plan")
         self.assertNotIn("decision", schema["properties"]["tickets"]["items"]["properties"]["kind"]["enum"])
 
+    def test_a_cut_names_its_kind_and_a_split_its_ticket(self):
+        self.assertEqual(plan.Cut("split", of=4).asked, "a split of ticket #4, which failed its escalation: at least two smaller tickets that replace it")
+        with self.assertRaises(plan.PlanError):
+            plan.Cut("split")
+        with self.assertRaises(plan.PlanError):
+            plan.Cut("plan", of=4)
+        with self.assertRaises(plan.PlanError):
+            plan.Cut("recut")
+
+    def test_retry_steps_are_spelled_as_a_ticket_file_holds_them(self):
+        self.assertEqual(plan.retry_steps({"host_oom": [{"--batch-size": 16, "NAME": "v"}], "gpu_oom": ["--x=1"]}),
+                         {"host_oom": ["--batch-size=16 NAME=v"], "gpu_oom": ["--x=1"]})
+        self.assertIsNone(plan.retry_steps(None))
+
 
 class ChecksTest(ProjectTestCase):
     """Criterion 3 on hand-written graphs: each check named, the base commit run in a checkout of main."""
@@ -110,6 +123,11 @@ class ChecksTest(ProjectTestCase):
                      "ticket 1 has no role: no assignable role covers a code ticket, and the harness needs one before it can run"):
             self.assertIn(text, failures)
 
+    def test_a_title_that_gives_no_file_name_is_named(self):
+        broken = fields(1, title="実験")
+        failures = plan.check_tickets([(broken, "")], [broken], self.project, base=False)
+        self.assertTrue(any(failure.startswith("ticket 1: its title gives no file name") for failure in failures), failures)
+
     def test_a_touch_set_is_paths_under_the_project(self):
         self.write(fields(1, touches=["/etc/", "../other/", "research/tickets/", "./", "src/", "results/e1/"]))
         failures = plan.check_graph(self.project, base=False)
@@ -125,6 +143,9 @@ class ChecksTest(ProjectTestCase):
         self.assertIn("ticket 1 adds public API and no docs ticket waits on it", plan.check_graph(self.project, base=False))
         self.write(fields(2, kind="docs", blocked_by=[1], touches=["docs/"]))
         self.assertEqual(plan.check_graph(self.project, base=False), [])
+        self.write(fields(2, kind="docs", status="parked", blocked_by=[1], touches=["docs/"]))
+        self.assertIn("ticket 1 adds public API and no docs ticket waits on it", plan.check_graph(self.project, base=False),
+                      "a parked docs ticket documents nothing")
         self.assertTrue(plan.adds_public_api(body))
         self.assertFalse(plan.adds_public_api("## Demo\n\nnothing\n"))
 
@@ -132,7 +153,7 @@ class ChecksTest(ProjectTestCase):
         self.write(fields(1, acceptance={"machine": ["test -f research/INTAKE.md", "test -f src/1.py"], "quality": []}))
         [failure] = plan.check_graph(self.project)
         self.assertIn("ticket 1: the machine criterion `test -f research/INTAKE.md` passes at the base commit", failure)
-        self.assertIn("the project directory, which is no repository", failure)
+        self.assertIn("the project directory, which lies in no repository", failure)
         self.assertEqual(plan.check_graph(self.project, base=False), [], "base False skips the run")
 
     def test_a_done_ticket_is_not_run_at_the_base(self):
@@ -147,7 +168,7 @@ class ChecksTest(ProjectTestCase):
 
 
 class BaseCommitTest(ProjectTestCase):
-    """The base commit is `main` of the project's own repository, checked out apart from the working tree."""
+    """The base commit is `main` of the project's repository, checked out apart from the working tree."""
 
     def setUp(self):
         super().setUp()
@@ -155,8 +176,8 @@ class BaseCommitTest(ProjectTestCase):
         project.init_project(self.project, harness_root=self.fake_harness(), git=True, hermes_python=None, owner_email=None)
         self.ledger = Ledger(self.project)
 
-    def git(self, *args):
-        return subprocess.run(["git", "-C", str(self.project), *IDENTITY, *args], capture_output=True, text=True, check=True)
+    def git(self, *args, cwd=None):
+        return subprocess.run(["git", "-C", str(cwd or self.project), *IDENTITY, *args], capture_output=True, text=True, check=True)
 
     def test_an_uncommitted_file_does_not_make_a_criterion_pass(self):
         (self.project / "notes").mkdir()
@@ -176,6 +197,31 @@ class BaseCommitTest(ProjectTestCase):
             self.assertTrue((where / "research" / "INTAKE.md").is_file())
             self.assertTrue(described.startswith("main at "))
         self.assertFalse(where.exists())
+
+    def test_a_project_inside_a_larger_repository_is_checked_at_its_prefix(self):
+        repo = self.temp / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "-C", str(repo), "init", "-q", "-b", "main"], check=True)
+        nested = repo / "study"
+        project.init_project(nested, harness_root=self.fake_harness(name="harness-2"), git=False, hermes_python=None, owner_email=None)
+        (nested / "notes").mkdir()
+        (nested / "notes" / "committed.md").write_text("x\n", encoding="utf-8")
+        self.git("add", "-A", cwd=repo)
+        self.git("commit", "-q", "-m", "the study", cwd=repo)
+        (nested / "notes" / "uncommitted.md").write_text("y\n", encoding="utf-8")
+        write_ticket(Ledger(nested), fields(1, touches=["notes/"], acceptance={"machine": ["test -f notes/uncommitted.md", "test -f notes/committed.md"], "quality": []}))
+        [failure] = plan.check_graph(nested)
+        self.assertIn("`test -f notes/committed.md` passes at the base commit (main at", failure)
+        self.assertIn(", under study)", failure)
+
+    def test_a_repository_without_a_commit_is_refused_rather_than_checked_in_place(self):
+        bare = self.temp / "fresh"
+        bare.mkdir()
+        subprocess.run(["git", "-C", str(bare), "init", "-q", "-b", "main"], check=True)
+        with self.assertRaises(plan.PlanError) as caught:
+            with plan.base_checkout(bare):
+                pass
+        self.assertIn("has no commit to be the base", str(caught.exception))
 
 
 class PlanCase(ProjectTestCase):
@@ -248,6 +294,9 @@ class PlanCase(ProjectTestCase):
         found = self.ticket(identifier)
         write_ticket(self.ledger, dict(found, status=status), self.body(identifier))
 
+    def second_message(self):
+        return self.calls(plan.PLANNER)[1].message
+
 
 class CutTest(PlanCase):
     """Criteria 1, 2, and 4: the launch, the written graph, the librarian's assignments, the decision tickets."""
@@ -262,7 +311,7 @@ class CutTest(PlanCase):
         self.assertEqual(request.schema_path.name, "plan.json")
         self.assertEqual(request.allowed_tools, ["Read", "Glob", "Grep"])
         self.assertEqual(request.cwd, self.project)
-        for text in ("- mode: the first cut", "## research/SPEC.md", "# Spec: Do pairwise interaction terms", "### E1 (claims: C1)",
+        for text in ("- the cut: the first cut", "## research/SPEC.md", "# Spec: Do pairwise interaction terms", "### E1 (claims: C1)",
                      "## research/GOAL.json", "## research/kb/query_pack.md", "paper-a extends paper-b",
                      "# The registry", "`coder` for code, docs, harness tickets", "`experimenter` for experiment tickets",
                      "no role covers `lit`, `figure`, `review` tickets", "# The difficulty rubric", "- 3: a new code path",
@@ -276,8 +325,9 @@ class CutTest(PlanCase):
         self.script(planned(cut()))
         report = self.plan()
         self.assertIsNone(report["stopped"], report)
-        self.assertEqual(report["cut"]["tickets"], [1, 2, 3, 4, 5, 6, 7, 8])
-        self.assertEqual(report["cut"]["decisions"], [9])
+        self.assertEqual(report["cut"], "plan")
+        self.assertEqual(report["written"]["tickets"], [1, 2, 3, 4, 5, 6, 7, 8])
+        self.assertEqual(report["written"]["decisions"], [9])
         one = self.ticket(1)
         self.assertEqual((one["kind"], one["difficulty"], one["status"], one["role"], one["skills"], one["proposed_by"]),
                          ("code", 2, "open", "coder", [], "planner"))
@@ -303,10 +353,10 @@ class CutTest(PlanCase):
         self.assertEqual([entry["id"] for entry in graph["tickets"]], list(range(1, 11)))
         self.assertEqual(plan.check_graph(self.project), [], "the written graph passes the checks it was cut under")
         record = plan.read_plan(self.project)
-        self.assertEqual((record["mode"], record["tickets"], record["decisions"], record["superseded"], record["sent_back"]),
+        self.assertEqual((record["cut"], record["tickets"], record["decisions"], record["superseded"], record["sent_back"]),
                          ("plan", [1, 2, 3, 4, 5, 6, 7, 8], [9], [], None))
         self.assertEqual(record["plan"], CUT)
-        self.assertEqual(record["sha"], report["cut"]["sha"])
+        self.assertEqual(record["sha"], report["written"]["sha"])
 
     def test_the_assignments_and_the_creations_are_journaled(self):
         self.script(planned(cut()))
@@ -338,10 +388,23 @@ class CutTest(PlanCase):
         self.assertEqual([identifier for event, identifier, _ in self.notified if event == "decision_opened"], [9, 10])
         self.assertEqual(sorted(tickets.paused_by(tickets.read_graph(self.project), [9])), [6, 7, 8])
 
-    def test_a_failing_check_returns_the_plan_once_with_the_failures(self):
+    def test_a_decision_that_blocks_everything_and_is_human_only(self):
+        whole = cut()
+        whole["decisions"][0].update(blocking="all", human_only=True, pauses=[])
+        self.script(planned(whole))
+        self.assertIsNone(self.plan()["stopped"])
+        nine = self.ticket(9)
+        self.assertEqual((nine["blocking"], nine["human_only"]), ("all", True))
+        self.assertEqual(self.ticket(6)["blocked_by"], [1, 3])
+        self.assertIn("blocking: `all`, so no other ticket launches until it is answered", self.body(9))
+        self.assertIn("human-only: yes", self.body(9))
+
+    def test_a_failing_check_returns_the_plan_once_with_every_failure(self):
         looped = cut()
         looped["tickets"][0]["blocked_by"] = ["T2"]
         looped["tickets"][2]["touches"] = ["research/kb/"]
+        looped["tickets"][3]["acceptance"]["machine"] = ["test -f toy/eval.py"]
+        looped["tickets"][4]["context_pack"] = []
         self.script(planned(looped), planned(cut()))
         report = self.plan()
         self.assertIsNone(report["stopped"], report)
@@ -349,6 +412,8 @@ class CutTest(PlanCase):
         self.assertEqual((first.kind, second.kind), ("launch", "resume"))
         self.assertIn("- the graph is not a DAG", second.message)
         self.assertIn("- T3 (ticket 3): the touch set entry `research/kb/` is under research/, which the ledger alone writes", second.message)
+        self.assertIn("- T4 (ticket 4): the machine criterion `test -f toy/eval.py` passes at the base commit", second.message)
+        self.assertIn("- T5 (ticket 5) has no context pack", second.message)
         sessions = self.project / "research" / "sessions" / "plan" / "1"
         self.assertEqual(sorted(path.name for path in sessions.glob("plan-*.json")), ["plan-1.json", "plan-2.json"])
         self.assertEqual(len(read_tickets(self.project)), 10)
@@ -371,44 +436,67 @@ class CutTest(PlanCase):
     def test_an_unreadable_plan_is_resumed_once(self):
         self.script(Envelope(structured_output=None, errors=["no structured output"]), planned(cut()))
         self.assertIsNone(self.plan()["stopped"])
-        self.assertIn("could not be read", self.calls(plan.PLANNER)[1].message)
+        self.assertIn("could not be read", self.second_message())
 
-    def test_a_criterion_that_passes_at_the_base_commit_is_returned(self):
-        passing = cut()
-        passing["tickets"][0]["acceptance"]["machine"] = ["test -f toy/eval.py"]
-        self.script(planned(passing), planned(cut()))
-        report = self.plan()
-        self.assertIsNone(report["stopped"], report)
-        message = self.calls(plan.PLANNER)[1].message
-        self.assertIn("T1 (ticket 1): the machine criterion `test -f toy/eval.py` passes at the base commit", message)
-
-    def test_a_kind_no_role_covers_and_a_reference_that_does_not_resolve(self):
+    def test_references_that_do_not_resolve_and_a_kind_no_role_covers_come_back_together(self):
         broken = cut()
         broken["tickets"][0]["kind"] = "figure"
         broken["tickets"][2]["blocked_by"] = ["#42", "T9"]
         broken["decisions"][0]["pauses"] = []
         self.script(planned(broken), planned(cut()))
-        self.plan()
-        message = self.calls(plan.PLANNER)[1].message
+        self.assertIsNone(self.plan()["stopped"])
+        message = self.second_message()
         self.assertIn("T3 (ticket 3) waits on #42, which the project does not hold", message)
         self.assertIn("T3 (ticket 3) waits on T9, which is no key of this plan", message)
         self.assertIn("decision 1 (ticket 9) pauses no ticket", message)
-        self.assertNotIn("no role", message, "a failure to resolve is returned before the librarian runs")
-        self.fake.reset()
-        self.script(planned(dict(cut(), tickets=[dict(cut()["tickets"][0], kind="figure")] + cut()["tickets"][1:])), planned(cut()))
-        # A fresh project for the second round: the first cut was written already.
+        self.assertIn("T1 (ticket 1) has no role: no assignable role covers a figure ticket", message)
+
+    def test_a_title_with_no_file_name_and_an_empty_plan_are_returned(self):
+        unnamed = cut()
+        unnamed["tickets"][1]["title"] = "実験"
+        self.script(planned(unnamed), planned(cut()))
+        self.assertIsNone(self.plan()["stopped"])
+        self.assertIn("T2 (ticket 2): its title gives no file name", self.second_message())
         shutil.rmtree(tickets_dir(self.project))
         tickets_dir(self.project).mkdir()
         (self.project / "research" / "plan.json").unlink()
-        self.plan()
-        self.assertIn("T1 (ticket 1) has no role: no assignable role covers a figure ticket", self.calls(plan.PLANNER)[1].message)
+        self.fake.reset()
+        self.script(planned(cut(tickets=[], decisions=[])), planned(cut()))
+        self.assertIsNone(self.plan()["stopped"])
+        self.assertIn("a plan cuts at least one ticket; the plan holds none", self.second_message())
 
     def test_a_code_ticket_that_adds_public_api_needs_a_docs_ticket(self):
         undocumented = cut()
         undocumented["tickets"] = [item for item in undocumented["tickets"] if item["key"] != "T2"]
         self.script(planned(undocumented), planned(cut()))
         self.plan()
-        self.assertIn("T1 (ticket 1) adds public API and no docs ticket waits on it", self.calls(plan.PLANNER)[1].message)
+        self.assertIn("T1 (ticket 1) adds public API and no docs ticket waits on it", self.second_message())
+
+    def test_a_first_plan_takes_back_the_open_tickets_it_finds(self):
+        """A crash between the ticket writes and plan.json, or a hand-written ticket: never a second graph beside the first."""
+        write_ticket(self.ledger, fields(1, "Left behind"), "## Demo\n\nleft\n")
+        self.script(planned(cut()))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        self.assertIn("- #1 [open, re-cut] code", self.calls(plan.PLANNER)[0].request.prompt)
+        self.assertEqual(report["written"]["superseded"], [1])
+        self.assertEqual(report["written"]["tickets"], list(range(2, 10)))
+        self.assertEqual(self.statuses()[1], "parked")
+        self.assertIn("Superseded by the planner's first cut of the graph", self.body(1))
+
+    def test_two_cuts_of_one_graph_cannot_both_land(self):
+        self.script(planned(cut()))
+        self.plan()
+        index = registry.read_registry(self.project)
+        with self.assertRaises(plan.PlanError) as caught:
+            plan.write_plan(self.project, self.ledger, cut(), index, plan.Cut("plan"))
+        self.assertIn("a graph was cut since this session started", str(caught.exception))
+        self.assertEqual(len(read_tickets(self.project)), 10, "nothing was written")
+        self.set_status(4, "running")
+        with self.assertRaises(plan.PlanError) as caught:
+            plan.write_plan(self.project, self.ledger, cut(), index, plan.Cut("replan"), expected=[1, 2, 3, 4, 5, 6, 7, 8, 9])
+        self.assertIn("the graph changed since the planner was launched", str(caught.exception))
+        self.assertEqual(self.statuses()[1], "open", "nothing was parked")
 
     def test_the_spec_must_be_confirmed_first(self):
         (self.project / "research" / "spec.json").unlink()  # no spec, no confirmation to read
@@ -434,12 +522,13 @@ class CheckpointsTest(PlanCase):
         self.assertEqual((ticket["id"], ticket["kind"], ticket["blocking"], ticket["human_only"], ticket["status"]),
                          (10, "decision", "all", False, "open"))
         self.assertEqual(ticket["origin"], "plan: confirm research/graph.json at %s" % plan.read_plan(self.project)["sha"])
+        self.assertEqual(report["written"]["gate"], 10, "opened in the same locked section as the tickets")
         self.assertEqual(report["state"]["state"], "pending")
         self.assertEqual([entry["id"] for entry in tickets.frontier(tickets.read_graph(self.project))], [9, 10],
                          "the frontier holds only the decision tickets while the confirmation is open")
         self.assertEqual(self.phases(), [(None, "P4")])
         again = self.plan()
-        self.assertEqual((again["did"], again["mode"], again["state"]["state"]), ([], None, "pending"), "waiting is idempotent")
+        self.assertEqual((again["did"], again["cut"], again["state"]["state"]), ([], None, "pending"), "waiting is idempotent")
         self.assertEqual(len(self.confirmation()), 1)
         project.answer(self.project, 10, "confirm", rationale="reads right")
         report = self.plan()
@@ -459,7 +548,7 @@ class CheckpointsTest(PlanCase):
         self.assertEqual(code, 0, err)
         statuses = self.statuses()
         self.assertEqual([identifier for identifier in range(1, 9) if statuses[identifier] == "parked"], list(range(1, 9)))
-        self.assertEqual(statuses[9], "open", "the planner's decision ticket stays open")
+        self.assertEqual(statuses[9], "open", "the planner's decision ticket stays until the re-cut")
         self.assertIn("## Superseded\n\nSent back: the answer to decision ticket 10", self.body(3))
         self.assertEqual(sorted(event["ticket"] for event in self.events("ticket_cancelled")), list(range(1, 9)))
         self.assertEqual({event["payload"]["by"] for event in self.events("ticket_cancelled")}, {"planner"})
@@ -474,18 +563,35 @@ class CheckpointsTest(PlanCase):
         self.script(planned(recut))
         report = self.plan()
         self.assertIsNone(report["stopped"], report)
-        self.assertEqual(report["mode"], "revise")
+        self.assertEqual(report["cut"], "revise")
         prompt = self.calls(plan.PLANNER)[1].request.prompt
         self.assertIn("# What to change", prompt)
         self.assertIn("The owner asked: split the network experiment by seed", prompt)
         self.assertIn("- #3 [parked, re-cut] code", prompt)
-        self.assertIn("- #9 [open, kept] decision", prompt)
-        self.assertEqual(report["cut"]["tickets"], list(range(11, 19)))
-        self.assertEqual(report["cut"]["superseded"], list(range(1, 9)))
+        self.assertIn("- #9 [open, re-cut] decision", prompt, "a decision that paused only re-cut tickets goes with them")
+        self.assertIn("- #10 [open, kept] decision", prompt)
+        self.assertEqual(report["written"]["tickets"], list(range(11, 19)))
+        self.assertEqual(report["written"]["superseded"], list(range(1, 10)))
+        self.assertEqual(self.statuses()[9], "parked")
         self.assertEqual(self.ticket(16)["title"], "Run E2 on seeds 0 to 4")
         self.assertEqual(len(self.confirmation()), 2, "the new graph is asked about anew")
         self.assertEqual(report["state"]["state"], "pending")
         self.assertIsNone(plan.read_plan(self.project)["sent_back"])
+
+    def test_a_sent_back_graph_is_not_confirmed_by_a_later_answer(self):
+        self.script(planned(cut()))
+        self.plan()
+        project.answer(self.project, 10, "revise: fewer seeds")
+        code, _, err = run("plan", "confirm", "--project", str(self.project))
+        self.assertEqual(code, 2)
+        self.assertIn("was sent back", err)
+        self.assertEqual(plan.plan_state(self.project)["state"], "revise")
+        path = tickets_dir(self.project) / tickets.filename(self.ticket(10))
+        path.write_text(path.read_text(encoding="utf-8").replace("## Answer\n\nrevise: fewer seeds", "## Answer\n\nconfirm"), encoding="utf-8")
+        project.journal_written_answers(self.project, self.ledger)
+        self.assertEqual(plan.plan_state(self.project)["state"], "revise", "the parked tickets do not come back by a word")
+        self.assertFalse(plan.advance(self.project))
+        self.assertEqual(self.phases(), [(None, "P4")])
 
     def test_an_answer_written_in_the_ticket_file_counts(self):
         self.script(planned(cut()))
@@ -516,6 +622,9 @@ class CheckpointsTest(PlanCase):
         self.assertIn("the planner notes: No role covers a figure ticket", out)
         self.assertIn("the graph: pending at %s" % plan.read_plan(self.project)["sha"], out)
         self.assertIn("wayline answer 10", out)
+        code, out, err = run("plan", "--json", "--project", str(self.project), "--no-pre-check")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["state"]["state"], "pending")
         code, out, err = run("answer", "10", "confirm", "--project", str(self.project))
         self.assertEqual(code, 0, err)
         code, out, err = run("plan", "--project", str(self.project), "--no-pre-check")
@@ -548,6 +657,7 @@ class AutonomousTest(PlanCase):
         report = self.plan()
         self.assertEqual(report["state"]["state"], "revise")
         self.assertIn("(the reason given: E2 is not needed for C3.)", report["state"]["feedback"])
+        self.assertEqual(report["state"]["decided_by"], "decider")
         self.assertEqual(self.statuses()[7], "parked")
         self.assertEqual(self.phases(), [(None, "P4")])
 
@@ -591,7 +701,7 @@ class InteractiveTest(PlanCase):
         self.assertIn("Sent back by the owner (wayline plan revise", self.body(4))
         self.script(planned(cut()))
         report = self.plan()
-        self.assertEqual(report["mode"], "revise")
+        self.assertEqual(report["cut"], "revise")
         self.assertIn("one experiment ticket per seed", self.calls(plan.PLANNER)[1].request.prompt)
         self.assertEqual(plan.plan_state(self.project)["state"], "unasked")
 
@@ -634,30 +744,40 @@ class ReplanTest(PlanCase):
         self.script(planned(self.recut()))
         report = plan.replan(self.project, notify=self.notify, pre_check=False)
         self.assertIsNone(report["stopped"], report)
-        self.assertEqual(report["mode"], "replan")
+        self.assertEqual(report["cut"], "replan")
         prompt = self.calls(plan.PLANNER)[0].request.prompt
-        self.assertIn("- mode: a re-cut after a stall", prompt)
+        self.assertIn("- the cut: a re-cut after a stall", prompt)
         self.assertIn("ticket 3 failed (attempt 1, next: tier_up): py_compile failed on toy/paired_gain.py", prompt)
         self.assertIn("the run stalled after 2 settling wave(s) without progress (action: replan)", prompt)
         self.assertIn("decision on ticket 10 by the owner: confirm", prompt)
         self.assertIn("- #1 [done, kept] code", prompt)
+        self.assertIn("- #1 [done, kept] code d2 \"Add the pairwise product features to the toy package\"; touches `toy/features.py`; "
+                      "acceptance `test -f toy/features.py`; `python3 -m py_compile toy/features.py`; adds public API", prompt)
         self.assertIn("- #3 [failed, kept] code", prompt)
         self.assertIn("- #2 [open, re-cut] docs", prompt)
-        self.assertEqual(report["cut"]["superseded"], [2, 4, 5, 6, 7, 8])
-        self.assertEqual(report["cut"]["tickets"], [11, 12])
+        self.assertIn("- #9 [open, re-cut] decision", prompt)
+        self.assertEqual(report["written"]["superseded"], [2, 4, 5, 6, 7, 8, 9])
+        self.assertEqual(report["written"]["tickets"], [11, 12])
         statuses = self.statuses()
-        self.assertEqual([statuses[identifier] for identifier in (1, 2, 3, 4, 8, 11, 12)],
-                         ["done", "parked", "failed", "parked", "parked", "open", "open"])
+        self.assertEqual([statuses[identifier] for identifier in (1, 2, 3, 4, 8, 9, 11, 12)],
+                         ["done", "parked", "failed", "parked", "parked", "parked", "open", "open"])
         self.assertIn("Re-cut by the planner after a stall; its replacements are tickets 11, 12.", self.body(4))
-        self.assertEqual(sorted(event["ticket"] for event in self.events("ticket_cancelled")), [2, 4, 5, 6, 7, 8])
+        self.assertEqual(sorted(event["ticket"] for event in self.events("ticket_cancelled")), [2, 4, 5, 6, 7, 8, 9])
         self.assertEqual(self.ticket(11)["blocked_by"], [1, 3])
         self.assertEqual(self.ticket(12)["blocked_by"], [11])
         record = plan.read_plan(self.project)
-        self.assertEqual((record["mode"], record["tickets"], record["superseded"]), ("replan", [11, 12], [2, 4, 5, 6, 7, 8]))
+        self.assertEqual((record["cut"], record["tickets"], record["superseded"]), ("replan", [11, 12], [2, 4, 5, 6, 7, 8, 9]))
         self.assertEqual(len(self.confirmation()), 2, "a re-cut graph is confirmed anew under checkpoints")
         self.assertEqual(self.confirmation()[-1]["blocking"], "all")
         self.assertEqual(report["state"]["state"], "pending")
         self.assertEqual(self.phases()[-1], ("P4", "P5"), "the phase does not move back")
+
+    def test_a_kept_code_ticket_that_adds_public_api_still_needs_its_docs_ticket(self):
+        self.set_status(1, "failed")  # kept by the re-cut, with its docs ticket 2 taken back
+        self.script(planned(self.recut()), planned(self.recut()))
+        report = plan.replan(self.project, notify=self.notify, pre_check=False)
+        self.assertIn("failed its checks twice", report["stopped"])
+        self.assertIn("ticket 1 adds public API and no docs ticket waits on it", self.second_message())
 
     def test_a_new_ticket_may_not_wait_on_one_being_re_cut(self):
         wrong = self.recut()
@@ -665,14 +785,13 @@ class ReplanTest(PlanCase):
         self.script(planned(wrong), planned(self.recut()))
         report = plan.replan(self.project, notify=self.notify, pre_check=False)
         self.assertIsNone(report["stopped"], report)
-        self.assertIn("T1 (ticket 11) waits on #2, which this plan re-cuts; name its replacement's key instead",
-                      self.calls(plan.PLANNER)[1].message)
+        self.assertIn("T1 (ticket 11) waits on #2, which this plan re-cuts; name its replacement's key instead", self.second_message())
 
     def test_the_verb_flag(self):
         self.script(planned(self.recut()))
         code, out, err = run("plan", "--replan", "--project", str(self.project), "--no-pre-check")
         self.assertEqual(code, 0, err)
-        self.assertIn("replan: wrote 2 ticket(s), parked 2, 4, 5, 6, 7, 8", out)
+        self.assertIn("replan: wrote 2 ticket(s), parked 2, 4, 5, 6, 7, 8, 9", out)
 
 
 class SplitTest(PlanCase):
@@ -707,22 +826,23 @@ class SplitTest(PlanCase):
         self.script(planned(self.pieces()))
         report = plan.split(self.project, 4, notify=self.notify, pre_check=False)
         self.assertIsNone(report["stopped"], report)
-        self.assertEqual(report["mode"], "split")
+        self.assertEqual(report["cut"], "split")
         prompt = self.calls(plan.PLANNER)[0].request.prompt
-        self.assertIn("- mode: a split of ticket #4", prompt)
+        self.assertIn("- the cut: a split of ticket #4", prompt)
         self.assertIn("## The ticket to split, #4, whole", prompt)
         self.assertIn("ticket 4 failed (attempt 2, next: split): the ten seeds did not finish in the budget", prompt)
         self.assertNotIn("ticket 10", prompt.split("# What the journal says")[1].split("# The graph")[0], "the digest is the split ticket's")
-        self.assertEqual(report["cut"]["tickets"], [11, 12])
+        self.assertEqual(report["written"]["tickets"], [11, 12])
         self.assertEqual(self.ticket(11)["blocked_by"], [1, 3], "the blockers of ticket 4")
         self.assertEqual(self.ticket(12)["blocked_by"], [1, 3, 11])
         self.assertEqual(self.ticket(7)["blocked_by"], [5, 6, 11, 12], "the dependent waits on both pieces instead of ticket 4")
-        self.assertEqual(report["cut"]["repointed"], [7])
+        self.assertEqual(report["written"]["repointed"], [7])
         self.assertEqual(self.statuses()[4], "parked")
         self.assertIn("## Superseded\n\nSplit by the planner into tickets 11, 12.", self.body(4))
         self.assertIn("Cut from ticket 4 by the planner's split.", self.body(11))
         self.assertEqual([event["ticket"] for event in self.events("ticket_cancelled")], [4])
         self.assertEqual(len(self.confirmation()), 1, "a split inherits the graph's confirmation")
+        self.assertIsNone(report["written"]["gate"])
         self.assertEqual(plan.read_plan(self.project)["tickets"], list(range(1, 9)), "plan.json is the plan's, not the split's")
         self.assertEqual(report["state"]["state"], "confirmed")
         self.assertEqual(plan.check_graph(self.project), [])

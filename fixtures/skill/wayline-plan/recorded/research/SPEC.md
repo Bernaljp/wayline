@@ -1,0 +1,97 @@
+# Spec: Do pairwise interaction terms improve held-out AUROC on the synthetic set?
+
+Rendered by `wayline specify` from `research/spec.json`; change the spec by answering its confirmation with what to change, never by editing here.
+
+## Question
+
+On the toy generator's synthetic two-class set, does a logistic regression given all 28 pairwise products of x0..x7 reach a higher held-out AUROC on split_b than the same model without them, by at least +0.02 averaged over ten generator seeds, and does that gain survive a flexible model without products and vanish on a set with no planted interaction?
+
+## Claims
+
+- **C1.** Adding all 28 pairwise products to a logistic regression raises held-out AUROC on split_b by at least +0.02, mean over ten generator seeds, paired within a seed. (experiments: E1)
+- **C2.** The products' gain is not matched by a small multilayer network on the raw features, so explicit products carry information a flexible model without them does not recover at this size. (experiments: E2)
+- **C3.** The gain comes from the planted interaction: on a set generated with interaction 0 the products change held-out AUROC by less than 0.005. (experiments: E3)
+
+## Anti-claims
+
+- **A1.** No claim is made about real data: the set plants exactly one product, and the result is synthetic-only. (confirmed by: E3)
+- **A2.** No product's coefficient is read as a discovery; if the gain appears on the null set, the method is fitting noise and C1 is withdrawn. (confirmed by: E3)
+
+## Methods
+
+- **logistic regression**: scikit-learn LogisticRegression with library defaults, installed in the project's own virtual environment (Q3), on the raw features, with and without the 28 pairwise products (Q4).
+- **small network**: scikit-learn MLPClassifier on the raw features, its settings tuned by 5-fold cross-validation inside split_a with the same grid on every seed.
+- **paired comparison**: Each seed generates a fresh 20000-row set, split_b its last quarter; each model is scored on split_b and differences are paired within a seed (Q5).
+
+## Experiments
+
+### E1 (claims: C1)
+
+- design: For generator seeds 0-9 at the default signal and interaction, fit the logistic regression with and without products on split_a and score both on split_b; report the mean and standard deviation of the paired difference.
+- baselines: B1
+- data: D1
+- metrics: auroc, auroc_gain
+- success: mean paired auroc_gain >= 0.02 over the ten seeds
+- budget: about 5 minutes of CPU
+
+### E2 (claims: C2)
+
+- design: On the same ten sets, fit the small network on the raw features and score it on split_b; compare with the with-products logistic regression, paired within a seed.
+- baselines: B1, B2
+- data: D1
+- metrics: auroc, auroc_gain
+- success: the with-products logistic regression beats the network by a mean paired margin above zero
+- budget: up to 3 hours of CPU for the cross-validated grid
+
+### E3 (claims: C3)
+
+- design: Repeat E1 on sets generated with interaction 0 for seeds 0-9.
+- baselines: B1
+- data: D2
+- metrics: auroc, auroc_gain
+- success: absolute mean paired auroc_gain < 0.005
+- budget: about 5 minutes of CPU
+
+## Baselines
+
+- **B1.** logistic regression on the raw features, no products (source: GOAL.json baseline; Q1)
+- **B2.** small multilayer network on the raw features, no products (source: Q2, Q8; paper-b)
+- **B3.** planted-only logistic regression (x2*x3 alone), an oracle reference, not a competitor (source: Q4)
+
+## Data
+
+- **D1.** toy/make_synthetic.py at default signal 1.0 and interaction 0.6, seeds 0-9, 20000 rows each; split_a the first three quarters, split_b the last (source: toy/make_synthetic.py)
+- **D2.** the same generator at interaction 0, seeds 0-9 (the null control) (source: toy/make_synthetic.py --interaction 0)
+
+## Metrics
+
+- **auroc**: area under the ROC curve of the model's scores on split_b (script: `python3 toy/eval.py {artifact}`)
+- **auroc_gain**: paired difference in split_b AUROC between the with-products model and its comparison, per seed, then the mean over seeds (script: `python3 toy/paired_gain.py {artifact}`)
+
+## Success criteria
+
+- C1 holds when E1's mean paired gain is at least +0.02 (the goal of GOAL.json). (experiments: E1)
+- C3 holds when E3's gain is under 0.005 in absolute value; otherwise C1 is withdrawn (A2). (experiments: E3)
+
+## Budgets
+
+- GPU: 0 hours
+- wall clock: 4 hours
+- usage windows: not set
+- notes: 4 hours of CPU wall clock in total (Q6); no GPU.
+
+## Out of scope
+
+- real datasets
+- a sweep of the generator's interaction strength beyond 0 and the default
+- product selection or any reading of which product matters
+
+## Risks
+
+- The network's cross-validated grid overruns the 4-hour budget. Mitigation: cap the grid at what fits 3 hours on the first seed, and keep that grid for every seed.
+- The ceiling spread across seeds (0.7445-0.7511) is a third of the target gain. Mitigation: pair every comparison within a seed and report the paired standard deviation.
+
+## Seams
+
+- **the set**: toy/make_synthetic.py writes one CSV per seed and interaction; every experiment reads only those files.
+- **the scores**: each fitted model writes predictions/<model>-<seed>.csv with a score per split_b row; toy/eval.py and toy/paired_gain.py read only those.

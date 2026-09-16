@@ -17,16 +17,22 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   `ticket_created`), opens the decision tickets, and keeps the plan with the ids it became as
   `research/plan.json`. The registry is rebuilt at every planner launch.
 - The graph's confirmation, by autonomy: under `checkpoints` a `blocking: all` decision ticket
-  "Confirm the graph"; under `autonomous` the decider answers it at once; under `interactive`
-  `wayline plan confirm` and `wayline plan revise "<change>"`. A confirmation journals `phase P4 ->
-  P5`. An answer that sends the graph back, whichever path it takes (`wayline answer`, the ticket
-  file, the dashboard, the decider), parks the graph's open tickets at once (`ticket_cancelled` by
-  the planner) so the conductor cannot run an unrevised graph, and the next `wayline plan` cuts it
-  again with the change.
+  "Confirm the graph", opened in the same locked section that writes the tickets, so no wave can
+  find them without their gate; under `autonomous` the decider answers it at once; under
+  `interactive` `wayline plan confirm` and `wayline plan revise "<change>"`. A confirmation journals
+  `phase P4 -> P5`. An answer that sends the graph back, whichever path it takes (`wayline answer`,
+  the ticket file, the dashboard, the decider), parks the graph's open tickets at once
+  (`ticket_cancelled` by the planner) so the conductor cannot run an unrevised graph; the graph then
+  stands sent back, which no later answer confirms, until the next `wayline plan` cuts it again with
+  the change.
 - `wayline plan --replan` re-cuts every `open` or `blocked` ticket from the journal's failures,
-  stalls, blocks, findings, and answers, parking the superseded ones; `wayline plan --split <id>`
-  replaces one failed ticket with at least two no harder than it, which inherit its blockers and its
-  dependents. Both are what the conductor calls (ticket 38).
+  stalls, blocks, findings, and answers, parking the superseded ones and, with them, the planner's
+  decision tickets that paused nothing else; `wayline plan --split <id>` replaces one failed ticket
+  with at least two no harder than it, which inherit its blockers and its dependents. Both are what
+  the conductor calls (ticket 38). Two cuts of one graph at once are refused at the write: a first
+  plan when one was cut since the session launched, a re-cut when what it supersedes changed. A
+  first plan takes back open tickets it finds, so a crash between the ticket writes and `plan.json`
+  never leaves a second graph beside the first.
 - The `wayline-plan` skill is written around the verb, and its fixture holds the checks
   (`checks.py`) that pin what the verb writes and journals. `roles/planner/agent.md` covers phase P4.
 - `wayline.decider.inline_records` is the records inliner the decider's and the planner's prompts

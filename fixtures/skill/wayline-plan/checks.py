@@ -32,7 +32,7 @@ def _events(root):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
 
 
-def _work(root):
+def _work_tickets(root):
     return [fields for fields in read_tickets(root) if fields["kind"] != "decision"]
 
 
@@ -47,12 +47,12 @@ def the_graph_passes_the_plan_time_checks(root):
 
 def every_ticket_has_a_role_and_skills(root):
     problems = []
-    for fields in _work(root):
+    for fields in _work_tickets(root):
         if not fields.get("role") or fields["role"] == plan.UNASSIGNED:
             problems.append("ticket %d has no role" % fields["id"])
         if not isinstance(fields.get("skills"), list):
             problems.append("ticket %d has no skills list" % fields["id"])
-    if not _work(root):
+    if not _work_tickets(root):
         problems.append("no work ticket was cut")
     return problems
 
@@ -61,7 +61,7 @@ def every_assignment_is_journaled(root):
     """One `assigned` per work ticket, naming the role the ticket file carries."""
     assigned = {event.get("ticket"): event.get("payload") or {} for event in _events(root) if event.get("event") == "assigned"}
     problems = []
-    for fields in _work(root):
+    for fields in _work_tickets(root):
         payload = assigned.get(fields["id"])
         if payload is None:
             problems.append("ticket %d has no assigned event" % fields["id"])

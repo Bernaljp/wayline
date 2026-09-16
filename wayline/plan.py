@@ -13,35 +13,41 @@ and keeps the record with the ids it became as `research/plan.json`.
 
 **The checks** (`check_tickets`, and `check_graph` on a written graph) are the Type-A gate of
 decision 10: the graph is a DAG; every work ticket has `demo`, `acceptance.machine`, `touches` under
-the project (and never `research/`), `difficulty` 1 to 5, `context_pack`, `role`, and `skills`; no
-machine criterion passes at the base commit, which is `main` checked out into a detached worktree
-(the project directory itself when it is no repository); and every `code` ticket the planner declared
-to add public API is followed by a `docs` ticket, the declaration kept under `## Public API` in the
-ticket body so a written graph can be checked again. A plan that fails is returned to the same
-session once with the failures; a second failure ends the call and writes nothing.
+the project (and never `research/`, which the ledger alone writes), `difficulty` 1 to 5,
+`context_pack`, `role`, and `skills`; no machine criterion passes at the base commit, which is `main`
+of the project's repository checked out into a detached worktree (the project directory itself when
+it lies in no repository); and every `code` ticket the planner declared to add public API is
+followed by a `docs` ticket, the declaration kept under `## Public API` in the ticket body so a
+written graph can be checked again. Every check runs on every plan, so the one return a failing plan
+gets carries every failure; a second failure ends the call and writes nothing.
 
-**Re-cutting.** `wayline plan --replan` (`replan`) re-cuts every work ticket that is `open` or
-`blocked`: the planner is given the graph as it stands and the journal's failures, stalls, blocks,
-findings, and answers, the superseded tickets are parked and journaled `ticket_cancelled` by the
-planner, and the new ones may wait on the kept tickets as `#<id>`. `wayline plan --split <id>`
-(`split`) replaces one ticket with at least two no harder than it: the pieces inherit its blockers,
-whatever waited on it waits on all of them, and the ticket is parked the same way. Both are what the
-conductor calls at a stall and at the `split` rung of the escalation ladder (ticket 38).
+**The cuts.** A first `plan` cuts the whole graph. `wayline plan --replan` (`replan`) re-cuts every
+work ticket that is `open` or `blocked`: the planner is given the graph as it stands and the
+journal's failures, stalls, blocks, findings, and answers, the superseded tickets are parked and
+journaled `ticket_cancelled` by the planner, a planner's decision ticket that paused only superseded
+tickets is parked with them, and the new tickets may wait on the kept ones as `#<id>`. `wayline plan
+--split <id>` (`split`) replaces one ticket with at least two no harder than it: the pieces inherit
+its blockers, whatever waited on it waits on all of them, and the ticket is parked the same way. Both
+are what the conductor calls at a stall and at the `split` rung of the escalation ladder (ticket 38).
+A `revise` is a plan cut again with what the owner asked to change.
 
 **The confirmation**, by autonomy, as `wayline specify` asks it. Under `checkpoints` a decision ticket
 "Confirm the graph" is opened with `blocking: all` and origin `plan: confirm research/graph.json at
-<sha>`, so the conductor launches nothing until it is answered; under `autonomous` the decider answers
-it at once; under `interactive` the session asks the owner and records the word with `wayline plan
-confirm` or `wayline plan revise "<what to change>"`, journaled as a `decision` with no ticket whose
-answer leads with `graph <sha>:`. An answer that confirms journals `phase P4 -> P5`. Any other answer
-is what to change: `graph_sent_back`, called from every path an answer takes (`project.answer`, an
-answer written into the file, the decider), parks the graph's open tickets at once, because the
-conductor closes an answered ticket at its next wave whatever the answer says; the next `wayline
-plan` cuts the graph again with the change and asks again. A split asks nothing: it inherits the
-graph's confirmation, so `plan.json` is not rewritten by it.
+<sha>`, in the same locked section that writes the tickets, so no wave can find them without their
+gate; under `autonomous` the decider answers it at once; under `interactive` the session asks the
+owner and records the word with `wayline plan confirm` or `wayline plan revise "<what to change>"`,
+journaled as a `decision` with no ticket whose answer leads with `graph <sha>:`. An answer that
+confirms journals `phase P4 -> P5`. Any other answer is what to change: `graph_sent_back`, called from
+every path an answer takes (`project.answer`, an answer written into the file, the decider), parks the
+graph's open tickets at once, because the conductor closes an answered ticket at its next wave
+whatever the answer says; the graph then stands sent back until the next `wayline plan` cuts it again
+with the change, and no later answer confirms it. A split asks nothing: it inherits the graph's
+confirmation, so `plan.json` is not rewritten by it.
 
 `plan_state` reads all of this back from `plan.json`, the tickets, and the journal, so the verb is
 safe to run again at any point: it cuts, asks, waits, or advances, whichever the ledger says is owed.
+Two cuts of one graph at once are refused at the write: a first plan when one was written since the
+session launched, a re-cut when the tickets it supersedes are not the ones the planner was shown.
 """
 
 import argparse
@@ -52,9 +58,11 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
-from wayline import HARNESS_ROOT, decider, decisions, gates, pacing, registry, specify, worker
+from wayline import HARNESS_ROOT, decider, decisions, gates, registry, specify, worker
 from wayline.cli import parse_args
 from wayline.frontmatter import dump_document
 from wayline.jsonschema import ValidationError, check, load_schema
@@ -65,23 +73,22 @@ from wayline.ledger import (
 from wayline.project import ProjectError, find_project, journal_written_answers, policy_for, read_harness
 from wayline.project import answer as answer_ticket
 from wayline.tickets import (
-    DECISION as DECISION_KIND, TicketError, answer_section, build_graph, filename, next_id, read_ticket, read_tickets, refresh_graph,
-    section, tickets_dir, write_ticket,
+    DECISION as DECISION_KIND, SATISFIED, TicketError, answer_section, build_graph, filename, next_id, read_ticket, read_tickets,
+    refresh_graph, section, tickets_dir, write_ticket,
 )
 
 __all__ = [
-    "PLANNER", "PLAN_SCHEMA", "PLAN_JSON", "MODES", "RECUT", "PlanError", "Prepared", "is_existing", "existing_id", "ticket_body",
-    "adds_public_api", "retry_steps", "touch_problem", "base_checkout", "criteria_at_base", "check_tickets", "check_graph", "prepare",
-    "check_plan", "read_all", "registry_text", "rubric_text", "journal_text", "graph_text", "plan_prompt", "cut", "write_plan",
-    "park_open", "read_plan", "graph_sha", "plan_state", "graph_sent_back", "confirm", "advance", "plan", "replan", "split",
-    "render_report", "plan_command",
+    "PLANNER", "PLAN_SCHEMA", "PLAN_JSON", "KINDS", "RECUT", "PlanError", "Cut", "Prepared", "is_existing", "existing_id",
+    "ticket_body", "adds_public_api", "retry_steps", "touch_problem", "base_checkout", "criteria_at_base", "check_tickets",
+    "check_graph", "superseded_by", "prepare", "check_plan", "read_all", "registry_text", "rubric_text", "journal_text", "graph_text",
+    "plan_prompt", "cut_graph", "write_plan", "park_open", "read_plan", "graph_sha", "plan_state", "graph_sent_back", "confirm",
+    "advance", "plan", "replan", "split", "render_report", "plan_command",
 ]
 
 PLANNER = specify.PLANNER
 PLAN_SCHEMA = "plan"
 PLAN_JSON = "plan.json"                 # research/plan.json: the record as returned, and the ids it became
 SESSIONS = "sessions/plan"              # research/sessions/plan/<n>
-PLANNER_BUDGET = specify.PLANNER_BUDGET
 PLAN_PHASE, EXECUTE_PHASE = "P4", "P5"
 SUBJECT = "research/graph.json"
 ORIGIN_PREFIX = "plan: confirm %s at " % SUBJECT
@@ -90,9 +97,13 @@ TITLE = "Confirm the graph"
 CONFIRM, REVISE = specify.CONFIRM, specify.REVISE
 ANSWER_PREFIX = "graph %s: "            # the interactive answer's `decision`, keyed by the graph it answers
 INTERACTIVE, CHECKPOINTS, AUTONOMOUS = specify.INTERACTIVE, specify.CHECKPOINTS, specify.AUTONOMOUS
-MODES = ("plan", "replan", "split", "revise")
+# The four cuts of the graph the planner is launched for.
+KINDS = ("plan", "replan", "split", "revise")
 # The statuses a re-cut takes back: work not started, or stopped on a path the planner has to re-cut around.
 RECUT = ("open", "blocked")
+# The statuses a ticket can be split from: not started, or stopped short of a person.
+SPLITTABLE = ("open", "failed", "blocked", "needs_human")
+CLOSED = SATISFIED + ("parked",)
 EXISTING = "#"                          # a reference to a ticket the project holds: #<id>
 BY_PLANNER = "planner"                  # `ticket_cancelled` by the planner: a superseded ticket
 MAIN = "main"                           # the base commit's branch, the one worktrees branch from (decision 3)
@@ -117,9 +128,9 @@ RESUME_CHECKS = (
 SIGNALS = {
     1: "mechanical, one file, fully machine-checkable",
     2: "a routine change, a known pattern, few files",
-    3: "a new code path or an experiment, numerical care; an independent code review follows",
-    4: "design judgment, several modules, ambiguous acceptance; an independent review of the result follows",
-    5: "research-critical, the claim depends on it; the review is mandatory and the ticket is accepted only after it",
+    3: "a new code path or an experiment, numerical care; an independent verdict on the diff follows",
+    4: "design judgment, several modules, ambiguous acceptance; an independent verdict on the result follows",
+    5: "research-critical, the claim depends on it; the verdict is mandatory and the ticket is accepted only after it",
 }
 
 
@@ -129,6 +140,42 @@ class PlanError(ValueError):
     def __init__(self, message, failures=()):
         super().__init__(message)
         self.failures = list(failures)
+
+
+@dataclass
+class Cut:
+    """One cut of the graph: which of the planner's four asks this launch is, and what it carries."""
+
+    kind: str                                   # plan | replan | split | revise
+    of: Optional[int] = None                    # the ticket a split replaces
+    change: Optional[str] = None                # what the owner or the decider asked to change, for a revise
+    sent_back: list = field(default_factory=list)  # the ids a sent-back answer parked, which a revise takes back too
+
+    def __post_init__(self):
+        if self.kind not in KINDS:
+            raise PlanError("a cut is one of %s, got %r" % (", ".join(KINDS), self.kind))
+        if (self.kind == "split") != (self.of is not None):
+            raise PlanError("a split names the ticket it replaces, and no other cut does")
+
+    @property
+    def asked(self):
+        """What the planner is asked for, in one line of its prompt."""
+        return {
+            "plan": "the first cut of this project's graph",
+            "replan": "a re-cut after a stall: every ticket marked re-cut below is cut again, from what the journal says failed",
+            "split": "a split of ticket #%s, which failed its escalation: at least two smaller tickets that replace it" % self.of,
+            "revise": "a re-cut: the owner sent the graph back with what to change",
+        }[self.kind]
+
+    def why_superseded(self, replacements):
+        """The line a parked ticket's body carries: which cut superseded it and what replaced it."""
+        named = ", ".join(str(identifier) for identifier in replacements) or "none"
+        return {
+            "split": "Split by the planner into tickets %s." % named,
+            "replan": "Re-cut by the planner after a stall; its replacements are tickets %s." % named,
+            "revise": "Re-cut by the planner with the owner's change; its replacements are tickets %s." % named,
+            "plan": "Superseded by the planner's first cut of the graph; its replacements are tickets %s." % named,
+        }[self.kind]
 
 
 def _one_line(text):
@@ -220,45 +267,55 @@ def _git(cwd, *args):
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
 
 
-def _base_commit(project):
-    """The commit the base checkout is of: `main` of the project's own repository, else its HEAD; None with no repository."""
+def _repository(project):
+    """`(toplevel, prefix, ref, commit)` of the repository the project lies in, or None when it lies in none.
+
+    The base is `main` (the branch the conductor's worktrees branch from, decision 3), else `HEAD`. A
+    project inside a larger repository is checked at its prefix under that repository's base. A
+    repository with no commit has no base, which is said rather than checked in place.
+    """
     top = _git(project, "rev-parse", "--show-toplevel")
-    if top.returncode != 0 or not top.stdout.strip() or Path(top.stdout.strip()).resolve() != Path(project).resolve():
+    if top.returncode != 0 or not top.stdout.strip():
         return None
+    toplevel = Path(top.stdout.strip()).resolve()
+    prefix = Path(project).resolve().relative_to(toplevel)
     for ref in (MAIN, "HEAD"):
-        done = _git(project, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
+        done = _git(toplevel, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
         if done.returncode == 0 and done.stdout.strip():
-            return done.stdout.strip()
-    return None
+            return toplevel, prefix, ref, done.stdout.strip()
+    raise PlanError("the repository at %s has no commit to be the base the machine criteria are run at" % toplevel)
 
 
 @contextmanager
 def base_checkout(project):
     """`(directory, description)`: the base commit checked out to run the machine criteria in, removed afterward.
 
-    The base commit is `main`, the commit the conductor's worktrees branch from (decision 3), in a
-    detached worktree under a temporary directory, so an uncommitted file in the working tree cannot
-    make a criterion pass. A project that is no repository of its own is checked in place, since it has
-    no commit to be the base.
+    A detached worktree of the base under a temporary directory, so an uncommitted, untracked, or
+    ignored file in the working tree cannot make a criterion pass; a worktree that cannot be added is
+    a refusal, never a run in the live tree. A project that lies in no repository is checked in place,
+    since it has no commit to be the base.
     """
     project = Path(project).resolve()
-    commit = _base_commit(project)
-    if commit is None:
-        yield project, "the project directory, which is no repository"
+    found = _repository(project)
+    if found is None:
+        yield project, "the project directory, which lies in no repository"
         return
+    toplevel, prefix, ref, commit = found
     root = Path(tempfile.mkdtemp(prefix="wayline-plan-base-"))
     checkout = root / "base"
-    added = _git(project, "worktree", "add", "--detach", str(checkout), commit)
+    added = _git(toplevel, "worktree", "add", "--detach", str(checkout), commit)
     if added.returncode != 0:
         shutil.rmtree(root, ignore_errors=True)
-        yield project, "the project directory (a worktree of %s could not be added: %s)" % (commit[:12], (added.stderr or added.stdout).strip())
-        return
+        raise PlanError("a worktree of %s at %s could not be added to run the machine criteria at the base: %s"
+                        % (toplevel, commit[:12], (added.stderr or added.stdout).strip()))
     try:
-        yield checkout, "%s at %s" % (MAIN, commit[:12])
+        cwd = checkout / prefix
+        cwd.mkdir(parents=True, exist_ok=True)  # a project directory that did not exist at the base is empty there
+        yield cwd, "%s at %s%s" % (ref, commit[:12], "" if prefix == Path(".") else ", under %s" % prefix)
     finally:
-        _git(project, "worktree", "remove", "--force", str(checkout))
+        _git(toplevel, "worktree", "remove", "--force", str(checkout))
         shutil.rmtree(root, ignore_errors=True)
-        _git(project, "worktree", "prune")
+        _git(toplevel, "worktree", "prune")
 
 
 def _work(fields):
@@ -294,10 +351,11 @@ def check_tickets(new, graph, project, *, base=True, timeout_s=None, declared=fr
     """The plan-time Type-A checks of decision 10; returns the failures, each one line, empty when they pass.
 
     `new` is `[(fields, body)]`, the tickets checked field by field; `graph` is the frontmatter of every
-    ticket the project will hold, `new` included, for the DAG. `declared` holds the ids of the `code`
-    tickets declared to add public API (the plan's declaration, or the body's for a written graph), and
-    `labels` names a ticket in the failures by its key rather than its id, for the planner. `base`
-    False skips the run at the base commit, which a view that only reads a graph asks for.
+    ticket the project will hold, `new` included, for the DAG and the docs rule. `declared` holds the ids
+    of the `code` tickets that add public API (the plan's declaration, or the body's for a written graph),
+    and `labels` names a ticket in the failures by its key rather than its id, for the planner. `base`
+    False skips the run at the base commit, which a view that only reads a graph asks for. Every check
+    runs whatever the ones before it found, so one return carries every failure.
     """
     project = Path(project).resolve()
     failures = []
@@ -307,6 +365,10 @@ def check_tickets(new, graph, project, *, base=True, timeout_s=None, declared=fr
             check(fields, load_schema("ticket"), name=_label(fields, labels))
         except ValidationError as failure:
             failures.append(str(failure))
+        try:
+            filename(fields)
+        except (TicketError, KeyError, TypeError) as failure:
+            failures.append("%s: its title gives no file name (%s)" % (_label(fields, labels), failure))
     for fields in graph:
         for blocker in fields.get("blocked_by") or []:
             if blocker not in ids:
@@ -339,12 +401,16 @@ def check_tickets(new, graph, project, *, base=True, timeout_s=None, declared=fr
                             % (label, fields.get("kind")))
         if not isinstance(fields.get("skills"), list):
             failures.append("%s has no skills list (the librarian assigns it, empty when no skill matches)" % label)
-    docs = [fields for fields in graph if fields.get("kind") == "docs"]
-    for fields, _ in new:
-        if fields.get("kind") == "code" and fields.get("id") in declared:
+    # A parked docs ticket documents nothing, so it does not satisfy the rule for the code ticket it waited on.
+    docs = [fields for fields in graph if fields.get("kind") == "docs" and fields.get("status") != "parked"]
+    for fields in graph:
+        if fields.get("kind") == "code" and fields.get("id") in declared and fields.get("status") not in CLOSED:
             if not any(fields["id"] in (item.get("blocked_by") or []) for item in docs):
                 failures.append("%s adds public API and no docs ticket waits on it" % _label(fields, labels))
-    if base and not failures:
+    # The base commit is run whatever the checks above found, so the one return a plan gets carries
+    # every failure at once: a planner that fixed the structure and only then learned that a criterion
+    # passes at the base would have spent its return on half the news.
+    if base:
         if timeout_s is None:
             timeout_s = policy_for(project).get("acceptance_timeout_s", 600)
         failures.extend(criteria_at_base(new, project, timeout_s, labels))
@@ -360,7 +426,7 @@ def read_all(project):
 
 
 def check_graph(project, base=True, timeout_s=None):
-    """The plan-time checks on the graph as written: every open work ticket checked, the whole graph for the DAG.
+    """The plan-time checks on the graph as written: every open work ticket checked, the whole graph for the DAG and the docs rule.
 
     What the fixture of the `wayline-plan` skill and the tests run on a written graph, hand-written or
     cut. A ticket already `done` is not run at the base commit, since its criteria pass now by design.
@@ -372,11 +438,42 @@ def check_graph(project, base=True, timeout_s=None):
         return [str(failure)]
     graph = [fields for fields, _ in existing.values()]
     new = [(fields, body) for fields, body in existing.values() if _work(fields) and fields["status"] == "open"]
-    declared = {fields["id"] for fields, body in new if adds_public_api(body)}
+    declared = {fields["id"] for fields, body in existing.values() if fields["kind"] == "code" and adds_public_api(body)}
     return check_tickets(new, graph, project, base=base, timeout_s=timeout_s, declared=declared)
 
 
 # --- resolving a plan against the project ---------------------------------------------------------------
+
+
+def _dependents(existing):
+    """id -> the ids that wait on it directly, over the tickets as they stand."""
+    found = {}
+    for identifier, (fields, _) in existing.items():
+        for blocker in fields["blocked_by"]:
+            found.setdefault(blocker, []).append(identifier)
+    return found
+
+
+def superseded_by(cut, existing):
+    """The ids this cut takes back, sorted: what is parked when the plan is written.
+
+    A split supersedes the ticket it replaces alone. The other cuts supersede every work ticket that is
+    `open` or `blocked` (`RECUT`), a revise also the tickets its sent-back answer parked, and with them
+    every decision ticket of the planner's with `blocking: subgraph` that pauses nothing but tickets in
+    that set: a question asked about work that is being cut again is asked again by the new plan when it
+    still stands. A first plan takes back what it finds too, so tickets a crash left behind, or a plan
+    that stopped before `plan.json` was written, never run beside the graph.
+    """
+    if cut.kind == "split":
+        return [cut.of]
+    taken = {identifier for identifier, (fields, _) in existing.items() if _work(fields) and fields["status"] in RECUT}
+    taken.update(identifier for identifier in cut.sent_back if identifier in existing)
+    dependents = _dependents(existing)
+    for identifier, (fields, _) in existing.items():
+        if (fields["kind"] == DECISION_KIND and fields.get("proposed_by") == PLANNER and fields.get("blocking") == "subgraph"
+                and fields["status"] not in CLOSED and dependents.get(identifier) and set(dependents[identifier]) <= taken):
+            taken.add(identifier)
+    return sorted(taken)
 
 
 class Prepared:
@@ -385,49 +482,21 @@ class Prepared:
     def __init__(self):
         self.tickets = []      # (key, fields, body, tags), in the plan's order
         self.decisions = []    # (record, pause ids, origin)
-        self.superseded = []   # the ids a re-cut parks
+        self.superseded = []   # the ids the cut parks
         self.repointed = {}    # id -> fields rewritten, the dependents of a split ticket
         self.failures = []
-        self.declared = set()  # the ids declared to add public API
+        self.declared = set()  # the ids of the code tickets that add public API, new and kept
         self.labels = {}       # id -> "T3 (ticket 12)"
-
-    @property
-    def graph(self):
-        """Every ticket's frontmatter as the project will hold it, the decisions as placeholders, for the DAG check."""
-        return list(self._graph)
+        self.graph = []        # every ticket's frontmatter as the project will hold it, the decisions as placeholders
 
 
-def _resolve(reference, ids, existing, superseded, of, label, failures, verb="waits on"):
-    """One `blocked_by` or `pauses` entry as an id, or None with the failure named."""
-    if not is_existing(reference):
-        if reference not in ids:
-            failures.append("%s %s %s, which is no key of this plan" % (label, verb, reference))
-            return None
-        return ids[reference]
-    identifier = existing_id(reference)
-    if identifier not in existing:
-        failures.append("%s %s #%d, which the project does not hold" % (label, verb, identifier))
-        return None
-    if identifier == of:
-        failures.append("%s %s #%d, the ticket this split replaces" % (label, verb, identifier))
-        return None
-    if identifier in superseded:
-        failures.append("%s %s #%d, which this plan re-cuts; name its replacement's key instead" % (label, verb, identifier))
-        return None
-    if existing[identifier][0]["status"] == "parked":
-        failures.append("%s %s #%d, which is parked and would hold it forever" % (label, verb, identifier))
-        return None
-    return identifier
-
-
-def prepare(record, project, existing, index, mode, of=None, start=None, sent_back=()):
+def prepare(record, project, existing, index, cut, start=None):
     """Resolve a `plan` record against the project: ids, references, the librarian's assignments, the bodies.
 
     `existing` is `read_all(project)`; `index` the registry; `start` the id the first ticket takes
-    (`next_id` when None). A replan or a revise supersedes every work ticket that is `open` or
-    `blocked` (`RECUT`), plus the ones a sent-back answer parked; a split supersedes `of` alone, and its
-    pieces inherit that ticket's blockers while its dependents are re-pointed at all of them. What
-    cannot be resolved is a failure the planner is returned; nothing here writes.
+    (`next_id` when None). What cannot be resolved is a failure the planner is returned; nothing here
+    writes. A split's pieces inherit the split ticket's blockers, and its dependents are re-pointed at
+    all of them.
     """
     project = Path(project).resolve()
     prepared = Prepared()
@@ -441,27 +510,50 @@ def prepare(record, project, existing, index, mode, of=None, start=None, sent_ba
             failures.append("the key %s is used more than once" % key)
         seen.add(key)
         ids.setdefault(key, start + position)
-    if mode == "split":
-        prepared.superseded = [of]
-    elif mode in ("replan", "revise"):
-        prepared.superseded = sorted({identifier for identifier, (fields, _) in existing.items()
-                                      if _work(fields) and fields["status"] in RECUT} | set(sent_back))
+    prepared.superseded = superseded_by(cut, existing)
     superseded = set(prepared.superseded)
-    split_of = existing[of][0] if mode == "split" and of in existing else None
-    if mode == "split":
+    split_of = existing[cut.of][0] if cut.kind == "split" and cut.of in existing else None
+    if cut.kind == "split":
+        if split_of is None:
+            failures.append("the project has no ticket %s to split" % cut.of)
+        elif split_of["status"] not in SPLITTABLE:
+            failures.append("ticket %d is %s, so it is not split" % (cut.of, split_of["status"]))
         if len(tickets) < 2:
             failures.append("a split cuts at least two tickets; the plan holds %d" % len(tickets))
         for item in tickets:
             if split_of is not None and item["difficulty"] > split_of["difficulty"]:
                 failures.append("%s is difficulty %d, harder than ticket %d (difficulty %d) it is cut from"
-                                % (item["key"], item["difficulty"], of, split_of["difficulty"]))
+                                % (item["key"], item["difficulty"], cut.of, split_of["difficulty"]))
+    elif not tickets:
+        failures.append("a plan cuts at least one ticket; the plan holds none")
+
+    def resolve(reference, label, verb):
+        """One `blocked_by` or `pauses` entry as an id, or None with the failure named."""
+        if not is_existing(reference):
+            if reference not in ids:
+                failures.append("%s %s %s, which is no key of this plan" % (label, verb, reference))
+                return None
+            return ids[reference]
+        identifier = existing_id(reference)
+        if identifier not in existing:
+            failures.append("%s %s #%d, which the project does not hold" % (label, verb, identifier))
+        elif identifier == cut.of:
+            failures.append("%s %s #%d, the ticket this split replaces" % (label, verb, identifier))
+        elif identifier in superseded:
+            failures.append("%s %s #%d, which this plan re-cuts; name its replacement's key instead" % (label, verb, identifier))
+        elif existing[identifier][0]["status"] == "parked":
+            failures.append("%s %s #%d, which is parked and would hold it forever" % (label, verb, identifier))
+        else:
+            return identifier
+        return None
+
     for item in tickets:
         key, identifier = item["key"], ids[item["key"]]
         label = "%s (ticket %d)" % (key, identifier)
         prepared.labels[identifier] = label
         blockers = set()
         for reference in item["blocked_by"]:
-            resolved = _resolve(reference, ids, existing, superseded, of, label, failures)
+            resolved = resolve(reference, label, "waits on")
             if resolved is not None:
                 blockers.add(resolved)
         if split_of is not None:
@@ -487,9 +579,9 @@ def prepare(record, project, existing, index, mode, of=None, start=None, sent_ba
         fields["demo"] = _one_line(item["demo"])
         if item.get("retry") and item["kind"] == "experiment":
             fields["retry"] = retry_steps(item["retry"])
-        if item.get("adds_public_api"):
+        if item.get("adds_public_api") and item["kind"] == "code":
             prepared.declared.add(identifier)
-        prepared.tickets.append((key, fields, ticket_body(item, of if mode == "split" else None), item.get("tags")))
+        prepared.tickets.append((key, fields, ticket_body(item, cut.of), item.get("tags")))
     first_decision = start + len(tickets)
     placeholders = []
     for position, item in enumerate(record.get("decisions") or []):
@@ -497,7 +589,7 @@ def prepare(record, project, existing, index, mode, of=None, start=None, sent_ba
         label = "decision %d (ticket %d)" % (position + 1, identifier)
         pauses = []
         for reference in item["pauses"]:
-            resolved = _resolve(reference, ids, existing, superseded, of, label, failures, verb="pauses")
+            resolved = resolve(reference, label, "pauses")
             if resolved is not None:
                 pauses.append(resolved)
         if item["blocking"] == "subgraph" and not pauses:
@@ -509,11 +601,14 @@ def prepare(record, project, existing, index, mode, of=None, start=None, sent_ba
     if split_of is not None:
         pieces = sorted(fields["id"] for _, fields, _, _ in prepared.tickets)
         for identifier, (fields, _) in existing.items():
-            if of in fields["blocked_by"] and fields["status"] not in ("done", "accepted", "parked"):
-                prepared.repointed[identifier] = dict(fields, blocked_by=sorted((set(fields["blocked_by"]) - {of}) | set(pieces)))
+            if cut.of in fields["blocked_by"] and fields["status"] not in CLOSED:
+                prepared.repointed[identifier] = dict(fields, blocked_by=sorted((set(fields["blocked_by"]) - {cut.of}) | set(pieces)))
     graph = {}
-    for identifier, (fields, _) in existing.items():
+    for identifier, (fields, body) in existing.items():
         graph[identifier] = dict(prepared.repointed.get(identifier, fields), status="parked" if identifier in superseded else fields["status"])
+        # A kept code ticket that declared public API still needs its docs ticket, which this cut may have taken back.
+        if fields["kind"] == "code" and identifier not in superseded and adds_public_api(body):
+            prepared.declared.add(identifier)
     for _, fields, _, _ in prepared.tickets:
         graph[fields["id"]] = dict(fields)
     for placeholder in placeholders:
@@ -521,21 +616,20 @@ def prepare(record, project, existing, index, mode, of=None, start=None, sent_ba
             if identifier in graph and graph[identifier]["status"] in decisions.PAUSABLE:
                 graph[identifier] = dict(graph[identifier], blocked_by=sorted(set(graph[identifier]["blocked_by"]) | {placeholder["id"]}))
         graph[placeholder["id"]] = placeholder
-    prepared._graph = [graph[identifier] for identifier in sorted(graph)]
+    prepared.graph = [graph[identifier] for identifier in sorted(graph)]
     return prepared
 
 
-def check_plan(record, project, existing, index, mode, of=None, start=None, sent_back=(), base=True, timeout_s=None):
-    """The schema, the resolution, and the plan-time checks on a returned plan: `(failures, prepared)`."""
+def check_plan(record, project, existing, index, cut, start=None, base=True, timeout_s=None):
+    """The schema, the resolution, and the plan-time checks on a returned plan: `(failures, prepared)`, every failure at once."""
     try:
         check(record, load_schema(PLAN_SCHEMA), name="the plan")
     except ValidationError as failure:
         return [str(failure)], None
-    prepared = prepare(record, project, existing, index, mode, of=of, start=start, sent_back=sent_back)
+    prepared = prepare(record, project, existing, index, cut, start=start)
     failures = list(prepared.failures)
-    if not failures:
-        failures = check_tickets([(fields, body) for _, fields, body, _ in prepared.tickets], prepared.graph, project,
-                                 base=base, timeout_s=timeout_s, declared=prepared.declared, labels=prepared.labels)
+    failures += check_tickets([(fields, body) for _, fields, body, _ in prepared.tickets], prepared.graph, project,
+                              base=base, timeout_s=timeout_s, declared=prepared.declared, labels=prepared.labels)
     return failures, prepared
 
 
@@ -650,7 +744,7 @@ def _fence(text):
 
 
 def graph_text(existing, superseded=(), of=None):
-    """The graph as it stands, for a re-cut: every ticket on one line, the ones this plan takes back marked; the split ticket whole."""
+    """The graph as it stands, for a re-cut: every ticket on one line, marked kept, re-cut, parked, or split; the split ticket whole."""
     if not existing:
         return ""
     superseded = set(superseded)
@@ -660,10 +754,18 @@ def graph_text(existing, superseded=(), of=None):
     else:
         lines.append("Every ticket the project holds. Those marked re-cut are yours to cut again (they are parked when you return); "
                      "the rest stay, and a new ticket waits on one of them as `#<id>`.")
+    lines.append("A ticket marked parked is closed for good: nothing waits on it, and a plan that names it fails its checks.")
     lines.append("")
     for identifier in sorted(existing):
-        fields, _ = existing[identifier]
-        mark = "split" if identifier == of else ("re-cut" if identifier in superseded else "kept")
+        fields, body = existing[identifier]
+        if identifier == of:
+            mark = "split"
+        elif identifier in superseded:
+            mark = "re-cut"
+        elif fields["status"] == "parked":
+            mark = "parked"
+        else:
+            mark = "kept"
         parts = ["- #%d [%s, %s] %s d%s \"%s\"" % (identifier, fields["status"], mark, fields["kind"], fields.get("difficulty"), _one_line(fields["title"]))]
         if fields["blocked_by"]:
             parts.append("waits on %s" % ", ".join("#%d" % blocker for blocker in fields["blocked_by"]))
@@ -672,6 +774,8 @@ def graph_text(existing, superseded=(), of=None):
         machine = (fields.get("acceptance") or {}).get("machine") or []
         if machine:
             parts.append("acceptance %s" % "; ".join("`%s`" % command for command in machine))
+        if fields["kind"] == "code" and adds_public_api(body):
+            parts.append("adds public API, so a docs ticket has to wait on it")
         if fields.get("demo"):
             parts.append("demo: %s" % _one_line(fields["demo"]))
         if fields.get("origin"):
@@ -685,26 +789,20 @@ def graph_text(existing, superseded=(), of=None):
     return "\n".join(lines)
 
 
-def plan_prompt(role, mode, harness, project, policy, records, index, journal, graph, cut=False, change=None, of=None):
-    """The planner's plan prompt: what is asked, the mode, the records, the registry, the rubric, the journal, the graph, the protocol, the schema."""
-    asked = {
-        "plan": "the first cut of this project's graph",
-        "replan": "a re-cut after a stall: every ticket marked re-cut below is cut again, from what the journal says failed",
-        "split": "a split of ticket #%s, which failed its escalation: at least two smaller tickets that replace it" % of,
-        "revise": "a re-cut: the owner sent the graph back with what to change",
-    }[mode]
+def plan_prompt(role, cut, harness, project, policy, records, index, journal, graph, cut_short=False):
+    """The planner's plan prompt: what is asked, the cut, the records, the registry, the rubric, the journal, the graph, the protocol, the schema."""
     lines = ["# What you are asked for", "",
              "The ticket graph of this project: phase P4, plan. The harness numbers what you return, has the librarian assign a "
              "role and skills to every ticket, runs the plan-time checks, writes `research/tickets/NN-slug.md` and "
              "`research/graph.json`, opens a decision ticket for every choice you report open, and, by the project's autonomy, "
              "asks for the graph's confirmation before the conductor runs it.", "",
-             "- mode: %s" % asked,
+             "- the cut: %s" % cut.asked,
              "- autonomy: %s; radius: %s" % (harness.get("autonomy"), harness.get("radius"))]
-    if change:
+    if cut.change:
         lines += ["", "# What to change", "",
-                  "The graph as it was cut was not accepted. Change what this names, and keep what it does not:", "", change.strip()]
+                  "The graph as it was cut was not accepted. Change what this names, and keep what it does not:", "", cut.change.strip()]
     parts = ["\n".join(lines), records]
-    if cut:
+    if cut_short:
         parts.append("[wayline: the records were cut at the context cap; the paths below hold the rest.]")
     parts += [registry_text(index), rubric_text(policy), journal, graph]
     parts.append("\n".join([
@@ -730,7 +828,7 @@ def plan_prompt(role, mode, harness, project, policy, records, index, journal, g
 
 
 def _records(project, max_chars):
-    """The records the plan reads, inlined: the spec whole, the goal, the query pack; `(text, cut)`."""
+    """The records the plan reads, inlined: the spec whole, the goal, the query pack; `(text, cut short)`."""
     ledger = Ledger(project)
 
     def read(relative):
@@ -750,99 +848,34 @@ def _records(project, max_chars):
 # --- one planner session -----------------------------------------------------------------------------------
 
 
-def _session_dir(project):
-    base = Path(project) / "research" / SESSIONS
-    number = 1
-    while (base / str(number)).exists():
-        number += 1
-    return base / str(number)
+class _Session(specify.PlannerSession):
+    """The plan session and its one allowance of each return: an unreadable plan, and a plan that failed the checks."""
 
-
-def _budget(policy, key):
-    return ((policy.get("budget") or {}).get(PLANNER_BUDGET) or {}).get(key)
-
-
-def _falls_back_now(project, policy, fall_back):
-    if fall_back is not None:
-        return bool(fall_back)
-    if specify.planner_tier(policy)[0] != pacing.FABLE:
-        return False
-    return gates.fallback_now(project, "the planner's plan session")
-
-
-def _unusable(envelope):
-    if not envelope.valid:
-        return "; ".join(envelope.errors) or "the session returned no structured plan"
-    try:
-        check(envelope.structured_output, load_schema(PLAN_SCHEMA), name="the plan")
-    except ValidationError as failure:
-        return str(failure)
-    return None
-
-
-class _Session:
-    """One planner session and its one allowance of each return: an unreadable plan, and a plan that failed the checks."""
-
-    def __init__(self, project, harness_root, policy, fall_back, say):
-        self.project, self.harness_root, self.policy, self.say = project, harness_root, policy, say
-        self.ledger = Ledger(project)
-        self.model, self.effort, self.fallback_from = specify.planner_tier(policy, _falls_back_now(project, policy, fall_back))
-        self.role = worker.read_role(PLANNER, harness_root, project)
-        self.run_dir = _session_dir(project)
-        self.request = None
-        self.session_id = None
-        self.plans = 0
-
-    def _launch(self, prompt):
-        self.request = worker.LaunchRequest(
-            role=self.role.name, model=self.model, effort=self.effort, prompt=prompt,
-            agent_json=self.role.agent_json(self.model, self.effort, _budget(self.policy, "max_turns")),
-            allowed_tools=list(self.role.allowed_tools), disallowed_tools=list(self.role.disallowed_tools),
-            settings_path=gates.write_worker_settings(self.run_dir / "settings.json", self.harness_root),
-            add_dirs=[str(Path(self.harness_root).resolve()), str(self.project)],
-            cwd=self.project,
-            env=gates.verdict_env(self.project, self.run_dir),
-            schema_path=Path(self.harness_root).resolve() / "schemas" / (PLAN_SCHEMA + ".json"),
-            max_minutes=_budget(self.policy, "max_minutes"),
-        )
-        return self._taken(worker.launch(self.request))
-
-    def _resume(self, message):
-        if not self.session_id:
-            raise PlanError("the planner's session has no id to be resumed with")
-        return self._taken(worker.resume(self.request, self.session_id, message))
-
-    def _taken(self, envelope):
-        gates.raise_if_refused(envelope, self.model, "the planner's plan session")
-        self.session_id = envelope.session_id or self.session_id
-        return envelope
-
-    def _keep(self, record):
-        """The plan as the session returned it, kept beside its stream for the owner to read."""
-        self.plans += 1
-        relative = "%s/plan-%d.json" % (Path(self.run_dir).relative_to(self.ledger.research), self.plans)
-        self.ledger.write_json(relative, record)
+    error = PlanError
+    schema = PLAN_SCHEMA
+    sessions = SESSIONS
+    what = "the planner's plan session"
 
     def plan(self, prompt, checker):
         """A plan that passed the schema and the checks, with each gate's one return spent as needed; `(record, prepared)`."""
-        envelope = self._launch(prompt)
-        problem = _unusable(envelope)
+        envelope = self.start(prompt)
+        problem = self.unusable(envelope)
         if problem is not None:
             self.say("  the plan could not be read (%s); returned to the planner once" % problem)
-            envelope = self._resume(RESUME_INVALID % problem)
-            problem = _unusable(envelope)
+            envelope = self.continue_with(RESUME_INVALID % problem)
+            problem = self.unusable(envelope)
         if problem is not None:
             raise PlanError("the planner returned no plan the schema accepts: %s" % problem)
         return self.checked(envelope.structured_output, checker)
 
     def checked(self, record, checker, returned=False):
         """`record` once it passes the checks; a failing one goes back once, a second failure raises."""
-        self._keep(record)
+        self.keep(record, "plan")
         failures, prepared = checker(record)
         if failures and not returned:
             self.say("  the plan failed %d check(s); returned to the planner once" % len(failures))
-            envelope = self._resume(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
-            problem = _unusable(envelope)
+            envelope = self.continue_with(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
+            problem = self.unusable(envelope)
             if problem is not None:
                 raise PlanError("the planner's second plan could not be read: %s" % problem, failures)
             return self.checked(envelope.structured_output, checker, returned=True)
@@ -881,33 +914,51 @@ def graph_sha(record, tickets, decisions_opened):
     return _digest({"tickets": list(tickets), "decisions": list(decisions_opened), "plan": record})
 
 
-def write_plan(project, ledger, record, index, mode, *, of=None, change=None, sent_back=(), session=None, notify=None):
+def _ask(project, sha, tickets, opened, notify):
+    """The confirmation ticket for the graph at `sha`: `blocking: all`, answerable by the decider under autonomous."""
+    span = "tickets %d to %d" % (min(tickets), max(tickets)) if tickets else "no ticket"
+    return decisions.open_decision(
+        project, "Confirm the graph (%s at %s: %s%s) before the conductor runs it? Answer confirm, or revise: and what to change."
+                 % (SUBJECT, sha, span, ", and decision tickets %s" % ", ".join(str(item) for item in opened) if opened else ""),
+        options=[CONFIRM, REVISE], recommended=CONFIRM,
+        evidence=["%s at %s: its plan-time checks passed, the base commit included" % (SUBJECT, sha),
+                  "the plan as returned, with the ids it became: research/plan.json",
+                  "a revise parks the graph at once; the next wayline plan cuts it again with the change"],
+        blocking="all", human_only=False, reversible=True, proposed_by=PLANNER, origin=ORIGIN % sha, title=TITLE,
+        context_pack=[SUBJECT, "research/plan.json"], notify=notify)["ticket"]
+
+
+def write_plan(project, ledger, record, index, cut, *, expected=None, autonomy=None, session=None, notify=None):
     """Write what a checked plan becomes, under the ledger's lock; returns what was written.
 
-    The superseded tickets are parked first, so the frontier never holds a ticket and its
-    replacement at once; then the new tickets are written and journaled (`ticket_created`, and
-    `assigned` through the librarian), a split's dependents re-pointed, the decision tickets opened,
-    the record kept as `research/plan.json` (not for a split, which inherits the graph's confirmation),
-    and `graph.json` regenerated. The plan is resolved again here at the id that is free now, so two
-    verbs writing tickets at once cannot number one twice.
+    The plan is resolved again here, against the project as it stands now: a first plan is refused when
+    a graph was cut since the session launched, and a re-cut when what it supersedes is not `expected`,
+    the ids the planner was shown as re-cut, so two cuts of one graph at once cannot both land. The
+    superseded tickets are parked first, so the frontier never holds a ticket and its replacement at
+    once; then the new tickets are written and journaled (`ticket_created`, and `assigned` through the
+    librarian), a split's dependents re-pointed, the decision tickets opened, the record kept as
+    `research/plan.json` (not for a split, which inherits the graph's confirmation), `graph.json`
+    regenerated, and, under `checkpoints` or `autonomous`, the confirmation opened in this same locked
+    section, so no wave can find the new tickets without their gate.
     """
     project = Path(project).resolve()
     with ledger.lock():
         existing = read_all(project)
-        prepared = prepare(record, project, existing, index, mode, of=of, sent_back=sent_back)
+        if cut.kind == "plan" and read_plan(project) is not None:
+            raise PlanError("a graph was cut since this session started (research/plan.json at %s); nothing was written"
+                            % read_plan(project)["sha"])
+        prepared = prepare(record, project, existing, index, cut)
         if prepared.failures:
             raise PlanError("the plan no longer fits the project as it stands now: %s" % "; ".join(prepared.failures), prepared.failures)
-        why = {
-            "split": "Split by the planner into tickets %s." % ", ".join(str(fields["id"]) for _, fields, _, _ in prepared.tickets),
-            "replan": "Re-cut by the planner after a stall; its replacements are tickets %s."
-                      % (", ".join(str(fields["id"]) for _, fields, _, _ in prepared.tickets) or "none"),
-            "revise": "Re-cut by the planner with the owner's change; its replacements are tickets %s."
-                      % (", ".join(str(fields["id"]) for _, fields, _, _ in prepared.tickets) or "none"),
-        }.get(mode, "Superseded by the planner.")
+        if expected is not None and list(expected) != prepared.superseded:
+            raise PlanError("the graph changed since the planner was launched: it was shown tickets %s as re-cut, and now %s would "
+                            "be; nothing was written, so run wayline plan again"
+                            % (", ".join(str(item) for item in expected) or "none", ", ".join(str(item) for item in prepared.superseded) or "none"))
+        replacements = [fields["id"] for _, fields, _, _ in prepared.tickets]
         for identifier in prepared.superseded:
             fields, body = existing[identifier]
             if fields["status"] != "parked":
-                _park(ledger, fields, body, why)
+                _park(ledger, fields, body, cut.why_superseded(replacements))
         written = []
         for key, fields, body, tags in prepared.tickets:
             write_ticket(ledger, fields, body)
@@ -925,14 +976,16 @@ def write_plan(project, ledger, record, index, mode, *, of=None, change=None, se
                 pauses=pauses, proposed_by=PLANNER, origin="plan %s: %s" % (_digest(record), origin or "decision %d" % position),
                 context_pack=["research/SPEC.md"], notify=notify)
             opened.append(report["ticket"])
-        outcome = {"mode": mode, "of": of, "tickets": written, "decisions": opened, "superseded": list(prepared.superseded),
-                   "repointed": sorted(prepared.repointed), "notes": list(record.get("notes") or []), "sha": None}
-        if mode != "split":
+        outcome = {"cut": cut.kind, "of": cut.of, "tickets": written, "decisions": opened, "superseded": list(prepared.superseded),
+                   "repointed": sorted(prepared.repointed), "notes": list(record.get("notes") or []), "sha": None, "gate": None}
+        if cut.kind != "split":
             outcome["sha"] = graph_sha(record, written, opened)
             ledger.write_json(PLAN_JSON, {
-                "sha": outcome["sha"], "cut_at": now_ts(), "mode": mode, "change": change, "session_id": session,
+                "sha": outcome["sha"], "cut_at": now_ts(), "cut": cut.kind, "change": cut.change, "session_id": session,
                 "tickets": written, "decisions": opened, "superseded": list(prepared.superseded), "sent_back": None, "plan": record,
             })
+            if autonomy in (CHECKPOINTS, AUTONOMOUS):
+                outcome["gate"] = _ask(project, outcome["sha"], written, opened, notify)
         events, _ = ledger.read_events()
         refresh_graph(project, ledger=ledger, events=events, force=True)
     return outcome
@@ -957,25 +1010,36 @@ def _confirmation_ticket(project, sha):
     return None
 
 
+def _feedback(answer, rationale):
+    change = specify.what_to_change(answer)
+    if change == specify.what_to_change(REVISE):
+        change = ""  # the option's placeholder, as the decider may pick it: the change is in the rationale
+    rationale = str(rationale or "").strip()
+    if rationale:
+        change = (change + " (the reason given: %s)" % rationale).strip()
+    return change or "no change was named; read the answer on the ticket"
+
+
 def plan_state(project, events=None):
     """Where the graph stands, read from `plan.json`, the tickets, and the journal.
 
     `state` is one of `none` (no plan was cut), `unasked` (cut, no confirmation asked or given), `pending`
-    (a confirmation ticket waits), `confirmed`, or `revise` (answered with what to change, which `feedback`
-    holds). `sha`, `ticket`, `answer`, `decided_by`, `mode`, `tickets`, `decisions`, `sent_back`, and `phase`
-    go with it.
+    (a confirmation ticket waits), `confirmed`, or `revise` (sent back with what to change, which
+    `feedback` holds, until the next cut). `sha`, `ticket`, `answer`, `decided_by`, `cut`, `tickets`,
+    `decisions`, `sent_back`, and `phase` go with it. A graph once sent back stays `revise` whatever is
+    answered later: its tickets are parked, and only a re-cut brings a graph back.
     """
     project = Path(project).resolve()
     ledger = Ledger(project)
     if events is None:
         events, _ = ledger.read_events()
-    state = {"state": "none", "sha": None, "ticket": None, "answer": None, "decided_by": None, "feedback": None, "mode": None,
+    state = {"state": "none", "sha": None, "ticket": None, "answer": None, "decided_by": None, "feedback": None, "cut": None,
              "tickets": [], "decisions": [], "sent_back": None, "phase": specify.current_phase(events)}
     record = read_plan(project)
     if record is None:
         return state
     sha = record["sha"]
-    state.update(sha=sha, mode=record.get("mode"), tickets=list(record.get("tickets") or []), decisions=list(record.get("decisions") or []),
+    state.update(sha=sha, cut=record.get("cut"), tickets=list(record.get("tickets") or []), decisions=list(record.get("decisions") or []),
                  sent_back=record.get("sent_back"))
     ticket = _confirmation_ticket(project, sha)
     state["ticket"] = ticket["id"] if ticket is not None else None
@@ -994,6 +1058,12 @@ def plan_state(project, events=None):
         written = answer_section(read_ticket(tickets_dir(project) / filename(ticket))[1])
         if written is not None:
             answer = {"answer": written, "decided_by": "human"}
+    if state["sent_back"]:
+        sent = state["sent_back"].get("answer")
+        rationale = answer.get("rationale") if answer is not None and answer.get("answer") == sent else None
+        state.update(state="revise", answer=sent, decided_by=(answer or {}).get("decided_by") if answer is not None and answer.get("answer") == sent else None,
+                     feedback=_feedback(sent, rationale))
+        return state
     if answer is None:
         state["state"] = "pending" if ticket is not None else "unasked"
         return state
@@ -1001,14 +1071,21 @@ def plan_state(project, events=None):
     if specify.confirms(answer["answer"]):
         state["state"] = "confirmed"
         return state
-    change = specify.what_to_change(answer["answer"])
-    if change == specify.what_to_change(REVISE):
-        change = ""  # the option's placeholder, as the decider may pick it: the change is in the rationale
-    rationale = str(answer.get("rationale") or "").strip()
-    if rationale:
-        change = (change + " (the reason given: %s)" % rationale).strip()
-    state["state"], state["feedback"] = "revise", change or "no change was named; read the answer on the ticket"
+    state["state"], state["feedback"] = "revise", _feedback(answer["answer"], answer.get("rationale"))
     return state
+
+
+def _send_back(project, ledger, why, ticket, answer):
+    """Park the graph's open tickets, record the sent-back answer in `plan.json`, and refresh the graph; returns the ids parked."""
+    with ledger.lock():
+        parked = park_open(project, ledger, why)
+        record = read_plan(project)
+        if record is not None:
+            record["sent_back"] = {"ticket": ticket, "answer": answer, "parked": parked}
+            ledger.write_json(PLAN_JSON, record)
+        if parked:
+            refresh_graph(project, ledger=ledger)  # the stored graph says at once that nothing of it can launch
+    return parked
 
 
 def graph_sent_back(project, ledger, fields, answer):
@@ -1023,18 +1100,9 @@ def graph_sent_back(project, ledger, fields, answer):
     origin = str(fields.get("origin") or "")
     if fields.get("kind") != DECISION_KIND or not origin.startswith(ORIGIN_PREFIX) or specify.confirms(answer):
         return []
-    project = Path(project).resolve()
     why = ("Sent back: the answer to decision ticket %d, \"%s\", asks for a change; the next wayline plan cuts the graph again."
            % (fields["id"], _one_line(answer)))
-    with ledger.lock():
-        parked = park_open(project, ledger, why)
-        record = read_plan(project)
-        if record is not None:
-            record["sent_back"] = {"ticket": fields["id"], "answer": answer, "parked": parked}
-            ledger.write_json(PLAN_JSON, record)
-        if parked:
-            refresh_graph(project, ledger=ledger)  # the stored graph says at once that nothing of it can launch
-    return parked
+    return _send_back(Path(project).resolve(), ledger, why, fields["id"], answer)
 
 
 def advance(project, events=None):
@@ -1054,78 +1122,60 @@ def advance(project, events=None):
 # --- cutting -----------------------------------------------------------------------------------------------
 
 
-def cut(project, mode, *, of=None, change=None, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None,
-        say=lambda text: None, pre_check=True):
-    """Launch the planner in `mode`, check what it returns, and write it; returns what was written.
+def cut_graph(project, cut, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None, say=lambda text: None,
+              pre_check=True):
+    """Launch the planner for `cut`, check what it returns, and write it; returns what was written.
 
-    `mode` is `plan` (the spec must be confirmed), `replan`, `split` (with `of`), or `revise` (with
-    `change`). The registry is rebuilt first, since the librarian assigns from it. Raises `PlanError`
-    when nothing can be cut or the plan failed its checks twice, `gates.UsageLimited` when a window
-    refused the session, and `gates.FableHeld` when the planner waits for Fable's weekly window.
+    A first plan needs the spec confirmed; a split needs a ticket that can be split. The registry is
+    rebuilt first, since the librarian assigns from it. Raises `PlanError` when nothing can be cut or the
+    plan failed its checks twice, `gates.UsageLimited` when a window refused the session, and
+    `gates.FableHeld` when the planner waits for Fable's weekly window.
     """
     project = Path(project).resolve()
     ledger = Ledger(project)
     policy = policy_for(project, harness_root) if policy is None else policy
+    harness = read_harness(project)
     events, _ = ledger.read_events()
     existing = read_all(project)
-    if mode == "plan":
+    if cut.kind == "plan":
         state = specify.spec_state(project, events)
         if state["state"] != "confirmed":
             raise PlanError("the spec is %s, and the graph is cut from a confirmed spec; run wayline specify first" % state["state"])
         problems = specify.check_spec(project)
         if problems:
             raise PlanError("research/SPEC.md fails its checks, so it cannot be cut: %s" % "; ".join(problems), problems)
-    if mode == "split":
-        found = existing.get(of)
+    if cut.kind == "split":
+        found = existing.get(cut.of)
         if found is None:
-            raise PlanError("%s has no ticket %s to split" % (project, of))
+            raise PlanError("%s has no ticket %s to split" % (project, cut.of))
         if not _work(found[0]):
-            raise PlanError("ticket %d is a decision ticket, which is answered rather than split" % of)
-        if found[0]["status"] in ("done", "accepted", "parked", "running"):
-            raise PlanError("ticket %d is %s, so it is not split" % (of, found[0]["status"]))
-    record = read_plan(project) or {}
-    sent_back = list(((record.get("sent_back") or {}).get("parked") or [])) if mode == "revise" else []
+            raise PlanError("ticket %d is a decision ticket, which is answered rather than split" % cut.of)
+        if found[0]["status"] not in SPLITTABLE:
+            raise PlanError("ticket %d is %s, so it is not split" % (cut.of, found[0]["status"]))
     index = registry.build(project, harness_root=harness_root, events=events, pre_check=pre_check)
     session = _Session(project, harness_root, policy, fall_back, say)
     records, cut_short = _records(project, specify.context_cap(policy, session.model))
-    focus = of if mode == "split" else None
-    superseded = [of] if mode == "split" else [identifier for identifier, (fields, _) in existing.items()
-                                                if _work(fields) and fields["status"] in RECUT] + sent_back
-    prompt = plan_prompt(session.role, mode, read_harness(project), project, policy, records, index, journal_text(events, focus),
-                         graph_text(existing, superseded, of=of), cut=cut_short, change=change, of=of)
-    say("cutting the graph (%s): the planner on %s at %s%s" % (mode, session.model, session.effort,
+    superseded = superseded_by(cut, existing)
+    prompt = plan_prompt(session.role, cut, harness, project, policy, records, index, journal_text(events, cut.of),
+                         graph_text(existing, superseded, of=cut.of), cut_short=cut_short)
+    say("cutting the graph (%s): the planner on %s at %s%s" % (cut.kind, session.model, session.effort,
                                                              " in place of fable" if session.fallback_from else ""))
 
     def checker(returned):
-        return check_plan(returned, project, existing, index, mode, of=of, sent_back=sent_back,
-                          timeout_s=policy.get("acceptance_timeout_s"))
+        return check_plan(returned, project, existing, index, cut, timeout_s=policy.get("acceptance_timeout_s"))
 
     returned, _ = session.plan(prompt, checker)
-    outcome = write_plan(project, ledger, returned, index, mode, of=of, change=change, sent_back=sent_back,
+    outcome = write_plan(project, ledger, returned, index, cut, expected=superseded, autonomy=harness.get("autonomy"),
                          session=session.session_id, notify=notify)
     outcome.update(model=session.model, fallback_from=session.fallback_from, session_id=session.session_id)
-    say("  wrote %d ticket(s)%s%s" % (len(outcome["tickets"]),
-                                      " and %d decision ticket(s)" % len(outcome["decisions"]) if outcome["decisions"] else "",
-                                      "; parked %s" % ", ".join(str(item) for item in outcome["superseded"]) if outcome["superseded"] else ""))
+    say("  wrote %d ticket(s)%s%s%s" % (len(outcome["tickets"]),
+                                        " and %d decision ticket(s)" % len(outcome["decisions"]) if outcome["decisions"] else "",
+                                        "; parked %s" % ", ".join(str(item) for item in outcome["superseded"]) if outcome["superseded"] else "",
+                                        "; opened decision ticket %d, \"%s\", blocking all" % (outcome["gate"], TITLE) if outcome["gate"] else ""))
     return outcome
 
 
 # --- the confirmation ---------------------------------------------------------------------------------------
-
-
-def _ask(project, state, notify):
-    """The confirmation ticket for the graph at `state['sha']`: `blocking: all`, answerable by the decider under autonomous."""
-    tickets = state["tickets"]
-    span = "tickets %d to %d" % (min(tickets), max(tickets)) if tickets else "no ticket"
-    return decisions.open_decision(
-        project, "Confirm the graph (%s at %s: %s%s) before the conductor runs it? Answer confirm, or revise: and what to change."
-                 % (SUBJECT, state["sha"], span, ", and decision tickets %s" % ", ".join(str(item) for item in state["decisions"]) if state["decisions"] else ""),
-        options=[CONFIRM, REVISE], recommended=CONFIRM,
-        evidence=["%s at %s: its plan-time checks passed, the base commit included" % (SUBJECT, state["sha"]),
-                  "the plan as returned, with the ids it became: research/plan.json",
-                  "a revise parks the graph at once; the next wayline plan cuts it again with the change"],
-        blocking="all", human_only=False, reversible=True, proposed_by=PLANNER, origin=ORIGIN % state["sha"], title=TITLE,
-        context_pack=[SUBJECT, "research/plan.json"], notify=notify)["ticket"]
 
 
 def _decide(project, identifier, harness_root, policy, fall_back, notify, say):
@@ -1149,14 +1199,18 @@ def confirm(project, text, rationale=None, by="cli"):
 
     An answer that does not confirm parks the graph's open tickets, as one given through the ticket
     does. Returns the state after the answer (and the phase moved when it confirms). Refused when no
-    cut graph waits for an answer.
+    cut graph waits for an answer, and once the graph was sent back: its tickets are parked, and only
+    `wayline plan` brings a graph back.
     """
     project = Path(project).resolve()
     text = str(text or "").strip()
     if not text:
         raise PlanError("an answer to the graph's confirmation needs some text")
     state = plan_state(project)
-    if state["state"] not in ("unasked", "pending", "revise"):
+    if state["state"] == "revise":
+        raise PlanError("the graph was sent back (%s) and its tickets are parked, so there is nothing to confirm; %s"
+                        % (state["feedback"], _next(state)))
+    if state["state"] not in ("unasked", "pending"):
         raise PlanError("the graph is %s, so there is nothing to confirm; %s" % (state["state"], _next(state)))
     ledger = Ledger(project)
     if state["state"] == "pending":
@@ -1166,14 +1220,8 @@ def confirm(project, text, rationale=None, by="cli"):
             ledger.append_event(DECISION, {"ticket": None, "answer": ANSWER_PREFIX % state["sha"] + text, "decided_by": "human",
                                            "rationale": rationale, "confidence": None})
             if not specify.confirms(text):
-                parked = park_open(project, ledger, "Sent back by the owner (wayline plan revise: \"%s\"); the next wayline plan cuts the graph again."
-                                   % _one_line(text))
-                record = read_plan(project)
-                if record is not None:
-                    record["sent_back"] = {"ticket": None, "answer": text, "parked": parked}
-                    ledger.write_json(PLAN_JSON, record)
-                if parked:
-                    refresh_graph(project, ledger=ledger)
+                _send_back(project, ledger, "Sent back by the owner (wayline plan revise: \"%s\"); the next wayline plan cuts the graph "
+                           "again." % _one_line(text), None, text)
     advance(project)
     return plan_state(project)
 
@@ -1196,36 +1244,35 @@ def plan(project, *, replan=False, split=None, harness_root=HARNESS_ROOT, policy
          pre_check=True):
     """Do whatever the graph owes next: cut, re-cut, split, ask, decide, or advance. Returns the report.
 
-    The report is `{project, autonomy, mode, did, cut, stopped, failures, state}`; `stopped` names what
+    The report is `{project, autonomy, cut, did, written, stopped, failures, state}`; `stopped` names what
     ended the call early (a failed gate, a usage window, the hold on Fable's window) and `failures` the
-    checks behind it; `cut` is what was written.
+    checks behind it; `written` is what the cut wrote.
     """
     project = Path(project).resolve()
     say = (lambda text: print(text, file=out)) if out is not None else (lambda text: None)
     ledger = Ledger(project)
     harness = read_harness(project)
     autonomy = harness.get("autonomy")
-    report = {"project": str(project), "autonomy": autonomy, "mode": None, "did": [], "cut": None, "stopped": None, "failures": []}
+    report = {"project": str(project), "autonomy": autonomy, "cut": None, "did": [], "written": None, "stopped": None, "failures": []}
     journal_written_answers(project, ledger)
     state = plan_state(project)
     if split is not None:
-        mode = "split"
+        cut = Cut("split", of=split)
     elif replan:
-        mode = "replan"
+        cut = Cut("replan")
     elif state["state"] == "revise":
-        mode = "revise"
+        cut = Cut("revise", change="The %s asked: %s" % ("owner" if state["decided_by"] in ("human", None) else state["decided_by"],
+                                                        state["feedback"]),
+                  sent_back=list((state["sent_back"] or {}).get("parked") or []))
     elif state["state"] == "none":
-        mode = "plan"
+        cut = Cut("plan")
     else:
-        mode = None
-    report["mode"] = mode
-    if mode is not None:
-        change = None
-        if mode == "revise":
-            change = "The %s asked: %s" % ("owner" if state["decided_by"] in ("human", None) else state["decided_by"], state["feedback"])
+        cut = None
+    report["cut"] = cut.kind if cut is not None else None
+    if cut is not None:
         try:
-            outcome = cut(project, mode, of=split, change=change, harness_root=harness_root, policy=policy, fall_back=fall_back,
-                          notify=notify, say=say, pre_check=pre_check)
+            outcome = cut_graph(project, cut, harness_root=harness_root, policy=policy, fall_back=fall_back, notify=notify, say=say,
+                                pre_check=pre_check)
         except PlanError as failure:
             report.update(stopped=str(failure), failures=failure.failures)
         except gates.FableHeld as held:
@@ -1235,19 +1282,21 @@ def plan(project, *, replan=False, split=None, harness_root=HARNESS_ROOT, policy
         except (gates.GateError, worker.LaunchError, worker.RoleError, registry.RegistryError, TicketError, ProjectError) as failure:
             report["stopped"] = str(failure)
         else:
-            report["cut"] = outcome
+            report["written"] = outcome
             report["did"].append("%s: wrote %d ticket(s)%s%s on %s%s" % (
-                mode, len(outcome["tickets"]),
+                cut.kind, len(outcome["tickets"]),
                 " and %d decision ticket(s)" % len(outcome["decisions"]) if outcome["decisions"] else "",
                 ", parked %s" % ", ".join(str(item) for item in outcome["superseded"]) if outcome["superseded"] else "",
                 outcome.get("model") or "an unnamed model", " in place of fable" if outcome.get("fallback_from") else ""))
+            if outcome.get("gate"):
+                report["did"].append("opened decision ticket %d, \"%s\", blocking all" % (outcome["gate"], TITLE))
         state = plan_state(project)
     if state["state"] == "unasked" and report["stopped"] is None:
         if autonomy == INTERACTIVE:
             report["did"].append("the graph waits for the owner's word in this session")
-        else:
-            identifier = _ask(project, state, notify)
-            refresh_graph(project, ledger=ledger)  # the stored graph holds the gate before any conductor reads it
+        else:  # a plan.json written without its gate, which no cut of this version leaves behind
+            identifier = _ask(project, state["sha"], state["tickets"], state["decisions"], notify)
+            refresh_graph(project, ledger=ledger)
             report["did"].append("opened decision ticket %d, \"%s\", blocking all" % (identifier, TITLE))
         state = plan_state(project)
     if state["state"] == "pending" and autonomy == AUTONOMOUS and report["stopped"] is None:
@@ -1290,12 +1339,12 @@ def render_report(report):
     state = report["state"]
     lines = ["plan  %s  (autonomy %s)" % (report["project"], report["autonomy"])]
     lines += ["  " + line for line in report["did"]] or ["  nothing to do"]
-    cut_report = report.get("cut")
-    if cut_report:
-        lines += _ticket_lines(report["project"], cut_report["tickets"] + cut_report["decisions"])
-        if cut_report.get("repointed"):
-            lines.append("  re-pointed at the pieces: %s" % ", ".join(str(item) for item in cut_report["repointed"]))
-        for note in cut_report.get("notes") or []:
+    written = report.get("written")
+    if written:
+        lines += _ticket_lines(report["project"], written["tickets"] + written["decisions"])
+        if written.get("repointed"):
+            lines.append("  re-pointed at the pieces: %s" % ", ".join(str(item) for item in written["repointed"]))
+        for note in written.get("notes") or []:
             lines.append("  the planner notes: %s" % note)
     if report["stopped"]:
         lines.append("  stopped: %s" % report["stopped"])

@@ -70,10 +70,10 @@
           "retry": {
             "type": ["object", "null"],
             "additionalProperties": false,
-            "description": "experiment tickets only: the footprint ladders of Implementation Decisions 6, each step an override object or its spelling \"--batch-size=16 NAME=value\"",
+            "description": "experiment tickets only: the footprint ladders of Implementation Decisions 6, each step spelled as a ticket file holds it, \"--batch-size=16 NAME=value\"",
             "properties": {
-              "host_oom": {"type": "array", "items": {"type": ["object", "string"]}},
-              "gpu_oom": {"type": "array", "items": {"type": ["object", "string"]}}
+              "host_oom": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+              "gpu_oom": {"type": "array", "items": {"type": "string", "pattern": "\\S"}}
             }
           }
         }
