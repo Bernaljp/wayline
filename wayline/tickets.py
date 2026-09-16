@@ -174,7 +174,7 @@ def result_notes(result):
         notes.append("reported %s = %s" % (progress.get("metric"), progress.get("value")))
     proposals = result.get("proposals") or []
     if proposals:
-        notes.append("proposed %s (ticket 37 admits proposals)"
+        notes.append("proposed %s (admission decides what joins the graph)"
                      % ", ".join("%s (%s)" % (item.get("title"), item.get("kind")) for item in proposals))
     requests = result.get("decision_requests") or []
     if requests:

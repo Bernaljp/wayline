@@ -36,6 +36,23 @@
     "model": {
       "type": ["string", "null"],
       "description": "written by the harness from the session's envelope; leave it out"
+    },
+    "proposals": {
+      "type": "array",
+      "description": "tickets the verifier or the critic propose, taken through admission (ticket 37) exactly as a worker's result's",
+      "items": {
+        "type": "object",
+        "required": ["title", "kind", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "title": {"type": "string"},
+          "kind": {"type": "string", "enum": ["dossier", "lit", "code", "docs", "experiment", "analysis", "figure", "writing", "review", "decision", "harness"]},
+          "why": {"type": "string"},
+          "blocked_by": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+          "radius": {"type": "string", "enum": ["strict", "moderate", "exploratory"]},
+          "touches": {"type": "array", "items": {"type": "string", "pattern": "\\S"}}
+        }
+      }
     }
   }
 }

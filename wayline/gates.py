@@ -505,6 +505,7 @@ class Verdict:
     model: Optional[str] = None
     ticket: Optional[int] = None
     fallback_from: Optional[str] = None
+    proposals: list = field(default_factory=list)
 
     @property
     def payload(self):
@@ -807,6 +808,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         passed=bool(returned["pass"]), question_limit=returned["question_limit"],
         findings=list(returned.get("findings") or []),
         session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
+        proposals=list(returned.get("proposals") or []),
     )
 
 
