@@ -183,6 +183,14 @@ def _locators(provenance):
     return locators
 
 
+def _cited(finding):
+    """A written finding's locators: `add_finding` writes a list, and the conductor one locator per finding."""
+    provenance = finding.get("provenance")
+    if isinstance(provenance, str):
+        return [provenance] if provenance else []
+    return list(provenance or [])
+
+
 def add_finding(project_or_ledger, text, provenance, ticket, negative=False):
     """Append one finding to `findings.jsonl`, journal `finding`, and re-render `findings.md`.
 
@@ -240,7 +248,7 @@ def render_findings(project_or_ledger):
             lines.append("")
             for finding in by_ticket[ticket]:
                 mark = " (negative)" if finding.get("negative") else ""
-                locators = ", ".join(finding.get("provenance") or [])
+                locators = ", ".join(_cited(finding))
                 lines.append("- `%s`%s %s (%s)" % (finding["id"], mark, finding["text"], locators))
             lines.append("")
     return book.write_markdown(FINDINGS_MD, "\n".join(lines))
@@ -1064,7 +1072,7 @@ def finding_tags(finding, manifest):
     """
     runs = {entry.get("path"): entry.get("run_id") for entry in manifest.get("entries", [])}
     tags = []
-    for locator in finding.get("provenance") or []:
+    for locator in _cited(finding):
         artifact, _, rest = str(locator).partition("#")
         tags.append("res:%s/%s#%s" % (runs.get(artifact) or "unmanifested", artifact, rest))
     return tags
@@ -1160,9 +1168,12 @@ def _trajectory(context):
     lines.extend(["", "Kept readings:"])
     lines.extend(["- %s from run `%s` (ticket %s)" % (_number(payload.get("value")), payload.get("run_id"), payload.get("ticket"))
                   for payload in kept] or ["- none"])
+    # A discarded change's own mean is its `progress` reading that was not kept (ticket 39), the last one of its ticket.
+    means = {payload.get("ticket"): payload.get("value") for payload in readings if not payload.get("kept")}
     lines.extend(["", "Discarded changes:"])
-    lines.extend(["- ticket %s: best %s, standard deviation %s, seeds %s" % (
-        payload.get("ticket"), _number(payload.get("best")), _number(payload.get("sd")), payload.get("seeds"))
+    lines.extend(["- ticket %s: mean %s against the best %s, standard deviation %s, seeds %s" % (
+        payload.get("ticket"), _number(means.get(payload.get("ticket"))), _number(payload.get("best")),
+        _number(payload.get("sd")), payload.get("seeds"))
         for payload in discarded] or ["- none"])
     return _records(lines)
 

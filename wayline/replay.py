@@ -20,7 +20,7 @@ from wayline.ledger import (
     JOB_LAUNCHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, STALL, SWITCHED,
     TICKET_ACCEPTED, TICKET_BLOCKED, TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED,
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
-    UNPAUSED, VERDICT, WAVE,
+    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED,
 )
 # The model a `paused` and an `unpaused` name for the hold on Fable's weekly window, the fallback consents a `control` may set,
 # and the window a ticket's origin names when it is the ask of decision 15.
@@ -262,6 +262,10 @@ class View:
     findings: set = field(default_factory=set)
     integrated: dict = field(default_factory=dict)
     verdicts: dict = field(default_factory=dict)
+    # Keep-if-better (ticket 39): every evaluation's `progress` by its run id, so a restart judges no attempt twice, and
+    # the `discarded` payload of each ticket whose latest attempt was not kept, whose branch and worktree stay.
+    progress: dict = field(default_factory=dict)
+    discarded: dict = field(default_factory=dict)
 
     def apply(self, event):
         """Fold one journal record into the view; returns the view."""
@@ -270,6 +274,8 @@ class View:
         identifier = _int(payload.get("ticket", event.get("ticket")))
         if identifier is not None and (name in STATUS_AFTER or name in (TICKET_SESSION, TICKET_RESULT)):
             self._ticket_event(self.tickets.setdefault(identifier, TicketView(identifier)), name, payload, event.get("ts"))
+        if name in (TICKET_LAUNCHED, TICKET_RERUN) and identifier is not None:
+            self.discarded.pop(identifier, None)  # a new attempt is judged afresh
         if name == TICKET_CREATED and identifier is not None and ask_window(payload.get("origin")) is not None:
             self.asks[identifier] = {"resets_at": ask_window(payload["origin"]), "opened": event.get("ts")}
         if name == RUN_STARTED:
@@ -320,6 +326,10 @@ class View:
                 {"verdict_type": payload.get("verdict_type"), "pass": payload.get("pass")})
         elif name == FINDING and payload.get("id"):
             self.findings.add(payload["id"])
+        elif name == PROGRESS and payload.get("run_id"):
+            self.progress[payload["run_id"]] = dict(payload)
+        elif name == DISCARDED and identifier is not None:
+            self.discarded[identifier] = dict(payload)
         elif name == INTEGRATED and identifier is not None:
             self.integrated[identifier] = payload.get("commit")
             ticket = self.tickets.get(identifier)

@@ -20,6 +20,11 @@ How you work:
   Name the decision or record a choice rests on, in the text itself (`Q4`, `paper-b`).
 - A question the grill left open is not yours to settle quietly. Where the spec has to take a side
   on one, take the recommended answer, and say so as a risk that names the question.
+- Under a goal, a change is kept only when it beat the best kept value on the held-out split, and
+  one that did not is journaled `discarded`, left on its branch, and filed as a negative result.
+  Do not plan it again as it was: a discarded change comes back only as a new ticket that cites new
+  evidence (a finding, a dossier entry, a result since the discard) and says what it does
+  differently. A ticket that merely runs it again is parked as a duplicate.
 - Stay inside the radius the intake set. What falls outside it goes in out of scope, not in an
   experiment.
 - Be concrete. An experiment says what is run, on which data, against which baseline, repeated how,

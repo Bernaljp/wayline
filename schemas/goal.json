@@ -11,7 +11,7 @@
     "target": {"type": "number"},
     "dataset_or_split": {"type": ["string", "null"], "description": "the data the metric is computed on"},
     "held_out_split": {"type": ["string", "null"], "description": "the split a kept change must improve on (the keep-if-better loop)"},
-    "eval_command": {"type": "string", "pattern": "\\S", "description": "a shell command run from the project root; {artifact} is replaced by the artifact's path, which is also exported as WAYLINE_ARTIFACT"},
+    "eval_command": {"type": "string", "pattern": "\\S", "description": "a shell command run from the project root; {artifact} is replaced by the artifact's path, which is also exported as WAYLINE_ARTIFACT, and {split} by held_out_split, also exported as WAYLINE_HELD_OUT_SPLIT; keep-if-better runs it once per seed artifact (ticket 39)"},
     "baseline": {
       "oneOf": [
         {
