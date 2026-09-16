@@ -16,6 +16,11 @@ const TOKEN = PARAMS.get('token') || '';
 const TRANSPORT = PARAMS.get('transport') === 'sse' ? 'sse' : 'poll';
 const TAIL_LINES = 500;
 
+// The columns an id-and-kind table draws: everything but the title is one line of monospace.
+const ROW_ID_KIND = ['short', 'short', 'short', 'short', 'text'];
+// `dag.svg` draws a project with no tickets as a canvas of no size.
+const EMPTY_CANVAS = /viewBox="0 0 0 0"/;
+
 const state = {
   projects: [],
   project: null,
@@ -86,14 +91,51 @@ function el(tag, attrs, children) {
   return node;
 }
 
+// A path, an id, or a reading is read character by character rather than as a word, so it is set
+// in the monospace face; a long one wraps inside its own column rather than widening the page, and
+// carries the whole value in its title when the wrap is not the whole story.
+const MONOSPACED = /[/\\]|^[\d.]+$/;
+
 function fields(pairs) {
   const list = el('dl', { class: 'fields' });
-  for (const [name, value] of pairs) {
+  for (const [name, value, whole] of pairs) {
     if (value === null || value === undefined || value === '') continue;
-    list.appendChild(el('dt', { text: name }));
-    list.appendChild(el('dd', { text: String(value) }));
+    const text = String(value);
+    const title = whole === undefined ? (text.length > 60 ? text : null) : String(whole);
+    list.appendChild(el('div', { class: 'field' }, [
+      el('dt', { text: name }),
+      el('dd', { class: MONOSPACED.test(text) ? 'mono' : null, text, title }),
+    ]));
   }
   return list;
+}
+
+// --- the empty, loading, and error states --------------------------------------------------------
+//
+// The three things a panel has to say instead of its content, each said inside the panel it belongs
+// to (ticket 58). The empty case is the one the owner met at the M1 demo: a table with no rows drew
+// its header across the page with nothing under it, which reads as a broken page rather than as a
+// count of zero. Every table and list goes through `tableOrNone` or `listOrNone`, so no view can
+// draw one without the sentence that stands in for it.
+
+function emptyState(text) {
+  return el('p', { class: 'state', text });
+}
+
+function loadingState(text) {
+  return el('p', { class: 'state loading', text });
+}
+
+function errorState(failure) {
+  return el('p', { class: 'state error', role: 'alert', text: String((failure && failure.message) || failure) });
+}
+
+// A heading inside a panel: what the table or list below it holds, and how many rows it has. A
+// section with nothing to count (the body of a ticket, its latest result) is given no badge.
+function subhead(name, count) {
+  const parts = [el('span', { text: name })];
+  if (count !== undefined && count !== null) parts.push(el('span', { class: 'count', text: String(count) }));
+  return el('h3', { class: 'sub' }, parts);
 }
 
 // Markdown from the ledger is written by workers (models), so it is sanitized before it is shown:
@@ -106,10 +148,23 @@ function renderMarkdown(text) {
   return node;
 }
 
-function table(headings, rows) {
-  const head = el('tr', {}, headings.map((name) => el('th', { text: name })));
-  const body = rows.map((row) => el('tr', {}, row.map((cell) => el('td', { text: cell === null || cell === undefined ? '' : String(cell) }))));
+// `columns` names what each column holds: `short` for an id, a count, or a status, which stays on
+// one line in the monospace face, and `text` for prose, which wraps inside a readable measure. A
+// cell longer than the measure keeps its whole value in its title.
+function tableElement(headings, rows, columns) {
+  const head = el('tr', {}, headings.map((name, index) => el('th', { class: (columns || [])[index] || null, text: name })));
+  const body = rows.map((row) => el('tr', {}, row.map((cell, index) => {
+    const text = cell === null || cell === undefined ? '' : String(cell);
+    return el('td', { class: (columns || [])[index] || null, text, title: text.length > 60 ? text : null });
+  })));
   return el('table', {}, [el('thead', {}, [head]), el('tbody', {}, body)]);
+}
+
+// The only way a table is drawn: rows, or the words that say there are none. The wrapper scrolls a
+// wide table inside its panel rather than widening the page.
+function tableOrNone(headings, rows, empty, columns) {
+  if (!rows.length) return emptyState(empty);
+  return el('div', { class: 'table-wrap' }, [tableElement(headings, rows, columns)]);
 }
 
 function replace(node, children) {
@@ -143,7 +198,7 @@ async function loadProjects() {
   if (!state.projects.some((project) => project.id === state.project)) {
     const first = state.projects.find((project) => project.active && project.readable) || state.projects.find((project) => project.readable);
     if (first) select(first.id);
-    else replace(document.getElementById('overview-body'), [el('p', { text: 'no readable project is registered; run wayline init <path>' })]);
+    else replace(document.getElementById('overview-body'), [emptyState('no readable project is registered: run wayline init <path>')]);
   }
 }
 
@@ -152,7 +207,14 @@ function select(id) {
   state.project = id;
   state.since = null;
   state.tags = {};
+  // The panels of the project being left are not the panels of the one being opened: each says it
+  // is reading until its own first answer lands.
   document.getElementById('journal-tail').replaceChildren();
+  delete document.getElementById('ticket-body').dataset.ticket;
+  replace(document.getElementById('overview-body'), [loadingState('reading the ledger')]);
+  replace(document.getElementById('graph-body'), [loadingState('drawing the graph')]);
+  replace(document.getElementById('outputs-body'), [loadingState('indexing the outputs')]);
+  replace(document.getElementById('decisions-open'), [loadingState('reading the open decision tickets')]);
   for (const tab of document.querySelectorAll('button.tab')) {
     tab.setAttribute('aria-current', String(tab.dataset.id === id));
   }
@@ -179,7 +241,7 @@ async function loadOverview() {
     const view = await get(`/api/projects/${encodeURIComponent(state.project)}/overview`);
     if (view) renderOverview(view);
   } catch (failure) {
-    replace(document.getElementById('overview-body'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+    replace(document.getElementById('overview-body'), [errorState(failure)]);
   }
 }
 
@@ -190,7 +252,7 @@ function renderOverview(view) {
   const cpu = resources.cpu;
   const ram = resources.ram;
   const gpus = resources.gpus;
-  const counts = Object.entries(view.counts || {}).filter(([, count]) => count).map(([status, count]) => `${status} ${count}`).join('   ');
+  const counts = Object.entries(view.counts || {}).filter(([, count]) => count);
   const parts = [
     fields([
       ['project', view.path || view.project],
@@ -207,20 +269,41 @@ function renderOverview(view) {
       ['cpu slot', cpu ? `loadavg1 ${cpu.loadavg1} of ${cpu.nproc}, ${cpu.free_cores.length} cores free, ${cpu.free ? 'free' : 'full'}` : null],
       ['ram slot', ram ? `${gib(ram.free_bytes)} free, ${gib(ram.committed_bytes)} committed` : null],
       ['gpu slots', gpus ? (gpus.length ? `${gpus.filter((gpu) => gpu.free).length} free of ${gpus.length}` : 'none detected (CPU-only)') : null],
-      ['tickets', counts || 'none'],
     ]),
   ];
-  parts.push(el('h3', { text: `frontier (${(view.frontier || []).length})` }));
-  parts.push(table(['id', 'kind', 'd', 'role', 'title'], (view.frontier || []).map((entry) => [entry.id, entry.kind, entry.difficulty, entry.role, entry.title])));
-  parts.push(el('h3', { text: `running (${(view.running || []).length})` }));
-  parts.push(table(['id', 'kind', 'attempt', 'role', 'title'], (view.running || []).map((entry) => [entry.id, entry.kind, entry.attempt, entry.role, entry.title])));
-  parts.push(el('h3', { text: `jobs (${(view.jobs || []).length})` }));
-  parts.push(table(['id', 'ticket', 'status', 'unit'], (view.jobs || []).map((job) => [job.id, job.ticket, job.status, job.unit || job.backend])));
+  parts.push(el('div', { class: 'chips' }, counts.length
+    ? counts.map(([status, count]) => el('span', { class: `chip s-${status}`, text: `${status} ${count}` }))
+    : [emptyState('no ticket has been written yet')]));
+  parts.push(el('hr', { class: 'rule' }));
+  // The four counts of a wave, side by side while they fit: none of them is stretched across the
+  // page to hold four short columns, and each says in words what a count of zero means.
+  const frontierRows = (view.frontier || []).map((entry) => [entry.id, entry.kind, entry.difficulty, entry.role, entry.title]);
+  const runningRows = (view.running || []).map((entry) => [entry.id, entry.kind, entry.attempt, entry.role, entry.title]);
+  const jobRows = (view.jobs || []).map((job) => [job.id, job.ticket, job.status, job.unit || job.backend]);
   // `blocking` is the scope a decision pauses ("subgraph" or "all"), not a list of ids.
-  parts.push(el('h3', { text: `open decisions (${(view.decisions || []).length})` }));
-  parts.push(table(['id', 'title', 'blocking', 'asks'], (view.decisions || []).map((entry) => [entry.id, entry.title, entry.blocking || '', entry.awaits === 'decider' ? 'the decider' : 'the owner'])));
+  const decisionRows = (view.decisions || []).map((entry) => [entry.id, entry.title, entry.blocking || '', entry.awaits === 'decider' ? 'the decider' : 'the owner']);
+  parts.push(el('div', { class: 'grid' }, [
+    el('div', {}, [
+      subhead('frontier', frontierRows.length),
+      tableOrNone(['id', 'kind', 'd', 'role', 'title'], frontierRows,
+        'no ticket is ready to launch: every open ticket is waiting on another', ROW_ID_KIND),
+    ]),
+    el('div', {}, [
+      subhead('running', runningRows.length),
+      tableOrNone(['id', 'kind', 'attempt', 'role', 'title'], runningRows, 'no worker is running', ROW_ID_KIND),
+    ]),
+    el('div', {}, [
+      subhead('jobs', jobRows.length),
+      tableOrNone(['id', 'ticket', 'status', 'unit'], jobRows, 'no job has been queued', ['short', 'short', 'short', 'text']),
+    ]),
+    el('div', {}, [
+      subhead('open decisions', decisionRows.length),
+      tableOrNone(['id', 'title', 'blocking', 'asks'], decisionRows,
+        'no decision is waiting for an answer', ['short', 'text', 'short', 'short']),
+    ]),
+  ]));
   if ((view.problems || []).length) {
-    parts.push(el('h3', { text: `problems (${view.problems.length})` }));
+    parts.push(subhead('problems', view.problems.length));
     parts.push(el('ul', { class: 'problems' }, view.problems.map((problem) => el('li', { text: problem }))));
   }
   replace(document.getElementById('overview-body'), parts);
@@ -250,9 +333,13 @@ async function loadGraph() {
   if (!state.project) return;
   try {
     const svg = await getText(`/api/projects/${encodeURIComponent(state.project)}/graph.svg`, 'graph');
-    if (svg !== null) document.getElementById('graph-body').innerHTML = svg;
+    if (svg === null) return;
+    // A project with no tickets answers with an empty canvas, which draws as nothing at all: the
+    // panel says so instead of standing blank.
+    if (EMPTY_CANVAS.test(svg)) replace(document.getElementById('graph-body'), [emptyState('no ticket yet: the graph is drawn once the first one is written')]);
+    else document.getElementById('graph-body').innerHTML = svg;
   } catch (failure) {
-    replace(document.getElementById('graph-body'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+    replace(document.getElementById('graph-body'), [errorState(failure)]);
   }
 }
 
@@ -272,13 +359,19 @@ async function openTicket(id) {
   if (!state.project) return;
   state.ticket = id;
   showTicket();
+  if (state.ticket !== id || document.getElementById('ticket-body').dataset.ticket !== id) {
+    replace(document.getElementById('ticket-body'), [loadingState(`reading ticket ${id}`)]);
+  }
   try {
     const view = await get(`/api/projects/${encodeURIComponent(state.project)}/tickets/${encodeURIComponent(id)}`);
     // A second click before this one's fetch returned must not let the first ticket's view land
     // on the page after the page has already moved on to another ticket.
-    if (view && state.ticket === id) renderTicket(view);
+    if (view && state.ticket === id) {
+      document.getElementById('ticket-body').dataset.ticket = id;
+      renderTicket(view);
+    }
   } catch (failure) {
-    if (state.ticket === id) replace(document.getElementById('ticket-body'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+    if (state.ticket === id) replace(document.getElementById('ticket-body'), [errorState(failure)]);
   }
 }
 
@@ -295,39 +388,48 @@ function renderTicket(view) {
       ['blocked by', (f.blocked_by || []).length ? f.blocked_by.join(', ') : 'nothing'],
     ]),
     ticketActions(f),
-    el('h3', { text: 'body' }),
+    el('hr', { class: 'rule' }),
+    subhead('body'),
     renderMarkdown(view.body),
-    el('h3', { text: `context pack (${(view.context_pack || []).length})` }),
-    listOrNone(view.context_pack, (path) => el('li', { text: path })),
-    el('h3', { text: 'latest result' }),
-    view.result ? resultFields(view.result) : el('p', { class: 'note', text: 'no attempt has returned a result yet' }),
-    el('h3', { text: `findings (${(view.findings || []).length})` }),
-    listOrNone(view.findings, (finding) => el('li', { text: finding.text })),
-    el('h3', { text: 'session logs' }),
-    logList(view.sessions, 'session', (entry) => `attempt ${entry.attempt}${entry.resume ? ` (${entry.resume})` : ''}`),
-    el('h3', { text: 'job logs' }),
-    logList(view.jobs, 'job', (entry) => `${entry.id} (${entry.status})`),
+    subhead('context pack', (view.context_pack || []).length),
+    listOrNone(view.context_pack, (path) => el('li', { text: path }), 'no file was packed for this ticket'),
+    subhead('latest result'),
+    view.result ? resultFields(view.result) : emptyState('no attempt has returned a result yet'),
+    subhead('findings', (view.findings || []).length),
+    listOrNone(view.findings, (finding) => el('li', { text: finding.text }), 'no finding is recorded against this ticket'),
+    subhead('session logs', (view.sessions || []).length),
+    logList(view.sessions, 'session', (entry) => `attempt ${entry.attempt}${entry.resume ? ` (${entry.resume})` : ''}`,
+      'no worker has been launched for this ticket'),
+    subhead('job logs', (view.jobs || []).length),
+    logList(view.jobs, 'job', (entry) => `${entry.id} (${entry.status})`, 'no job has been queued for this ticket'),
   ];
   replace(document.getElementById('ticket-body'), parts);
 }
 
+// `short` cuts a result's value to what the row holds; the whole of it stays in the field's title.
 function resultFields(result) {
-  return fields(Object.entries(result).map(([key, value]) => [key, short(value)]));
+  return fields(Object.entries(result).map(([key, value]) => [key, short(value), typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)]));
 }
 
-function listOrNone(items, render) {
-  return (items || []).length ? el('ul', {}, items.map(render)) : el('p', { class: 'note', text: 'none' });
+function listOrNone(items, render, empty) {
+  return (items || []).length ? el('ul', {}, items.map(render)) : emptyState(empty);
 }
 
-function logList(entries, kind, label) {
+function logList(entries, kind, label, empty) {
   return listOrNone(entries, (entry) => {
-    const button = el('button', { type: 'button', class: 'tab', text: label(entry) });
+    const button = el('button', { type: 'button', class: 'action', text: label(entry) });
     button.addEventListener('click', () => openLog(kind, entry.id));
     return el('li', {}, [button]);
-  });
+  }, empty);
 }
 
 // --- the log tail -----------------------------------------------------------------------------------
+
+// The tick's log is the only one whose kind and id are the same word, and "tick tick" reads as a
+// stutter rather than as a name.
+function logName(kind, id) {
+  return kind === id ? kind : `${kind} ${id}`;
+}
 
 function stopLog() {
   if (state.timers.logs) {
@@ -342,9 +444,9 @@ function openLog(kind, id) {
   document.getElementById('graph').hidden = true;
   document.getElementById('ticket').hidden = true;
   document.getElementById('logs').hidden = false;
-  state.log = { kind, id, since: null };
+  state.log = { kind, id, since: null, written: false };
   document.getElementById('logs-tail').textContent = '';
-  document.getElementById('logs-note').textContent = `${kind} ${id}`;
+  document.getElementById('logs-note').textContent = `${logName(kind, id)}: reading`;
   every('logs', state.pollJournal, pollLog);
 }
 
@@ -359,14 +461,29 @@ async function pollLog() {
   try {
     tail = await get(path, `log:${current.kind}:${current.id}`);
   } catch (failure) {
-    document.getElementById('logs-note').textContent = String(failure.message || failure);
+    const note = document.getElementById('logs-note');
+    note.textContent = String(failure.message || failure);
+    note.className = 'note problems';
     return;
   }
+  document.getElementById('logs-note').className = 'note';
   if (!tail || current !== state.log) return;
-  if (tail.truncated) document.getElementById('logs-tail').textContent = '';
+  const pre = document.getElementById('logs-tail');
+  if (tail.truncated) {
+    pre.textContent = '';
+    current.written = false;
+  }
   current.since = tail.next;
-  if (tail.text) document.getElementById('logs-tail').textContent += tail.text;
-  document.getElementById('logs-note').textContent = `${current.kind} ${current.id} — ${tail.exists ? `${tail.size} bytes` : 'nothing written yet'}`;
+  if (tail.text) {
+    // The words of the empty case are the pre's own text until the first byte arrives, so they are
+    // cleared rather than left above the log.
+    if (!current.written) pre.textContent = '';
+    current.written = true;
+    pre.textContent += tail.text;
+  } else if (!current.written) {
+    pre.textContent = tail.exists ? 'this log exists but nothing has been written to it yet' : 'nothing has been written to this log yet';
+  }
+  document.getElementById('logs-note').textContent = `${logName(current.kind, current.id)}: ${tail.exists ? `${tail.size} bytes` : 'nothing written yet'}`;
 }
 
 document.getElementById('ticket-back').addEventListener('click', showGraph);
@@ -406,7 +523,7 @@ async function loadOutputs() {
     const view = await get(`/api/projects/${encodeURIComponent(state.project)}/outputs`);
     if (view) renderOutputs(view);
   } catch (failure) {
-    replace(document.getElementById('outputs-body'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+    replace(document.getElementById('outputs-body'), [errorState(failure)]);
   }
 }
 
@@ -414,10 +531,10 @@ function renderOutputs(view) {
   const parts = [];
   for (const name of CATEGORIES) {
     const entries = view[name] || [];
-    parts.push(el('h3', { text: `${name} (${entries.length})` }));
+    parts.push(subhead(name, entries.length));
     parts.push(entries.length
       ? el('ul', { class: 'outputs' }, entries.map((entry) => outputRow(entry)))
-      : el('p', { class: 'note', text: 'none' }));
+      : emptyState(`nothing under ${name} yet`));
   }
   parts.push(el('div', { id: 'outputs-preview' }));
   replace(document.getElementById('outputs-body'), parts);
@@ -425,11 +542,11 @@ function renderOutputs(view) {
 
 function outputRow(entry) {
   const row = el('li', {}, [
-    el('a', { href: downloadUrl(entry.path), text: entry.path }),
-    el('span', { class: 'note', text: ` ${humanSize(entry.size)}` }),
+    el('a', { href: downloadUrl(entry.path), text: entry.path, title: entry.path }),
+    el('span', { class: 'note', text: humanSize(entry.size) }),
   ]);
   if (PREVIEWABLE_MARKDOWN.test(entry.path) || PREVIEWABLE_IMAGE.test(entry.path)) {
-    const view = el('button', { type: 'button', class: 'tab', text: 'view' });
+    const view = el('button', { type: 'button', class: 'action', text: 'view' });
     view.addEventListener('click', () => previewOutput(entry));
     row.appendChild(document.createTextNode(' '));
     row.appendChild(view);
@@ -444,14 +561,14 @@ async function previewOutput(entry) {
     replace(preview, [el('img', { src: downloadUrl(entry.path), alt: entry.path })]);
     return;
   }
-  replace(preview, [el('p', { class: 'note', text: 'loading...' })]);
+  replace(preview, [loadingState(`reading ${entry.path}`)]);
   try {
     const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
     const response = await fetch(downloadUrl(entry.path), { cache: 'no-store', headers });
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
     replace(preview, [renderMarkdown(await response.text())]);
   } catch (failure) {
-    replace(preview, [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+    replace(preview, [errorState(failure)]);
   }
 }
 
@@ -486,9 +603,12 @@ async function pollJournal() {
   try {
     tail = await get(path, base);
   } catch (failure) {
-    document.getElementById('journal-note').textContent = String(failure.message || failure);
+    const note = document.getElementById('journal-note');
+    note.textContent = String(failure.message || failure);
+    note.className = 'note problems';
     return;
   }
+  document.getElementById('journal-note').className = 'note';
   if (!tail) return;
   if (tail.truncated) document.getElementById('journal-tail').replaceChildren();
   state.since = tail.next;
@@ -510,7 +630,9 @@ function startStream() {
     document.getElementById('journal-note').textContent = `streaming, at offset ${state.since}`;
   });
   stream.addEventListener('error', () => {
-    document.getElementById('journal-note').textContent = 'stream dropped; the browser reconnects in 2 s with Last-Event-ID';
+    const note = document.getElementById('journal-note');
+    note.textContent = 'stream dropped; the browser reconnects in 2 s with Last-Event-ID';
+    note.className = 'note problems';
   });
   state.stream = stream;
 }
@@ -518,6 +640,12 @@ function startStream() {
 function appendEvents(events) {
   const tail = document.getElementById('journal-tail');
   const atBottom = tail.scrollTop + tail.clientHeight >= tail.scrollHeight - 8;
+  // A journal with nothing in it yet says so, and the line goes as soon as the first event lands.
+  const blank = tail.querySelector('li.state');
+  if ((events || []).length && blank) blank.remove();
+  if (!(events || []).length && !tail.childElementCount) {
+    tail.appendChild(el('li', { class: 'state', text: 'no event has been journaled for this project yet' }));
+  }
   for (const event of events || []) {
     const payload = event.payload || {};
     const detail = Object.entries(payload)
@@ -529,7 +657,8 @@ function appendEvents(events) {
       el('span', { class: 'ts', text: (event.ts || '').replace('T', ' ').replace('Z', '') }),
       el('span', { class: `event s-${event.event}`, text: event.event }),
       el('span', { class: 'ticket', text: event.ticket === null || event.ticket === undefined ? '' : `#${event.ticket}` }),
-      el('span', { class: 'payload', text: detail }),
+      // The payload is cut to what fits the row; the whole of it is in the line's title.
+      el('span', { class: 'payload', text: detail, title: Object.keys(payload).length ? JSON.stringify(payload) : null }),
     ]));
   }
   while (tail.childElementCount > TAIL_LINES) tail.removeChild(tail.firstElementChild);
@@ -710,7 +839,7 @@ async function loadDecisions() {
   } catch (failure) {
     if (project !== state.project) return;
     state.openSignature = null;
-    replace(document.getElementById('decisions-open'), [el('p', { class: 'problems', text: String(failure.message || failure) })]);
+    replace(document.getElementById('decisions-open'), [errorState(failure)]);
   }
 }
 
@@ -721,25 +850,23 @@ function renderDecisions(view, project) {
   const signature = JSON.stringify([project, open]);
   if (signature !== state.openSignature) {
     state.openSignature = signature;
-    const cards = [el('h3', { text: `open decision tickets (${open.length})` })];
-    if (!open.length) cards.push(el('p', { class: 'note', text: 'none: nothing waits for an answer' }));
+    const cards = [subhead('open decision tickets', open.length)];
+    if (!open.length) cards.push(emptyState('nothing is waiting for an answer'));
     for (const decision of open) cards.push(decisionCard(decision, project));
     replace(document.getElementById('decisions-open'), cards);
   }
   const log = view.log || [];
-  const parts = [el('h3', { text: `decision log (${log.length}), the decider's first` })];
-  parts.push(log.length
-    ? table(['decided by', 'ticket', 'question', 'answer', 'rationale', 'when'], log.map((entry) => [
-      entry.decided_by + (entry.superseded ? ' (superseded)' : ''),
-      entry.ticket === null ? (entry.id || '') : `#${entry.ticket}`,
-      entry.question || '',
-      entry.answer,
-      entry.rationale || '',
-      (entry.ts || '').replace('T', ' ').replace('Z', ''),
-    ]))
-    : el('p', { class: 'note', text: 'no decision yet' }));
+  const parts = [subhead("decision log, the decider's first", log.length)];
+  parts.push(tableOrNone(['decided by', 'ticket', 'question', 'answer', 'rationale', 'when'], log.map((entry) => [
+    entry.decided_by + (entry.superseded ? ' (superseded)' : ''),
+    entry.ticket === null ? (entry.id || '') : `#${entry.ticket}`,
+    entry.question || '',
+    entry.answer,
+    entry.rationale || '',
+    (entry.ts || '').replace('T', ' ').replace('Z', ''),
+  ]), 'nothing has been decided on this project yet', ['short', 'short', 'text', 'text', 'text', 'short']));
   if ((view.problems || []).length) {
-    parts.push(el('h3', { text: `problems (${view.problems.length})` }));
+    parts.push(subhead('problems', view.problems.length));
     parts.push(el('ul', { class: 'problems' }, view.problems.map((problem) => el('li', { text: problem }))));
   }
   replace(document.getElementById('decisions-log'), parts);
@@ -793,7 +920,7 @@ function decisionCard(decision, project) {
   const rationale = el('textarea', { rows: '2', placeholder: 'why (optional; journaled with the answer)', 'aria-label': `why, for ticket ${decision.id}` });
   rationale.value = draft.rationale;
   rationale.addEventListener('input', () => { draft.rationale = rationale.value; });
-  const submit = el('button', { type: 'submit', class: 'action', text: `answer ticket ${decision.id}` });
+  const submit = el('button', { type: 'submit', class: 'action primary', text: `answer ticket ${decision.id}` });
   submit.disabled = !TOKEN;
   form.append(text, rationale, submit);
   form.addEventListener('submit', async (event) => {

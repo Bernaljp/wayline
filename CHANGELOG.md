@@ -11,6 +11,26 @@ paused a run that the tick relaunched under the user manager, and the read-only 
 tabs, the frontier, the running tickets, and the journal tail. `docs/verification/m1.md` records the
 runs. The entries below it, down to v0.1.0, are everything else this tag carries.
 
+A design pass over the dashboard (ticket 58, M5 Overnight and report), answering the owner's verdict
+from the M1 demo: the page "is not good looking", and an empty table drew its header row across the
+full width with nothing under it.
+
+- `dashboard/style.css` is rewritten around one type scale, one spacing scale, and one set of color
+  tokens, declared for both themes together. The page reads inside a measure of 1180 px, panels are
+  cards, and tables are sized to their content rather than stretched, with the scroll on the wrapper.
+- Every table and list in `dashboard/app.js` is drawn through `tableOrNone` or `listOrNone`, each
+  taking the sentence to show when there is nothing. Loading and error states are drawn the same way,
+  inside the panel they belong to. A value too long for its cell keeps the whole of itself in the
+  cell's title.
+- The graph is restyled from the stylesheet, by matching the fills `wayline.dag.svg` writes, so
+  `graph.svg` answers byte for byte as before. A status added to `dag.STATUS_COLOR` without a rule in
+  the stylesheet is now a failing test.
+- The page carries its own icon as an inline `data:` URI: the browser asked for `/favicon.ico` on
+  every load and logged the 404 as a console error.
+- Nothing under `wayline/` changed: the endpoints, the token rule, the read-only guarantees, the
+  sanitize path, and the vendored files and their digests are as they were. `docs/verification/m5.md`
+  records the renders, before and after, with what changed in each view.
+
 The M1 demo, live (ticket 15, M1 Frontier and windows).
 
 - Ticket 4 of `fixtures/projects/five-tickets/` gains a `## What to do` section, packed into its
