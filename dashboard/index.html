@@ -3,90 +3,138 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>wayline</title>
+<!-- The mark, inline: a favicon served from anywhere else would be a fetch, and no favicon at all
+     is a 404 in the browser's console on every load. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 12L6 4l2 5 2-5 4 8' fill='none' stroke='%231d4ed8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header>
-  <h1>wayline</h1>
-  <nav id="tabs" aria-label="projects"></nav>
-  <p id="transport" class="note"></p>
-  <p id="action-note" class="note" role="status" aria-live="polite"></p>
-  <p><button type="button" id="tick-log-button">tick log</button></p>
+  <div class="bar">
+    <span class="brand">
+      <svg width="20" height="20" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M2 12L6 4l2 5 2-5 4 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <h1>wayline</h1>
+    </span>
+    <nav id="tabs" aria-label="projects"></nav>
+    <div class="bar-actions">
+      <div id="theme" class="switch" role="group" aria-label="theme"></div>
+      <button type="button" id="tick-log-button" class="action">tick log</button>
+    </div>
+  </div>
+  <div class="meta">
+    <p id="transport" class="note"></p>
+    <p id="action-note" class="note" role="status" aria-live="polite"></p>
+  </div>
 </header>
+
+<div class="layout">
+<!-- The sections, listed from the page itself so the list cannot drift from what is on it. -->
+<aside id="index" aria-label="sections"><nav><p class="index-title">sections</p><ol id="index-list"></ol></nav></aside>
 
 <main>
   <section id="overview" aria-labelledby="overview-heading">
-    <h2 id="overview-heading">Overview</h2>
-    <div id="overview-body" class="panel">loading...</div>
-  </section>
-
-  <section id="controls" aria-labelledby="controls-heading">
-    <h2 id="controls-heading">Controls</h2>
-    <div id="controls-body" class="panel">
-      <form id="autonomy-form" class="inline">
-        <label for="autonomy-select">autonomy</label>
-        <select id="autonomy-select"></select>
-        <button type="submit" id="autonomy-set" class="action">set autonomy</button>
-        <span id="autonomy-current" class="note"></span>
-      </form>
-      <form id="pacing-form" class="inline">
-        <label for="stop-at">stop at</label>
-        <input id="stop-at" type="number" min="0" max="1" step="any" required>
-        <label for="cheap-at">cheap only at</label>
-        <input id="cheap-at" type="number" min="0" max="1" step="any" required>
-        <button type="submit" id="pacing-set" class="action">set pacing</button>
-      </form>
-      <form id="model-fallback-form" class="inline">
-        <label for="model-fallback-select">fallback consent</label>
-        <select id="model-fallback-select"></select>
-        <button type="submit" id="model-fallback-set" class="action">set fallback consent</button>
-        <span id="model-fallback-current" class="note"></span>
-      </form>
-      <p class="inline">
-        <button type="button" id="switch-button" class="action">make this the active project</button>
-        <span id="active-state" class="note"></span>
-      </p>
-      <p class="inline">
-        <button type="button" id="pause-button" class="action">pause</button>
-        <button type="button" id="resume-button" class="action">resume</button>
-        <span id="pause-state" class="note"></span>
-      </p>
+    <div class="view-head"><h2 id="overview-heading">Overview</h2></div>
+    <div id="overview-body" class="panel">
+      <p class="state loading">reading the ledger</p>
     </div>
   </section>
 
-  <section id="decisions" aria-labelledby="decisions-heading">
-    <h2 id="decisions-heading">Decisions</h2>
-    <div class="panel">
-      <div id="decisions-open">loading...</div>
-      <div id="decisions-log"></div>
+  <section id="controls" aria-labelledby="controls-heading">
+    <div class="view-head"><h2 id="controls-heading">Controls</h2></div>
+    <div id="controls-body" class="panel">
+      <p id="controls-state" class="state loading">reading the controls</p>
+      <div class="control">
+        <form id="autonomy-form" class="inline">
+          <label for="autonomy-select">autonomy</label>
+          <select id="autonomy-select"></select>
+          <button type="submit" id="autonomy-set" class="action">set autonomy</button>
+        </form>
+        <p id="autonomy-current" class="note"></p>
+      </div>
+      <div class="control">
+        <form id="pacing-form" class="inline">
+          <label for="stop-at">stop at</label>
+          <input id="stop-at" type="number" min="0" max="1" step="any" required>
+          <label for="cheap-at">cheap only at</label>
+          <input id="cheap-at" type="number" min="0" max="1" step="any" required>
+          <button type="submit" id="pacing-set" class="action">set pacing</button>
+        </form>
+        <p class="note">The utilizations the conductor stops at, and the one past which only the cheap models run.</p>
+      </div>
+      <div class="control">
+        <form id="model-fallback-form" class="inline">
+          <label for="model-fallback-select">fallback consent</label>
+          <select id="model-fallback-select"></select>
+          <button type="submit" id="model-fallback-set" class="action">set fallback consent</button>
+        </form>
+        <p id="model-fallback-current" class="note"></p>
+      </div>
+      <div class="control">
+        <p class="inline">
+          <button type="button" id="switch-button" class="action">make this the active project</button>
+        </p>
+        <p id="active-state" class="note"></p>
+      </div>
+      <div class="control">
+        <p class="inline">
+          <button type="button" id="pause-button" class="action">pause</button>
+          <button type="button" id="resume-button" class="action">resume</button>
+        </p>
+        <p id="pause-state" class="note"></p>
+      </div>
     </div>
   </section>
 
   <section id="graph" aria-labelledby="graph-heading">
-    <h2 id="graph-heading">Graph</h2>
-    <div id="graph-body" class="panel graph">loading...</div>
+    <div class="view-head"><h2 id="graph-heading">Tickets</h2><div id="ticket-view" class="switch" role="group" aria-label="view"></div><p class="note">Point at a ticket to see what it waits on; click it to open it.</p></div>
+    <div id="board-body" class="panel board">
+      <p class="state loading">reading the tickets</p>
+    </div>
+    <div id="graph-body" class="panel graph" hidden>
+      <p class="state loading">drawing the graph</p>
+    </div>
   </section>
 
   <section id="ticket" aria-labelledby="ticket-heading" hidden>
-    <h2 id="ticket-heading">Ticket</h2>
-    <p><button type="button" id="ticket-back">&larr; back to the graph</button></p>
+    <div class="view-head">
+      <h2 id="ticket-heading">Ticket</h2>
+      <button type="button" id="ticket-back" class="ghost">&larr; back to the tickets</button>
+    </div>
     <div id="ticket-body" class="panel"></div>
   </section>
 
   <section id="logs" aria-labelledby="logs-heading" hidden>
-    <h2 id="logs-heading">Log</h2>
-    <p><button type="button" id="logs-back">&larr; back</button> <span id="logs-note" class="note"></span></p>
+    <div class="view-head">
+      <h2 id="logs-heading">Log</h2>
+      <button type="button" id="logs-back" class="ghost">&larr; back</button>
+      <span id="logs-note" class="note"></span>
+    </div>
     <pre id="logs-tail" class="tail log-tail"></pre>
   </section>
 
+  <section id="decisions" aria-labelledby="decisions-heading">
+    <div class="view-head"><h2 id="decisions-heading">Decisions</h2></div>
+    <div class="panel">
+      <div id="decisions-open">
+        <p class="state loading">reading the open decision tickets</p>
+      </div>
+      <div id="decisions-log"></div>
+    </div>
+  </section>
+
   <section id="outputs" aria-labelledby="outputs-heading">
-    <h2 id="outputs-heading">Outputs</h2>
-    <div id="outputs-body" class="panel">loading...</div>
+    <div class="view-head"><h2 id="outputs-heading">Outputs</h2><p class="note">Every file is downloadable; markdown and images open below.</p></div>
+    <div id="outputs-body" class="panel">
+      <p class="state loading">indexing the outputs</p>
+    </div>
   </section>
 
   <section id="intake" aria-labelledby="intake-heading">
-    <h2 id="intake-heading">Intake</h2>
+    <div class="view-head"><h2 id="intake-heading">Intake</h2></div>
     <div id="intake-drop" class="panel drop">
       <p>Drop files here: a reference PDF, a reference list, a plan, or a small data file. Each is kept under
       <code>research/intake/</code> and added to <code>INTAKE.md</code>.</p>
@@ -96,11 +144,14 @@
   </section>
 
   <section id="journal" aria-labelledby="journal-heading">
-    <h2 id="journal-heading">Journal</h2>
-    <p id="journal-note" class="note"></p>
+    <div class="view-head"><h2 id="journal-heading">Journal</h2><p id="journal-note" class="note"></p></div>
     <ol id="journal-tail" class="tail" reversed></ol>
   </section>
 </main>
+</div>
+
+<!-- The card a graph node shows while the pointer or the keyboard is on it. -->
+<div id="node-card" class="node-card" role="status" hidden></div>
 
 <footer>
   <p class="note">Every action needs the token carried by the URL <code>wayline serve</code> printed.</p>

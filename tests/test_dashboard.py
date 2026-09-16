@@ -27,7 +27,7 @@ from pathlib import Path
 
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from wayline import TAG
+from wayline import TAG, dag
 from wayline.dashboard import (
     DashboardError, DashboardHandler, IDLE_TIMEOUT_S, LOOPBACK, READINGS_TTL_S, SSE_RETRY_MS,
     TOKEN_COOKIE, TOKEN_HEADER, TAIL_LINES_MAX,
@@ -452,6 +452,22 @@ class GraphEndpointTest(DashboardTestCase):
         empty = self.temp / "no-tickets"
         (empty / "research" / "tickets").mkdir(parents=True)
         self.assertIn("<svg", graph_svg(empty))
+
+    def test_the_page_recognizes_that_canvas_and_says_so_in_words(self):
+        """A canvas of no size draws as nothing at all, so `app.js` says so instead (ticket 58).
+
+        The page tells the empty canvas apart by the pattern in its `EMPTY_CANVAS`, which is this
+        endpoint's own bytes. Taking that pattern out of the script rather than repeating it here is
+        what makes this a check of the two against each other.
+        """
+        empty = self.temp / "no-tickets-for-the-page"
+        (empty / "research" / "tickets").mkdir(parents=True)
+        script = (STATIC / "app.js").read_text(encoding="utf-8")
+        pattern = re.search(r"const EMPTY_CANVAS = /(.+)/;", script)
+        self.assertIsNotNone(pattern, "app.js no longer names the canvas it stands in for")
+        self.assertRegex(graph_svg(empty), pattern.group(1))
+        # And it is the empty canvas alone: a graph with tickets in it is drawn, not described.
+        self.assertNotRegex(graph_svg(self.project), pattern.group(1))
 
 
 # --- the tickets endpoints ------------------------------------------------------------------------------
@@ -957,6 +973,78 @@ class VendoredAssetsTest(unittest.TestCase):
     def test_the_vendor_directory_holds_nothing_else(self):
         present = sorted(path.name for path in (STATIC / "vendor").iterdir())
         self.assertEqual(present, sorted(["VENDOR.md"] + [name for name, _, _ in VENDORED]))
+
+
+# --- the design pass (ticket 58) -------------------------------------------------------------------------
+
+
+class PageDesignTest(unittest.TestCase):
+    """What ticket 58 asks of the three assets, where a browser cannot be run to check it.
+
+    The look itself is judged from the renders recorded in `docs/verification/m5.md`. What is pinned
+    here is what would otherwise rot without anyone noticing: a stylesheet that stops covering a fill
+    the graph draws, a table drawn without the words that stand in for it when it is empty, and an
+    asset that reaches off the workstation for a font.
+    """
+
+    PAGE = STATIC / "index.html"
+    SCRIPT = STATIC / "app.js"
+    SHEET = STATIC / "style.css"
+
+    # A namespace is a name, not an address: nothing fetches it.
+    EXTERNAL = re.compile(r"https?://(?!www\.w3\.org/)")
+
+    def test_no_asset_fetches_anything_from_outside_the_workstation(self):
+        for path in (self.PAGE, self.SCRIPT, self.SHEET):
+            with self.subTest(asset=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertIsNone(self.EXTERNAL.search(text), "%s reaches off the workstation" % path.name)
+                self.assertNotIn("@import", text, "%s imports a stylesheet it does not serve" % path.name)
+
+    def test_the_page_asks_for_no_file_the_dashboard_directory_does_not_hold(self):
+        page = self.PAGE.read_text(encoding="utf-8")
+        for reference in re.findall(r'(?:href|src)="([^"]+)"', page):
+            if reference.startswith("data:") or reference.startswith("#"):
+                continue
+            with self.subTest(reference=reference):
+                self.assertIsNotNone(static_file(reference, root=STATIC), "%s is not served from dashboard/" % reference)
+
+    def test_every_table_the_page_draws_carries_the_words_for_its_empty_case(self):
+        """The owner's second complaint: an empty table drew its header row and nothing under it."""
+        script = self.SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("function tableOrNone(", script)
+        # `tableElement` builds the element and `tableOrNone` chooses between it and a sentence, so
+        # the builder is called exactly once, by the chooser, and `<table>` is created in one place.
+        code = [line for line in script.splitlines() if not line.strip().startswith("//")]
+        self.assertEqual("\n".join(code).count("tableElement("), 2, "the builder is defined once and called once, by tableOrNone")
+        self.assertEqual("\n".join(code).count("el('table'"), 1, "a table is built in tableElement and nowhere else")
+        drawn = [line for line in code if "tableOrNone(" in line and "function tableOrNone(" not in line]
+        self.assertGreaterEqual(len(drawn), 5, "the overview's four tables and the decision log at least")
+
+    def test_the_stylesheet_answers_every_fill_the_graph_can_draw(self):
+        """The graph's fills are the server's, so the stylesheet restyles them by value.
+
+        `graph.svg` answers byte for byte as it did and the palette is applied in the browser, so a
+        new status in `dag.STATUS_COLOR` has to be given its own rule in the stylesheet. This test is
+        what says so, rather than a node rendering in the prototype's colors on the owner's screen.
+        """
+        sheet = self.SHEET.read_text(encoding="utf-8")
+        # Every fill has its rule, and `dag.svg` still writes fills the way the rules match them:
+        # as a `fill` presentation attribute on the rect. A dag that moved them into a class or a
+        # `style` attribute would leave the rules matching nothing, with every other test green.
+        drawn = dag.svg(list(dag.STATUS_COLOR), [], {status: status for status in dag.STATUS_COLOR})
+        for status, fill in dag.STATUS_COLOR.items():
+            with self.subTest(status=status):
+                self.assertIn('rect[fill="%s"]' % fill, sheet)
+                self.assertIn('fill="%s"' % fill, drawn)
+
+    def test_the_stylesheet_holds_one_scale_of_each_kind(self):
+        sheet = self.SHEET.read_text(encoding="utf-8")
+        for token in ("--text-", "--space-", "--radius-"):
+            with self.subTest(token=token):
+                self.assertIn(token, sheet)
+        self.assertIn("prefers-color-scheme: dark", sheet)
+        self.assertIn("prefers-reduced-motion", sheet)
 
 
 # --- the token rule -------------------------------------------------------------------------------------
