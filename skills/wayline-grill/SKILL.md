@@ -161,7 +161,11 @@ tell you:
 3. Do not answer the remaining questions yourself. They are the decider's, and the decider records
    its decisions as `decided-by: decider`, so the owner can audit and reverse each one. An answer
    you record through `wayline grill answer` is recorded as the owner's, which would be false.
-4. Run `wayline grill --project .`. Under `autonomous` it lists what the decider takes and asks only
+4. Run `wayline grill --decide-rest --project .`. It launches the decider, one max-effort session
+   per open question that is not human-only or irreversible, until only the owner's questions are
+   left, and prints each decision with its confidence and the command that reverses it. A question
+   the decider was refused (its answer would cross the irreversible list) comes back as the
+   owner's, with a decision ticket beside it. Then run `wayline grill --project .`: it asks only
    the human-only and irreversible questions, which still wait for the owner. Ask those, if there
    are any, and record the owner's answers to them as before.
 5. Tell the owner plainly what changed: the decider resolves every open question and every decision

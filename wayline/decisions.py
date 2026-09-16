@@ -39,6 +39,7 @@ decisions first; and the settings the page's controls start from.
 """
 
 import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -57,11 +58,15 @@ from wayline.tickets import (
 )
 
 __all__ = [
-    "DECISION_HEADING", "BLOCKINGS", "PAUSABLE", "decision_record", "decision_question", "decision_body",
+    "DECISION_HEADING", "BLOCKINGS", "PAUSABLE", "PROPOSALS", "decision_record", "decision_question", "decision_body",
     "open_decision", "open_requested", "requested_origin", "open_fable_ask", "close_ask", "decisions_view", "decision_log", "decider_ready",
+    "decide", "turn_over", "for_the_decider", "parked_proposals",
 ]
 
 DECISION_HEADING = "## Decision"
+# The body's human-only line, as `decision_body` writes it and `turn_over` rewrites it.
+HUMAN_ONLY_YES = "- human-only: yes, only the owner answers it"
+HUMAN_ONLY_NO = "- human-only: no, so under autonomy `autonomous` the decider may answer it"
 # What `blocking` may say on a ticket a worker or the planner asks for (the frontmatter also allows null).
 BLOCKINGS = ("subgraph", "all")
 # The statuses a ticket is paused from: work not started, or stopped and waiting for another attempt. A
@@ -168,8 +173,7 @@ def decision_body(record, paused=(), origin=None):
                      % (_named(paused), "it" if len(paused) == 1 else "them"))
     else:
         lines.append("- blocking: `subgraph`, and no ticket waited on it when it was opened")
-    lines.append("- human-only: yes, only the owner answers it" if record.get("human_only")
-                 else "- human-only: no, so under autonomy `autonomous` the decider may answer it")
+    lines.append(HUMAN_ONLY_YES if record.get("human_only") else HUMAN_ONLY_NO)
     if origin:
         lines.append("- asked by: " + _one_line(origin))
     lines += ["", grill.machine_line(record), "", "## How to answer", "",
@@ -385,6 +389,144 @@ def close_ask(project, identifier, answer, rationale):
         write_ticket(ledger, fields, with_answer(body, answer))
         return ledger.append_event(DECISION, {"ticket": identifier, "answer": answer, "decided_by": "conductor",
                                               "rationale": rationale, "confidence": None}, ticket=identifier)["payload"]
+
+
+# --- the decider's answers (ticket 31) ------------------------------------------------------------------
+
+
+REFUSED_HEADING = "## Refused by the decider"
+# Where ticket 37 parks a proposal the admission rules did not admit: one JSON object per file.
+PROPOSALS = "proposals"
+
+
+def for_the_decider(project, view=None):
+    """The open decision tickets the decider takes now: not human-only, still `open`, and not answered yet.
+
+    `view` is the conductor's replayed view when it has one; otherwise the journal is replayed here. A
+    ticket answered in the journal or in its file waits for the conductor to close it, not for the decider.
+    Each entry is `(fields, body, record)`, the record read from the body (None on a decision ticket written
+    without one, which the decider is still asked from its `## Decision` text).
+    """
+    project = Path(project).resolve()
+    if view is None:
+        events, _ = Ledger(project).read_events()
+        view = replay.replay(events)
+    taken = []
+    for ticket in read_tickets(project):
+        if ticket["kind"] != DECISION_KIND or ticket.get("human_only") or ticket["status"] != "open" or ticket["id"] in view.answers:
+            continue
+        body = read_ticket(tickets_dir(project) / filename(ticket))[1]
+        if answer_section(body):
+            continue
+        try:
+            record = decision_record(body)
+        except ProjectError:
+            record = None
+        taken.append((ticket, body, record))
+    return taken
+
+
+def decide(project, identifier, answer, rationale, confidence=None, model=None, fallback_from=None, session_id=None):
+    """The decider's answer to a decision ticket: `## Answer` in its file and a `decision` with `decided_by: decider`.
+
+    The ticket carries the decider's session in the event's `session_id` column and the model it ran on in the
+    payload (`fallback_from: fable` when it ran on Opus in Fable's place, decision 15), which is what makes the
+    record auditable. Refused, with nothing written, for a ticket that is not an open decision ticket, one that
+    is human-only, or one answered already, under the ledger's lock: an owner's answer given in the meantime wins.
+    """
+    project = Path(project).resolve()
+    answer = str(answer or "").strip()
+    rationale = str(rationale or "").strip()
+    if not answer or not rationale:
+        raise ProjectError("the decider's answer to ticket %s needs an answer and a rationale" % identifier)
+    ledger = Ledger(project)
+    with ledger.lock():
+        found = {ticket["id"]: ticket for ticket in read_tickets(project)}.get(identifier)
+        if found is None or found["kind"] != DECISION_KIND:
+            raise ProjectError("ticket %s is not a decision ticket of %s" % (identifier, project))
+        if found.get("human_only"):
+            raise ProjectError("ticket %d is human-only: the decider never answers it" % identifier)
+        if found["status"] in SATISFIED + ("parked",):
+            raise ProjectError("ticket %d is %s and takes no answer" % (identifier, found["status"]))
+        fields, body = read_ticket(tickets_dir(project) / filename(found))
+        events, _ = ledger.read_events()
+        if identifier in replay.replay(events).answers or answer_section(body):
+            raise ProjectError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
+        try:
+            record = decision_record(body)
+        except ProjectError:
+            record = None
+        write_ticket(ledger, fields, with_answer(body, answer))
+        payload = {"ticket": identifier, "answer": answer, "decided_by": "decider", "rationale": rationale, "confidence": confidence}
+        payload.update({key: value for key, value in (("model", model), ("fallback_from", fallback_from)) if value})
+        event = ledger.append_event(DECISION, payload, ticket=identifier, session_id=session_id)
+        # The decision lands in DECISIONS.md too (ticket 31, criterion 4), as a settled record of the ticket's question.
+        settled = dict(record or {"ticket": identifier, "question": decision_question(fields, body), "options": [], "reversible": True},
+                       answer=answer, rationale=rationale, confidence=confidence, decided_by="decider", timestamp=event["ts"])
+        settled.update({key: value for key, value in (("model", model), ("fallback_from", fallback_from), ("session_id", session_id)) if value})
+        grill.append_ticket_record(project, settled)
+        return event["payload"]
+
+
+def turn_over(project, identifier, why, notify=None):
+    """Turn a decision ticket the decider was refused into a human-only one; returns the rewritten fields.
+
+    The frontmatter and the body's record both gain `human_only: true`, so the ticket waits for the owner
+    under every autonomy and the decider never takes it again; `why` goes under `## Refused by the decider`
+    at the end of the file, where the owner reads what the decider would have answered and why the harness
+    refused it. `decision_opened` is journaled again with `human_only: true`, since the ticket is opened anew
+    for the owner, and the owner is notified as for any decision ticket. A ticket that is not an open decision
+    ticket, or one answered already, is left alone and None is returned.
+    """
+    project = Path(project).resolve()
+    ledger = Ledger(project)
+    with ledger.lock():
+        found = {ticket["id"]: ticket for ticket in read_tickets(project)}.get(identifier)
+        if found is None or found["kind"] != DECISION_KIND or found["status"] in SATISFIED + ("parked",):
+            return None
+        fields, body = read_ticket(tickets_dir(project) / filename(found))
+        events, _ = ledger.read_events()
+        if identifier in replay.replay(events).answers or answer_section(body):
+            return None
+        try:
+            record = decision_record(body)
+        except ProjectError:
+            record = None
+        if record is not None:
+            turned = dict(record, human_only=True)
+            body = body.replace(grill.machine_line(record), grill.machine_line(turned))
+        body = body.replace(HUMAN_ONLY_NO, HUMAN_ONLY_YES)
+        body = body.rstrip("\n") + "\n\n" + REFUSED_HEADING + "\n\n" + _one_line(why) + "\n"
+        fields = dict(fields, human_only=True)
+        write_ticket(ledger, fields, body)
+        ledger.append_event(DECISION_OPENED, {"ticket": identifier, "blocking": fields.get("blocking"), "human_only": True},
+                            ticket=identifier)
+    question = decision_question(fields, body)
+    (notify or send_notification)(DECISION_OPENED, "%s: decision ticket %d is now human only: the decider was refused it (%s). "
+                                  "It asks: %s Answer with wayline answer %d \"<answer>\" or in the dashboard's decisions view."
+                                  % (project.name, identifier, _one_line(why), question, identifier), project, identifier)
+    return fields
+
+
+def parked_proposals(project):
+    """The proposals parked under `research/proposals/`, for the decider to reconsider at the end of a wave (decision 5).
+
+    Ticket 37 writes them, one JSON object per file with at least `id`, `title`, and `reason`; until it does, or
+    on a project with none, this is empty and the decider is not launched for them. A file that is not such an
+    object is skipped, because a parked proposal nobody can read is not one the decider can admit.
+    """
+    directory = Path(project).resolve() / "research" / PROPOSALS
+    if not directory.is_dir():
+        return []
+    parked = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(value, dict) and value.get("id") and value.get("title") and value.get("status", "parked") == "parked":
+            parked.append(dict(value, path=str(path.relative_to(Path(project).resolve()))))
+    return parked
 
 
 # --- the view ------------------------------------------------------------------------------------------

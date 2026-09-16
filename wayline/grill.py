@@ -25,15 +25,18 @@ import re
 import sys
 from pathlib import Path
 
+from wayline import replay
 from wayline.cli import parse_args
 from wayline.jsonschema import load_schema, validate
 from wayline.ledger import DECISION, Ledger, LedgerError, make_event, now_ts
 from wayline.project import ProjectError, find_project, read_harness
+from wayline.tickets import DECISION as DECISION_KIND, read_tickets
 
 __all__ = [
     "GrillError", "DECISIONS_MD", "CONTEXT_MD", "read_records", "parse_records", "render_decisions", "frontier",
-    "missing", "with_question", "with_answer", "with_tier", "with_term", "ask", "answer", "settle_term",
-    "apply_batch", "grill_view", "render_grill", "grill_command", "machine_line", "record_payload", "superseded_by",
+    "missing", "with_question", "with_answer", "with_tier", "with_term", "ask", "answer", "settle_term", "with_human_only",
+    "turn_over", "apply_batch", "grill_view", "render_grill", "grill_command", "machine_line", "record_payload", "superseded_by",
+    "decider_share",
 ]
 
 DECISIONS_MD = "DECISIONS.md"
@@ -46,7 +49,10 @@ _RECORD = re.compile(r"^<!-- wayline:decision (\{.*\}) -->$")
 _ID = re.compile(r"^Q([1-9][0-9]*)\Z")
 # The order a record's keys are written in, so a diff of DECISIONS.md shows what changed and nothing else.
 FIELDS = ("id", "ticket", "question", "options", "recommended", "evidence", "requires", "human_only", "reversible",
-          "tier", "supersedes", "answer", "rationale", "confidence", "decided_by", "timestamp")
+          "tier", "supersedes", "answer", "rationale", "confidence", "decided_by", "model", "fallback_from", "session_id",
+          "timestamp")
+# What a settled record carries about the session that answered it (decision 15; ticket 31): never on the owner's answer.
+SESSION_FIELDS = ("model", "fallback_from", "session_id")
 # `conductor` is the conductor closing the ask of decision 15, superseded or answered at its timeout; the grill reads it back.
 DECIDERS = ("human", "decider", "conductor")
 
@@ -180,6 +186,11 @@ def _waiting(records):
     return [record for record in records if record.get("id") and not _settled(record) and missing(record, records, questions)]
 
 
+def decider_share(records):
+    """The frontier's questions the decider resolves under `autonomous`: every open one that is not the owner's (decision 4)."""
+    return [record for record in frontier(records) if not _owners(record)]
+
+
 def superseded_by(records):
     return {record["supersedes"]: record["id"] for record in records if record.get("supersedes")}
 
@@ -266,15 +277,16 @@ def _flag(value, what):
 
 
 def with_answer(records, identifier, text, rationale, confidence=None, decided_by="human", revise=False, ts=None,
-                model=None, fallback_from=None):
+                model=None, fallback_from=None, session_id=None):
     """`records` with one question settled, and the settled record.
 
     An open question is settled in place and moves to the end of the settled records. A settled one
     is answered again only with `revise`, as a new record that supersedes it, so the old answer stays
     on the record. A question whose prerequisites are open is refused, and so is the decider on a
     human-only or irreversible question (decision 4). `model` is the model the answering session ran
-    on and `fallback_from` is `fable` when it ran on Opus in Fable's place (decision 15); an answer no
-    model gave carries neither, and a revision never inherits the ones before it.
+    on, `fallback_from` is `fable` when it ran on Opus in Fable's place (decision 15), and `session_id`
+    names that session (ticket 31); an answer no model gave carries none of them, and a revision never
+    inherits the ones before it.
     """
     if not isinstance(identifier, str):
         raise GrillError("a question's id is Q and a number, like Q3; got %r" % (identifier,))
@@ -294,12 +306,14 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
         raise GrillError("an answer the owner gave ran on no model, so it carries neither model nor fallback_from")
     if fallback_from not in (None, "fable") or (fallback_from and model is None):
         raise GrillError("fallback_from is fable, on an answer that names the model it ran on in Fable's place; got %r" % (fallback_from,))
+    if session_id is not None and (not isinstance(session_id, str) or not session_id.strip() or model is None):
+        raise GrillError("session_id names the session of an answer that names its model; got %r" % (session_id,))
     if decided_by == "decider" and _owners(record):
         raise GrillError("%s is %s: the decider never resolves it, and it waits for the owner"
                          % (identifier, "human-only" if record.get("human_only") else "irreversible"))
     answered = {"answer": text, "rationale": rationale, "confidence": confidence, "decided_by": decided_by, "timestamp": ts or now_ts()}
-    answered.update({key: value for key, value in (("model", model), ("fallback_from", fallback_from)) if value is not None})
-    base = {key: value for key, value in record.items() if key not in ("model", "fallback_from")}
+    answered.update({key: value for key, value in zip(SESSION_FIELDS, (model, fallback_from, session_id)) if value is not None})
+    base = {key: value for key, value in record.items() if key not in SESSION_FIELDS}
     position = sum(1 for other in records if _settled(other))
     if _settled(record):
         if not revise:
@@ -414,7 +428,8 @@ def _journal_settled(ledger, records, now=()):
     for record in records:
         if not record.get("id") or not _settled(record) or record_payload(record)["answer"] in known:
             continue
-        ledger.append_event(DECISION, record_payload(record), ts=record["timestamp"] if record["id"] in now else None)
+        ledger.append_event(DECISION, record_payload(record), ts=record["timestamp"] if record["id"] in now else None,
+                            session_id=record.get("session_id"))
         journaled.append(record["id"])
     return journaled
 
@@ -426,6 +441,46 @@ def _read_context(ledger):
         return None
 
 
+# The origin of the decision ticket the decider opens for a question it was refused (ticket 31): `grill Q8`.
+TICKET_ORIGIN = "grill "
+
+
+def _settle_from_tickets(project, ledger, records):
+    """`records` with every refused question settled from the owner's answer to its decision ticket, and their ids.
+
+    The decider (ticket 31) turns a question it is refused into a human-only decision ticket whose origin
+    names the question. The owner may answer that ticket (`wayline answer`, the dashboard) instead of the
+    grill, and the tree must not stay open on a question the owner has answered: the ticket's `decision`
+    settles the question here as the owner's, with the ticket named in the rationale when they gave none.
+    An answer the owner gave in the grill first leaves the ticket's answer alone.
+    """
+    open_human = {record["id"] for record in records if record.get("id") and not _settled(record) and record.get("human_only")}
+    if not open_human:
+        return records, []
+    try:
+        decision_tickets = [ticket for ticket in read_tickets(project)
+                            if ticket["kind"] == DECISION_KIND and str(ticket.get("origin") or "").startswith(TICKET_ORIGIN)]
+    except (ValueError, OSError):
+        return records, []
+    if not decision_tickets:
+        return records, []
+    events, _ = ledger.read_events()
+    view = replay.replay(events)
+    settled = []
+    for ticket in decision_tickets:
+        identifier = ticket["origin"][len(TICKET_ORIGIN):].strip()
+        answered = view.answers.get(ticket["id"])
+        if identifier not in open_human or answered is None or answered.get("decided_by") != "human" or not answered.get("answer"):
+            continue
+        if missing(_questions(records)[identifier], records):
+            continue
+        records, record = with_answer(records, identifier, answered["answer"],
+                                      answered.get("rationale") or "the owner answered on decision ticket %d" % ticket["id"],
+                                      confidence=answered.get("confidence"), decided_by="human", ts=now_ts())
+        settled.append(record["id"])
+    return records, settled
+
+
 def ask(project, question, **fields):
     """`wayline grill ask`: add one open question to the design tree; returns its record."""
     ledger = Ledger(project)
@@ -435,20 +490,94 @@ def ask(project, question, **fields):
     return record
 
 
-def answer(project, identifier, text, rationale, confidence=None, decided_by="human", revise=False, model=None, fallback_from=None):
+def answer(project, identifier, text, rationale, confidence=None, decided_by="human", revise=False, model=None, fallback_from=None,
+           session_id=None):
     """`wayline grill answer`: settle one question in DECISIONS.md and journal it as a `decision`.
 
-    The decider (ticket 31) settles through this function too, with `decided_by="decider"`, the `model`
-    its session ran on, and `fallback_from` when it ran on Opus while Fable's weekly window was spent
-    (decision 15), so the `decision` it journals records the model that made it.
+    The decider (ticket 31, `wayline.decider`) settles through this function too, with `decided_by="decider"`,
+    the `model` its session ran on, `fallback_from` when it ran on Opus while Fable's weekly window was spent
+    (decision 15), and its `session_id`, so the `decision` it journals records the model and the session that
+    made it.
     """
     ledger = Ledger(project)
     with ledger.lock():
         records, record = with_answer(read_records(project), identifier, text, rationale, confidence=confidence,
-                                      decided_by=decided_by, revise=revise, ts=now_ts(), model=model, fallback_from=fallback_from)
+                                      decided_by=decided_by, revise=revise, ts=now_ts(), model=model, fallback_from=fallback_from,
+                                      session_id=session_id)
         make_event(DECISION, record_payload(record), ts=record["timestamp"])  # an event the journal refuses writes nothing
         _write_records(ledger, records)
         _journal_settled(ledger, records, now=(record["id"],))
+        if decided_by == "human":
+            _answer_ticket_of(project, ledger, record)
+    return record
+
+
+def _answer_ticket_of(project, ledger, record):
+    """The owner's grill answer to a refused question answers its decision ticket too, so none stays open in the dashboard.
+
+    The decider (ticket 31) opens a human-only decision ticket for a question it was refused (origin `grill
+    Qn`); the owner may answer in the grill instead. The ticket then takes the same answer as the owner's,
+    through `project.answer`, and the conductor closes it at its next wave. A ticket already answered or closed
+    is left alone.
+    """
+    from wayline.project import answer as answer_ticket  # the project module imports the grill's readers
+    identifier = record.get("supersedes") or record.get("id")
+    try:
+        found = [ticket for ticket in read_tickets(project)
+                 if ticket["kind"] == DECISION_KIND and str(ticket.get("origin") or "") == TICKET_ORIGIN + identifier]
+    except (ValueError, OSError):
+        return
+    for ticket in found:
+        try:
+            answer_ticket(project, ticket["id"], record["answer"], rationale=record.get("rationale"), confidence=record.get("confidence"),
+                          by="grill")
+        except (ProjectError, OSError):
+            continue  # answered already, or closed
+
+
+def append_ticket_record(project, record):
+    """Append one settled decision-ticket record (`ticket` set, no `id`) to `research/DECISIONS.md`; returns it.
+
+    The decider's answer to a decision ticket (ticket 31) lands here as well as in the ticket's file and the
+    journal, so the file of the project's design decisions holds every decision the decider made. A record
+    for the same ticket and answer already there is not appended twice; the record is checked against the
+    schema first, and nothing is journaled here, since `decisions.decide` journals the decision itself.
+    """
+    record = _check(_ordered(dict(record)))
+    if record.get("ticket") is None or record.get("id") is not None or not _settled(record):
+        raise GrillError("a ticket record names its ticket, no question id, and its answer")
+    ledger = Ledger(project)
+    with ledger.lock():
+        records = read_records(project)
+        if any(other.get("ticket") == record["ticket"] and other.get("answer") == record["answer"] for other in records):
+            return record
+        _write_records(ledger, records + [record])
+    return record
+
+
+def with_human_only(records, identifier, why):
+    """`records` with one open question turned over to the owner, and that record.
+
+    The decider's answer to it was refused (ticket 31): the record gains `human_only: true`, so the next
+    tier asks the owner and the decider never takes it again, and `why` joins its evidence so the owner
+    reads the refusal where the question is. A settled question is never rewritten, so one is refused.
+    """
+    record = _questions(records).get(identifier)
+    if record is None:
+        raise GrillError("the design tree has no question %s" % (identifier,))
+    if _settled(record):
+        raise GrillError("%s is settled, and a settled record is never rewritten" % identifier)
+    why = _text(why, "the reason a question is the owner's")
+    turned = _check(dict(record, human_only=True, evidence=list(record.get("evidence") or []) + [why]))
+    return [turned if other is record else other for other in records], turned
+
+
+def turn_over(project, identifier, why):
+    """Mark one open question of `research/DECISIONS.md` human-only, with `why` in its evidence; returns the record."""
+    ledger = Ledger(project)
+    with ledger.lock():
+        records, record = with_human_only(read_records(project), identifier, why)
+        _write_records(ledger, records)
     return record
 
 
@@ -601,11 +730,12 @@ def grill_view(project, stamp=True):
     if stamp:
         with ledger.lock():
             records = read_records(project)
-            stamped, tier, asked = with_tier(records, autonomy)
+            settled, now = _settle_from_tickets(project, ledger, records)
+            stamped, tier, asked = with_tier(settled, autonomy)
             if stamped != records:
                 _write_records(ledger, stamped)
                 records = stamped
-            _journal_settled(ledger, records)
+            _journal_settled(ledger, records, now=now)
     else:
         records = read_records(project)
         _, tier, asked = with_tier(records, autonomy)
@@ -619,7 +749,7 @@ def grill_view(project, stamp=True):
         "position": ("research/" + POSITION_MD) if ledger.path(POSITION_MD).is_file() else None,
         "tier": tier,
         "ask": asked,
-        "decider": [record for record in frontier(records) if autonomy == AUTONOMOUS and not _owners(record)],
+        "decider": decider_share(records) if autonomy == AUTONOMOUS else [],
         "waiting": [dict(record, needs=missing(record, records, questions)) for record in _waiting(records)],
         "settled": sum(1 for record in current if _settled(record)),
         "total": len(current),
@@ -653,7 +783,8 @@ def render_grill(view):
                 lines.append("       evidence: %s" % _line(item))
         lines.append("")
     if view["decider"]:
-        lines.append("autonomy is autonomous: the decider (ticket 31) resolves these %d open question%s, and never a human-only or irreversible one"
+        lines.append("autonomy is autonomous: the decider resolves these %d open question%s (wayline grill --decide-rest), "
+                     "and never a human-only or irreversible one"
                      % (len(view["decider"]), "" if len(view["decider"]) == 1 else "s"))
         lines += ["  %s  %s" % (record["id"], _line(record["question"])) for record in view["decider"]]
         lines.append("")
@@ -680,6 +811,9 @@ def grill_command(args):
                     "`wayline grill term` settles a term in CONTEXT.md, and --from applies a batch of the three first.")
     parser.add_argument("--from", dest="batch", metavar="FILE",
                         help='{"questions": [...], "answers": [...], "terms": [...]} as JSON, or - for stdin')
+    parser.add_argument("--decide-rest", action="store_true",
+                        help="under autonomy autonomous, launch the decider on every open question that is not human-only or "
+                             "irreversible, one session each, until the frontier holds only the owner's (ticket 31)")
     parser.add_argument("--json", action="store_true", help="print the tier as JSON")
     parser.add_argument("--project", help="the project; the active one by default")
     options, code = parse_args(parser, args)
@@ -689,6 +823,11 @@ def grill_command(args):
         project = find_project(options.project)
         if options.batch:
             apply_batch(project, _load_json(options.batch))
+        if options.decide_rest:
+            from wayline import decider  # the launcher and the decisions module, which the grill alone never needs
+            report = decider.decide_rest(project)
+            print(decider.render_decided(report))
+            print("")
         view = grill_view(project)
     except GrillError as failure:
         return _refuse(failure)

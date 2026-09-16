@@ -51,6 +51,7 @@ from wayline.tickets import relative_path as ticket_relative_path
 
 __all__ = [
     "GateError",
+    "raise_if_refused",
     "GUARDS",
     "HOOK_TIMEOUT_S",
     "accept",
@@ -791,11 +792,11 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         max_minutes=_budget(policy, "max_minutes"),
     )
     envelope = worker.launch(request)
-    _raise_if_refused(envelope, model, what)
+    raise_if_refused(envelope, model, what)
     problem = _unusable(envelope)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_VERDICT % problem)
-        _raise_if_refused(envelope, model, what)
+        raise_if_refused(envelope, model, what)
         problem = _unusable(envelope)
     if problem is not None:
         raise GateError("%s could not be taken: %s" % (what, problem))
@@ -813,7 +814,7 @@ def _budget(policy, key):
     return ((policy.get("budget") or {}).get(VERDICT_BUDGET) or {}).get(key)
 
 
-def _raise_if_refused(envelope, model, what):
+def raise_if_refused(envelope, model, what):
     """Raise `UsageLimited` for a session a usage window stopped without a usable answer (decision 15)."""
     if envelope.valid:
         return

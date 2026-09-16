@@ -280,10 +280,12 @@ def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_f
     The pacing action removes what it does not afford: everything under `stop`, difficulty 3 to 5
     under `cheap_only`. `held(entry)` names a launch the hold on Fable's weekly window keeps back
     (decision 15), dropped before anything is picked, so its slot goes to what else is launchable. A
-    ticket that `awaits_owner` under `autonomy` and `decider` is never picked.
+    decision ticket is never picked: the owner answers it, or under `autonomous` the decider is launched
+    on it by the conductor's wave step 5 (`wayline.decider`, ticket 31), never as a worker in a worktree.
     """
     ready = [entry for entry in frontier(graph)
-             if affordable(entry, action) and not held(entry) and not awaits_owner(entry, autonomy, decider)]
+             if entry["kind"] != DECISION and affordable(entry, action) and not held(entry)
+             and not awaits_owner(entry, autonomy, decider)]
     lengths = critical_path_lengths(graph)
     taken = list(running)
     chosen = []

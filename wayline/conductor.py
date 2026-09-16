@@ -94,7 +94,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, decisions, gates, notify, pacing, replay, schedule, tick, tickets, worker
+from wayline import HARNESS_ROOT, decider, decisions, gates, notify, pacing, replay, schedule, tick, tickets, worker
 from wayline.ledger import (
     ACCEPTANCE, CONTROL, FEEDBACK, FINDING, INTEGRATED, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
@@ -351,6 +351,9 @@ class WaveResult:
     running: list = field(default_factory=list)
     accepted: list = field(default_factory=list)
     rejected: list = field(default_factory=list)
+    # The decision tickets the decider answered this wave, and the parked proposals it reconsidered (ticket 31).
+    decided: list = field(default_factory=list)
+    reconsidered: list = field(default_factory=list)
     ended: bool = False
     reason: Optional[str] = None
     ledger_commit: Optional[str] = None
@@ -367,7 +370,7 @@ class WaveResult:
         released whatever waited on them, so the next wave has work the last one did not.
         """
         return bool(self.launched or self.done or self.failed or self.running
-                    or self.accepted or self.rejected or self.outcomes)
+                    or self.accepted or self.rejected or self.decided or self.reconsidered or self.outcomes)
 
 
 @dataclass
@@ -560,10 +563,12 @@ class Conductor:
         self._poll(result)
         self._pace()
         if not self._holds_launches():
+            self._decide(result)
             picks = self._picks(self._graph())
             if picks:
                 self._start(picks, result)
             self._drain_verdicts(result)
+            self._reconsider_parked(result)
         self._ask_owner()
         self._journal_wave(result)
         self._end(result)
@@ -2301,6 +2306,121 @@ class Conductor:
         self._queue_verdicts(attempt)
         self._remove_worktree(attempt.id)
         self.say("  ticket %d done" % attempt.id)
+
+    # --- the decider (decision 10; ticket 31) ---
+
+    def _decide(self, result):
+        """Wave step 5: under autonomy `autonomous`, launch the decider on every open decision ticket not human-only.
+
+        One session per ticket, taken here like a verdict rather than picked as a worker: at the decider's
+        tier (`policy.roles.decider`), with `decision.json` as its schema and no worktree, since it writes
+        nothing but its answer. It is model work, so it waits under pacing and, when its tier is Fable, under
+        the hold on Fable's weekly window, falling back to Opus when the consent says (decision 15). A ticket
+        answered is closed in this same wave, so what it paused launches now rather than a wave later; one the
+        decider was refused turns human-only and waits for the owner; one nobody could decide is handed to a
+        person (`ticket_needs_human`) rather than tried again every wave.
+        """
+        if not self._decider_takes():
+            return
+        try:
+            asked = decisions.for_the_decider(self.project, self.view)
+        except (ValueError, OSError) as failure:
+            self.say("  the decision tickets could not be read for the decider: %s" % failure)
+            return
+        for fields, body, record in asked:
+            if self._holds_launches() or self.action != schedule.NORMAL:
+                return
+            outcome, stopped = self._launch_decider("the decider on ticket %d" % fields["id"], lambda falls_back: decider.decide_ticket(
+                self.project, fields, body, record, harness_root=self.harness_root, policy=self.policy, fall_back=falls_back,
+                notify=self.notify))
+            if stopped:
+                return
+            if outcome is None:
+                continue
+            if outcome.status == "failed":
+                self._decider_failed(fields["id"], outcome.why)
+                continue
+            self.say("  ticket %d: %s" % (fields["id"], outcome.line))
+            if outcome.status == "decided":
+                result.decided.append(fields["id"])
+        if result.decided:
+            self._tail()
+            self._apply_answers()  # closed now, so what the answered tickets paused is launchable in this wave
+
+    def _launch_decider(self, what, decide):
+        """One launch of the decider under the wave's rules: `(outcome, stopped)`.
+
+        `decide(falls_back)` is the launch. It waits for the hold on Fable's weekly window when the decider's tier is
+        Fable and the consent waits (`outcome` None, named for the ask of decision 15), and a usage window that
+        refuses it pauses the run and stops this wave's deciding (`stopped`); a launch that raised is a failed
+        outcome, for the caller to hand to a person or say aloud.
+        """
+        on_fable = decider.decides_on_fable(self.policy) and self._fable_held()
+        falls_back = on_fable and self._falls_back()
+        if on_fable and not falls_back:
+            self._held_back(what)
+            return None, False
+        try:
+            return decide(falls_back), False
+        except gates.FableHeld:
+            self._held_back(what)
+            return None, False
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, what)
+            self.say("  %s: the usage limit refused it; it is launched again once the window allows" % what)
+            return None, True
+        except (ValueError, OSError) as failure:
+            return decider.Outcome(None, "failed", why=str(failure)), False
+
+    def _decider_takes(self):
+        """Whether the decider is launched in this wave: autonomy `autonomous`, a decider role that reads, and pacing `normal`.
+
+        Without the role every decision ticket waits for the owner (`schedule.awaits_owner`), and a max-effort
+        session is never cheap, so `cheap_only` holds it as it holds a verdict.
+        """
+        return (self._autonomy() == schedule.AUTONOMOUS and self.action == schedule.NORMAL
+                and decisions.decider_ready(self.harness_root, self.project))
+
+    def _decider_failed(self, identifier, why):
+        """A decision ticket nobody could decide: `ticket_needs_human`, and the ticket waits for a person.
+
+        The status leaves the frontier, so the run can end, while the ticket still pauses what it holds and
+        `wayline answer` still takes the owner's answer; a retry every wave would spend a max-effort session
+        each time on the same failure.
+        """
+        self.ledger.append_event(TICKET_NEEDS_HUMAN, {"ticket": identifier, "question": "the decider could not answer it: %s" % why},
+                                 ticket=identifier)
+        self._set_status(identifier, "needs_human", ["- the decider could not answer it: %s" % why])
+        self.say("  ticket %d: the decider could not answer it (%s); it waits for a person" % (identifier, why))
+
+    def _reconsider_parked(self, result):
+        """The end of the wave: under `autonomous`, the decider reconsiders every parked proposal not yet reconsidered.
+
+        Parked proposals are ticket 37's (`research/proposals/`); until it lands there are none. Each answer is a
+        `decision` with no ticket, `proposal <id>: admit` or `keep parked`, which the admission reads; one already
+        answered is not asked again. The same pacing and hold rules as `_decide`.
+        """
+        if not self._decider_takes():
+            return
+        parked = decisions.parked_proposals(self.project)
+        if not parked:
+            return
+        events, _ = self.ledger.read_events()
+        taken = decider.reconsidered(self.project, events)
+        for proposal in parked:
+            if str(proposal["id"]) in taken or self._holds_launches() or self.action != schedule.NORMAL:
+                continue
+            outcome, stopped = self._launch_decider("the decider on parked proposal %s" % proposal["id"], lambda falls_back: decider.decide_proposal(
+                self.project, proposal, harness_root=self.harness_root, policy=self.policy, fall_back=falls_back, notify=self.notify))
+            if stopped:
+                return
+            if outcome is None:
+                continue
+            if outcome.status == "failed":
+                self.say("  parked proposal %s: the decider could not reconsider it: %s" % (proposal["id"], outcome.why))
+                continue
+            self.say("  %s" % outcome.line)
+            result.reconsidered.append(str(proposal["id"]))
 
     # --- the Type-B gate (decision 11) ---
 

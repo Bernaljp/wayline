@@ -55,7 +55,7 @@ from wayline.scout import Reference, Scout, UNRESOLVED, parse_reference
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets, write_ticket
 
 __all__ = [
-    "DossierError", "REFS", "CACHE", "LEVEL_0", "LEVEL_1", "LEVEL_2", "slug_for", "l0_dossier", "write_l0",
+    "DossierError", "REFS", "CACHE", "LEVEL_0", "LEVEL_1", "LEVEL_2", "slug_for", "l0_dossier", "write_l0", "all_slugs",
     "intake_references", "read_intake", "absorb_level_0", "absorb_command", "scout_fetcher",
     "read_dossier", "l1_input", "l1_prompt", "l1_request", "absorb_level_1",
     "PRIMARY_AT_INTAKE", "CITED_BY_SPEC", "CONTEXT_PACK", "CONSULTANT_QUESTION", "PLANNER_OR_DECIDER",
@@ -1768,7 +1768,7 @@ def _known_slugs(ledger):
     return known
 
 
-def _all_slugs(ledger):
+def all_slugs(ledger):
     """Every slug with a dossier on disk, in file order."""
     directory = ledger.research / REFS
     if not directory.is_dir():
@@ -1937,7 +1937,7 @@ def absorb_level_1(project, slugs=None, launcher=None, harness_root=None, ledger
     launcher = launcher or worker.launch
     max_chars = (policy_for(project).get("absorb") or {}).get("l1_max_chars", L1_MAX_CHARS)
     intent = _intake_text(project)
-    slugs = list(slugs) if slugs else [slug for slug in _all_slugs(ledger) if read_dossier(ledger, slug).get("level", LEVEL_0) < LEVEL_1]
+    slugs = list(slugs) if slugs else [slug for slug in all_slugs(ledger) if read_dossier(ledger, slug).get("level", LEVEL_0) < LEVEL_1]
     report = {"project": str(project), "skimmed": [], "problems": []}
     for slug in slugs:
         try:
@@ -2078,7 +2078,7 @@ def render_levels_report(project):
     """Slugs grouped by level, and every open promotion decision (a paper not read in full) with why."""
     ledger = ledger_for(project)
     by_level = {LEVEL_0: [], LEVEL_1: [], LEVEL_2: []}
-    for slug in _all_slugs(ledger):
+    for slug in all_slugs(ledger):
         try:
             dossier = read_dossier(ledger, slug)
         except DossierError:
