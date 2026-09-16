@@ -100,8 +100,11 @@
   </section>
 
   <section id="graph" aria-labelledby="graph-heading">
-    <div class="view-head"><button type="button" class="fold" data-folds="graph" aria-expanded="true" aria-controls="graph"></button><h2 id="graph-heading">Graph</h2><p class="note">A node opens its ticket.</p></div>
-    <div id="graph-body" class="panel graph">
+    <div class="view-head"><button type="button" class="fold" data-folds="graph" aria-expanded="true" aria-controls="graph"></button><h2 id="graph-heading">Tickets</h2><div id="ticket-view" class="switch" role="group" aria-label="view"></div><p class="note">Point at a ticket to see what it waits on; click it to open it.</p></div>
+    <div id="board-body" class="panel board">
+      <p class="state loading">reading the tickets</p>
+    </div>
+    <div id="graph-body" class="panel graph" hidden>
       <p class="state loading">drawing the graph</p>
     </div>
   </section>

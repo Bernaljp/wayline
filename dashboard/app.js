@@ -28,7 +28,8 @@ const state = {
   tags: {},
   since: null, // null means "the tail has not read this project yet": ask by line count, not offset
 
-  tickets: [], // every ticket's frontmatter, for the titles on the graph and the card a node shows
+  tickets: [], // every ticket's frontmatter, for the board, the graph, and the card a node shows
+  frontier: [], // the ids the overview says are ready, for the board's column of them
   ticketsFor: null, // the project `tickets` was read from, so another project's titles are never drawn
   graphSource: null, // the SVG the server last sent, redrawn whenever the titles change
   openSignature: null, // the open decision tickets last drawn, so a poll that changed nothing leaves their forms alone
@@ -226,6 +227,8 @@ function select(id) {
   state.tickets = [];
   state.ticketsFor = null;
   state.graphSource = null;
+  state.frontier = [];
+  renderBoard();
   replace(document.getElementById('overview-body'), [loadingState('reading the ledger')]);
   replace(document.getElementById('graph-body'), [loadingState('drawing the graph')]);
   replace(document.getElementById('outputs-body'), [loadingState('indexing the outputs')]);
@@ -296,6 +299,12 @@ function renderOverview(view) {
   // The four counts of a wave, side by side while they fit: none of them is stretched across the
   // page to hold four short columns, and each says in words what a count of zero means.
   const frontierRows = (view.frontier || []).map((entry) => [entry.id, entry.kind, entry.difficulty, entry.role, entry.title]);
+  // The board's "ready" column is this list: the conductor's frontier, not a second guess at it.
+  const frontier = (view.frontier || []).map((entry) => String(entry.id));
+  if (frontier.join(',') !== (state.frontier || []).join(',')) {
+    state.frontier = frontier;
+    renderBoard();
+  }
   const runningRows = (view.running || []).map((entry) => [entry.id, entry.kind, entry.attempt, entry.role, entry.title]);
   const jobRows = (view.jobs || []).map((job) => [job.id, job.ticket, job.status, job.unit || job.backend]);
   // `blocking` is the scope a decision pauses ("subgraph" or "all"), not a list of ids.
@@ -385,7 +394,10 @@ async function loadTickets() {
     state.ticketsFor = project;
     // A title that changed, or a list that has only now arrived, is drawn on the nodes at once
     // rather than at the graph's next poll: the two are one picture and must agree.
-    if (titleSignature(view) !== was) drawGraph();
+    if (titleSignature(view) !== was) {
+      drawGraph();
+      renderBoard();
+    }
   } catch (failure) {
     // The graph is drawn either way; only the titles and the card would be missing, so this is not
     // the panel's error to report.
@@ -393,7 +405,7 @@ async function loadTickets() {
 }
 
 function titleSignature(tickets) {
-  return (tickets || []).map((entry) => `${entry.id}:${entry.status}:${entry.title}`).join('|');
+  return (tickets || []).map((entry) => `${entry.id}:${entry.status}:${entry.title}:${(entry.blocked_by || []).join(',')}`).join('|');
 }
 
 // The titles belong to this project, or there are none to draw yet.
@@ -467,16 +479,17 @@ function trimCanvas(svg) {
 //
 // The server decides the graph: which ticket sits in which layer, in what order across it, and which
 // node is on the frontier. That is the part worth having in one tested place, and it stays there.
-// What it cannot know is how much room a browser has, so its nodes are a box of 120 by 36 with a
-// number in them. Here the same layout is drawn again at a size that fits a title, a status, and the
-// room to tell one ticket from another at a glance.
+// What it cannot know is how much room a browser has, so its nodes are a box of 120 by 36. Here the
+// same layout is drawn again as the owner asked for it: a circle per ticket with its number inside,
+// colored by where it stands, the rest on hover. Reading titles is the board's job; the graph is
+// for seeing the shape of what waits on what.
 //
 // Nothing is re-laid-out: each node keeps its column and its row, each edge keeps its ends, and the
 // fill the server chose is carried over untouched, so the stylesheet's rules (and the test that
 // holds them to `dag.STATUS_COLOR`) still decide every color.
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const NODE = { w: 208, h: 56, gx: 44, gy: 60 };
+const NODE = { w: 44, h: 44, gx: 40, gy: 46, r: 19 };
 
 function svgEl(tag, attrs) {
   const node = document.createElementNS(SVG_NS, tag);
@@ -503,11 +516,6 @@ function gridOf(rects) {
   };
 }
 
-function fitsIn(text, chars) {
-  const value = String(text || '');
-  return value.length <= chars ? value : `${value.slice(0, chars - 1).trimEnd()}\u2026`;
-}
-
 function redrawGraph(source) {
   const rects = [...source.querySelectorAll('a rect')];
   if (!rects.length) return null;
@@ -523,24 +531,39 @@ function redrawGraph(source) {
   const drawn = svgEl('svg', { xmlns: SVG_NS });
   drawn.appendChild((() => {
     const defs = svgEl('defs');
-    const marker = svgEl('marker', { id: 'arrow', viewBox: '0 0 10 10', refX: 9, refY: 5,
-                                     markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' });
-    marker.appendChild(svgEl('path', { d: 'M0,1L9,5L0,9z' }));
-    defs.appendChild(marker);
+    // Two heads: the everyday one, and the one an edge takes while its ticket is pointed at.
+    for (const [id, cls] of [['arrow', 'head'], ['arrow-hot', 'head hot']]) {
+      const marker = svgEl('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5,
+                                       markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' });
+      marker.appendChild(svgEl('path', { d: 'M0,1L9,5L0,9z', class: cls }));
+      defs.appendChild(marker);
+    }
     return defs;
   })());
 
-  // The edges first, so a node is never drawn under one of its own lines.
+  // Which ticket sits at each place, so an edge can say which two it joins.
+  const at = new Map();
+  for (const link of source.querySelectorAll('a')) {
+    const rect = link.querySelector('rect');
+    if (!rect) continue;
+    const spot = place(Number(rect.getAttribute('x')), Number(rect.getAttribute('y')));
+    at.set(`${spot.x},${spot.y}`, link.getAttribute('href').slice('#ticket/'.length));
+  }
+
+  // The edges first, so a node is never drawn under one of its own lines. An edge runs from the
+  // bottom of the ticket that blocks to the top of the one that waits.
   for (const line of source.querySelectorAll('line')) {
     const from = place(Number(line.getAttribute('x1')) - grid.w / 2, Number(line.getAttribute('y1')) - grid.h);
     const to = place(Number(line.getAttribute('x2')) - grid.w / 2, Number(line.getAttribute('y2')));
     const x1 = from.x + NODE.w / 2;
-    const y1 = from.y + NODE.h;
+    const y1 = from.y + NODE.h / 2 + NODE.r;
     const x2 = to.x + NODE.w / 2;
-    const y2 = to.y;
-    const bend = Math.max(18, (y2 - y1) / 2);
+    const y2 = to.y + NODE.h / 2 - NODE.r - 2;
+    const bend = Math.max(14, (y2 - y1) / 2);
     drawn.appendChild(svgEl('path', {
       class: 'edge',
+      'data-from': at.get(`${from.x},${from.y}`),
+      'data-to': at.get(`${to.x},${to.y}`),
       d: `M${x1},${y1} C${x1},${y1 + bend} ${x2},${y2 - bend} ${x2},${y2}`,
       'marker-end': 'url(#arrow)',
     }));
@@ -551,28 +574,173 @@ function redrawGraph(source) {
     if (!rect) continue;
     const id = link.getAttribute('href').slice('#ticket/'.length);
     const ticket = ticketsHere().find((entry) => String(entry.id) === String(id)) || {};
-    const at = place(Number(rect.getAttribute('x')), Number(rect.getAttribute('y')));
-    const node = svgEl('a', { href: link.getAttribute('href'), class: 'node' });
-    node.appendChild(svgEl('rect', {
-      x: at.x, y: at.y, width: NODE.w, height: NODE.h, rx: 10,
+    const spot = place(Number(rect.getAttribute('x')), Number(rect.getAttribute('y')));
+    const cx = spot.x + NODE.w / 2;
+    const cy = spot.y + NODE.h / 2;
+    const node = svgEl('a', { href: link.getAttribute('href'), class: 'node', 'data-id': id,
+                              'aria-label': `ticket ${id}${ticket.title ? `: ${ticket.title}` : ''}${ticket.status ? `, ${ticket.status}` : ''}` });
+    node.appendChild(svgEl('circle', {
+      cx, cy, r: NODE.r,
       // The server's own choice of fill, carried over: the stylesheet maps it to the palette.
       fill: rect.getAttribute('fill'),
+      // The ring repeats where the ticket stands, so the fill is not carrying it alone.
+      class: `ring s-stroke-${ticket.status || 'unknown'}`,
     }));
-    // The stripe down the leading edge repeats the status without relying on the fill alone.
-    node.appendChild(svgEl('rect', { class: `stripe s-fill-${ticket.status || 'unknown'}`,
-                                     x: at.x, y: at.y, width: 4, height: NODE.h }));
-    const number = svgEl('text', { class: 'node-id', x: at.x + 14, y: at.y + 23 });
-    number.textContent = `#${id}`;
+    const number = svgEl('text', { class: 'node-id', x: cx, y: cy + 4, 'text-anchor': 'middle' });
+    number.textContent = id;
     node.appendChild(number);
-    const status = svgEl('text', { class: 'node-status', x: at.x + NODE.w - 14, y: at.y + 23, 'text-anchor': 'end' });
-    status.textContent = ticket.status || '';
-    node.appendChild(status);
-    const title = svgEl('text', { class: 'node-name', x: at.x + 14, y: at.y + 42 });
-    title.textContent = fitsIn(ticket.title || '', 26);
-    node.appendChild(title);
     drawn.appendChild(node);
   }
   return drawn;
+}
+
+// --- what a ticket waits on, and what waits on it --------------------------------------------------
+//
+// The dependencies of one ticket at a time, rather than of all of them at once: the board's columns
+// are where tickets stand, not the order they depend in, so every edge drawn across them would cross
+// the others. Pointing at a ticket, on the board or on the graph, marks the tickets it waits on and
+// the ones waiting on it, and dims the rest.
+
+function relationsOf(id) {
+  const tickets = ticketsHere();
+  const self = tickets.find((entry) => String(entry.id) === String(id));
+  const waitsOn = new Set(((self && self.blocked_by) || []).map(String));
+  const waitedOnBy = new Set(tickets.filter((entry) => (entry.blocked_by || []).map(String).includes(String(id))).map((entry) => String(entry.id)));
+  return { waitsOn, waitedOnBy };
+}
+
+function markRelations(container, id) {
+  const { waitsOn, waitedOnBy } = relationsOf(id);
+  container.classList.add('relating');
+  for (const item of container.querySelectorAll('[data-id]')) {
+    const other = String(item.dataset.id);
+    item.classList.toggle('is-self', other === String(id));
+    item.classList.toggle('is-blocker', waitsOn.has(other));
+    item.classList.toggle('is-waiting', waitedOnBy.has(other));
+    const note = item.querySelector('.card-rel');
+    if (note) {
+      if (waitsOn.has(other)) note.textContent = `#${id} waits on this`;
+      else if (waitedOnBy.has(other)) note.textContent = `waits on #${id}`;
+      else note.textContent = '';
+    }
+  }
+  for (const edge of container.querySelectorAll('.edge')) {
+    edge.classList.toggle('is-related', edge.dataset.from === String(id) || edge.dataset.to === String(id));
+  }
+}
+
+function clearRelations(container) {
+  container.classList.remove('relating');
+  for (const item of container.querySelectorAll('.is-self, .is-blocker, .is-waiting, .is-related')) {
+    item.classList.remove('is-self', 'is-blocker', 'is-waiting', 'is-related');
+  }
+  for (const note of container.querySelectorAll('.card-rel')) note.textContent = '';
+}
+
+// Pointer and keyboard alike: a move between two parts of the same item is not leaving it.
+function wireRelations(container, selector, entered, left) {
+  for (const type of ['mouseover', 'focusin']) {
+    container.addEventListener(type, (event) => {
+      const item = event.target.closest(selector);
+      if (!item) return;
+      markRelations(container, item.dataset.id);
+      if (entered) entered(item);
+    });
+  }
+  for (const type of ['mouseout', 'focusout']) {
+    container.addEventListener(type, (event) => {
+      const item = event.target.closest(selector);
+      if (!item) return;
+      const to = event.relatedTarget;
+      if (to && item.contains(to)) return;
+      clearRelations(container);
+      if (left) left(item);
+    });
+  }
+}
+
+// --- the board ---------------------------------------------------------------------------------------
+//
+// Every ticket as a card, in a column for where it stands. "Ready" is the server's frontier, read
+// from the overview, rather than worked out again here: what makes an open ticket launchable is the
+// conductor's rule, and it lives in one place.
+
+const COLUMNS = [
+  ['waiting', (ticket, ready) => ticket.status === 'open' && !ready.has(String(ticket.id))],
+  ['ready', (ticket, ready) => ready.has(String(ticket.id))],
+  ['running', (ticket) => ticket.status === 'running'],
+  ['needs you', (ticket) => ['needs_human', 'failed', 'blocked'].includes(ticket.status)],
+  ['done', (ticket) => ['done', 'accepted'].includes(ticket.status)],
+  ['parked', (ticket) => ticket.status === 'parked'],
+];
+
+function columnOf(ticket, ready) {
+  const found = COLUMNS.find(([, belongs]) => belongs(ticket, ready));
+  // A status the board has no column for is still a ticket the owner should see: it waits.
+  return found ? found[0] : 'waiting';
+}
+
+function renderBoard() {
+  const body = document.getElementById('board-body');
+  if (!body) return;
+  const tickets = ticketsHere();
+  if (state.ticketsFor !== state.project) {
+    replace(body, [loadingState('reading the tickets')]);
+    return;
+  }
+  if (!tickets.length) {
+    replace(body, [emptyState('no ticket yet: the board fills once the first one is written')]);
+    return;
+  }
+  const ready = new Set((state.frontier || []).map(String));
+  const columns = COLUMNS.map(([name]) => {
+    const cards = tickets.filter((ticket) => columnOf(ticket, ready) === name).map((ticket) => {
+      const card = el('button', { type: 'button', class: `card s-edge-${ticket.status || 'unknown'}`, 'data-id': String(ticket.id),
+                                  'aria-label': `ticket ${ticket.id}: ${ticket.title || ''}, ${ticket.status || ''}` }, [
+        el('span', { class: 'card-top' }, [
+          el('span', { class: 'card-id', text: `#${ticket.id}` }),
+          el('span', { class: 'card-meta', text: [ticket.kind, ticket.difficulty ? `d${ticket.difficulty}` : null].filter(Boolean).join(' ') }),
+        ]),
+        el('span', { class: 'card-title', text: ticket.title || '', title: ticket.title || null }),
+        el('span', { class: 'card-foot', text: [ticket.role, ticket.status].filter(Boolean).join(' \u00b7 ') }),
+        el('span', { class: 'card-rel', 'aria-live': 'polite' }),
+      ]);
+      card.addEventListener('click', () => openTicket(String(ticket.id)));
+      return card;
+    });
+    return el('div', { class: 'column', 'data-column': name }, [
+      el('h3', { class: 'sub' }, [el('span', { text: name }), el('span', { class: 'count', text: String(cards.length) })]),
+      cards.length ? el('div', { class: 'cards' }, cards) : el('p', { class: 'state', text: 'none' }),
+    ]);
+  });
+  replace(body, [el('div', { class: 'columns' }, columns)]);
+}
+
+// --- board or graph --------------------------------------------------------------------------------
+
+const VIEWS = [['board', 'board'], ['graph', 'graph']];
+
+function setTicketView(choice) {
+  const view = VIEWS.some(([name]) => name === choice) ? choice : 'board';
+  document.getElementById('board-body').hidden = view !== 'board';
+  document.getElementById('graph-body').hidden = view !== 'graph';
+  for (const button of document.querySelectorAll('#ticket-view button')) {
+    button.setAttribute('aria-current', String(button.dataset.view === view));
+  }
+  remember(STORE.view, view);
+  // A drawing is measured to trim its canvas, and a hidden one measures as nothing.
+  if (view === 'graph') drawGraph();
+  else renderBoard();
+}
+
+function wireTicketView() {
+  replace(document.getElementById('ticket-view'), VIEWS.map(([name, label]) => {
+    const button = el('button', { type: 'button', class: 'action', text: label, 'data-view': name });
+    button.addEventListener('click', () => setTicketView(name));
+    return button;
+  }));
+  wireRelations(document.getElementById('board-body'), '.card[data-id]');
+  setTicketView(remembered(STORE.view) || 'board');
 }
 
 // The server's SVG, drawn again at a readable size when it can be read back. Its own drawing stands
@@ -600,23 +768,9 @@ function drawGraph() {
 
 function wireGraph() {
   const body = document.getElementById('graph-body');
-  for (const [type, run] of [['mouseover', showNodeCard], ['focusin', showNodeCard]]) {
-    body.addEventListener(type, (event) => {
-      const link = event.target.closest('a[href^="#ticket/"]');
-      if (link) run(link);
-    });
-  }
-  // A node is a rect and a label inside one link, and the pointer crossing from one to the other
-  // leaves the node as far as the event is concerned. The card goes only when what the pointer
-  // moved to is outside the link it belongs to.
-  for (const type of ['mouseout', 'focusout']) {
-    body.addEventListener(type, (event) => {
-      const link = event.target.closest('a[href^="#ticket/"]');
-      if (!link) return;
-      const to = event.relatedTarget;
-      if (!to || !link.contains(to)) hideNodeCard();
-    });
-  }
+  // A node is a circle and a number inside one link; `wireRelations` treats a move between the two
+  // as staying on the node, so the card goes only when the pointer leaves the link.
+  wireRelations(body, 'a.node[data-id]', showNodeCard, hideNodeCard);
   window.addEventListener('scroll', followNodeCard, { passive: true });
   window.addEventListener('resize', followNodeCard);
 }
@@ -1300,7 +1454,7 @@ function wireIntake() {
 // that refuses storage (a private window, blocked site data) still works; it just forgets.
 
 const THEMES = [['auto', 'auto'], ['light', 'day'], ['dark', 'night']];
-const STORE = { theme: 'wayline.theme', folded: 'wayline.folded' };
+const STORE = { theme: 'wayline.theme', folded: 'wayline.folded', view: 'wayline.view' };
 
 function remember(key, value) {
   try {
@@ -1457,6 +1611,7 @@ function wireIndex() {
 wireTheme();
 wireFolds();
 wireIndex();
+wireTicketView();
 wireGraph();
 wireControls();
 wireIntake();

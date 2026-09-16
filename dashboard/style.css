@@ -473,31 +473,99 @@ dl.fields + .chips { margin-top: var(--space-4); }
 .graph svg a { cursor: pointer; }
 .graph svg a:hover rect, .graph svg a:focus-visible rect { stroke: var(--accent); stroke-width: 2; }
 
-/* A node of the redrawn graph: the id, where the ticket stands, and as much of its title as fits,
-   with the status repeated as a stripe so the fill is not carrying it alone. */
-.graph svg a.node .stripe { stroke: none; }
-.graph svg a.node:hover rect.stripe, .graph svg a.node:focus-visible rect.stripe { stroke: none; }
-.graph svg .node-id { font-size: 13px; font-weight: 700; }
-.graph svg .node-status { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; fill: var(--ink-2); text-transform: uppercase; }
-.graph svg .node-name { font-size: 12px; font-weight: 500; font-family: var(--ui); fill: var(--ink-2); }
+/* The redrawn graph: a circle per ticket with its number inside, and a ring in the color of where it
+   stands, so the fill is not carrying that alone. */
+.graph svg circle { stroke-width: 2.5; transition: stroke-width 150ms ease-out, opacity 150ms ease-out; }
+.graph svg .node-id { font-size: 12px; font-weight: 700; }
+.graph svg a.node:hover circle, .graph svg a.node:focus-visible circle { stroke-width: 4; }
+.graph svg a.node:focus-visible { outline: none; }
 
-.s-fill-done, .s-fill-accepted { fill: var(--done); }
-.s-fill-running { fill: var(--running); }
-.s-fill-failed, .s-fill-blocked, .s-fill-needs_human { fill: var(--failed); }
-.s-fill-paused, .s-fill-parked { fill: var(--paused); }
-.s-fill-open, .s-fill-unknown { fill: var(--dim); }
+.s-stroke-done, .s-stroke-accepted { stroke: var(--done); }
+.s-stroke-running { stroke: var(--running); }
+.s-stroke-failed, .s-stroke-blocked, .s-stroke-needs_human { stroke: var(--failed); }
+.s-stroke-paused, .s-stroke-parked { stroke: var(--paused); }
+.s-stroke-open, .s-stroke-unknown { stroke: var(--line-strong); }
+
+/* Pointing at a ticket: it, what it waits on, and what waits on it stay; the rest steps back. */
+.relating [data-id], .relating .edge { transition: opacity 150ms ease-out; }
+.relating [data-id]:not(.is-self):not(.is-blocker):not(.is-waiting) { opacity: 0.3; }
+.relating .edge:not(.is-related) { opacity: 0.15; }
+.relating .edge.is-related { stroke: var(--accent); stroke-width: 2; marker-end: url(#arrow-hot); }
+.graph svg marker path.hot { fill: var(--accent); }
+
+/* --- the board --------------------------------------------------------------------------------- */
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+.column {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  padding: var(--space-2);
+}
+.column h3.sub { margin: 0 0 var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--line); }
+.column .state { display: block; margin: 0; text-align: center; }
+.cards { display: grid; gap: var(--space-2); }
+
+.card {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+  cursor: pointer;
+  transition: border-color 150ms ease-out, opacity 150ms ease-out, background 150ms ease-out;
+}
+.card:hover { border-color: var(--accent); }
+.card-top { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-xs); }
+.card-id { font-weight: 700; }
+.card-meta, .card-foot { color: var(--dim); font-size: var(--text-xs); }
+.card-title {
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-rel:empty { display: none; }
+.card-rel { font-size: var(--text-xs); font-weight: 700; color: var(--accent-ink); }
+
+.s-edge-done, .s-edge-accepted { border-left-color: var(--done); }
+.s-edge-running { border-left-color: var(--running); }
+.s-edge-failed, .s-edge-blocked, .s-edge-needs_human { border-left-color: var(--failed); }
+.s-edge-paused, .s-edge-parked { border-left-color: var(--paused); }
+
+.relating .card.is-self { border-color: var(--accent); background: var(--accent-soft); }
+.relating .card.is-blocker, .relating .card.is-waiting { border-color: var(--accent); }
+
+@media (max-width: 1180px) {
+  .columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 
 /* One rule per fill `wayline.dag.svg` can write. A status added there needs its line here, and
    `tests/test_dashboard.py` fails until it has one. */
-.graph svg rect[fill="#dddddd"] { fill: var(--node-open); }
-.graph svg rect[fill="#ffd966"] { fill: var(--node-running); }
-.graph svg rect[fill="#9be49b"] { fill: var(--node-done); }
-.graph svg rect[fill="#6fbf73"] { fill: var(--node-accepted); }
-.graph svg rect[fill="#f2a6a6"] { fill: var(--node-failed); }
-.graph svg rect[fill="#c9c9c9"] { fill: var(--node-blocked); }
-.graph svg rect[fill="#f2994a"] { fill: var(--node-needs-human); }
-.graph svg rect[fill="#b0b0b0"] { fill: var(--node-parked); }
-.graph svg rect[fill="#8ecae6"] { fill: var(--node-frontier); }
+.graph svg rect[fill="#dddddd"], .graph svg circle[fill="#dddddd"] { fill: var(--node-open); }
+.graph svg rect[fill="#ffd966"], .graph svg circle[fill="#ffd966"] { fill: var(--node-running); }
+.graph svg rect[fill="#9be49b"], .graph svg circle[fill="#9be49b"] { fill: var(--node-done); }
+.graph svg rect[fill="#6fbf73"], .graph svg circle[fill="#6fbf73"] { fill: var(--node-accepted); }
+.graph svg rect[fill="#f2a6a6"], .graph svg circle[fill="#f2a6a6"] { fill: var(--node-failed); }
+.graph svg rect[fill="#c9c9c9"], .graph svg circle[fill="#c9c9c9"] { fill: var(--node-blocked); }
+.graph svg rect[fill="#f2994a"], .graph svg circle[fill="#f2994a"] { fill: var(--node-needs-human); }
+.graph svg rect[fill="#b0b0b0"], .graph svg circle[fill="#b0b0b0"] { fill: var(--node-parked); }
+.graph svg rect[fill="#8ecae6"], .graph svg circle[fill="#8ecae6"] { fill: var(--node-frontier); }
 
 /* The card a graph node shows: what the layout has no room to draw inside the node itself. */
 .node-card {
@@ -765,9 +833,7 @@ button.tab { border-radius: 3px; }
 .state { border-radius: 3px; }
 .decision { border-left-width: 2px; border-radius: 0; }
 .node-card { border-radius: 3px; box-shadow: none; border-color: var(--accent); }
-.graph svg a.node rect:first-of-type { rx: 3px; }
 .graph svg .node-id { font-weight: 700; }
-.graph svg .node-name { font-family: var(--mono); }
 dl.fields dt { letter-spacing: 0.1em; }
 dl.fields dd { font-size: var(--text-sm); }
 select, textarea, input[type="number"], input[type="file"] { border-radius: 3px; font-family: var(--ui); }
