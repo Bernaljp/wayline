@@ -105,7 +105,9 @@ VERDICT_SCOPE = (
     "Judge only the mapping between the claims (and anti-claims) and the experiments in research/SPEC.md: whether each "
     "claim's experiments would actually test it, whether each experiment actually bears on the claims it names, and "
     "whether each anti-claim's experiment would confirm it. Read DECISIONS.md and GOAL.json only to see what the claims "
-    "must answer. Not the science's merit, the budgets, the prose, or anything a later phase decides."
+    "must answer. Not the science's merit, the budgets, the prose, or anything a later phase decides. The hex after "
+    "`at` in the subject is the first twelve of research/spec.json's sha256, written by the harness beside the file "
+    "you read; it needs no checking."
 )
 VERDICT_PATHS = ("research/SPEC.md", "research/spec.json", "research/DECISIONS.md", "research/GOAL.json")
 
