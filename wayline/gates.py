@@ -673,7 +673,7 @@ def verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cw
             findings_text(memo, empty="[wayline: the memo session found no case to make against "
                                       "these paths, so there is nothing here to adjudicate.]"),
         ]))
-    parts.append(role.protocol)
+    parts.append(worker.protocol_for(role.protocol, "verdict"))
     parts.append(worker.schema_section("# The verdict", role.output_schema or VERDICT_SCHEMA))
     return "\n\n".join(part.strip("\n") for part in parts if part and part.strip()) + "\n"
 

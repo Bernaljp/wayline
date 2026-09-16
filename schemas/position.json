@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "position",
+  "description": "The position memo of phase P2 (Implementation Decisions 10, position): what the critic returns after reading only the dossiers, INTAKE.md, and GOAL.json, and from which code renders research/POSITION.md. The schema holds the shape; wayline.position holds the rest: every prior-work row's reference is resolved by the scout and a row that is not existence: verified is dropped with a note, the three directions are ranked by their distance from the intent, and none lies beyond the project's radius.",
+  "type": "object",
+  "required": ["intent", "prior_work", "feasibility", "goal_feasibility", "hostile_review", "directions"],
+  "additionalProperties": false,
+  "properties": {
+    "intent": {"type": "string", "pattern": "\\S", "description": "the intent as INTAKE.md states it, in one sentence of your own"},
+    "prior_work": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "the closest prior work, nearest first; only works you read about in a dossier, never one you remember",
+      "items": {
+        "type": "object",
+        "required": ["reference", "reports", "bearing"],
+        "additionalProperties": false,
+        "properties": {
+          "reference": {"type": "string", "pattern": "\\S", "description": "the dossier's slug (the directory under research/refs/), or for a work a dossier cites but no dossier holds, its DOI, arXiv id, or exact title; the harness has the scout resolve it and drops a row it cannot verify"},
+          "reports": {"type": "string", "pattern": "\\S", "description": "what the work reports, in a sentence, as its dossier says it"},
+          "bearing": {"type": "string", "pattern": "\\S", "description": "what it means for the intent: the same question, a competing explanation, a method to reuse, a result that makes the intent moot"},
+          "locator": {"type": ["string", "null"], "description": "where in the dossier you read it (research/refs/<slug>/dossier.md#Results, dossier.json#abstract), or null"}
+        }
+      }
+    },
+    "feasibility": {
+      "type": "object",
+      "required": ["verdict", "compute", "data", "reasoning"],
+      "additionalProperties": false,
+      "description": "whether the intent can be carried out with the compute and the data INTAKE.md states",
+      "properties": {
+        "verdict": {"type": "string", "enum": ["feasible", "feasible_with_changes", "infeasible"]},
+        "compute": {"type": "string", "pattern": "\\S", "description": "the compute stated, and what the work needs of it"},
+        "data": {"type": "string", "pattern": "\\S", "description": "the data stated, and whether it can answer the question"},
+        "reasoning": {"type": "string", "pattern": "\\S", "description": "why, in a paragraph; name what the intake leaves unsaid"}
+      }
+    },
+    "goal_feasibility": {
+      "type": "object",
+      "required": ["verdict", "reasoning", "revised_target"],
+      "additionalProperties": false,
+      "description": "whether GOAL.json's target looks reachable",
+      "properties": {
+        "verdict": {"type": "string", "enum": ["reachable", "uncertain", "out_of_reach"]},
+        "reasoning": {"type": "string", "pattern": "\\S", "description": "why, with the numbers you read and where"},
+        "revised_target": {
+          "type": ["object", "null"],
+          "required": ["value", "why"],
+          "additionalProperties": false,
+          "description": "a target to propose instead, required when the verdict is out_of_reach and null when it is reachable; the goal itself is the owner's to change",
+          "properties": {
+            "value": {"type": "number", "description": "the target in GOAL.json's metric and units"},
+            "why": {"type": "string", "pattern": "\\S", "description": "why this number, in a sentence"}
+          }
+        }
+      }
+    },
+    "hostile_review": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "description": "the objections a hostile reviewer would raise against the intent as stated, worst first, each one sentence or two",
+      "items": {"type": "string", "pattern": "\\S"}
+    },
+    "directions": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "three directions the project could take, nearest to the intent first, none farther than the project's radius",
+      "items": {
+        "type": "object",
+        "required": ["distance", "title", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "distance": {"type": "string", "enum": ["strict", "moderate", "exploratory"], "description": "how far from the intent, on the radius's own scale"},
+          "title": {"type": "string", "pattern": "\\S", "description": "the direction in a few words"},
+          "text": {"type": "string", "pattern": "\\S", "description": "what it would do, and what it would show, in two or three sentences"}
+        }
+      }
+    }
+  }
+}

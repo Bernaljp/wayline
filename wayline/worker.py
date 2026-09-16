@@ -59,7 +59,7 @@ __all__ = [
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command", "login_command", "auth_status_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
-    "schema_bullets", "schema_section",
+    "schema_bullets", "schema_section", "protocol_for",
 ]
 
 _log = logging.getLogger("wayline.worker")
@@ -767,6 +767,24 @@ def schema_bullets(schema):
             line += ": " + definition["description"]
         lines.append(line)
     return lines
+
+
+def protocol_for(protocol, phase):
+    """The part of a role's protocol for `phase`: the `## <Phase>` section, under the file's own lead.
+
+    A role with more than one job keeps one protocol file with a section per job: the planner's phases,
+    the critic's verdict and position memo. A file without the section is given whole, since a protocol
+    the harness cannot cut is still the protocol.
+    """
+    lines = protocol.split("\n")
+    starts = [index for index, line in enumerate(lines) if line.startswith("## ")]
+    wanted = [index for index in starts if lines[index][3:].strip().lower() == phase.lower()]
+    if not wanted:
+        return protocol
+    start = wanted[0]
+    end = next((index for index in starts if index > start), len(lines))
+    lead = lines[: starts[0]] if starts else []
+    return "\n".join(lead + lines[start:end]).strip("\n") + "\n"
 
 
 def schema_section(heading, name, closing=()):

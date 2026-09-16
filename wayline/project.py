@@ -697,6 +697,12 @@ def status_view(project, refresh=True):
     from wayline.decisions import decider_ready  # the decisions module imports this one
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
     policy = policy_for(project)
+    from wayline.position import position_view  # the position module imports this one
+    try:
+        position = position_view(project, harness, events)
+    except (ValueError, OSError) as failure:
+        position = None
+        problems.append("position memo: %s" % failure)
     return {
         "project": str(project),
         "name": project.name,
@@ -704,6 +710,8 @@ def status_view(project, refresh=True):
         "harness_tag": harness.get("harness_tag"),
         "autonomy": harness.get("autonomy"),
         "radius": harness.get("radius"),
+        # The memo leads the view while it is the owner's to read (ticket 29); `first` says whether it does.
+        "position": position,
         "frontier": [_ticket_line(entry, tickets) for entry in frontier(graph)],
         "running": [_ticket_line(entry, tickets) for entry in _with_status(graph, "running")],
         "jobs": live_jobs,
@@ -937,6 +945,10 @@ def render_status(view):
     lines.append(head + ("  [active]" if view["active"] else ""))
     lines.append("harness  %s   autonomy %s   radius %s" % (view["harness_tag"], view["autonomy"], view["radius"]))
     lines.append("")
+    if (view.get("position") or {}).get("first"):
+        from wayline.position import render_view  # the position module imports this one
+        lines.extend(render_view(view["position"]))
+        lines.append("")
     lines.extend(_render_tickets("frontier", view["frontier"]))
     lines.extend(_render_tickets("running tickets", view["running"]))
     lines.extend(_render_jobs(view["jobs"]))
