@@ -33,6 +33,8 @@ const state = {
   ticketsFor: null, // the project `tickets` was read from, so another project's titles are never drawn
   graphSource: null, // the SVG the server last sent, redrawn whenever the titles change
   openSignature: null, // the open decision tickets last drawn, so a poll that changed nothing leaves their forms alone
+  openDecisions: { project: null, list: [] }, // the same list, for the ticket page of one of them
+  ticketDecisionSignature: null, // what the ticket page's own answer form was last drawn from
   ticket: null, // the ticket id whose page is open, or null when the graph is showing
   log: null, // { kind, id, since } of the log tail that is open, or null
 
@@ -821,6 +823,7 @@ function renderTicket(view) {
       ['blocked by', (f.blocked_by || []).length ? f.blocked_by.join(', ') : 'nothing'],
     ]),
     ticketActions(f),
+    el('div', { id: 'ticket-decision' }),
     el('hr', { class: 'rule' }),
     subhead('body'),
     renderMarkdown(view.body),
@@ -837,6 +840,23 @@ function renderTicket(view) {
     logList(view.jobs, 'job', (entry) => `${entry.id} (${entry.status})`, 'no job has been queued for this ticket'),
   ];
   replace(document.getElementById('ticket-body'), parts);
+  state.ticketDecisionSignature = null;
+  renderTicketDecision();
+}
+
+// A decision ticket opened from the board or the graph can be answered where it is, with the same
+// card and the same form the decisions panel draws: one way to answer, shown in two places, sharing
+// the draft the owner has typed. The form is drawn again only when the decision itself changed, so
+// a poll never takes it out from under the cursor.
+function renderTicketDecision() {
+  const place = document.getElementById('ticket-decision');
+  if (!place || state.ticket === null || document.getElementById('ticket').hidden) return;
+  const { project, list } = state.openDecisions;
+  const decision = project === state.project ? list.find((entry) => String(entry.id) === String(state.ticket)) : null;
+  const signature = JSON.stringify([project, state.ticket, decision || null]);
+  if (signature === state.ticketDecisionSignature) return;
+  state.ticketDecisionSignature = signature;
+  replace(place, decision ? [el('hr', { class: 'rule' }), subhead('decision'), decisionCard(decision, project)] : []);
 }
 
 // `short` cuts a result's value to what the row holds; the whole of it stays in the field's title.
@@ -1301,6 +1321,8 @@ async function loadDecisions() {
 function renderDecisions(view, project) {
   renderControls(view.controls || {});
   const open = view.open || [];
+  state.openDecisions = { project, list: open };
+  renderTicketDecision();
   // Redrawn only when it changed: a redraw replaces the form under the owner's cursor.
   const signature = JSON.stringify([project, open]);
   if (signature !== state.openSignature) {
