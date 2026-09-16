@@ -164,7 +164,7 @@ read.forEach((outcome, index) => {
 const consultations = []
 if (asked.length > 0) {
   phase('Consult')
-  const limit = consultant ? consultant.max_questions : 0
+  const limit = consultant && Number.isInteger(consultant.max_questions) ? consultant.max_questions : 0
   const taken = asked.slice(0, limit)
   for (const skipped of asked.slice(taken.length)) {
     const reason = consultant ? `past the ${limit} question(s) one absorb may ask` : 'no consultant was given to this run'

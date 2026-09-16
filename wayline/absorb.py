@@ -789,9 +789,13 @@ def _consult_readers(context, asked, outcome):
     """
     limit = consult.question_limit(context.policy)
     consultations = []
+    refused = None
     for index, item in enumerate(asked):
         if index >= limit:
             consultations.append(dict(item, answer=None, reason="past the %d question(s) one absorb may ask" % limit))
+            continue
+        if refused:
+            consultations.append(dict(item, answer=None, reason="not asked: %s" % refused))
             continue
         try:
             request = consult.consult_request(context.project, context.slug, item["question"], LEVEL_2,
@@ -800,6 +804,11 @@ def _consult_readers(context, asked, outcome):
             consultations.append(dict(item, answer=None, reason="the consultant could not be launched: %s" % failure))
             continue
         envelope = _launch(context, request, outcome)
+        if envelope is not None and not envelope.valid \
+                and pacing.hit_limit(envelope, worker.stderr_of(envelope), model=request.model) is not None:
+            refused = "the usage limit refused the consultant, and no further question is put to it in this read"
+            consultations.append(dict(item, answer=None, reason=refused))
+            continue
         if envelope is None or not envelope.valid:
             reason = "; ".join(envelope.errors) if envelope is not None else "it could not be launched"
             consultations.append(dict(item, answer=None, reason="the consultant returned no answer: %s" % (reason or "no structured output")))

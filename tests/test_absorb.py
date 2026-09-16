@@ -442,6 +442,19 @@ class ConductorFanoutTest(AbsorbTestCase):
         consulted = [event for event in events if event["event"] == "consulted"]
         self.assertEqual((consulted[0]["payload"]["by"], consulted[0]["session_id"]), ("absorb:c-001", "consultant-1"))
 
+    def test_once_the_usage_limit_refuses_the_consultant_no_further_question_is_put_to_it(self):
+        for number in range(2):
+            self.fake.script(respond=self.reader(question="Question %d?" % number), role="reader")
+        self.script_readers(count=4)
+        self.fake.script(Envelope(structured_output=sections()), role="synthesizer")
+        self.fake.script(Envelope(api_error_status=429, is_error=True, exit_code=1, session_id="refused",
+                                  errors=["You've hit your session limit · resets 3:45pm (UTC)"]), role="consultant")
+        report = self.absorb(fanout=CONDUCTOR)
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["consultations"], 0)
+        self.assertEqual(len([call for call in self.fake.calls if call.request.role == "consultant"]), 1)
+        self.assertEqual(len([problem for problem in report["problems"] if "usage limit refused the consultant" in problem]), 2)
+
     def test_questions_past_the_limit_are_not_put_to_the_consultant(self):
         (self.project / "harness.json").write_text(json.dumps({"policy": {"consultant": {"max_questions_per_ticket": 1}}}), encoding="utf-8")
         for number in range(2):

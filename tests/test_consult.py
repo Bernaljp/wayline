@@ -185,6 +185,28 @@ class ExchangeTest(ConsultTestCase):
             consult.ask(self.project, SLUG, QUESTION, ticket=7)
         self.assertEqual(self.consulted(), [])
 
+    def test_a_session_the_usage_limit_refused_is_not_resumed_and_says_so(self):
+        self.fake.script(Envelope(api_error_status=429, is_error=True, exit_code=1, session_id="refused",
+                                  errors=["You've hit your session limit · resets 3:45pm (UTC)"]), role="consultant")
+        with self.assertRaises(consult.ConsultError) as raised:
+            consult.ask(self.project, SLUG, QUESTION, ticket=7)
+        self.assertIn("usage limit", str(raised.exception))
+        self.assertEqual([call.kind for call in self.fake.calls], ["launch"])
+        self.assertEqual(self.consulted(), [])
+
+    def test_an_unusable_answer_is_resumed_once_and_the_resumed_answer_is_kept(self):
+        self.fake.script(Envelope(session_id="s", structured_output=answer(locators=[])), role="consultant")
+        self.fake.script(Envelope(session_id="s", structured_output=answer()), role="consultant")
+        report = consult.ask(self.project, SLUG, QUESTION)
+        self.assertEqual([call.kind for call in self.fake.calls], ["launch", "resume"])
+        self.assertIn("locator", self.fake.calls[1].message)
+        self.assertEqual(report["answer"], answer())
+
+    def test_a_promoted_paper_not_yet_read_is_presented_at_the_level_it_was_read_to(self):
+        promote(self.ledger, SLUG, PLANNER_OR_DECIDER, phase="P1")
+        self.ask()
+        self.assertIn("at level 1", self.fake.calls[0].request.prompt)
+
     def test_check_answer_uses_the_schema(self):
         self.assertEqual(consult.check_answer(answer()), [])
         self.assertTrue(consult.check_answer(answer(confidence=2)))
@@ -231,6 +253,17 @@ class LimitTest(ConsultTestCase):
         self.assertIn("5", str(raised.exception))
         self.assertEqual(len(self.fake.calls), 5)
         self.assertEqual(len(self.consulted()), 5)
+
+    def test_a_question_that_finishes_after_the_fifth_was_recorded_is_not_recorded(self):
+        """Two consults of one ticket started at four questions: the count is taken again under the lock."""
+        for _ in range(5):
+            self.ask(ticket=7)
+        with self.assertRaises(consult.ConsultRefused):
+            consult.record_exchange(self.ledger, SLUG, QUESTION, answer(promote_requested=True), "worker:7",
+                                    "late-session", ticket=7, limit=5)
+        self.assertEqual(len(self.consulted()), 5)
+        self.assertEqual(len(self.qa_lines()), 5)
+        self.assertEqual(read_dossier(self.ledger, SLUG)["level"], LEVEL_1)
 
     def test_questions_are_counted_per_ticket(self):
         for _ in range(5):

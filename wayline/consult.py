@@ -31,7 +31,7 @@ from pathlib import Path
 
 from wayline import HARNESS_ROOT, gates, pacing, worker
 from wayline.cli import parse_args
-from wayline.dossier import CONSULTANT_QUESTION, REFS, DossierError, promote, read_dossier
+from wayline.dossier import CONSULTANT_QUESTION, LEVEL_1, LEVEL_2, REFS, DossierError, promote, read_dossier
 from wayline.jsonschema import ValidationError, load_schema, validate
 from wayline.ledger import CONSULTED, LedgerError, ledger_for, now_ts
 from wayline.project import ProjectError, find_project, policy_for
@@ -168,29 +168,47 @@ QA_HEADER = (
 )
 
 
-def record_exchange(project_or_ledger, slug, question, answer, by, session_id=None, ticket=None):
+def _refusal(ticket, asked, limit):
+    return ConsultRefused("ticket %s has asked %d question(s), the most policy.consultant.max_questions_per_ticket (%d) allows; "
+                          "work from what the answers and the context pack say" % (ticket, asked, limit))
+
+
+def record_exchange(project_or_ledger, slug, question, answer, by, session_id=None, ticket=None, limit=None):
     """Append one validated exchange to `qa_log.md`, journal `consulted`, and act on a promotion request.
 
-    Returns the promotion outcome of `dossier.promote`, or None when none was requested.
-    Raises ConsultError for an answer code does not accept, before anything is written.
+    Returns the promotion outcome of `dossier.promote`, or None when none was requested. Raises
+    ConsultError for an answer code does not accept, and ConsultRefused when `ticket` already has
+    `limit` questions recorded, both before anything is written. The count, the records, and the
+    promotion share one hold of the lock, so two consults that finish together cannot both record a
+    sixth question, nor both spend the phase's last level-2 slot.
     """
     problems = check_answer(answer)
     if problems:
         raise ConsultError("the consultant's answer about %s was not usable: %s" % (slug, "; ".join(problems)))
     ledger = ledger_for(project_or_ledger)
     relpath = "%s/%s/%s" % (REFS, slug, QA_LOG)
+    digest = hashlib.sha256(question.encode("utf-8")).hexdigest()
     with ledger.lock():
+        if ticket is not None and limit is not None:
+            asked = questions_asked(ledger, ticket)
+            if asked >= limit:
+                raise _refusal(ticket, asked, limit)
         if not ledger.path(relpath).exists():
             ledger.write_markdown(relpath, QA_HEADER % slug)
         ledger.append_line(relpath, _log_line(now_ts(), by, session_id, question, answer))
         ledger.append_event(CONSULTED, {
-            "slug": slug, "by": by, "question_sha256": hashlib.sha256(question.encode("utf-8")).hexdigest(),
+            "slug": slug, "by": by, "question_sha256": digest,
             "promote_requested": bool(answer["promote_requested"]), "session_id": session_id,
         }, ticket=ticket, session_id=session_id)
-    if not answer["promote_requested"]:
-        return None
-    return promote(ledger, slug, CONSULTANT_QUESTION, ticket=ticket,
-                   detail="question %s" % hashlib.sha256(question.encode("utf-8")).hexdigest()[:12])
+        if not answer["promote_requested"]:
+            return None
+        return promote(ledger, slug, CONSULTANT_QUESTION, ticket=ticket, detail="question %s" % digest[:12])
+
+
+def _read_level(dossier):
+    """The level the dossier has been read to: a promotion to level 2 counts once the read has written `l2`."""
+    level = dossier.get("level", 0)
+    return level if level < LEVEL_2 or dossier.get("l2") else LEVEL_1
 
 
 def ask(project, slug, question, ticket=None, launcher=None, resumer=None, harness_root=None, ledger=None):
@@ -212,9 +230,8 @@ def ask(project, slug, question, ticket=None, launcher=None, resumer=None, harne
     limit = question_limit(policy)
     asked = questions_asked(ledger, ticket) if ticket is not None else None
     if ticket is not None and asked >= limit:
-        raise ConsultRefused("ticket %s has asked %d question(s), the most policy.consultant.max_questions_per_ticket (%d) allows; "
-                             "work from what the answers and the context pack say" % (ticket, asked, limit))
-    request = consult_request(project, slug, question, dossier.get("level", 0), harness_root=harness_root, policy=policy)
+        raise _refusal(ticket, asked, limit)
+    request = consult_request(project, slug, question, _read_level(dossier), harness_root=harness_root, policy=policy)
     launcher = launcher or worker.launch
     resumer = resumer if resumer is not None else (worker.resume if launcher is worker.launch else None)
     try:
@@ -222,7 +239,8 @@ def ask(project, slug, question, ticket=None, launcher=None, resumer=None, harne
     except worker.LaunchError as failure:
         raise ConsultError("the consultant could not be launched: %s" % failure) from None
     problems = check_answer(envelope.structured_output) if envelope.valid else (envelope.errors or ["no structured output"])
-    if problems and pacing.hit_limit(envelope, worker.stderr_of(envelope), model=request.model) is None:  # a refused session is never resumed
+    if problems:
+        _raise_on_limit(envelope, request)  # a refused session is never resumed
         resumed = _resume_once(request, envelope, problems, resumer)
         if isinstance(resumed, worker.Envelope):
             envelope, problems = resumed, []
@@ -231,9 +249,18 @@ def ask(project, slug, question, ticket=None, launcher=None, resumer=None, harne
     if problems:
         raise ConsultError("the consultant returned no usable answer about %s: %s" % (slug, "; ".join(problems)))
     by = "worker:%s" % ticket if ticket is not None else CLI_BY
-    promotion = record_exchange(ledger, slug, question, envelope.structured_output, by, envelope.session_id, ticket)
+    promotion = record_exchange(ledger, slug, question, envelope.structured_output, by, envelope.session_id, ticket,
+                                limit=limit if ticket is not None else None)
     return {"slug": slug, "answer": envelope.structured_output, "session_id": envelope.session_id,
             "promotion": promotion, "asked": None if ticket is None else asked + 1, "limit": limit, "ticket": ticket}
+
+
+def _raise_on_limit(envelope, request):
+    """Say so plainly when a usage window refused the consultant, so the asker waits rather than rephrases."""
+    limit = pacing.hit_limit(envelope, worker.stderr_of(envelope), model=request.model)
+    if limit is not None:
+        window = "Fable's weekly window" if limit.model == pacing.FABLE else "the %s window" % limit.window
+        raise ConsultError("the usage limit refused the consultant (%s); ask again once the window allows" % window)
 
 
 def _resume_once(request, envelope, problems, resumer):

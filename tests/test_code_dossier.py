@@ -306,9 +306,10 @@ class CheckPickTest(unittest.TestCase):
         with unittest.mock.patch("wayline.code_dossier.subprocess.run",
                                  side_effect=lambda argv, **options: subprocess.CompletedProcess(argv, 1, "", "no network")):
             outcome = _run_check(Path("/venv/bin/python3"), self.dest, relpath, "test", self.dest)
-        self.assertEqual(outcome["command"], "pip install pytest")
+        self.assertEqual(outcome["command"], "python -m pytest -q -p no:cacheprovider pkg/tests/test_p.py")
         self.assertEqual(outcome["result"].returncode, 1)
-        self.assertEqual(outcome["setup"], [])
+        self.assertIn("not run", outcome["result"].stderr)
+        self.assertIn("no network", outcome["setup"][0])
 
 
 if __name__ == "__main__":  # pragma: no cover

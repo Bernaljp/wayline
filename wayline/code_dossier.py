@@ -491,6 +491,7 @@ def _run_check(venv_python, dest, checked_path, kind, work):
     venv (unless the venv already sees one) and is run as `python -m pytest -q <file>`.
     """
     if kind == "test" and _needs_pytest(dest / checked_path, dest):
+        command = "python -m pytest -q -p no:cacheprovider %s" % checked_path
         setup = []
         present = subprocess.run([str(venv_python), "-c", "import pytest"], capture_output=True, text=True)
         if present.returncode != 0:
@@ -499,8 +500,8 @@ def _run_check(venv_python, dest, checked_path, kind, work):
             )
             setup.append(_transcript(PYTEST_INSTALL, installed))
             if installed.returncode != 0:
-                return {"command": PYTEST_INSTALL, "result": installed, "setup": setup[:-1]}
-        command = "python -m pytest -q -p no:cacheprovider %s" % checked_path
+                skipped = subprocess.CompletedProcess(command, installed.returncode, "", "not run: pytest could not be installed\n")
+                return {"command": command, "result": skipped, "setup": setup}
         result = subprocess.run([str(venv_python), "-m", "pytest", "-q", "-p", "no:cacheprovider", str(dest / checked_path)],
                                 capture_output=True, text=True, cwd=str(dest))
         return {"command": command, "result": result, "setup": setup}
