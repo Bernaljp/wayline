@@ -13,24 +13,31 @@ runs. The entries below it, down to v0.1.0, are everything else this tag carries
 
 A design pass over the dashboard (ticket 58, M5 Overnight and report), answering the owner's verdict
 from the M1 demo: the page "is not good looking", and an empty table drew its header row across the
-full width with nothing under it.
+full width with nothing under it. The owner looked at it through the tunnel four times and accepted
+the last; `docs/verification/m5.md` records each look in the owner's words, with the renders before
+and after.
 
-- `dashboard/style.css` is rewritten around one type scale, one spacing scale, and one set of color
-  tokens, declared for both themes together. The page reads inside a measure of 1180 px, panels are
-  cards, and tables are sized to their content rather than stretched, with the scroll on the wrapper.
-- Every table and list in `dashboard/app.js` is drawn through `tableOrNone` or `listOrNone`, each
-  taking the sentence to show when there is nothing. Loading and error states are drawn the same way,
-  inside the panel they belong to. A value too long for its cell keeps the whole of itself in the
-  cell's title.
-- The graph is restyled from the stylesheet, by matching the fills `wayline.dag.svg` writes, so
-  `graph.svg` answers byte for byte as before. A test holds the two together in both directions: a
-  status added to `dag.STATUS_COLOR` without a rule in the stylesheet fails, and so does a `dag` that
-  stops writing those fills as attributes on the rect.
+- One look, "console", chosen by the owner of three: monospace for the interface, square corners,
+  hairlines instead of shadows, and tight rows, from one type scale, one spacing scale, and one set of
+  color tokens declared for both themes. The page follows the system's theme until the owner picks day
+  or night in the header.
+- Every table and list says in words when it is empty, through `tableOrNone` and `listOrNone`, and
+  every panel says in its own place when it is reading and when a read failed. Tables are sized to
+  their content.
+- An index of the sections down the left; every section folds from its heading; the overview's parts
+  are ruled off and its tables framed.
+- The graph section is Tickets, with two views. The board puts each ticket in a column for where it
+  stands, the frontier and the decisions waiting on the owner taken from the server rather than worked
+  out again. The graph draws the server's layout again as numbered circles, with a card on hover or
+  focus. Pointing at a ticket on either view marks what it waits on and what waits on it.
+- A decision ticket can be answered from its own page with the decisions panel's own form, and the
+  decisions panel follows the tickets.
 - The page carries its own icon as an inline `data:` URI: the browser asked for `/favicon.ico` on
   every load and logged the 404 as a console error.
 - Nothing under `wayline/` changed: the endpoints, the token rule, the read-only guarantees, the
-  sanitize path, and the vendored files and their digests are as they were. `docs/verification/m5.md`
-  records the renders, before and after, with what changed in each view.
+  sanitize path, and the vendored files and their digests are as they were. The graph's colors are
+  applied in the browser by matching the fills `wayline.dag.svg` writes, and a test holds the two
+  together in both directions.
 
 The M1 demo, live (ticket 15, M1 Frontier and windows).
 

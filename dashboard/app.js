@@ -29,9 +29,12 @@ const state = {
   since: null, // null means "the tail has not read this project yet": ask by line count, not offset
 
   tickets: [], // every ticket's frontmatter, for the board, the graph, and the card a node shows
-  frontier: [], // the ids the overview says are ready, for the board's column of them
   ticketsFor: null, // the project `tickets` was read from, so another project's titles are never drawn
-  graphSource: null, // the SVG the server last sent, redrawn whenever the titles change
+  ticketsFailure: null, // { project, message } of the last read of `tickets` that failed, for the board to say
+  frontier: [], // the overview's frontier, as ids, for the board's column of it
+  frontierFor: null, // the project `frontier` was read from
+  frontierFailure: null, // { project, message } of the last read of the overview that failed
+  graphSource: null, // the SVG the server last sent, redrawn whenever the titles change or the graph is shown
   openSignature: null, // the open decision tickets last drawn, so a poll that changed nothing leaves their forms alone
   openDecisions: { project: null, list: [] }, // the same list, for the ticket page of one of them
   ticketDecisionSignature: null, // what the ticket page's own answer form was last drawn from
@@ -228,8 +231,12 @@ function select(id) {
   delete document.getElementById('ticket-body').dataset.ticket;
   state.tickets = [];
   state.ticketsFor = null;
-  state.graphSource = null;
+  state.ticketsFailure = null;
   state.frontier = [];
+  state.frontierFor = null;
+  state.frontierFailure = null;
+  state.graphSource = null;
+  hideNodeCard();
   renderBoard();
   replace(document.getElementById('overview-body'), [loadingState('reading the ledger')]);
   replace(document.getElementById('graph-body'), [loadingState('drawing the graph')]);
@@ -256,18 +263,26 @@ function select(id) {
 // --- the overview -------------------------------------------------------------------------------
 
 async function loadOverview() {
-  if (!state.project) return;
+  const project = state.project;
+  if (!project) return;
   // The render is inside the try with the fetch: a panel that silently keeps saying "loading"
   // tells the owner nothing, so whatever went wrong is shown in its place.
   try {
-    const view = await get(`/api/projects/${encodeURIComponent(state.project)}/overview`);
-    if (view) renderOverview(view);
+    const view = await get(`/api/projects/${encodeURIComponent(project)}/overview`);
+    // A tab switched while this poll was out: the view is another project's.
+    if (!view || project !== state.project) return;
+    state.frontierFailure = null;
+    renderOverview(view, project);
   } catch (failure) {
+    if (project !== state.project) return;
     replace(document.getElementById('overview-body'), [errorState(failure)]);
+    // The board's frontier column is this read, so the board says it failed too.
+    state.frontierFailure = { project, message: String(failure.message || failure) };
+    renderBoard();
   }
 }
 
-function renderOverview(view) {
+function renderOverview(view, project) {
   const window_ = view.window || {};
   const goal = view.goal;
   const resources = view.resources || {};
@@ -301,10 +316,11 @@ function renderOverview(view) {
   // The four counts of a wave, side by side while they fit: none of them is stretched across the
   // page to hold four short columns, and each says in words what a count of zero means.
   const frontierRows = (view.frontier || []).map((entry) => [entry.id, entry.kind, entry.difficulty, entry.role, entry.title]);
-  // The board's "ready" column is this list: the conductor's frontier, not a second guess at it.
+  // The board's frontier column is this list, the conductor's own, rather than a second guess at it.
   const frontier = (view.frontier || []).map((entry) => String(entry.id));
-  if (frontier.join(',') !== (state.frontier || []).join(',')) {
+  if (state.frontierFor !== project || frontier.join(',') !== state.frontier.join(',')) {
     state.frontier = frontier;
+    state.frontierFor = project;
     renderBoard();
   }
   const runningRows = (view.running || []).map((entry) => [entry.id, entry.kind, entry.attempt, entry.role, entry.title]);
@@ -350,6 +366,9 @@ function showGraph() {
   stopLog();
   state.ticket = null;
   buildIndex();
+  // The graph may have changed while the ticket page covered it, and a hidden drawing cannot be
+  // measured, so it is drawn now that it can be seen.
+  drawGraph();
 }
 
 function showTicket() {
@@ -368,6 +387,7 @@ async function loadGraph() {
     // A project with no tickets answers with an empty canvas, which draws as nothing at all: the
     // panel says so instead of standing blank.
     if (EMPTY_CANVAS.test(svg)) {
+      state.graphSource = null;
       replace(document.getElementById('graph-body'), [emptyState('no ticket yet: the graph is drawn once the first one is written')]);
       return;
     }
@@ -391,32 +411,51 @@ async function loadTickets() {
   try {
     const view = await get(`/api/projects/${encodeURIComponent(project)}/tickets`, 'tickets');
     if (!view || project !== state.project) return;
-    const was = titleSignature(state.tickets);
+    // A list for a project that had none drawn yet (an empty one included), or one whose tickets
+    // moved, is drawn at once rather than at the graph's next poll: the board and the graph are one
+    // picture of it and must agree.
+    const changed = state.ticketsFor !== project || ticketsSignature(view) !== ticketsSignature(state.tickets);
     state.tickets = view;
     state.ticketsFor = project;
-    // A title that changed, or a list that has only now arrived, is drawn on the nodes at once
-    // rather than at the graph's next poll: the two are one picture and must agree.
-    if (titleSignature(view) !== was) {
+    state.ticketsFailure = null;
+    if (changed) {
       drawGraph();
       renderBoard();
     }
   } catch (failure) {
-    // The graph is drawn either way; only the titles and the card would be missing, so this is not
-    // the panel's error to report.
+    if (project !== state.project) return;
+    // The board is this read, so the board says it failed; the graph is drawn either way.
+    state.ticketsFailure = { project, message: String(failure.message || failure) };
+    renderBoard();
   }
 }
 
-function titleSignature(tickets) {
+// What the board and the graph draw from a ticket: where it stands, what it is called, and what it waits on.
+function ticketsSignature(tickets) {
   return (tickets || []).map((entry) => `${entry.id}:${entry.status}:${entry.title}:${(entry.blocked_by || []).join(',')}`).join('|');
 }
 
-// The titles belong to this project, or there are none to draw yet.
+// The tickets belong to this project, or there are none to draw yet.
 function ticketsHere() {
   return state.ticketsFor === state.project ? (state.tickets || []) : [];
 }
 
+function ticketById(id) {
+  return ticketsHere().find((entry) => String(entry.id) === String(id));
+}
+
+// The id a graph node's link names, from its `#ticket/<id>`.
+function ticketIdOf(link) {
+  return link.getAttribute('href').slice('#ticket/'.length);
+}
+
+// A space token of the stylesheet, in pixels, for the few distances the script has to work out itself.
+function space(step) {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(`--space-${step}`)) || 0;
+}
+
 function nodeCard(id) {
-  const ticket = ticketsHere().find((entry) => String(entry.id) === String(id));
+  const ticket = ticketById(id);
   const card = document.getElementById('node-card');
   if (!ticket) {
     replace(card, [el('p', { class: 'node-title', text: `ticket ${id}` })]);
@@ -436,44 +475,51 @@ function nodeCard(id) {
 
 // The node the card is open for, so that a scroll moves the card with it rather than dropping it:
 // scrolling to read a long graph is not the same as leaving the node.
-let carded = null;
+let cardFor = null;
 
 function placeNodeCard(link) {
   const card = document.getElementById('node-card');
   // Beside the node, and inside the window: a card that runs off the right edge is worse than one
   // that sits to the left of what it describes.
+  const gap = space(3);
   const at = link.getBoundingClientRect();
-  const left = Math.min(at.right + 12, window.innerWidth - card.offsetWidth - 12);
-  card.style.left = `${Math.max(12, left)}px`;
-  card.style.top = `${Math.max(12, at.top + window.scrollY - 4)}px`;
+  const left = Math.min(at.right + gap, window.innerWidth - card.offsetWidth - gap);
+  card.style.left = `${Math.max(gap, left)}px`;
+  card.style.top = `${Math.max(gap, at.top + window.scrollY - space(1))}px`;
 }
 
 function showNodeCard(link) {
-  const card = nodeCard(link.getAttribute('href').slice('#ticket/'.length));
+  const card = nodeCard(ticketIdOf(link));
   card.hidden = false;
-  carded = link;
+  cardFor = link;
   placeNodeCard(link);
 }
 
 function hideNodeCard() {
   document.getElementById('node-card').hidden = true;
-  carded = null;
+  cardFor = null;
 }
 
 function followNodeCard() {
-  if (!carded) return;
+  if (!cardFor) return;
   // The graph is redrawn on its own poll, which replaces the node the card was opened from.
-  if (!carded.isConnected) hideNodeCard();
-  else placeNodeCard(carded);
+  if (!cardFor.isConnected) hideNodeCard();
+  else placeNodeCard(cardFor);
 }
 
 // `dag.svg` sizes its canvas by the grid it lays out on, which leaves the gap below the last row
 // inside the picture. The drawing is measured here and the canvas trimmed to it, so the panel is
 // the height of the graph rather than the height of the grid.
 function trimCanvas(svg) {
-  const drawn = svg.getBBox ? svg.getBBox() : null;
+  let drawn = null;
+  try {
+    drawn = svg.getBBox();
+  } catch (failure) {
+    // A drawing that is not laid out has no box in some browsers; it keeps the canvas it came with.
+    return;
+  }
   if (!drawn || !drawn.width || !drawn.height) return;
-  const pad = 10;
+  const pad = space(2);
   svg.setAttribute('viewBox', `${drawn.x - pad} ${drawn.y - pad} ${drawn.width + pad * 2} ${drawn.height + pad * 2}`);
 }
 
@@ -525,7 +571,7 @@ function redrawGraph(source) {
   if (!grid.w || !grid.h) return null;
 
   // Where each node lands in the new grid, by the column and row the old one was in.
-  const place = (x, y) => ({
+  const landing = (x, y) => ({
     x: (grid.px ? Math.round(x / grid.px) : 0) * (NODE.w + NODE.gx),
     y: (grid.py ? Math.round(y / grid.py) : 0) * (NODE.h + NODE.gy),
   });
@@ -548,15 +594,15 @@ function redrawGraph(source) {
   for (const link of source.querySelectorAll('a')) {
     const rect = link.querySelector('rect');
     if (!rect) continue;
-    const spot = place(Number(rect.getAttribute('x')), Number(rect.getAttribute('y')));
-    at.set(`${spot.x},${spot.y}`, link.getAttribute('href').slice('#ticket/'.length));
+    const spot = landing(Number(rect.getAttribute('x')), Number(rect.getAttribute('y')));
+    at.set(`${spot.x},${spot.y}`, ticketIdOf(link));
   }
 
   // The edges first, so a node is never drawn under one of its own lines. An edge runs from the
   // bottom of the ticket that blocks to the top of the one that waits.
   for (const line of source.querySelectorAll('line')) {
-    const from = place(Number(line.getAttribute('x1')) - grid.w / 2, Number(line.getAttribute('y1')) - grid.h);
-    const to = place(Number(line.getAttribute('x2')) - grid.w / 2, Number(line.getAttribute('y2')));
+    const from = landing(Number(line.getAttribute('x1')) - grid.w / 2, Number(line.getAttribute('y1')) - grid.h);
+    const to = landing(Number(line.getAttribute('x2')) - grid.w / 2, Number(line.getAttribute('y2')));
     const x1 = from.x + NODE.w / 2;
     const y1 = from.y + NODE.h / 2 + NODE.r;
     const x2 = to.x + NODE.w / 2;
@@ -574,9 +620,9 @@ function redrawGraph(source) {
   for (const link of source.querySelectorAll('a')) {
     const rect = link.querySelector('rect');
     if (!rect) continue;
-    const id = link.getAttribute('href').slice('#ticket/'.length);
-    const ticket = ticketsHere().find((entry) => String(entry.id) === String(id)) || {};
-    const spot = place(Number(rect.getAttribute('x')), Number(rect.getAttribute('y')));
+    const id = ticketIdOf(link);
+    const ticket = ticketById(id) || {};
+    const spot = landing(Number(rect.getAttribute('x')), Number(rect.getAttribute('y')));
     const cx = spot.x + NODE.w / 2;
     const cy = spot.y + NODE.h / 2;
     const node = svgEl('a', { href: link.getAttribute('href'), class: 'node', 'data-id': id,
@@ -586,7 +632,7 @@ function redrawGraph(source) {
       // The server's own choice of fill, carried over: the stylesheet maps it to the palette.
       fill: rect.getAttribute('fill'),
       // The ring repeats where the ticket stands, so the fill is not carrying it alone.
-      class: `ring s-stroke-${ticket.status || 'unknown'}`,
+      class: `ring s-${ticket.status || 'unknown'}`,
     }));
     const number = svgEl('text', { class: 'node-id', x: cx, y: cy + 4, 'text-anchor': 'middle' });
     number.textContent = id;
@@ -604,10 +650,9 @@ function redrawGraph(source) {
 // the ones waiting on it, and dims the rest.
 
 function relationsOf(id) {
-  const tickets = ticketsHere();
-  const self = tickets.find((entry) => String(entry.id) === String(id));
+  const self = ticketById(id);
   const waitsOn = new Set(((self && self.blocked_by) || []).map(String));
-  const waitedOnBy = new Set(tickets.filter((entry) => (entry.blocked_by || []).map(String).includes(String(id))).map((entry) => String(entry.id)));
+  const waitedOnBy = new Set(ticketsHere().filter((entry) => (entry.blocked_by || []).map(String).includes(String(id))).map((entry) => String(entry.id)));
   return { waitsOn, waitedOnBy };
 }
 
@@ -663,21 +708,24 @@ function wireRelations(container, selector, entered, left) {
 
 // --- the board ---------------------------------------------------------------------------------------
 //
-// Every ticket as a card, in a column for where it stands. "Ready" is the server's frontier, read
-// from the overview, rather than worked out again here: what makes an open ticket launchable is the
-// conductor's rule, and it lives in one place.
+// Every ticket as a card, in a column for where it stands. Two of the columns are the server's
+// answers rather than rules worked out again here: the frontier is the overview's (what puts an open
+// ticket on it is the conductor's rule, and it lives in one place), and a decision ticket waiting on
+// the owner is the decisions view's. The rest is the ticket's own status.
 
 const COLUMNS = [
-  ['waiting', (ticket, ready) => ticket.status === 'open' && !ready.has(String(ticket.id))],
-  ['ready', (ticket, ready) => ready.has(String(ticket.id))],
+  ['needs you', (ticket, known) => known.forOwner.has(String(ticket.id)) || ['needs_human', 'failed', 'blocked'].includes(ticket.status)],
+  ['frontier', (ticket, known) => known.frontier.has(String(ticket.id))],
+  ['waiting', (ticket) => ticket.status === 'open'],
   ['running', (ticket) => ticket.status === 'running'],
-  ['needs you', (ticket) => ['needs_human', 'failed', 'blocked'].includes(ticket.status)],
   ['done', (ticket) => ['done', 'accepted'].includes(ticket.status)],
   ['parked', (ticket) => ticket.status === 'parked'],
 ];
+// The order the columns are read in, left to right, which is not the order they are tested in.
+const COLUMN_ORDER = ['waiting', 'frontier', 'running', 'needs you', 'done', 'parked'];
 
-function columnOf(ticket, ready) {
-  const found = COLUMNS.find(([, belongs]) => belongs(ticket, ready));
+function columnOf(ticket, known) {
+  const found = COLUMNS.find(([, belongs]) => belongs(ticket, known));
   // A status the board has no column for is still a ticket the owner should see: it waits.
   return found ? found[0] : 'waiting';
 }
@@ -685,19 +733,28 @@ function columnOf(ticket, ready) {
 function renderBoard() {
   const body = document.getElementById('board-body');
   if (!body) return;
-  const tickets = ticketsHere();
-  if (state.ticketsFor !== state.project) {
-    replace(body, [loadingState('reading the tickets')]);
+  const project = state.project;
+  const failed = [state.ticketsFailure, state.frontierFailure].find((failure) => failure && failure.project === project);
+  if (state.ticketsFor !== project || state.frontierFor !== project) {
+    // What is not read yet is said as such; what failed to be read is said as that.
+    replace(body, [failed ? errorState(failed.message) : loadingState('reading the tickets and the frontier')]);
     return;
   }
+  const tickets = ticketsHere();
   if (!tickets.length) {
     replace(body, [emptyState('no ticket yet: the board fills once the first one is written')]);
     return;
   }
-  const ready = new Set((state.frontier || []).map(String));
-  const columns = COLUMNS.map(([name]) => {
-    const cards = tickets.filter((ticket) => columnOf(ticket, ready) === name).map((ticket) => {
-      const card = el('button', { type: 'button', class: `card s-edge-${ticket.status || 'unknown'}`, 'data-id': String(ticket.id),
+  const { project: decisionsFor, list } = state.openDecisions;
+  const known = {
+    frontier: new Set(state.frontier),
+    forOwner: new Set(decisionsFor === project ? list.filter((entry) => entry.awaits === 'owner').map((entry) => String(entry.id)) : []),
+  };
+  const placed = new Map(COLUMN_ORDER.map((name) => [name, []]));
+  for (const ticket of tickets) placed.get(columnOf(ticket, known)).push(ticket);
+  const columns = COLUMN_ORDER.map((name) => {
+    const cards = placed.get(name).map((ticket) => {
+      const card = el('button', { type: 'button', class: `card s-${ticket.status || 'unknown'}`, 'data-id': String(ticket.id),
                                   'aria-label': `ticket ${ticket.id}: ${ticket.title || ''}, ${ticket.status || ''}` }, [
         el('span', { class: 'card-top' }, [
           el('span', { class: 'card-id', text: `#${ticket.id}` }),
@@ -705,7 +762,9 @@ function renderBoard() {
         ]),
         el('span', { class: 'card-title', text: ticket.title || '', title: ticket.title || null }),
         el('span', { class: 'card-foot', text: [ticket.role, ticket.status].filter(Boolean).join(' \u00b7 ') }),
-        el('span', { class: 'card-rel', 'aria-live': 'polite' }),
+        // Which way a dependency runs, while a related ticket is pointed at. Not a live region: one
+        // pointer move would have a screen reader read out every card it touches.
+        el('span', { class: 'card-rel' }),
       ]);
       card.addEventListener('click', () => openTicket(String(ticket.id)));
       return card;
@@ -720,35 +779,50 @@ function renderBoard() {
 
 // --- board or graph --------------------------------------------------------------------------------
 
-const VIEWS = [['board', 'board'], ['graph', 'graph']];
+const VIEWS = ['board', 'graph'];
 
 function setTicketView(choice) {
-  const view = VIEWS.some(([name]) => name === choice) ? choice : 'board';
+  const view = VIEWS.includes(choice) ? choice : 'board';
   document.getElementById('board-body').hidden = view !== 'board';
   document.getElementById('graph-body').hidden = view !== 'graph';
-  for (const button of document.querySelectorAll('#ticket-view button')) {
-    button.setAttribute('aria-current', String(button.dataset.view === view));
-  }
+  markChoice(document.getElementById('ticket-view'), view);
   remember(STORE.view, view);
-  // A drawing is measured to trim its canvas, and a hidden one measures as nothing.
   if (view === 'graph') drawGraph();
   else renderBoard();
 }
 
 function wireTicketView() {
-  replace(document.getElementById('ticket-view'), VIEWS.map(([name, label]) => {
-    const button = el('button', { type: 'button', class: 'action', text: label, 'data-view': name });
-    button.addEventListener('click', () => setTicketView(name));
-    return button;
-  }));
+  segmented(document.getElementById('ticket-view'), VIEWS.map((name) => ({ name, label: name })), setTicketView);
   wireRelations(document.getElementById('board-body'), '.card[data-id]');
   setTicketView(remembered(STORE.view) || 'board');
 }
 
+// A set of buttons of which one is chosen, the way the header's theme and the tickets' view are.
+function segmented(group, choices, pick) {
+  replace(group, choices.map(({ name, label, title }) => {
+    const button = el('button', { type: 'button', class: 'action', text: label, 'data-choice': name, title: title || null });
+    button.addEventListener('click', () => pick(name));
+    return button;
+  }));
+}
+
+function markChoice(group, chosen) {
+  for (const button of group.querySelectorAll('button[data-choice]')) {
+    button.setAttribute('aria-current', String(button.dataset.choice === chosen));
+  }
+}
+
+// The graph can be seen: its view is chosen, the ticket page is not over it, and it is not folded.
+function graphShown() {
+  return document.getElementById('graph-body').getClientRects().length > 0;
+}
+
 // The server's SVG, drawn again at a readable size when it can be read back. Its own drawing stands
-// if it cannot, so the graph is never lost to a shape this did not expect.
+// if it cannot, so the graph is never lost to a shape this did not expect. A drawing is measured to
+// trim its canvas and a hidden one measures as nothing, so a graph that cannot be seen is left until
+// it can: choosing the graph view, coming back from a ticket, and unfolding the section all draw it.
 function drawGraph() {
-  if (!state.graphSource) return;
+  if (!state.graphSource || !graphShown()) return;
   const body = document.getElementById('graph-body');
   body.innerHTML = state.graphSource;
   hideNodeCard();
@@ -756,10 +830,10 @@ function drawGraph() {
   if (!source) return;
   let shown = source;
   try {
-    const again = redrawGraph(source);
-    if (again) {
-      replace(body, [again]);
-      shown = again;
+    const redrawn = redrawGraph(source);
+    if (redrawn) {
+      replace(body, [redrawn]);
+      shown = redrawn;
     }
   } catch (failure) {
     body.innerHTML = state.graphSource;
@@ -784,7 +858,7 @@ document.getElementById('graph-body').addEventListener('click', (event) => {
   const link = event.target.closest('a[href^="#ticket/"]');
   if (!link) return;
   event.preventDefault();
-  openTicket(link.getAttribute('href').slice('#ticket/'.length));
+  openTicket(ticketIdOf(link));
 });
 
 // --- the ticket page ------------------------------------------------------------------------------
@@ -849,14 +923,14 @@ function renderTicket(view) {
 // the draft the owner has typed. The form is drawn again only when the decision itself changed, so
 // a poll never takes it out from under the cursor.
 function renderTicketDecision() {
-  const place = document.getElementById('ticket-decision');
-  if (!place || state.ticket === null || document.getElementById('ticket').hidden) return;
+  const slot = document.getElementById('ticket-decision');
+  if (!slot || state.ticket === null || document.getElementById('ticket').hidden) return;
   const { project, list } = state.openDecisions;
   const decision = project === state.project ? list.find((entry) => String(entry.id) === String(state.ticket)) : null;
   const signature = JSON.stringify([project, state.ticket, decision || null]);
   if (signature === state.ticketDecisionSignature) return;
   state.ticketDecisionSignature = signature;
-  replace(place, decision ? [el('hr', { class: 'rule' }), subhead('decision'), decisionCard(decision, project)] : []);
+  replace(slot, decision ? [el('hr', { class: 'rule' }), subhead('decision'), decisionCard(decision, project)] : []);
 }
 
 // `short` cuts a result's value to what the row holds; the whole of it stays in the field's title.
@@ -1321,8 +1395,11 @@ async function loadDecisions() {
 function renderDecisions(view, project) {
   renderControls(view.controls || {});
   const open = view.open || [];
+  const before = JSON.stringify(state.openDecisions);
   state.openDecisions = { project, list: open };
   renderTicketDecision();
+  // A decision waiting on the owner sits in the board's "needs you".
+  if (JSON.stringify(state.openDecisions) !== before) renderBoard();
   // Redrawn only when it changed: a redraw replaces the form under the owner's cursor.
   const signature = JSON.stringify([project, open]);
   if (signature !== state.openSignature) {
@@ -1384,19 +1461,30 @@ function decisionCard(decision, project) {
   }
   const form = el('form', { class: 'answer-form' });
   for (const option of decision.options || []) {
-    const input = el('input', { type: 'radio', name: `choice-${decision.id}`, value: option });
+    const input = el('input', { type: 'radio', name: `choice-${decision.id}`, value: option, 'data-draft': key, 'data-field': 'choice' });
     input.checked = draft.choice === option;
-    input.addEventListener('change', () => { draft.choice = option; });
+    input.addEventListener('change', () => {
+      draft.choice = option;
+      showDraft(key, 'choice', input);
+    });
     form.appendChild(el('label', { class: 'option' }, [input, document.createTextNode(` ${option}${option === decision.recommended ? ' (recommended)' : ''}`)]));
   }
   const text = el('textarea', {
     rows: '2', placeholder: (decision.options || []).length ? 'or an answer in your own words' : 'the answer', 'aria-label': `the answer to ticket ${decision.id}`,
+    'data-draft': key, 'data-field': 'text',
   });
   text.value = draft.text;
-  text.addEventListener('input', () => { draft.text = text.value; });
-  const rationale = el('textarea', { rows: '2', placeholder: 'why (optional; journaled with the answer)', 'aria-label': `why, for ticket ${decision.id}` });
+  text.addEventListener('input', () => {
+    draft.text = text.value;
+    showDraft(key, 'text', text);
+  });
+  const rationale = el('textarea', { rows: '2', placeholder: 'why (optional; journaled with the answer)', 'aria-label': `why, for ticket ${decision.id}`,
+                                     'data-draft': key, 'data-field': 'rationale' });
   rationale.value = draft.rationale;
-  rationale.addEventListener('input', () => { draft.rationale = rationale.value; });
+  rationale.addEventListener('input', () => {
+    draft.rationale = rationale.value;
+    showDraft(key, 'rationale', rationale);
+  });
   const submit = el('button', { type: 'submit', class: 'action primary', text: `answer ticket ${decision.id}` });
   submit.disabled = !TOKEN;
   form.append(text, rationale, submit);
@@ -1418,6 +1506,16 @@ function decisionCard(decision, project) {
   });
   card.appendChild(form);
   return card;
+}
+
+// A decision can be on the page twice (the decisions panel, and its own ticket page), and both forms
+// send the one draft, so what is typed in one is shown in the other as it is typed.
+function showDraft(key, field, typedIn) {
+  for (const other of document.querySelectorAll('[data-draft][data-field]')) {
+    if (other === typedIn || other.dataset.draft !== key || other.dataset.field !== field) continue;
+    if (other.type === 'radio') other.checked = other.value === drafts[key].choice;
+    else other.value = drafts[key][field];
+  }
 }
 
 // --- the intake drop zone (ticket 35) ----------------------------------------------------------
@@ -1499,19 +1597,13 @@ function setTheme(choice) {
   if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', theme);
   remember(STORE.theme, theme);
-  for (const button of document.querySelectorAll('#theme button')) {
-    button.setAttribute('aria-current', String(button.dataset.themeChoice === theme));
-  }
+  markChoice(document.getElementById('theme'), theme);
 }
 
 function wireTheme() {
-  const group = document.getElementById('theme');
-  replace(group, THEMES.map(([name, label]) => {
-    const button = el('button', { type: 'button', class: 'action', text: label, 'data-theme-choice': name,
-                                  title: name === 'auto' ? 'follow the system' : `always ${label}` });
-    button.addEventListener('click', () => setTheme(name));
-    return button;
-  }));
+  segmented(document.getElementById('theme'), THEMES.map(([name, label]) => ({
+    name, label, title: name === 'auto' ? 'follow the system' : `always ${label}`,
+  })), setTheme);
   setTheme(remembered(STORE.theme) || 'auto');
 }
 
@@ -1525,21 +1617,32 @@ function fold(section, folded) {
   node.classList.toggle('folded', folded);
   const button = node.querySelector('button.fold');
   if (button) button.setAttribute('aria-expanded', String(!folded));
+  // A graph unfolded can be measured again.
+  if (!folded && section === 'graph') drawGraph();
 }
 
+// Fold or open a section and remember which it is.
+function setFolded(section, folded) {
+  fold(section, folded);
+  const now = foldedNow();
+  if (folded) now.add(section);
+  else now.delete(section);
+  remember(STORE.folded, [...now].join(','));
+}
+
+// Every section's heading gets the button that folds it, made here from the page's own sections, as
+// the index is, so a section added to the page folds without a second edit.
 function wireFolds() {
   const folded = foldedNow();
-  for (const button of document.querySelectorAll('button.fold')) {
-    const section = button.dataset.folds;
-    fold(section, folded.has(section));
-    button.addEventListener('click', () => {
-      const open = document.getElementById(section).classList.contains('folded');
-      fold(section, !open);
-      const now = foldedNow();
-      if (open) now.delete(section);
-      else now.add(section);
-      remember(STORE.folded, [...now].join(','));
-    });
+  for (const section of document.querySelectorAll('main > section')) {
+    const head = section.querySelector('.view-head');
+    const heading = section.querySelector('h2');
+    if (!head) continue;
+    const button = el('button', { type: 'button', class: 'fold', 'aria-controls': section.id,
+                                  'aria-label': `fold ${heading ? heading.textContent.toLowerCase() : section.id}` });
+    button.addEventListener('click', () => setFolded(section.id, !section.classList.contains('folded')));
+    head.prepend(button);
+    fold(section.id, folded.has(section.id));
   }
 }
 
@@ -1572,14 +1675,9 @@ function buildIndex() {
 function jumpTo(id) {
   const section = document.getElementById(id);
   if (!section || section.hidden) return;
-  if (section.classList.contains('folded')) {
-    fold(id, false);
-    const now = foldedNow();
-    now.delete(id);
-    remember(STORE.folded, [...now].join(','));
-  }
-  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  section.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+  if (section.classList.contains('folded')) setFolded(id, false);
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  section.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
   // Where the keyboard is follows where the eye was sent.
   const heading = section.querySelector('h2');
   if (heading) {
@@ -1590,7 +1688,7 @@ function jumpTo(id) {
 
 // The section being read is the last one whose top has passed under the header.
 function markCurrent() {
-  const line = headerHeight() + 24;
+  const line = headerHeight() + space(5);
   let current = null;
   for (const section of sectionsShown()) {
     if (section.getBoundingClientRect().top <= line) current = section.id;
@@ -1624,8 +1722,10 @@ function wireIndex() {
       markCurrent();
     });
   }, { passive: true });
-  window.addEventListener('resize', measureHeader);
+  // The header's own size is what matters, so it is watched where the browser can; a window resize is
+  // the nearest thing where it cannot.
   if (window.ResizeObserver) new ResizeObserver(measureHeader).observe(document.querySelector('header'));
+  else window.addEventListener('resize', measureHeader);
 }
 
 // --- start ---------------------------------------------------------------------------------------

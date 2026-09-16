@@ -5,24 +5,27 @@
    the interface, square corners, hairlines instead of shadows, and tight rows.
 
    One type scale, one spacing scale, one set of colors, declared as tokens here and used by name
-   everywhere below. Both themes are written together so a color that reads in one reads in the
-   other. The fonts are the ones the laptop already has: a web font would be a fetch.
+   everywhere below. Every margin, gap, and padding is a space token; the one exception is the -1px
+   that lets two neighbors share a hairline instead of doubling it. Both themes are written together
+   so a color that reads in one reads in the other. The fonts are the ones the laptop already has: a
+   web font would be a fetch.
 
-   The parts, in order: tokens, the page frame, the header, panels and their headings, tables, the
-   empty, loading, and error states, fields, status, the graph, the tails, the actions, the
-   decisions, outputs and intake, markdown, and the narrow width. */
+   The parts, in order: tokens, the page frame, the header, the index, panels and their headings,
+   folding, tables, the empty, loading, and error states, fields and chips, status, the tickets (the
+   board, the graph, and the card a node shows), the tails, buttons and the actions, the decisions,
+   outputs and intake, markdown, and last the narrow width and reduced motion. */
 
 :root {
   color-scheme: light dark;
 
-  /* Type. Body is 14px: this is a laptop screen at arm's length, read in rows, not a phone. */
+  /* Type. The interface is monospace, which reads large for its size, so the body is 13px. */
   --text-xs: 11px;
   --text-sm: 12px;
   --text-md: 13px;
   --text-lg: 15px;
   --text-xl: 20px;
 
-  /* Space, in fours. Every margin, gap, and padding below is one of these. */
+  /* Space, in fours. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -34,20 +37,21 @@
   --radius-2: 4px;
   --radius-pill: 3px;
 
-  /* The index down the left, and the page it sits beside. */
-  --index-w: 168px;
-  --page: calc(var(--measure) + var(--index-w) + var(--space-5));
-  --header-h: 88px;
-
   /* The width the page reads at. Wider than this, and one row of a table becomes a walk of the eye. */
   --measure: 1240px;
   --gutter: var(--space-5);
 
+  /* The index down the left, the page it sits beside, and the sticky header's height, which the
+     script measures and sets here, since it depends on how the project tabs wrap. */
+  --index-w: 168px;
+  --page: calc(var(--measure) + var(--index-w) + var(--space-5));
+  --header-h: 88px;
+
   --ui: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --mono: var(--ui);
   /* Rendered markdown (a ticket's body, a findings file) is prose to be read, not a value to be
      scanned, so it keeps a proportional face. */
   --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   --bg: #eef0ee;
   --surface: #fbfbf9;
@@ -62,7 +66,6 @@
   --accent-soft: #dcefec;
   /* What is legible on top of --accent: 4.5:1 against it in either theme. */
   --on-accent: #ffffff;
-  --shadow: none;
 
   --done: #116b3d;
   --running: #8a5a00;
@@ -70,7 +73,7 @@
   --paused: #6d28a8;
 
   /* The graph's fills, one per status of `wayline.dag.STATUS_COLOR`. The server sends its own
-     values as presentation attributes; the rules under "the graph" map each one onto these, so
+     values as presentation attributes; the rules under "the tickets" map each one onto these, so
      `graph.svg` answers byte for byte as it did and the palette is applied in the browser. */
   --node-open: #e4e7e2;
   --node-running: #f3dfae;
@@ -102,7 +105,6 @@
     --accent-ink: #5fd3c0;
     --accent-soft: #10241f;
     --on-accent: #05100e;
-    --shadow: none;
 
     --done: #57c98c;
     --running: #d8a944;
@@ -122,38 +124,39 @@
 }
 
 :root[data-theme="dark"] {
-    --bg: #0b0f14;
-    --surface: #11161d;
-    --surface-2: #161d26;
-    --ink: #d7e0ea;
-    --ink-2: #b3c0ce;
-    --dim: #7f8b99;
-    --line: #1f2731;
-    --line-strong: #2e3945;
-    --accent: #2f9e8f;
-    --accent-ink: #5fd3c0;
-    --accent-soft: #10241f;
-    --on-accent: #05100e;
-    --shadow: none;
+  --bg: #0b0f14;
+  --surface: #11161d;
+  --surface-2: #161d26;
+  --ink: #d7e0ea;
+  --ink-2: #b3c0ce;
+  --dim: #7f8b99;
+  --line: #1f2731;
+  --line-strong: #2e3945;
+  --accent: #2f9e8f;
+  --accent-ink: #5fd3c0;
+  --accent-soft: #10241f;
+  --on-accent: #05100e;
 
-    --done: #57c98c;
-    --running: #d8a944;
-    --failed: #e8737d;
-    --paused: #b98ce0;
+  --done: #57c98c;
+  --running: #d8a944;
+  --failed: #e8737d;
+  --paused: #b98ce0;
 
-    --node-open: #1b242e;
-    --node-running: #3f320f;
-    --node-done: #123b27;
-    --node-accepted: #14512e;
-    --node-failed: #4d1f1f;
-    --node-blocked: #19212a;
-    --node-needs-human: #472c13;
-    --node-parked: #171d25;
-    --node-frontier: #123630;
+  --node-open: #1b242e;
+  --node-running: #3f320f;
+  --node-done: #123b27;
+  --node-accepted: #14512e;
+  --node-failed: #4d1f1f;
+  --node-blocked: #19212a;
+  --node-needs-human: #472c13;
+  --node-parked: #171d25;
+  --node-frontier: #123630;
 }
 
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
+
+/* --- the page frame --------------------------------------------------------------------------- */
 
 * { box-sizing: border-box; }
 
@@ -166,6 +169,37 @@ body {
   color: var(--ink);
   font: var(--text-md) / 1.55 var(--ui);
   -webkit-font-smoothing: antialiased;
+}
+
+/* The index and the sections, side by side. */
+.layout {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: grid;
+  grid-template-columns: var(--index-w) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+main { min-width: 0; padding: var(--space-5) 0 0; }
+
+section { margin: 0 0 var(--space-5); scroll-margin-top: calc(var(--header-h) + var(--space-3)); }
+
+footer {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: var(--space-5) var(--gutter) 0;
+}
+footer .note { margin: 0; }
+
+a { color: var(--accent-ink); }
+
+code { font: var(--text-sm) / 1.5 var(--mono); background: var(--surface-2); border-radius: var(--radius-1); padding: 0 var(--space-1); }
+
+:where(button, a, select, input, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* --- the header ------------------------------------------------------------------------------- */
@@ -188,19 +222,21 @@ header {
   gap: var(--space-3) var(--space-4);
 }
 
+.brand { display: flex; align-items: center; gap: var(--space-2); }
+.brand svg { display: block; color: var(--accent); }
+h1 { margin: 0; font-size: var(--text-lg); font-weight: 700; letter-spacing: 0.04em; text-transform: lowercase; }
+
+nav { display: flex; flex-wrap: wrap; gap: var(--space-2); flex: 1 1 auto; min-width: 0; }
+
 .bar-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+/* A set of buttons of which one is chosen: the theme, and board or graph. */
 .switch { display: flex; }
 .switch button { border-radius: 0; }
 .switch button:first-child { border-radius: var(--radius-1) 0 0 var(--radius-1); }
 .switch button:last-child { border-radius: 0 var(--radius-1) var(--radius-1) 0; }
 .switch button + button { margin-left: -1px; }
 .switch button[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; z-index: 1; }
-
-.brand { display: flex; align-items: center; gap: var(--space-2); }
-.brand svg { display: block; color: var(--accent); }
-h1 { margin: 0; font-size: var(--text-lg); font-weight: 650; letter-spacing: 0.01em; }
-
-nav { display: flex; flex-wrap: wrap; gap: var(--space-2); flex: 1 1 auto; min-width: 0; }
 
 .meta {
   max-width: var(--page);
@@ -212,23 +248,9 @@ nav { display: flex; flex-wrap: wrap; gap: var(--space-2); flex: 1 1 auto; min-w
   align-items: baseline;
 }
 .meta .note { margin: 0; }
+#action-note { min-height: 1.5em; }
 
-/* --- panels and headings ------------------------------------------------------------------------ */
-
-/* The index and the sections, side by side. */
-.layout {
-  max-width: var(--page);
-  margin: 0 auto;
-  padding: 0 var(--gutter);
-  display: grid;
-  grid-template-columns: var(--index-w) minmax(0, 1fr);
-  gap: var(--space-5);
-  align-items: start;
-}
-
-main { min-width: 0; padding: var(--space-5) 0 0; }
-
-section { margin: 0 0 var(--space-5); scroll-margin-top: calc(var(--header-h) + var(--space-3)); }
+/* --- the index -------------------------------------------------------------------------------- */
 
 #index {
   position: sticky;
@@ -258,9 +280,12 @@ section { margin: 0 0 var(--space-5); scroll-margin-top: calc(var(--header-h) + 
   text-transform: lowercase;
   transition: color 150ms ease-out, border-color 150ms ease-out;
 }
-#index a:hover { color: var(--accent-ink); border-left-color: var(--line-strong); }
+#index a:hover, #index a:focus-visible { color: var(--accent-ink); border-left-color: var(--line-strong); }
 #index a[aria-current="true"] { color: var(--accent-ink); border-left-color: var(--accent); font-weight: 700; }
+/* A jump moves the keyboard to the section's heading; the heading is not a control to outline. */
 h2[tabindex="-1"]:focus { outline: none; }
+
+/* --- panels and headings ---------------------------------------------------------------------- */
 
 .view-head {
   display: flex;
@@ -275,7 +300,7 @@ h2 {
   font-size: var(--text-xs);
   font-weight: 650;
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.14em;
   color: var(--dim);
 }
 
@@ -283,9 +308,9 @@ h2 {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-2);
-  padding: var(--space-4);
-  box-shadow: var(--shadow);
+  padding: var(--space-3);
 }
+.panel[hidden] { display: none; }
 
 /* A subhead inside a panel: the name of a table or a list, and how many rows it has. */
 h3.sub {
@@ -293,9 +318,9 @@ h3.sub {
   align-items: center;
   gap: var(--space-2);
   margin: var(--space-4) 0 var(--space-2);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-2);
 }
@@ -309,8 +334,10 @@ h3.sub .count {
   padding: 0 var(--space-2);
 }
 
-/* The overview's tables sit side by side while they fit, so none of them is stretched to the width
-   of the page to hold four short columns. */
+.rule { height: 1px; background: var(--line); border: 0; margin: var(--space-4) 0; }
+
+/* The overview's four tables sit side by side while they fit, each in a pane with its own frame, so
+   none is stretched to the width of the page and one does not run into the next. */
 .grid {
   display: grid;
   gap: var(--space-4) var(--space-5);
@@ -318,6 +345,15 @@ h3.sub .count {
   align-items: start;
 }
 .grid > * { min-width: 0; }
+.grid.panes > div {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+}
+.grid.panes > div h3.sub { margin-top: 0; padding-bottom: var(--space-2); border-bottom: 1px solid var(--line); }
+
+/* --- folding ---------------------------------------------------------------------------------- */
 
 /* A folded section keeps its heading, so the page can be scrolled past what is not being watched. */
 button.fold {
@@ -332,14 +368,12 @@ button.fold {
 }
 button.fold::before { content: "\25BE"; display: inline-block; transition: transform 150ms ease-out; }
 button.fold[aria-expanded="false"]::before { transform: rotate(-90deg); }
-button.fold:hover { color: var(--accent-ink); }
+button.fold:hover, button.fold:focus-visible { color: var(--accent-ink); }
 section.folded > *:not(.view-head) { display: none; }
 section.folded .view-head { margin-bottom: 0; }
 section.folded { margin-bottom: var(--space-3); }
 
-.rule { height: 1px; background: var(--line); border: 0; margin: var(--space-4) 0; }
-
-/* --- tables -------------------------------------------------------------------------------------- */
+/* --- tables ----------------------------------------------------------------------------------- */
 
 /* Sized to their content, not to the page: `width: auto`, with the scroll on the wrapper, so a wide
    table scrolls inside its panel instead of widening the page. */
@@ -355,7 +389,7 @@ table {
 
 th, td {
   text-align: left;
-  padding: var(--space-2) var(--space-4) var(--space-2) 0;
+  padding: var(--space-1) var(--space-4) var(--space-1) 0;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
 }
@@ -373,14 +407,14 @@ th {
 
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr { transition: background 150ms ease-out; }
-tbody tr:hover { background: var(--surface-2); }
+tbody tr:hover { background: var(--accent-soft); }
 
 /* A short value keeps its row on one line; a long one wraps inside a readable measure, and either
    way the whole value is in the cell's title. */
-td.short { white-space: nowrap; font-family: var(--mono); font-size: var(--text-xs); color: var(--ink-2); }
+td.short { white-space: nowrap; font-size: var(--text-xs); color: var(--ink-2); }
 td.text { max-width: 52ch; overflow-wrap: anywhere; }
 
-/* --- the empty, loading, and error states ---------------------------------------------------------- */
+/* --- the empty, loading, and error states ----------------------------------------------------- */
 
 /* The owner's second complaint: an empty table drew its header row across the page with nothing
    under it. Every empty table and list is one of these sentences instead. */
@@ -417,10 +451,14 @@ td.text { max-width: 52ch; overflow-wrap: anywhere; }
   overflow-wrap: anywhere;
 }
 
+/* The words that stand in for an empty list keep their own shape inside one. */
+ul.outputs li.state, ol.tail li.state { display: inline-block; border-bottom: 0; }
+ol.tail li.state { border-top: 0; }
+
 .problems { color: var(--failed); }
 ul.problems { margin: var(--space-2) 0 0; padding-left: var(--space-5); font-size: var(--text-sm); }
 
-/* --- fields ----------------------------------------------------------------------------------------- */
+/* --- fields and chips ------------------------------------------------------------------------- */
 
 dl.fields {
   display: grid;
@@ -433,19 +471,18 @@ dl.fields dt {
   font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.1em;
   color: var(--dim);
 }
 dl.fields dd {
   margin: var(--space-1) 0 0;
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   color: var(--ink);
   overflow-wrap: anywhere;
 }
-dl.fields dd.mono { font: var(--text-sm) / 1.5 var(--mono); color: var(--ink-2); }
+dl.fields dd.mono { color: var(--ink-2); }
 
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-dl.fields + .chips { margin-top: var(--space-4); }
 .chip {
   font: 600 var(--text-xs) / 1.8 var(--mono);
   border: 1px solid var(--line-strong);
@@ -455,45 +492,19 @@ dl.fields + .chips { margin-top: var(--space-4); }
   white-space: nowrap;
 }
 
-/* --- status ------------------------------------------------------------------------------------------- */
+/* --- status ----------------------------------------------------------------------------------- */
 
-.s-done, .s-accepted { color: var(--done); }
-.s-running { color: var(--running); }
-.s-failed, .s-blocked, .s-needs_human { color: var(--failed); }
-.s-paused { color: var(--paused); }
+/* Where a ticket stands, said once as a color, and read by whatever shows it: a chip's text, a
+   journal event's name, a board card's leading edge, and a graph node's ring. A status with no rule
+   here (open, and anything new) falls back to each reader's own neutral. */
+.s-done, .s-accepted { --status: var(--done); }
+.s-running { --status: var(--running); }
+.s-failed, .s-blocked, .s-needs_human { --status: var(--failed); }
+.s-paused, .s-parked { --status: var(--paused); }
 
-/* --- the graph ----------------------------------------------------------------------------------------- */
+.chip, .tail .event { color: var(--status, inherit); }
 
-.graph { overflow-x: auto; }
-.graph svg { display: block; max-width: 100%; height: auto; }
-.graph svg text { fill: var(--ink); font-family: var(--mono); font-weight: 600; }
-.graph svg line, .graph svg .edge { stroke: var(--line-strong); fill: none; stroke-width: 1.5; }
-.graph svg marker path { fill: var(--line-strong); stroke: none; }
-.graph svg rect { stroke: var(--line-strong); transition: stroke 150ms ease-out; }
-.graph svg a { cursor: pointer; }
-.graph svg a:hover rect, .graph svg a:focus-visible rect { stroke: var(--accent); stroke-width: 2; }
-
-/* The redrawn graph: a circle per ticket with its number inside, and a ring in the color of where it
-   stands, so the fill is not carrying that alone. */
-.graph svg circle { stroke-width: 2.5; transition: stroke-width 150ms ease-out, opacity 150ms ease-out; }
-.graph svg .node-id { font-size: 12px; font-weight: 700; }
-.graph svg a.node:hover circle, .graph svg a.node:focus-visible circle { stroke-width: 4; }
-.graph svg a.node:focus-visible { outline: none; }
-
-.s-stroke-done, .s-stroke-accepted { stroke: var(--done); }
-.s-stroke-running { stroke: var(--running); }
-.s-stroke-failed, .s-stroke-blocked, .s-stroke-needs_human { stroke: var(--failed); }
-.s-stroke-paused, .s-stroke-parked { stroke: var(--paused); }
-.s-stroke-open, .s-stroke-unknown { stroke: var(--line-strong); }
-
-/* Pointing at a ticket: it, what it waits on, and what waits on it stay; the rest steps back. */
-.relating [data-id], .relating .edge { transition: opacity 150ms ease-out; }
-.relating [data-id]:not(.is-self):not(.is-blocker):not(.is-waiting) { opacity: 0.3; }
-.relating .edge:not(.is-related) { opacity: 0.15; }
-.relating .edge.is-related { stroke: var(--accent); stroke-width: 2; marker-end: url(#arrow-hot); }
-.graph svg marker path.hot { fill: var(--accent); }
-
-/* --- the board --------------------------------------------------------------------------------- */
+/* --- the tickets: the board ------------------------------------------------------------------- */
 
 .columns {
   display: grid;
@@ -521,16 +532,18 @@ dl.fields + .chips { margin-top: var(--space-4); }
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--line-strong);
+  border-left: 3px solid var(--status, var(--line-strong));
   border-radius: var(--radius-1);
   padding: var(--space-2);
   cursor: pointer;
   transition: border-color 150ms ease-out, opacity 150ms ease-out, background 150ms ease-out;
 }
-.card:hover { border-color: var(--accent); }
+/* The frame lights up; the leading edge keeps saying where the ticket stands. */
+.card:hover, .card:focus-visible { border-color: var(--accent); border-left-color: var(--status, var(--accent)); }
 .card-top { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-xs); }
 .card-id { font-weight: 700; }
 .card-meta, .card-foot { color: var(--dim); font-size: var(--text-xs); }
+/* Three lines of a title; the whole of it is the card's title and the ticket page's. */
 .card-title {
   font-size: var(--text-sm);
   line-height: 1.4;
@@ -543,20 +556,34 @@ dl.fields + .chips { margin-top: var(--space-4); }
 .card-rel:empty { display: none; }
 .card-rel { font-size: var(--text-xs); font-weight: 700; color: var(--accent-ink); }
 
-.s-edge-done, .s-edge-accepted { border-left-color: var(--done); }
-.s-edge-running { border-left-color: var(--running); }
-.s-edge-failed, .s-edge-blocked, .s-edge-needs_human { border-left-color: var(--failed); }
-.s-edge-paused, .s-edge-parked { border-left-color: var(--paused); }
+/* --- the tickets: the graph ------------------------------------------------------------------- */
 
-.relating .card.is-self { border-color: var(--accent); background: var(--accent-soft); }
-.relating .card.is-blocker, .relating .card.is-waiting { border-color: var(--accent); }
+.graph { overflow-x: auto; }
+.graph svg { display: block; max-width: 100%; height: auto; }
+.graph svg text { fill: var(--ink); font-family: var(--mono); font-weight: 600; }
+.graph svg a { cursor: pointer; }
+.graph svg .edge { stroke: var(--line-strong); fill: none; stroke-width: 1.5; }
+.graph svg marker path { fill: var(--line-strong); stroke: none; }
+.graph svg marker path.hot { fill: var(--accent); }
 
-@media (max-width: 1180px) {
-  .columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* A circle per ticket with its number inside, and a ring in the color of where it stands, so the
+   fill is not carrying that alone. */
+.graph svg circle.ring {
+  stroke: var(--status, var(--line-strong));
+  stroke-width: 2.5;
+  transition: stroke-width 150ms ease-out, opacity 150ms ease-out;
 }
+.graph svg .node-id { font-size: var(--text-sm); font-weight: 700; }
+.graph svg a.node:hover circle, .graph svg a.node:focus-visible circle { stroke-width: 4; }
+.graph svg a.node:focus-visible { outline: none; }
 
-/* One rule per fill `wayline.dag.svg` can write. A status added there needs its line here, and
-   `tests/test_dashboard.py` fails until it has one. */
+/* The server's own drawing, which stands when the page cannot read it back to draw it again. */
+.graph svg line { stroke: var(--line-strong); }
+.graph svg rect { stroke: var(--line-strong); }
+.graph svg a:hover rect, .graph svg a:focus-visible rect { stroke: var(--accent); stroke-width: 2; }
+
+/* One rule per fill `wayline.dag.svg` can write, for the server's rect and the circle drawn from it.
+   A status added there needs its line here, and `tests/test_dashboard.py` fails until it has one. */
 .graph svg rect[fill="#dddddd"], .graph svg circle[fill="#dddddd"] { fill: var(--node-open); }
 .graph svg rect[fill="#ffd966"], .graph svg circle[fill="#ffd966"] { fill: var(--node-running); }
 .graph svg rect[fill="#9be49b"], .graph svg circle[fill="#9be49b"] { fill: var(--node-done); }
@@ -567,25 +594,33 @@ dl.fields + .chips { margin-top: var(--space-4); }
 .graph svg rect[fill="#b0b0b0"], .graph svg circle[fill="#b0b0b0"] { fill: var(--node-parked); }
 .graph svg rect[fill="#8ecae6"], .graph svg circle[fill="#8ecae6"] { fill: var(--node-frontier); }
 
-/* The card a graph node shows: what the layout has no room to draw inside the node itself. */
+/* --- the tickets: pointing at one ------------------------------------------------------------- */
+
+/* The ticket, what it waits on, and what waits on it stay; the rest steps back. */
+.relating [data-id], .relating .edge { transition: opacity 150ms ease-out; }
+.relating [data-id]:not(.is-self):not(.is-blocker):not(.is-waiting) { opacity: 0.3; }
+.relating .edge:not(.is-related) { opacity: 0.15; }
+.relating .edge.is-related { stroke: var(--accent); stroke-width: 2; marker-end: url(#arrow-hot); }
+.relating .card.is-self { border-color: var(--accent); background: var(--accent-soft); }
+.relating .card.is-blocker, .relating .card.is-waiting { border-color: var(--accent); }
+
+/* The card a graph node shows: what a circle has no room to hold. */
 .node-card {
   position: absolute;
   z-index: 30;
   max-width: 34ch;
   padding: var(--space-2) var(--space-3);
   background: var(--surface);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--accent);
   border-radius: var(--radius-1);
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
   pointer-events: none;
 }
 .node-card[hidden] { display: none; }
 .node-card .node-title { margin: 0; font-size: var(--text-sm); font-weight: 650; }
 .node-card .node-line { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-1) 0 0; }
 .node-card .node-dim { margin: var(--space-1) 0 0; font-size: var(--text-xs); color: var(--dim); }
-.node-card .chip { font-size: var(--text-xs); }
 
-/* --- the journal and log tails ----------------------------------------------------------------------------- */
+/* --- the journal and log tails ---------------------------------------------------------------- */
 
 .tail {
   list-style: none;
@@ -596,13 +631,12 @@ dl.fields + .chips { margin-top: var(--space-4); }
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-2);
-  box-shadow: var(--shadow);
   font: var(--text-sm) / 1.65 var(--mono);
 }
 .tail li {
   display: flex;
   gap: var(--space-3);
-  padding: var(--space-1) 0;
+  padding: 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -620,10 +654,11 @@ dl.fields + .chips { margin-top: var(--space-4); }
   color: var(--ink-2);
 }
 
-/* --- buttons and the actions of ticket 35 --------------------------------------------------------------------- */
+/* --- buttons and the actions of ticket 35 ----------------------------------------------------- */
 
 button.tab, button.action, button.ghost {
   font: 500 var(--text-sm) / 1.5 var(--ui);
+  text-transform: lowercase;
   color: var(--ink);
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
@@ -649,13 +684,6 @@ button.action.primary { background: var(--accent); border-color: var(--accent); 
 button.action.primary:hover:enabled { background: var(--accent-ink); border-color: var(--accent-ink); color: var(--on-accent); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-:where(button, a, select, input, textarea):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-a { color: var(--accent-ink); }
-
 .note { margin: var(--space-2) 0 0; color: var(--dim); font-size: var(--text-sm); }
 .note.problems { color: var(--failed); }
 
@@ -664,10 +692,10 @@ a { color: var(--accent-ink); }
 /* By type rather than by position: the panel's own status line comes before the first control. */
 .control:first-of-type { border-top: 0; padding-top: 0; }
 .control:last-child { padding-bottom: 0; }
+.control .note { margin: var(--space-1) 0 0; }
 form.inline, p.inline { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0; }
 dl.fields + p.inline { margin-top: var(--space-4); }
 form.inline label { font-size: var(--text-sm); color: var(--dim); min-width: 8.5em; }
-.control .note { margin: var(--space-1) 0 0; }
 
 select, textarea, input[type="number"], input[type="file"] {
   font: var(--text-sm) / 1.5 var(--ui);
@@ -678,15 +706,15 @@ select, textarea, input[type="number"], input[type="file"] {
   padding: var(--space-1) var(--space-2);
   min-height: 30px;
 }
-input[type="number"] { width: 7em; font-family: var(--mono); }
-#action-note { min-height: 1.5em; }
+input[type="number"] { width: 7em; }
 
-/* --- the decisions ------------------------------------------------------------------------------------------- */
+/* --- the decisions ---------------------------------------------------------------------------- */
+
+#decisions-log { margin-top: var(--space-5); }
 
 .decision {
   border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-1);
+  border-left: 2px solid var(--accent);
   background: var(--surface-2);
   padding: var(--space-3) var(--space-4);
   margin-top: var(--space-3);
@@ -704,10 +732,10 @@ input[type="number"] { width: 7em; font-family: var(--mono); }
 .decision ul { margin: 0; padding-left: var(--space-5); font-size: var(--text-sm); color: var(--ink-2); }
 .answer-form { display: grid; gap: var(--space-2); margin-top: var(--space-3); max-width: 62ch; }
 .answer-form label.option { display: flex; gap: var(--space-2); align-items: baseline; font-size: var(--text-sm); }
-.answer-form textarea { width: 100%; resize: vertical; font-family: var(--ui); }
+.answer-form textarea { width: 100%; resize: vertical; }
 .answer-form button { justify-self: start; }
 
-/* --- outputs and intake --------------------------------------------------------------------------------------- */
+/* --- outputs and intake ----------------------------------------------------------------------- */
 
 ul.outputs { list-style: none; margin: 0; padding: 0; }
 ul.outputs li {
@@ -720,11 +748,8 @@ ul.outputs li {
   font-size: var(--text-sm);
 }
 ul.outputs li:last-child { border-bottom: 0; }
-/* The words that stand in for an empty list keep their own shape inside one. */
-ul.outputs li.state, ol.tail li.state { display: inline-block; border-bottom: 0; }
-ol.tail li.state { border-top: 0; font-family: var(--ui); }
-ul.outputs a { font-family: var(--mono); overflow-wrap: anywhere; }
-ul.outputs .note { margin: 0; font-family: var(--mono); font-size: var(--text-xs); }
+ul.outputs a { overflow-wrap: anywhere; }
+ul.outputs .note { margin: 0; font-size: var(--text-xs); }
 
 #outputs-preview { margin-top: var(--space-4); }
 #outputs-preview img { max-width: 100%; border-radius: var(--radius-1); border: 1px solid var(--line); }
@@ -749,11 +774,8 @@ input[type="file"]::file-selector-button {
   cursor: pointer;
 }
 #intake-list { margin-top: var(--space-3); }
-#decisions-log { margin-top: var(--space-5); }
 
-code { font: var(--text-sm) / 1.5 var(--mono); background: var(--surface-2); border-radius: var(--radius-1); padding: 0 var(--space-1); }
-
-/* --- rendered markdown ------------------------------------------------------------------------------------------ */
+/* --- rendered markdown ------------------------------------------------------------------------ */
 
 .markdown { max-width: 78ch; color: var(--ink-2); font-family: var(--prose); }
 .markdown > :first-child { margin-top: 0; }
@@ -775,14 +797,11 @@ code { font: var(--text-sm) / 1.5 var(--mono); background: var(--surface-2); bor
 }
 .markdown table { margin: var(--space-2) 0; }
 
-footer {
-  max-width: var(--page);
-  margin: 0 auto;
-  padding: var(--space-5) var(--gutter) 0;
-}
-footer .note { margin: 0; }
+/* --- the narrow width, and reduced motion ----------------------------------------------------- */
 
-/* --- the narrow width -------------------------------------------------------------------------------------------- */
+@media (max-width: 1180px) {
+  .columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 
 @media (max-width: 960px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
@@ -803,37 +822,3 @@ footer .note { margin: 0; }
     transition-duration: 1ms !important;
   }
 }
-
-
-/* The overview's four tables, each in a pane with its own frame, so one does not run into the next. */
-.grid.panes > div {
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-2);
-  padding: var(--space-3);
-  background: var(--surface-2);
-}
-.grid.panes > div h3.sub { margin-top: 0; padding-bottom: var(--space-2); border-bottom: 1px solid var(--line); }
-
-/* --- the console look: where it departs from the rules above ------------------------------------------------------------------------ */
-
-body { font-family: var(--ui); }
-.panel { padding: var(--space-3); box-shadow: none; }
-h1 { font-weight: 700; letter-spacing: 0.04em; text-transform: lowercase; }
-h2 { letter-spacing: 0.14em; }
-h3.sub { letter-spacing: 0.1em; font-size: var(--text-xs); }
-h3.sub .count { border-radius: 3px; }
-th, td { padding-block: var(--space-1); }
-th { border-bottom: 1px solid var(--line-strong); }
-tbody tr:hover { background: var(--accent-soft); }
-.tail { box-shadow: none; }
-.tail li { padding: 0; }
-button.tab, button.action, button.ghost { border-radius: 3px; font-family: var(--ui); text-transform: lowercase; }
-button.tab { border-radius: 3px; }
-.chip { border-radius: 3px; }
-.state { border-radius: 3px; }
-.decision { border-left-width: 2px; border-radius: 0; }
-.node-card { border-radius: 3px; box-shadow: none; border-color: var(--accent); }
-.graph svg .node-id { font-weight: 700; }
-dl.fields dt { letter-spacing: 0.1em; }
-dl.fields dd { font-size: var(--text-sm); }
-select, textarea, input[type="number"], input[type="file"] { border-radius: 3px; font-family: var(--ui); }
