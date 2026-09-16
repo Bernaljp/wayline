@@ -72,8 +72,13 @@
   --node-frontier: #bcd7fb;
 }
 
+/* Night and day. The page follows the system until the owner says otherwise in the header, and
+   what they say is remembered in their browser. The dark tokens are written twice on purpose: once
+   for the system's answer, once for the owner's, since CSS has no way to give one block two
+   conditions. Anything added to one belongs in the other. */
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0d1420;
     --surface: #151d2c;
     --surface-2: #1b2534;
@@ -104,6 +109,40 @@
     --node-frontier: #1e3a63;
   }
 }
+
+:root[data-theme="dark"] {
+    --bg: #0d1420;
+    --surface: #151d2c;
+    --surface-2: #1b2534;
+    --ink: #eef2f8;
+    --ink-2: #cbd5e1;
+    --dim: #93a1b5;
+    --line: #253145;
+    --line-strong: #37445c;
+    --accent: #4d7fe0;
+    --accent-ink: #a8c6ff;
+    --accent-soft: #1b2a45;
+    --on-accent: #0b1220;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    --done: #5fd18b;
+    --running: #e3b341;
+    --failed: #f98c82;
+    --paused: #c39bf5;
+
+    --node-open: #26334a;
+    --node-running: #4b3a12;
+    --node-done: #14472c;
+    --node-accepted: #176135;
+    --node-failed: #5d2320;
+    --node-blocked: #222d40;
+    --node-needs-human: #563617;
+    --node-parked: #1f2937;
+    --node-frontier: #1e3a63;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 
@@ -137,6 +176,14 @@ header {
   align-items: center;
   gap: var(--space-3) var(--space-4);
 }
+
+.bar-actions { display: flex; align-items: center; gap: var(--space-2); }
+.switch { display: flex; }
+.switch button { border-radius: 0; }
+.switch button:first-child { border-radius: var(--radius-1) 0 0 var(--radius-1); }
+.switch button:last-child { border-radius: 0 var(--radius-1) var(--radius-1) 0; }
+.switch button + button { margin-left: -1px; }
+.switch button[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; z-index: 1; }
 
 .brand { display: flex; align-items: center; gap: var(--space-2); }
 .brand svg { display: block; color: var(--accent); }
@@ -217,6 +264,24 @@ h3.sub .count {
   align-items: start;
 }
 .grid > * { min-width: 0; }
+
+/* A folded section keeps its heading, so the page can be scrolled past what is not being watched. */
+button.fold {
+  font: inherit;
+  color: var(--dim);
+  background: none;
+  border: 0;
+  padding: 0;
+  width: 1.1em;
+  cursor: pointer;
+  line-height: 1;
+}
+button.fold::before { content: "\25BE"; display: inline-block; transition: transform 150ms ease-out; }
+button.fold[aria-expanded="false"]::before { transform: rotate(-90deg); }
+button.fold:hover { color: var(--accent-ink); }
+section.folded > *:not(.view-head) { display: none; }
+section.folded .view-head { margin-bottom: 0; }
+section.folded { margin-bottom: var(--space-3); }
 
 .rule { height: 1px; background: var(--line); border: 0; margin: var(--space-4) 0; }
 
@@ -365,6 +430,24 @@ dl.fields + .chips { margin-top: var(--space-4); }
 .graph svg rect[fill="#f2994a"] { fill: var(--node-needs-human); }
 .graph svg rect[fill="#b0b0b0"] { fill: var(--node-parked); }
 .graph svg rect[fill="#8ecae6"] { fill: var(--node-frontier); }
+
+/* The card a graph node shows: what the layout has no room to draw inside the node itself. */
+.node-card {
+  position: absolute;
+  z-index: 30;
+  max-width: 34ch;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-1);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+  pointer-events: none;
+}
+.node-card[hidden] { display: none; }
+.node-card .node-title { margin: 0; font-size: var(--text-sm); font-weight: 650; }
+.node-card .node-line { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-1) 0 0; }
+.node-card .node-dim { margin: var(--space-1) 0 0; font-size: var(--text-xs); color: var(--dim); }
+.node-card .chip { font-size: var(--text-xs); }
 
 /* --- the journal and log tails ----------------------------------------------------------------------------- */
 

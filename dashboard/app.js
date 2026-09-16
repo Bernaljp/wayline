@@ -28,6 +28,7 @@ const state = {
   tags: {},
   since: null, // null means "the tail has not read this project yet": ask by line count, not offset
 
+  tickets: [], // every ticket's frontmatter, for the card a graph node shows
   openSignature: null, // the open decision tickets last drawn, so a poll that changed nothing leaves their forms alone
   ticket: null, // the ticket id whose page is open, or null when the graph is showing
   log: null, // { kind, id, since } of the log tail that is open, or null
@@ -230,6 +231,7 @@ function select(id) {
   }
   every('overview', state.pollViews, loadOverview);
   every('graph', state.pollViews, loadGraph);
+  every('tickets', state.pollViews, loadTickets);
   every('outputs', state.pollViews, loadOutputs);
   state.openSignature = null;
   // An edit to a control that was never set belongs to the project it was made on.
@@ -346,11 +348,120 @@ async function loadGraph() {
     if (svg === null) return;
     // A project with no tickets answers with an empty canvas, which draws as nothing at all: the
     // panel says so instead of standing blank.
-    if (EMPTY_CANVAS.test(svg)) replace(document.getElementById('graph-body'), [emptyState('no ticket yet: the graph is drawn once the first one is written')]);
-    else document.getElementById('graph-body').innerHTML = svg;
+    if (EMPTY_CANVAS.test(svg)) {
+      replace(document.getElementById('graph-body'), [emptyState('no ticket yet: the graph is drawn once the first one is written')]);
+      return;
+    }
+    const body = document.getElementById('graph-body');
+    body.innerHTML = svg;
+    hideNodeCard();
+    const drawn = body.querySelector('svg');
+    if (drawn) trimCanvas(drawn);
   } catch (failure) {
     replace(document.getElementById('graph-body'), [errorState(failure)]);
   }
+}
+
+// --- the graph's hover card ------------------------------------------------------------------------
+//
+// A node carries its ticket id and nothing else, which is all the layout has room for. The rest of
+// what the owner wants to know before clicking (the title, where the ticket stands, who runs it,
+// what it waits on) is read from the tickets endpoint and shown beside the node. Hover is not the
+// only way to it: the node is a link, so the keyboard reaches it and a click opens the whole page.
+
+async function loadTickets() {
+  if (!state.project) return;
+  try {
+    const view = await get(`/api/projects/${encodeURIComponent(state.project)}/tickets`, 'tickets');
+    if (view) state.tickets = view;
+  } catch (failure) {
+    // The graph is drawn either way; only the card would be missing, so this is not the panel's error.
+  }
+}
+
+function nodeCard(id) {
+  const ticket = (state.tickets || []).find((entry) => String(entry.id) === String(id));
+  const card = document.getElementById('node-card');
+  if (!ticket) {
+    replace(card, [el('p', { class: 'node-title', text: `ticket ${id}` })]);
+    return card;
+  }
+  const blocked = (ticket.blocked_by || []).length ? `waits on ${ticket.blocked_by.join(', ')}` : 'waits on nothing';
+  replace(card, [
+    el('p', { class: 'node-title', text: `#${ticket.id} ${ticket.title || ''}` }),
+    el('p', { class: 'node-line' }, [
+      el('span', { class: `chip s-${ticket.status}`, text: ticket.status || 'unknown' }),
+      el('span', { class: 'node-dim', text: [ticket.kind, ticket.role, ticket.difficulty ? `d${ticket.difficulty}` : null].filter(Boolean).join('  ') }),
+    ]),
+    el('p', { class: 'node-dim', text: blocked }),
+  ]);
+  return card;
+}
+
+// The node the card is open for, so that a scroll moves the card with it rather than dropping it:
+// scrolling to read a long graph is not the same as leaving the node.
+let carded = null;
+
+function placeNodeCard(link) {
+  const card = document.getElementById('node-card');
+  // Beside the node, and inside the window: a card that runs off the right edge is worse than one
+  // that sits to the left of what it describes.
+  const at = link.getBoundingClientRect();
+  const left = Math.min(at.right + 12, window.innerWidth - card.offsetWidth - 12);
+  card.style.left = `${Math.max(12, left)}px`;
+  card.style.top = `${Math.max(12, at.top + window.scrollY - 4)}px`;
+}
+
+function showNodeCard(link) {
+  const card = nodeCard(link.getAttribute('href').slice('#ticket/'.length));
+  card.hidden = false;
+  carded = link;
+  placeNodeCard(link);
+}
+
+function hideNodeCard() {
+  document.getElementById('node-card').hidden = true;
+  carded = null;
+}
+
+function followNodeCard() {
+  if (!carded) return;
+  // The graph is redrawn on its own poll, which replaces the node the card was opened from.
+  if (!carded.isConnected) hideNodeCard();
+  else placeNodeCard(carded);
+}
+
+// `dag.svg` sizes its canvas by the grid it lays out on, which leaves the gap below the last row
+// inside the picture. The drawing is measured here and the canvas trimmed to it, so the panel is
+// the height of the graph rather than the height of the grid.
+function trimCanvas(svg) {
+  const drawn = svg.getBBox ? svg.getBBox() : null;
+  if (!drawn || !drawn.width || !drawn.height) return;
+  const pad = 8;
+  svg.setAttribute('viewBox', `${drawn.x - pad} ${drawn.y - pad} ${drawn.width + pad * 2} ${drawn.height + pad * 2}`);
+}
+
+function wireGraph() {
+  const body = document.getElementById('graph-body');
+  for (const [type, run] of [['mouseover', showNodeCard], ['focusin', showNodeCard]]) {
+    body.addEventListener(type, (event) => {
+      const link = event.target.closest('a[href^="#ticket/"]');
+      if (link) run(link);
+    });
+  }
+  // A node is a rect and a label inside one link, and the pointer crossing from one to the other
+  // leaves the node as far as the event is concerned. The card goes only when what the pointer
+  // moved to is outside the link it belongs to.
+  for (const type of ['mouseout', 'focusout']) {
+    body.addEventListener(type, (event) => {
+      const link = event.target.closest('a[href^="#ticket/"]');
+      if (!link) return;
+      const to = event.relatedTarget;
+      if (!to || !link.contains(to)) hideNodeCard();
+    });
+  }
+  window.addEventListener('scroll', followNodeCard, { passive: true });
+  window.addEventListener('resize', followNodeCard);
 }
 
 // The SVG's `<a href="#ticket/<id>">` is not meant to navigate: this is a single-page app, so a
@@ -1024,8 +1135,85 @@ function wireIntake() {
   });
 }
 
+// --- the theme, and the sections that fold ------------------------------------------------------
+//
+// Both are the owner's own choice about their own screen, so both are remembered in this browser
+// and nowhere else: they are no part of the ledger, and the dashboard stays a view of it. A browser
+// that refuses storage (a private window, blocked site data) still works; it just forgets.
+
+const THEMES = [['auto', 'auto'], ['light', 'day'], ['dark', 'night']];
+const STORE = { theme: 'wayline.theme', folded: 'wayline.folded' };
+
+function remember(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (failure) {
+    // A browser that will not store it is not a browser that cannot show it.
+  }
+}
+
+function remembered(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (failure) {
+    return null;
+  }
+}
+
+function setTheme(choice) {
+  const theme = THEMES.some(([name]) => name === choice) ? choice : 'auto';
+  if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+  remember(STORE.theme, theme);
+  for (const button of document.querySelectorAll('#theme button')) {
+    button.setAttribute('aria-current', String(button.dataset.themeChoice === theme));
+  }
+}
+
+function wireTheme() {
+  const group = document.getElementById('theme');
+  replace(group, THEMES.map(([name, label]) => {
+    const button = el('button', { type: 'button', class: 'action', text: label, 'data-theme-choice': name,
+                                  title: name === 'auto' ? 'follow the system' : `always ${label}` });
+    button.addEventListener('click', () => setTheme(name));
+    return button;
+  }));
+  setTheme(remembered(STORE.theme) || 'auto');
+}
+
+function foldedNow() {
+  return new Set((remembered(STORE.folded) || '').split(',').filter(Boolean));
+}
+
+function fold(section, folded) {
+  const node = document.getElementById(section);
+  if (!node) return;
+  node.classList.toggle('folded', folded);
+  const button = node.querySelector('button.fold');
+  if (button) button.setAttribute('aria-expanded', String(!folded));
+}
+
+function wireFolds() {
+  const folded = foldedNow();
+  for (const button of document.querySelectorAll('button.fold')) {
+    const section = button.dataset.folds;
+    fold(section, folded.has(section));
+    button.addEventListener('click', () => {
+      const open = document.getElementById(section).classList.contains('folded');
+      fold(section, !open);
+      const now = foldedNow();
+      if (open) now.delete(section);
+      else now.add(section);
+      remember(STORE.folded, [...now].join(','));
+    });
+  }
+}
+
 // --- start ---------------------------------------------------------------------------------------
 
+wireTheme();
+wireFolds();
+wireGraph();
 wireControls();
 wireIntake();
 intakeEmpty();
