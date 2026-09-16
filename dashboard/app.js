@@ -16,8 +16,9 @@ const TOKEN = PARAMS.get('token') || '';
 const TRANSPORT = PARAMS.get('transport') === 'sse' ? 'sse' : 'poll';
 const TAIL_LINES = 500;
 
-// The columns an id-and-kind table draws: everything but the title is one line of monospace.
-const ROW_ID_KIND = ['short', 'short', 'short', 'short', 'text'];
+// What each column of a table holds, in order, for the two tables of tickets: four one-line values
+// and then the title, which is the only prose in the row.
+const TICKET_COLUMNS = ['short', 'short', 'short', 'short', 'text'];
 // `dag.svg` draws a project with no tickets as a canvas of no size.
 const EMPTY_CANVAS = /viewBox="0 0 0 0"/;
 
@@ -96,12 +97,20 @@ function el(tag, attrs, children) {
 // carries the whole value in its title when the wrap is not the whole story.
 const MONOSPACED = /[/\\]|^[\d.]+$/;
 
+// Longer than this and a value gets its title, so that what the cell shows is never all there is.
+const TITLE_AT = 60;
+
+// A value as it reads in full: what a title carries, and what `short` cuts down for a row.
+function wholeValue(value) {
+  return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
 function fields(pairs) {
   const list = el('dl', { class: 'fields' });
   for (const [name, value, whole] of pairs) {
     if (value === null || value === undefined || value === '') continue;
     const text = String(value);
-    const title = whole === undefined ? (text.length > 60 ? text : null) : String(whole);
+    const title = whole === undefined ? (text.length > TITLE_AT ? text : null) : wholeValue(whole);
     list.appendChild(el('div', { class: 'field' }, [
       el('dt', { text: name }),
       el('dd', { class: MONOSPACED.test(text) ? 'mono' : null, text, title }),
@@ -155,7 +164,7 @@ function tableElement(headings, rows, columns) {
   const head = el('tr', {}, headings.map((name, index) => el('th', { class: (columns || [])[index] || null, text: name })));
   const body = rows.map((row) => el('tr', {}, row.map((cell, index) => {
     const text = cell === null || cell === undefined ? '' : String(cell);
-    return el('td', { class: (columns || [])[index] || null, text, title: text.length > 60 ? text : null });
+    return el('td', { class: (columns || [])[index] || null, text, title: text.length > TITLE_AT ? text : null });
   })));
   return el('table', {}, [el('thead', {}, [head]), el('tbody', {}, body)]);
 }
@@ -215,6 +224,7 @@ function select(id) {
   replace(document.getElementById('graph-body'), [loadingState('drawing the graph')]);
   replace(document.getElementById('outputs-body'), [loadingState('indexing the outputs')]);
   replace(document.getElementById('decisions-open'), [loadingState('reading the open decision tickets')]);
+  controlsState('reading the controls');
   for (const tab of document.querySelectorAll('button.tab')) {
     tab.setAttribute('aria-current', String(tab.dataset.id === id));
   }
@@ -286,11 +296,11 @@ function renderOverview(view) {
     el('div', {}, [
       subhead('frontier', frontierRows.length),
       tableOrNone(['id', 'kind', 'd', 'role', 'title'], frontierRows,
-        'no ticket is ready to launch: every open ticket is waiting on another', ROW_ID_KIND),
+        'no ticket is ready to launch: every open ticket is waiting on another', TICKET_COLUMNS),
     ]),
     el('div', {}, [
       subhead('running', runningRows.length),
-      tableOrNone(['id', 'kind', 'attempt', 'role', 'title'], runningRows, 'no worker is running', ROW_ID_KIND),
+      tableOrNone(['id', 'kind', 'attempt', 'role', 'title'], runningRows, 'no worker is running', TICKET_COLUMNS),
     ]),
     el('div', {}, [
       subhead('jobs', jobRows.length),
@@ -359,19 +369,20 @@ async function openTicket(id) {
   if (!state.project) return;
   state.ticket = id;
   showTicket();
-  if (state.ticket !== id || document.getElementById('ticket-body').dataset.ticket !== id) {
-    replace(document.getElementById('ticket-body'), [loadingState(`reading ticket ${id}`)]);
-  }
+  const body = document.getElementById('ticket-body');
+  // The ticket already on the page is left where it is while it is read again; another one's page
+  // says it is being read rather than showing the ticket the owner just clicked away from.
+  if (body.dataset.ticket !== id) replace(body, [loadingState(`reading ticket ${id}`)]);
   try {
     const view = await get(`/api/projects/${encodeURIComponent(state.project)}/tickets/${encodeURIComponent(id)}`);
     // A second click before this one's fetch returned must not let the first ticket's view land
     // on the page after the page has already moved on to another ticket.
     if (view && state.ticket === id) {
-      document.getElementById('ticket-body').dataset.ticket = id;
+      body.dataset.ticket = id;
       renderTicket(view);
     }
   } catch (failure) {
-    if (state.ticket === id) replace(document.getElementById('ticket-body'), [errorState(failure)]);
+    if (state.ticket === id) replace(body, [errorState(failure)]);
   }
 }
 
@@ -408,11 +419,11 @@ function renderTicket(view) {
 
 // `short` cuts a result's value to what the row holds; the whole of it stays in the field's title.
 function resultFields(result) {
-  return fields(Object.entries(result).map(([key, value]) => [key, short(value), typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)]));
+  return fields(Object.entries(result).map(([key, value]) => [key, short(value), value]));
 }
 
-function listOrNone(items, render, empty) {
-  return (items || []).length ? el('ul', {}, items.map(render)) : emptyState(empty);
+function listOrNone(items, render, empty, className) {
+  return (items || []).length ? el('ul', { class: className || null }, items.map(render)) : emptyState(empty);
 }
 
 function logList(entries, kind, label, empty) {
@@ -446,7 +457,7 @@ function openLog(kind, id) {
   document.getElementById('logs').hidden = false;
   state.log = { kind, id, since: null, written: false };
   document.getElementById('logs-tail').textContent = '';
-  document.getElementById('logs-note').textContent = `${logName(kind, id)}: reading`;
+  noteText('logs-note', `${logName(kind, id)}: reading`);
   every('logs', state.pollJournal, pollLog);
 }
 
@@ -461,12 +472,9 @@ async function pollLog() {
   try {
     tail = await get(path, `log:${current.kind}:${current.id}`);
   } catch (failure) {
-    const note = document.getElementById('logs-note');
-    note.textContent = String(failure.message || failure);
-    note.className = 'note problems';
+    noteText('logs-note', String(failure.message || failure), true);
     return;
   }
-  document.getElementById('logs-note').className = 'note';
   if (!tail || current !== state.log) return;
   const pre = document.getElementById('logs-tail');
   if (tail.truncated) {
@@ -483,7 +491,7 @@ async function pollLog() {
   } else if (!current.written) {
     pre.textContent = tail.exists ? 'this log exists but nothing has been written to it yet' : 'nothing has been written to this log yet';
   }
-  document.getElementById('logs-note').textContent = `${logName(current.kind, current.id)}: ${tail.exists ? `${tail.size} bytes` : 'nothing written yet'}`;
+  noteText('logs-note', `${logName(current.kind, current.id)}: ${tail.exists ? `${tail.size} bytes` : 'nothing written yet'}`);
 }
 
 document.getElementById('ticket-back').addEventListener('click', showGraph);
@@ -532,9 +540,7 @@ function renderOutputs(view) {
   for (const name of CATEGORIES) {
     const entries = view[name] || [];
     parts.push(subhead(name, entries.length));
-    parts.push(entries.length
-      ? el('ul', { class: 'outputs' }, entries.map((entry) => outputRow(entry)))
-      : emptyState(`nothing under ${name} yet`));
+    parts.push(listOrNone(entries, (entry) => outputRow(entry), `nothing under ${name} yet`, 'outputs'));
   }
   parts.push(el('div', { id: 'outputs-preview' }));
   replace(document.getElementById('outputs-body'), parts);
@@ -583,6 +589,7 @@ function startTail() {
     clearInterval(state.timers.journal);
     delete state.timers.journal;
   }
+  journalPlaceholder('reading the journal', true);
   const note = document.getElementById('transport');
   if (TRANSPORT === 'sse') {
     note.textContent = 'transport: server-sent events (?transport=sse). Drop the parameter for the polling default.';
@@ -603,23 +610,25 @@ async function pollJournal() {
   try {
     tail = await get(path, base);
   } catch (failure) {
-    const note = document.getElementById('journal-note');
-    note.textContent = String(failure.message || failure);
-    note.className = 'note problems';
+    noteText('journal-note', String(failure.message || failure), true);
     return;
   }
-  document.getElementById('journal-note').className = 'note';
   if (!tail) return;
   if (tail.truncated) document.getElementById('journal-tail').replaceChildren();
   state.since = tail.next;
   appendEvents(tail.events);
-  document.getElementById('journal-note').textContent = `${tail.size} bytes, reading from ${tail.next}`;
+  // The read came back, so an empty tail is a journal with nothing in it rather than one unread.
+  journalPlaceholder('no event has been journaled for this project yet');
+  noteText('journal-note', `${tail.size} bytes, reading from ${tail.next}`);
 }
 
 function startStream() {
   const query = new URLSearchParams({ transport: 'sse', since: String(state.since ?? 0) });
   if (TOKEN) query.set('token', TOKEN);
   const stream = new EventSource(`/api/projects/${encodeURIComponent(state.project)}/journal?${query}`);
+  // A stream has no end of backlog to wait for, so the tail says what is true of it: it is open,
+  // and nothing has come along it yet.
+  stream.addEventListener('open', () => journalPlaceholder('the stream is open; no event has arrived on it yet'));
   stream.addEventListener('message', (message) => {
     state.since = Number(message.lastEventId) || state.since;
     try {
@@ -627,25 +636,28 @@ function startStream() {
     } catch (failure) {
       // A torn line the ledger closes on its next append; the next id carries the whole line.
     }
-    document.getElementById('journal-note').textContent = `streaming, at offset ${state.since}`;
+    noteText('journal-note', `streaming, at offset ${state.since}`);
   });
   stream.addEventListener('error', () => {
-    const note = document.getElementById('journal-note');
-    note.textContent = 'stream dropped; the browser reconnects in 2 s with Last-Event-ID';
-    note.className = 'note problems';
+    noteText('journal-note', 'stream dropped; the browser reconnects in 2 s with Last-Event-ID', true);
   });
   state.stream = stream;
+}
+
+// What the tail says while it holds no event: that it is reading, or, once a read has come back
+// with nothing, that there is nothing. Both transports say it, and the line goes as soon as the
+// first event lands.
+function journalPlaceholder(text, loading) {
+  const tail = document.getElementById('journal-tail');
+  if (tail.querySelector('li:not(.state)')) return;
+  replace(tail, [el('li', { class: loading ? 'state loading' : 'state', text })]);
 }
 
 function appendEvents(events) {
   const tail = document.getElementById('journal-tail');
   const atBottom = tail.scrollTop + tail.clientHeight >= tail.scrollHeight - 8;
-  // A journal with nothing in it yet says so, and the line goes as soon as the first event lands.
-  const blank = tail.querySelector('li.state');
-  if ((events || []).length && blank) blank.remove();
-  if (!(events || []).length && !tail.childElementCount) {
-    tail.appendChild(el('li', { class: 'state', text: 'no event has been journaled for this project yet' }));
-  }
+  const placeholder = tail.querySelector('li.state');
+  if ((events || []).length && placeholder) placeholder.remove();
   for (const event of events || []) {
     const payload = event.payload || {};
     const detail = Object.entries(payload)
@@ -658,7 +670,7 @@ function appendEvents(events) {
       el('span', { class: `event s-${event.event}`, text: event.event }),
       el('span', { class: 'ticket', text: event.ticket === null || event.ticket === undefined ? '' : `#${event.ticket}` }),
       // The payload is cut to what fits the row; the whole of it is in the line's title.
-      el('span', { class: 'payload', text: detail, title: Object.keys(payload).length ? JSON.stringify(payload) : null }),
+      el('span', { class: 'payload', text: detail, title: Object.keys(payload).length ? wholeValue(payload) : null }),
     ]));
   }
   while (tail.childElementCount > TAIL_LINES) tail.removeChild(tail.firstElementChild);
@@ -709,10 +721,16 @@ async function act(name, body, headers, project) {
   return reply;
 }
 
-function say(text, failed) {
-  const note = document.getElementById('action-note');
+// One line, said in its own note: the action note, the journal's, and the log tail's all read the
+// same way, and a note that carried a failure last time is plain again when the next read lands.
+function noteText(id, text, failed) {
+  const note = document.getElementById(id);
   note.textContent = text;
   note.className = failed ? 'note problems' : 'note';
+}
+
+function say(text, failed) {
+  noteText('action-note', text, failed);
 }
 
 // Take one action, say what came of it, and poll the views again at once instead of at their next tick, whether it
@@ -743,7 +761,19 @@ function refreshViews() {
 // A control the owner changed and has not set yet keeps what they chose while the views poll.
 const dirty = { autonomy: false, pacing: false, model_fallback: false };
 
+// The line at the top of the controls panel: what it is doing, or what went wrong, before the
+// first reading of the decisions view fills the controls themselves.
+function controlsState(text, failed) {
+  const line = document.getElementById('controls-state');
+  if (!line) return;
+  line.hidden = false;
+  line.textContent = text;
+  line.className = failed ? 'state error' : 'state loading';
+}
+
 function renderControls(controls) {
+  const state_ = document.getElementById('controls-state');
+  if (state_) state_.hidden = true;
   const select = document.getElementById('autonomy-select');
   if (!dirty.autonomy) {
     replace(select, (controls.autonomy_levels || []).map((level) => {
@@ -840,6 +870,8 @@ async function loadDecisions() {
     if (project !== state.project) return;
     state.openSignature = null;
     replace(document.getElementById('decisions-open'), [errorState(failure)]);
+    // The controls are drawn from this same view, so the panel that lost its reading says so.
+    controlsState(String(failure.message || failure), true);
   }
 }
 
@@ -856,7 +888,7 @@ function renderDecisions(view, project) {
     replace(document.getElementById('decisions-open'), cards);
   }
   const log = view.log || [];
-  const parts = [subhead("decision log, the decider's first", log.length)];
+  const parts = [subhead('decision log', log.length), el('p', { class: 'note', text: "the decider's decisions first" })];
   parts.push(tableOrNone(['decided by', 'ticket', 'question', 'answer', 'rationale', 'when'], log.map((entry) => [
     entry.decided_by + (entry.superseded ? ' (superseded)' : ''),
     entry.ticket === null ? (entry.id || '') : `#${entry.ticket}`,
@@ -947,6 +979,8 @@ function decisionCard(decision, project) {
 
 async function upload(files) {
   const list = document.getElementById('intake-list');
+  const placeholder = list.querySelector('li.state');
+  if (placeholder) placeholder.remove();
   for (const file of Array.from(files || [])) {
     const row = el('li', { text: `${file.name}: sending ${humanSize(file.size)}...` });
     list.prepend(row);
@@ -962,6 +996,13 @@ async function upload(files) {
     }
   }
   refreshViews();
+}
+
+// The list under the drop zone holds what this page has sent, which is nothing until a file is
+// dropped on it: it says that rather than sitting as an empty box.
+function intakeEmpty() {
+  const list = document.getElementById('intake-list');
+  if (!list.querySelector('li:not(.state)')) replace(list, [el('li', { class: 'state', text: 'nothing has been sent from this page yet' })]);
 }
 
 function wireIntake() {
@@ -987,5 +1028,6 @@ function wireIntake() {
 
 wireControls();
 wireIntake();
+intakeEmpty();
 if (!TOKEN) say('Actions need the dashboard token: open the URL wayline serve printed, which carries it. The views work without it.');
 every('projects', 5, loadProjects);

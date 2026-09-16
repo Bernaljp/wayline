@@ -49,6 +49,8 @@
   --accent: #1d4ed8;
   --accent-ink: #1d4ed8;
   --accent-soft: #eaf0ff;
+  /* What is legible on top of --accent: 4.5:1 against it in either theme. */
+  --on-accent: #ffffff;
   --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.04);
 
   --done: #15803d;
@@ -83,6 +85,7 @@
     --accent: #4d7fe0;
     --accent-ink: #a8c6ff;
     --accent-soft: #1b2a45;
+    --on-accent: #0b1220;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 
     --done: #5fd18b;
@@ -275,10 +278,12 @@ td.text { max-width: 52ch; overflow-wrap: anywhere; }
 }
 
 .state.loading { display: inline-flex; align-items: center; gap: var(--space-2); }
+/* `display` on a class beats the `hidden` attribute's own rule, so it is said again here. */
+.state[hidden] { display: none; }
 .state.loading::before {
   content: "";
-  width: 7px;
-  height: 7px;
+  width: var(--space-2);
+  height: var(--space-2);
   border-radius: 50%;
   background: var(--accent);
   animation: pulse 1.4s ease-in-out infinite;
@@ -313,7 +318,7 @@ dl.fields dt {
   color: var(--dim);
 }
 dl.fields dd {
-  margin: 2px 0 0;
+  margin: var(--space-1) 0 0;
   font-size: var(--text-md);
   color: var(--ink);
   overflow-wrap: anywhere;
@@ -378,7 +383,7 @@ dl.fields + .chips { margin-top: var(--space-4); }
 .tail li {
   display: flex;
   gap: var(--space-3);
-  padding: 1px 0;
+  padding: var(--space-1) 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -421,8 +426,8 @@ button.tab[aria-current="true"] {
   font-weight: 650;
 }
 button.ghost { background: transparent; border-color: transparent; color: var(--accent-ink); }
-button.action.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
-button.action.primary:hover:enabled { background: var(--accent-ink); border-color: var(--accent-ink); }
+button.action.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.action.primary:hover:enabled { background: var(--accent-ink); border-color: var(--accent-ink); color: var(--on-accent); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 :where(button, a, select, input, textarea):focus-visible {
@@ -495,6 +500,9 @@ ul.outputs li {
   font-size: var(--text-sm);
 }
 ul.outputs li:last-child { border-bottom: 0; }
+/* The words that stand in for an empty list keep their own shape inside one. */
+ul.outputs li.state, ol.tail li.state { display: inline-block; border-bottom: 0; }
+ol.tail li.state { border-top: 0; font-family: var(--sans); }
 ul.outputs a { font-family: var(--mono); overflow-wrap: anywhere; }
 ul.outputs .note { margin: 0; font-family: var(--mono); font-size: var(--text-xs); }
 
@@ -523,7 +531,7 @@ input[type="file"]::file-selector-button {
 #intake-list { margin-top: var(--space-3); }
 #decisions-log { margin-top: var(--space-5); }
 
-code { font: var(--text-sm) / 1.5 var(--mono); background: var(--surface-2); border-radius: 4px; padding: 0 4px; }
+code { font: var(--text-sm) / 1.5 var(--mono); background: var(--surface-2); border-radius: var(--radius-1); padding: 0 var(--space-1); }
 
 /* --- rendered markdown ------------------------------------------------------------------------------------------ */
 

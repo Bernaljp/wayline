@@ -27,7 +27,7 @@ from pathlib import Path
 
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from wayline import TAG
+from wayline import TAG, dag
 from wayline.dashboard import (
     DashboardError, DashboardHandler, IDLE_TIMEOUT_S, LOOPBACK, READINGS_TTL_S, SSE_RETRY_MS,
     TOKEN_COOKIE, TOKEN_HEADER, TAIL_LINES_MAX,
@@ -36,7 +36,6 @@ from wayline.dashboard import (
     phase_from_events, project_ids, projects_view, read_settings, record_settings,
     requires_token, serve_lines, static_file, ticket_view, tickets_view, tunnel_line,
 )
-from wayline import dag
 from wayline.ledger import Ledger
 from wayline.project import home, register, set_active
 from wayline.provenance import sha256_of
@@ -453,6 +452,22 @@ class GraphEndpointTest(DashboardTestCase):
         empty = self.temp / "no-tickets"
         (empty / "research" / "tickets").mkdir(parents=True)
         self.assertIn("<svg", graph_svg(empty))
+
+    def test_the_page_recognizes_that_canvas_and_says_so_in_words(self):
+        """A canvas of no size draws as nothing at all, so `app.js` says so instead (ticket 58).
+
+        The page tells the empty canvas apart by the pattern in its `EMPTY_CANVAS`, which is this
+        endpoint's own bytes. Taking that pattern out of the script rather than repeating it here is
+        what makes this a check of the two against each other.
+        """
+        empty = self.temp / "no-tickets-for-the-page"
+        (empty / "research" / "tickets").mkdir(parents=True)
+        script = (STATIC / "app.js").read_text(encoding="utf-8")
+        pattern = re.search(r"const EMPTY_CANVAS = /(.+)/;", script)
+        self.assertIsNotNone(pattern, "app.js no longer names the canvas it stands in for")
+        self.assertRegex(graph_svg(empty), pattern.group(1))
+        # And it is the empty canvas alone: a graph with tickets in it is drawn, not described.
+        self.assertNotRegex(graph_svg(self.project), pattern.group(1))
 
 
 # --- the tickets endpoints ------------------------------------------------------------------------------
@@ -1000,9 +1015,10 @@ class PageDesignTest(unittest.TestCase):
         self.assertIn("function tableOrNone(", script)
         # `tableElement` builds the element and `tableOrNone` chooses between it and a sentence, so
         # the builder is called exactly once, by the chooser, and `<table>` is created in one place.
-        self.assertEqual(script.count("tableElement("), 2, "the builder is defined once and called once, by tableOrNone")
-        self.assertEqual(script.count("el('table'"), 1, "a table is built in tableElement and nowhere else")
-        drawn = [line for line in script.splitlines() if "tableOrNone(" in line and "function tableOrNone(" not in line]
+        code = [line for line in script.splitlines() if not line.strip().startswith("//")]
+        self.assertEqual("\n".join(code).count("tableElement("), 2, "the builder is defined once and called once, by tableOrNone")
+        self.assertEqual("\n".join(code).count("el('table'"), 1, "a table is built in tableElement and nowhere else")
+        drawn = [line for line in code if "tableOrNone(" in line and "function tableOrNone(" not in line]
         self.assertGreaterEqual(len(drawn), 5, "the overview's four tables and the decision log at least")
 
     def test_the_stylesheet_answers_every_fill_the_graph_can_draw(self):
@@ -1013,9 +1029,14 @@ class PageDesignTest(unittest.TestCase):
         what says so, rather than a node rendering in the prototype's colors on the owner's screen.
         """
         sheet = self.SHEET.read_text(encoding="utf-8")
+        # Every fill has its rule, and `dag.svg` still writes fills the way the rules match them:
+        # as a `fill` presentation attribute on the rect. A dag that moved them into a class or a
+        # `style` attribute would leave the rules matching nothing, with every other test green.
+        drawn = dag.svg(list(dag.STATUS_COLOR), [], {status: status for status in dag.STATUS_COLOR})
         for status, fill in dag.STATUS_COLOR.items():
             with self.subTest(status=status):
                 self.assertIn('rect[fill="%s"]' % fill, sheet)
+                self.assertIn('fill="%s"' % fill, drawn)
 
     def test_the_stylesheet_holds_one_scale_of_each_kind(self):
         sheet = self.SHEET.read_text(encoding="utf-8")

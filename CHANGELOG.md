@@ -23,8 +23,9 @@ full width with nothing under it.
   inside the panel they belong to. A value too long for its cell keeps the whole of itself in the
   cell's title.
 - The graph is restyled from the stylesheet, by matching the fills `wayline.dag.svg` writes, so
-  `graph.svg` answers byte for byte as before. A status added to `dag.STATUS_COLOR` without a rule in
-  the stylesheet is now a failing test.
+  `graph.svg` answers byte for byte as before. A test holds the two together in both directions: a
+  status added to `dag.STATUS_COLOR` without a rule in the stylesheet fails, and so does a `dag` that
+  stops writing those fills as attributes on the rect.
 - The page carries its own icon as an inline `data:` URI: the browser asked for `/favicon.ico` on
   every load and logged the 404 as a console error.
 - Nothing under `wayline/` changed: the endpoints, the token rule, the read-only guarantees, the
