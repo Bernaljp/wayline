@@ -72,7 +72,7 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   ticket with a request for more. A change whose mean does not beat the best kept value by more than
   `policy.goal.margin_sd` standard deviations is discarded: `progress` with `kept: false` and `discarded`
   are journaled, the ticket is `done` and earns no verdict, its findings are filed as negative results, and
-  its branch and worktree stay. A `done` result is then never fast-forwarded; a `running` one, whose branch
+  its branch and worktree stay, renamed `ticket/<id>-a<n>` and `.worktrees/<id>-a<n>`. A `done` result is then never fast-forwarded; a `running` one, whose branch
   reached `main` before its jobs, is reverted there. A kept change journals `progress` with `kept: true`
   once it is on `main`, and with `stop_when: goal_reached`, the first wave whose best kept value reaches the
   target journals `run_ended` with `goal_reached` and notifies the owner (wave step 6).
@@ -203,6 +203,9 @@ FALLEN_BACK = "fallen_back"
 RUNNING = "running_jobs"
 # The commit that reverts a discarded experiment's change on `main` (ticket 39); its trailer finds it again after a restart.
 REVERT_TRAILER = "Wayline-Discarded: %s"
+# Where a discarded attempt's change stays (ticket 39), out of the way of the ticket's next attempt.
+DISCARDED_BRANCH = "ticket/%d-a%d"
+DISCARDED_WORKTREE = "%d-a%d"
 REVERT_MESSAGE = "ticket %d: discarded by keep-if-better\n\n" + REVERT_TRAILER
 # How much of a failed job's log the journal and the ticket's failure output carry.
 LOG_TAIL_CHARS = 4000
@@ -1665,6 +1668,8 @@ class Conductor:
         if judgment is not None:
             self._journal_judgment(attempt, judgment)
             result.kept += 1
+        # A goal ticket's worktree was kept for its judgment; kept, or no longer judged since GOAL.json changed, it goes.
+        if (self._worktree(identifier) / ".git").exists():
             self._remove_worktree(identifier)
         self._set_status(identifier, "done", note)
         self.ledger.append_event(TICKET_DONE, {"ticket": identifier}, ticket=identifier)
@@ -1693,28 +1698,37 @@ class Conductor:
             if attempt.ticket.get("goal_metric"):
                 self.say("  ticket %d: keep-if-better does not run: %s" % (attempt.id, skip))
             return None
-        if attempt.judgment is None:
-            attempt.judgment = self._read_judgment(attempt)
-        if attempt.judgment is not None:
-            return attempt.judgment
         policy = self.policy.get("goal") or {}
-        artifacts = goals.seed_artifacts(outputs, root)
-        try:
-            values = goals.evaluate(goal, artifacts, self.project, self._timeout())
-        except goals.GoalError as failure:
-            fail("keep-if-better measured nothing: %s" % failure)
-            return "failed"
+        saved = attempt.judgment or self._read_judgment(attempt)
+        if saved is not None and goals.run_id(attempt.id, attempt.number) in self.view.progress:
+            attempt.judgment = saved  # journaled already: what it was judged then stands
+            return saved
+        if saved is not None:
+            # Measured already, and not journaled yet: the seeds are not read again, but the best kept value may have
+            # moved since (another ticket kept a change while this one waited to integrate), so they are judged again.
+            values, artifacts = saved.values, None
+        else:
+            artifacts = goals.seed_artifacts(outputs, root)
+            try:
+                values = goals.evaluate(goal, artifacts, self.project, self._timeout())
+            except goals.GoalError as failure:
+                fail("keep-if-better measured nothing: %s" % failure)
+                return "failed"
         judgment = goals.judge(goal["metric"], values, goals.best_kept(self.view.progress.values(), goal), goal["direction"],
                                min_seeds=policy.get("min_seeds", goals.DEFAULT_MIN_SEEDS),
                                margin_sd=policy.get("margin_sd", goals.DEFAULT_MARGIN_SD))
+        if saved is not None and judgment == saved:
+            attempt.judgment = saved
+            return saved
         self.say("  ticket %d: keep-if-better read %s" % (attempt.id, judgment.words()))
         if judgment.short is not None:
             fail("keep-if-better: %s" % judgment.short)
             return "failed"
-        self.ledger.write_json(self._judgment_record(attempt.id, attempt.number), {
-            "metric": judgment.metric, "values": list(judgment.values), "artifacts": [str(path) for path in artifacts],
-            "mean": judgment.mean, "sd": judgment.sd, "best": judgment.best, "kept": judgment.kept,
-        })
+        record = {"metric": judgment.metric, "values": list(judgment.values), "mean": judgment.mean, "sd": judgment.sd,
+                  "best": judgment.best, "kept": judgment.kept}
+        if artifacts is not None:
+            record["artifacts"] = [str(path) for path in artifacts]
+        self.ledger.write_json(self._judgment_record(attempt.id, attempt.number), record)
         attempt.judgment = judgment
         return judgment
 
@@ -1747,14 +1761,33 @@ class Conductor:
         self._tail()
         attempt.kept = kept
         self.say("  ticket %d: %s" % (attempt.id, "kept" if kept else (
-            "not kept" if judgment.kept else "discarded; its branch %s stays" % (BRANCH % attempt.id))))
+            "not kept" if judgment.kept else "discarded; its branch stays as %s" % (DISCARDED_BRANCH % (attempt.id, attempt.number)))))
 
-    def _discard_note(self, identifier, judgment):
+    def _discard_note(self, attempt, judgment):
         return ("Discarded by keep-if-better, and not integrated: %s, which is not better by more than %s standard "
-                "deviation(s). The branch %s stays; the findings are negative results, and only a new ticket citing "
-                "new evidence revives the change." % (
+                "deviation(s). The change stays on the branch %s, in the worktree %s; the findings are negative results, "
+                "and only a new ticket citing new evidence revives the change." % (
                     judgment.words(), (self.policy.get("goal") or {}).get("margin_sd", goals.DEFAULT_MARGIN_SD),
-                    BRANCH % identifier))
+                    DISCARDED_BRANCH % (attempt.id, attempt.number),
+                    "%s/%s" % (WORKTREES, DISCARDED_WORKTREE % (attempt.id, attempt.number))))
+
+    def _set_aside_discarded(self, identifier, number):
+        """Move a discarded attempt's worktree and branch to names of its own; the worktree's path, or None when there is none.
+
+        `ticket/<id>` and `.worktrees/<id>` are what the ticket's next attempt (a rerun) starts from, and a
+        discarded change must neither be that start nor be removed when that attempt closes: its negative
+        findings cite files in its worktree. A restart that finds it moved already moves nothing.
+        """
+        target = self.project / WORKTREES / (DISCARDED_WORKTREE % (identifier, number))
+        if (target / ".git").exists():
+            return target
+        source = self._worktree(identifier)
+        if not (source / ".git").exists():
+            return None
+        with self.ledger.lock():
+            self._git(self.project, "worktree", "move", str(source), str(target))
+            self._git(self.project, "branch", "-m", BRANCH % identifier, DISCARDED_BRANCH % (identifier, number))
+        return target
 
     def _seed_outputs(self, ticket, jobs):
         """The ticket's outputs, then each job's `expected_outputs`, as paths relative to the project."""
@@ -1780,10 +1813,10 @@ class Conductor:
             self.say("  ticket %d failed: %s (next: needs_human)" % (identifier, problem))
             return
         self._journal_judgment(attempt, judgment)
-        worktree = self._worktree(identifier) if (self._worktree(identifier) / ".git").exists() else None
+        worktree = self._set_aside_discarded(identifier, attempt.number)
         refused = self._file_findings(attempt, self._running_findings(attempt, known), True, worktree)
         result.findings += attempt.findings
-        self._set_status(identifier, "done", note + refused + [self._discard_note(identifier, judgment)])
+        self._set_status(identifier, "done", note + refused + [self._discard_note(attempt, judgment)])
         self.ledger.append_event(TICKET_DONE, {"ticket": identifier}, ticket=identifier)
         self._tail()
         result.done.append(identifier)
@@ -1828,6 +1861,10 @@ class Conductor:
                 self._git(self.project, "revert", "--abort", ok=None)
                 return ("keep-if-better discarded ticket %d, and reverting %s on main fails: %s" % (
                     attempt.id, span, (reverted.stderr or reverted.stdout).strip()))
+            if self._git(self.project, "diff", "--cached", "--quiet", ok=None).returncode == 0:
+                self._git(self.project, "revert", "--quit", ok=None)
+                self.say("  ticket %d: %s is undone on main already; nothing to revert" % (attempt.id, span))
+                return None
             self._git(self.project, "commit", "-q", "-m", REVERT_MESSAGE % (attempt.id, span))
         self.say("  ticket %d: reverted %s on main; the branch %s keeps the change" % (attempt.id, span, BRANCH % attempt.id))
         return None
@@ -1991,6 +2028,7 @@ class Conductor:
                 return "failed"
             if judgment is not None and not judgment.kept:
                 self._journal_judgment(attempt, judgment)
+                attempt.worktree = self._set_aside_discarded(attempt.id, attempt.number) or attempt.worktree
                 self._close(attempt, discarded=judgment)
                 return "done"
         outcome = self._integrate(attempt)
@@ -2936,7 +2974,7 @@ class Conductor:
         """
         notes = self._file_findings(attempt, attempt.result.get("findings") or [], discarded is not None, attempt.worktree)
         if discarded is not None:
-            notes.append(self._discard_note(attempt.id, discarded))
+            notes.append(self._discard_note(attempt, discarded))
         if notes:
             attempt.body = tickets.with_result_note(attempt.body, notes)
         self._write_ticket(attempt, "done", attempt.result)

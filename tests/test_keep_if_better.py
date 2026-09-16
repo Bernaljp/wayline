@@ -288,16 +288,19 @@ class DiscardedTest(GoalTicketCase):
         self.assertEqual(self.results[-1].reason, "frontier_empty")
         self.assertIn("Discarded by keep-if-better", self.body())
 
-    def test_the_branch_and_its_worktree_stay(self):
-        self.assertIn("ticket/1", self.branches())
-        self.assertTrue((self.worktree() / "metrics" / "seed-1.txt").is_file())
+    def test_the_branch_and_its_worktree_stay_under_the_attempt_s_name(self):
+        self.assertIn("ticket/1-a1", self.branches())
+        self.assertNotIn("ticket/1", self.branches())
+        self.assertTrue((self.project / ".worktrees" / "1-a1" / "metrics" / "seed-1.txt").is_file())
+        self.assertFalse(self.worktree().exists())
+        self.assertIn("ticket/1-a1", self.body())
 
     def test_its_findings_are_negative_results_citing_the_worktree(self):
         finding = self.findings()[-1]
         self.assertEqual((finding["ticket"], finding["negative"]), (1, True))
-        self.assertEqual(finding["provenance"], ".worktrees/1/metrics/seed-1.txt#auroc")
+        self.assertEqual(finding["provenance"], ".worktrees/1-a1/metrics/seed-1.txt#auroc")
         from wayline import provenance
-        self.assertIn(".worktrees/1/metrics/seed-1.txt", provenance.manifest_paths(provenance.read_manifest(self.ledger)))
+        self.assertIn(".worktrees/1-a1/metrics/seed-1.txt", provenance.manifest_paths(provenance.read_manifest(self.ledger)))
         self.assertTrue(self.payload("finding")["negative"])
 
     def test_it_earns_no_verdict(self):
@@ -308,8 +311,8 @@ class DiscardedTest(GoalTicketCase):
         again = Conductor(self.project, out=io.StringIO())
         again.readings, again.notify = machine.recorded, self.recorder
         again.wave()
-        self.assertTrue(self.worktree().exists())
-        self.assertIn("ticket/1", self.branches())
+        self.assertTrue((self.project / ".worktrees" / "1-a1").exists())
+        self.assertIn("ticket/1-a1", self.branches())
         self.assertEqual([len(self.events(name)) for name in ("progress", "discarded")], [2, 1])
 
     def test_the_report_draws_the_discard_on_the_trajectory(self):
@@ -320,11 +323,67 @@ class DiscardedTest(GoalTicketCase):
         self.assertIn("(ticket 1): Interaction terms lift the held-out AUROC.", text)
         self.assertNotIn("res:unmanifested/.#", text)
 
+    def test_a_rerun_starts_from_main_and_leaves_the_discarded_change_where_it_is(self):
+        tickets.write_ticket(self.ledger, dict(self.ticket(), status="open"), self.body())
+        self.ledger.append_event("ticket_rerun", {"ticket": 1, "by": "cli"}, ticket=1)
+        again = Conductor(self.project, out=io.StringIO())
+        self.conduct((finding_result(), seeds(0.95, 0.96, 0.97, extra={"metrics/seed-9.txt": "auroc: 0.96\n"})),
+                     conductor=again)
+        progress = [event["payload"] for event in self.events("progress")]
+        self.assertEqual([(payload["run_id"], payload["kept"]) for payload in progress],
+                         [("t99-a1", True), ("t1-a1", False), ("t1-a2", True)])
+        self.assertTrue(self.on_main("metrics/seed-9.txt"))
+        self.assertTrue((self.project / ".worktrees" / "1-a1" / "metrics" / "seed-1.txt").is_file())
+        self.assertIn("ticket/1-a1", self.branches())
+        self.assertIn("auroc: 0.8\n", (self.project / ".worktrees" / "1-a1" / "metrics" / "seed-1.txt").read_text())
+
     def test_a_proposal_that_merely_reruns_it_is_parked_as_a_duplicate(self):
         outcome = proposals.admit_proposals(self.project, [{
             "title": TITLE, "kind": "code", "why": "run it again, it may pass this time", "radius": "moderate",
             "touches": ["metrics/"]}], origin_ticket=1, origin_prefix="ticket 1 attempt 2", proposed_by="worker:1")
         self.assertEqual((outcome[0]["outcome"], outcome[0]["reason"]), ("parked", "duplicate"))
+
+
+class StaleJudgmentTest(GoalTicketCase):
+    def test_a_keep_saved_before_a_better_change_was_kept_is_judged_again(self):
+        """A change judged better, whose integration waited while another ticket raised the best, is not kept on the old word."""
+        self.set_goal()
+        self.prior(0.80)
+        self.ledger.write_json("sessions/1/1/goal.json", {"metric": "auroc", "values": [0.90, 0.91, 0.92], "mean": 0.91,
+                                                          "sd": 0.01, "best": 0.80, "kept": True})
+        self.prior(0.95, ticket=98)
+        self.conduct((finding_result(), seeds(0.90, 0.91, 0.92)))
+        self.assertEqual(self.payload("discarded")["best"], 0.95)
+        self.assertNotIn("integrated", self.sequence())
+        self.assertFalse(self.ledger.read_json("sessions/1/1/goal.json")["kept"])
+
+
+class RevertTest(GoalTicketCase):
+    def test_a_change_main_already_undid_is_not_reverted_again(self):
+        from types import SimpleNamespace
+        base = self.git("rev-parse", "main")
+        self.commit_on_main("extra.txt")
+        commit = self.git("rev-parse", "main")
+        self.git("rm", "-q", "extra.txt")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main: drop extra.txt")
+        head = self.git("rev-parse", "main")
+        self.ledger.write_json("sessions/1/1/integration.json", {"base": base, "commit": commit})
+        driven = Conductor(self.project, out=io.StringIO())
+        self.assertIsNone(driven._revert(SimpleNamespace(id=1, number=1)))
+        self.assertEqual(self.git("rev-parse", "main"), head)
+        self.assertEqual(self.git("diff", "--cached", "--name-only"), "")  # nothing left staged
+
+
+class ReportMeansTest(unittest.TestCase):
+    def test_each_discard_is_paired_with_its_own_attempt_s_mean(self):
+        from wayline.provenance import _discarded_means
+        def progress(value, run, kept=False):
+            return make_event("progress", {"metric": "auroc", "value": value, "ticket": 1, "run_id": run, "kept": kept}, ticket=1)
+        def discarded():
+            return make_event("discarded", {"ticket": 1, "metric": "auroc", "best": 0.9, "sd": 0.01, "seeds": 3}, ticket=1)
+        pairs = _discarded_means([progress(0.5, "t1-a1"), discarded(), progress(0.6, "t1-a2"), discarded(),
+                                  progress(0.7, "t1-a3")], "auroc")
+        self.assertEqual([mean for _, mean in pairs], [0.5, 0.6])
 
 
 class ShortOrUnmeasuredTest(GoalTicketCase):
@@ -430,9 +489,9 @@ class JobsDiscardedTest(JobsGoalCase):
         self.assertEqual(self.status(1), "done")
         self.assertFalse(self.on_main("sweep/plan.md"))
         self.assertIn("ticket 1: discarded by keep-if-better", self.git("log", "--format=%s", "main"))
-        self.assertIn("ticket/1", self.git("branch"))
-        self.assertTrue((self.project / ".worktrees" / "1" / "sweep" / "plan.md").is_file())
-        self.assertIn("sweep/plan.md", self.git("ls-tree", "-r", "--name-only", "ticket/1"))
+        self.assertIn("ticket/1-a1", self.git("branch"))
+        self.assertTrue((self.project / ".worktrees" / "1-a1" / "sweep" / "plan.md").is_file())
+        self.assertIn("sweep/plan.md", self.git("ls-tree", "-r", "--name-only", "ticket/1-a1"))
 
     def test_it_is_journaled_as_discarded_and_the_run_goes_on(self):
         discarded = [event["payload"] for event in self.events("discarded")]
