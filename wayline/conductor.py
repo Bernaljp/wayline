@@ -2330,24 +2330,12 @@ class Conductor:
         for fields, body, record in asked:
             if self._holds_launches() or self.action != schedule.NORMAL:
                 return
-            what = "the decider on ticket %d" % fields["id"]
-            on_fable = decider.decides_on_fable(self.policy) and self._fable_held()
-            falls_back = on_fable and self._falls_back()
-            if on_fable and not falls_back:
-                self._held_back(what)
-                continue
-            try:
-                outcome = decider.decide_ticket(self.project, fields, body, record, harness_root=self.harness_root,
-                                                policy=self.policy, fall_back=falls_back, notify=self.notify)
-            except gates.FableHeld:
-                self._held_back(what)
-                continue
-            except gates.UsageLimited as refused:
-                self._pause(refused.limit, what)
-                self.say("  ticket %d: the usage limit refused the decider; it is launched again once the window allows" % fields["id"])
+            outcome, stopped = self._launch_decider("the decider on ticket %d" % fields["id"], lambda falls_back: decider.decide_ticket(
+                self.project, fields, body, record, harness_root=self.harness_root, policy=self.policy, fall_back=falls_back,
+                notify=self.notify))
+            if stopped:
                 return
-            except (ValueError, OSError) as failure:
-                self._decider_failed(fields["id"], str(failure))
+            if outcome is None:
                 continue
             if outcome.status == "failed":
                 self._decider_failed(fields["id"], outcome.why)
@@ -2358,6 +2346,31 @@ class Conductor:
         if result.decided:
             self._tail()
             self._apply_answers()  # closed now, so what the answered tickets paused is launchable in this wave
+
+    def _launch_decider(self, what, decide):
+        """One launch of the decider under the wave's rules: `(outcome, stopped)`.
+
+        `decide(falls_back)` is the launch. It waits for the hold on Fable's weekly window when the decider's tier is
+        Fable and the consent waits (`outcome` None, named for the ask of decision 15), and a usage window that
+        refuses it pauses the run and stops this wave's deciding (`stopped`); a launch that raised is a failed
+        outcome, for the caller to hand to a person or say aloud.
+        """
+        on_fable = decider.decides_on_fable(self.policy) and self._fable_held()
+        falls_back = on_fable and self._falls_back()
+        if on_fable and not falls_back:
+            self._held_back(what)
+            return None, False
+        try:
+            return decide(falls_back), False
+        except gates.FableHeld:
+            self._held_back(what)
+            return None, False
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, what)
+            self.say("  %s: the usage limit refused it; it is launched again once the window allows" % what)
+            return None, True
+        except (ValueError, OSError) as failure:
+            return decider.Outcome(None, "failed", why=str(failure)), False
 
     def _decider_takes(self):
         """Whether the decider is launched in this wave: autonomy `autonomous`, a decider role that reads, and pacing `normal`.
@@ -2393,31 +2406,21 @@ class Conductor:
         if not parked:
             return
         events, _ = self.ledger.read_events()
-        answered = decider.decided_proposals(events)
+        taken = decider.reconsidered(self.project, events)
         for proposal in parked:
-            if str(proposal["id"]) in answered or self._holds_launches() or self.action != schedule.NORMAL:
+            if str(proposal["id"]) in taken or self._holds_launches() or self.action != schedule.NORMAL:
                 continue
-            what = "the decider on parked proposal %s" % proposal["id"]
-            on_fable = decider.decides_on_fable(self.policy) and self._fable_held()
-            falls_back = on_fable and self._falls_back()
-            if on_fable and not falls_back:
-                self._held_back(what)
-                continue
-            try:
-                outcome = decider.decide_proposal(self.project, proposal, harness_root=self.harness_root, policy=self.policy,
-                                                  fall_back=falls_back)
-            except gates.FableHeld:
-                self._held_back(what)
-                continue
-            except gates.UsageLimited as refused:
-                self._pause(refused.limit, what)
+            outcome, stopped = self._launch_decider("the decider on parked proposal %s" % proposal["id"], lambda falls_back: decider.decide_proposal(
+                self.project, proposal, harness_root=self.harness_root, policy=self.policy, fall_back=falls_back, notify=self.notify))
+            if stopped:
                 return
-            except (ValueError, OSError) as failure:
-                self.say("  parked proposal %s: the decider could not reconsider it: %s" % (proposal["id"], failure))
+            if outcome is None:
+                continue
+            if outcome.status == "failed":
+                self.say("  parked proposal %s: the decider could not reconsider it: %s" % (proposal["id"], outcome.why))
                 continue
             self.say("  %s" % outcome.line)
-            if outcome.status != "failed":
-                result.reconsidered.append(str(proposal["id"]))
+            result.reconsidered.append(str(proposal["id"]))
 
     # --- the Type-B gate (decision 11) ---
 

@@ -64,6 +64,9 @@ __all__ = [
 ]
 
 DECISION_HEADING = "## Decision"
+# The body's human-only line, as `decision_body` writes it and `turn_over` rewrites it.
+HUMAN_ONLY_YES = "- human-only: yes, only the owner answers it"
+HUMAN_ONLY_NO = "- human-only: no, so under autonomy `autonomous` the decider may answer it"
 # What `blocking` may say on a ticket a worker or the planner asks for (the frontmatter also allows null).
 BLOCKINGS = ("subgraph", "all")
 # The statuses a ticket is paused from: work not started, or stopped and waiting for another attempt. A
@@ -170,8 +173,7 @@ def decision_body(record, paused=(), origin=None):
                      % (_named(paused), "it" if len(paused) == 1 else "them"))
     else:
         lines.append("- blocking: `subgraph`, and no ticket waited on it when it was opened")
-    lines.append("- human-only: yes, only the owner answers it" if record.get("human_only")
-                 else "- human-only: no, so under autonomy `autonomous` the decider may answer it")
+    lines.append(HUMAN_ONLY_YES if record.get("human_only") else HUMAN_ONLY_NO)
     if origin:
         lines.append("- asked by: " + _one_line(origin))
     lines += ["", grill.machine_line(record), "", "## How to answer", "",
@@ -450,10 +452,20 @@ def decide(project, identifier, answer, rationale, confidence=None, model=None, 
         events, _ = ledger.read_events()
         if identifier in replay.replay(events).answers or answer_section(body):
             raise ProjectError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
+        try:
+            record = decision_record(body)
+        except ProjectError:
+            record = None
         write_ticket(ledger, fields, with_answer(body, answer))
         payload = {"ticket": identifier, "answer": answer, "decided_by": "decider", "rationale": rationale, "confidence": confidence}
         payload.update({key: value for key, value in (("model", model), ("fallback_from", fallback_from)) if value})
-        return ledger.append_event(DECISION, payload, ticket=identifier, session_id=session_id)["payload"]
+        event = ledger.append_event(DECISION, payload, ticket=identifier, session_id=session_id)
+        # The decision lands in DECISIONS.md too (ticket 31, criterion 4), as a settled record of the ticket's question.
+        settled = dict(record or {"ticket": identifier, "question": decision_question(fields, body), "options": [], "reversible": True},
+                       answer=answer, rationale=rationale, confidence=confidence, decided_by="decider", timestamp=event["ts"])
+        settled.update({key: value for key, value in (("model", model), ("fallback_from", fallback_from), ("session_id", session_id)) if value})
+        grill.append_ticket_record(project, settled)
+        return event["payload"]
 
 
 def turn_over(project, identifier, why, notify=None):
@@ -483,8 +495,7 @@ def turn_over(project, identifier, why, notify=None):
         if record is not None:
             turned = dict(record, human_only=True)
             body = body.replace(grill.machine_line(record), grill.machine_line(turned))
-        body = body.replace("- human-only: no, so under autonomy `autonomous` the decider may answer it",
-                            "- human-only: yes, only the owner answers it")
+        body = body.replace(HUMAN_ONLY_NO, HUMAN_ONLY_YES)
         body = body.rstrip("\n") + "\n\n" + REFUSED_HEADING + "\n\n" + _one_line(why) + "\n"
         fields = dict(fields, human_only=True)
         write_ticket(ledger, fields, body)

@@ -147,6 +147,19 @@ class IrreversibleListTest(unittest.TestCase):
         self.assertIsNone(irreversible_class("the second option", "Which flexible model is the second baseline?"))
         self.assertIsNone(irreversible_class("5-fold cross-validation inside split_a", "How are settings tuned without touching split_b?"))
 
+    def test_an_answer_that_only_points_at_an_option_is_checked_by_the_options_words(self):
+        options = ["keep the results", "delete results/ and regenerate"]
+        for pointer in ("option 2", "2", "the second", "the second option", "choice 2", "The second one."):
+            with self.subTest(pointer=pointer):
+                self.assertEqual(decider.chosen_option(pointer, options), "delete results/ and regenerate")
+        self.assertEqual(decider.chosen_option("the first", options), "keep the results")
+        self.assertEqual(decider.chosen_option("option 3", options), "option 3", "a pointer past the options is read as words")
+        self.assertEqual(decider.chosen_option("keep the results", options), "keep the results")
+        subject = Subject(kind="ticket", key="2", question="What happens to the old results?", options=options)
+        self.assertIn("irreversible list (delete or overwrite data): delete results/ and regenerate",
+                      refusal(subject, decision("the second option")))
+        self.assertIsNone(refusal(subject, decision("the first")))
+
     def test_refusal_reads_the_session_first_and_the_answer_second(self):
         subject = Subject(kind="question", key="Q8", question="Which flexible model is the second baseline?")
         self.assertIsNone(refusal(subject, decision(Q8_ANSWER)))
@@ -382,6 +395,22 @@ class RefusedAnswerTest(RecordedGrillCase):
         self.assertEqual(len(journaled), 1)
         self.assertEqual(journaled[0]["payload"]["decided_by"], "human")
 
+    def test_the_owners_answer_in_the_grill_answers_the_ticket_too(self):
+        report = self.decide_rest(Q8=decision("wipe results/ and start over"), Q10=decision(Q10_ANSWER))
+        ticket = report["refused"][0].ticket
+        grill.answer(self.project, "Q8", "both", "the owner wants trees and a network")
+        answered = [event for event in self.events("decision") if event["ticket"] == ticket]
+        self.assertEqual(len(answered), 1)
+        self.assertEqual((answered[0]["payload"]["answer"], answered[0]["payload"]["decided_by"], answered[0]["payload"]["rationale"]),
+                         ("both", "human", "the owner wants trees and a network"))
+        opened = {item["id"]: item for item in tickets.read_tickets(self.project)}[ticket]
+        body = tickets.read_ticket(tickets.tickets_dir(self.project) / tickets.filename(opened))[1]
+        self.assertEqual(tickets.answer_section(body), "both", "the ticket carries the same answer, for the conductor to close")
+        self.assertEqual(self.records()["Q8"]["answer"], "both")
+        grill.grill_view(self.project)  # reading the tree again neither re-answers nor re-journals anything
+        self.assertEqual(len([event for event in self.events("decision") if event["ticket"] == ticket]), 1)
+        self.assertEqual(len([event for event in self.events("decision") if event["payload"].get("answer", "").startswith("Q8 ")]), 1)
+
     def test_a_human_only_or_irreversible_question_is_never_launched(self):
         report = self.decide_rest(Q8=decision(Q8_ANSWER), Q10=decision(Q10_ANSWER))
         subjects = [subject_of(call.request) for call in self.decider_calls()]
@@ -449,6 +478,15 @@ class ConductorDecidesTest(ConductedCase):
         self.assertTrue(decided[0]["session_id"])
         self.assertEqual(tickets.answer_section(self.body(2)), "one line")
         self.assertIn("ticket 2: decision ticket 2  decided: one line", self.out.getvalue())
+        # The decision is appended to DECISIONS.md as well, as a settled record of the ticket's question (criterion 4).
+        records = grill.read_records(self.project)
+        self.assertEqual([(record.get("ticket"), record["answer"], record["decided_by"]) for record in records],
+                         [(2, "one line", "decider")])
+        self.assertEqual(records[0]["model"], worker.RESOLVED_MODELS["fable"])
+        self.assertTrue(records[0]["session_id"])
+        text = (self.project / "research" / "DECISIONS.md").read_text(encoding="utf-8")
+        self.assertIn("### Ticket 2. Which form does the beta report take?", text)
+        self.assertIn("- decided-by: decider", text)
 
     def test_the_launch_is_the_decider_at_fable_max_on_the_project_with_no_worktree(self):
         self.script()
@@ -473,7 +511,6 @@ class ConductorDecidesTest(ConductedCase):
         self.script()
         self.fake.script(envelope("one line"), role=decider.DECIDER)
         self.conduct()
-        project.answer(self.project, 2, "a table", rationale="the owner's later word") if False else None
         log = decisions.decisions_view(self.project)["log"]
         self.assertEqual(log[0]["decided_by"], "decider")
         self.assertEqual((log[0]["ticket"], log[0]["answer"], log[0]["question"]), (2, "one line", "Which form does the beta report take?"))
@@ -585,24 +622,48 @@ class ParkedProposalsTest(ConductedCase):
         self.assertEqual([entry["answer"] for entry in answers], ["proposal p1: admit", "proposal p2: keep parked"])
         self.assertEqual(answers[0]["rationale"], "it probes the claim's failure, inside a moderate radius")
         self.assertEqual(answers[0]["model"], worker.RESOLVED_MODELS["fable"])
-        self.assertEqual(decider.decided_proposals(self.events()), {"p1", "p2"})
+        self.assertEqual(decider.reconsidered(self.project, self.events()), {"p1", "p2"})
         prompt = [call for call in self.fake.calls if "parked proposal p1" in call.request.prompt][0].request.prompt
         self.assertIn('- the question: Is the parked proposal p1, "Sweep the interaction strength", admitted to the run?', prompt)
         self.assertIn("- options: admit | keep parked", prompt)
         self.assertIn("- evidence: parked because: radius", prompt)
         self.assertEqual(len(self.decider_calls()), 3, "ticket 2 and the two proposals")
 
-    def test_a_refused_admission_keeps_the_proposal_parked(self):
+    def test_a_refused_admission_becomes_a_human_only_decision_ticket_and_is_not_asked_again(self):
         self.script()
         self.fake.script(envelope("one line"), role=decider.DECIDER)
         self.fake.script(respond=answering({"p1": decision("admit, and push the branch to origin"), "p2": decision("keep parked")}),
                          role=decider.DECIDER)
         self.fake.script(respond=answering({"p1": decision("admit, and push the branch to origin"), "p2": decision("keep parked")}),
                          role=decider.DECIDER)
-        self.conduct()
+        launched, waves = self.conduct()
         answers = {event["payload"]["answer"]: event["payload"] for event in self.events("decision") if event["payload"].get("ticket") is None}
-        self.assertIn("proposal p1: keep parked", answers)
-        self.assertIn("irreversible list (push)", answers["proposal p1: keep parked"]["rationale"])
+        self.assertEqual(list(answers), ["proposal p2: keep parked"], "nothing was decided about p1")
+        opened = [ticket for ticket in tickets.read_tickets(self.project) if ticket.get("origin") == "proposal p1"]
+        self.assertEqual(len(opened), 1)
+        self.assertEqual((opened[0]["kind"], opened[0]["human_only"], opened[0]["blocking"], opened[0]["proposed_by"], opened[0]["status"]),
+                         ("decision", True, None, "decider", "open"))
+        body = tickets.read_ticket(tickets.tickets_dir(self.project) / tickets.filename(opened[0]))[1]
+        self.assertIn('Is the parked proposal p1, "Sweep the interaction strength", admitted to the run?', body)
+        self.assertIn("irreversible list (push)", body)
+        self.assertIn(("decision_opened", opened[0]["id"]), [(event, ticket) for event, ticket, _ in self.notified])
+        self.assertEqual(decider.reconsidered(self.project, self.events()), {"p1", "p2"})
+        self.assertEqual(waves[0].reconsidered, ["p1", "p2"], "both were put to the decider this wave")
+        self.assertEqual([wave.reconsidered for wave in waves[1:]], [[] for _ in waves[1:]])
+        self.assertEqual(len(self.decider_calls()), 3, "p1 is the owner's now and is not put to a session again")
+        self.assertTrue(launched, "the run went on")
+
+    def test_the_report_names_a_proposal_decision_as_a_parked_proposal(self):
+        self.script()
+        self.fake.script(envelope("one line"), role=decider.DECIDER)
+        self.fake.script(respond=answering({"p1": decision("admit"), "p2": decision("keep parked")}), role=decider.DECIDER)
+        self.fake.script(respond=answering({"p1": decision("admit"), "p2": decision("keep parked")}), role=decider.DECIDER)
+        self.conduct()
+        provenance.render_report(self.project, offline=True, draft=False)
+        text = (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
+        first = text.split("## 1. Decisions by the decider", 1)[1].split("## 2.", 1)[0]
+        self.assertIn("- A parked proposal: **proposal p1: admit**", first)
+        self.assertNotIn("The grill: **proposal", first)
 
 
 class NoParkedProposalsTest(unittest.TestCase):

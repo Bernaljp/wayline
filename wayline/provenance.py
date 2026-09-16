@@ -1105,8 +1105,14 @@ def _decider_decisions(context):
             continue
         ticket = payload.get("ticket")
         title = (context.tickets.get(ticket) or {}).get("title")
-        # A question of the grill has no ticket; its answer opens with the question it settles.
-        subject = "The grill" if ticket is None else "Ticket %s%s" % (ticket, ", *%s*" % title if title else "")
+        # A question of the grill has no ticket; its answer opens with the question it settles. A parked proposal
+        # the decider reconsidered has none either, and its answer opens with `proposal <id>:` (ticket 31).
+        if ticket is not None:
+            subject = "Ticket %s%s" % (ticket, ", *%s*" % title if title else "")
+        elif str(payload.get("answer") or "").startswith("proposal "):
+            subject = "A parked proposal"
+        else:
+            subject = "The grill"
         lines.append("- %s: **%s** (confidence %s, %s)" % (
             subject, _inline(payload.get("answer")), _number(payload.get("confidence")), _when(event)))
         if payload.get("rationale"):

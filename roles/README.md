@@ -75,10 +75,14 @@ options, the recommendation, the evidence, the prerequisites' answers), the irre
 the project's human-only classes, and the records inlined in order (`DECISIONS.md`, `POSITION.md`,
 `GOAL.json`, the L0 and L1 records, the query pack), cut at the context cap with the cut announced.
 The session hands back a decision on the irreversible list with `answer: null`, and code refuses one
-it did give anyway (`decider.irreversible_class`): a refused decision becomes the owner's, as a
-human-only question in the tree with a human-only decision ticket beside it, or as a decision
-ticket turned human-only. While Fable's weekly window is spent it falls back to Opus at the same
-effort under the fallback consent, and the decision records the model and the session it came from.
+it did give anyway (`decider.irreversible_class`, read on the option's words when the answer only
+points at an option): a refused decision becomes the owner's, as a human-only question in the tree
+with a human-only decision ticket beside it, as a decision ticket turned human-only, or, for a
+parked proposal, as a human-only decision ticket asking whether it is admitted. While Fable's weekly
+window is spent it falls back to Opus at the same effort under the fallback consent, and every
+decision records the model and the session it came from: a grill question in its `DECISIONS.md`
+record, a decision ticket in its `## Answer`, the journal, and a record appended to `DECISIONS.md`,
+a parked proposal in the journal alone.
 
 ## Why `disallowed_tools` names tools the harness never asked for
 

@@ -507,6 +507,51 @@ def answer(project, identifier, text, rationale, confidence=None, decided_by="hu
         make_event(DECISION, record_payload(record), ts=record["timestamp"])  # an event the journal refuses writes nothing
         _write_records(ledger, records)
         _journal_settled(ledger, records, now=(record["id"],))
+        if decided_by == "human":
+            _answer_ticket_of(project, ledger, record)
+    return record
+
+
+def _answer_ticket_of(project, ledger, record):
+    """The owner's grill answer to a refused question answers its decision ticket too, so none stays open in the dashboard.
+
+    The decider (ticket 31) opens a human-only decision ticket for a question it was refused (origin `grill
+    Qn`); the owner may answer in the grill instead. The ticket then takes the same answer as the owner's,
+    through `project.answer`, and the conductor closes it at its next wave. A ticket already answered or closed
+    is left alone.
+    """
+    from wayline.project import answer as answer_ticket  # the project module imports the grill's readers
+    identifier = record.get("supersedes") or record.get("id")
+    try:
+        found = [ticket for ticket in read_tickets(project)
+                 if ticket["kind"] == DECISION_KIND and str(ticket.get("origin") or "") == TICKET_ORIGIN + identifier]
+    except (ValueError, OSError):
+        return
+    for ticket in found:
+        try:
+            answer_ticket(project, ticket["id"], record["answer"], rationale=record.get("rationale"), confidence=record.get("confidence"),
+                          by="grill")
+        except (ProjectError, OSError):
+            continue  # answered already, or closed
+
+
+def append_ticket_record(project, record):
+    """Append one settled decision-ticket record (`ticket` set, no `id`) to `research/DECISIONS.md`; returns it.
+
+    The decider's answer to a decision ticket (ticket 31) lands here as well as in the ticket's file and the
+    journal, so the file of the project's design decisions holds every decision the decider made. A record
+    for the same ticket and answer already there is not appended twice; the record is checked against the
+    schema first, and nothing is journaled here, since `decisions.decide` journals the decision itself.
+    """
+    record = _check(_ordered(dict(record)))
+    if record.get("ticket") is None or record.get("id") is not None or not _settled(record):
+        raise GrillError("a ticket record names its ticket, no question id, and its answer")
+    ledger = Ledger(project)
+    with ledger.lock():
+        records = read_records(project)
+        if any(other.get("ticket") == record["ticket"] and other.get("answer") == record["answer"] for other in records):
+            return record
+        _write_records(ledger, records + [record])
     return record
 
 
