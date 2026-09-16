@@ -28,7 +28,9 @@ const state = {
   tags: {},
   since: null, // null means "the tail has not read this project yet": ask by line count, not offset
 
-  tickets: [], // every ticket's frontmatter, for the card a graph node shows
+  tickets: [], // every ticket's frontmatter, for the titles on the graph and the card a node shows
+  ticketsFor: null, // the project `tickets` was read from, so another project's titles are never drawn
+  graphSource: null, // the SVG the server last sent, redrawn whenever the titles change
   openSignature: null, // the open decision tickets last drawn, so a poll that changed nothing leaves their forms alone
   ticket: null, // the ticket id whose page is open, or null when the graph is showing
   log: null, // { kind, id, since } of the log tail that is open, or null
@@ -221,6 +223,9 @@ function select(id) {
   // is reading until its own first answer lands.
   document.getElementById('journal-tail').replaceChildren();
   delete document.getElementById('ticket-body').dataset.ticket;
+  state.tickets = [];
+  state.ticketsFor = null;
+  state.graphSource = null;
   replace(document.getElementById('overview-body'), [loadingState('reading the ledger')]);
   replace(document.getElementById('graph-body'), [loadingState('drawing the graph')]);
   replace(document.getElementById('outputs-body'), [loadingState('indexing the outputs')]);
@@ -352,11 +357,8 @@ async function loadGraph() {
       replace(document.getElementById('graph-body'), [emptyState('no ticket yet: the graph is drawn once the first one is written')]);
       return;
     }
-    const body = document.getElementById('graph-body');
-    body.innerHTML = svg;
-    hideNodeCard();
-    const drawn = body.querySelector('svg');
-    if (drawn) trimCanvas(drawn);
+    state.graphSource = svg;
+    drawGraph();
   } catch (failure) {
     replace(document.getElementById('graph-body'), [errorState(failure)]);
   }
@@ -370,17 +372,34 @@ async function loadGraph() {
 // only way to it: the node is a link, so the keyboard reaches it and a click opens the whole page.
 
 async function loadTickets() {
-  if (!state.project) return;
+  const project = state.project;
+  if (!project) return;
   try {
-    const view = await get(`/api/projects/${encodeURIComponent(state.project)}/tickets`, 'tickets');
-    if (view) state.tickets = view;
+    const view = await get(`/api/projects/${encodeURIComponent(project)}/tickets`, 'tickets');
+    if (!view || project !== state.project) return;
+    const was = titleSignature(state.tickets);
+    state.tickets = view;
+    state.ticketsFor = project;
+    // A title that changed, or a list that has only now arrived, is drawn on the nodes at once
+    // rather than at the graph's next poll: the two are one picture and must agree.
+    if (titleSignature(view) !== was) drawGraph();
   } catch (failure) {
-    // The graph is drawn either way; only the card would be missing, so this is not the panel's error.
+    // The graph is drawn either way; only the titles and the card would be missing, so this is not
+    // the panel's error to report.
   }
 }
 
+function titleSignature(tickets) {
+  return (tickets || []).map((entry) => `${entry.id}:${entry.status}:${entry.title}`).join('|');
+}
+
+// The titles belong to this project, or there are none to draw yet.
+function ticketsHere() {
+  return state.ticketsFor === state.project ? (state.tickets || []) : [];
+}
+
 function nodeCard(id) {
-  const ticket = (state.tickets || []).find((entry) => String(entry.id) === String(id));
+  const ticket = ticketsHere().find((entry) => String(entry.id) === String(id));
   const card = document.getElementById('node-card');
   if (!ticket) {
     replace(card, [el('p', { class: 'node-title', text: `ticket ${id}` })]);
@@ -437,8 +456,143 @@ function followNodeCard() {
 function trimCanvas(svg) {
   const drawn = svg.getBBox ? svg.getBBox() : null;
   if (!drawn || !drawn.width || !drawn.height) return;
-  const pad = 8;
+  const pad = 10;
   svg.setAttribute('viewBox', `${drawn.x - pad} ${drawn.y - pad} ${drawn.width + pad * 2} ${drawn.height + pad * 2}`);
+}
+
+// --- the graph, drawn again ------------------------------------------------------------------------
+//
+// The server decides the graph: which ticket sits in which layer, in what order across it, and which
+// node is on the frontier. That is the part worth having in one tested place, and it stays there.
+// What it cannot know is how much room a browser has, so its nodes are a box of 120 by 36 with a
+// number in them. Here the same layout is drawn again at a size that fits a title, a status, and the
+// room to tell one ticket from another at a glance.
+//
+// Nothing is re-laid-out: each node keeps its column and its row, each edge keeps its ends, and the
+// fill the server chose is carried over untouched, so the stylesheet's rules (and the test that
+// holds them to `dag.STATUS_COLOR`) still decide every color.
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const NODE = { w: 208, h: 56, gx: 44, gy: 60 };
+
+function svgEl(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs || {})) {
+    if (value !== null && value !== undefined) node.setAttribute(name, String(value));
+  }
+  return node;
+}
+
+// The grid the server drew on, read back from the drawing itself rather than assumed: the node box
+// is a rect's own size, and the pitch is the smallest step between two columns or two rows.
+function gridOf(rects) {
+  const pitch = (values) => {
+    const sorted = [...new Set(values)].sort((a, b) => a - b);
+    const steps = sorted.slice(1).map((value, index) => value - sorted[index]).filter((step) => step > 0);
+    return steps.length ? Math.min(...steps) : 0;
+  };
+  const first = rects[0];
+  return {
+    w: Number(first.getAttribute('width')),
+    h: Number(first.getAttribute('height')),
+    px: pitch(rects.map((rect) => Number(rect.getAttribute('x')))),
+    py: pitch(rects.map((rect) => Number(rect.getAttribute('y')))),
+  };
+}
+
+function fitsIn(text, chars) {
+  const value = String(text || '');
+  return value.length <= chars ? value : `${value.slice(0, chars - 1).trimEnd()}\u2026`;
+}
+
+function redrawGraph(source) {
+  const rects = [...source.querySelectorAll('a rect')];
+  if (!rects.length) return null;
+  const grid = gridOf(rects);
+  if (!grid.w || !grid.h) return null;
+
+  // Where each node lands in the new grid, by the column and row the old one was in.
+  const place = (x, y) => ({
+    x: (grid.px ? Math.round(x / grid.px) : 0) * (NODE.w + NODE.gx),
+    y: (grid.py ? Math.round(y / grid.py) : 0) * (NODE.h + NODE.gy),
+  });
+
+  const drawn = svgEl('svg', { xmlns: SVG_NS });
+  drawn.appendChild((() => {
+    const defs = svgEl('defs');
+    const marker = svgEl('marker', { id: 'arrow', viewBox: '0 0 10 10', refX: 9, refY: 5,
+                                     markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' });
+    marker.appendChild(svgEl('path', { d: 'M0,1L9,5L0,9z' }));
+    defs.appendChild(marker);
+    return defs;
+  })());
+
+  // The edges first, so a node is never drawn under one of its own lines.
+  for (const line of source.querySelectorAll('line')) {
+    const from = place(Number(line.getAttribute('x1')) - grid.w / 2, Number(line.getAttribute('y1')) - grid.h);
+    const to = place(Number(line.getAttribute('x2')) - grid.w / 2, Number(line.getAttribute('y2')));
+    const x1 = from.x + NODE.w / 2;
+    const y1 = from.y + NODE.h;
+    const x2 = to.x + NODE.w / 2;
+    const y2 = to.y;
+    const bend = Math.max(18, (y2 - y1) / 2);
+    drawn.appendChild(svgEl('path', {
+      class: 'edge',
+      d: `M${x1},${y1} C${x1},${y1 + bend} ${x2},${y2 - bend} ${x2},${y2}`,
+      'marker-end': 'url(#arrow)',
+    }));
+  }
+
+  for (const link of source.querySelectorAll('a')) {
+    const rect = link.querySelector('rect');
+    if (!rect) continue;
+    const id = link.getAttribute('href').slice('#ticket/'.length);
+    const ticket = ticketsHere().find((entry) => String(entry.id) === String(id)) || {};
+    const at = place(Number(rect.getAttribute('x')), Number(rect.getAttribute('y')));
+    const node = svgEl('a', { href: link.getAttribute('href'), class: 'node' });
+    node.appendChild(svgEl('rect', {
+      x: at.x, y: at.y, width: NODE.w, height: NODE.h, rx: 10,
+      // The server's own choice of fill, carried over: the stylesheet maps it to the palette.
+      fill: rect.getAttribute('fill'),
+    }));
+    // The stripe down the leading edge repeats the status without relying on the fill alone.
+    node.appendChild(svgEl('rect', { class: `stripe s-fill-${ticket.status || 'unknown'}`,
+                                     x: at.x, y: at.y, width: 4, height: NODE.h }));
+    const number = svgEl('text', { class: 'node-id', x: at.x + 14, y: at.y + 23 });
+    number.textContent = `#${id}`;
+    node.appendChild(number);
+    const status = svgEl('text', { class: 'node-status', x: at.x + NODE.w - 14, y: at.y + 23, 'text-anchor': 'end' });
+    status.textContent = ticket.status || '';
+    node.appendChild(status);
+    const title = svgEl('text', { class: 'node-name', x: at.x + 14, y: at.y + 42 });
+    title.textContent = fitsIn(ticket.title || '', 26);
+    node.appendChild(title);
+    drawn.appendChild(node);
+  }
+  return drawn;
+}
+
+// The server's SVG, drawn again at a readable size when it can be read back. Its own drawing stands
+// if it cannot, so the graph is never lost to a shape this did not expect.
+function drawGraph() {
+  if (!state.graphSource) return;
+  const body = document.getElementById('graph-body');
+  body.innerHTML = state.graphSource;
+  hideNodeCard();
+  const source = body.querySelector('svg');
+  if (!source) return;
+  let shown = source;
+  try {
+    const again = redrawGraph(source);
+    if (again) {
+      replace(body, [again]);
+      shown = again;
+    }
+  } catch (failure) {
+    body.innerHTML = state.graphSource;
+    shown = body.querySelector('svg');
+  }
+  if (shown) trimCanvas(shown);
 }
 
 function wireGraph() {

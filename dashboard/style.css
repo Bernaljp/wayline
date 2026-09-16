@@ -413,11 +413,25 @@ dl.fields + .chips { margin-top: var(--space-4); }
 .graph { overflow-x: auto; }
 .graph svg { display: block; max-width: 100%; height: auto; }
 .graph svg text { fill: var(--ink); font-family: var(--mono); font-weight: 600; }
-.graph svg line { stroke: var(--line-strong); }
-.graph svg marker path { fill: var(--line-strong); }
+.graph svg line, .graph svg .edge { stroke: var(--line-strong); fill: none; stroke-width: 1.5; }
+.graph svg marker path { fill: var(--line-strong); stroke: none; }
 .graph svg rect { stroke: var(--line-strong); transition: stroke 150ms ease-out; }
 .graph svg a { cursor: pointer; }
 .graph svg a:hover rect, .graph svg a:focus-visible rect { stroke: var(--accent); stroke-width: 2; }
+
+/* A node of the redrawn graph: the id, where the ticket stands, and as much of its title as fits,
+   with the status repeated as a stripe so the fill is not carrying it alone. */
+.graph svg a.node .stripe { stroke: none; }
+.graph svg a.node:hover rect.stripe, .graph svg a.node:focus-visible rect.stripe { stroke: none; }
+.graph svg .node-id { font-size: 13px; font-weight: 700; }
+.graph svg .node-status { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; fill: var(--ink-2); text-transform: uppercase; }
+.graph svg .node-name { font-size: 12px; font-weight: 500; font-family: var(--sans); fill: var(--ink-2); }
+
+.s-fill-done, .s-fill-accepted { fill: var(--done); }
+.s-fill-running { fill: var(--running); }
+.s-fill-failed, .s-fill-blocked, .s-fill-needs_human { fill: var(--failed); }
+.s-fill-paused, .s-fill-parked { fill: var(--paused); }
+.s-fill-open, .s-fill-unknown { fill: var(--dim); }
 
 /* One rule per fill `wayline.dag.svg` can write. A status added there needs its line here, and
    `tests/test_dashboard.py` fails until it has one. */
