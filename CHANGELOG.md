@@ -4,6 +4,22 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+- Pacing and the fallback by rung (ticket 62; Implementation Decision 16). A nearly spent window
+  stretches further instead of making hard tickets wait: at `pacing.cheap_at` every ticket launch runs
+  one rung below the rung its level gives it, and the deferral of tickets above difficulty 2 under
+  `cheap_only` (`schedule.CHEAP_MAX`) is gone. Each launch reads the windows of its rung's family: a
+  Fable rung reads Fable's weekly window and the all-models week, every other rung the five-hour and
+  all-models windows, and `pacing` carries `fable_action` beside `action`. The step never runs a launch
+  below rung 2, and never out of Fable (rung 7 steps to rung 6 and rung 6 stays), because leaving Fable
+  is what the hold and the fallback do under the owner's consent; an attempt that is itself a tier up of
+  the escalation chain is never stepped down, and role sessions and verdicts are not on the ladder.
+  `ticket_launched` carries the rung the attempt actually ran on, and `fallback_from` on
+  `ticket_launched` and `verdict` now names the Fable rung the work came from (`r7 fable high`) rather
+  than the word `fable`. While a step down is in force the window line of `wayline status` and the
+  dashboard overview says so (`stepping down one rung`, or `stepping down to r6 fable low` when only
+  Fable's window is at `cheap_at`), and `wayline run --simulate-limit cheap:<seconds>` (or
+  `cheap:fable:<seconds>`) forces a reading past `cheap_at` and under `stop_at` for that long, so the
+  overnight demo can show launches one rung down without waiting for a window to fill.
 - The rung ladder (ticket 60; Implementation Decision 16). A ticket's difficulty names a rung of
   `policy.tiers`, an ordered list of seven rungs cheapest first (a `model`, an `effort`, and a
   `budget`), and `policy.difficulty` maps each level 1 to 5 to a rung index (2, 3, 5, 6, 7). The cap:

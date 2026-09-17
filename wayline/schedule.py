@@ -16,18 +16,19 @@ from pathlib import Path
 from wayline.tickets import DECISION, HARDEST, SATISFIED, frontier, is_open_decision, open_decisions
 
 __all__ = [
-    "NORMAL", "CHEAP_ONLY", "STOP", "CHEAP_MAX", "affordable",
+    "NORMAL", "CHEAP_ONLY", "STOP", "steps_down",
     "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
     "everything_free", "nothing_held", "awaits_owner", "launchable", "order_key", "pick", "held_back", "holds_model_work",
     "AUTONOMOUS",
 ]
 
 # The pacing actions of decision 5 (`wayline.pacing` computes which one holds). `stop` launches
-# nothing; `cheap_only` launches only the tickets at or below `CHEAP_MAX` and puts the cheaper first.
+# nothing; `cheap_only` launches every ticket, each one rung down the rung ladder (decision 16,
+# `conductor.stepped_down`), and puts the cheaper first. It deferred the tickets above a difficulty
+# before ticket 62: a nearly spent window now stretches further instead of making hard tickets wait.
 NORMAL = "normal"
 CHEAP_ONLY = "cheap_only"
 STOP = "stop"
-CHEAP_MAX = 2
 # The one autonomy under which a decision ticket that is not human-only is the decider's rather than the owner's.
 AUTONOMOUS = "autonomous"
 
@@ -35,18 +36,21 @@ AUTONOMOUS = "autonomous"
 def holds_model_work(action):
     """Whether this pacing action stops the conductor launching a model at all.
 
-    Only `stop` does. `cheap_only` still launches difficulty 1 and 2 (`pick`), and the conductor
-    holds the verdict queue under it as well, because a verdict runs a tier above the work it
-    judges and is never on the cheap tier.
+    Only `stop` does. `cheap_only` still launches every ticket, one rung down (decision 16), and the
+    conductor holds the verdict queue under it as well, because a verdict runs above the work it
+    judges, is not on the rung ladder, and is never stepped down.
     """
     return action == STOP
 
 
-def affordable(entry, action=NORMAL):
-    """Whether this pacing action lets the ticket launch: any under `normal`, difficulty 1 and 2 under `cheap_only`."""
-    if action == STOP:
-        return False
-    return action != CHEAP_ONLY or (entry.get("difficulty") or 0) <= CHEAP_MAX
+def steps_down(action):
+    """Whether this pacing action runs a launch one rung down the rung ladder (decision 16).
+
+    Only `cheap_only` does. Which windows the action was read from is the launch's own business
+    (`pacing.rung_action`): a Fable rung is stepped down by Fable's weekly window, every other rung
+    by the five-hour window, and the all-models week steps down both.
+    """
+    return action == CHEAP_ONLY
 
 
 # --- touch sets ------------------------------------------------------------------------------
@@ -277,14 +281,15 @@ def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_f
     Up to `slots` of them (`policy.max_parallel_workers`). Each pick joins the running set before
     the next is chosen, so two tickets that share a path are never launched into the same wave:
     the second waits for the first to be integrated, which is what makes the conflict serialize.
-    The pacing action removes what it does not afford: everything under `stop`, difficulty 3 to 5
-    under `cheap_only`. `held(entry)` names a launch the hold on Fable's weekly window keeps back
+    The pacing action removes what it does not afford, which is everything under `stop` and nothing
+    under `cheap_only`, where a launch runs one rung down instead (decision 16; the conductor
+    resolves the rung). `held(entry)` names a launch the hold on Fable's weekly window keeps back
     (decision 15), dropped before anything is picked, so its slot goes to what else is launchable. A
     decision ticket is never picked: the owner answers it, or under `autonomous` the decider is launched
     on it by the conductor's wave step 5 (`wayline.decider`, ticket 31), never as a worker in a worktree.
     """
     ready = [entry for entry in frontier(graph)
-             if entry["kind"] != DECISION and affordable(entry, action) and not held(entry)
+             if entry["kind"] != DECISION and not holds_model_work(action) and not held(entry)
              and not awaits_owner(entry, autonomy, decider)]
     lengths = critical_path_lengths(graph)
     taken = list(running)

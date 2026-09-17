@@ -53,8 +53,10 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   first wave, and every wave folds in the `rate_limit_event`s the workers' streams gained, so the
   action of wave step 8 follows the windows while the workers are still running; `pacing` is
   journaled when the reading changes. `stop`, a window pause, the owner's pause, and a stop hold
-  every session that needs a model, verdicts and resumes included, and `cheap_only` launches only
-  difficulty 1 and 2 and holds the verdicts. What needs no model still happens first in the wave:
+  every session that needs a model, verdicts and resumes included. `cheap_only` launches every
+  ticket, each one rung down the rung ladder (ticket 62, decision 16: `stepped_down`, floor rung 2
+  and rung 6 out of Fable, and an attempt that is itself a tier up exempt), and holds the verdicts,
+  which are not on the ladder. What needs no model still happens first in the wave:
   the workers already running finish, and their machine checks and integration run. A hit limit
   journals `paused`, a session the limit stopped mid-work is resumed after the reset instead of
   failed, one it refused before its first turn is relaunched in the same attempt (decision 15), and
@@ -68,10 +70,14 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   runs on Fable) and everything else keeps launching; a Fable session stopped mid-work waits and is
   resumed on Fable after the reset. `/usage` is read again before a wave launches Fable work, and
   `unpaused` with `model: fable` ends the hold at the reset, or earlier when a reading puts Fable
-  under `stop_at`.
+  under `stop_at`. Below `stop_at` and at `cheap_at`, that window steps a Fable launch one rung down
+  instead, from rung 7 to rung 6 and no further (ticket 62): a launch on a Fable rung is paced by
+  Fable's weekly window and the all-models week, every other launch by the five-hour and all-models
+  windows, and `pacing` carries both actions.
 - The fallback to Opus (ticket 55, decision 15). While the hold stands and the fallback consent is
   `auto`, a launch on Fable runs on Opus at the same effort and budget under Opus's context cap,
-  every agent it defines on Fable moves with it, and `ticket_launched` carries `fallback_from`. A
+  every agent it defines on Fable moves with it, and `ticket_launched` carries `fallback_from`,
+  naming the Fable rung it came from (`r7 fable high`, decision 16). A
   Fable session the hold would keep waiting (refused before its first turn, stopped mid-work, or owed
   a gate's resume) starts again as a fresh Opus session in the same attempt and worktree, never as a
   resume of the Fable transcript. Under `wait`, and under `ask` until the ask is built, Fable work
@@ -137,6 +143,7 @@ from wayline.project import (
 
 __all__ = [
     "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "rung_tier", "rung_of", "rung_label", "ladder", "fallback_tier",
+    "rung_family", "stepped_down", "FLOOR_RUNG",
     "porcelain_entries",
     "dirty_outside_research", "refuse_to_start", "run_command", "WORKTREES", "RESEARCH", "BRANCH",
 ]
@@ -231,6 +238,9 @@ REVERT_MESSAGE = "ticket %d: discarded by keep-if-better\n\n" + REVERT_TRAILER
 RESUME, TIER_UP, SPLIT, NEEDS_HUMAN = "resume", "tier_up", "split", "needs_human"
 # The order is the owner's (2026-09-17): a split before a tier up, since a tier up (to Fable above all) is the dearer step.
 LADDER = {"resume": 1, "then": [SPLIT, TIER_UP, NEEDS_HUMAN], "tier_up": 1, "raise_after_failures": 2}
+# The floor of the step down at `pacing.cheap_at` (decision 16): pacing never runs a launch below
+# this rung of the rung ladder, whatever the windows read (`stepped_down`).
+FLOOR_RUNG = 2
 # The stall's two actions, and the reason a strict stall ends the run with (decision 5).
 REPLAN, STOP = "replan", "stop"
 STALL_STRICT = "stall_strict"
@@ -404,6 +414,36 @@ def rung_tier(policy, rung, ticket_budget=None):
         max_turns=budget.get("max_turns"), max_minutes=budget.get("max_minutes"),
         context_chars=_context_cap(policy, family), rung=index, family=family,
     )
+
+
+def rung_family(policy, rung):
+    """The family of the model rung `rung` names, or None for a rung the ladder does not have."""
+    rungs = ladder(policy)
+    index = rung if isinstance(rung, int) and not isinstance(rung, bool) else None
+    if index is None or not 1 <= index <= len(rungs):
+        return None
+    entry = rungs[index - 1]
+    return pacing.family(entry.get("model")) if isinstance(entry, dict) else None
+
+
+def stepped_down(policy, rung):
+    """The rung a launch runs on while `cheap_at` is in force: one below `rung` (decision 16).
+
+    Two floors hold. A launch never runs below `FLOOR_RUNG`, because a nearly spent window is a
+    reason to spend less on a ticket, never a reason to hand a hard ticket to the cheapest model
+    there is. And a launch on Fable never steps out of Fable: on Fable's own window the step takes
+    a launch from rung 7 to rung 6, and rung 6 stays where it is, because leaving Fable is what the
+    hold and the fallback do (decision 15), under the owner's consent, and not what pacing does.
+
+    A rung the ladder does not have is returned as it came: the launch fails on it in `rung_tier`,
+    where the owner reads why, rather than silently running one rung off.
+    """
+    below = rung - 1 if isinstance(rung, int) and not isinstance(rung, bool) else None
+    if below is None or rung <= FLOOR_RUNG or rung_family(policy, rung) is None:
+        return rung
+    if rung_family(policy, rung) == pacing.FABLE and rung_family(policy, below) != pacing.FABLE:
+        return rung
+    return below
 
 
 def rung_of(policy, difficulty):
@@ -588,8 +628,11 @@ class _Attempt:
     integrating: bool = False
     # How many of the session stream's `rate_limit_event`s pacing has already folded in.
     limits_read: int = 0
-    # `fable` when the attempt's session runs on Opus because Fable work fell back (decision 15), else None.
+    # The Fable rung (`r7 fable high`) the attempt's session came from when it runs on Opus because
+    # Fable work fell back (decisions 15 and 16), else None.
     fallback_from: Optional[str] = None
+    # The rung the attempt would have run on had pacing not stepped it down one (decision 16), for the launch line.
+    stepped_from: Optional[str] = None
     # What keep-if-better judged of this attempt (ticket 39), once it has, and whether the change was kept.
     judgment: Optional[goals.Judgment] = None
     kept: bool = False
@@ -643,8 +686,14 @@ class Conductor:
         # resource answer of step 7, which the job poller replaces with the free-slot rule of
         # `wayline.resources`. `clock` is the time pacing reads, which a test moves across a reset.
         self.action = schedule.NORMAL
+        # The action a launch on a Fable rung runs under (decision 16): the same thresholds over the
+        # windows a Fable rung reads, Fable's weekly window and the all-models week.
+        self.fable_action = schedule.NORMAL
         self.windows = pacing.Windows()
         self.clock = time.time
+        # The reading `run --simulate-limit cheap:[fable:]<seconds>` forces, as `(seconds, model)`, and the
+        # moment it lapses; the demo forces a step down with it rather than waiting for a nearly spent window.
+        self._simulated_step = self._simulated_until = None
         # The wave `/usage` was last read for before it launched Fable work (decision 15): once a wave at most.
         self._usage_wave = None
         # What was last said of `/usage` giving no reading and of verdicts waiting on the hold, so a week-long hold says each once.
@@ -922,10 +971,45 @@ class Conductor:
             picks = pick()  # the reading may have begun the hold or moved the action: pick again under what it says
         if self.view.hold is not None and not self._falls_back():
             for entry in tickets.frontier(graph):
-                if (self._on_fable(entry) and schedule.affordable(entry, self.action)
+                if (self._on_fable(entry) and not schedule.holds_model_work(self.action)
                         and not schedule.awaits_owner(entry, autonomy, decider)):
                     self._held_back("ticket %d" % entry["id"])
         return picks
+
+    def _launch_rung(self, identifier, rung):
+        """The rung this ticket's next attempt runs on: its level's, stepped down one at `cheap_at` (decision 16).
+
+        The windows the rung's own family reads decide (`pacing.rung_action`, folded into `action`
+        and `fable_action` by `_pace`), and the floors of `stepped_down` hold. An attempt that is
+        itself a tier up of the escalation chain runs on the rung it climbed to whatever the windows
+        read, or pacing would step the escalation back down and cancel it.
+        """
+        if not schedule.steps_down(self._rung_action(rung)) or self._climbed(identifier):
+            return rung
+        return stepped_down(self.policy, rung)
+
+    def _ran_on(self, rung, difficulty, budget=None):
+        """The tier of a session already under way: the rung `ticket_launched` named, else its difficulty's.
+
+        A session is resumed and re-adopted on the model it was launched on, and a launch stepped down
+        one rung at `cheap_at` (decision 16) ran below its level's rung. A journal written before the
+        rung ladder carries no rung, and a rung this policy no longer has is read as its level's.
+        """
+        if rung is not None:
+            try:
+                return rung_tier(self.policy, rung, budget)
+            except ConductorError:
+                pass
+        return tier_for(self.policy, difficulty, budget)
+
+    def _rung_action(self, rung):
+        """The pacing action a launch on this rung runs under: `fable_action` for a Fable rung, `action` for every other."""
+        return self.fable_action if rung_family(self.policy, rung) == pacing.FABLE else self.action
+
+    def _climbed(self, identifier):
+        """Whether the escalation chain has taken this ticket up a tier, which pacing never steps back down."""
+        known = self.view.tickets.get(identifier)
+        return known is not None and bool(known.taken(TIER_UP))
 
     def _on_fable(self, entry):
         """Whether a ticket launches on Fable: the tier of its effective difficulty names Fable (decision 15)."""
@@ -1288,7 +1372,8 @@ class Conductor:
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         # The difficulty it launched at: a raise journaled since does not move an attempt already under way.
         attempt.difficulty = replayed.difficulty if replayed.difficulty is not None else entry.get("difficulty", attempt.ticket["difficulty"])
-        attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
+        # The rung it launched on, which a step down at `cheap_at` (decision 16) may have put below its level's.
+        attempt.tier = self._ran_on(replayed.rung, attempt.difficulty, attempt.ticket.get("budget"))
         if replayed.fallback_from:
             # Its session runs on Opus and is resumed there, whatever the hold and the consent say now.
             attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), replayed.fallback_from
@@ -1528,18 +1613,22 @@ class Conductor:
         """
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
-        attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
+        rung = rung_of(self.policy, attempt.difficulty)
+        running = self._launch_rung(attempt.id, rung)
+        attempt.stepped_from = rung_tier(self.policy, rung, attempt.ticket.get("budget")).label if running != rung else None
+        attempt.tier = rung_tier(self.policy, running, attempt.ticket.get("budget"))
         if attempt.tier.family == pacing.FABLE and self._falls_back():
-            attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), pacing.FABLE
+            attempt.fallback_from, attempt.tier = attempt.tier.label, fallback_tier(self.policy, attempt.tier)
         self._add_worktree(attempt)
         self._write_ticket(attempt, "running")
         attempt.prompt = self._prompt(attempt)
         attempt.request = self._request(attempt, attempt.prompt)
         own = attempt.ticket.get("pinned_difficulty") or attempt.ticket["difficulty"]
-        self.say("wave %d: ticket %d %s (%s, %s, attempt %d)%s%s" % (
+        self.say("wave %d: ticket %d %s (%s, %s, attempt %d)%s%s%s" % (
             self.number, attempt.id, attempt.ticket["title"], attempt.role.name,
             attempt.tier.label, attempt.number,
             ", difficulty %s raised from %s" % (attempt.difficulty, own) if attempt.difficulty != own else "",
+            ", stepping down one rung from %s" % attempt.stepped_from if attempt.stepped_from else "",
             ", falling back from %s" % attempt.fallback_from if attempt.fallback_from else ""))
 
     def _prompt(self, attempt, notes=()):
@@ -2340,11 +2429,12 @@ class Conductor:
         if ran and last:
             notes.append(FALLBACK_LAST_MESSAGE % last)
         if attempt.tier.family == pacing.FABLE:
-            attempt.tier = fallback_tier(self.policy, attempt.tier)
-        attempt.fallback_from = pacing.FABLE
+            attempt.fallback_from, attempt.tier = attempt.tier.label, fallback_tier(self.policy, attempt.tier)
+        elif not attempt.fallback_from:  # a tier no rung made, or one already moved: the rung it came from is unnamed
+            attempt.fallback_from = pacing.FABLE
         if notes:
             self.ledger.write_json(self._attempt_dir(attempt).relative_to(self.ledger.research) / FALLBACK_NOTES,
-                                   {"fallback_from": pacing.FABLE, "notes": notes})
+                                   {"fallback_from": attempt.fallback_from, "notes": notes})
         attempt.prompt = self._prompt(attempt, notes)
         attempt.request = self._request(attempt, attempt.prompt)
         taken = ("its %s resume would run on Fable; a fresh session takes it" % want.stage if returned
@@ -2716,9 +2806,14 @@ class Conductor:
         """Wave step 8: the action from the latest readings, journaled as `pacing` when the reading changed.
 
         With nothing read from either surface yet, the action stands as it is: a run is never
-        slowed or stopped on a guess. Fable's weekly window never moves the action; its reading
-        begins or ends the hold on Fable launches instead (`_hold_by_reading`).
+        slowed or stopped on a guess. `action` is the one a launch off Fable runs under, read from
+        the five-hour and all-models windows, and `fable_action` the one a launch on a Fable rung
+        runs under, read from Fable's weekly window and the all-models week (decision 16); the
+        event carries both. Fable's weekly window never moves the run's action: at `stop_at` it
+        begins or ends the hold on Fable launches (`_hold_by_reading`), and at `cheap_at` it steps
+        a Fable launch one rung down, to rung 6 and no further.
         """
+        self._force_reading()
         if not self.windows.known():
             return
         now = self.clock()
@@ -2726,13 +2821,47 @@ class Conductor:
         reading = {name: self.windows.utilization(name, now) for name in pacing.READINGS}
         if self.windows.known(pacing.WINDOWS):
             self.action = pacing.action_for(reading["five_hour"], reading["seven_day"], stop_at, cheap_at)
-        reading["action"] = self.action
+        if self.windows.known(pacing.windows_for(pacing.FABLE)):
+            self.fable_action = pacing.rung_action(pacing.FABLE, reading, stop_at, cheap_at)
+        reading["action"], reading["fable_action"] = self.action, self.fable_action
         if reading != self.view.pacing:
             self.ledger.append_event(PACING, reading)
             self._tail()
-            self.say("  pacing: %s (five_hour %s, seven_day %s, fable %s; stop at %s, cheap only at %s)"
-                     % (self.action, reading["five_hour"], reading["seven_day"], reading["fable"], stop_at, cheap_at))
+            self.say("  pacing: %s (five_hour %s, seven_day %s, fable %s %s; stop at %s, cheap only at %s)"
+                     % (self.action, reading["five_hour"], reading["seven_day"], reading["fable"],
+                        self.fable_action, stop_at, cheap_at))
         self._hold_by_reading(reading["fable"], stop_at)
+
+    def simulate_step_down(self, seconds, model=None):
+        """Force a reading past `cheap_at` and under `stop_at` for `seconds`: `run --simulate-limit cheap:[fable:]<seconds>`.
+
+        On every model's windows, or on Fable's weekly window alone with `model` `fable`, so the M5
+        demo can show launches one rung down without waiting for a window to be nearly spent. The
+        reading is taken again at every wave, so a real one read meanwhile does not undo it, and it
+        lapses on its own once the seconds are out, because a reading whose reset has passed is no
+        reading (`Windows.utilization`). `seconds` None disarms it.
+        """
+        self._simulated_step = None if seconds is None else (float(seconds), model)
+        self._simulated_until = None
+
+    def _force_reading(self):
+        """Take the simulated reading of `simulate_step_down`, while its seconds last."""
+        if self._simulated_step is None:
+            return
+        seconds, model = self._simulated_step
+        now = self.clock()
+        stop_at, cheap_at = self._thresholds()
+        forced = round((cheap_at + stop_at) / 2, 4) if cheap_at < stop_at else cheap_at
+        if self._simulated_until is None:
+            self._simulated_until = now + seconds
+            self.say("  simulating a reading of %s on %s until %s, at or above cheap_at %s and under stop_at %s"
+                     % (forced, "Fable's weekly window" if model == pacing.FABLE else "the windows every model draws on",
+                        pacing.iso(self._simulated_until), cheap_at, stop_at))
+        if now >= self._simulated_until:
+            self._simulated_step = None
+            return
+        for name in (pacing.FABLE,) if model == pacing.FABLE else pacing.WINDOWS:
+            self.windows.record(name, forced, int(self._simulated_until), now)
 
     def _hold_by_reading(self, fable, stop_at):
         """The hold a reading of Fable's weekly window calls for: begun at `stop_at` or above, ended under it.
@@ -3399,8 +3528,8 @@ class Conductor:
         Pacing holds the whole queue rather than part of it: a ticket whose first verdict passed
         and whose second was never taken is neither accepted nor failed, and leaving one in that
         state across a window boundary is worse than leaving both for the next wave. `cheap_only`
-        holds it too, because a verdict runs a tier above the work it judges and so is never on
-        the cheap tier that difficulty 1 and 2 run on.
+        holds it too, because a verdict runs above the work it judges, is not on the rung ladder,
+        and so is never stepped down to a cheaper rung the way a ticket launch is (decision 16).
 
         While the hold on Fable's weekly window stands, a done ticket any of whose verdicts runs on
         Fable keeps every one of them queued, and the other tickets' verdicts are taken, unless the
@@ -3755,9 +3884,10 @@ class Conductor:
         """
         known = self.view.tickets[identifier]
         latest = known.latest
-        entry = {"difficulty": latest.difficulty if latest is not None else None}
-        if self._busy() >= self._slots() or not schedule.affordable(entry, self.action):
-            return False  # a resume is a worker like any launch: it waits for a slot, and for the pacing to allow its tier
+        if self._busy() >= self._slots() or schedule.holds_model_work(self.action):
+            return False  # a resume is a worker like any launch: it waits for a slot, and for the pacing to allow a session
+        # A resume is the attempt's own session again, on the model it was launched on: pacing steps a
+        # launch down a rung (decision 16), never a session already under way.
         if latest is None or not latest.session_id or latest.spent:
             self._climb(identifier, known.attempt, self._rung_from(identifier),
                         "%s; its session cannot be resumed" % (known.failure or "it failed"))
@@ -3766,7 +3896,7 @@ class Conductor:
         attempt = _Attempt(ticket, body, latest.number, self._worktree(identifier))
         attempt.role = worker.read_role(ticket["role"], self.harness_root, self.project)
         attempt.difficulty = latest.difficulty if latest.difficulty is not None else self._effective_difficulty(ticket)
-        attempt.tier = tier_for(self.policy, attempt.difficulty, ticket.get("budget"))
+        attempt.tier = self._ran_on(latest.rung, attempt.difficulty, ticket.get("budget"))
         if latest.fallback_from:
             attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), latest.fallback_from
         attempt.session_id, attempt.session_journaled = latest.session_id, True
@@ -4124,16 +4254,33 @@ def _in_touch_set(path, touches):
 
 # --- the verb ---------------------------------------------------------------------------------
 
+class _Simulated(NamedTuple):
+    """What `--simulate-limit` asks for: how long, on whose windows, and whether it steps down or pauses."""
+
+    seconds: float
+    model: Optional[str]
+    step_down: bool
+
+
 def parse_simulated_limit(text):
-    """`--simulate-limit`'s value as `(seconds, model)`: `S` for every model's windows, `fable:S` for Fable's weekly window; None otherwise."""
-    model, _, seconds = str(text).rpartition(":")
+    """`--simulate-limit`'s value as a `_Simulated`, or None when it is not one of its spellings.
+
+    `S` arms a hit limit on every model's windows and `fable:S` one on Fable's weekly window, which
+    pause the run and hold Fable launches (decisions 5 and 15). `cheap:S` and `cheap:fable:S` force a
+    reading past `pacing.cheap_at` and under `pacing.stop_at` for that many seconds instead, on every
+    model's windows or on Fable's alone, so a demo can show launches one rung down (decision 16).
+    """
+    rest, step_down = str(text), False
+    if rest.startswith("cheap:"):
+        rest, step_down = rest[len("cheap:"):], True
+    model, _, seconds = rest.rpartition(":")
     if model not in ("", pacing.FABLE):
         return None
     try:
         value = float(seconds)
     except ValueError:
         return None
-    return (value, model or None) if 0 <= value < float("inf") else None
+    return _Simulated(value, model or None, step_down) if 0 <= value < float("inf") else None
 
 
 def run_command(args):
@@ -4143,9 +4290,11 @@ def run_command(args):
     parser.add_argument("--project", help="the project to run; the active one by default")
     parser.add_argument("--resume", action="store_true", help="say in run_started that this run resumes one (every run replays the journal)")
     parser.add_argument("--detach", action="store_true", help="run as the transient user unit wayline-conductor, which outlives this shell")
-    parser.add_argument("--simulate-limit", metavar="[fable:]S",
+    parser.add_argument("--simulate-limit", metavar="[cheap:][fable:]S",
                         help="the next launch carries a rejected rate_limit_event resetting S seconds ahead, which pauses the run; "
-                             "with fable:S the next Fable launch is refused on Fable's weekly window, which holds only Fable launches")
+                             "with fable:S the next Fable launch is refused on Fable's weekly window, which holds only Fable launches; "
+                             "with cheap:S (or cheap:fable:S) no launch is refused and a reading past cheap_at stands for S seconds, "
+                             "under which every launch runs one rung down")
     parser.add_argument("--simulate-failure", metavar="ID", type=int,
                         help="every acceptance of ticket ID fails, on every attempt, so the escalation ladder climbs to the top")
     parser.add_argument("--max-waves", type=int, metavar="N", help="stop after N waves, whatever the frontier still holds")
@@ -4158,7 +4307,9 @@ def run_command(args):
         return 2
     simulated = None if options.simulate_limit is None else parse_simulated_limit(options.simulate_limit)
     if options.simulate_limit is not None and simulated is None:
-        print("wayline run: --simulate-limit takes a number of seconds, 0 or more, or fable:<seconds>", file=sys.stderr)
+        print("wayline run: --simulate-limit takes <seconds>, fable:<seconds> (Fable's weekly window alone), or either "
+              "prefixed by cheap: (a reading past cheap_at for that long, rather than a hit limit); the seconds are 0 or more",
+              file=sys.stderr)
         return 2
 
     try:
@@ -4178,8 +4329,12 @@ def run_command(args):
     announce_dashboard(project)
     conductor = Conductor(project)
     print("run      %s (%s, radius %s)" % (project, harness.get("autonomy"), harness.get("radius")))
-    if simulated is not None:
-        worker.simulate_limit(*simulated)
+    if simulated is not None and simulated.step_down:
+        conductor.simulate_step_down(simulated.seconds, simulated.model)
+        print("simulate a reading past cheap_at for %g second(s) on %s; every launch runs one rung down"
+              % (simulated.seconds, "Fable's weekly window" if simulated.model else "every model's windows"))
+    elif simulated is not None:
+        worker.simulate_limit(simulated.seconds, simulated.model)
     if options.simulate_failure is not None:
         worker.simulate_failure(options.simulate_failure)
         print("simulate every acceptance of ticket %d fails, on every attempt" % options.simulate_failure)

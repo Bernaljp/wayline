@@ -235,9 +235,15 @@ class TicketView:
 
 
 def _pacing(payload=None):
+    """The reading a `pacing` event carries: both actions, the Fable one of decision 16 beside the run's.
+
+    A `pacing` event written before the rung ladder carries no `fable_action`, and reads as `normal`:
+    what it says of Fable's weekly window is a reading, and the run paced Fable launches by it alone.
+    """
     payload = payload or {}
     return {"five_hour": payload.get("five_hour"), "seven_day": payload.get("seven_day"),
-            "fable": payload.get("fable"), "action": payload.get("action") or "normal"}
+            "fable": payload.get("fable"), "action": payload.get("action") or "normal",
+            "fable_action": payload.get("fable_action") or "normal"}
 
 
 @dataclass

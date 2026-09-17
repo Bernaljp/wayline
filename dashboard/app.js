@@ -322,6 +322,8 @@ function renderOverview(view, project) {
       ['five hour', window_.five_hour],
       ['seven day', window_.seven_day],
       ['fable', window_.fable],
+      // What `cheap_at` costs each launch (decision 16), beside the hold line of decision 15.
+      ['stepping down', window_.stepping_down],
       ['hold', view.hold ? view.hold.line : null],
       ['goal', goal ? `${goal.metric} ${goal.value === null ? 'no reading yet' : goal.value} of ${goal.target} (${goal.direction})${goal.reached ? ' reached' : ''}` : 'none set'],
       ['cpu slot', cpu ? `loadavg1 ${cpu.loadavg1} of ${cpu.nproc}, ${cpu.free_cores.length} cores free, ${cpu.free ? 'free' : 'full'}` : null],

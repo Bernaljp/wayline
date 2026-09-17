@@ -123,7 +123,7 @@
             "paths": {"type": "array", "items": {"type": "string"}},
             "session_id": {"type": ["string", "null"]},
             "model": {"type": ["string", "null"]},
-            "fallback_from": {"enum": ["fable", null], "description": "fable when the critic ran on Opus in place of a verifier on Fable (decision 15)"},
+            "fallback_from": {"type": ["string", "null"], "description": "the Fable rung the critic came from (r7 fable high) when it ran on Opus in place of a verifier on Fable (decisions 15 and 16)"},
             "findings": {"type": "array", "items": {"type": "object"}}
           }
         }

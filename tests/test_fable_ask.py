@@ -179,7 +179,7 @@ class AnswerAskTest(AskCase):
         self.assertTrue(fable_falls_back(self.project, self.now[0]), "a launch outside the conductor falls back too")
         waved = driven.wave()
         self.assertEqual(waved.launched, [1])
-        self.assertEqual((self.launches(1)[0]["model"], self.launches(1)[0]["fallback_from"]), ("opus", "fable"))
+        self.assertEqual((self.launches(1)[0]["model"], self.launches(1)[0]["fallback_from"]), ("opus", "r6 fable low"))
         self.assertEqual(self.statuses()[identifier], "done")
         self.assertEqual(read_harness(self.project)["model_fallback"], "ask")
         self.assertEqual([item["args"]["model_fallback"] for item in self.controls()], ["ask"], "no consent is journaled for this window alone")
@@ -202,7 +202,7 @@ class AnswerAskTest(AskCase):
         self.assertEqual(self.controls()[-1], {"command": "model_fallback", "args": {"model_fallback": "auto"}, "by": "cli"})
         self.assertEqual(read_harness(self.project)["model_fallback"], "auto")
         self.assertEqual(driven.wave().launched, [1])
-        self.assertEqual(self.launches(1)[0]["fallback_from"], "fable")
+        self.assertEqual(self.launches(1)[0]["fallback_from"], "r6 fable low")
         self.assertEqual([item["answer"] for item in self.decisions()], ["always fall back"], "an answered ask is not superseded by its own consent")
 
     def test_always_wait_written_into_the_ticket_file_also_journals_control_model_fallback_wait(self):
@@ -275,7 +275,7 @@ class CloseAskTest(AskCase):
         (closed,) = self.decisions()
         self.assertEqual((closed["answer"], closed["decided_by"]), ("superseded", "conductor"))
         self.assertIn("set to auto", closed["rationale"])
-        self.assertEqual(self.launches(1)[0]["fallback_from"], "fable")
+        self.assertEqual(self.launches(1)[0]["fallback_from"], "r6 fable low")
 
     def test_a_consent_set_to_wait_while_it_is_open_closes_it_and_fable_work_waits_with_nobody_asked_again(self):
         driven, identifier = self.opened()
@@ -316,7 +316,7 @@ class AskTimeoutTest(AskCase):
         self.assertEqual((timed_out["ticket"], timed_out["answer"], timed_out["decided_by"]), (identifier, "fall back", "conductor"))
         self.assertIn("ask_timeout_hours (2)", timed_out["rationale"])
         self.assertEqual(waved.launched, [1], "the timeout's answer is read before the wave launches")
-        self.assertEqual(self.launches(1)[0]["fallback_from"], "fable")
+        self.assertEqual(self.launches(1)[0]["fallback_from"], "r6 fable low")
         self.assertNotIn("model_fallback", read_harness(self.project), "the timeout answers for the window, never for the project")
         with self.assertRaisesRegex(ProjectError, "closed by the conductor"):
             answer(self.project, identifier, "wait")
@@ -357,7 +357,7 @@ class ReviewedAskTest(AskCase):
         self.ledger.append_event("paused", {"resets_at": later, "window": "seven_day", "utilization": 1.0, "model": "fable"})
         self.script(1)
         self.assertEqual(driven.wave().launched, [1])
-        self.assertEqual(self.launches(1)[0]["fallback_from"], "fable")
+        self.assertEqual(self.launches(1)[0]["fallback_from"], "r6 fable low")
         driven.settle()
         driven.wave()
         self.assertEqual((len(self.asks()), len(self.events("decision_opened"))), (1, 1))

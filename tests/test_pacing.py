@@ -492,19 +492,23 @@ class PacingActionTest(PacingCase):
     def test_the_seven_day_window_paces_the_run_through_normal_cheap_only_and_stop(self):
         self.pace_through("seven_day")
 
-    def test_cheap_only_launches_difficulty_1_and_2_and_holds_the_rest_and_the_verdicts(self):
+    def test_cheap_only_defers_no_ticket_and_still_holds_the_verdicts(self):
+        """Ticket 62: the deferral of hard tickets is gone; each launch runs one rung down instead (decision 16)."""
         self.add(1, difficulty=3)
         self.add(2, difficulty=3)
         self.add(3, difficulty=2)
         driven = self.conductor()
         self.script(1, self.reading("five_hour", 0.85))
+        self.script(2)
         self.script(3)
         drive(driven)
-        self.assertEqual(self.launched(), [1, 3])
-        self.assertEqual(self.statuses(), {1: "done", 2: "open", 3: "done"})
-        self.assertEqual([call.request.role for call in self.fake.calls], ["coder", "coder"], "no verifier ran under cheap_only")
-        self.assertEqual(len(driven.verdicts), 1)
+        self.assertEqual(sorted(self.launched()), [1, 2, 3])
+        self.assertEqual(self.statuses(), {1: "done", 2: "done", 3: "done"})
+        self.assertEqual({call.request.role for call in self.fake.calls}, {"coder"}, "no verifier ran under cheap_only")
+        self.assertEqual(len(driven.verdicts), 2, "the difficulty 3 tickets' verdicts wait: a verdict is not on the ladder")
         self.assertIn("pacing says cheap_only", driven.out.getvalue())
+        rungs = {item["payload"]["ticket"]: item["payload"]["rung"] for item in self.events("ticket_launched")}
+        self.assertEqual((rungs[2], rungs[3]), (4, 2), "difficulty 3 stepped from rung 5 to 4, difficulty 2 from rung 3 to 2")
 
     def test_the_thresholds_are_read_from_harness_json_and_a_control_event_moves_them(self):
         harness = json.loads((self.project / "harness.json").read_text(encoding="utf-8"))

@@ -329,7 +329,8 @@ class UsageBeforeFableWaveTest(HoldCase):
         self.script(2)
         self.fake.script(passing(), role="verifier")
         self.assertEqual(driven.wave().launched, [2], "the slot went to the Sonnet ticket")
-        self.assertEqual(self.payload("pacing"), {"five_hour": 0.24, "seven_day": 0.71, "fable": 1.0, "action": "normal"})
+        self.assertEqual(self.payload("pacing"), {"five_hour": 0.24, "seven_day": 0.71, "fable": 1.0,
+                                                  "action": "normal", "fable_action": "stop"})
         self.assertEqual(self.holds(), [{"resets_at": pacing.iso(resets), "window": "seven_day", "utilization": 1.0, "model": "fable"}])
         self.assertLess(self.index("paused", model="fable"), self.index("ticket_launched"))
         driven.settle()

@@ -367,7 +367,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   |---|---|
   | `init <path> [--uninstall-units]` | lays out a project, registers it, installs the three user units once per machine |
   | `intake [--goal]`, `absorb`, `position`, `grill`, `specify`, `plan` | the phases P0 to P4; the interactive ones are also skills |
-  | `run [--resume] [--detach] [--simulate-limit [fable:]s] [--simulate-failure id]` | the conductor; `--detach` launches it as the transient unit `wayline-conductor` |
+  | `run [--resume] [--detach] [--simulate-limit [cheap:][fable:]s] [--simulate-failure id]` | the conductor; `--detach` launches it as the transient unit `wayline-conductor` |
   | `pause`, `resume`, `stop [--drain]`, `cancel <id>`, `rerun <id>` | journal `control` events the conductor applies at its next wave |
   | `status`, `answer <id> "<text>"`, `switch <path>`, `switch --fallback auto|ask|wait`, `switch --ladder auto|ask`, `feedback "<text>"` | views and answers that work without the dashboard |
   | `serve [--bind 0.0.0.0] [--port n]`, `tick` | the dashboard server; the recurrent job |
@@ -389,12 +389,12 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `run_started` | `resume`, `harness_tag`, `autonomy`, `radius`, `pid` |
   | `run_ended` | `reason`: `frontier_empty`, `goal_reached`, `stopped`, `stall_strict`, `switched` |
   | `phase` | `from`, `to` (P0 to P8) |
-  | `pacing` | `five_hour`, `seven_day`, `fable`, `action`: `normal`, `cheap_only`, `stop` (written only on change; `fable` is Fable's weekly window, decision 15) |
+  | `pacing` | `five_hour`, `seven_day`, `fable`, `action`: `normal`, `cheap_only`, `stop`; `fable_action`: `normal`, `cheap_only`, `stop` (written only on change; `fable` is Fable's weekly window, decision 15; `fable_action` is the action a launch on a Fable rung runs under, read from that window and the all-models week, decision 16) |
   | `paused` | `resets_at`, `window`: `five_hour`, `seven_day`, `unknown`; `utilization`; `model`: `fable` (the hold on Fable's weekly window, decision 15; absent for the whole-run pause) |
   | `unpaused` | `model`: `fable` (the hold ended; absent when the whole-run pause ends) |
   | `ticket_created` | `ticket`, `kind`, `proposed_by`, `origin`, `blocked_by` |
   | `assigned` | `ticket`, `role`, `skills` |
-  | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256`, `difficulty` (the effective difficulty the attempt launched at, which the difficulty adjustment of decision 5 counts failures by; ticket 38), `rung` (the index of the rung the attempt ran on, decision 16; ticket 60); `fallback_from`: `fable` (a Fable launch that fell back to Opus, decision 15; absent otherwise) |
+  | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256`, `difficulty` (the effective difficulty the attempt launched at, which the difficulty adjustment of decision 5 counts failures by; ticket 38), `rung` (the index of the rung the attempt ran on, decision 16; ticket 60); `fallback_from` (the Fable rung a launch that fell back to Opus came from, as `r7 fable high`, decisions 15 and 16; absent otherwise) |
   | `ticket_session` | `ticket`, `attempt`, `session_id`, `model` (from the stream's `system/init`) |
   | `ticket_result` | `ticket`, `attempt`, `session_id`, `status`, `turns`, `duration_ms`, `usage`, `permission_denials`, `valid`; `jobs` (the job ids a `running` result leaves for the poller, ticket 19; absent otherwise) |
   | `ticket_resumed` | `ticket`, `attempt`, `session_id`, `reason`: `invalid_result`, `acceptance_failed`, `worker_died`, `timeout`, `readopted` |
@@ -406,7 +406,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `ticket_needs_human` | `ticket`, `question` |
   | `ticket_cancelled`, `ticket_rerun` | `ticket`, `by` |
   | `difficulty_raised` | `kind`, `from`, `to` |
-  | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings`, `rung` (the index of the rung the judged ticket attempt ran on, decision 16; absent on a verdict about anything but a ticket; ticket 60); `fallback_from`: `fable` (a verdict taken on Opus in place of a verifier on Fable, decision 15; absent otherwise) |
+  | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings`, `rung` (the index of the rung the judged ticket attempt ran on, decision 16; absent on a verdict about anything but a ticket; ticket 60); `fallback_from` (the Fable rung a verdict taken on Opus in place of a verifier on Fable came from, as `r7 fable high`, decisions 15 and 16; absent otherwise) |
   | `finding` | `id`, `ticket`, `text`, `provenance`, `negative` |
   | `progress` | `metric`, `value`, `ticket`, `run_id`, `kept` |
   | `discarded` | `ticket`, `metric`, `best`, `sd`, `seeds` |
@@ -677,7 +677,7 @@ Numbered so the milestones can point at them. Every decision below either restat
 | `verifier` | sonnet author: opus high; opus author: fable high; fable author: opus max (the default choice; decision 11) | map ticket 18, spec, Fable fallback map |
 | `max_parallel_workers` | 2 | map ticket 20 |
 | `poll_seconds`, `heartbeat_stale_s`, `acceptance_timeout_s` | 60, 300, 600 | spec |
-| `pacing.stop_at`, `pacing.cheap_at` | 0.90, 0.80, both windows; Fable's weekly window takes `stop_at` alone | map ticket 20, spec, Fable fallback map |
+| `pacing.stop_at`, `pacing.cheap_at` | 0.90, 0.80, both windows; at `cheap_at` a launch runs one rung down on every window, Fable's included, floor rung 2 and rung 6 out of Fable; Fable's weekly window takes `stop_at` alone, which holds Fable launches | map ticket 20, spec, Fable fallback map, finer model tiers map |
 | `model_fallback.wait_under_hours`, `model_fallback.ask_timeout_hours` | 12 (the ask recommends `wait` when the reset is nearer); 2 (only for a project without the key, under `autonomous`) | Fable fallback map |
 | `context_pack.max_chars` | sonnet 120000; opus 200000; fable 300000 (about 30k, 50k, and 75k tokens) | spec, measured in M1 |
 | `escalation` | resume 1, then split, then tier_up (1), then needs_human; `raise_after_failures` 2 | BRIEF 8.4, map ticket 24, the owner's order of 2026-09-17 |

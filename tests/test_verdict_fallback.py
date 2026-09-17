@@ -91,7 +91,8 @@ class PrincipleTest(GateCase):
     def test_the_tier_moves_only_a_verifier_on_fable(self):
         policy = policy_for(self.project)
         self.assertEqual(gates.verdict_tier(policy, "opus"), ("fable", "high", None))
-        self.assertEqual(gates.verdict_tier(policy, "opus", fall_back=True), ("opus", "high", "fable"))
+        # `fallback_from` names the rung the verifier came from (decision 16), `fable high` being rung 7.
+        self.assertEqual(gates.verdict_tier(policy, "opus", fall_back=True), ("opus", "high", "r7 fable high"))
         self.assertEqual(gates.verdict_tier(policy, "fable", fall_back=True), ("opus", "max", None))
         self.assertEqual(gates.verdict_tier(policy, "sonnet", fall_back=True), ("opus", "high", None))
 
@@ -116,7 +117,8 @@ class GateFallbackTest(GateCase):
                 self.assertEqual((call.kind, call.request.role, call.request.model, call.request.effort), ("launch", role, "opus", "high"))
                 self.assertEqual({agent["model"] for agent in json.loads(call.request.agent_text()).values()}, {"opus"})
                 payload = self.payload("verdict")
-                self.assertEqual((taken.fallback_from, payload["fallback_from"], payload["model"]), ("fable", "fable", "claude-opus-5"))
+                self.assertEqual((taken.fallback_from, payload["fallback_from"], payload["model"]),
+                         ("r7 fable high", "r7 fable high", "claude-opus-5"))
 
     def waits_under(self, consent, named):
         self.held(consent)
@@ -153,7 +155,7 @@ class GateFallbackTest(GateCase):
 
     def test_a_caller_that_decided_is_not_overruled_by_the_journal(self):
         self.held("wait")
-        self.assertEqual(self.take(passing(), author_model="opus", fall_back=True).fallback_from, "fable")
+        self.assertEqual(self.take(passing(), author_model="opus", fall_back=True).fallback_from, "r7 fable high")
         self.assertEqual(self.calls[0].request.model, "opus")
         set_model_fallback(self.project, "auto")
         self.assertIsNone(self.take(passing(), author_model="opus", fall_back=False).fallback_from)
@@ -193,7 +195,8 @@ class KillArgumentFallbackTest(GateCase):
         taken = self.run_gate(self.memo(), passing())
         self.assertEqual([(call.kind, call.request.model, call.request.effort) for call in self.calls], [("launch", "opus", "high")] * 2)
         (payload,) = [event["payload"] for event in self.events("verdict")]
-        self.assertEqual((payload["verdict_type"], payload["fallback_from"], taken.fallback_from), (gates.KILL_ARGUMENT, "fable", "fable"))
+        self.assertEqual((payload["verdict_type"], payload["fallback_from"], taken.fallback_from),
+                         (gates.KILL_ARGUMENT, "r7 fable high", "r7 fable high"))
 
     def test_under_wait_neither_thread_is_spent(self):
         hold(self.ledger)
@@ -233,11 +236,12 @@ class ConductorVerdictFallbackTest(FallbackCase):
         self.assertEqual((call.kind, call.request.model, call.request.effort), ("launch", "opus", "high"))
         self.assertIn("verdicts", call.run_dir.parts)
         (payload,) = self.verdicts()
-        self.assertEqual((payload["verdict_type"], payload["model"], payload["fallback_from"]), ("diff", "claude-opus-5", "fable"))
+        self.assertEqual((payload["verdict_type"], payload["model"], payload["fallback_from"]),
+                         ("diff", "claude-opus-5", "r7 fable high"))
         self.assertEqual(self.statuses(), {1: "accepted"})
-        self.assertIn("falling back from fable", driven.out.getvalue())
+        self.assertIn("falling back from r7 fable high", driven.out.getvalue())
         _, body = tickets.read_ticket(tickets.tickets_dir(self.project) / "01-write-the-hello-file.md")
-        self.assertIn("in place of fable, whose weekly window was spent", body)
+        self.assertIn("in place of r7 fable high, whose weekly window was spent", body)
 
     def test_under_wait_it_waits_a_difficulty_5_blocker_holds_its_dependent_and_auto_takes_it_once(self):
         self.add(1, difficulty=5)
@@ -263,7 +267,7 @@ class ConductorVerdictFallbackTest(FallbackCase):
         self.assertEqual((judged.accepted, judged.launched), ([1], []), "the wave picks before it drains its verdicts")
         (call,) = self.verifier_calls()
         self.assertEqual((call.kind, call.request.model, call.request.effort), ("launch", "opus", "high"))
-        self.assertEqual(self.verdicts()[0]["fallback_from"], "fable")
+        self.assertEqual(self.verdicts()[0]["fallback_from"], "r7 fable high")
         self.assertEqual(driven.wave().launched, [2], "accepted, the difficulty-5 blocker lets its dependent start")
         driven.settle()
         drive(driven)
@@ -320,7 +324,7 @@ class ConductorVerdictFallbackTest(FallbackCase):
         self.assertIn("was never taken; queued again", again.out.getvalue())
         (call,) = self.verifier_calls()
         self.assertEqual((call.kind, call.request.model, call.request.effort), ("launch", "opus", "high"))
-        self.assertEqual((self.statuses(), self.verdicts()[0]["fallback_from"]), ({1: "accepted"}, "fable"))
+        self.assertEqual((self.statuses(), self.verdicts()[0]["fallback_from"]), ({1: "accepted"}, "r7 fable high"))
 
 
 # --- claim sampling, the depth spot-check, the report --------------------------------------------------------------
@@ -361,7 +365,7 @@ class ClaimFallbackTest(RunCase):
         self.assertEqual(self.tiers(), {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "high"), "Interaction terms carry": ("opus", "max")})
         fell_back = [payload for payload in self.claim_verdicts() if payload.get("fallback_from")]
         self.assertEqual(len(fell_back), 2, "the claims of the two findings written on Opus, tickets 2 and 4")
-        self.assertEqual({(payload["model"], payload["fallback_from"]) for payload in fell_back}, {("claude-opus-5", "fable")})
+        self.assertEqual({(payload["model"], payload["fallback_from"]) for payload in fell_back}, {("claude-opus-5", "r7 fable high")})
 
     def test_under_wait_those_claims_wait_the_rest_are_judged_and_a_pass_after_the_reset_takes_only_them(self):
         hold(self.book)
@@ -418,9 +422,9 @@ class SpotCheckFallbackTest(AbsorbTestCase):
         critic = self.fake.calls[-1]
         self.assertEqual((critic.kind, critic.request.role, critic.request.model, critic.request.effort), ("launch", "critic", "opus", "high"))
         record = read_dossier(self.ledger, SLUG)["l2"]["spot_check"]
-        self.assertEqual((record["status"], record["model"], record["fallback_from"]), ("passed", "claude-opus-5", "fable"))
-        self.assertEqual(taken.payload["fallback_from"], "fable")
-        self.assertIn("Taken on claude-opus-5 in place of fable", (self.refs / "dossier.md").read_text(encoding="utf-8"))
+        self.assertEqual((record["status"], record["model"], record["fallback_from"]), ("passed", "claude-opus-5", "r7 fable high"))
+        self.assertEqual(taken.payload["fallback_from"], "r7 fable high")
+        self.assertIn("Taken on claude-opus-5 in place of r7 fable high", (self.refs / "dossier.md").read_text(encoding="utf-8"))
 
     def test_the_verb_prints_the_read_and_the_spot_check_that_waits_and_exits_0(self):
         (self.project / "harness.json").write_text(json.dumps(HARNESS), encoding="utf-8")
@@ -505,11 +509,13 @@ class DecisionModelTest(GrillCase):
                     grill.answer(self.project, "Q1", "three", "why", decided_by=decided_by, model=model, fallback_from=fallback_from)
         self.assertEqual(self.events("decision"), [])
 
-    def test_the_journal_takes_fallback_from_only_as_fable(self):
-        for event, payload in (("decision", {"ticket": 8, "answer": "split_b", "decided_by": "decider", "model": "claude-opus-5"}),
-                               ("verdict", {"subject_kind": "ticket", "subject": "t", "verdict_type": "diff", "pass": True,
-                                            "model": "claude-opus-5"})):
-            with self.subTest(event=event):
-                make_event(event, dict(payload, fallback_from="fable"))
-                with self.assertRaises(LedgerError):
-                    make_event(event, dict(payload, fallback_from="opus"))
+    def test_the_journal_takes_fallback_from_as_fable_on_a_decision_and_as_a_rung_on_a_verdict(self):
+        """A decision names the model it fell back from; a launch and a verdict name the rung (ticket 62, decision 16)."""
+        decision = {"ticket": 8, "answer": "split_b", "decided_by": "decider", "model": "claude-opus-5"}
+        make_event("decision", dict(decision, fallback_from="fable"))
+        with self.assertRaises(LedgerError):
+            make_event("decision", dict(decision, fallback_from="opus"))
+        verdict_payload = {"subject_kind": "ticket", "subject": "t", "verdict_type": "diff", "pass": True, "model": "claude-opus-5"}
+        for came_from in ("fable", "r7 fable high", "r6 fable low"):
+            with self.subTest(fallback_from=came_from):
+                make_event("verdict", dict(verdict_payload, fallback_from=came_from))
