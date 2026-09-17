@@ -54,7 +54,7 @@ from wayline.ledger import now_ts
 
 __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
-    "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
+    "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "launches_on", "fall_back", "stderr_tail", "stderr_of",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command", "login_command", "auth_status_command",
@@ -1980,6 +1980,38 @@ def simulated_limit():
     """The seconds a simulated limit is armed with, or None."""
     with _simulated_lock:
         return _simulated["seconds"]
+
+
+# --- the simulated failure (decision 5; ticket 38, M5's demo) ----------------------------------------
+
+_failing = {"ticket": None}
+
+# The command a simulated failure names in the acceptance record, and what it says it printed.
+SIMULATED_FAILURE_CMD = "wayline run --simulate-failure %d"
+SIMULATED_FAILURE_TAIL = ("the owner armed a simulated failure for this ticket: every acceptance of every attempt fails, so the "
+                          "whole escalation chain runs (resume, a tier up, a split, needs_human)\n")
+
+
+def simulate_failure(ticket):
+    """Arm a simulated failure for one ticket id, or disarm it with None: `wayline run --simulate-failure <id>`.
+
+    Unlike a simulated limit it is not taken by one launch: every attempt at the ticket, through either
+    backend, comes back with a failing acceptance (`simulated_failure`), which is what lets the owner
+    watch the escalation ladder climb in minutes.
+    """
+    if ticket is not None and (isinstance(ticket, bool) or not isinstance(ticket, int) or ticket < 1):
+        raise LaunchError("a simulated failure names a ticket id, a whole number from 1, not %r" % (ticket,))
+    with _simulated_lock:
+        _failing["ticket"] = ticket
+
+
+def simulated_failure(ticket):
+    """The failing acceptance result armed for `ticket` (`{cmd, exit_code, tail}`), or None when none is armed for it."""
+    with _simulated_lock:
+        armed = _failing["ticket"]
+    if armed is None or armed != ticket:
+        return None
+    return {"cmd": SIMULATED_FAILURE_CMD % ticket, "exit_code": 1, "seconds": 0.0, "tail": SIMULATED_FAILURE_TAIL}
 
 
 def launches_on(request, model):

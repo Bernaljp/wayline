@@ -20,7 +20,7 @@ from wayline.ledger import (
     JOB_LAUNCHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, STALL, SWITCHED,
     TICKET_ACCEPTED, TICKET_BLOCKED, TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED,
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
-    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED,
+    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED, DIFFICULTY_RAISED,
 )
 # The model a `paused` and an `unpaused` name for the hold on Fable's weekly window, the fallback consents a `control` may set,
 # and the window a ticket's origin names when it is the ask of decision 15.
@@ -106,6 +106,8 @@ class Attempt:
     # `fable` when the latest session was launched on Opus because Fable work fell back (decision 15), which the
     # difficulty adjustment of decision 5 never counts; None otherwise.
     fallback_from: Optional[str] = None
+    # The effective difficulty the attempt was launched at, which the difficulty adjustment counts failures by (ticket 38).
+    difficulty: Optional[int] = None
     sessions: list = field(default_factory=list)
     stage: str = "launch"
     spent: set = field(default_factory=set)
@@ -134,6 +136,21 @@ class TicketView:
     id: int
     status: Optional[str] = None
     attempts: dict = field(default_factory=dict)
+    # The `next` of every `ticket_failed` since the ticket was last rerun: the rungs of the escalation ladder it was sent to (ticket 38).
+    rungs: list = field(default_factory=list)
+    # The `reason` of the last `ticket_failed`: the failure output the ladder's resume is given.
+    failure: Optional[str] = None
+    # One tier above the difficulty the last attempt sent to `tier_up` launched at: where its next attempt starts.
+    floor: Optional[int] = None
+
+    @property
+    def rung(self):
+        """The rung a failed ticket waits on: the `next` of its last `ticket_failed`; None unless the ticket is `failed`."""
+        return self.rungs[-1] if self.status == "failed" and self.rungs else None
+
+    def taken(self, rung):
+        """How many times the ladder sent this ticket to `rung` since it was last rerun."""
+        return self.rungs.count(rung)
 
     @property
     def attempt(self):
@@ -168,6 +185,7 @@ class TicketView:
         attempt.role, attempt.model = payload.get("role"), payload.get("model")
         attempt.effort, attempt.worktree = payload.get("effort"), payload.get("worktree")
         attempt.fallback_from = fallback_from
+        attempt.difficulty = _int(payload.get("difficulty"))
         attempt.sessions = [Session("launch", pid=pid, ts=ts)]
 
     def session(self, payload):
@@ -186,9 +204,13 @@ class TicketView:
 
     def resumed(self, payload, ts):
         attempt = self._named(payload)
+        reason, session_id = payload.get("reason"), payload.get("session_id")
+        if attempt is not None and attempt.ended == TICKET_FAILED and reason in GATES:
+            # The escalation ladder's resume takes a failed attempt up again, in the same session (ticket 38); what it
+            # returns is integrated afresh, whatever its failed result was.
+            attempt.ended, attempt.integrated = None, False
         if attempt is None or attempt.ended:
             return
-        reason, session_id = payload.get("reason"), payload.get("session_id")
         if session_id:
             attempt.session_id = session_id
         if reason == READOPTED or (reason == WORKER_DIED and not session_id):
@@ -201,7 +223,8 @@ class TicketView:
 
     def end(self, name, payload):
         attempt = self._named(payload)
-        if attempt is not None and not attempt.ended:
+        # A failed verdict fails an attempt that ended `done` (decision 11), and the ladder takes it from the failure.
+        if attempt is not None and (not attempt.ended or (name == TICKET_FAILED and attempt.ended == TICKET_DONE)):
             attempt.ended = name
 
 
@@ -266,6 +289,14 @@ class View:
     # the `discarded` payload of each ticket whose latest attempt was not kept, whose branch and worktree stay.
     progress: dict = field(default_factory=dict)
     discarded: dict = field(default_factory=dict)
+    # The difficulty adjustment of decision 5 (ticket 38), for the run that is running: every failed attempt that did not
+    # fall back, `{(ticket, attempt): the difficulty it launched at}`, and the raises journaled, `{kind: {from: to}}`.
+    # A `run_ended` clears both, since a raise lasts for the rest of the run.
+    failures: dict = field(default_factory=dict)
+    raised: dict = field(default_factory=dict)
+    # When the last `stall` that asked for a replan was journaled: the replan it owes, until a re-cut is written after it
+    # or its run ends (a later run starts its own count).
+    replan_at: Optional[str] = None
 
     def apply(self, event):
         """Fold one journal record into the view; returns the view."""
@@ -274,6 +305,11 @@ class View:
         identifier = _int(payload.get("ticket", event.get("ticket")))
         if identifier is not None and (name in STATUS_AFTER or name in (TICKET_SESSION, TICKET_RESULT)):
             self._ticket_event(self.tickets.setdefault(identifier, TicketView(identifier)), name, payload, event.get("ts"))
+        if name == TICKET_FAILED and identifier is not None and payload.get("next") != "resume":
+            # An attempt has failed once its one resume is behind it: a failure the resume may still mend does not count.
+            attempt = self.tickets[identifier]._named(payload)
+            if attempt is not None and attempt.difficulty is not None and not attempt.fallback_from:
+                self.failures[(identifier, attempt.number)] = attempt.difficulty
         if name in (TICKET_LAUNCHED, TICKET_RERUN) and identifier is not None:
             self.discarded.pop(identifier, None)  # a new attempt is judged afresh
         if name == TICKET_CREATED and identifier is not None and ask_window(payload.get("origin")) is not None:
@@ -287,6 +323,7 @@ class View:
             if self.run is not None:
                 self.run["ended"] = payload.get("reason")
             self.stop = self.switched = self.model_fallback = None
+            self.failures, self.raised, self.replan_at = {}, {}, None
         elif name == PAUSED:
             stands = {key: payload.get(key) for key in ("resets_at", "window", "utilization")}
             if payload.get("model") == FABLE:
@@ -308,6 +345,12 @@ class View:
                 self.stall = 0 if payload.get("progressed") else self.stall + 1
         elif name == STALL:
             self.stall = 0
+            if payload.get("action") == "replan":
+                self.replan_at = event.get("ts")
+        elif name == DIFFICULTY_RAISED and isinstance(payload.get("kind"), str):
+            start, end = _int(payload.get("from")), _int(payload.get("to"))
+            if start is not None and end is not None:
+                self.raised.setdefault(payload["kind"], {})[start] = end
         elif name == SWITCHED:
             self.switched = {"from": payload.get("from"), "to": payload.get("to")}
         elif name == FEEDBACK:
@@ -353,6 +396,14 @@ class View:
             ticket.resumed(payload, ts)
         elif name in ENDS_ATTEMPT:
             ticket.end(name, payload)
+        if name == TICKET_FAILED:
+            ticket.rungs.append(payload.get("next"))
+            ticket.failure = payload.get("reason")
+            failed = ticket._named(payload)
+            if payload.get("next") == "tier_up" and failed is not None and failed.difficulty is not None:
+                ticket.floor = max(ticket.floor or 0, failed.difficulty + 1)
+        elif name == TICKET_RERUN:
+            ticket.rungs, ticket.failure, ticket.floor = [], None, None
 
     def _control(self, payload, identifier):
         command = payload.get("command")

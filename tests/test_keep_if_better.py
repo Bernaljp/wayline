@@ -390,17 +390,17 @@ class ShortOrUnmeasuredTest(GoalTicketCase):
     def test_fewer_seeds_than_the_policy_fail_the_ticket_with_a_request_for_more(self):
         self.set_goal()
         self.conduct((finding_result(), seeds(0.9, 0.95)))
-        failed = self.payload("ticket_failed")
+        failed = self.events("ticket_failed")[0]["payload"]
         self.assertIn("at least 3", failed["reason"])
         self.assertEqual(failed["next"], "resume")
-        self.assertEqual(self.ticket()["status"], "failed")
+        self.assertEqual(self.ticket()["status"], "needs_human", "its resume had nothing scripted")
         self.assertNotIn("progress", self.sequence())
         self.assertNotIn("integrated", self.sequence())
 
     def test_a_command_that_measures_nothing_fails_the_ticket(self):
         self.set_goal(eval_command="exit 3")
         self.conduct((finding_result(), seeds(0.9, 0.9, 0.9)))
-        self.assertIn("keep-if-better measured nothing", self.payload("ticket_failed")["reason"])
+        self.assertIn("keep-if-better measured nothing", self.events("ticket_failed")[0]["payload"]["reason"])
         self.assertNotIn("integrated", self.sequence())
 
     def test_the_baseline_is_the_best_before_anything_was_kept(self):

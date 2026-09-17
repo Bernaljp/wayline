@@ -468,7 +468,9 @@ def outcomes(events):
 
     A launch names the role and the skills it ran with, so a close is attributed to whatever the
     ticket's most recent launch named. `passed_first_time` counts the closes that came back on the
-    first attempt, which is the number the evolve loop compares skills by.
+    first attempt without a failure before them, which is the number the evolve loop compares skills by.
+    `failed` counts failed launches: the escalation ladder (ticket 38) journals a `ticket_failed` at each
+    rung of one attempt, and the attempt failed once.
     """
     records, launched = {}, {}
 
@@ -482,21 +484,24 @@ def outcomes(events):
         if name == TICKET_LAUNCHED:
             keys = [("role", payload[K_ROLE])] if payload.get(K_ROLE) else []
             keys += [("skill", skill) for skill in (payload.get(K_SKILLS) or []) if skill]
-            launched[ticket] = {"keys": keys, "attempt": payload.get(K_ATTEMPT)}
+            before = launched.get(ticket) or {}
+            same = before.get("attempt") is not None and before.get("attempt") == payload.get(K_ATTEMPT)
+            launched[ticket] = {"keys": keys, "attempt": payload.get(K_ATTEMPT), "failed": same and before.get("failed", False)}
             for kind, identifier in keys:
                 entry = record(kind, identifier)
                 entry["assigned"] += 1
                 entry["last_used"] = event.get("ts") or entry["last_used"]
         elif name in (TICKET_DONE, TICKET_FAILED):
             launch = launched.get(ticket)
-            if launch is None:
+            if launch is None or (name == TICKET_FAILED and launch["failed"]):
                 continue
             for kind, identifier in launch["keys"]:
                 entry = record(kind, identifier)
                 if name == TICKET_FAILED:
                     entry["failed"] += 1
-                elif launch["attempt"] in (1, None):
+                elif launch["attempt"] in (1, None) and not launch["failed"]:
                     entry["passed_first_time"] += 1
+            launch["failed"] = launch["failed"] or name == TICKET_FAILED
     return records
 
 

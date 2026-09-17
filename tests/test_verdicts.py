@@ -639,7 +639,7 @@ class ConductorVerdictTest(ConductorCase):
                 code = conductor.run_command(["--project", str(self.project)])
         self.assertEqual(code, 1, out.getvalue() + err.getvalue())
         self.assertIn("failed their quality verdict", out.getvalue())
-        self.assertEqual(self.ticket()["status"], "failed")
+        self.assertEqual(self.ticket()["status"], "needs_human", "its resume had nothing scripted")
 
     def test_a_verdict_nobody_could_take_leaves_the_ticket_done_and_unaccepted(self):
         self.quality()

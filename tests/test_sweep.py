@@ -15,6 +15,7 @@ import shutil
 from tests import machine
 from tests.paths import FIXTURES_DIR
 from tests.projects import ProjectTestCase
+from tests.test_conductor import hold_the_ladder
 from wayline import project, provenance, replay, resources, tickets, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
@@ -47,6 +48,7 @@ class SweepCase(ProjectTestCase):
         shutil.copytree(SWEEP, self.project)
         project.init_project(self.project)
         self.ledger = Ledger(self.project)
+        hold_the_ladder(self)  # these tests read the failure a job met, not the ladder that climbs from it
 
     def script_jobs(self, jobs):
         """The sweep that goes as planned: t1-3's first attempt runs out of GPU memory, and its retry succeeds."""

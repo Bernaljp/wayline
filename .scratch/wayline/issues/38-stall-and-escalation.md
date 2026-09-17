@@ -4,14 +4,14 @@
 
 **Blocked by:** 08 (Integration protocol and the integrator role), 34 (Plan: the planner, plan-time checks, and ticket assignment)
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#39](https://github.com/Bernaljp/wayline/issues/39) (mirror; the local file is the source)
 
 **Milestone:** M5 Overnight and report. **Spec:** Implementation Decisions 5 (escalation, stall), 14 (`escalation`, `stall.waves`), 15 (a fallback failure never raises a kind); OPEN-12 (map ticket 24); BRIEF 8.4, 9.7.
 
-- [ ] A settling wave is one that processed at least one worker or job outcome; the stall counter increments on each settling wave without `ticket_done`, `finding`, or `progress` with `kept: true`, resets on any of them, and at `policy.stall.waves` journals `stall` and files a replan ticket (`wayline plan --replan`) or, in radius `strict`, journals `run_ended` with `stall_strict` and renders the report.
-- [ ] Escalation on a failed attempt: resume the same session once with the failure output; then relaunch one tier up as a new attempt; then file a split (`wayline plan --split <id>`); then `ticket_needs_human` with a notification; each step journals `ticket_failed` with `next`.
-- [ ] After two failures of one kind at a tier, that kind's default difficulty rises by one for the rest of the run (`difficulty_raised`), except for tickets with `pinned_difficulty`, and never counting an attempt whose `ticket_launched` carries `fallback_from` (Implementation Decision 15; the test lands with whichever of this ticket and 55 merges second); outcomes feed the registry's outcome record.
-- [ ] `wayline run --simulate-failure <id>` makes the launcher return a failing acceptance for that ticket on every attempt so the whole chain runs in a demo.
-- [ ] Tests cover the counter, both stall actions, every escalation step, the difficulty raise, and the pin, with the fake worker and a fake planner.
+- [x] A settling wave is one that processed at least one worker or job outcome; the stall counter increments on each settling wave without `ticket_done`, `finding`, or `progress` with `kept: true`, resets on any of them, and at `policy.stall.waves` journals `stall` and files a replan ticket (`wayline plan --replan`) or, in radius `strict`, journals `run_ended` with `stall_strict` and renders the report.
+- [x] Escalation on a failed attempt: resume the same session once with the failure output; then relaunch one tier up as a new attempt; then file a split (`wayline plan --split <id>`); then `ticket_needs_human` with a notification; each step journals `ticket_failed` with `next`.
+- [x] After two failures of one kind at a tier, that kind's default difficulty rises by one for the rest of the run (`difficulty_raised`), except for tickets with `pinned_difficulty`, and never counting an attempt whose `ticket_launched` carries `fallback_from` (Implementation Decision 15; the test lands with whichever of this ticket and 55 merges second); outcomes feed the registry's outcome record.
+- [x] `wayline run --simulate-failure <id>` makes the launcher return a failing acceptance for that ticket on every attempt so the whole chain runs in a demo.
+- [x] Tests cover the counter, both stall actions, every escalation step, the difficulty raise, and the pin, with the fake worker and a fake planner.
