@@ -529,7 +529,9 @@ class DecisionsViewTest(BranchCase):
         self.assertEqual(view["log"], [])
         self.assertEqual(view["controls"], {"autonomy": "checkpoints", "autonomy_levels": ["interactive", "checkpoints", "autonomous"],
                                             "stop_at": 0.9, "cheap_at": 0.8, "model_fallback": "ask", "model_fallback_stated": False,
-                                            "model_fallback_levels": ["auto", "ask", "wait"], "paused_by_owner": False, "active": True})
+                                            "model_fallback_levels": ["auto", "ask", "wait"], "ladder_changes": "ask",
+                                            "ladder_changes_stated": False, "ladder_changes_levels": ["auto", "ask"],
+                                            "paused_by_owner": False, "active": True})
         self.assertEqual(view["problems"], [])
 
     def test_under_autonomous_the_decider_takes_it_and_a_human_only_one_stays_the_owner_s(self):

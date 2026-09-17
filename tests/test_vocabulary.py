@@ -25,6 +25,7 @@ class VocabularyTest(unittest.TestCase):
         self.assertEqual(self.events["decision"][-2:], ("model", "fallback_from"))
         self.assertEqual(self.enums[("decision", "fallback_from")], ("fable",))
         self.assertIn("model_fallback", self.enums[("control", "command")])
+        self.assertIn("ladder_changes", self.enums[("control", "command")])
         self.assertEqual(self.events["tagged"], ("tag",))
         self.assertEqual(self.events["pinned"], ("tag", "previous"))
         self.assertEqual(self.enums[("run_ended", "reason")], ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched"))

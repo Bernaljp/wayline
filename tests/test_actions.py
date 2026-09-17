@@ -417,7 +417,8 @@ class NoShellTest(ActionCase):
                 super().__init__(args, *rest, **options)
 
         steps = [("answer", {"ticket": 2, "answer": "one line"}), ("autonomy", {"autonomy": "autonomous"}), ("pause", {}), ("resume", {}),
-                 ("cancel", {"ticket": 3}), ("rerun", {"ticket": 3}), ("pacing", {"stop_at": 0.95}), ("model_fallback", {"model_fallback": "wait"})]
+                 ("cancel", {"ticket": 3}), ("rerun", {"ticket": 3}), ("pacing", {"stop_at": 0.95}), ("model_fallback", {"model_fallback": "wait"}),
+                 ("ladder_changes", {"ladder_changes": "auto"})]
         with mock.patch.object(subprocess, "Popen", Watched):
             for name, body in steps:
                 with self.subTest(action=name):

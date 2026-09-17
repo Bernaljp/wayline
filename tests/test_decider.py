@@ -279,7 +279,8 @@ class DecideRestTest(RecordedGrillCase):
         self.assertIn("relation to the intent: The nearest work", prompt)
         self.assertIn('"held_out_split": "split_b"', prompt)
         self.assertIn("paper-a extends paper-b", prompt)
-        self.assertIn("The human-only classes of this project are: `goal`, `data`.", prompt)
+        # `ladder` joins them while the ladder consent is not `auto`, which a project without the key behaves as (decision 16).
+        self.assertIn("The human-only classes of this project are: `goal`, `data`, `ladder`.", prompt)
         self.assertIn("# The line", prompt)
         self.assertIn("# Protocol", prompt)
         self.assertIn("`decision` schema", prompt)

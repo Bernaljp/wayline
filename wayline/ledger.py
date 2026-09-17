@@ -294,7 +294,7 @@ PAYLOAD_ENUMS = {
     (JOB_RETRIED, K_OOM): ("host", "gpu"),
     (STALL, K_ACTION): ("replan", "stop"),
     (NOTIFIED, K_CHANNEL): ("notify-send", "hermes", "none"),
-    (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback"),
+    (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes"),
     (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file"),
     (CHANGE_RECORD, K_SCOPE_KIND): ("local", "global"),
 }
