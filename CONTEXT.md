@@ -96,6 +96,22 @@ _Avoid_: downgrade, substitution
 The owner's standing answer on fallback for a project: `auto`, `ask`, or `wait`.
 _Avoid_: permission, fallback policy
 
+**Rung**:
+One step a ticket can be launched at: a model, an effort, and a budget.
+_Avoid_: tier (the grill's word; `tier_up` stays the name of the escalation step that climbs one rung), level (a difficulty level names a rung; it is not one)
+
+**Rung ladder**:
+The ordered list of rungs, cheapest first, that a tier up climbs and pacing steps down.
+_Avoid_: ladder alone (the escalation chain and the footprint ladder are other things)
+
+**The cap**:
+The rule that ticket work never runs above `high` effort; roles and verdicts are not bound by it.
+_Avoid_: effort limit, ceiling
+
+**Ladder consent**:
+The owner's standing answer on whether an autonomous run may change the rung ladder alone: `auto` or `ask`.
+_Avoid_: ladder policy, permission
+
 **Evolve**:
 The loop that turns owner feedback into tested, versioned harness changes.
 _Avoid_: self-improvement, learning
