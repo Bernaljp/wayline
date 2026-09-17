@@ -316,6 +316,11 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
     """
     harness_root = Path(harness_root or HARNESS_ROOT).resolve()
     project = Path(path).expanduser().resolve()
+    claude_home = (Path.home() / ".claude").resolve()
+    if project == claude_home or claude_home in project.parents:
+        # Measured live (ticket 36): a headless session with Write allowed is refused every write under ~/.claude/.
+        raise ProjectError("%s is under %s, where Claude Code refuses a worker's writes whatever its rules allow; "
+                           "lay the project out somewhere else" % (project, claude_home))
     created = not project.exists()
     project.mkdir(parents=True, exist_ok=True)
     if not project.is_dir():
