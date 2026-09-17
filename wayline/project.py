@@ -279,20 +279,23 @@ def check_policy(policy, name="policy.json"):
     return None
 
 
-def rung_label(rung, model, effort):
+def rung_label(rung, model, effort, ran=None):
     """The label of a launch as `status` and the dashboard show it: `r<index> <model> <effort>` (decision 16).
 
     A journal written before the rung ladder carries no `rung`, and its launches read `<model> <effort>`.
+    `ran` is the model the session actually ran on when the result named another than the rung's, and the
+    label says both: `r5 claude-opus-4-8 high, ran claude-opus-5`.
     """
     text = "%s %s" % (model or "?", effort or "?")
-    return "r%d %s" % (rung, text) if isinstance(rung, int) and not isinstance(rung, bool) else text
+    label = "r%d %s" % (rung, text) if isinstance(rung, int) and not isinstance(rung, bool) else text
+    return "%s, ran %s" % (label, ran) if ran else label
 
 
 def launch_label(attempt):
     """The label of a replayed attempt's launch (`replay.Attempt`), or None for one that never launched."""
     if attempt is None or not attempt.model:
         return None
-    return rung_label(attempt.rung, attempt.model, attempt.effort)
+    return rung_label(attempt.rung, attempt.model, attempt.effort, attempt.model_ran)
 
 
 def detect_hermes():

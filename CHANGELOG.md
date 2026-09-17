@@ -4,6 +4,21 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+- The model that ran (ticket 63; Implementation Decision 16). Every session now runs with
+  `CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP=1`, so a retired name such as `claude-opus-4-1` fails
+  instead of running, silently and at the newer model's price, on its family's newest. The launcher
+  reads the model that ran from the result's `modelUsage` (`worker.model_ran`, `ran_as_asked`,
+  `not_served`): a rung naming an alias matches any version of its family, one naming a full version
+  matches only that version, dated or not. A ticket attempt whose result names no model of the rung's
+  fails with `model_mismatch`, and its `ticket_result` carries `model_ran`; a verdict whose own
+  session ran elsewhere carries it too. A name the subscription does not serve (exit 1, `is_error`
+  with `subtype: success`, `api_error_status: 404`) fails with `model_not_served` and is never
+  resumed or retried: it is no usage refusal and pauses nothing, the rung is held, and one human-only
+  decision ticket per held rung asks the owner to edit the policy while every other rung keeps
+  launching, a tier up onto the held rung waiting with it. The hold is that open decision ticket, so
+  a replay rebuilds it and the owner's answer lifts it. `wayline status` and the dashboard's ticket
+  page show both models on a launch whose model was not its rung's: `r5 claude-opus-4-8 high, ran
+  claude-opus-5`. No probe runs at `run` start, and no retirement date is stored.
 - The rung ladder (ticket 60; Implementation Decision 16). A ticket's difficulty names a rung of
   `policy.tiers`, an ordered list of seven rungs cheapest first (a `model`, an `effort`, and a
   `budget`), and `policy.difficulty` maps each level 1 to 5 to a rung index (2, 3, 5, 6, 7). The cap:

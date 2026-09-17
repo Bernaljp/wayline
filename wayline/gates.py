@@ -508,13 +508,17 @@ class Verdict:
     fallback_from: Optional[str] = None
     proposals: list = field(default_factory=list)
     rung: Optional[int] = None
+    # The model the verdict's own session ran on, when its result named another than the one it was launched
+    # with (decision 16); None when it ran as asked, which is every recorded verdict.
+    model_ran: Optional[str] = None
 
     @property
     def payload(self):
         """The `verdict` journal event's payload (Implementation Decisions 2).
 
         `rung` is the index of the rung the judged ticket attempt ran on (decision 16), absent on a verdict
-        about anything but a ticket; `fallback_from` only on a verdict taken by fallback.
+        about anything but a ticket; `fallback_from` only on a verdict taken by fallback; `model_ran` only on
+        one whose own session ran on another model than it was launched with (decision 16).
         """
         payload = {
             "subject_kind": self.subject_kind, "subject": self.subject,
@@ -526,6 +530,8 @@ class Verdict:
             payload["rung"] = self.rung
         if self.fallback_from:
             payload["fallback_from"] = self.fallback_from
+        if self.model_ran:
+            payload["model_ran"] = self.model_ran
         return payload
 
 
@@ -819,6 +825,9 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         findings=list(returned.get("findings") or []),
         session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
         proposals=list(returned.get("proposals") or []), rung=rung,
+        # What the verifier's own session ran on, when the result named another model than it was launched with
+        # (decision 16): a verdict stands or falls on who read the work, so the journal says which model did.
+        model_ran=None if worker.ran_as_asked(model, envelope) else worker.model_ran(envelope),
     )
 
 

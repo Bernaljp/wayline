@@ -65,7 +65,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from wayline import HARNESS_ROOT, TAG, dag, decisions
-from wayline.ledger import TICKET_LAUNCHED, Ledger, atomic_write, conductor_holder
+from wayline.ledger import TICKET_LAUNCHED, TICKET_RESULT, Ledger, atomic_write, conductor_holder
 from wayline.project import (
     FINDINGS, HARNESS_JSON, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for, rung_label,
     read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing,
@@ -605,18 +605,25 @@ def _launch_labels(project, ticket_id):
     """Each attempt's launch label, `r5 opus high`, by attempt number, from the journal's `ticket_launched` (decision 16).
 
     A journal written before the rung ladder carries no `rung`, so its labels read `opus high`; a journal that
-    cannot be read labels nothing, since the page is worth more without labels than not at all.
+    cannot be read labels nothing, since the page is worth more without labels than not at all. An attempt whose
+    `ticket_result` named the model that ran reads `r5 claude-opus-4-8 high, ran claude-opus-5` (decision 16, ticket 63).
     """
     try:
         events, _ = Ledger(project).read_events()
     except (OSError, ValueError):
         return {}
-    labels = {}
+    launched, ran = {}, {}
     for event in events:
         payload = event.get("payload") or {}
-        if event.get("event") == TICKET_LAUNCHED and payload.get("ticket") == ticket_id and isinstance(payload.get("attempt"), int):
-            labels[payload["attempt"]] = rung_label(payload.get("rung"), payload.get("model"), payload.get("effort"))  # the latest launch wins
-    return labels
+        if payload.get("ticket") != ticket_id or not isinstance(payload.get("attempt"), int):
+            continue
+        if event.get("event") == TICKET_LAUNCHED:
+            launched[payload["attempt"]] = payload  # the latest launch wins
+            ran.pop(payload["attempt"], None)  # what a launch ran on is its own result's word
+        elif event.get("event") == TICKET_RESULT and payload.get("model_ran"):
+            ran[payload["attempt"]] = payload["model_ran"]
+    return {attempt: rung_label(payload.get("rung"), payload.get("model"), payload.get("effort"), ran.get(attempt))
+            for attempt, payload in launched.items()}
 
 
 def _session_logs(project, ticket_id, labels=None):

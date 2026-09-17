@@ -101,6 +101,13 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   also sets the consent (`always fall back`, `always wait`). An ask nobody answered is closed as
   superseded at the first wave past its reset or on a change of consent to `auto` or `wait`, and on a
   project that never recorded a consent, under `autonomous`, answered `fall back` at its timeout.
+- The model that ran (ticket 63, decision 16). Every launch turns the CLI's legacy model remap off, and
+  a returned session is checked against the model it was launched with before anything else is made of it.
+  A result whose `modelUsage` names no model of the rung's fails the attempt with `model_mismatch`, and the
+  model that ran is on its `ticket_result`. A name the subscription does not serve fails it with
+  `model_not_served`, which is never resumed or retried: the rung is held, one human-only decision ticket
+  per held rung asks the owner to edit the policy, and launches at every other rung go on. The hold is that
+  open ticket, so a replay rebuilds it and the owner's answer lifts it.
 - The Type-B gate of decision 11 (ticket 32): a done ticket's verdicts are queued and drained
   later in the same wave, and the ticket is `accepted` when every one of them passed.
 
@@ -650,6 +657,8 @@ class Conductor:
         # What was last said of `/usage` giving no reading and of verdicts waiting on the hold, so a week-long hold says each once.
         self._usage_trouble = None
         self._said_waiting = None
+        # The tickets last said to be waiting on a rung the subscription does not serve (decision 16), said on change.
+        self._said_held_rungs = ()
         # The fallback consent as this wave read it, and the wave it read it for (decision 15).
         self._consent = self._consent_wave = None
         # The launches on Fable the hold dropped in this wave, which the ask of decision 15 names when the consent asks.
@@ -909,23 +918,50 @@ class Conductor:
         autonomy = self._autonomy()
         decider = decisions.decider_ready(self.harness_root, self.project)
 
+        def held(entry):
+            if self.view.hold is not None and not self._falls_back() and self._on_fable(entry):
+                return True
+            return self._rung_held(entry) is not None
+
         def pick():
             return schedule.pick(
                 graph, running=running, slots=max(0, self._slots() - busy), action=self.action,
                 root=self.project, free=self.resources_free, goal_tickets=goal_tickets,
-                held=self._on_fable if self.view.hold is not None and not self._falls_back() else schedule.nothing_held,
-                autonomy=autonomy, decider=decider,
+                held=held, autonomy=autonomy, decider=decider,
             )
 
         picks = pick()
         if any(self._on_fable(entry) for entry in picks) and self._read_usage_before_fable():
             picks = pick()  # the reading may have begun the hold or moved the action: pick again under what it says
-        if self.view.hold is not None and not self._falls_back():
-            for entry in tickets.frontier(graph):
-                if (self._on_fable(entry) and schedule.affordable(entry, self.action)
-                        and not schedule.awaits_owner(entry, autonomy, decider)):
-                    self._held_back("ticket %d" % entry["id"])
+        waiting = []
+        for entry in tickets.frontier(graph):
+            if not schedule.affordable(entry, self.action) or schedule.awaits_owner(entry, autonomy, decider):
+                continue
+            if self.view.hold is not None and not self._falls_back() and self._on_fable(entry):
+                self._held_back("ticket %d" % entry["id"])
+            holding = self._rung_held(entry)
+            if holding is not None:
+                waiting.append("  ticket %d waits: its rung's model is not served, and decision ticket %d holds that rung"
+                               % (entry["id"], holding))
+        if tuple(waiting) != self._said_held_rungs:  # a hold lasts until the owner answers; the wait is said on change
+            for line in waiting:
+                self.say(line)
+            self._said_held_rungs = tuple(waiting)
         return picks
+
+    def _rung_held(self, entry):
+        """The decision ticket holding the rung this ticket would launch at, or None when nothing holds it (decision 16).
+
+        A rung is held from the not-served failure that asked the owner about it until that ask is answered, so a
+        ticket at that rung waits, a tier up onto it waits with it, and every other rung goes on launching.
+        """
+        held = self.view.held_rungs()
+        if not held:
+            return None
+        try:
+            return held.get(rung_of(self.policy, entry.get("difficulty")))
+        except ConductorError:
+            return None  # the launch fails on the missing rung, and says so there
 
     def _on_fable(self, entry):
         """Whether a ticket launches on Fable: the tier of its effective difficulty names Fable (decision 15)."""
@@ -2170,6 +2206,9 @@ class Conductor:
         if not attempt.result_journaled:
             self._journal_result(attempt)
             attempt.result_journaled = True
+            wrong_model = self._model_that_ran(attempt)
+            if wrong_model is not None:
+                return wrong_model  # the session did not run on the rung's model (decision 16): no gate, no resume
         if attempt.integrating:
             attempt.integrating = False
             return self._finish(attempt)
@@ -2253,7 +2292,82 @@ class Conductor:
         }
         if attempt.result.get("status") == "running":
             payload["jobs"] = [str(job) for job in attempt.result.get("jobs") or []]
+        asked = self._launched_on(attempt)
+        if asked is not None and worker.not_served(envelope) is None and not worker.ran_as_asked(asked, envelope):
+            # The model that ran, when it was not the rung's (decision 16); a not-served refusal ran no model at all,
+            # and its `modelUsage` holds only the Haiku preflight, so that failure names no model here.
+            payload["model_ran"] = worker.model_ran(envelope)
         self.ledger.append_event(TICKET_RESULT, payload, ticket=attempt.id, session_id=attempt.session_id)
+
+    @staticmethod
+    def _launched_on(attempt):
+        """The model this attempt's session was launched with: its request's, else its tier's; None when neither is known."""
+        if attempt.request is not None:
+            return attempt.request.model
+        return attempt.tier.model if attempt.tier is not None else None
+
+    def _model_that_ran(self, attempt):
+        """`failed` when the session did not run on the model it was launched with, None when it did (decision 16).
+
+        Neither failure is one a resume could mend, so both skip the ladder's resume and take the rung above it.
+        A model name the subscription does not serve comes back as a 404 that spent no window and no turn: the
+        rung is held and the owner asked (`_hold_rung`), because a policy naming a dead model needs an edit no
+        conductor can make, while the rest of the run goes on at other rungs. A result whose `modelUsage` names
+        no model of the rung's ran somewhere nobody asked for, which with the legacy remap off means a fallback
+        or a remap; its `ticket_result` carries the model that ran.
+        """
+        envelope, asked = attempt.envelope, self._launched_on(attempt)
+        if envelope is None or asked is None:
+            return None
+        refused = worker.not_served(envelope)
+        if refused is not None:
+            held = self._hold_rung(attempt, refused)
+            self._fail(attempt, "model_not_served: the subscription does not serve %s, the model this launch named%s; "
+                                "the attempt is not retried and launches at that rung are held%s"
+                       % (refused, "" if attempt.tier is None else " at rung %s" % attempt.tier.rung,
+                          " until decision ticket %d is answered" % held if held else ""),
+                       # Straight to the tier up, skipping the split: a rung naming a model nobody serves is a policy
+                       # typo, and re-cutting the ticket would spend the planner on it. A tier up onto a held rung waits.
+                       self._rung_from(attempt.id, start=TIER_UP))
+            return "failed"
+        if worker.ran_as_asked(asked, envelope):
+            return None
+        self._fail(attempt, "model_mismatch: the launch named %s and the result says %s ran; the work is not what the "
+                            "rung asked for, and the attempt is not resumed"
+                   % (asked, worker.model_ran(envelope) or "another model"),
+                   # As for a refusal: neither failure says anything about the work, so the split, which makes the
+                   # work smaller, is skipped and the ladder goes straight to the tier up.
+                   self._rung_from(attempt.id, start=TIER_UP))
+        return "failed"
+
+    def _hold_rung(self, attempt, refused):
+        """Hold every launch at the rung whose model the subscription refused, by asking the owner (decision 16).
+
+        The hold is the open decision ticket: `View.held_rungs` reads it back from the journal, so a restarted
+        conductor holds what a running one does and an answer lifts it. One ticket per held rung: a second
+        refusal at a rung already held opens nothing, and `open_decision`'s origin finishes one a crash left
+        half written. Returns the decision ticket's id, or None when there is nothing to hold or it could not
+        be opened, which leaves the failure itself as the record.
+        """
+        rung = attempt.tier.rung if attempt.tier is not None else None
+        if rung is None:
+            self.say("  ticket %d named a model the subscription does not serve (%s), and no rung to hold" % (attempt.id, refused))
+            return None
+        self._tail()
+        held = self.view.held_rungs().get(rung)
+        if held is not None:
+            self.say("  ticket %d met rung r%d's unserved model again; decision ticket %d already holds that rung" % (attempt.id, rung, held))
+            return held
+        try:
+            report = decisions.open_not_served(self.project, rung, attempt.tier.model, refused,
+                                               attempt.id, attempt.number, notify=self.notify)
+        except (ValueError, OSError) as failure:
+            self.say("  the ask about rung r%d's unserved model could not be opened: %s" % (rung, failure))
+            return None
+        self._tail()
+        self.say("  rung r%d names %s, which this subscription does not serve: launches at that rung are held and "
+                 "decision ticket %d asks the owner to edit the policy" % (rung, refused, report["ticket"]))
+        return report["ticket"]
 
     def _want_resume(self, attempt, stage, message):
         """Spend a gate's one resume (BRIEF 9.1): now, or as soon as the run may start model work."""

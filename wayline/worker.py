@@ -24,6 +24,10 @@ at all, because a session a usage window refused before its first turn is relaun
 
 `WAYLINE_CLAUDE` names the executable when it is not the `claude` on PATH; the tests point it at
 a recording stand-in, so the real backend is exercised without the network.
+
+Every request carries `CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP=1` (decision 16), so a retired model
+name fails instead of running on its family's newest, and `model_ran`, `ran_as_asked`, and
+`not_served` read what the result says of the model that actually ran.
 """
 
 import argparse
@@ -56,6 +60,7 @@ __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
     "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "launches_on", "fall_back", "stderr_tail", "stderr_of",
+    "NO_LEGACY_REMAP", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command", "login_command", "auth_status_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
@@ -76,6 +81,16 @@ PROC = Path("/proc")  # where a pid's environment says which session it belongs 
 FALLBACK_MODEL = "sonnet"  # `--fallback-model`: overload only, never usage limits (decision 3)
 MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")  # what a role's model is; a rung's may also be a full version name (decision 16)
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+# The model that ran (decision 16; the research note on `research/model-versions`). Left on, the CLI's legacy
+# remap rewrites four retired names (`claude-opus-4-1` and its kin) to their family's newest model before the
+# request, so a rung naming a dead model would exit 0 and be paid for on another one. Every launch turns the
+# remap off, and a name the subscription does not serve then fails for free with the 404 below.
+NO_LEGACY_REMAP = "CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP"
+NOT_SERVED_STATUS = 404
+_NOT_SERVED_RE = re.compile(r"There's an issue with the selected model \(([^)]*)\)")
+# A dated model id names the same version as its undated name: `claude-sonnet-4-5-20250929` is `claude-sonnet-4-5`.
+_DATED_RE = re.compile(r"-\d{6,8}\Z")
 
 # The resolved model name `system/init` reports for each alias, used by the fake backend.
 RESOLVED_MODELS = {
@@ -103,6 +118,10 @@ class LaunchRequest:
     and re-validated in code; None runs the session without a schema. `env` carries the
     `TICKET_*` and `WAYLINE_*` variables, and `env["WAYLINE_RUN"]` names the session directory.
     `max_minutes` None means no timeout.
+
+    Every request also carries `CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP=1` (decision 16), set here rather
+    than by a backend or by each caller because it holds for every model call the harness makes: ticket
+    work, role sessions, and verdicts alike. A caller that spelled the variable itself keeps its value.
     """
 
     role: str
@@ -118,6 +137,11 @@ class LaunchRequest:
     env: dict = field(default_factory=dict)
     schema_path: Optional[Union[str, Path]] = None
     max_minutes: Optional[float] = None
+
+    def __post_init__(self):
+        """Turn the legacy model remap off for this session (decision 16); a malformed `env` is left to `check`."""
+        if isinstance(self.env, dict):
+            self.env.setdefault(NO_LEGACY_REMAP, "1")
 
     @property
     def run_dir(self):
@@ -2055,6 +2079,80 @@ def simulated_failure(ticket):
     if armed is None or armed != ticket:
         return None
     return {"cmd": SIMULATED_FAILURE_CMD % ticket, "exit_code": 1, "seconds": 0.0, "tail": SIMULATED_FAILURE_TAIL}
+
+
+# --- the model that ran (decision 16) -------------------------------------------------------------
+
+
+def same_model(asked, ran):
+    """Whether `ran` is the model a launch that asked for `asked` meant (decision 16).
+
+    An alias (`opus`) matches any version of its family, because the alias is whatever version the
+    subscription serves as that family's newest. A full version name matches only that version, dated
+    or not: `claude-sonnet-4-5` and `claude-sonnet-4-5-20250929` are one version under two spellings.
+    Case does not matter, since `--model` is case-insensitive and the envelope echoes the spelling given.
+    """
+    if not isinstance(asked, str) or not isinstance(ran, str):
+        return False
+    asked, ran = asked.strip().lower(), ran.strip().lower()
+    if asked in MODEL_ALIASES:
+        return pacing.family(ran) == asked
+    return bool(asked) and _DATED_RE.sub("", asked) == _DATED_RE.sub("", ran)
+
+
+def model_ran(envelope):
+    """The model the result says ran, read from its `modelUsage`; None when the result names none.
+
+    Every session makes a Haiku preflight call before its own model runs, so `modelUsage` holds that
+    entry beside the session's own, and a session whose subagents ran elsewhere holds theirs too (the
+    research note on `research/model-versions`). What is reported is the entry that spent the most
+    output tokens once the preflight family is set aside, which is the session's own model in every
+    recorded envelope; a result whose only entry is the preflight reports it, because then nothing else ran.
+    """
+    usage = _model_usage(envelope)
+    names = [name for name in usage if isinstance(name, str) and name.strip()]
+    if not names:
+        return None
+    ranked = [name for name in names if pacing.family(name) != pacing.HAIKU] or names
+    return max(sorted(ranked), key=lambda name: _output_tokens(usage[name]))
+
+
+def ran_as_asked(model, envelope):
+    """Whether the model a launch asked for is among the models its result says ran (decision 16).
+
+    Any entry of `modelUsage` that matches settles it, rather than the one `model_ran` reports, so a
+    session whose subagent ran on another model is no mismatch. A result whose `modelUsage` names
+    nothing says nothing either way and is not a mismatch: `not_served` is what catches a name that
+    never ran at all.
+    """
+    usage = _model_usage(envelope)
+    return not usage or any(same_model(model, name) for name in usage)
+
+
+def not_served(envelope):
+    """The model name the subscription refused, or None when this envelope is not that refusal (decision 16).
+
+    A name the account does not serve, whether unknown, retired, or another account's, comes back the
+    same way: exit 1, `is_error` with `subtype: success`, `api_error_status: 404`, and the text below
+    naming the name as it was given, having spent about a tenth of a cent of Haiku and no window. The
+    status and the text are what is read, because an envelope read back from a stream carries no exit code.
+    """
+    if envelope is None or envelope.api_error_status != NOT_SERVED_STATUS:
+        return None
+    for text in (envelope.result_text, *(envelope.errors or ())):
+        match = _NOT_SERVED_RE.search(text) if isinstance(text, str) else None
+        if match is not None:
+            return match.group(1).strip() or None
+    return None
+
+
+def _model_usage(envelope):
+    return envelope.model_usage if envelope is not None and isinstance(envelope.model_usage, dict) else {}
+
+
+def _output_tokens(entry):
+    value = entry.get("outputTokens") if isinstance(entry, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def launches_on(request, model):
