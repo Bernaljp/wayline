@@ -551,9 +551,12 @@ class _Attempt:
         """Whether a session of this attempt is running, or returned and is not carried yet (ticket 59).
 
         A session that returned holds its worker slot until the wave reads it, because the wave
-        that carries it may resume it; `thread` outlives the session that set it, and is cleared
-        by no one, so an attempt whose result was carried and that owes nothing has left `flight`.
+        that carries it may resume it. An attempt that waits to start a session has none: its own
+        was carried, and `thread` outlives the session that set it, so the dead thread of a carried
+        session is not one. An attempt whose result was carried and that owes nothing has left `flight`.
         """
+        if self.want is not None:
+            return False
         return self.running or self.adopted or self.thread is not None
 
     @property
@@ -1023,8 +1026,17 @@ class Conductor:
         return not (self._held_on_fable(attempt.request) and not self._falls_back())
 
     def _free_slot(self, attempt):
-        """Whether a slot is free for the session this attempt waits to start; the wait is said once."""
-        taken, slots = self._busy(besides=attempt), self._slots()
+        """Whether a slot is free for the session this attempt waits to start; the wait is said once.
+
+        What is counted here is the sessions that run now, not the attempts that wait, so two
+        attempts waiting for one slot never keep each other out: the first to be looked at starts,
+        and its session is what the next one waits for. They can outnumber the slots (the hold on
+        Fable's weekly window gives a waiting session's slot away, a restart re-adopts what the
+        journal owes, `max_parallel_workers` is lowered between runs), and counting one waiting
+        attempt against another would then leave every one of them waiting for good.
+        """
+        taken = sum(1 for other in self.flight.values() if other is not attempt and other.has_a_session)
+        slots = self._slots()
         if taken < slots:
             return True
         if not attempt.waiting_for_slot:
@@ -1032,6 +1044,10 @@ class Conductor:
             self.say("  ticket %d: its %s waits for a free worker slot (%d of %d taken)"
                      % (attempt.id, "relaunch" if attempt.want.stage == RELAUNCH else "resume", taken, slots))
         return False
+
+    def _waits_for(self, attempt):
+        """What the session this attempt did not start is waiting for, for the line its caller says."""
+        return " once a worker slot is free" if attempt.waiting_for_slot else " once the run may launch again"
 
     def _slots(self):
         """`policy.max_parallel_workers`: how many workers this conductor runs at once."""
@@ -1268,7 +1284,7 @@ class Conductor:
         started = self._start_wanted(attempt)
         if started == FALLEN_BACK:
             return  # a fresh session on Opus took its place, which `_fall_back_session` said
-        self.say("  ticket %d: %s%s" % (attempt.id, doing, "" if started else " once the run may launch again"))
+        self.say("  ticket %d: %s%s" % (attempt.id, doing, "" if started else self._waits_for(attempt)))
 
     def _adopted_returned(self, attempt):
         """Whether a re-adopted session has returned; a dead one without a result is resumed or relaunched.
@@ -1299,7 +1315,7 @@ class Conductor:
             started = self._start_wanted(attempt)
             if started != FALLEN_BACK:  # a fresh session on Opus took its place, which `_fall_back_session` said
                 self.say("  ticket %d: resuming session %s out of time%s"
-                         % (attempt.id, resumed_by, "" if started else " once the run may launch again"))
+                         % (attempt.id, resumed_by, "" if started else self._waits_for(attempt)))
         else:
             self._died(attempt, replay.Session("launch" if attempt.run_dir == self._attempt_dir(attempt) else "resume"))
         return False
@@ -2217,6 +2233,7 @@ class Conductor:
             # Resumed, or relaunched, on Fable once the hold ends; and the `/usage` the hold read may have said `stop`.
             if held and not self._holds_launches():
                 self._held_back("ticket %d's session" % attempt.id)
+            attempt.waiting_for_slot = False  # what it waits for now is the hold, and a slot's wait is said again after it
             return False
         if not self._free_slot(attempt):
             return False  # every slot is taken: it starts at the first wave one is free
@@ -2539,7 +2556,7 @@ class Conductor:
             started = self._start_wanted(attempt)
             if started != FALLEN_BACK:  # a fresh session on Opus took its place, which `_fall_back_session` said
                 self.say("  ticket %d: the usage limit refused its session before its first turn; relaunching it%s"
-                         % (attempt.id, "" if started else " once the window allows"))
+                         % (attempt.id, "" if started else self._waits_for(attempt)))
             return "session"
         self._died(attempt, replay.Session(kind), RESUME_LIMIT, "its session stopped at the usage limit")
         return "session"

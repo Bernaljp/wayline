@@ -13,7 +13,10 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   gate's resume (an invalid result, a failed acceptance, a timeout) and a relaunch after a worker
   died now wait for a free slot, as the escalation ladder's resume already did; the wait is said
   once and the session starts at the first wave with a free slot, including one freed by a carry in
-  that same wave.
+  that same wave. What a waiting session waits for is the sessions that run, never another waiting
+  session, because the attempts in flight can outnumber the slots (the hold on Fable's weekly window
+  gives a waiting session's slot away, a restart re-adopts what the journal owes, the policy can be
+  lowered between runs) and waiting sessions counted against each other would never start.
 
 ## v0.5.0 (2026-09-17)
 

@@ -909,6 +909,36 @@ class WorkerSlotsTest(WorkerSlotsCase):
         self.assertEqual(freed.done, [2])
         self.assertEqual(kinds, ["launch", "launch", "resume"], "the resume starts at the first wave with a free slot")
 
+    def test_two_sessions_waiting_for_one_slot_do_not_keep_each_other_out(self):
+        """More waiting sessions than slots is reachable, and every one of them must still start.
+
+        The attempts in flight can outnumber the slots: the hold on Fable's weekly window gives a
+        waiting session's slot away, a restart re-adopts what the journal owes, and the policy can
+        be lowered between runs, which is what this test does. Counting one waiting attempt against
+        another would leave both waiting for good, with no worker running and nothing said.
+        """
+        self.tickets_beside_the_first(2)
+        with worker.use_fake() as fake:
+            for identifier in (1, 2):
+                self.held(fake, identifier, Envelope())  # neither launch returns anything usable
+                self.held(fake, identifier)              # what each resumed session returns
+            driven = self.conductor_with(2)
+            driven.wave()
+            self.returns(driven, fake)  # both sessions return, and neither is carried yet
+            driven.policy = dict(driven.policy, max_parallel_workers=1)
+            results = []
+            while len(results) < 8:
+                results.append(driven.wave())
+                if results[-1].ended:
+                    break
+                self.returns(driven, fake)
+            kinds, peak = [call.kind for call in fake.calls], fake.peak
+            self.quiet(driven, fake)
+        self.assertTrue(results[-1].ended, "the run hung with both sessions waiting for the one slot")
+        self.assertEqual(kinds, ["launch", "launch", "resume", "resume"])
+        self.assertEqual(peak, 2, "the two launches ran under the policy that allowed two")
+        self.assertEqual(self.statuses(), {1: "done", 2: "done"})
+
     def test_a_relaunch_after_a_worker_died_waits_for_a_free_slot(self):
         """Resume is start: the take-over relaunches a worker that left no session, into a slot of its own."""
         self.tickets_beside_the_first(2)
