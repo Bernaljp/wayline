@@ -2,7 +2,13 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
-## Unreleased
+## v0.5.0 (2026-09-17)
+
+M4 Front door is live: from a paragraph of intent, the ten references of M3, and a goal, one sitting
+ran the intake, the position memo, a three-tier grill with the switch raised, the decider, the spec
+(four passes), and the plan: 24 tickets with roles from the registry, and a decision ticket that held
+its branch while the other ran and was answered from the dashboard and from `wayline answer`, each
+answer relaunching the conductor through the tick (`docs/verification/m4.md`, ticket 36).
 
 - The stall and the escalation ladder (`wayline.conductor`, ticket 38). Every failure journals
   `ticket_failed` with its rung in `next`, and each wave takes every failed ticket up that rung, so a
