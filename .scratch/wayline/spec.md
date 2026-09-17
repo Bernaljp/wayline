@@ -394,7 +394,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `unpaused` | `model`: `fable` (the hold ended; absent when the whole-run pause ends) |
   | `ticket_created` | `ticket`, `kind`, `proposed_by`, `origin`, `blocked_by` |
   | `assigned` | `ticket`, `role`, `skills` |
-  | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256`, `difficulty` (the effective difficulty the attempt launched at, which the difficulty adjustment of decision 5 counts failures by; ticket 38); `fallback_from`: `fable` (a Fable launch that fell back to Opus, decision 15; absent otherwise) |
+  | `ticket_launched` | `ticket`, `attempt`, `role`, `model`, `effort`, `skills`, `worktree`, `pid`, `context_chars`, `prompt_sha256`, `difficulty` (the effective difficulty the attempt launched at, which the difficulty adjustment of decision 5 counts failures by; ticket 38), `rung` (the index of the rung the attempt ran on, decision 16; ticket 60); `fallback_from`: `fable` (a Fable launch that fell back to Opus, decision 15; absent otherwise) |
   | `ticket_session` | `ticket`, `attempt`, `session_id`, `model` (from the stream's `system/init`) |
   | `ticket_result` | `ticket`, `attempt`, `session_id`, `status`, `turns`, `duration_ms`, `usage`, `permission_denials`, `valid`; `jobs` (the job ids a `running` result leaves for the poller, ticket 19; absent otherwise) |
   | `ticket_resumed` | `ticket`, `attempt`, `session_id`, `reason`: `invalid_result`, `acceptance_failed`, `worker_died`, `timeout`, `readopted` |
@@ -406,7 +406,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `ticket_needs_human` | `ticket`, `question` |
   | `ticket_cancelled`, `ticket_rerun` | `ticket`, `by` |
   | `difficulty_raised` | `kind`, `from`, `to` |
-  | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings`; `fallback_from`: `fable` (a verdict taken on Opus in place of a verifier on Fable, decision 15; absent otherwise) |
+  | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings`, `rung` (the index of the rung the judged ticket attempt ran on, decision 16; absent on a verdict about anything but a ticket; ticket 60); `fallback_from`: `fable` (a verdict taken on Opus in place of a verifier on Fable, decision 15; absent otherwise) |
   | `finding` | `id`, `ticket`, `text`, `provenance`, `negative` |
   | `progress` | `metric`, `value`, `ticket`, `run_id`, `kept` |
   | `discarded` | `ticket`, `metric`, `best`, `sd`, `seeds` |
@@ -670,7 +670,8 @@ Numbered so the milestones can point at them. Every decision below either restat
 
 | Key | Initial value | Source |
 |---|---|---|
-| `difficulty` | 1: sonnet low small; 2: sonnet medium small; 3: opus high medium; 4: fable xhigh large; 5: fable max large | BRIEF 8.4 |
+| `tiers` | the rung ladder, cheapest first: rung 1 haiku medium small; 2 sonnet low small; 3 sonnet high small; 4 opus low medium; 5 opus high medium; 6 fable low large; 7 fable high large | finer tiers map (decision 16) |
+| `difficulty` | the level to rung map: 1: rung 2; 2: rung 3; 3: rung 5; 4: rung 6; 5: rung 7 | BRIEF 8.4, finer tiers map (decision 16) |
 | `budget` | small: 40 turns, 30 min; medium: 100 turns, 90 min; large: 200 turns, 180 min | spec |
 | `roles` | planner fable xhigh; decider fable max; critic opus high; synthesizer opus high; reader sonnet medium; consultant sonnet medium; integrator opus high; figure-designer opus high; figure-critic opus high; documentarian sonnet high; writer fable xhigh; evolver fable xhigh; classifier haiku low; dedup judge haiku low; fixture judge haiku low | spec |
 | `verifier` | sonnet author: opus high; opus author: fable high; fable author: opus max (the default choice; decision 11) | map ticket 18, spec, Fable fallback map |

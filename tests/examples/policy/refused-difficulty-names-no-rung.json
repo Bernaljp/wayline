@@ -1,0 +1,259 @@
+{
+  "tiers": [
+    {
+      "model": "haiku",
+      "effort": "medium",
+      "budget": "small"
+    },
+    {
+      "model": "sonnet",
+      "effort": "low",
+      "budget": "small"
+    },
+    {
+      "model": "sonnet",
+      "effort": "high",
+      "budget": "small"
+    },
+    {
+      "model": "opus",
+      "effort": "low",
+      "budget": "medium"
+    },
+    {
+      "model": "opus",
+      "effort": "high",
+      "budget": "medium"
+    },
+    {
+      "model": "fable",
+      "effort": "low",
+      "budget": "large"
+    },
+    {
+      "model": "fable",
+      "effort": "high",
+      "budget": "large"
+    }
+  ],
+  "difficulty": {
+    "1": 2,
+    "2": 3,
+    "3": 5,
+    "4": 6,
+    "5": 9
+  },
+  "budget": {
+    "small": {
+      "max_turns": 40,
+      "max_minutes": 30
+    },
+    "medium": {
+      "max_turns": 100,
+      "max_minutes": 90
+    },
+    "large": {
+      "max_turns": 200,
+      "max_minutes": 180
+    }
+  },
+  "roles": {
+    "planner": {
+      "model": "fable",
+      "effort": "xhigh"
+    },
+    "decider": {
+      "model": "fable",
+      "effort": "max"
+    },
+    "critic": {
+      "model": "opus",
+      "effort": "high"
+    },
+    "synthesizer": {
+      "model": "opus",
+      "effort": "high"
+    },
+    "reader": {
+      "model": "sonnet",
+      "effort": "medium"
+    },
+    "consultant": {
+      "model": "sonnet",
+      "effort": "medium"
+    },
+    "integrator": {
+      "model": "opus",
+      "effort": "high"
+    },
+    "figure-designer": {
+      "model": "opus",
+      "effort": "high"
+    },
+    "figure-critic": {
+      "model": "opus",
+      "effort": "high"
+    },
+    "documentarian": {
+      "model": "sonnet",
+      "effort": "high"
+    },
+    "writer": {
+      "model": "fable",
+      "effort": "xhigh"
+    },
+    "evolver": {
+      "model": "fable",
+      "effort": "xhigh"
+    },
+    "classifier": {
+      "model": "haiku",
+      "effort": "low"
+    },
+    "dedup-judge": {
+      "model": "haiku",
+      "effort": "low"
+    },
+    "fixture-judge": {
+      "model": "haiku",
+      "effort": "low"
+    }
+  },
+  "verifier": {
+    "sonnet": {
+      "model": "opus",
+      "effort": "high"
+    },
+    "opus": {
+      "model": "fable",
+      "effort": "high"
+    },
+    "fable": {
+      "model": "opus",
+      "effort": "max"
+    }
+  },
+  "max_parallel_workers": 2,
+  "poll_seconds": 60,
+  "heartbeat_stale_s": 300,
+  "acceptance_timeout_s": 600,
+  "pacing": {
+    "stop_at": 0.9,
+    "cheap_at": 0.8
+  },
+  "model_fallback": {
+    "wait_under_hours": 12,
+    "ask_timeout_hours": 2
+  },
+  "context_pack": {
+    "max_chars": {
+      "sonnet": 120000,
+      "opus": 200000,
+      "fable": 300000
+    }
+  },
+  "escalation": {
+    "resume": 1,
+    "then": [
+      "split",
+      "tier_up",
+      "needs_human"
+    ],
+    "tier_up": 1,
+    "raise_after_failures": 2
+  },
+  "stall": {
+    "waves": 2
+  },
+  "proposals": {
+    "cap": {
+      "strict": 0,
+      "moderate": 3,
+      "exploratory": 6
+    },
+    "dedup": {
+      "similarity": 0.8,
+      "judged_between": [
+        0.6,
+        0.8
+      ]
+    }
+  },
+  "goal": {
+    "min_seeds": 3,
+    "margin_sd": 1
+  },
+  "absorb": {
+    "l1_max_chars": 40000,
+    "l2_per_phase": {
+      "P1": 3,
+      "P3": 2,
+      "P5": 2
+    },
+    "chunk_max_chars": 20000,
+    "fanout": "workflow",
+    "workflow_concurrency": 16
+  },
+  "consultant": {
+    "max_questions_per_ticket": 5
+  },
+  "kb": {
+    "query_pack_max_chars": 20000
+  },
+  "provenance": {
+    "sample": 0.1,
+    "min": 10,
+    "all_difficulty_5": true
+  },
+  "artifacts": {
+    "commit_threshold_bytes": 1000000
+  },
+  "reservations": {
+    "gpu": [],
+    "cores": 8,
+    "ram_gb": 64,
+    "processes": []
+  },
+  "jobs": {
+    "gpu_util_free_below": 20,
+    "gpu_util_samples": 2,
+    "oom_log_tail_bytes": 65536,
+    "host_oom_first_doubles_memory": true
+  },
+  "tick": {
+    "on_calendar": "*:0/15",
+    "login_warning_days": 3
+  },
+  "dashboard": {
+    "port": 8765,
+    "poll_journal_s": 2,
+    "poll_views_s": 5,
+    "bind": "127.0.0.1"
+  },
+  "fixtures": {
+    "sample_size": 3,
+    "at_least": 2,
+    "flake_limit": 2,
+    "stable_runs_to_restore": 3,
+    "max_turns_per_suite": 300,
+    "judge": {
+      "model": "haiku",
+      "effort": "low"
+    }
+  },
+  "figures": {
+    "candidates": {
+      "max": 5
+    },
+    "margin_threshold": 2,
+    "ssim_min": 0.99,
+    "crops_dpi": 600
+  },
+  "plot_index": {
+    "crawl_rate_per_s": 1,
+    "liveness": "monthly",
+    "recrawl": "quarterly"
+  },
+  "quiet_hours": null,
+  "per_window_worker_budget": null
+}

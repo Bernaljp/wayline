@@ -510,6 +510,18 @@ class TicketEndpointTest(DashboardTestCase):
         self.assertEqual([entry["id"] for entry in view["sessions"]], ["2/1", "2/1/resume-1"])
         self.assertEqual(view["jobs"], [])
 
+    def test_each_session_carries_the_launch_label_of_its_attempt(self):
+        """`r<index> <model> <effort>` from `ticket_launched` (decision 16); the fixture's journal predates `rung`, so it reads without the index."""
+        view = self.api("/tickets/2").json
+        self.assertEqual([(entry["id"], entry["label"]) for entry in view["sessions"]],
+                         [("2/1", "sonnet medium"), ("2/1/resume-1", "sonnet medium")])
+        self.append("ticket_launched", {"ticket": 2, "attempt": 1, "role": "analyst", "model": "opus", "effort": "high", "skills": [],
+                                        "worktree": ".worktrees/2", "pid": 31491, "context_chars": 20480, "prompt_sha256": "a" * 64,
+                                        "difficulty": 3, "rung": 5}, ticket=2)
+        view = self.api("/tickets/2").json
+        self.assertEqual([entry["label"] for entry in view["sessions"]], ["r5 opus high", "r5 opus high"])
+        self.assertIsNone(self.api("/tickets/1").json["result"])
+
     def test_a_running_tickets_jobs_are_named(self):
         view = self.api("/tickets/3").json
         self.assertEqual([entry["id"] for entry in view["sessions"]], ["3/1"])

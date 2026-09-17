@@ -37,7 +37,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, fixtures, project as projects, registry
+from wayline import HARNESS_ROOT, fixtures, pacing, project as projects, registry, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_PREVIOUS, K_TAG, PINNED, TAGGED, Ledger, conductor_holder
@@ -45,7 +45,7 @@ from wayline.ledger import K_PREVIOUS, K_TAG, PINNED, TAGGED, Ledger, conductor_
 __all__ = [
     "EvolveError", "UNPINNED_ENV", "KINDS", "PROMOTE_AFTER_TICKETS",
     "parse_tag", "next_tag", "harness_tags", "tags_at_head", "pin_problem",
-    "changelog_entries", "entries_between", "upgrade", "render_upgrade", "upgrade_command",
+    "changelog_entries", "entries_between", "upgrade", "render_upgrade", "upgrade_command", "migrate_difficulty", "nearest_rung",
     "main_branch", "promote", "run_check", "render_promotion", "promote_command",
     "promotion_candidates", "render_recommendations",
 ]
@@ -195,6 +195,18 @@ def _changelog_at(harness_root, tag):
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
+def _policy_at(harness_root, tag):
+    """`policy.json` as the tag has it, or None when the tag carries none or it does not parse."""
+    shown = _git(harness_root, "show", "%s:policy.json" % tag, ok=None)
+    if shown.returncode != 0:
+        return None
+    try:
+        value = json.loads(shown.stdout)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _add_unreleased(text, paragraph):
     """Add a paragraph at the end of `## Unreleased`, opening that section above the first entry when there is none."""
     matches = list(_HEADING_RE.finditer(text))
@@ -254,6 +266,15 @@ def upgrade(project, to=None, harness_root=None):
                           % (project, ", ".join(line[3:] for line in edited.stdout.splitlines() if line)))
 
     notes = []
+    # The migration of decision 16 is resolved against the target's ladder here, before the checkout moves, so a refusal
+    # leaves the checkout and every pin where they were; `rewrite` applies the same resolution once the pin is written.
+    ladder_policy = _policy_at(harness_root, target)
+    if ladder_policy is None:
+        migration = ([], "the harness at %s has no policy.json to read a rung ladder from; the override is left as it is" % target)
+    elif not ladder_policy.get("tiers"):
+        migration = ([], "the harness at %s has no rung ladder (no policy.tiers); the override is left as it is" % target)
+    else:
+        migration = migrate_difficulty(projects.read_harness(project), projects.merge_policy(ladder_policy, projects.read_harness(project).get("policy")))
     if target not in (tags_at_head(harness_root) or []):
         dirty = _tracked_changes(harness_root)
         if dirty:
@@ -261,7 +282,17 @@ def upgrade(project, to=None, harness_root=None):
                               % (harness_root, ", ".join(dirty[:5]), target))
         _git(harness_root, "checkout", "--quiet", "--detach", target + "^{commit}")
         notes.append("the harness checkout %s is now at %s (detached)" % (harness_root, target))
-    changes, repinned = projects.repin(project, target, harness_root)
+    migrated, note = migration
+    if note:
+        notes.append(note)
+
+    def rewrite(value):
+        if not migrated:
+            return False
+        lines, _ = migrate_difficulty(value, projects.merge_policy(ladder_policy, value.get("policy")))
+        return bool(lines)
+
+    changes, repinned = projects.repin(project, target, harness_root, rewrite=rewrite)
     notes.extend(repinned)
 
     direction, entries = "unchanged", []
@@ -275,7 +306,69 @@ def upgrade(project, to=None, harness_root=None):
             notes.append("the project %s pins %s, so its next run is refused against this checkout until wayline upgrade --project %s"
                          % (entry["path"], entry["harness_tag"], entry["path"]))
     return {"project": str(project), "harness_root": str(harness_root), "previous": previous, "tag": target,
-            "direction": direction, "entries": entries, "changes": changes, "notes": notes}
+            "direction": direction, "entries": entries, "changes": changes, "notes": notes, "migrated": migrated}
+
+
+# --- the migration to the rung ladder (decision 16) ---------------------------------------------------
+
+# The efforts in the launcher's order; the cap holds ticket work at `high`, so an old level above it lands on a rung at `high`.
+_EFFORT_RANK = {effort: rank for rank, effort in enumerate(worker.EFFORTS)}
+CAP = "high"
+
+
+def nearest_rung(rungs, model, effort):
+    """The 1-based index of the rung whose model family matches `model` and whose effort is nearest `effort` under the cap.
+
+    An effort above `high` is taken as `high` first (the cap). Of two rungs at the same distance the higher
+    one is taken, so `sonnet medium` lands on `sonnet high`, where the shipped map puts level 2. None when no
+    rung is on the model's family; an effort the launcher does not know, the level's or a rung's, is refused.
+    """
+    if effort not in _EFFORT_RANK:
+        raise EvolveError("the effort %r is none of %s" % (effort, ", ".join(worker.EFFORTS)))
+    family = pacing.family(model)
+    wanted = min(_EFFORT_RANK[effort], _EFFORT_RANK[CAP])
+    best = None
+    for index, rung in enumerate(rungs, start=1):
+        if not isinstance(rung, dict) or pacing.family(rung.get("model")) != family or family is None:
+            continue
+        if rung.get("effort") not in _EFFORT_RANK:
+            raise EvolveError("policy.tiers rung %d has the effort %r, none of %s" % (index, rung.get("effort"), ", ".join(worker.EFFORTS)))
+        distance = abs(_EFFORT_RANK[rung["effort"]] - wanted)
+        if best is None or distance <= best[0]:
+            best = (distance, index)
+    return None if best is None else best[1]
+
+
+def migrate_difficulty(harness, policy):
+    """Rewrite `harness.json`'s `policy.difficulty` override from the old shape to the level to rung map, in place.
+
+    Returns `(lines, note)`: one line per level rewritten (its old model and effort, the rung it took), and the
+    note for a project that had nothing to rewrite (no override, or one already a level to rung map). Each level
+    takes the rung of `policy.tiers` (the harness's, under the project's own override) whose model matches and
+    whose effort is nearest without going above `high`; an old level on a model no rung carries is refused.
+    """
+    override = (harness.get("policy") or {}).get("difficulty") if isinstance(harness.get("policy"), dict) else None
+    if not isinstance(override, dict):
+        return [], "harness.json overrides no policy.difficulty; nothing to rewrite to rungs"
+    old = projects.old_difficulty_levels(override)
+    if not old:
+        return [], "harness.json's policy.difficulty override is already a level to rung map; nothing to rewrite"
+    rungs = policy.get("tiers") or []
+    lines = []
+    for level in old:
+        entry = override[level]
+        model, effort = entry.get("model"), entry.get("effort")
+        try:
+            rung = nearest_rung(rungs, model, effort)
+        except EvolveError as failure:
+            raise EvolveError("harness.json's policy.difficulty maps level %s to %s %s: %s; edit the override by hand, then upgrade"
+                              % (level, model, effort, failure))
+        if rung is None:
+            raise EvolveError("harness.json's policy.difficulty maps level %s to %s %s, and no rung of policy.tiers is on that model; "
+                              "edit the override by hand, then upgrade" % (level, model, effort))
+        override[level] = rung
+        lines.append("difficulty %s: %s %s -> rung %d (%s %s)" % (level, model, effort, rung, rungs[rung - 1]["model"], rungs[rung - 1]["effort"]))
+    return lines, None
 
 
 def render_upgrade(report):
@@ -285,6 +378,7 @@ def render_upgrade(report):
     else:
         lines.append("%-9s  %s  %s -> %s" % (report["direction"], report["project"], report["previous"], report["tag"]))
     lines.extend("  wrote  %s" % change for change in report["changes"])
+    lines.extend("  %s" % line for line in report.get("migrated") or [])
     if report["entries"]:
         if report["direction"] == "upgrade":
             lines += ["", "changelog  what %s brings since %s:" % (report["tag"], report["previous"]), ""]

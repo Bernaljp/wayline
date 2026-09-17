@@ -293,7 +293,7 @@ class FallbackLaunchTest(FallbackCase):
             self.script(identifier)
         self.assertEqual(sorted(driven.wave().launched), [1, 2, 3])
 
-        for identifier, effort in ((1, "xhigh"), (2, "max")):
+        for identifier, effort in ((1, "low"), (2, "high")):  # rungs 6 and 7 fall back to opus at the same effort (decision 16)
             with self.subTest(ticket=identifier):
                 (call,) = self.calls(identifier)
                 request = call.request
@@ -388,11 +388,11 @@ class FallbackSessionTest(FallbackCase):
         first, again = self.launches(1)
         self.assertEqual((first["attempt"], again["attempt"]), (1, 1), "the same attempt")
         self.assertNotIn("fallback_from", first)
-        self.assertEqual((again["model"], again["effort"], again["fallback_from"]), ("opus", "xhigh", "fable"))
+        self.assertEqual((again["model"], again["effort"], again["fallback_from"]), ("opus", "low", "fable"))
         self.assertLess(self.index("paused", model="fable"), self.index("ticket_launched", fallback_from="fable"))
         self.assertNotIn("partial work", self.calls(1)[1].request.prompt, "a refused session left nothing behind")
         self.assertNotIn("relaunching it", driven.out.getvalue(), "the fallback is said once, by the line that launches it")
-        self.assertEqual(driven.out.getvalue().count("never started work; it is launched again on opus xhigh"), 1)
+        self.assertEqual(driven.out.getvalue().count("never started work; it is launched again on opus low"), 1)
         drive(driven)
         self.assertEqual(self.statuses(), {1: "done"})
 
