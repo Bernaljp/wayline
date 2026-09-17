@@ -694,8 +694,10 @@ def status_view(project, refresh=True):
         problems.append(resource_problem)
     active = read_active()
     view = replay.replay(events)
-    from wayline.decisions import decider_ready  # the decisions module imports this one
+    from wayline.decisions import decider_ready, project_log  # the decisions module imports this one
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
+    decided, log_problems = project_log(project, events)
+    problems.extend(log_problems)
     policy = policy_for(project)
     from wayline.position import position_view  # the position module imports this one
     try:
@@ -720,6 +722,8 @@ def status_view(project, refresh=True):
         "decisions": [dict(_ticket_line(entry, tickets), awaits="owner" if awaits_owner(entry, answering, decider) else "decider",
                            falls_back_at=ask_falls_back_at(harness, view, entry["id"], answering, policy))
                       for entry in _open_decisions(graph)],
+        # Every decision made, the decider's first (decision 10), as the dashboard's decision log orders them.
+        "decided": decided,
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
         "window": window_status(events, harness, view),
         "hold": hold_status(project, events, harness, graph, tickets, view),
@@ -953,6 +957,7 @@ def render_status(view):
     lines.extend(_render_tickets("running tickets", view["running"]))
     lines.extend(_render_jobs(view["jobs"]))
     lines.extend(_render_decisions(view["decisions"]))
+    lines.extend(_render_decided(view.get("decided") or []))
     lines.append(_render_window(view["window"]))
     if view.get("hold"):
         lines.append(view["hold"]["line"])
@@ -1007,6 +1012,32 @@ def _render_decisions(decisions):
         lines.append("  #%-3d %s%s%s" % (entry["id"], entry["title"], ("  (%s)" % ", ".join(marks)) if marks else "", timeout))
     lines.append("")
     return lines
+
+
+def _render_decided(decided):
+    """The decisions made, the decider's first, each with its rationale under it when the decider gave one.
+
+    A superseded answer is left out: `DECISIONS.md` and the dashboard's log keep it, and here it would only
+    say twice what the answer replacing it says.
+    """
+    shown = [entry for entry in decided if not entry.get("superseded")]
+    if not shown:
+        return []
+    lines = ["decisions made (%d)" % len(shown)]
+    for entry in shown:
+        subject = ("ticket %d" % entry["ticket"] if entry.get("ticket") is not None
+                   else entry.get("id") or "intake")
+        confidence = "  (confidence %s)" % _number(entry["confidence"]) if entry.get("confidence") is not None else ""
+        lines.append("  %-8s %s: %s%s" % (entry.get("decided_by") or "unknown", subject, _one_line(entry.get("answer")), confidence))
+        if entry.get("decided_by") == "decider" and entry.get("rationale"):
+            lines.append("           rationale: %s" % _one_line(entry["rationale"]))
+    lines.append("")
+    return lines
+
+
+def _one_line(text, limit=100):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
 def _render_window(window):
