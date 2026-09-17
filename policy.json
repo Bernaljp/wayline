@@ -1,11 +1,14 @@
 {
-  "difficulty": {
-    "1": {"model": "sonnet", "effort": "low", "budget": "small"},
-    "2": {"model": "sonnet", "effort": "medium", "budget": "small"},
-    "3": {"model": "opus", "effort": "high", "budget": "medium"},
-    "4": {"model": "fable", "effort": "xhigh", "budget": "large"},
-    "5": {"model": "fable", "effort": "max", "budget": "large"}
-  },
+  "tiers": [
+    {"model": "haiku", "effort": "medium", "budget": "small"},
+    {"model": "sonnet", "effort": "low", "budget": "small"},
+    {"model": "sonnet", "effort": "high", "budget": "small"},
+    {"model": "opus", "effort": "low", "budget": "medium"},
+    {"model": "opus", "effort": "high", "budget": "medium"},
+    {"model": "fable", "effort": "low", "budget": "large"},
+    {"model": "fable", "effort": "high", "budget": "large"}
+  ],
+  "difficulty": {"1": 2, "2": 3, "3": 5, "4": 6, "5": 7},
   "budget": {
     "small": {"max_turns": 40, "max_minutes": 30},
     "medium": {"max_turns": 100, "max_minutes": 90},

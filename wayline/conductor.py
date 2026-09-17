@@ -126,13 +126,15 @@ from wayline.ledger import (
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, STALL, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
+from wayline.jsonschema import ValidationError
 from wayline.project import (
-    ProjectError, ask_falls_back_at, consent_for, fallback_consent, falls_back_now, find_project, journal_written_answers, policy_for,
-    read_harness,
+    UPGRADE_HINT, ProjectError, ask_falls_back_at, check_policy, consent_for, fallback_consent, falls_back_now, find_project,
+    journal_written_answers, policy_for, read_harness, rung_label,
 )
 
 __all__ = [
-    "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "fallback_tier", "porcelain_entries",
+    "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "rung_tier", "rung_of", "rung_label", "ladder", "fallback_tier",
+    "porcelain_entries",
     "dirty_outside_research", "refuse_to_start", "run_command", "WORKTREES", "RESEARCH", "BRANCH",
 ]
 
@@ -327,6 +329,11 @@ def refuse_to_start(project, harness_root=None):
     pinned = evolve.pin_problem(project, harness_root)
     if pinned:
         problems.append(pinned)
+    # The rung ladder (decision 16): a policy the schema or the ladder refuses, an old-shape `difficulty` override first.
+    try:
+        check_policy(policy_for(project, harness_root), name="the policy of %s (policy.json under harness.json)" % project)
+    except ValidationError as failure:
+        problems.append(str(failure))
     return problems
 
 
@@ -335,49 +342,98 @@ def refuse_to_start(project, harness_root=None):
 
 @dataclass
 class Tier:
-    """What a ticket's difficulty resolves to in the policy: the model, the effort, the budget."""
+    """What a ticket launches at: the rung of the rung ladder its difficulty names, resolved (decision 16).
+
+    `model` is the rung's, an alias or a full version name, and `family` its family (`opus` for
+    `claude-opus-4-8`), which keys the context cap and the verifier table. `rung` is the rung's 1-based
+    index in `policy.tiers`, what `ticket_launched` and `verdict` carry and `wayline status` labels a launch
+    by; None for a tier no rung made (a role's).
+    """
 
     model: str
     effort: str
     max_turns: Optional[int] = None
     max_minutes: Optional[int] = None
     context_chars: Optional[int] = None
+    rung: Optional[int] = None
+    family: Optional[str] = None
+
+    def __post_init__(self):
+        if self.family is None:
+            self.family = pacing.family(self.model)
+
+    @property
+    def label(self):
+        """`r5 opus high`, the label of decision 16; without the index for a tier no rung made."""
+        return rung_label(self.rung, self.model, self.effort)
 
 
-def tier_for(policy, difficulty, ticket_budget=None):
-    """The tier of `difficulty` (policy `difficulty`, `budget`, `context_pack`), the ticket's budget winning.
+def ladder(policy):
+    """`policy.tiers`, the rung ladder: the rungs as listed, cheapest first."""
+    rungs = policy.get("tiers")
+    if not isinstance(rungs, list) or not rungs:
+        raise ConductorError("policy.tiers, the rung ladder, is missing or empty")
+    return rungs
 
-    `context_pack.max_chars` is keyed by model and names only the three a worker runs on, so
-    anything else (a `haiku` judge) takes the smallest cap rather than none at all.
+
+def rung_tier(policy, rung, ticket_budget=None):
+    """The tier of rung `rung` (its 1-based index in `policy.tiers`), under `budget` and `context_pack`, the ticket's budget winning.
+
+    `context_pack.max_chars` is keyed by family and names only the three a worker runs on, so
+    anything else (a `haiku` rung) takes the smallest cap rather than none at all.
     """
-    tiers = policy.get("difficulty") or {}
-    tier = tiers.get(str(difficulty), tiers.get(difficulty))
-    if not isinstance(tier, dict) or "model" not in tier or "effort" not in tier:
-        raise ConductorError("policy.difficulty has no tier %r; it has %s"
-                             % (difficulty, ", ".join(sorted(map(str, tiers))) or "none"))
-    budget = dict((policy.get("budget") or {}).get(tier.get("budget")) or {})
+    rungs = ladder(policy)
+    index = rung if isinstance(rung, int) and not isinstance(rung, bool) else None
+    if index is None or not 1 <= index <= len(rungs):
+        raise ConductorError("policy.tiers has no rung %r; the rung ladder has %d rung(s), 1 to %d" % (rung, len(rungs), len(rungs)))
+    entry = rungs[index - 1]
+    if not isinstance(entry, dict) or "model" not in entry or "effort" not in entry:
+        raise ConductorError("policy.tiers rung %d is not a model, an effort, and a budget: %r" % (index, entry))
+    family = pacing.family(entry["model"])
+    if family is None:
+        raise ConductorError("policy.tiers rung %d names the model %r, which is no alias (%s) and no full version name of one"
+                             % (index, entry["model"], ", ".join(pacing.FAMILIES)))
+    budget = dict((policy.get("budget") or {}).get(entry.get("budget")) or {})
     budget.update({key: value for key, value in (ticket_budget or {}).items() if value is not None})
     return Tier(
-        model=tier["model"], effort=tier["effort"],
+        model=entry["model"], effort=entry["effort"],
         max_turns=budget.get("max_turns"), max_minutes=budget.get("max_minutes"),
-        context_chars=_context_cap(policy, tier["model"]),
+        context_chars=_context_cap(policy, family), rung=index, family=family,
     )
 
 
-def _context_cap(policy, model):
-    """`policy.context_pack.max_chars` for `model`; a model it does not name takes the smallest cap rather than none."""
+def rung_of(policy, difficulty):
+    """The rung index `policy.difficulty` maps `difficulty` to; the old shape (a level mapped to a model) names `wayline upgrade`."""
+    levels = policy.get("difficulty") or {}
+    rung = levels.get(str(difficulty), levels.get(difficulty))
+    if isinstance(rung, dict):
+        raise ConductorError("policy.difficulty maps level %s to a model and an effort, the shape before the rung ladder; %s"
+                             % (difficulty, UPGRADE_HINT))
+    if not isinstance(rung, int) or isinstance(rung, bool):
+        raise ConductorError("policy.difficulty has no rung for level %r; it has %s"
+                             % (difficulty, ", ".join(sorted(map(str, levels))) or "none"))
+    return rung
+
+
+def tier_for(policy, difficulty, ticket_budget=None):
+    """The tier of `difficulty`: the rung `policy.difficulty` maps it to, resolved by `rung_tier`."""
+    return rung_tier(policy, rung_of(policy, difficulty), ticket_budget)
+
+
+def _context_cap(policy, family):
+    """`policy.context_pack.max_chars` for `family`; a family it does not name takes the smallest cap rather than none."""
     caps = (policy.get("context_pack") or {}).get("max_chars") or {}
-    return caps.get(model, min(caps.values()) if caps else None)
+    return caps.get(family, min(caps.values()) if caps else None)
 
 
 def fallback_tier(policy, tier):
     """What a tier on Fable becomes while Fable work falls back (decision 15).
 
     Opus, at the same effort and the same turns and minutes, under `context_pack.max_chars.opus`: the
-    difficulty and the budget are the ticket's, and only the model and its context cap change.
+    difficulty, the rung, and the budget are the ticket's, and only the model and its context cap change.
     """
     return Tier(model=pacing.OPUS, effort=tier.effort, max_turns=tier.max_turns, max_minutes=tier.max_minutes,
-                context_chars=_context_cap(policy, pacing.OPUS))
+                context_chars=_context_cap(policy, pacing.OPUS), rung=tier.rung, family=pacing.OPUS)
 
 
 # --- what a wave did ------------------------------------------------------------------------
@@ -854,7 +910,7 @@ class Conductor:
     def _on_fable(self, entry):
         """Whether a ticket launches on Fable: the tier of its effective difficulty names Fable (decision 15)."""
         try:
-            return tier_for(self.policy, entry.get("difficulty")).model == pacing.FABLE
+            return tier_for(self.policy, entry.get("difficulty")).family == pacing.FABLE
         except ConductorError:
             return False  # the launch fails on the missing tier, and says so there
 
@@ -1147,7 +1203,7 @@ class Conductor:
             ticket, _ = self._ticket(identifier)
             difficulty = launched.difficulty if launched.difficulty is not None else entry.get("difficulty", ticket["difficulty"])
             earned, asks = gates.owed_asks(ticket, difficulty, launched.model,
-                                           self.view.integrated.get(identifier), self.view.passed(identifier))
+                                           self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung)
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -1392,16 +1448,16 @@ class Conductor:
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
         attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
-        if attempt.tier.model == pacing.FABLE and self._falls_back():
+        if attempt.tier.family == pacing.FABLE and self._falls_back():
             attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), pacing.FABLE
         self._add_worktree(attempt)
         self._write_ticket(attempt, "running")
         attempt.prompt = self._prompt(attempt)
         attempt.request = self._request(attempt, attempt.prompt)
         own = attempt.ticket.get("pinned_difficulty") or attempt.ticket["difficulty"]
-        self.say("wave %d: ticket %d %s (%s, %s %s, attempt %d)%s%s" % (
+        self.say("wave %d: ticket %d %s (%s, %s, attempt %d)%s%s" % (
             self.number, attempt.id, attempt.ticket["title"], attempt.role.name,
-            attempt.tier.model, attempt.tier.effort, attempt.number,
+            attempt.tier.label, attempt.number,
             ", difficulty %s raised from %s" % (attempt.difficulty, own) if attempt.difficulty != own else "",
             ", falling back from %s" % attempt.fallback_from if attempt.fallback_from else ""))
 
@@ -1452,7 +1508,7 @@ class Conductor:
             "skills": list(attempt.ticket.get("skills") or []),
             "worktree": str(attempt.worktree), "pid": started.pid,
             "context_chars": attempt.prompt.context_chars, "prompt_sha256": attempt.prompt.sha256,
-            "difficulty": attempt.difficulty,
+            "difficulty": attempt.difficulty, "rung": attempt.tier.rung,
         }
         if attempt.fallback_from:
             payload["fallback_from"] = attempt.fallback_from
@@ -2195,7 +2251,7 @@ class Conductor:
         last = want.message if gate else want.answering
         if ran and last:
             notes.append(FALLBACK_LAST_MESSAGE % last)
-        if attempt.tier.model == pacing.FABLE:
+        if attempt.tier.family == pacing.FABLE:
             attempt.tier = fallback_tier(self.policy, attempt.tier)
         attempt.fallback_from = pacing.FABLE
         if notes:
@@ -3005,7 +3061,7 @@ class Conductor:
         """
         if self._holds_launches():
             return True
-        if self._integrator_tier(attempt).model == pacing.FABLE and self._fable_held() and not self._falls_back():
+        if self._integrator_tier(attempt).family == pacing.FABLE and self._fable_held() and not self._falls_back():
             self._held_back("ticket %d's integrator" % attempt.id)
             return True
         return self._holds_launches()
@@ -3019,8 +3075,8 @@ class Conductor:
         model, effort = entry.get("model") or attempt.tier.model, entry.get("effort") or attempt.tier.effort
         caps = (self.policy.get("context_pack") or {}).get("max_chars") or {}
         tier = Tier(model=model, effort=effort, max_turns=attempt.tier.max_turns, max_minutes=attempt.tier.max_minutes,
-                    context_chars=caps.get(model, attempt.tier.context_chars))
-        return fallback_tier(self.policy, tier) if tier.model == pacing.FABLE and self._falls_back() else tier
+                    context_chars=caps.get(pacing.family(model) or model, attempt.tier.context_chars))
+        return fallback_tier(self.policy, tier) if tier.family == pacing.FABLE and self._falls_back() else tier
 
     # --- closing the ticket ---
 
@@ -3241,7 +3297,7 @@ class Conductor:
         outputs = attempt.result.get("outputs_written") or attempt.ticket.get("outputs") or []
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
-            tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs,
+            tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
         )
         if not asks:
             return
@@ -3646,10 +3702,10 @@ class Conductor:
         fields = self._fields(identifier)
         difficulty = self._effective_difficulty(fields)
         tier = tier_for(self.policy, difficulty, fields.get("budget"))
-        self._set_status(identifier, "open", ["Escalated one tier up: the next attempt launches at difficulty %d (%s %s), "
-                                              "in a new session." % (difficulty, tier.model, tier.effort)])
-        self.say("  ticket %d: escalation: its next attempt launches one tier up, at difficulty %d (%s %s)"
-                 % (identifier, difficulty, tier.model, tier.effort))
+        self._set_status(identifier, "open", ["Escalated one tier up: the next attempt launches at difficulty %d (%s), "
+                                              "in a new session." % (difficulty, tier.label)])
+        self.say("  ticket %d: escalation: its next attempt launches one tier up, at difficulty %d (%s)"
+                 % (identifier, difficulty, tier.label))
         return True
 
     def _planner_falls_back(self, what):

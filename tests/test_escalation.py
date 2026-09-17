@@ -135,7 +135,7 @@ class LadderTest(EscalationCase):
         self.assertEqual(self.rungs(), ["resume", "split", "tier_up", "resume", "needs_human"])
         self.assertEqual([item["payload"]["reason"] for item in self.events("ticket_resumed")],
                          ["acceptance_failed", "acceptance_failed"], "each attempt's acceptance is resumed once first")
-        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "medium")])
+        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "high")])
         self.assertEqual([call.kind for call in self.calls], ["launch", "resume", "launch", "resume"])
         self.assertEqual(self.planner.cuts, [("split", 1, False)])
         self.assertIn("the planner could not split it", self.events("ticket_failed")[2]["payload"]["reason"],
@@ -147,7 +147,7 @@ class LadderTest(EscalationCase):
         self.assertEqual(results[-1].reason, "frontier_empty")
         commands = [result["cmd"] for item in self.events("acceptance") for result in item["payload"]["results"]]
         self.assertIn("wayline run --simulate-failure 1", commands)
-        self.assertIn("Escalated one tier up: the next attempt launches at difficulty 2 (sonnet medium)", self.body())
+        self.assertIn("Escalated one tier up: the next attempt launches at difficulty 2 (r3 sonnet high)", self.body())
 
     def test_a_failure_the_worker_reports_is_resumed_once_with_its_output(self):
         results = self.conduct((failed(), None), (done(), patch()))
@@ -165,7 +165,7 @@ class LadderTest(EscalationCase):
         self.conduct((failed(), None), (failed(summary="still missing"), None), (done(), patch()))
         self.assertEqual(self.rungs(), ["resume", "split", "tier_up"])
         self.assertEqual(self.planner.cuts, [("split", 1, False)])
-        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "medium")])
+        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "high")])
         self.assertEqual([call.kind for call in self.calls], ["launch", "resume", "launch"])
         self.assertEqual(self.ticket()["status"], "done")
 
@@ -281,7 +281,7 @@ class RestartTest(EscalationCase):
     def test_a_recorded_tier_up_launches_the_next_attempt_one_tier_up(self):
         self.record_failure("tier_up")
         self.conduct((done(), patch()))
-        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "medium")])
+        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "high")])
         self.assertEqual(self.ticket()["status"], "done")
         self.assertNotIn("the journal wins", self.made.out.getvalue(), "a ticket opened for its tier up is not a contradiction")
 
@@ -354,7 +354,7 @@ class DifficultyTest(EscalationCase):
         self.assertEqual(self.launched_at(2)[:1], [(1, "sonnet", "low")])
         graph = snapshots[-1]  # read before the run ended, which ends the raise with it
         self.assertEqual((graph[5], graph[3]), (2, 2), "the kind is raised for the rest of the run")
-        self.assertEqual(self.launched_at(2)[1:], [(2, "sonnet", "medium")], "the tier up is one tier above attempt 1, not two")
+        self.assertEqual(self.launched_at(2)[1:], [(2, "sonnet", "high")], "the tier up is one tier above attempt 1, not two")
 
     def test_a_failure_its_resume_mends_does_not_count(self):
         self.record_failure(1)
