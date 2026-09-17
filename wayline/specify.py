@@ -501,10 +501,15 @@ def specify_prompt(role, records, harness, project, open_questions=(), change=No
     if open_questions:
         lines += ["", "# The questions the grill left open", "",
                   "The spec takes the recommended answer on each of these where it has to take a side, and names the "
-                  "question in a risk.", ""]
+                  "question in a risk. A question marked as the owner's (human-only or irreversible) takes no answer from the spec: "
+                  "what depends on it is written as conditional on the owner's answer, and named in a risk, so that the "
+                  "graph can pause it behind a decision ticket.", ""]
         for record in open_questions:
-            lines.append("- %s: %s (recommended: %s)" % (record["id"], _one_line(record["question"]),
-                                                          _one_line(record.get("recommended")) or "none given"))
+            if grill.owners(record):
+                lines.append("- %s: %s (the owner's: human-only or irreversible)" % (record["id"], _one_line(record["question"])))
+            else:
+                lines.append("- %s: %s (recommended: %s)" % (record["id"], _one_line(record["question"]),
+                                                              _one_line(record.get("recommended")) or "none given"))
     if change:
         lines += ["", "# What to change", "",
                   "A previous draft of this spec was not accepted. Change what this names, and keep what it does not:", "",
@@ -809,7 +814,14 @@ def specify(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, 
     report = {"project": str(project), "autonomy": autonomy, "did": [], "stopped": None, "failures": []}
     journal_written_answers(project, ledger)
     state = spec_state(project)
-    if state["state"] == "unverified" and not state["findings"] and not check_spec(project):
+    if autonomy == AUTONOMOUS and state["state"] in ("none", "revise"):
+        # Before a draft, the decider takes whatever the grill left for it: a decide-rest that did not finish
+        # (its session killed with the grill's, ticket 36) would otherwise leave the planner to guess.
+        decider.settle_grill(project, report, harness_root=harness_root, policy=policy, fall_back=fall_back,
+                             notify=notify, say=say)
+    if report["stopped"] is not None:
+        state = spec_state(project)
+    elif state["state"] == "unverified" and not state["findings"] and not check_spec(project):
         try:
             sha, verdict = judge_spec(project, harness_root=harness_root, policy=policy, fall_back=fall_back, say=say)
         except gates.FableHeld as held:

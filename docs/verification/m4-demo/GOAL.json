@@ -1,0 +1,18 @@
+{
+  "metric": "trustworthiness_k15",
+  "direction": "up",
+  "target": 0.95,
+  "dataset_or_split": "data/cells.npz",
+  "held_out_split": "day 7",
+  "eval_command": "python3 eval/trustworthiness.py --embedding {artifact}",
+  "baseline": {
+    "value": 0.9206,
+    "source": "PCA to two dimensions fitted on days 0 to 6 (eval/pca_sample.py), measured by eval/trustworthiness.py"
+  },
+  "budget": {
+    "gpu_hours": 20,
+    "wallclock": null,
+    "usage_windows": null
+  },
+  "stop_when": "goal_reached"
+}

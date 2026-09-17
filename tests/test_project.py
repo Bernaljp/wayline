@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tests.paths import HARNESS_ROOT
@@ -143,6 +144,27 @@ class InitLayoutTest(ProjectTestCase):
         self.assertIn("research/journal.jsonl", self.report["changes"])
         self.assertTrue(self.report["created"])
         self.assertIsNone(self.report["displaced"])
+
+
+class InitRefusesClaudeHomeTest(ProjectTestCase):
+    """A project under `~/.claude/` is refused: Claude Code refuses a worker's writes there, whatever its rules say (ticket 36)."""
+
+    def test_a_project_under_the_claude_directory_is_refused_and_nothing_is_written(self):
+        home = self.temp / "home"
+        project = home / ".claude" / "jobs" / "x" / "study"
+        with unittest.mock.patch.dict(os.environ, {"HOME": str(home)}):
+            with self.assertRaises(ProjectError) as raised:
+                init_project(project, harness_root=self.fake_harness())
+        self.assertIn(".claude", str(raised.exception))
+        self.assertIn("refuses", str(raised.exception))
+        self.assertFalse(project.exists())
+
+    def test_a_directory_merely_named_like_it_elsewhere_is_laid_out(self):
+        home = self.temp / "home"
+        project = self.temp / "work" / ".claude-notes" / "study"
+        with unittest.mock.patch.dict(os.environ, {"HOME": str(home)}):
+            init_project(project, harness_root=self.fake_harness())
+        self.assertTrue((project / HARNESS_JSON).is_file())
 
 
 class InitIdempotenceTest(ProjectTestCase):

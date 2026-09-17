@@ -682,6 +682,27 @@ def reconsidered(project, events):
 # --- the verb: wayline grill --decide-rest ---------------------------------------------------------
 
 
+def settle_grill(project, report, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None, say=None):
+    """`decide_rest` for a phase verb under autonomous: each outcome's line into `report["did"]`, what stopped it into `report["stopped"]`.
+
+    `wayline position` calls it once the memo is there, and `wayline specify` before a draft, so a
+    decide-rest that did not finish (its session killed with the grill's, ticket 36) is taken up again.
+    """
+    if not grill.decider_share(grill.read_records(project)):
+        return
+    try:
+        decided = decide_rest(project, harness_root=harness_root, policy=policy, fall_back=fall_back, notify=notify, out=None)
+    except (grill.GrillError, ProjectError) as failure:
+        report["stopped"] = "the decider could not take the grill's questions: %s" % failure
+        return
+    for name in ("decided", "refused", "failed"):
+        report["did"] += ["the decider on " + outcome.line for outcome in decided[name]]
+    if decided["stopped"]:
+        report["stopped"] = decided["stopped"]
+    if say is not None:
+        say("  the decider took %d of the grill's question(s)" % sum(len(decided[name]) for name in ("decided", "refused", "failed")))
+
+
 def decide_rest(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None, out=None):
     """Resolve the design tree's frontier until only the owner's questions are left; returns the report.
 

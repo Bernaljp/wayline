@@ -1,0 +1,41 @@
+plan  <project>  (autonomy autonomous)
+  plan: wrote 24 ticket(s) and 1 decision ticket(s) on fable
+  opened decision ticket 28, "Confirm the graph", blocking all
+  the decider on ticket 28: decision ticket 28  decided: confirm (confidence 0.8, on claude-fable-5-1)
+  the graph is confirmed; the phase moved to P5
+      3  harness    d2  coder        Pin the study environment: .venv from requirements.lock with umap-learn, openTSNE, phate, scanpy, torch, pytest
+      4  code       d2  coder        Write the replicate, no-branch and noise-sweep generators beside make_cells.py (D2, D3, D4)
+      5  code       d4  coder        study/measures.py: the six faithfulness measures, the auxiliary scores, the 50-gene references and the reference check (waits on 3)
+      6  code       d4  coder        study/methods.py, study/knn_map.py, study/embed.py: the seven methods with native extensions, the kNN control map, and the embedding artifact writer (waits on 3)
+      7  code       d3  coder        study/summarize.py: the scores table schema and seed intervals (bootstrap over 20 seeds, split_avg rows) (waits on 3)
+      8  code       d4  coder        study/sweep_summary.py: the E2 surface, stratified permutation axis tests, init_shift, the init contrast and chosen_config.json (waits on 7)
+      9  code       d4  coder        study/verdict.py: the Q14 rule, kNN attribution, --goal-vs-faithful, --defaults-vs-chosen, --replicates and --probe (waits on 7)
+     10  code       d3  coder        study/run_experiment.py and study/panels.py: the driver that runs configurations x conditions x maps x seeds into a scores table, artifacts and panels (waits on 5, 6, 7)
+     11  docs       d1  coder        Document the three dataset generators and the dataset file schema (waits on 4)
+     12  docs       d1  coder        Document the study library: measures, methods, kNN map, artifacts and the scores table (waits on 5, 6, 7)
+     13  docs       d1  coder        Document the pipeline: run_experiment, sweep_summary, verdict and the results layout (waits on 8, 9, 10, 12)
+     14  experiment d3  experimenter E2: UMAP sensitivity sweep on the internal splits (108 points x 20 seeds x 2 splits) and the chosen configuration (waits on 8, 10)
+     15  experiment d3  experimenter E1: out-of-sample benchmark of the eight configurations on data/cells.npz (internal splits and day 7, native and kNN) with the Q14 verdict (waits on 9, 14)
+     16  experiment d3  experimenter E4: no-branch null control: reference check on D3, then invented_branch_rate for the eight configurations (waits on 4, 14)
+     17  experiment d3  experimenter E5: noise sweep: the E1 protocol on the sd 0.3, 0.6 and 1.2 datasets with a verdict per dataset (waits on 4, 9, 14)
+     18  experiment d3  experimenter E6: the E1 protocol on the ten replicate datasets and verdict_replicate_count (waits on 4, 15)
+     19  experiment d3  experimenter E3: leave-day-3-out branch-point probe of the eight configurations (native and kNN, branch_point_placement vs the B3 reference) (waits on 9, 14, 27)
+     20  analysis   d3  analyst      Analysis of E2: C4 (a setting matters) and C5 (init moves the global picture more than the local) (waits on 14)
+     21  analysis   d4  analyst      Analysis of E1: the Q14 verdict (C1, A3), the goal (C2), layout vs extension (C3), goal vs Faithful (A2) and defaults vs chosen (A5) (waits on 15, 20)
+     22  analysis   d3  analyst      Analysis of the controls E4 and E5: C8/A4 on the no-branch copy and C9/A1/A8 across noise levels (waits on 16, 17, 21)
+     23  analysis   d3  analyst      Analysis of E6: C10/A7, the verdict's stability across generator seeds (waits on 18, 21)
+     24  analysis   d3  analyst      Analysis of E3: C6, C7 and A6's second clause on the leave-day-3-out probe (waits on 19, 27)
+     25  writing    d4  writer       Write the report: the verdict on data/cells.npz, the goal as one criterion, the sweep, the controls and the replicates (waits on 20, 21, 22, 23)
+     26  writing    d2  writer       Add the branch-point probe section (E3: C6, C7, A6) to the report (waits on 24, 25, 27)
+     27  decision   d1  decider      Q4: Day 7 contains no pre-branch cells. Is the branch point tested on...
+  the planner notes: Q4 is open and human-only, so the spec's conditional E3 is cut as T17 (experiment), T22 (analysis) and T24 (report section), all paused by the Q4 decision; T23 writes the report without them and leaves a placeholder heading, so answering 'it is not' parks T17/T22/T24 and the report still closes. E1, E2, E4, E5 and E6 launch now.
+  the planner notes: The sweep's selection score (internal-split average of seed-mean trustworthiness_k15, ties by the mean of the other five) is the spec's own choice under Risks, not an open decision; T6 implements it as written and reports the best-mean-rank point beside it without selecting on it.
+  the planner notes: Diffusion-map and parametric-UMAP backends (pydiffmap vs scipy Nystrom; ParametricUMAP vs torch MLP) are settled by what installs under the pins, as the spec's Methods and Risks say; T1 records the outcome in study/ENVIRONMENT.md and T4 implements whichever is recorded, so no decision ticket is cut.
+  the planner notes: results/ is in .gitignore, so experiment outputs are carried by the manifest rather than commits; analysis tickets write under analysis/ and the report under report/, never research/.
+  the planner notes: E6 waits on E1 (T13) because verdict_replicate_count compares each replicate's verdict to results/E1/verdict.json; E4 and E5 wait only on the datasets, E2's chosen configuration and the pipeline, so they run beside E1.
+  the planner notes: No lit, figure or review ticket is cut: no role covers them; Q7 absorbs no new references, and the panels the spec asks for are unscored PNGs written by the experiment tickets (study/panels.py), not figure tickets.
+  the planner notes: Experiment resources are set to gpu 0: every fit runs in seconds on CPU at 480 cells; parametric UMAP may use the RTX 3090 within the spec's 0.5-2 GPU-hour expectations but does not need a GPU slot to launch.
+  the graph: confirmed at 7fcfe3f36fd9, answered by the decider: confirm
+  phase: P5
+  next: wayline run (wayline plan --replan re-cuts the open tickets, --split <id> replaces one)
+

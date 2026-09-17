@@ -520,6 +520,22 @@ class ConductorDecidesTest(ConductedCase):
         self.assertIn("Ticket 2, *Which form does the beta report take?*: **one line** (confidence 0.7", first)
         self.assertIn("rationale: POSITION.md names it", first)
 
+    def test_status_lists_the_deciders_decision_before_the_owners(self):
+        self.script()
+        Ledger(self.project).append_event("decision", {"ticket": None, "answer": "the goal stays", "decided_by": "human",
+                                                       "rationale": None, "confidence": None})
+        self.fake.script(envelope("one line"), role=decider.DECIDER)
+        self.conduct()
+        view = project.status_view(self.project)
+        self.assertEqual([entry["decided_by"] for entry in view["decided"]], ["decider", "human"])
+        text = project.render_status(view)
+        made = text.split("decisions made (2)\n", 1)[1].split("\n\n", 1)[0].split("\n")
+        self.assertIn("decider", made[0])
+        self.assertIn("ticket 2: one line  (confidence 0.7)", made[0])
+        self.assertIn("rationale: POSITION.md names it", made[1])
+        self.assertIn("human", made[2])
+        self.assertIn("the goal stays", made[2])
+
     def test_a_refused_answer_turns_the_ticket_human_only_and_the_run_waits_for_the_owner(self):
         self.script()
         self.fake.script(envelope("a table, after deleting the old reports directory"), role=decider.DECIDER)

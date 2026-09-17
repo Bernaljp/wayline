@@ -2,7 +2,13 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
-## Unreleased
+## v0.5.0 (2026-09-17)
+
+M4 Front door is live: from a paragraph of intent, the ten references of M3, and a goal, one sitting
+ran the intake, the position memo, a three-tier grill with the switch raised, the decider, the spec
+(four passes), and the plan: 24 tickets with roles from the registry, and a decision ticket that held
+its branch while the other ran and was answered from the dashboard and from `wayline answer`, each
+answer relaunching the conductor through the tick (`docs/verification/m4.md`, ticket 36).
 
 - The stall and the escalation ladder (`wayline.conductor`, ticket 38). Every failure journals
   `ticket_failed` with its rung in `next`, and each wave takes every failed ticket up that rung, so a
@@ -57,6 +63,18 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   (`checks.py`) that pin what the verb writes and journals. `roles/planner/agent.md` covers phase P4.
 - `wayline.decider.inline_records` is the records inliner the decider's and the planner's prompts
   share; `wayline.specify` exposes `confirms`, `what_to_change`, `move_phase`, and `context_cap`.
+- What the M4 demo changed (ticket 36). `wayline status` lists the decisions made, the decider's
+  first, each with its confidence and, for the decider's, its rationale. Under `autonomous`,
+  `wayline specify` hands the decider the grill's open questions before it drafts
+  (`decider.settle_grill`, which `wayline position` uses too), so a `--decide-rest` killed with the
+  grill's session is taken up again; the grill skill says how long that verb runs. The spec takes no
+  answer to a question that is the owner's (human-only or irreversible): what depends on it is
+  written as conditional, and the planner role says so. A prompt over 100 KB goes to `claude -p` on
+  stdin, since Linux refuses one argument over 128 KiB. An answered decision ticket stays closed
+  across runs: the replay holds it done, and a take-over leaves it to the answers step instead of
+  reopening it. The dashboard's decision log shows four lines of a long cell and the rest on a
+  click. `wayline init` refuses a project under `~/.claude/`, where Claude Code refuses a worker's
+  writes.
 
 ## v0.4.0 (2026-09-17)
 

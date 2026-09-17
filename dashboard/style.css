@@ -413,6 +413,8 @@ tbody tr:hover { background: var(--accent-soft); }
    way the whole value is in the cell's title. */
 td.short { white-space: nowrap; font-size: var(--text-xs); color: var(--ink-2); }
 td.text { max-width: 52ch; overflow-wrap: anywhere; }
+td .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; cursor: pointer; }
+td .clamp.open { display: block; overflow: visible; -webkit-line-clamp: none; line-clamp: none; }
 
 /* --- the empty, loading, and error states ----------------------------------------------------- */
 

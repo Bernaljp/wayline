@@ -637,6 +637,24 @@ def _ticket_of(payload, event):
     return ticket if isinstance(ticket, int) and not isinstance(ticket, bool) else None
 
 
+def project_log(project, events):
+    """`decision_log` over a project's own ticket files and `DECISIONS.md`: `(log, problems)`, for `status` (ticket 36)."""
+    fields, bodies, problems = {}, {}, []
+    try:
+        for ticket in read_tickets(project):
+            fields[ticket["id"]] = ticket
+            if ticket["kind"] == DECISION_KIND:
+                bodies[ticket["id"]] = read_ticket(tickets_dir(project) / filename(ticket))[1]
+    except (ValueError, OSError) as failure:
+        problems.append("tickets: %s" % failure)
+    try:
+        records = grill.read_records(project)
+    except (ProjectError, OSError) as failure:
+        records = []
+        problems.append("DECISIONS.md: %s" % failure)
+    return decision_log(events, records, fields, bodies), problems
+
+
 def decision_log(events, records=(), tickets=None, bodies=None):
     """Every `decision` the journal holds, the decider's first, each with the question it answered.
 

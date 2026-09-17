@@ -168,6 +168,13 @@ tell you:
    owner's, with a decision ticket beside it. Then run `wayline grill --project .`: it asks only
    the human-only and irreversible questions, which still wait for the owner. Ask those, if there
    are any, and record the owner's answers to them as before.
+
+   Each decision takes two to four minutes, so the verb often runs longer than a command's default
+   timeout. Give it the longest timeout your shell tool allows. If it is still running when that
+   timeout ends, do not end your turn with it unfinished: when your session ends, the decider's
+   session is killed with it, and the question it was deciding stays open. Say which questions are
+   decided so far (`wayline grill --project .` lists them), and tell the owner that `wayline grill
+   --decide-rest` takes up the rest, and that `wayline specify` does so on its own before it drafts.
 5. Tell the owner plainly what changed: the decider resolves every open question and every decision
    ticket that is not human-only, the report lists its decisions first, and nothing on the
    irreversible list is decided without them.

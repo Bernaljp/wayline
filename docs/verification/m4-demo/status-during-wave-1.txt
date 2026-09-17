@@ -1,0 +1,64 @@
+project  umap-study  (<project>)  [active]
+harness  v0.4.0   autonomy autonomous   radius moderate
+
+frontier (1)
+  #27  decision   d1  decider        Q4: Day 7 contains no pre-branch cells. Is the branch point tested on...
+
+running tickets (2)
+  #3   harness    d2  coder          Pin the study environment: .venv from requirements.lock with umap-learn, openTSNE, phate, scanpy, torch, pytest  attempt 1
+  #4   code       d2  coder          Write the replicate, no-branch and noise-sweep generators beside make_cells.py (D2, D3, D4)  attempt 1
+
+running jobs (0)
+
+open decision tickets (1)
+  #27  Q4: Day 7 contains no pre-branch cells. Is the branch point tested on...  (human_only, blocking subgraph)
+
+decisions made (20)
+  decider  Q11: n_neighbors {5,15,30,50} x min_dist {0.0,0.1,0.5} x init {spectral,pca,random} x input PCA dims {...  (confidence 0.85)
+           rationale: The full 108-point grid, for five reasons from the records, with one cost named at the end. 1. It...
+  decider  Q14: when UMAP's interval overlaps the best method's on every faithfulness measure, on the internal sp...  (confidence 0.85)
+           rationale: The recommended option, because it is the only one of the three that fits what the owner has alre...
+  decider  Q15: both: each method's own extension, and the kNN map as a common control  (confidence 0.85)
+           rationale: The recommended option, because the native extensions are what Q1 already adopted and what the in...
+  decider  Q16: a project venv with pinned versions (umap-learn, scikit-learn, openTSNE, phate, scanpy, torch)  (confidence 0.9)
+           rationale: The recommended option, because it is the only one of the two that keeps the study rerunnable fro...
+  decider  ticket 1: revise: keep E3 specified exactly as it is, but the spec must not take Q4's recommended answer on...  (confidence 0.75)
+           rationale: Not the recommended answer, for one reason only: the spec as written answers a question the owner...
+  decider  ticket 2: confirm  (confidence 0.8)
+           rationale: Confirm, the recommended answer: the re-rendered spec carries exactly the change ticket 1 asked f...
+  decider  ticket 28: confirm  (confidence 0.8)
+           rationale: Confirm, the recommended answer: the graph is the confirmed spec (6d990626d4c7, ticket 2) cut int...
+  human    intake: goal: `trustworthiness_k15` up to 0.95 on the held-out split `day 7`, measured by `python3 eval/t...
+  human    Q1: all three: the out-of-sample benchmark with branch-aware metrics, the UMAP sensitivity sweep on a...
+  human    Q2: yes, 2-D only  (confidence 0.95)
+  human    Q3: keep the metric and the 0.95 target, but run the whole study and report the goal as one criterion...
+  human    Q5: repeat datasets from the same generator under other seeds, about ten, written by a new script bes...  (confidence 0.4)
+  human    Q6: rolling internal splits: fit on days 0-4 and score day 5, fit on days 0-5 and score day 6, averaged
+  human    Q7: keep NumPy, SciPy and PyTorch as software citations; drop the Transformer, AlphaFold, SARS-CoV-2 ...
+  human    Q8: all four beside trustworthiness_k15: continuity at k=15; Spearman correlation of embedding-derive...
+  human    Q9: 20 embedding seeds per configuration, reported as mean and 95% bootstrap interval
+  human    Q10: UMAP, PCA, t-SNE, diffusion maps, PHATE and parametric UMAP, plus PAGA-initialized UMAP
+  human    Q12: the no-branch copy of the generator plus the noise sweep (sd 0.3, 0.6, 1.2), as new scripts besid...
+  human    Q13: this generator only, with transfer to real scRNA-seq named as an anti-claim
+  human    Q17: the Q8 measures plus a Spearman correlation of embedding order with day labels, as the scored ver...
+
+window   normal   five_hour 0.17   seven_day 0.3   fable 0.39
+goal     trustworthiness_k15 (up), target 0.95, no reading yet
+reservation  gpu none   cores 0-7   ram 64GB   processes none
+cpu slot     loadavg1 0.96 / 128   cores in use none   free 8-127   free   psi 0%
+ram slot     available 994.0GB   committed 0.0GB   free 930.0GB
+gpu slot 0   GPU-0095fb8d-af69-ff0f-6b06-da1a9a89fc7f   24170/24576 MiB free   util 0,0%   free
+
+tickets  open 23   running 2   done 3
+
+last 10 events
+  2026-09-17T11:36:39.010Z decision_opened  #28   blocking=all human_only=false
+  2026-09-17T11:36:39.044Z notified         #28   event=decision_opened
+  2026-09-17T11:36:39.077Z notified         #28   event=decision_opened channel=none ok=false
+  2026-09-17T11:41:47.893Z decision         #28   answer=confirm decided_by=decider rationale=Confirm, the recommended answer: the ...
+  2026-09-17T11:41:48.032Z phase                  from=P4 to=P5
+  2026-09-17T11:43:32.091Z run_started            resume=false harness_tag=v0.4.0 autonomy=autonomous
+  2026-09-17T11:43:36.304Z pacing                 five_hour=0.17 seven_day=0.3 fable=0.39
+  2026-09-17T11:43:37.139Z ticket_launched  #3    attempt=1 role=coder model=sonnet
+  2026-09-17T11:43:37.327Z ticket_launched  #4    attempt=1 role=coder model=sonnet
+  2026-09-17T11:43:52.573Z control                command=stop args={1 keys} by=cli
