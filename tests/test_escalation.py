@@ -124,18 +124,22 @@ class EscalationCase(ConductorCase):
 
 
 class LadderTest(EscalationCase):
-    """Criterion 2: resume once, one tier up as a new attempt, a split, then a person; each rung journaled in `next`."""
+    """Criterion 2: resume once, a split, one tier up as a new attempt, then a person; each rung journaled in `next`.
+
+    The owner put the split before the tier up (2026-09-17): a tier up, to Fable above all, is the dearer step.
+    """
 
     def test_a_simulated_failure_climbs_the_whole_ladder(self):
         worker.simulate_failure(1)
         results = self.conduct((done(), patch()), (done(), None), (done(), None), (done(), None))
-        self.assertEqual(self.rungs(), ["resume", "tier_up", "resume", "split", "needs_human"])
+        self.assertEqual(self.rungs(), ["resume", "split", "tier_up", "resume", "needs_human"])
         self.assertEqual([item["payload"]["reason"] for item in self.events("ticket_resumed")],
                          ["acceptance_failed", "acceptance_failed"], "each attempt's acceptance is resumed once first")
         self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "medium")])
         self.assertEqual([call.kind for call in self.calls], ["launch", "resume", "launch", "resume"])
         self.assertEqual(self.planner.cuts, [("split", 1, False)])
-        self.assertIn("the planner could not split it", self.events("ticket_failed")[-1]["payload"]["reason"])
+        self.assertIn("the planner could not split it", self.events("ticket_failed")[2]["payload"]["reason"],
+                      "a split that fails goes on to the tier up")
         self.assertEqual(self.payload("ticket_needs_human")["ticket"], 1)
         self.assertEqual([(name, ticket) for name, ticket, _ in self.notified], [("ticket_needs_human", 1)])
         self.assertEqual(self.ticket()["status"], "needs_human")
@@ -157,16 +161,17 @@ class LadderTest(EscalationCase):
         self.assertEqual((results[-1].ended, results[-1].reason), (True, "frontier_empty"))
         self.assertIn((1, "resume"), [item for result in results for item in result.escalated])
 
-    def test_a_spent_resume_goes_one_tier_up_in_a_new_session(self):
+    def test_a_spent_resume_is_split_first_and_a_failed_split_goes_one_tier_up_in_a_new_session(self):
         self.conduct((failed(), None), (failed(summary="still missing"), None), (done(), patch()))
-        self.assertEqual(self.rungs(), ["resume", "tier_up"])
+        self.assertEqual(self.rungs(), ["resume", "split", "tier_up"])
+        self.assertEqual(self.planner.cuts, [("split", 1, False)])
         self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "medium")])
         self.assertEqual([call.kind for call in self.calls], ["launch", "resume", "launch"])
         self.assertEqual(self.ticket()["status"], "done")
 
     def test_a_resumed_session_that_reports_failed_again_goes_up_a_rung_even_when_its_acceptance_passes(self):
         self.conduct((failed(), patch()), (failed(summary="still missing"), None), (done(), None))
-        self.assertEqual(self.rungs(), ["resume", "tier_up"])
+        self.assertEqual(self.rungs(), ["resume", "split", "tier_up"])
         self.assertEqual(self.events("ticket_failed")[1]["payload"]["reason"], "still missing")
         self.assertEqual(self.ticket()["status"], "done", "the tier-up attempt closed it")
         self.assertEqual(len(self.launches()), 2)
@@ -200,6 +205,25 @@ class LadderTest(EscalationCase):
         self.assertEqual(self.ticket()["status"], "parked")
         self.assertEqual((results[-1].ended, results[-1].reason), (True, "frontier_empty"))
         self.assertEqual(len(self.launches()), 1)
+
+    def test_a_split_that_lands_parks_the_ticket_and_nothing_goes_up_a_tier(self):
+        self.planner = Planner(park(self.project))
+        results = self.conduct((failed(), None), (failed(), None))
+        self.assertEqual(self.rungs(), ["resume", "split"])
+        self.assertEqual(self.ticket()["status"], "parked")
+        self.assertEqual(len(self.launches()), 1, "no attempt one tier up")
+        self.assertTrue(results[-1].ended)
+
+    def test_a_ticket_a_split_cut_is_not_split_again(self):
+        path = next(tickets.tickets_dir(self.project).glob("01-*.md"))
+        fields, body = tickets.read_ticket(path)
+        tickets.write_ticket(self.ledger, fields, body + "\n" + plan.SPLIT_NOTE % 7 + "\n")
+        self.git("add", "--", "research")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger: a piece of ticket 7")
+        self.conduct((failed(), None), (failed(), None), (done(), patch()))
+        self.assertEqual(self.rungs(), ["resume", "tier_up"])
+        self.assertEqual(self.planner.cuts, [])
+        self.assertEqual(plan.split_from(self.body()), 7)
 
     def test_the_top_tier_skips_the_tier_up(self):
         self.set_fields(difficulty=5)
@@ -274,8 +298,8 @@ class RestartTest(EscalationCase):
         self.ledger.append_event("ticket_failed", {"ticket": 1, "attempt": 1, "reason": "it broke", "next": "resume"}, ticket=1)
         self.set_fields(status="failed")
         self.conduct((done(), patch()))
-        self.assertEqual(self.rungs(), ["resume", "tier_up"])
-        self.assertIn("cannot be resumed", self.events("ticket_failed")[-1]["payload"]["reason"])
+        self.assertEqual(self.rungs(), ["resume", "split", "tier_up"])
+        self.assertIn("cannot be resumed", self.events("ticket_failed")[1]["payload"]["reason"])
         self.assertEqual(self.ticket()["status"], "done")
 
 
@@ -325,7 +349,7 @@ class DifficultyTest(EscalationCase):
                      waves=6, before=watch)
         self.assertEqual(self.payload("difficulty_raised"), {"kind": "code", "from": 1, "to": 2})
         names = [(item["event"], item["payload"].get("next")) for item in self.events()]
-        self.assertLess(names.index(("ticket_failed", "tier_up")), names.index(("difficulty_raised", None)),
+        self.assertLess(names.index(("ticket_failed", "split")), names.index(("difficulty_raised", None)),
                         "a failure its resume may still mend does not count")
         self.assertEqual(self.launched_at(2)[:1], [(1, "sonnet", "low")])
         graph = snapshots[-1]  # read before the run ended, which ends the raise with it
@@ -367,10 +391,17 @@ class StallTest(EscalationCase):
         self.planner = Planner(park(self.project))
 
     def test_two_settling_waves_without_progress_file_a_replan(self):
+        replan_only = park(self.project)
+
+        def act(cut):
+            if cut.kind == "split":
+                raise plan.PlanError("this planner only re-cuts")
+            return replan_only(cut)
+        self.planner = Planner(act)
         results = self.conduct((failed(), None), (failed(), None), (done(), patch()))
         stalls = self.events("stall")
         self.assertEqual([item["payload"] for item in stalls], [{"waves": 2, "action": "replan"}])
-        self.assertEqual(self.planner.cuts, [("replan", None, False)])
+        self.assertIn(("replan", None, False), self.planner.cuts)
         sequence = self.sequence()
         self.assertEqual([name for name in sequence if name in ("wave", "stall")][:3], ["wave", "wave", "stall"])
         self.assertTrue(any(result.stalled for result in results))
@@ -391,7 +422,7 @@ class StallTest(EscalationCase):
     def test_a_replan_that_fails_is_said_and_not_launched_again(self):
         self.planner = Planner()
         results = self.conduct((failed(), None), (failed(), None), (done(), patch()))
-        self.assertEqual(self.planner.cuts, [("replan", None, False)])
+        self.assertEqual([cut for cut in self.planner.cuts if cut[0] == "replan"], [("replan", None, False)])
         self.assertIn("could not re-cut the graph", self.made.out.getvalue())
         self.assertEqual((results[-1].ended, results[-1].reason), (True, "frontier_empty"))
 

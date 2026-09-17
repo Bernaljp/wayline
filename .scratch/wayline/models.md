@@ -1,6 +1,6 @@
 # Wayline tickets: which model and effort to implement each one
 
-Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. Ticket 58, a design pass over the dashboard, was added on 2026-09-16 from the owner's verdict in the M1 demo and graded the same way. 54 was cut as opus high and regraded fable xhigh the same day, because the hold it builds has to replay. Each issue also carries a `model:` label with its row of this table.
+Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. Ticket 58, a design pass over the dashboard, was added on 2026-09-16 from the owner's verdict in the M1 demo and graded the same way. Ticket 59, worker slots, was added on 2026-09-17 from the review of ticket 38 and graded the same way. 54 was cut as opus high and regraded fable xhigh the same day, because the hold it builds has to replay. Each issue also carries a `model:` label with its row of this table.
 
 | Difficulty | Model | Effort | Tickets | Label |
 |---|---|---|---|---|
@@ -117,6 +117,7 @@ On 2026-09-13, 33 of the 57 tickets are closed, and this schedule takes the 24 s
 | 56 Verdicts on Opus and the verdict principle | #103 | 9 | 3 | opus | high | A rule change in the gates and the spot-check, fallback verdicts under each consent, and one report section. |
 | 57 Ask the owner when Fable is spent | #104 | 10 | 3 | opus | high | A decision ticket opened by code with four options, a superseded close, and a timeout under a fake clock; one dashboard action. |
 | 58 A design pass over the dashboard | #114 | 1 | 3 | opus | high | Every view restyled at once under the no-build, no-CDN rule with the dashboard's behavior and tests unchanged; renders in a real browser before and after, and the owner's acceptance through the tunnel. |
+| 59 Worker slots count every session a conductor owes | #126 | 11 | 3 | opus | high | A concurrency rule in the wave: every session in flight holds its slot, gate resumes wait for one; tested with delayed fake sessions. |
 
 ## Working the window
 

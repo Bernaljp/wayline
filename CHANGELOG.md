@@ -6,12 +6,14 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 - The stall and the escalation ladder (`wayline.conductor`, ticket 38). Every failure journals
   `ticket_failed` with its rung in `next`, and each wave takes every failed ticket up that rung, so a
-  restarted conductor carries on where the ladder stood: `resume` resumes the failed attempt's
-  session once with the failure output (a failed job and a failed verdict now included, in a
-  worktree made again when the integration removed it); `tier_up` opens the ticket for a new attempt
-  one difficulty tier up; `split` calls the planner's split (`plan.cut_graph`); `needs_human` journals
-  `ticket_needs_human` and notifies the owner. A pinned ticket, and one already on the top tier, skip
-  the tier up. `ticket_launched` carries `difficulty`, the effective difficulty the attempt launched
+  restarted conductor carries on where the ladder stood. The order is `policy.escalation.then`, split
+  before tier up (the owner's choice, since a tier up to Fable is the dearer step): `resume` resumes
+  the failed attempt's session once with the failure output (a failed job and a failed verdict now
+  included, in a worktree made again when the integration removed it); `split` calls the planner's
+  split (`plan.cut_graph`), and one that fails goes on to the tier up; `tier_up` opens the ticket for
+  a new attempt one difficulty tier up; `needs_human` journals `ticket_needs_human` and notifies the
+  owner. A ticket a split cut is never split again; a pinned ticket, and one already on the top tier,
+  skip the tier up. `ticket_launched` carries `difficulty`, the effective difficulty the attempt launched
   at; two attempts of a kind that failed at a tier past their resume journal `difficulty_raised`
   and move that kind's unpinned tickets up a tier for the rest of the run, never counting an attempt
   that fell back to Opus. A failed acceptance now journals `ticket_failed` with `next: resume` before
