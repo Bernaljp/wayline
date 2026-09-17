@@ -1648,7 +1648,9 @@ class FakeLauncher:
     hands the scripted `errors` over as the harness's own (the timeout text). `alive` seeds the
     pid-alive simulation `pid_alive` answers from; `alive` is a dict a test may edit directly.
     A scripted `delay` holds the call: `release()` ends the hold as a worker that finished and
-    `terminate(pid)` as one that was killed, and a call still held counts as a live pid.
+    `terminate(pid)` as one that was killed, and a call still held counts as a live pid. `live()`
+    says how many calls are held now and `peak` the most that were ever held at once, which is how
+    a test reads the workers this launcher ran in parallel (ticket 59).
 
     `respond` stands in for the envelope when a test cannot know the answer before the call: a
     session whose prompt code builds from the ledger (the sentence classifier's numbered batch)
@@ -1669,6 +1671,7 @@ class FakeLauncher:
             self.calls = []
             self.alive = {}
             self._holds = {}
+            self.peak = 0
             self._loaded = None
             self._next_pid = 100000
             self.usage_text = None
@@ -1776,6 +1779,15 @@ class FakeLauncher:
             hold.ended.set()
         return running
 
+    def live(self):
+        """How many scripted calls are running now: the calls still held by their delay (tests).
+
+        A worker slot is held for as long as its session runs, so this is what a test reads to say
+        how many workers the launcher holds at once; `peak` is the most it ever held at once.
+        """
+        with self._lock:
+            return len(self._holds)
+
     def release(self, ticket=None):
         """End the delay of every scripted call still running, or of one ticket's, so each returns its result now.
 
@@ -1838,6 +1850,7 @@ class FakeLauncher:
         with self._lock:
             self.calls.append(Call(kind, request, session_id, message, run_dir, pid))
             self._holds[pid] = hold
+            self.peak = max(self.peak, len(self._holds))
         try:
             if on_start is not None:
                 on_start(Started(pid, run_dir, stream_path))

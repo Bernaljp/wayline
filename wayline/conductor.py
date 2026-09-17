@@ -14,7 +14,10 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   A wave does not wait for them (ticket 09): it carries the outcomes of the sessions that returned
   since the last wave, one at a time in id order, because the integration protocol is one rebase
   and one fast-forward at a time, then launches what the frontier allows and returns. `run` waits
-  between waves, waking when a session returns or another process appends to the journal.
+  between waves, waking when a session returns or another process appends to the journal. The limit
+  holds at every moment and not only at the moment a wave picks (ticket 59): an attempt holds its
+  worker slot while its session runs, while its result waits to be carried, and while it waits to
+  start the session it wants, and a resume waits for a free slot as a launch does (`_busy`).
 - Resume is start (ticket 09). `run` takes the heartbeat `research/conductor.json`, whose `flock`
   keeps a second conductor off the project, and rewrites it every wave. The first wave replays
   the journal from byte zero into a `replay.View`, reconciles the ticket files and `.worktrees/`
@@ -513,6 +516,8 @@ class _Attempt:
     session_journaled: bool = False
     # The session the attempt waits to start while the run holds model work: a resume, or a relaunch.
     want: Optional[_Want] = None
+    # Whether the wait for a free worker slot was said for the session it wants, which is said once.
+    waiting_for_slot: bool = False
     # A session this conductor did not start (a restart re-adopted it): polled by stream and pid.
     adopted: bool = False
     # When a re-adopted session started, which its budget is counted from, and when the conductor
@@ -540,6 +545,16 @@ class _Attempt:
     def running(self):
         """Whether a session this conductor started for the attempt is still running in its thread."""
         return self.thread is not None and self.thread.is_alive()
+
+    @property
+    def has_a_session(self):
+        """Whether a session of this attempt is running, or returned and is not carried yet (ticket 59).
+
+        A session that returned holds its worker slot until the wave reads it, because the wave
+        that carries it may resume it; `thread` outlives the session that set it, and is cleared
+        by no one, so an attempt whose result was carried and that owes nothing has left `flight`.
+        """
+        return self.running or self.adopted or self.thread is not None
 
     @property
     def result(self):
@@ -816,10 +831,11 @@ class Conductor:
     def _picks(self, graph):
         """The tickets to launch now: the launchable subset of the frontier, in pick order.
 
-        `max_parallel_workers` counts workers, so a wave fills only the slots that the workers still
-        running from earlier waves leave free. A ticket left `running` by jobs that outlived their
-        worker holds its touch set against the frontier but occupies no worker slot, because that
-        ticket has no worker.
+        `max_parallel_workers` counts workers, so a wave fills only the slots that the attempts in
+        flight leave free: a session still running, one that returned and is not carried yet, and
+        one an attempt waits to start all hold theirs (`_takes_a_slot`, ticket 59). A ticket left
+        `running` by jobs that outlived their worker holds its touch set against the frontier but
+        occupies no worker slot, because that ticket has no worker.
 
         While the hold on Fable's weekly window stands, a ticket whose tier is Fable is dropped
         before the pick, so its slot goes to whatever else is launchable, unless the fallback consent
@@ -828,7 +844,7 @@ class Conductor:
         it says: without the Fable tickets when it began the hold, and under the action it paced to.
         """
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
-        busy = sum(1 for attempt in self.flight.values() if attempt.running or attempt.adopted)
+        busy = self._busy()
         goal_tickets = self._goal_tickets()
         autonomy = self._autonomy()
         decider = decisions.decider_ready(self.harness_root, self.project)
@@ -979,6 +995,43 @@ class Conductor:
                 % (self.project.name, identifier, known.get("answer"), ", ".join(pacing.ASK_OPTIONS), ask["resets_at"], identifier))
         self.say("  ticket %d: the answer matches no option and counts as wait; the owner is told" % identifier)
         self.notify(decisions.DECISION, text, self.project, identifier)
+
+    def _busy(self, besides=None):
+        """How many worker slots are taken now, counting every attempt this conductor owes a session (ticket 59).
+
+        `max_parallel_workers` holds at every moment, not only at the moment a wave picks, so a
+        session that returned between wave step 3 (the poll) and step 9 (the pick) still holds its
+        slot: the wave after carries it, and may resume it. `besides` is the attempt about to take
+        a slot itself, which is never counted against its own session.
+        """
+        return sum(1 for attempt in self.flight.values() if attempt is not besides and self._takes_a_slot(attempt))
+
+    def _takes_a_slot(self, attempt):
+        """Whether the attempt holds one of `max_parallel_workers` worker slots now (ticket 59).
+
+        It holds one while a session of its own runs or waits to be carried, and while it waits to
+        start the session it wants, because that session starts as soon as this wave or the next
+        allows. Two things wait and hold nothing: an integration, whose integrator the wave that
+        carries it launches rather than the attempt, and a session the hold on Fable's weekly window
+        keeps waiting, whose slot goes to whatever else is launchable (decision 15, ticket 54). Both
+        take a slot when they do start, which `_start_wanted` waits for.
+        """
+        if attempt.want is None:
+            return attempt.has_a_session
+        if attempt.want.stage == INTEGRATE:
+            return False
+        return not (self._held_on_fable(attempt.request) and not self._falls_back())
+
+    def _free_slot(self, attempt):
+        """Whether a slot is free for the session this attempt waits to start; the wait is said once."""
+        taken, slots = self._busy(besides=attempt), self._slots()
+        if taken < slots:
+            return True
+        if not attempt.waiting_for_slot:
+            attempt.waiting_for_slot = True
+            self.say("  ticket %d: its %s waits for a free worker slot (%d of %d taken)"
+                     % (attempt.id, "relaunch" if attempt.want.stage == RELAUNCH else "resume", taken, slots))
+        return False
 
     def _slots(self):
         """`policy.max_parallel_workers`: how many workers this conductor runs at once."""
@@ -1298,7 +1351,10 @@ class Conductor:
         """Wave step 3: journal the sessions that began, carry the ones that returned, start what waits.
 
         One attempt's unexpected exception does not abandon the others: every attempt is looked at,
-        and then the first such exception is raised again.
+        and then the first such exception is raised again. A carry frees the worker slot the attempt
+        held, so the sessions still waiting for one are looked at again afterwards (ticket 59); that
+        is what makes a waiting session start at the first wave with a free slot, whether the slot
+        came free before this wave or in it.
         """
         escaped = None
         for identifier in sorted(self.flight):
@@ -1320,6 +1376,14 @@ class Conductor:
                     continue
                 self._carry(attempt, result)
             except Exception as failure:  # not one of the two a ticket can be failed on
+                self.flight.pop(identifier, None)
+                escaped = failure if escaped is None else escaped
+        for identifier in sorted(self.flight):
+            attempt = self.flight[identifier]
+            try:
+                if attempt.want is not None and attempt.want.stage != INTEGRATE and not attempt.running:
+                    self._start_wanted(attempt)  # a carry above may have freed the slot it waits for
+            except Exception as failure:
                 self.flight.pop(identifier, None)
                 escaped = failure if escaped is None else escaped
         if escaped is not None:
@@ -2137,6 +2201,10 @@ class Conductor:
     def _start_wanted(self, attempt):
         """Start the session an attempt waits for, unless the run holds model work or the hold holds it on Fable.
 
+        A session is a worker like any launch, so it also waits for a free worker slot when every slot
+        is taken (ticket 59), as the ladder's resume does; the wait is said once and the session starts
+        at the first wave with a free slot.
+
         Under the fallback consent `auto` the hold holds nothing back: a session it would keep waiting on
         Fable starts as a fresh Opus session in the same attempt instead (`_fall_back_session`). Returns
         True when it started the session, `FALLEN_BACK` when a fresh Opus session took its place, and
@@ -2150,7 +2218,9 @@ class Conductor:
             if held and not self._holds_launches():
                 self._held_back("ticket %d's session" % attempt.id)
             return False
-        want, attempt.want = attempt.want, None
+        if not self._free_slot(attempt):
+            return False  # every slot is taken: it starts at the first wave one is free
+        want, attempt.want, attempt.waiting_for_slot = attempt.want, None, False
         if held:
             self._fall_back_session(attempt, want)
             attempt.begun.wait()
@@ -3611,9 +3681,8 @@ class Conductor:
         """
         known = self.view.tickets[identifier]
         latest = known.latest
-        busy = sum(1 for attempt in self.flight.values() if attempt.running or attempt.adopted)
         entry = {"difficulty": latest.difficulty if latest is not None else None}
-        if busy >= self._slots() or not schedule.affordable(entry, self.action):
+        if self._busy() >= self._slots() or not schedule.affordable(entry, self.action):
             return False  # a resume is a worker like any launch: it waits for a slot, and for the pacing to allow its tier
         if latest is None or not latest.session_id or latest.spent:
             self._climb(identifier, known.attempt, self._rung_from(identifier),

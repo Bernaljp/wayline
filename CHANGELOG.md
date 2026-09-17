@@ -2,6 +2,19 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
+## Unreleased
+
+- Worker slots count every session a conductor owes (`wayline.conductor`, ticket 59).
+  `policy.max_parallel_workers` now holds at every moment, not only at the moment a wave picks: an
+  attempt holds its slot while its session runs, while its result waits to be carried (the process
+  has exited and no wave has read it yet), and while it waits to start the session it wants. A
+  session that returned between wave step 3 and wave step 9 no longer lets the pick fill its slot,
+  so the wave that carries and resumes it no longer runs one worker more than the policy allows. A
+  gate's resume (an invalid result, a failed acceptance, a timeout) and a relaunch after a worker
+  died now wait for a free slot, as the escalation ladder's resume already did; the wait is said
+  once and the session starts at the first wave with a free slot, including one freed by a carry in
+  that same wave.
+
 ## v0.5.0 (2026-09-17)
 
 M4 Front door is live: from a paragraph of intent, the ten references of M3, and a goal, one sitting
