@@ -290,7 +290,20 @@ function renderOverview(view, project) {
   const ram = resources.ram;
   const gpus = resources.gpus;
   const counts = Object.entries(view.counts || {}).filter(([, count]) => count);
-  const parts = [
+  const parts = [];
+  // The position memo leads the overview while it is the owner's to read (ticket 29): its verdicts in
+  // a line, then the memo itself, sanitized like every other markdown the ledger holds.
+  if (view.position && view.position.first) {
+    const memo = view.position;
+    const revised = memo.revised_target === null ? '' : `, revised target ${memo.revised_target}`;
+    parts.push(
+      subhead('position memo'),
+      el('p', { class: 'memo-line', text: `feasibility ${memo.feasibility}, goal ${memo.goal}${revised}; ${memo.cited} prior work cited, ${memo.dropped} dropped. Read ${memo.path} before the grill.` }),
+      el('details', { class: 'memo', open: '' }, [el('summary', { text: 'the memo' }), renderMarkdown(view.position.text)]),
+      el('hr', { class: 'rule' }),
+    );
+  }
+  parts.push(
     fields([
       ['project', view.path || view.project],
       ['harness', view.harness_tag],
@@ -308,7 +321,7 @@ function renderOverview(view, project) {
       ['gpu slots', gpus ? (gpus.length ? `${gpus.filter((gpu) => gpu.free).length} free of ${gpus.length}` : 'none detected (CPU-only)') : null],
     ]),
     el('hr', { class: 'rule' }),
-  ];
+  );
   parts.push(el('div', { class: 'chips' }, counts.length
     ? counts.map(([status, count]) => el('span', { class: `chip s-${status}`, text: `${status} ${count}` }))
     : [emptyState('no ticket has been written yet')]));

@@ -56,7 +56,20 @@ so the depth spot-check of an L2 dossier is the critic's read on the verifier th
 synthesizer's model. That may be the synthesizer's own model, in a fresh session carrying none of the
 dossier's context; it is never Haiku, and while Fable's weekly window is spent a critic on Fable runs
 on Opus at the same effort under the fallback consent, like any verdict on Fable.
-Ticket 29 gives the critic its other job, the position memo.
+
+## The critic's other job: the position memo
+
+Ticket 29 gives the critic its second job. `wayline position` (`wayline.position`) launches it on
+`policy.roles.critic` (`opus`, `high`) with the `position` schema in place of `verdict`, so the
+sidecar's `output_schema` stays the verdict the gate reads. Its protocol file therefore has one
+section per job, `## Verdict` and `## Position`, and each launch is given only its own
+(`worker.protocol_for`). The session is fresh and reads only the dossiers, `INTAKE.md`, and
+`GOAL.json`. The intake and the goal are inlined in its prompt with the dossiers, and it runs in
+`research/refs/` with its `Read`, `Glob`, and `Grep` rules scoped to that directory
+(`Read(//<project>/research/refs/**)`), so no decision, spec, or earlier memo can reach it. The
+working directory alone would not do that: under `dontAsk` a bare `Read` rule reads any path, and a
+scoped `Read` alone still lets `Glob` and `Grep` reach outside (`docs/verification/m4.md`). Code
+checks what it returns, has the scout verify every citation, and renders `research/POSITION.md`.
 
 ## The decider is launched by the grill and the conductor, one decision per session
 
@@ -88,7 +101,7 @@ a parked proposal in the journal alone.
 
 `planner` (tickets 33 and 34) is launched by code too (`kinds` empty) and does not judge. Its protocol
 file, `prompts/roles/planner.md`, holds one `## <Phase>` section per phase, and the verb that launches
-it gives the session only its own (`wayline.specify.protocol_for`). `wayline specify` launches it on
+it gives the session only its own (`wayline.worker.protocol_for`). `wayline specify` launches it on
 `policy.roles.planner` (`fable`, `xhigh`) with the `spec` schema and the decider's records, reading
 only: code writes what it returns as `research/spec.json`, renders `research/SPEC.md`, runs the
 structural checks, and asks the verifier for the `spec_coverage` verdict, returning the draft to the

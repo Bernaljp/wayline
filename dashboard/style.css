@@ -797,6 +797,12 @@ input[type="file"]::file-selector-button {
 }
 .markdown table { margin: var(--space-2) 0; }
 
+/* The position memo at the head of the overview: its table of prior work is wide, so the memo
+   scrolls inside its panel rather than widening the page. */
+.memo-line { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--ink); }
+.memo { overflow-x: auto; margin-bottom: var(--space-3); }
+.memo > summary { cursor: pointer; font-size: var(--text-sm); color: var(--ink-2); margin-bottom: var(--space-2); }
+
 /* --- the narrow width, and reduced motion ----------------------------------------------------- */
 
 @media (max-width: 1180px) {

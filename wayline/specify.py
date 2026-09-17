@@ -53,6 +53,7 @@ from wayline.ledger import DECISION, PHASE, Ledger, LedgerError
 from wayline.project import ProjectError, find_project, journal_written_answers, policy_for, read_harness
 from wayline.project import answer as answer_ticket
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, answer_section, filename, read_ticket, read_tickets, tickets_dir
+from wayline.worker import protocol_for  # the planner's cut, first written here and kept under its name
 
 __all__ = [
     "PLANNER", "SPEC_SCHEMA", "SPEC_MD", "SPEC_JSON", "SECTIONS", "SpecifyError", "planner_tier", "protocol_for",
@@ -156,23 +157,6 @@ def falls_back_now(project, policy, fall_back, what="the planner's specify sessi
     if planner_tier(policy)[0] != pacing.FABLE:
         return False
     return gates.fallback_now(project, what)
-
-
-def protocol_for(protocol, phase):
-    """The part of a role's protocol for `phase`: the `## <Phase>` section, under the file's own lead.
-
-    The planner has one protocol file with a section per phase (specify now, plan with ticket 34). A
-    file without the section is given whole, since a protocol the harness cannot cut is still the protocol.
-    """
-    lines = protocol.split("\n")
-    starts = [index for index, line in enumerate(lines) if line.startswith("## ")]
-    wanted = [index for index in starts if lines[index][3:].strip().lower() == phase.lower()]
-    if not wanted:
-        return protocol
-    start = wanted[0]
-    end = next((index for index in starts if index > start), len(lines))
-    lead = lines[: starts[0]] if starts else []
-    return "\n".join(lead + lines[start:end]).strip("\n") + "\n"
 
 
 # --- the Type-A checks --------------------------------------------------------------------------------
@@ -477,12 +461,12 @@ def spec_state(project, events=None):
     return state
 
 
-def move_phase(ledger, events, to):
+def move_phase(ledger, events, to, session_id=None):
     """Journal `phase` to `to` unless the journal is there already; returns whether it moved."""
     now = current_phase(events)
     if now is not None and PHASES.index(now) >= PHASES.index(to):
         return False  # never backwards: a spec redrafted in a later phase leaves the phase where it is
-    ledger.append_event(PHASE, {"from": now, "to": to})
+    ledger.append_event(PHASE, {"from": now, "to": to}, session_id=session_id)
     return True
 
 
@@ -538,7 +522,7 @@ def specify_prompt(role, records, harness, project, open_questions=(), change=No
         "- `research/refs/<slug>/dossier.json`, and `dossier.md` for a reference read in full",
         "- `research/SPEC.md` and `research/spec.json`: the previous draft, when there is one",
     ]))
-    parts.append(protocol_for(role.protocol, "specify"))
+    parts.append(worker.protocol_for(role.protocol, "specify"))
     parts.append(worker.schema_section("# The spec", SPEC_SCHEMA, closing=[
         "",
         "Ids are `C<n>` for claims, `A<n>` for anti-claims, `E<n>` for experiments, `B<n>` for baselines, and `D<n>` for "
