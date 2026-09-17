@@ -183,6 +183,14 @@ def _locators(provenance):
     return locators
 
 
+def _cited(finding):
+    """A written finding's locators: `add_finding` writes a list, and the conductor one locator per finding."""
+    provenance = finding.get("provenance")
+    if isinstance(provenance, str):
+        return [provenance] if provenance else []
+    return list(provenance or [])
+
+
 def add_finding(project_or_ledger, text, provenance, ticket, negative=False):
     """Append one finding to `findings.jsonl`, journal `finding`, and re-render `findings.md`.
 
@@ -240,7 +248,7 @@ def render_findings(project_or_ledger):
             lines.append("")
             for finding in by_ticket[ticket]:
                 mark = " (negative)" if finding.get("negative") else ""
-                locators = ", ".join(finding.get("provenance") or [])
+                locators = ", ".join(_cited(finding))
                 lines.append("- `%s`%s %s (%s)" % (finding["id"], mark, finding["text"], locators))
             lines.append("")
     return book.write_markdown(FINDINGS_MD, "\n".join(lines))
@@ -1064,7 +1072,7 @@ def finding_tags(finding, manifest):
     """
     runs = {entry.get("path"): entry.get("run_id") for entry in manifest.get("entries", [])}
     tags = []
-    for locator in finding.get("provenance") or []:
+    for locator in _cited(finding):
         artifact, _, rest = str(locator).partition("#")
         tags.append("res:%s/%s#%s" % (runs.get(artifact) or "unmanifested", artifact, rest))
     return tags
@@ -1148,8 +1156,6 @@ def _trajectory(context):
         return _records(["No quantitative goal: `research/GOAL.json` names no metric."])
     readings = [event.get("payload") or {} for event in context.events
                 if event.get("event") == ledger.PROGRESS and (event.get("payload") or {}).get("metric") == metric]
-    discarded = [event.get("payload") or {} for event in context.events
-                 if event.get("event") == ledger.DISCARDED and (event.get("payload") or {}).get("metric") == metric]
     lines = ["Goal: `%s`, direction `%s`, target %s on the held-out split `%s`; stop when `%s`." % (
         metric, goal.get("direction"), _number(goal.get("target")), goal.get("held_out_split"), goal.get("stop_when"))]
     if not readings:
@@ -1161,10 +1167,28 @@ def _trajectory(context):
     lines.extend(["- %s from run `%s` (ticket %s)" % (_number(payload.get("value")), payload.get("run_id"), payload.get("ticket"))
                   for payload in kept] or ["- none"])
     lines.extend(["", "Discarded changes:"])
-    lines.extend(["- ticket %s: best %s, standard deviation %s, seeds %s" % (
-        payload.get("ticket"), _number(payload.get("best")), _number(payload.get("sd")), payload.get("seeds"))
-        for payload in discarded] or ["- none"])
+    lines.extend(["- ticket %s: mean %s against the best %s, standard deviation %s, seeds %s" % (
+        payload.get("ticket"), _number(mean), _number(payload.get("best")), _number(payload.get("sd")), payload.get("seeds"))
+        for payload, mean in _discarded_means(context.events, metric)] or ["- none"])
     return _records(lines)
+
+
+def _discarded_means(events, metric):
+    """Each `discarded` payload for `metric`, with its change's mean: the unkept `progress` of its ticket just before it.
+
+    The conductor journals an evaluation's `progress` and then its `discarded` (ticket 39), so pairing each
+    discard with the reading before it gives every attempt of a ticket its own mean.
+    """
+    last, pairs = {}, []
+    for event in events:
+        payload = event.get("payload") or {}
+        if payload.get("metric") != metric:
+            continue
+        if event.get("event") == ledger.PROGRESS and not payload.get("kept"):
+            last[payload.get("ticket")] = payload.get("value")
+        elif event.get("event") == ledger.DISCARDED:
+            pairs.append((payload, last.pop(payload.get("ticket"), None)))
+    return pairs
 
 
 def _chart(readings, goal, width=40):

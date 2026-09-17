@@ -1449,8 +1449,10 @@ def answer(project, identifier, text, rationale=None, confidence=None, by="cli")
             raise ProjectError("ticket %d is answered already; the conductor closes it at its next wave" % identifier)
         _set_consent_by_answer(project, view, identifier, text, by)
         write_ticket(ledger, fields, with_answer(body, text))
-        return ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": "human",
-                                              "rationale": rationale, "confidence": confidence}, ticket=identifier)
+        event = ledger.append_event(DECISION, {"ticket": identifier, "answer": text, "decided_by": "human",
+                                               "rationale": rationale, "confidence": confidence}, ticket=identifier)
+        graph_answered(project, ledger, fields, text)
+        return event
 
 
 def _set_consent_by_answer(project, view, identifier, text, by):
@@ -1458,6 +1460,19 @@ def _set_consent_by_answer(project, view, identifier, text, by):
     consent = ALWAYS.get(ask_choice(text)) if identifier in view.asks else None
     if consent is not None:
         set_model_fallback(project, consent, by=by)
+
+
+def graph_answered(project, ledger, fields, text):
+    """An answer to the graph's confirmation (ticket 34) that asks for a change parks the graph's open tickets at once.
+
+    The conductor closes an answered decision ticket at its next wave whatever the answer says, and a
+    `blocking: all` ticket that is closed holds nothing; so every path an answer takes (`answer`, the file,
+    the decider) calls this under the ledger's lock, and a graph the owner sent back runs nothing before
+    `wayline plan` cuts it again. Any other ticket's answer is left alone. Returns the ids parked.
+    """
+    from wayline import plan  # the plan module imports this one
+
+    return plan.graph_sent_back(project, ledger, fields, text)
 
 
 def journal_written_answers(project, ledger):
@@ -1475,12 +1490,13 @@ def journal_written_answers(project, ledger):
     """
     journaled = {}
     with ledger.lock():
-        written = {}
+        written, fields = {}, {}
         for ticket in read_tickets(project):
             if ticket["kind"] == DECISION_KIND:
                 text = answer_section(read_ticket(tickets_dir(project) / filename(ticket))[1])
                 if text is not None:
                     written[ticket["id"]] = text
+                    fields[ticket["id"]] = ticket
         if not written:
             return journaled
         events, _ = ledger.read_events()
@@ -1494,6 +1510,7 @@ def journal_written_answers(project, ledger):
                 journaled[identifier] = ledger.append_event(DECISION, {
                     "ticket": identifier, "answer": text, "decided_by": "human", "rationale": None, "confidence": None,
                 }, ticket=identifier)["payload"]
+                graph_answered(project, ledger, fields[identifier], text)
     return journaled
 
 
