@@ -727,19 +727,7 @@ def position(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None,
 def _decide(project, report, harness_root, policy, fall_back, notify, say):
     """Under autonomous: the decider on whatever the grill left open for it, now that the memo is there."""
     from wayline import decider  # the decider imports the grill and the gates, as this module does; loaded when used
-    if not grill.decider_share(grill.read_records(project)):
-        return
-    try:
-        decided = decider.decide_rest(project, harness_root=harness_root, policy=policy, fall_back=fall_back,
-                                      notify=notify, out=None)
-    except (grill.GrillError, ProjectError) as failure:
-        report["stopped"] = "the decider could not take the grill's questions: %s" % failure
-        return
-    for name in ("decided", "refused", "failed"):
-        report["did"] += ["the decider on " + outcome.line for outcome in decided[name]]
-    if decided["stopped"]:
-        report["stopped"] = decided["stopped"]
-    say("  the decider took %d question(s)" % sum(len(decided[name]) for name in ("decided", "refused", "failed")))
+    decider.settle_grill(project, report, harness_root=harness_root, policy=policy, fall_back=fall_back, notify=notify, say=say)
 
 
 def _tell_owner(project, record, notify):

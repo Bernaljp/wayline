@@ -17,7 +17,7 @@ from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from wayline import cli, decider, gates, project, specify, tickets, worker
+from wayline import cli, decider, gates, grill, project, specify, tickets, worker
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
 
@@ -410,7 +410,30 @@ class AutonomousTest(SpecifyCase):
 
     autonomy = "autonomous"
 
+    def settle_the_grill(self):
+        """The recorded grill leaves Q8 and Q10 to the decider, which specify hands it before drafting."""
+        for answer in ("a small network", "5-fold cross-validation inside split_a"):
+            self.fake.script(Envelope(structured_output={
+                "question": "as asked", "options": [], "answer": answer, "confidence": 0.7, "decided_by": "decider",
+                "rationale": "The owner's earlier answers point there.", "reversible": True, "timestamp": None}), role=decider.DECIDER)
+
+    def test_the_decider_takes_the_grills_open_questions_before_the_planner_drafts(self):
+        self.settle_the_grill()
+        self.script(planned(draft()))
+        report = self.specify()  # nothing scripted for the confirmation: it stays pending
+        roles = [call.request.role for call in self.fake.calls]
+        self.assertEqual(roles[:3], [decider.DECIDER, decider.DECIDER, specify.PLANNER])
+        self.assertIn("- subject: the grill's Q8", self.calls(decider.DECIDER)[0].request.prompt)
+        self.assertTrue(any(line.startswith("the decider on the grill's Q8") for line in report["did"]), report["did"])
+        prompt = self.calls(specify.PLANNER)[0].request.prompt
+        left = prompt.split("# The questions the grill left open", 1)[1].split("\n# ", 1)[0]
+        self.assertIn("- Q7:", left, "the owner's questions stay open")
+        self.assertNotIn("- Q8:", left)
+        self.assertNotIn("- Q10:", left)
+        self.assertEqual([record["id"] for record in grill.decider_share(grill.read_records(self.project))], [])
+
     def test_the_decider_confirms_the_spec_and_the_phase_advances(self):
+        self.settle_the_grill()
         self.script(planned(draft()))
         self.fake.script(Envelope(structured_output={
             "question": "as asked", "options": ["confirm"], "answer": "confirm", "confidence": 0.8, "decided_by": "decider",
@@ -418,15 +441,16 @@ class AutonomousTest(SpecifyCase):
             "timestamp": None}), role=decider.DECIDER)
         report = self.specify()
         self.assertIsNone(report["stopped"])
-        [call] = self.calls(decider.DECIDER)
+        call = self.calls(decider.DECIDER)[-1]
         self.assertIn("- subject: decision ticket", call.request.prompt)
         self.assertIn("Confirm the spec", call.request.prompt)
         self.assertEqual((report["state"]["state"], report["state"]["decided_by"]), ("confirmed", "decider"))
-        [decision] = [event for event in self.events("decision") if event["payload"].get("decided_by") == "decider"]
+        decision = [event for event in self.events("decision") if event["payload"].get("decided_by") == "decider"][-1]
         self.assertEqual(decision["payload"]["answer"], "confirm")
         self.assertEqual(self.phases(), [(None, "P3"), ("P3", "P4")])
 
     def test_a_decider_that_cannot_decide_leaves_it_for_the_owner(self):
+        self.settle_the_grill()
         self.script(planned(draft()))
         report = self.specify()  # nothing scripted for the decider: its launch fails
         self.assertEqual(report["state"]["state"], "pending")
