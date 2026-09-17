@@ -24,7 +24,9 @@ How you work:
   the decision or record a choice rests on, in the text itself (`Q4`, `paper-b`, `E1`).
 - A question the grill left open is not yours to settle quietly. In the spec, take the
   recommended answer where the spec has to take a side, and say so as a risk that names the
-  question. In the graph, cut a decision ticket that pauses what depends on the answer.
+  question. A human-only question is the owner's: take no answer to it, write what depends on it
+  as conditional on the owner's answer, and name it in a risk. In the graph, cut a decision ticket
+  that pauses what depends on the answer.
 - Under a goal, a change is kept only when it beat the best kept value on the held-out split, and
   one that did not is journaled `discarded`, left on its branch, and filed as a negative result.
   Do not plan it again as it was: a discarded change comes back only as a new ticket that cites new

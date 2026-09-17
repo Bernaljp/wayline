@@ -432,6 +432,17 @@ class AutonomousTest(SpecifyCase):
         self.assertNotIn("- Q10:", left)
         self.assertEqual([record["id"] for record in grill.decider_share(grill.read_records(self.project))], [])
 
+    def test_a_human_only_question_is_left_to_the_owner_not_taken_by_the_spec(self):
+        self.settle_the_grill()
+        self.script(planned(draft()))
+        self.specify()
+        prompt = self.calls(specify.PLANNER)[0].request.prompt
+        left = prompt.split("# The questions the grill left open", 1)[1].split("\n# ", 1)[0]
+        [q7] = [line for line in left.split("\n") if line.startswith("- Q7:")]
+        self.assertIn("the owner's: human-only or irreversible", q7)
+        self.assertNotIn("recommended:", q7)
+        self.assertIn("conditional on the owner's answer", left)
+
     def test_the_decider_confirms_the_spec_and_the_phase_advances(self):
         self.settle_the_grill()
         self.script(planned(draft()))

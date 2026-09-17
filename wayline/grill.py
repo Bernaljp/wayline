@@ -161,7 +161,7 @@ def _questions(records):
     return {record["id"]: record for record in records if record.get("id")}
 
 
-def _owners(record):
+def owners(record):
     """Whether only the owner settles a question: it is in a human-only class, or its answer cannot be taken back.
 
     Decision 4 puts both out of the decider's reach, so under `autonomous` they are still the owner's.
@@ -188,7 +188,7 @@ def _waiting(records):
 
 def decider_share(records):
     """The frontier's questions the decider resolves under `autonomous`: every open one that is not the owner's (decision 4)."""
-    return [record for record in frontier(records) if not _owners(record)]
+    return [record for record in frontier(records) if not owners(record)]
 
 
 def superseded_by(records):
@@ -308,7 +308,7 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
         raise GrillError("fallback_from is fable, on an answer that names the model it ran on in Fable's place; got %r" % (fallback_from,))
     if session_id is not None and (not isinstance(session_id, str) or not session_id.strip() or model is None):
         raise GrillError("session_id names the session of an answer that names its model; got %r" % (session_id,))
-    if decided_by == "decider" and _owners(record):
+    if decided_by == "decider" and owners(record):
         raise GrillError("%s is %s: the decider never resolves it, and it waits for the owner"
                          % (identifier, "human-only" if record.get("human_only") else "irreversible"))
     answered = {"answer": text, "rationale": rationale, "confidence": confidence, "decided_by": decided_by, "timestamp": ts or now_ts()}
@@ -341,7 +341,7 @@ def with_tier(records, autonomy):
     next tier and stamps those questions with it; one holding only questions asked before is the tier
     already open. An empty frontier is no tier (None).
     """
-    asked = [record for record in frontier(records) if autonomy != AUTONOMOUS or _owners(record)]
+    asked = [record for record in frontier(records) if autonomy != AUTONOMOUS or owners(record)]
     if not asked:
         return records, None, []
     current = _current_tier(records)

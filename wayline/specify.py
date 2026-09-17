@@ -501,10 +501,15 @@ def specify_prompt(role, records, harness, project, open_questions=(), change=No
     if open_questions:
         lines += ["", "# The questions the grill left open", "",
                   "The spec takes the recommended answer on each of these where it has to take a side, and names the "
-                  "question in a risk.", ""]
+                  "question in a risk. A question marked as the owner's (human-only or irreversible) takes no answer from the spec: "
+                  "what depends on it is written as conditional on the owner's answer, and named in a risk, so that the "
+                  "graph can pause it behind a decision ticket.", ""]
         for record in open_questions:
-            lines.append("- %s: %s (recommended: %s)" % (record["id"], _one_line(record["question"]),
-                                                          _one_line(record.get("recommended")) or "none given"))
+            if grill.owners(record):
+                lines.append("- %s: %s (the owner's: human-only or irreversible)" % (record["id"], _one_line(record["question"])))
+            else:
+                lines.append("- %s: %s (recommended: %s)" % (record["id"], _one_line(record["question"]),
+                                                              _one_line(record.get("recommended")) or "none given"))
     if change:
         lines += ["", "# What to change", "",
                   "A previous draft of this spec was not accepted. Change what this names, and keep what it does not:", "",
