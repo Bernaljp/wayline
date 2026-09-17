@@ -1,1 +1,3 @@
-SPEC.md is written. Cut the ticket graph.
+/wayline-plan
+
+The spec is confirmed. Cut the ticket graph, read it back to me, and tell me what waits for my answer.
