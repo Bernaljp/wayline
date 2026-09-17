@@ -65,10 +65,11 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from wayline import HARNESS_ROOT, TAG, dag, decisions
-from wayline.ledger import Ledger, atomic_write, conductor_holder
+from wayline.ledger import TICKET_LAUNCHED, Ledger, atomic_write, conductor_holder
 from wayline.project import (
-    FINDINGS, HARNESS_JSON, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for,
-    read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing, status_view, steer_ticket, switch_project,
+    FINDINGS, HARNESS_JSON, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for, rung_label,
+    read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing,
+    status_view, steer_ticket, switch_project,
 )
 from wayline.provenance import FINDINGS_MD, MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
 from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
@@ -545,7 +546,7 @@ def ticket_view(project, ticket_id):
         "context_pack": list(fields.get("context_pack") or []),
         "result": _latest_result(project, ticket_id),
         "findings": _findings_for(project, ticket_id),
-        "sessions": _session_logs(project, ticket_id),
+        "sessions": _session_logs(project, ticket_id, _launch_labels(project, ticket_id)),
         "jobs": _job_logs(project, ticket_id),
     }
 
@@ -600,12 +601,32 @@ def _findings_for(project, ticket_id):
     return findings
 
 
-def _session_logs(project, ticket_id):
-    """The session log ids of one ticket, oldest attempt first, each with a `resume-<k>` after it."""
+def _launch_labels(project, ticket_id):
+    """Each attempt's launch label, `r5 opus high`, by attempt number, from the journal's `ticket_launched` (decision 16).
+
+    A journal written before the rung ladder carries no `rung`, so its labels read `opus high`; a journal that
+    cannot be read labels nothing, since the page is worth more without labels than not at all.
+    """
+    try:
+        events, _ = Ledger(project).read_events()
+    except (OSError, ValueError):
+        return {}
+    labels = {}
+    for event in events:
+        payload = event.get("payload") or {}
+        if event.get("event") == TICKET_LAUNCHED and payload.get("ticket") == ticket_id and isinstance(payload.get("attempt"), int):
+            labels[payload["attempt"]] = rung_label(payload.get("rung"), payload.get("model"), payload.get("effort"))  # the latest launch wins
+    return labels
+
+
+def _session_logs(project, ticket_id, labels=None):
+    """The session log ids of one ticket, oldest attempt first, each with a `resume-<k>` after it, and each attempt's launch label."""
     logs = []
+    labels = labels or {}
     for attempt_dir in _attempt_dirs(project, ticket_id):
         if (attempt_dir / "stream.jsonl").is_file():
-            logs.append({"id": "%d/%s" % (ticket_id, attempt_dir.name), "attempt": int(attempt_dir.name)})
+            logs.append({"id": "%d/%s" % (ticket_id, attempt_dir.name), "attempt": int(attempt_dir.name),
+                         "label": labels.get(int(attempt_dir.name))})
         resumes = sorted(
             (entry for entry in attempt_dir.iterdir() if entry.is_dir() and _RESUME_NAME.match(entry.name)),
             key=lambda entry: int(_RESUME_NAME.match(entry.name).group(1)),
@@ -614,7 +635,7 @@ def _session_logs(project, ticket_id):
             if (resume_dir / "stream.jsonl").is_file():
                 logs.append({
                     "id": "%d/%s/%s" % (ticket_id, attempt_dir.name, resume_dir.name),
-                    "attempt": int(attempt_dir.name), "resume": resume_dir.name,
+                    "attempt": int(attempt_dir.name), "resume": resume_dir.name, "label": labels.get(int(attempt_dir.name)),
                 })
     return logs
 

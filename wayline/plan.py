@@ -680,13 +680,20 @@ def registry_text(index):
 
 
 def rubric_text(policy):
-    """The difficulty rubric of BRIEF 8.4, with the model, the effort, and the budget the policy gives each tier."""
-    lines = ["# The difficulty rubric", "", "Difficulty sets the model, the effort, and the budget a ticket's worker gets (policy.difficulty):", ""]
-    tiers = (policy or {}).get("difficulty") or {}
+    """The difficulty rubric of BRIEF 8.4, with the rung of the rung ladder each level names (decision 16): its model, effort, and budget."""
+    from wayline import conductor  # the conductor imports this module; the rung ladder is resolved there
+
+    lines = ["# The difficulty rubric", "",
+             "Difficulty names a rung of the rung ladder (policy.difficulty into policy.tiers), which sets the model, the effort, "
+             "and the budget a ticket's worker gets:", ""]
     for level in range(1, 6):
-        tier = tiers.get(str(level)) or {}
-        lines.append("- %d: %s. %s at %s, a %s budget." % (level, SIGNALS[level], tier.get("model", "?"), tier.get("effort", "?"),
-                                                           tier.get("budget", "?")))
+        try:
+            tier = conductor.tier_for(policy or {}, level)
+        except conductor.ConductorError:
+            lines.append("- %d: %s. No rung is set for this level." % (level, SIGNALS[level]))
+            continue
+        budget = (conductor.ladder(policy)[tier.rung - 1] or {}).get("budget", "?")
+        lines.append("- %d: %s. Rung %d, %s at %s, a %s budget." % (level, SIGNALS[level], tier.rung, tier.model, tier.effort, budget))
     return "\n".join(lines)
 
 

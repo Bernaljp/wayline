@@ -74,7 +74,7 @@ AUTH_STATUS_ARGV = ("auth", "status", "--json")  # decision 7, the tick's login 
 AUTH_STATUS_TIMEOUT_S = 30
 PROC = Path("/proc")  # where a pid's environment says which session it belongs to
 FALLBACK_MODEL = "sonnet"  # `--fallback-model`: overload only, never usage limits (decision 3)
-MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")  # what decision 3 passes as --model; the policy schema's enum
+MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")  # what a role's model is; a rung's may also be a full version name (decision 16)
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 # The resolved model name `system/init` reports for each alias, used by the fake backend.
@@ -137,8 +137,9 @@ class LaunchRequest:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise LaunchError("request.%s must be a non-empty string" % name)
-        if self.model not in MODEL_ALIASES:
-            raise LaunchError("request.model must be one of %s, got %r" % (", ".join(MODEL_ALIASES), self.model))
+        if pacing.family(self.model) is None:
+            raise LaunchError("request.model must be one of %s or a full version name of one (claude-opus-4-8), got %r"
+                              % (", ".join(MODEL_ALIASES), self.model))
         if self.effort not in EFFORTS:
             raise LaunchError("request.effort must be one of %s, got %r" % (", ".join(EFFORTS), self.effort))
         if isinstance(self.agent_json, str):
@@ -1648,7 +1649,9 @@ class FakeLauncher:
     hands the scripted `errors` over as the harness's own (the timeout text). `alive` seeds the
     pid-alive simulation `pid_alive` answers from; `alive` is a dict a test may edit directly.
     A scripted `delay` holds the call: `release()` ends the hold as a worker that finished and
-    `terminate(pid)` as one that was killed, and a call still held counts as a live pid.
+    `terminate(pid)` as one that was killed, and a call still held counts as a live pid. `live()`
+    says how many calls are held now and `peak` the most that were ever held at once, which is how
+    a test reads the workers this launcher ran in parallel (ticket 59).
 
     `respond` stands in for the envelope when a test cannot know the answer before the call: a
     session whose prompt code builds from the ledger (the sentence classifier's numbered batch)
@@ -1669,6 +1672,7 @@ class FakeLauncher:
             self.calls = []
             self.alive = {}
             self._holds = {}
+            self.peak = 0
             self._loaded = None
             self._next_pid = 100000
             self.usage_text = None
@@ -1776,6 +1780,15 @@ class FakeLauncher:
             hold.ended.set()
         return running
 
+    def live(self):
+        """How many scripted calls are running now: the calls still held by their delay (tests).
+
+        A worker slot is held for as long as its session runs, so this is what a test reads to say
+        how many workers the launcher holds at once; `peak` is the most it ever held at once.
+        """
+        with self._lock:
+            return len(self._holds)
+
     def release(self, ticket=None):
         """End the delay of every scripted call still running, or of one ticket's, so each returns its result now.
 
@@ -1838,6 +1851,7 @@ class FakeLauncher:
         with self._lock:
             self.calls.append(Call(kind, request, session_id, message, run_dir, pid))
             self._holds[pid] = hold
+            self.peak = max(self.peak, len(self._holds))
         try:
             if on_start is not None:
                 on_start(Started(pid, run_dir, stream_path))
@@ -2045,13 +2059,14 @@ def simulated_failure(ticket):
 
 def launches_on(request, model):
     """Whether a launch runs on `model`: its own `--model`, or any agent its `--agents` defines on it (decision 15)."""
-    if request.model == model:
+    if pacing.family(request.model) == model:
         return True
     try:
         agents = json.loads(request.agent_json) if isinstance(request.agent_json, str) else request.agent_json
     except ValueError:
         return False
-    return isinstance(agents, dict) and any(isinstance(agent, dict) and agent.get("model") == model for agent in agents.values())
+    return isinstance(agents, dict) and any(isinstance(agent, dict) and pacing.family(agent.get("model")) == model
+                                            for agent in agents.values())
 
 
 def fall_back(request, model=pacing.FABLE, to=pacing.OPUS):
@@ -2069,12 +2084,12 @@ def fall_back(request, model=pacing.FABLE, to=pacing.OPUS):
         agents = None
     moved = agents
     if isinstance(agents, dict):
-        moved = {name: dict(agent, model=to) if isinstance(agent, dict) and agent.get("model") == model else agent
+        moved = {name: dict(agent, model=to) if isinstance(agent, dict) and pacing.family(agent.get("model")) == model else agent
                  for name, agent in agents.items()}
-    if request.model != model and moved == agents:
+    if pacing.family(request.model) != model and moved == agents:
         return request, False
     agent_json = request.agent_json if moved == agents else (json.dumps(moved) if as_text else moved)
-    return replace(request, model=to if request.model == model else request.model, agent_json=agent_json), True
+    return replace(request, model=to if pacing.family(request.model) == model else request.model, agent_json=agent_json), True
 
 
 def _simulated_event(request):
@@ -2259,12 +2274,17 @@ def launch_verb(args):
     parser = argparse.ArgumentParser(prog="wayline launch", description="one real cheap session through the launcher")
     parser.add_argument("--smoke", action="store_true", required=True, help="run the smoke session and print the envelope")
     parser.add_argument("--dir", help="the session directory (default: ~/.wayline/smoke/<timestamp>)")
-    parser.add_argument("--model", default="sonnet", choices=MODEL_ALIASES)
+    parser.add_argument("--model", default="sonnet", help="an alias (%s) or a full version name" % ", ".join(MODEL_ALIASES))
     parser.add_argument("--effort", default="low", choices=EFFORTS)
     try:
         options = parser.parse_args(args)
     except SystemExit as exc:
         return int(exc.code or 0)
+    if pacing.family(options.model) is None:
+        parser.print_usage(sys.stderr)
+        print("wayline launch: error: --model must be one of %s or a full version name of one (claude-opus-4-8), got %r"
+              % (", ".join(MODEL_ALIASES), options.model), file=sys.stderr)
+        return 2
     run_dir = Path(options.dir).resolve() if options.dir else Path.home() / ".wayline" / "smoke" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     try:
         request = smoke_request(run_dir, options.model, options.effort)

@@ -1,12 +1,15 @@
 """The shipped schemas and policy.json: the subset, the examples, and the spec's policy table."""
 
 import json
+import re
 import unittest
 
 from tests.paths import EXAMPLES_DIR, SCHEMAS_DIR, SPEC_PATH
 from tests.spec_table import spec_policy_keys
 from wayline import POLICY_PATH
-from wayline.jsonschema import check, check_schema, load_schema, validate
+from wayline.jsonschema import ValidationError, check, check_schema, load_schema, validate
+from wayline.pacing import family
+from wayline.project import check_policy, policy_problems
 
 # The schemas this ticket ships; later tickets add the rest of Implementation Decisions 2's list.
 SHIPPED = ["journal_event", "ticket", "result", "harness", "policy", "job", "manifest", "decision",
@@ -81,8 +84,16 @@ class PolicyTest(unittest.TestCase):
 
     def test_initial_values_of_the_spec_table(self):
         policy = self.policy
-        self.assertEqual(policy["difficulty"]["1"], {"model": "sonnet", "effort": "low", "budget": "small"})
-        self.assertEqual(policy["difficulty"]["5"], {"model": "fable", "effort": "max", "budget": "large"})
+        self.assertEqual(policy["tiers"], [
+            {"model": "haiku", "effort": "medium", "budget": "small"},
+            {"model": "sonnet", "effort": "low", "budget": "small"},
+            {"model": "sonnet", "effort": "high", "budget": "small"},
+            {"model": "opus", "effort": "low", "budget": "medium"},
+            {"model": "opus", "effort": "high", "budget": "medium"},
+            {"model": "fable", "effort": "low", "budget": "large"},
+            {"model": "fable", "effort": "high", "budget": "large"},
+        ])
+        self.assertEqual(policy["difficulty"], {"1": 2, "2": 3, "3": 5, "4": 6, "5": 7})
         self.assertEqual(policy["budget"]["large"], {"max_turns": 200, "max_minutes": 180})
         self.assertEqual(policy["roles"]["decider"], {"model": "fable", "effort": "max"})
         self.assertEqual(policy["verifier"]["fable"], {"model": "opus", "effort": "max"})
@@ -109,9 +120,77 @@ class PolicyTest(unittest.TestCase):
         self.assertIsNone(policy["quiet_hours"])
         self.assertIsNone(policy["per_window_worker_budget"])
 
-    def test_every_difficulty_names_a_shipped_budget(self):
-        for tier in self.policy["difficulty"].values():
-            self.assertIn(tier["budget"], self.policy["budget"])
+    def test_every_rung_names_a_shipped_budget_and_every_level_a_rung(self):
+        for rung in self.policy["tiers"]:
+            self.assertIn(rung["budget"], self.policy["budget"])
+        for level, rung in self.policy["difficulty"].items():
+            self.assertTrue(1 <= rung <= len(self.policy["tiers"]), "level %s names rung %s" % (level, rung))
+        self.assertEqual(check_policy(self.policy), None)
+
+    def test_the_cap_binds_no_role_and_no_verifier(self):
+        """Decision 16: ticket work stops at high; the planner, the decider, and the verifiers stay where decision 14 puts them."""
+        self.assertTrue(all(rung["effort"] in ("low", "medium", "high") for rung in self.policy["tiers"]))
+        self.assertEqual(self.policy["roles"]["planner"], {"model": "fable", "effort": "xhigh"})
+        self.assertEqual(self.policy["roles"]["decider"], {"model": "fable", "effort": "max"})
+        self.assertEqual(self.policy["roles"]["writer"], {"model": "fable", "effort": "xhigh"})
+        self.assertEqual(self.policy["roles"]["evolver"], {"model": "fable", "effort": "xhigh"})
+        self.assertEqual(self.policy["verifier"]["fable"], {"model": "opus", "effort": "max"})
+
+    def test_a_rung_above_the_cap_is_refused(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["tiers"][6]["effort"] = "xhigh"
+        with self.assertRaises(ValidationError) as caught:
+            check_policy(policy)
+        self.assertIn('  $.tiers[6].effort: "xhigh" is not one of ["low", "medium", "high"]', str(caught.exception))
+        self.assertNotIn("$: $", str(caught.exception), "the schema's own path, once")
+
+    def test_the_rung_model_grammar_is_the_launchers(self):
+        """The schema's pattern and `pacing.family` accept the same names, so a policy the schema takes launches."""
+        pattern = re.compile(load_schema("policy")["$defs"]["rung_model"]["pattern"])
+        for name in ("haiku", "sonnet", "opus", "fable", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001", "claude-fable-5-1",
+                     "gpt-5", "claude-opus", "claude-opus-", "opus-5", "claude-gemini-3", ""):
+            with self.subTest(name=name):
+                self.assertEqual(bool(pattern.match(name)), family(name) is not None)
+
+    def test_a_rung_model_is_an_alias_or_a_full_version_name(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["tiers"][4]["model"] = "claude-opus-4-8"
+        self.assertEqual(check_policy(policy), None)
+        policy["tiers"][4]["model"] = "gpt-5"
+        with self.assertRaises(ValidationError) as caught:
+            check_policy(policy)
+        self.assertIn("$.tiers[4].model", str(caught.exception))
+
+    def test_the_old_difficulty_shape_is_refused_naming_upgrade(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["difficulty"] = {"1": {"model": "sonnet", "effort": "low", "budget": "small"}, "2": 3, "3": 5, "4": 6,
+                                "5": {"model": "fable", "effort": "max", "budget": "large"}}
+        self.assertEqual(policy_problems(policy), [
+            ("$.difficulty", "policy", "policy.difficulty maps levels 1, 5 to a model and an effort, the shape before the rung ladder; "
+             "run wayline upgrade, which rewrites it to rungs")])
+        with self.assertRaises(ValidationError) as caught:
+            check_policy(policy, name="harness.json")
+        self.assertIn("wayline upgrade", str(caught.exception))
+        self.assertTrue(validate(policy, load_schema("policy")), "the schema refuses the old shape too")
+
+    def test_a_level_naming_a_rung_the_ladder_lacks_is_refused(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["difficulty"]["5"] = 9
+        self.assertEqual(validate(policy, load_schema("policy")), [], "the schema cannot see the ladder's length")
+        self.assertEqual(policy_problems(policy), [
+            ("$.difficulty.5", "policy", "policy.difficulty maps level 5 to rung 9, which policy.tiers does not have; the rung ladder has 7 rung(s), 1 to 7")])
+
+    def test_every_refused_example_is_refused_by_check_policy(self):
+        """The refusals the schema cannot express have their negative examples beside the schema's, under `refused-`."""
+        examples = sorted((EXAMPLES_DIR / "policy").glob("refused-*.json")) + sorted((EXAMPLES_DIR / "policy").glob("invalid-*.json"))
+        self.assertTrue(examples)
+        for path in examples:
+            with self.subTest(example=path.name):
+                with self.assertRaises(ValidationError):
+                    check_policy(load(path), name=path.name)
+        for path in sorted((EXAMPLES_DIR / "policy").glob("valid-*.json")):
+            with self.subTest(example=path.name):
+                self.assertEqual(check_policy(load(path), name=path.name), None)
 
 
 if __name__ == "__main__":

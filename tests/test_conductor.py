@@ -21,7 +21,7 @@ from unittest import mock
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests import machine
 from tests.projects import ProjectTestCase
-from wayline import conductor, project, resources, tickets, worker
+from wayline import conductor, gates, project, resources, tickets, worker
 from wayline.conductor import Conductor, ConductorError, WaveResult
 from wayline.ledger import Ledger
 from wayline.worker import Envelope, Patch
@@ -55,6 +55,13 @@ def hold_the_ladder(case):
         patcher = mock.patch.object(conductor.Conductor, name, value)
         patcher.start()
         case.addCleanup(patcher.stop)
+
+
+def failing(ticket_id=1, summary="the library does not exist"):
+    """An envelope carrying the result a coder returns when the ticket did not go well."""
+    envelope = done(ticket_id)
+    envelope.structured_output.update({"status": "failed", "summary": summary})
+    return envelope
 
 
 def patch(files=None, message="ticket 1: write hello.txt", commit=True):
@@ -730,6 +737,269 @@ class ParallelOutcomeTest(FiveTicketsCase):
         self.assertIn("integrated", [event["event"] for event in self.read_journal() if event["ticket"] == 2])
 
 
+class WorkerSlotsCase(ConductorCase):
+    """The one-ticket project with as many independent tickets as a slot test needs (ticket 59).
+
+    Every session is scripted with a long delay, so a worker runs until the test releases it and
+    nothing here sleeps (Testing Decisions, seam 4). `fake.live()` is how many workers the launcher
+    holds at that moment, and `fake.peak` the most it ever held, which is what `max_parallel_workers`
+    bounds at every moment and not only at the moment a wave picks.
+    """
+
+    def another_ticket(self, identifier):
+        """Ticket `identifier`, independent of every other: its own file to write and its own acceptance."""
+        fields, body = tickets.read_ticket(tickets.tickets_dir(self.project) / "01-write-the-hello-file.md")
+        name = "f%d.txt" % identifier
+        tickets.write_ticket(self.ledger, dict(fields, id=identifier, title="Write file %d" % identifier,
+                                               touches=[name], outputs=[name],
+                                               acceptance=dict(fields["acceptance"], machine=["test -f " + name])), body)
+
+    def tickets_beside_the_first(self, count):
+        """Tickets 2 to `count`, each with its own file, so `count` of them may run at once."""
+        for identifier in range(2, count + 1):
+            self.another_ticket(identifier)
+
+    def wrote(self, identifier):
+        """What ticket `identifier`'s worker returns when it went well, and the commit it leaves."""
+        if identifier == 1:
+            return done(), patch()
+        name = "f%d.txt" % identifier
+        return (done(ticket_id=identifier, outputs_written=[name]),
+                patch({name: "written\n"}, "ticket %d: write %s" % (identifier, name)))
+
+    def held(self, fake, identifier, envelope=None, applied=None):
+        """One held call for a ticket: what it returns and the commit it leaves, until the test releases it."""
+        if envelope is None:
+            envelope, applied = self.wrote(identifier)
+        fake.script(envelope, patch=applied, delay=600, ticket=identifier)
+
+    def conductor_with(self, slots):
+        """A conductor over this project whose policy allows `slots` workers at once."""
+        driven = Conductor(self.project, out=io.StringIO())
+        driven.policy = dict(driven.policy, max_parallel_workers=slots,
+                             stall=dict(driven.policy["stall"], waves=99))  # the ladder's waves are the test's, not a stall's
+        driven.readings = machine.recorded
+        driven.plan_pre_check = False
+        self.addCleanup(driven.settle, 30)
+        return driven
+
+    def returns(self, driven, fake, identifier=None):
+        """The held session(s) return now: released, and their threads waited for, so the result is in.
+
+        The conductor has not carried it: that is the moment `max_parallel_workers` used to count
+        the slot free.
+        """
+        released = fake.release(ticket=identifier)
+        for wanted, attempt in list(driven.flight.items()):
+            if attempt.thread is not None and (identifier is None or wanted == identifier):
+                attempt.thread.join(30)
+        return released
+
+    def at_the_pick(self, driven, release):
+        """Run `release` between wave step 3 (the poll) and wave step 9 (the pick), at every wave."""
+        picks = driven._picks
+
+        def picking(graph):
+            release()
+            return picks(graph)
+
+        driven._picks = picking
+        self.addCleanup(lambda: driven.__dict__.pop("_picks", None))
+
+    def quiet(self, driven, fake):
+        """Every held session returns and every thread is joined, so no test leaves a worker running."""
+        fake.release()
+        driven.settle(30)
+
+    def statuses(self):
+        return {fields["id"]: fields["status"] for fields in tickets.read_tickets(self.project)}
+
+    def killed_worker(self, identifier, pid, session=None):
+        """Ticket `identifier` as a SIGKILL left it: running, its worktree added, its launch journaled.
+
+        Without a session it left nothing to resume, so the conductor relaunches it in the same attempt.
+        """
+        path = next(tickets.tickets_dir(self.project).glob("%02d-*.md" % identifier))
+        fields, body = tickets.read_ticket(path)
+        tickets.write_ticket(self.ledger, dict(fields, status="running"), body)
+        self.git("worktree", "add", "-b", conductor.BRANCH % identifier, str(self.worktree(identifier)), "main")
+        self.ledger.append_event("ticket_launched", {
+            "ticket": identifier, "attempt": 1, "role": "coder", "model": "sonnet", "effort": "low", "skills": [],
+            "worktree": str(self.worktree(identifier)), "pid": pid, "context_chars": 1, "prompt_sha256": "0" * 64,
+        }, ticket=identifier)
+        run_dir = self.project / "research" / "sessions" / str(identifier) / "1"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "pid").write_text("%d\n" % pid, encoding="utf-8")
+        if session is not None:
+            self.ledger.append_event("ticket_session", {"ticket": identifier, "attempt": 1, "session_id": session,
+                                                        "model": "claude-sonnet-5"}, ticket=identifier, session_id=session)
+            (run_dir / "stream.jsonl").write_text(json.dumps({
+                "type": "system", "subtype": "init", "session_id": session, "model": "claude-sonnet-5"}) + "\n",
+                encoding="utf-8")
+        return run_dir
+
+    def left_a_failure(self, run_dir, identifier, session):
+        """The result a re-adopted worker left in its stream before it died: a failure, which needs no commit."""
+        with open(run_dir / "stream.jsonl", "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "type": "result", "subtype": "success", "is_error": False, "num_turns": 2, "duration_ms": 900,
+                "usage": {}, "permission_denials": [], "session_id": session,
+                "structured_output": failing(identifier).structured_output}) + "\n")
+
+
+class WorkerSlotsTest(WorkerSlotsCase):
+    """Criteria 1 and 2 of ticket 59: every session a conductor owes holds its worker slot."""
+
+    def test_a_session_that_returns_between_the_poll_and_the_pick_keeps_its_slot(self):
+        self.tickets_beside_the_first(2)
+        with worker.use_fake() as fake:
+            self.held(fake, 1)
+            self.held(fake, 2)
+            driven = self.conductor_with(1)
+            launched = driven.wave()
+            self.at_the_pick(driven, lambda: self.returns(driven, fake, 1))
+            between = driven.wave()
+            carried = driven.wave()
+            self.quiet(driven, fake)
+        self.assertEqual(launched.launched, [1])
+        self.assertEqual((between.launched, between.done), ([], []),
+                         "the slot of a session whose result is not carried yet is not free")
+        self.assertEqual((carried.done, carried.launched), ([1], [2]))
+
+    def test_the_slot_stays_taken_until_the_resume_of_a_carried_session_returns(self):
+        self.tickets_beside_the_first(2)
+        with worker.use_fake() as fake:
+            self.held(fake, 1, Envelope())  # nothing usable: the gate resumes it once
+            self.held(fake, 1)              # what the resumed session returns
+            self.held(fake, 2)
+            driven = self.conductor_with(1)
+            driven.wave()
+            self.returns(driven, fake, 1)
+            resumed = driven.wave()
+            kinds, live = [call.kind for call in fake.calls], fake.live()
+            self.returns(driven, fake, 1)
+            carried = driven.wave()
+            self.quiet(driven, fake)
+        self.assertEqual(kinds, ["launch", "resume"])
+        self.assertEqual((resumed.launched, live), ([], 1), "the resume holds the slot its launch held")
+        self.assertEqual((carried.done, carried.launched), ([1], [2]))
+
+    def test_a_gate_resume_waits_for_a_free_slot_and_the_wait_is_said_once(self):
+        self.tickets_beside_the_first(2)
+        with worker.use_fake() as fake:
+            self.held(fake, 1, Envelope())  # nothing usable: the gate resumes it once
+            self.held(fake, 1)
+            self.held(fake, 2)
+            driven = self.conductor_with(2)
+            launched = driven.wave()
+            self.returns(driven, fake, 1)
+            driven.policy = dict(driven.policy, max_parallel_workers=1)  # one slot, and ticket 2's worker holds it
+            waiting = driven.wave()
+            waited = ([call.kind for call in fake.calls], fake.live())
+            driven.wave()
+            said = driven.out.getvalue().count("waits for a free worker slot")
+            self.returns(driven, fake, 2)
+            freed = driven.wave()
+            kinds = [call.kind for call in fake.calls]
+            self.quiet(driven, fake)
+        self.assertEqual(launched.launched, [1, 2])
+        self.assertEqual(waited, (["launch", "launch"], 1), "the resume waits while the other worker holds the slot")
+        self.assertEqual(waiting.launched, [])
+        self.assertEqual(said, 1, "the wait is said once, not at every wave")
+        self.assertEqual(freed.done, [2])
+        self.assertEqual(kinds, ["launch", "launch", "resume"], "the resume starts at the first wave with a free slot")
+
+    def test_two_sessions_waiting_for_one_slot_do_not_keep_each_other_out(self):
+        """More waiting sessions than slots is reachable, and every one of them must still start.
+
+        The attempts in flight can outnumber the slots: the hold on Fable's weekly window gives a
+        waiting session's slot away, a restart re-adopts what the journal owes, and the policy can
+        be lowered between runs, which is what this test does. Counting one waiting attempt against
+        another would leave both waiting for good, with no worker running and nothing said.
+        """
+        self.tickets_beside_the_first(2)
+        with worker.use_fake() as fake:
+            for identifier in (1, 2):
+                self.held(fake, identifier, Envelope())  # neither launch returns anything usable
+                self.held(fake, identifier)              # what each resumed session returns
+            driven = self.conductor_with(2)
+            driven.wave()
+            self.returns(driven, fake)  # both sessions return, and neither is carried yet
+            driven.policy = dict(driven.policy, max_parallel_workers=1)
+            results = []
+            while len(results) < 8:
+                results.append(driven.wave())
+                if results[-1].ended:
+                    break
+                self.returns(driven, fake)
+            kinds, peak = [call.kind for call in fake.calls], fake.peak
+            self.quiet(driven, fake)
+        self.assertTrue(results[-1].ended, "the run hung with both sessions waiting for the one slot")
+        self.assertEqual(kinds, ["launch", "launch", "resume", "resume"])
+        self.assertEqual(peak, 2, "the two launches ran under the policy that allowed two")
+        self.assertEqual(self.statuses(), {1: "done", 2: "done"})
+
+    def test_a_relaunch_after_a_worker_died_waits_for_a_free_slot(self):
+        """Resume is start: the take-over relaunches a worker that left no session, into a slot of its own."""
+        self.tickets_beside_the_first(2)
+        run_dir = self.killed_worker(1, 777001, session="s-1")
+        self.killed_worker(2, 777002)  # no session: it is relaunched, not resumed
+        with worker.use_fake() as fake:
+            fake.alive[777001] = True   # ticket 1's worker outlived its conductor and holds the one slot
+            self.held(fake, 2)
+            driven = self.conductor_with(1)
+            adopted = driven.wave()
+            waited = [call.kind for call in fake.calls]
+            self.left_a_failure(run_dir, 1, "s-1")
+            fake.alive[777001] = False
+            freed = driven.wave()
+            kinds = [call.kind for call in fake.calls]
+            launched_for = [call.request.env["WAYLINE_TICKET"] for call in fake.calls]
+            self.quiet(driven, fake)
+        self.assertEqual(adopted.launched, [])
+        self.assertEqual(waited, [], "the relaunch waits while the re-adopted worker holds the slot")
+        self.assertIn("waits for a free worker slot", driven.out.getvalue())
+        self.assertEqual(freed.failed, [1])
+        self.assertEqual((kinds, launched_for), (["launch"], ["2"]),
+                         "the relaunch starts at the first wave with a free slot")
+
+    def test_no_more_workers_run_at_once_than_the_policy_allows(self):
+        """Criterion 3: launches, a gate's resume, and the ladder's resume, every session returning at the pick."""
+        for slots in (2, 3):
+            with self.subTest(slots=slots):
+                self.mixed_run(slots)
+
+    def mixed_run(self, slots, waves=25):
+        """Seven tickets over one run, with every held session returning between the poll and the pick."""
+        self.project = self.temp / ("slots-%d" % slots)
+        shutil.copytree(ONE_TICKET, self.project)
+        project.init_project(self.project)
+        self.ledger = Ledger(self.project)
+        self.tickets_beside_the_first(7)
+        with worker.use_fake() as fake:
+            self.held(fake, 1, Envelope())      # nothing usable: the gate resumes it once
+            self.held(fake, 1)
+            self.held(fake, 2, failing(2))      # a failure the worker reports: the ladder resumes its session
+            self.held(fake, 2)
+            for identifier in range(3, 8):
+                self.held(fake, identifier)
+            driven = self.conductor_with(slots)
+            self.at_the_pick(driven, lambda: self.returns(driven, fake))
+            results, live = [], []
+            while len(results) < waves:
+                results.append(driven.wave())
+                live.append(fake.live())
+                if results[-1].ended:
+                    break
+            kinds, peak = [call.kind for call in fake.calls], fake.peak
+            self.quiet(driven, fake)
+        self.assertTrue(results[-1].ended, "the run did not end in %d waves" % waves)
+        self.assertLessEqual(max(live), slots, "more workers were running between waves than the policy allows")
+        self.assertLessEqual(peak, slots, "the launcher held more workers at once than the policy allows")
+        self.assertEqual(self.statuses(), {identifier: "done" for identifier in range(1, 8)})
+        self.assertEqual(kinds.count("resume"), 2, "the gate's resume and the ladder's resume both ran")
+
+
 class ShellRunTest(ProjectTestCase):
     """The same path from the shell, with the fixture's own fake script: M0's "one command"."""
 
@@ -770,25 +1040,55 @@ class ShellRunTest(ProjectTestCase):
 
 
 class TierTest(unittest.TestCase):
-    """The policy's difficulty table, which decides the model, the effort, and the budget."""
+    """The rung ladder (decision 16): a difficulty names a rung, which decides the model, the effort, and the budget."""
 
     def setUp(self):
         self.policy = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
 
-    def test_every_difficulty_resolves_to_the_table_of_decision_14(self):
-        expected = [("sonnet", "low", 40), ("sonnet", "medium", 40), ("opus", "high", 100), ("fable", "xhigh", 200), ("fable", "max", 200)]
-        for difficulty, (model, effort, turns) in enumerate(expected, start=1):
+    def test_every_difficulty_resolves_through_its_rung_to_the_ladder_of_decision_16(self):
+        expected = [(2, "sonnet", "low", 40), (3, "sonnet", "high", 40), (5, "opus", "high", 100), (6, "fable", "low", 200), (7, "fable", "high", 200)]
+        for difficulty, (rung, model, effort, turns) in enumerate(expected, start=1):
             with self.subTest(difficulty=difficulty):
                 tier = conductor.tier_for(self.policy, difficulty)
-                self.assertEqual((tier.model, tier.effort, tier.max_turns), (model, effort, turns))
+                self.assertEqual((tier.rung, tier.model, tier.effort, tier.max_turns, tier.family), (rung, model, effort, turns, model))
+                self.assertEqual(tier.label, "r%d %s %s" % (rung, model, effort))
+
+    def test_every_rung_of_the_shipped_ladder_resolves(self):
+        labels = [conductor.rung_tier(self.policy, rung).label for rung in range(1, 8)]
+        self.assertEqual(labels, ["r1 haiku medium", "r2 sonnet low", "r3 sonnet high", "r4 opus low", "r5 opus high",
+                                  "r6 fable low", "r7 fable high"])
+        self.assertEqual([conductor.rung_tier(self.policy, rung).max_turns for rung in (1, 4, 7)], [40, 100, 200])
+
+    def test_a_rung_on_a_full_version_name_keeps_the_name_and_takes_its_family(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["tiers"][4]["model"] = "claude-opus-4-8"
+        tier = conductor.tier_for(policy, 3)
+        self.assertEqual((tier.rung, tier.model, tier.family, tier.effort), (5, "claude-opus-4-8", "opus", "high"))
+        self.assertEqual(tier.context_chars, 200000, "the context pack is cut at the family's cap")
+        self.assertEqual(tier.label, "r5 claude-opus-4-8 high")
+        self.assertEqual(gates.verifier_tier(policy, tier.model), ("fable", "high"), "the verifier table is keyed by the family")
+
+    def test_a_fallback_tier_keeps_the_rung(self):
+        tier = conductor.fallback_tier(self.policy, conductor.tier_for(self.policy, 5))
+        self.assertEqual((tier.rung, tier.model, tier.family, tier.effort, tier.context_chars), (7, "opus", "opus", "high", 200000))
 
     def test_the_context_cap_follows_the_model(self):
         self.assertEqual(conductor.tier_for(self.policy, 1).context_chars, 120000)
         self.assertEqual(conductor.tier_for(self.policy, 5).context_chars, 300000)
 
     def test_a_model_outside_the_cap_table_takes_the_smallest_cap(self):
-        policy = dict(self.policy, difficulty=dict(self.policy["difficulty"], **{"1": {"model": "haiku", "effort": "low", "budget": "small"}}))
-        self.assertEqual(conductor.tier_for(policy, 1).context_chars, 120000)
+        self.assertEqual(conductor.rung_tier(self.policy, 1).context_chars, 120000, "the haiku rung")
+
+    def test_a_rung_the_ladder_does_not_have_is_refused(self):
+        with self.assertRaises(ConductorError) as caught:
+            conductor.rung_tier(self.policy, 8)
+        self.assertIn("1 to 7", str(caught.exception))
+
+    def test_the_old_difficulty_shape_names_upgrade(self):
+        policy = dict(self.policy, difficulty={"1": {"model": "sonnet", "effort": "low", "budget": "small"}})
+        with self.assertRaises(ConductorError) as caught:
+            conductor.tier_for(policy, 1)
+        self.assertIn("wayline upgrade", str(caught.exception))
 
     def test_the_ticket_budget_wins_over_the_tier(self):
         tier = conductor.tier_for(self.policy, 1, {"max_turns": 5, "max_minutes": 2})

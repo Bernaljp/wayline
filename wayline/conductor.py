@@ -14,7 +14,10 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   A wave does not wait for them (ticket 09): it carries the outcomes of the sessions that returned
   since the last wave, one at a time in id order, because the integration protocol is one rebase
   and one fast-forward at a time, then launches what the frontier allows and returns. `run` waits
-  between waves, waking when a session returns or another process appends to the journal.
+  between waves, waking when a session returns or another process appends to the journal. The limit
+  holds at every moment and not only at the moment a wave picks (ticket 59): an attempt holds its
+  worker slot while its session runs, while its result waits to be carried, and while it waits to
+  start the session it wants, and a resume waits for a free slot as a launch does (`_busy`).
 - Resume is start (ticket 09). `run` takes the heartbeat `research/conductor.json`, whose `flock`
   keeps a second conductor off the project, and rewrites it every wave. The first wave replays
   the journal from byte zero into a `replay.View`, reconciles the ticket files and `.worktrees/`
@@ -126,13 +129,15 @@ from wayline.ledger import (
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, STALL, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
+from wayline.jsonschema import ValidationError
 from wayline.project import (
-    ProjectError, ask_falls_back_at, consent_for, fallback_consent, falls_back_now, find_project, journal_written_answers, policy_for,
-    read_harness,
+    UPGRADE_HINT, ProjectError, ask_falls_back_at, check_policy, consent_for, fallback_consent, falls_back_now, find_project,
+    journal_written_answers, policy_for, read_harness, rung_label,
 )
 
 __all__ = [
-    "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "fallback_tier", "porcelain_entries",
+    "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "rung_tier", "rung_of", "rung_label", "ladder", "fallback_tier",
+    "porcelain_entries",
     "dirty_outside_research", "refuse_to_start", "run_command", "WORKTREES", "RESEARCH", "BRANCH",
 ]
 
@@ -328,6 +333,11 @@ def refuse_to_start(project, harness_root=None):
     pinned = evolve.pin_problem(project, harness_root)
     if pinned:
         problems.append(pinned)
+    # The rung ladder (decision 16): a policy the schema or the ladder refuses, an old-shape `difficulty` override first.
+    try:
+        check_policy(policy_for(project, harness_root), name="the policy of %s (policy.json under harness.json)" % project)
+    except ValidationError as failure:
+        problems.append(str(failure))
     return problems
 
 
@@ -336,49 +346,98 @@ def refuse_to_start(project, harness_root=None):
 
 @dataclass
 class Tier:
-    """What a ticket's difficulty resolves to in the policy: the model, the effort, the budget."""
+    """What a ticket launches at: the rung of the rung ladder its difficulty names, resolved (decision 16).
+
+    `model` is the rung's, an alias or a full version name, and `family` its family (`opus` for
+    `claude-opus-4-8`), which keys the context cap and the verifier table. `rung` is the rung's 1-based
+    index in `policy.tiers`, what `ticket_launched` and `verdict` carry and `wayline status` labels a launch
+    by; None for a tier no rung made (a role's).
+    """
 
     model: str
     effort: str
     max_turns: Optional[int] = None
     max_minutes: Optional[int] = None
     context_chars: Optional[int] = None
+    rung: Optional[int] = None
+    family: Optional[str] = None
+
+    def __post_init__(self):
+        if self.family is None:
+            self.family = pacing.family(self.model)
+
+    @property
+    def label(self):
+        """`r5 opus high`, the label of decision 16; without the index for a tier no rung made."""
+        return rung_label(self.rung, self.model, self.effort)
 
 
-def tier_for(policy, difficulty, ticket_budget=None):
-    """The tier of `difficulty` (policy `difficulty`, `budget`, `context_pack`), the ticket's budget winning.
+def ladder(policy):
+    """`policy.tiers`, the rung ladder: the rungs as listed, cheapest first."""
+    rungs = policy.get("tiers")
+    if not isinstance(rungs, list) or not rungs:
+        raise ConductorError("policy.tiers, the rung ladder, is missing or empty")
+    return rungs
 
-    `context_pack.max_chars` is keyed by model and names only the three a worker runs on, so
-    anything else (a `haiku` judge) takes the smallest cap rather than none at all.
+
+def rung_tier(policy, rung, ticket_budget=None):
+    """The tier of rung `rung` (its 1-based index in `policy.tiers`), under `budget` and `context_pack`, the ticket's budget winning.
+
+    `context_pack.max_chars` is keyed by family and names only the three a worker runs on, so
+    anything else (a `haiku` rung) takes the smallest cap rather than none at all.
     """
-    tiers = policy.get("difficulty") or {}
-    tier = tiers.get(str(difficulty), tiers.get(difficulty))
-    if not isinstance(tier, dict) or "model" not in tier or "effort" not in tier:
-        raise ConductorError("policy.difficulty has no tier %r; it has %s"
-                             % (difficulty, ", ".join(sorted(map(str, tiers))) or "none"))
-    budget = dict((policy.get("budget") or {}).get(tier.get("budget")) or {})
+    rungs = ladder(policy)
+    index = rung if isinstance(rung, int) and not isinstance(rung, bool) else None
+    if index is None or not 1 <= index <= len(rungs):
+        raise ConductorError("policy.tiers has no rung %r; the rung ladder has %d rung(s), 1 to %d" % (rung, len(rungs), len(rungs)))
+    entry = rungs[index - 1]
+    if not isinstance(entry, dict) or "model" not in entry or "effort" not in entry:
+        raise ConductorError("policy.tiers rung %d is not a model, an effort, and a budget: %r" % (index, entry))
+    family = pacing.family(entry["model"])
+    if family is None:
+        raise ConductorError("policy.tiers rung %d names the model %r, which is no alias (%s) and no full version name of one"
+                             % (index, entry["model"], ", ".join(pacing.FAMILIES)))
+    budget = dict((policy.get("budget") or {}).get(entry.get("budget")) or {})
     budget.update({key: value for key, value in (ticket_budget or {}).items() if value is not None})
     return Tier(
-        model=tier["model"], effort=tier["effort"],
+        model=entry["model"], effort=entry["effort"],
         max_turns=budget.get("max_turns"), max_minutes=budget.get("max_minutes"),
-        context_chars=_context_cap(policy, tier["model"]),
+        context_chars=_context_cap(policy, family), rung=index, family=family,
     )
 
 
-def _context_cap(policy, model):
-    """`policy.context_pack.max_chars` for `model`; a model it does not name takes the smallest cap rather than none."""
+def rung_of(policy, difficulty):
+    """The rung index `policy.difficulty` maps `difficulty` to; the old shape (a level mapped to a model) names `wayline upgrade`."""
+    levels = policy.get("difficulty") or {}
+    rung = levels.get(str(difficulty), levels.get(difficulty))
+    if isinstance(rung, dict):
+        raise ConductorError("policy.difficulty maps level %s to a model and an effort, the shape before the rung ladder; %s"
+                             % (difficulty, UPGRADE_HINT))
+    if not isinstance(rung, int) or isinstance(rung, bool):
+        raise ConductorError("policy.difficulty has no rung for level %r; it has %s"
+                             % (difficulty, ", ".join(sorted(map(str, levels))) or "none"))
+    return rung
+
+
+def tier_for(policy, difficulty, ticket_budget=None):
+    """The tier of `difficulty`: the rung `policy.difficulty` maps it to, resolved by `rung_tier`."""
+    return rung_tier(policy, rung_of(policy, difficulty), ticket_budget)
+
+
+def _context_cap(policy, family):
+    """`policy.context_pack.max_chars` for `family`; a family it does not name takes the smallest cap rather than none."""
     caps = (policy.get("context_pack") or {}).get("max_chars") or {}
-    return caps.get(model, min(caps.values()) if caps else None)
+    return caps.get(family, min(caps.values()) if caps else None)
 
 
 def fallback_tier(policy, tier):
     """What a tier on Fable becomes while Fable work falls back (decision 15).
 
     Opus, at the same effort and the same turns and minutes, under `context_pack.max_chars.opus`: the
-    difficulty and the budget are the ticket's, and only the model and its context cap change.
+    difficulty, the rung, and the budget are the ticket's, and only the model and its context cap change.
     """
     return Tier(model=pacing.OPUS, effort=tier.effort, max_turns=tier.max_turns, max_minutes=tier.max_minutes,
-                context_chars=_context_cap(policy, pacing.OPUS))
+                context_chars=_context_cap(policy, pacing.OPUS), rung=tier.rung, family=pacing.OPUS)
 
 
 # --- what a wave did ------------------------------------------------------------------------
@@ -514,6 +573,8 @@ class _Attempt:
     session_journaled: bool = False
     # The session the attempt waits to start while the run holds model work: a resume, or a relaunch.
     want: Optional[_Want] = None
+    # Whether the wait for a free worker slot was said for the session it wants, which is said once.
+    waiting_for_slot: bool = False
     # A session this conductor did not start (a restart re-adopted it): polled by stream and pid.
     adopted: bool = False
     # When a re-adopted session started, which its budget is counted from, and when the conductor
@@ -541,6 +602,19 @@ class _Attempt:
     def running(self):
         """Whether a session this conductor started for the attempt is still running in its thread."""
         return self.thread is not None and self.thread.is_alive()
+
+    @property
+    def has_a_session(self):
+        """Whether a session of this attempt is running, or returned and is not carried yet (ticket 59).
+
+        A session that returned holds its worker slot until the wave reads it, because the wave
+        that carries it may resume it. An attempt that waits to start a session has none: its own
+        was carried, and `thread` outlives the session that set it, so the dead thread of a carried
+        session is not one. An attempt whose result was carried and that owes nothing has left `flight`.
+        """
+        if self.want is not None:
+            return False
+        return self.running or self.adopted or self.thread is not None
 
     @property
     def result(self):
@@ -817,10 +891,11 @@ class Conductor:
     def _picks(self, graph):
         """The tickets to launch now: the launchable subset of the frontier, in pick order.
 
-        `max_parallel_workers` counts workers, so a wave fills only the slots that the workers still
-        running from earlier waves leave free. A ticket left `running` by jobs that outlived their
-        worker holds its touch set against the frontier but occupies no worker slot, because that
-        ticket has no worker.
+        `max_parallel_workers` counts workers, so a wave fills only the slots that the attempts in
+        flight leave free: a session still running, one that returned and is not carried yet, and
+        one an attempt waits to start all hold theirs (`_takes_a_slot`, ticket 59). A ticket left
+        `running` by jobs that outlived their worker holds its touch set against the frontier but
+        occupies no worker slot, because that ticket has no worker.
 
         While the hold on Fable's weekly window stands, a ticket whose tier is Fable is dropped
         before the pick, so its slot goes to whatever else is launchable, unless the fallback consent
@@ -829,7 +904,7 @@ class Conductor:
         it says: without the Fable tickets when it began the hold, and under the action it paced to.
         """
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
-        busy = sum(1 for attempt in self.flight.values() if attempt.running or attempt.adopted)
+        busy = self._busy()
         goal_tickets = self._goal_tickets()
         autonomy = self._autonomy()
         decider = decisions.decider_ready(self.harness_root, self.project)
@@ -855,7 +930,7 @@ class Conductor:
     def _on_fable(self, entry):
         """Whether a ticket launches on Fable: the tier of its effective difficulty names Fable (decision 15)."""
         try:
-            return tier_for(self.policy, entry.get("difficulty")).model == pacing.FABLE
+            return tier_for(self.policy, entry.get("difficulty")).family == pacing.FABLE
         except ConductorError:
             return False  # the launch fails on the missing tier, and says so there
 
@@ -980,6 +1055,56 @@ class Conductor:
                 % (self.project.name, identifier, known.get("answer"), ", ".join(pacing.ASK_OPTIONS), ask["resets_at"], identifier))
         self.say("  ticket %d: the answer matches no option and counts as wait; the owner is told" % identifier)
         self.notify(decisions.DECISION, text, self.project, identifier)
+
+    def _busy(self, besides=None):
+        """How many worker slots are taken now, counting every attempt this conductor owes a session (ticket 59).
+
+        `max_parallel_workers` holds at every moment, not only at the moment a wave picks, so a
+        session that returned between wave step 3 (the poll) and step 9 (the pick) still holds its
+        slot: the wave after carries it, and may resume it. `besides` is the attempt about to take
+        a slot itself, which is never counted against its own session.
+        """
+        return sum(1 for attempt in self.flight.values() if attempt is not besides and self._takes_a_slot(attempt))
+
+    def _takes_a_slot(self, attempt):
+        """Whether the attempt holds one of `max_parallel_workers` worker slots now (ticket 59).
+
+        It holds one while a session of its own runs or waits to be carried, and while it waits to
+        start the session it wants, because that session starts as soon as this wave or the next
+        allows. Two things wait and hold nothing: an integration, whose integrator the wave that
+        carries it launches rather than the attempt, and a session the hold on Fable's weekly window
+        keeps waiting, whose slot goes to whatever else is launchable (decision 15, ticket 54). Both
+        take a slot when they do start, which `_start_wanted` waits for.
+        """
+        if attempt.want is None:
+            return attempt.has_a_session
+        if attempt.want.stage == INTEGRATE:
+            return False
+        return not (self._held_on_fable(attempt.request) and not self._falls_back())
+
+    def _free_slot(self, attempt):
+        """Whether a slot is free for the session this attempt waits to start; the wait is said once.
+
+        What is counted here is the sessions that run now, not the attempts that wait, so two
+        attempts waiting for one slot never keep each other out: the first to be looked at starts,
+        and its session is what the next one waits for. They can outnumber the slots (the hold on
+        Fable's weekly window gives a waiting session's slot away, a restart re-adopts what the
+        journal owes, `max_parallel_workers` is lowered between runs), and counting one waiting
+        attempt against another would then leave every one of them waiting for good.
+        """
+        taken = sum(1 for other in self.flight.values() if other is not attempt and other.has_a_session)
+        slots = self._slots()
+        if taken < slots:
+            return True
+        if not attempt.waiting_for_slot:
+            attempt.waiting_for_slot = True
+            self.say("  ticket %d: its %s waits for a free worker slot (%d of %d taken)"
+                     % (attempt.id, "relaunch" if attempt.want.stage == RELAUNCH else "resume", taken, slots))
+        return False
+
+    def _waits_for(self, attempt):
+        """What the session this attempt did not start is waiting for, for the line its caller says."""
+        return " once a worker slot is free" if attempt.waiting_for_slot else " once the run may launch again"
 
     def _slots(self):
         """`policy.max_parallel_workers`: how many workers this conductor runs at once."""
@@ -1148,7 +1273,7 @@ class Conductor:
             ticket, _ = self._ticket(identifier)
             difficulty = launched.difficulty if launched.difficulty is not None else entry.get("difficulty", ticket["difficulty"])
             earned, asks = gates.owed_asks(ticket, difficulty, launched.model,
-                                           self.view.integrated.get(identifier), self.view.passed(identifier))
+                                           self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung)
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -1216,7 +1341,7 @@ class Conductor:
         started = self._start_wanted(attempt)
         if started == FALLEN_BACK:
             return  # a fresh session on Opus took its place, which `_fall_back_session` said
-        self.say("  ticket %d: %s%s" % (attempt.id, doing, "" if started else " once the run may launch again"))
+        self.say("  ticket %d: %s%s" % (attempt.id, doing, "" if started else self._waits_for(attempt)))
 
     def _adopted_returned(self, attempt):
         """Whether a re-adopted session has returned; a dead one without a result is resumed or relaunched.
@@ -1247,7 +1372,7 @@ class Conductor:
             started = self._start_wanted(attempt)
             if started != FALLEN_BACK:  # a fresh session on Opus took its place, which `_fall_back_session` said
                 self.say("  ticket %d: resuming session %s out of time%s"
-                         % (attempt.id, resumed_by, "" if started else " once the run may launch again"))
+                         % (attempt.id, resumed_by, "" if started else self._waits_for(attempt)))
         else:
             self._died(attempt, replay.Session("launch" if attempt.run_dir == self._attempt_dir(attempt) else "resume"))
         return False
@@ -1299,7 +1424,10 @@ class Conductor:
         """Wave step 3: journal the sessions that began, carry the ones that returned, start what waits.
 
         One attempt's unexpected exception does not abandon the others: every attempt is looked at,
-        and then the first such exception is raised again.
+        and then the first such exception is raised again. A carry frees the worker slot the attempt
+        held, so the sessions still waiting for one are looked at again afterwards (ticket 59); that
+        is what makes a waiting session start at the first wave with a free slot, whether the slot
+        came free before this wave or in it.
         """
         escaped = None
         for identifier in sorted(self.flight):
@@ -1321,6 +1449,14 @@ class Conductor:
                     continue
                 self._carry(attempt, result)
             except Exception as failure:  # not one of the two a ticket can be failed on
+                self.flight.pop(identifier, None)
+                escaped = failure if escaped is None else escaped
+        for identifier in sorted(self.flight):
+            attempt = self.flight[identifier]
+            try:
+                if attempt.want is not None and attempt.want.stage != INTEGRATE and not attempt.running:
+                    self._start_wanted(attempt)  # a carry above may have freed the slot it waits for
+            except Exception as failure:
                 self.flight.pop(identifier, None)
                 escaped = failure if escaped is None else escaped
         if escaped is not None:
@@ -1393,16 +1529,16 @@ class Conductor:
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
         attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
-        if attempt.tier.model == pacing.FABLE and self._falls_back():
+        if attempt.tier.family == pacing.FABLE and self._falls_back():
             attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), pacing.FABLE
         self._add_worktree(attempt)
         self._write_ticket(attempt, "running")
         attempt.prompt = self._prompt(attempt)
         attempt.request = self._request(attempt, attempt.prompt)
         own = attempt.ticket.get("pinned_difficulty") or attempt.ticket["difficulty"]
-        self.say("wave %d: ticket %d %s (%s, %s %s, attempt %d)%s%s" % (
+        self.say("wave %d: ticket %d %s (%s, %s, attempt %d)%s%s" % (
             self.number, attempt.id, attempt.ticket["title"], attempt.role.name,
-            attempt.tier.model, attempt.tier.effort, attempt.number,
+            attempt.tier.label, attempt.number,
             ", difficulty %s raised from %s" % (attempt.difficulty, own) if attempt.difficulty != own else "",
             ", falling back from %s" % attempt.fallback_from if attempt.fallback_from else ""))
 
@@ -1453,7 +1589,7 @@ class Conductor:
             "skills": list(attempt.ticket.get("skills") or []),
             "worktree": str(attempt.worktree), "pid": started.pid,
             "context_chars": attempt.prompt.context_chars, "prompt_sha256": attempt.prompt.sha256,
-            "difficulty": attempt.difficulty,
+            "difficulty": attempt.difficulty, "rung": attempt.tier.rung,
         }
         if attempt.fallback_from:
             payload["fallback_from"] = attempt.fallback_from
@@ -2138,6 +2274,10 @@ class Conductor:
     def _start_wanted(self, attempt):
         """Start the session an attempt waits for, unless the run holds model work or the hold holds it on Fable.
 
+        A session is a worker like any launch, so it also waits for a free worker slot when every slot
+        is taken (ticket 59), as the ladder's resume does; the wait is said once and the session starts
+        at the first wave with a free slot.
+
         Under the fallback consent `auto` the hold holds nothing back: a session it would keep waiting on
         Fable starts as a fresh Opus session in the same attempt instead (`_fall_back_session`). Returns
         True when it started the session, `FALLEN_BACK` when a fresh Opus session took its place, and
@@ -2150,8 +2290,11 @@ class Conductor:
             # Resumed, or relaunched, on Fable once the hold ends; and the `/usage` the hold read may have said `stop`.
             if held and not self._holds_launches():
                 self._held_back("ticket %d's session" % attempt.id)
+            attempt.waiting_for_slot = False  # what it waits for now is the hold, and a slot's wait is said again after it
             return False
-        want, attempt.want = attempt.want, None
+        if not self._free_slot(attempt):
+            return False  # every slot is taken: it starts at the first wave one is free
+        want, attempt.want, attempt.waiting_for_slot = attempt.want, None, False
         if held:
             self._fall_back_session(attempt, want)
             attempt.begun.wait()
@@ -2196,7 +2339,7 @@ class Conductor:
         last = want.message if gate else want.answering
         if ran and last:
             notes.append(FALLBACK_LAST_MESSAGE % last)
-        if attempt.tier.model == pacing.FABLE:
+        if attempt.tier.family == pacing.FABLE:
             attempt.tier = fallback_tier(self.policy, attempt.tier)
         attempt.fallback_from = pacing.FABLE
         if notes:
@@ -2470,7 +2613,7 @@ class Conductor:
             started = self._start_wanted(attempt)
             if started != FALLEN_BACK:  # a fresh session on Opus took its place, which `_fall_back_session` said
                 self.say("  ticket %d: the usage limit refused its session before its first turn; relaunching it%s"
-                         % (attempt.id, "" if started else " once the window allows"))
+                         % (attempt.id, "" if started else self._waits_for(attempt)))
             return "session"
         self._died(attempt, replay.Session(kind), RESUME_LIMIT, "its session stopped at the usage limit")
         return "session"
@@ -3006,7 +3149,7 @@ class Conductor:
         """
         if self._holds_launches():
             return True
-        if self._integrator_tier(attempt).model == pacing.FABLE and self._fable_held() and not self._falls_back():
+        if self._integrator_tier(attempt).family == pacing.FABLE and self._fable_held() and not self._falls_back():
             self._held_back("ticket %d's integrator" % attempt.id)
             return True
         return self._holds_launches()
@@ -3020,8 +3163,8 @@ class Conductor:
         model, effort = entry.get("model") or attempt.tier.model, entry.get("effort") or attempt.tier.effort
         caps = (self.policy.get("context_pack") or {}).get("max_chars") or {}
         tier = Tier(model=model, effort=effort, max_turns=attempt.tier.max_turns, max_minutes=attempt.tier.max_minutes,
-                    context_chars=caps.get(model, attempt.tier.context_chars))
-        return fallback_tier(self.policy, tier) if tier.model == pacing.FABLE and self._falls_back() else tier
+                    context_chars=caps.get(pacing.family(model) or model, attempt.tier.context_chars))
+        return fallback_tier(self.policy, tier) if tier.family == pacing.FABLE and self._falls_back() else tier
 
     # --- closing the ticket ---
 
@@ -3242,7 +3385,7 @@ class Conductor:
         outputs = attempt.result.get("outputs_written") or attempt.ticket.get("outputs") or []
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
-            tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs,
+            tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
         )
         if not asks:
             return
@@ -3612,9 +3755,8 @@ class Conductor:
         """
         known = self.view.tickets[identifier]
         latest = known.latest
-        busy = sum(1 for attempt in self.flight.values() if attempt.running or attempt.adopted)
         entry = {"difficulty": latest.difficulty if latest is not None else None}
-        if busy >= self._slots() or not schedule.affordable(entry, self.action):
+        if self._busy() >= self._slots() or not schedule.affordable(entry, self.action):
             return False  # a resume is a worker like any launch: it waits for a slot, and for the pacing to allow its tier
         if latest is None or not latest.session_id or latest.spent:
             self._climb(identifier, known.attempt, self._rung_from(identifier),
@@ -3647,10 +3789,10 @@ class Conductor:
         fields = self._fields(identifier)
         difficulty = self._effective_difficulty(fields)
         tier = tier_for(self.policy, difficulty, fields.get("budget"))
-        self._set_status(identifier, "open", ["Escalated one tier up: the next attempt launches at difficulty %d (%s %s), "
-                                              "in a new session." % (difficulty, tier.model, tier.effort)])
-        self.say("  ticket %d: escalation: its next attempt launches one tier up, at difficulty %d (%s %s)"
-                 % (identifier, difficulty, tier.model, tier.effort))
+        self._set_status(identifier, "open", ["Escalated one tier up: the next attempt launches at difficulty %d (%s), "
+                                              "in a new session." % (difficulty, tier.label)])
+        self.say("  ticket %d: escalation: its next attempt launches one tier up, at difficulty %d (%s)"
+                 % (identifier, difficulty, tier.label))
         return True
 
     def _planner_falls_back(self, what):

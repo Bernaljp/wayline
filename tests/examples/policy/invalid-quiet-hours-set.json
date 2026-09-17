@@ -1,30 +1,47 @@
 {
-  "difficulty": {
-    "1": {
+  "tiers": [
+    {
+      "model": "haiku",
+      "effort": "medium",
+      "budget": "small"
+    },
+    {
       "model": "sonnet",
       "effort": "low",
       "budget": "small"
     },
-    "2": {
+    {
       "model": "sonnet",
-      "effort": "medium",
+      "effort": "high",
       "budget": "small"
     },
-    "3": {
+    {
+      "model": "opus",
+      "effort": "low",
+      "budget": "medium"
+    },
+    {
       "model": "opus",
       "effort": "high",
       "budget": "medium"
     },
-    "4": {
+    {
       "model": "fable",
-      "effort": "xhigh",
+      "effort": "low",
       "budget": "large"
     },
-    "5": {
+    {
       "model": "fable",
-      "effort": "max",
+      "effort": "high",
       "budget": "large"
     }
+  ],
+  "difficulty": {
+    "1": 2,
+    "2": 3,
+    "3": 5,
+    "4": 6,
+    "5": 7
   },
   "budget": {
     "small": {
@@ -124,6 +141,10 @@
     "stop_at": 0.9,
     "cheap_at": 0.8
   },
+  "model_fallback": {
+    "wait_under_hours": 12,
+    "ask_timeout_hours": 2
+  },
   "context_pack": {
     "max_chars": {
       "sonnet": 120000,
@@ -133,11 +154,12 @@
   },
   "escalation": {
     "resume": 1,
-    "tier_up": 1,
     "then": [
       "split",
+      "tier_up",
       "needs_human"
     ],
+    "tier_up": 1,
     "raise_after_failures": 2
   },
   "stall": {
@@ -168,7 +190,7 @@
       "P3": 2,
       "P5": 2
     },
-    "chunk_max_chars": 30000,
+    "chunk_max_chars": 20000,
     "fanout": "workflow",
     "workflow_concurrency": 16
   },
@@ -233,8 +255,7 @@
     "recrawl": "quarterly"
   },
   "quiet_hours": {
-    "from": 22,
-    "to": 7
+    "from": "22:00"
   },
   "per_window_worker_budget": null
 }

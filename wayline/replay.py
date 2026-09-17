@@ -111,6 +111,8 @@ class Attempt:
     fallback_from: Optional[str] = None
     # The effective difficulty the attempt was launched at, which the difficulty adjustment counts failures by (ticket 38).
     difficulty: Optional[int] = None
+    # The index of the rung it ran on (decision 16); None in a journal written before the rung ladder.
+    rung: Optional[int] = None
     sessions: list = field(default_factory=list)
     stage: str = "launch"
     spent: set = field(default_factory=set)
@@ -189,6 +191,7 @@ class TicketView:
         attempt.effort, attempt.worktree = payload.get("effort"), payload.get("worktree")
         attempt.fallback_from = fallback_from
         attempt.difficulty = _int(payload.get("difficulty"))
+        attempt.rung = _int(payload.get("rung"))
         attempt.sessions = [Session("launch", pid=pid, ts=ts)]
 
     def session(self, payload):
