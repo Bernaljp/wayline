@@ -173,7 +173,14 @@ function tableElement(headings, rows, columns) {
   const head = el('tr', {}, headings.map((name, index) => el('th', { class: (columns || [])[index] || null, text: name })));
   const body = rows.map((row) => el('tr', {}, row.map((cell, index) => {
     const text = cell === null || cell === undefined ? '' : String(cell);
-    return el('td', { class: (columns || [])[index] || null, text, title: text.length > TITLE_AT ? text : null });
+    const kind = (columns || [])[index] || null;
+    if (kind === 'clamp') {
+      // A cell that can run to pages (a decider's rationale) shows its first lines; a click shows the rest.
+      const inner = el('div', { class: 'clamp', text, title: text.length > TITLE_AT ? 'click to read it whole' : null });
+      inner.addEventListener('click', () => inner.classList.toggle('open'));
+      return el('td', { class: 'text' }, [inner]);
+    }
+    return el('td', { class: kind, text, title: text.length > TITLE_AT ? text : null });
   })));
   return el('table', {}, [el('thead', {}, [head]), el('tbody', {}, body)]);
 }
@@ -1431,7 +1438,7 @@ function renderDecisions(view, project) {
     entry.answer,
     entry.rationale || '',
     (entry.ts || '').replace('T', ' ').replace('Z', ''),
-  ]), 'nothing has been decided on this project yet', ['short', 'short', 'text', 'text', 'text', 'short']));
+  ]), 'nothing has been decided on this project yet', ['short', 'short', 'clamp', 'clamp', 'clamp', 'short']));
   if ((view.problems || []).length) {
     parts.push(subhead('problems', view.problems.length));
     parts.push(el('ul', { class: 'problems' }, view.problems.map((problem) => el('li', { text: problem }))));
