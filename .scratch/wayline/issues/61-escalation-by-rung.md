@@ -1,0 +1,20 @@
+# 61 - Escalation by rung
+
+**What to build:** A stuck ticket climbs the rung ladder one rung at a time. After the one resume, a tier up moves the ticket to the next rung, and it comes before the split while that rung is on the same model family as the attempt's; when the next rung is on Fable (rung 5 to rung 6), the split comes first, so the scarce Fable week is spent only after the cheaper remedy. A ticket on rung 7 has nowhere to climb: once the split has been tried, it ends `needs_human` with `reason: top_rung`, which `wayline status`, the dashboard, and the `needs_human` items of `REPORT.md` show as "at the ladder's top rung". A tier up onto a Fable rung that the hold is holding falls back, waits, or asks, as the fallback consent says. A kind that fails twice at a level is still raised one difficulty level, and its rung follows from the new level. The conductor's attribute that names a step of the escalation chain, today `rung`, is renamed `step`, so that rung means only a rung of the rung ladder.
+
+**Blocked by:** 60 (The rung ladder). Take "59 - Worker slots count every session a conductor owes" first when both are open: both edit the conductor's wave, so the second to land expects one merge.
+
+**Status:** ready-for-agent
+
+**GitHub:** [#144](https://github.com/Bernaljp/wayline/issues/144) (mirror; the local file is the source)
+
+**Milestone:** M5 Overnight and report. **Spec:** milestone M5 criteria 9 and 16; Implementation Decisions 16 (the escalation chain by rung, what `wayline status`, the dashboard, and the report show, the vocabulary the build adds), 5 (escalation), 15 (the fallback consent on a tier up), 14 (the policy table: `escalation`), 2 (the event table: `reason` on `ticket_needs_human`); user stories 16 and 86 to 89.
+
+- [ ] `escalation.tier_up` counts rungs: a tier up launches the next attempt one rung above the attempt that failed, with that rung's model, effort, and budget. `conductor.LADDER` and the journal replay record the ticket's rung, not a raised difficulty, so a tier up no longer changes the ticket's level; `difficulty_raised` still moves the kind's level by one, and a fallback attempt still never counts toward it.
+- [ ] The order after the resume is `tier_up` then `split` when the next rung has the same model family as the failed attempt's rung, and `split` then `tier_up` when the next rung is on Fable and the failed one is not; then `needs_human`. The policy table of decision 14 gains the new `escalation` row in the same commit.
+- [ ] A tier up from rung 7 is skipped as spent: the chain takes the split if it is untried, then journals `ticket_needs_human` with `reason: top_rung`, added to the event table. `wayline status`, the dashboard's ticket page, and the `needs_human` items of `REPORT.md` show such a ticket as "at the ladder's top rung".
+- [ ] A tier up onto a Fable rung while the hold stands behaves as any Fable launch under the fallback consent: under `auto` it runs on the Opus rung at the same effort and budget, under `wait` it waits for the reset, under `ask` it waits for the ask's answer.
+- [ ] The conductor's escalation step attribute and its helpers are renamed from `rung` to `step` (`_rung_from`, `_owed_rungs`, and their comments), and no name in the conductor uses rung for an escalation step afterwards.
+- [ ] `wayline run --simulate-failure <id>` forces a one rung tier up that shows in the journal (`ticket_launched` with the next `rung`), so "43 - M5 overnight demo" can force it live.
+- [ ] Tests replay recorded journals, extending `tests/test_escalation.py`: a one rung tier up inside a family (rung 2 to 3), the split before the tier up onto Fable (rung 5 to 6), a tier up inside Fable (rung 6 to 7), the top rung ending `needs_human` with `reason: top_rung`, a tier up onto a held Fable rung under each consent, and the kind raise after two failures at a level; each asserts the reconstructed view and the events the next wave appends, and replaying twice yields the same view.
+- [ ] `python -m unittest` passes.

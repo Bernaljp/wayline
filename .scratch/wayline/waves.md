@@ -1,33 +1,31 @@
 # Wayline tickets: what can run in parallel, and what waits
 
-Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
+Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. The same day the finer tiers map (wayline #129, cut as #141 settled it) added tickets 60 to 64 and eight edges (61, 62, and 63 after 60; 43 after 60, 61, 62, and 63; 45 after 64), for 121 edges among 64 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
 
 ## The rule
 
 A ticket can start when every ticket in its **Blocked by** line is done: its commit is on `master`, `python -m unittest` passes there, its local `Status:` line is updated, and its GitHub issue is closed. Tickets in the same wave never depend on each other, so any subset of a wave can run at the same time. A ticket may also start as soon as its own blockers are done, even if the rest of its wave is not; the waves below are the earliest start, not a required batch.
 
-## What is left on 2026-09-13
+## What is left on 2026-09-17
 
-33 of the 57 tickets are closed: 01 to 13, 16, 17, 18, 20 to 25, 27, 28, 30, 32, 40, 41, 42, 44, 48, 49, and 52. Counting those as done, the 24 still open fall into seven waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, step by step with each ticket's model and effort, is "Order from here" in `.scratch/wayline/models.md`.
+52 of the 64 tickets are closed: 01 to 42, 44, 46, 48, 49, 52, and 54 to 58. Counting those as done, the 12 still open fall into five waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, step by step with each ticket's model and effort, is "Order from here" in `.scratch/wayline/models.md`.
 
 | Wave left | Tickets | Notes |
 |---|---|---|
-| 1 | 19 (M2, #20), 26 (M3, #27), 31 (M4, #32), 46 (M6, #47), 54 (M1, #101) | Ready now. 19 and 26 are milestone demos, so they wait for 15 (rule 7), and 31, 54, and 46 go first. 54 is the first fallback ticket. |
-| 2 | 14 (M1, #15), 29 (M4, #30), 33 (M4, #34), 37 (M5, #38), 39 (M5, #40), 55 (M5, #102) | 14 and 55 wait for 54; 33 and 37 for 31; 39 for 19 and 29 for 26. |
-| 3 | 15 (M1, #16), 34 (M4, #35), 35 (M4, #36), 56 (M5, #103) | 15 closes M1, and the demos 19 and 26 follow it. 34 is the planner, at max. |
-| 4 | 36 (M4, #37), 38 (M5, #39), 45 (M6, #46), 57 (M5, #104) | 36 is the M4 demo. 38, 45, and 57 all edit the wave: 38 first, 57 beside it, 45 after it. |
-| 5 | 43 (M5, #44) | The overnight run; it also waits for the three fallback tickets 54, 55, and 56. |
-| 6 | 47 (M6, #48), 50 (M7, #51), 51 (M7, #52) | 47 is the M6 demo: after 50 and 51. |
-| 7 | 53 (M7, #54) | The last ticket. |
+| 1 | 59 (M5, #126), 60 (M5, #143), 64 (M6, #147) | Ready now. 60 is the rung ladder, the first finer tiers ticket; 64 is the ladder consent. |
+| 2 | 45 (M6, #46), 61 (M5, #144), 62 (M5, #145), 63 (M5, #146) | 61, 62, and 63 wait for 60, and 45 for 64. 59 and 61 both edit the conductor's wave: 59 first, or expect one merge. |
+| 3 | 43 (M5, #44) | The overnight run; it now also waits for the four rung ladder tickets and ships the ladder as v0.6.0. |
+| 4 | 47 (M6, #48), 50 (M7, #51), 51 (M7, #52) | 47 is the M6 demo: after 50 and 51. |
+| 5 | 53 (M7, #54) | The last ticket. |
 
-What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, seven tickets. The fallback chain 54 -> 55 -> 56 runs beside it and has to land before 43.
+What is left of the critical path is 60 -> 61 -> 43 -> 50 -> 53, five tickets (62 and 63 sit beside 61 and gate 43 the same way).
 
 ## Waves (earliest start)
 
 | Wave | Tickets | Notes |
 |---|---|---|
-| 1 | 01 (M0, #2), 58 (M5, #114) | The foundation: nothing else could start. 58, added on 2026-09-16, has no blocker, since the dashboard it restyles is done. |
-| 2 | 02 (M0, #3), 03 (M0, #4), 04 (M0, #5) | Three independent slices on top of 01: init, the launcher, the guards. |
+| 1 | 01 (M0, #2), 58 (M5, #114), 60 (M5, #143), 64 (M6, #147) | The foundation: nothing else could start. 58, added on 2026-09-16, and 60 and 64, added on 2026-09-17, have no blocker, since the code they edit is built. |
+| 2 | 02 (M0, #3), 03 (M0, #4), 04 (M0, #5), 61 (M5, #144), 62 (M5, #145), 63 (M5, #146) | Three independent slices on top of 01: init, the launcher, the guards. 61, 62, and 63 build on 60. |
 | 3 | 05 (M0, #6), 11 (M1, #12), 16 (M2, #17), 18 (M2, #19), 20 (M3, #21) | First wide wave: the conductor, the dashboard, resources, the manifest, the scout are in different modules and merge cleanly. |
 | 4 | 06 (M0, #7), 07 (M1, #8), 12 (M1, #13), 17 (M2, #18), 21 (M3, #22), 23 (M3, #24), 25 (M3, #26), 27 (M4, #28), 32 (M4, #33), 48 (M7, #49), 52 (M7, #53) | Widest wave. 06 is the M0 live demo; the rest fan out across M1 to M7. |
 | 5 | 09 (M1, #10), 19 (M2, #20), 22 (M3, #23), 28 (M4, #29), 40 (M5, #41), 42 (M5, #43), 49 (M7, #50) | 09 is the resume ticket, at max; the six others live in other modules and run beside it. 08 and 10 wait for 09 (wave 6). 19 is the M2 demo: it runs after 15 (rule 7), at no calendar cost. |
@@ -36,7 +34,7 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 | 8 | 14 (M1, #15), 29 (M4, #30), 33 (M4, #34), 37 (M5, #38), 55 (M5, #102) | 14 waits for 54; 33 and 34 (M4) sit on the critical path. |
 | 9 | 15 (M1, #16), 34 (M4, #35), 35 (M4, #36), 56 (M5, #103) | 34 is the planner; five later tickets wait on it. 15 closes M1, and the demos 19 and 26 follow it (rule 7). |
 | 10 | 36 (M4, #37), 38 (M5, #39), 45 (M6, #46), 57 (M5, #104) | 36 is the M4 demo: alone on `master` first. 38 and 45 both touch the conductor loop: 38 first (43 needs it), then 45, or together and expect a merge; 57 edits the wave too. |
-| 11 | 43 (M5, #44) | 43 is the overnight run; it needs a real night. |
+| 11 | 43 (M5, #44) | 43 is the overnight run; it needs a real night. It also waits for 60 to 63, which ship with it as v0.6.0. |
 | 12 | 47 (M6, #48), 50 (M7, #51), 51 (M7, #52) |  |
 | 13 | 53 (M7, #54) | The last ticket. |
 
@@ -90,9 +88,9 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 | 40 Provenance tags, the linter, and REPORT.md | #41 | 5 | 18, 32 | 43, 53 |
 | 41 The toy project fixture | #42 | 6 | 17, 28 | 43 |
 | 42 Dashboard outputs, downloads, and logs | #43 | 5 | 12 | 43, 45 |
-| 43 M5 overnight demo: the toy project end to end across a window boundary | #44 | 11 | 14, 36, 37, 38, 39, 40, 41, 42, 54, 55, 56 | 47, 50, 51 |
+| 43 M5 overnight demo: the toy project end to end across a window boundary | #44 | 11 | 14, 36, 37, 38, 39, 40, 41, 42, 54, 55, 56, 60, 61, 62, 63 | 47, 50, 51 |
 | 44 Fixture format and runner (verbatim prototype 32) | #45 | 6 | 03, 09 | 45, 46 |
-| 45 Feedback, change records, harness tickets, and local skills | #46 | 10 | 34, 42, 44, 58 | 47 |
+| 45 Feedback, change records, harness tickets, and local skills | #46 | 10 | 34, 42, 44, 58, 64 | 47 |
 | 46 Tags, pins, upgrade, rollback, and promotion | #47 | 7 | 27, 44 | 47 |
 | 47 M6 demo: feedback to a tagged harness change and back | #48 | 12 | 43, 45, 46 | nothing (a milestone demo) |
 | 48 The plot index | #49 | 4 | 20 | 49 |
@@ -107,6 +105,11 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 | 57 Ask the owner when Fable is spent | #104 | 10 | 35, 55 | nothing |
 | 58 A design pass over the dashboard | #114 | 1 | nothing | 45 |
 | 59 Worker slots count every session a conductor owes | #126 | 11 | 38 | nothing |
+| 60 The rung ladder | #143 | 1 | nothing | 43, 61, 62, 63 |
+| 61 Escalation by rung | #144 | 2 | 60 | 43 |
+| 62 Pacing and the fallback by rung | #145 | 2 | 60 | 43 |
+| 63 The model that ran | #146 | 2 | 60 | 43 |
+| 64 The ladder consent | #147 | 1 | nothing | 45 |
 
 ## Running tickets in parallel without corrupting git
 
@@ -119,7 +122,7 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 5. Keep two or three sessions in flight at most: the subscription window is shared by every session, and one ticket typically costs a large part of a window.
 6. Run 01 to 05 one at a time on `master` directly (no worktree needed while nothing else runs): they define the modules everything else edits.
 7. The eight milestone demos (06, 15, 19, 26, 36, 43, 47, 53) are integration points: run each alone, on `master`, with the tree clean, and in milestone order, so that every tag from v0.1.0 to v1.0.0 contains the code of the tags before it (`upgrade` moves a project between tags and prints the changelog between them, which needs a straight line). 19 and 26 therefore wait for 15 (wave 9), and 39 and 29 wait for them; this costs no calendar time, since none of the four is on the critical path. The schedule that follows these rules step by step is "Order from here" in `.scratch/wayline/models.md`.
-8. Same-module pairs: 09 before 08 and 10 (recorded as blocked-by edges, so the frontier query holds 08 and 10 until 09 closes), 38 before 45 in wave 10 (a note only), 54 before 55 (a blocked-by edge), and 57 beside 38 in wave 10 (a note only). Running such a pair together is allowed at the price of one real merge and a suite run on `master` afterwards; if the merge conflicts, start a session at the repo root and use `/resolving-merge-conflicts`.
+8. Same-module pairs: 09 before 08 and 10 (recorded as blocked-by edges, so the frontier query holds 08 and 10 until 09 closes), 38 before 45 in wave 10 (a note only), 54 before 55 (a blocked-by edge), 57 beside 38 in wave 10 (a note only), and 59 before 61 (a note only: both edit the conductor's wave). Running such a pair together is allowed at the price of one real merge and a suite run on `master` afterwards; if the merge conflicts, start a session at the repo root and use `/resolving-merge-conflicts`.
 
 ### Removing ended sessions
 
