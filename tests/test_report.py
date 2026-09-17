@@ -394,7 +394,7 @@ class ReportTest(RunCase):
         self.assertIn("^ target 0.85", rows[3])
         self.assertGreater(rows[1].count("#"), rows[0].count("#"), "the bar grows with the metric")
         self.assertIn("- 0.861 from run `t3-a1` (ticket 3)", third)
-        self.assertIn("- ticket 4: best 0.861, standard deviation 0.011, seeds 3", third)
+        self.assertIn("- ticket 4: mean 0.815 against the best 0.861, standard deviation 0.011, seeds 3", third)
 
     def test_findings_are_grouped_by_claim_with_citations_that_resolve(self):
         fourth = self.section(4)

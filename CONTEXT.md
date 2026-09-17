@@ -112,6 +112,14 @@ _Avoid_: state, database, memory
 The append-only event log the conductor replays to resume and the report is built from.
 _Avoid_: log, history
 
+**Keep-if-better**:
+The rule that keeps a goal ticket's change only when its mean over the seeds beats the best kept value on the held-out split by more than one standard deviation; a change it does not keep is discarded.
+_Avoid_: hill climbing, accept-if-improved
+
+**Discarded**:
+A goal ticket's change keep-if-better did not keep: done, not integrated, its branch kept, its findings negative results.
+_Avoid_: rejected, reverted
+
 **Job**:
 A detached hardware process (experiment or analysis) polled by code; no session waits on it.
 _Avoid_: run, task, process
