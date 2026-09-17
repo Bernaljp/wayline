@@ -24,7 +24,7 @@ from unittest import mock
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_conductor import HELLO, WRONG, ConductorCase, done as worker_done, patch as worker_patch
-from wayline import cli, decisions, grill, notify, project, schedule, tick, tickets, worker
+from wayline import cli, decisions, grill, notify, project, replay, schedule, tick, tickets, worker
 from wayline.conductor import Conductor
 from wayline.dashboard import LOOPBACK, TOKEN_HEADER, make_server
 from wayline.frontmatter import dump_document
@@ -120,6 +120,33 @@ class ConductedCase(BranchCase):
 
 
 # --- the subgraph waits, the other branch runs, and every answer path releases it ---------------------------
+
+
+class ClosedOnceTest(ConductedCase):
+    """An answered decision ticket the journal created, as the planner's are, stays closed in every later run (ticket 36)."""
+
+    def test_a_later_run_leaves_an_answered_ticket_closed(self):
+        self.ledger.append_event("ticket_created", {"ticket": 2, "kind": "decision", "proposed_by": "planner", "origin": "plan"},
+                                 ticket=2)
+        self.script()
+        self.conduct()
+        project.answer(self.project, 2, "one line")
+        self.conduct()
+        before = self.out.getvalue()
+        self.assertIn("ticket 2 answered by the human", before)
+        self.conduct()
+        again = self.out.getvalue()[len(before):]
+        self.assertNotIn("the journal wins", again, "the journal knows an answered decision ticket is done")
+        self.assertNotIn("ticket 2 answered", again, "closed once, by the run after the answer")
+        self.assertEqual(replay.replay(self.events()).tickets[2].status, "done")
+        self.assertEqual(self.statuses()[2], "done")
+
+    def test_a_rerun_opens_it_again(self):
+        self.ledger.append_event("ticket_created", {"ticket": 2, "kind": "decision", "proposed_by": "planner", "origin": "plan"},
+                                 ticket=2)
+        project.answer(self.project, 2, "one line")
+        self.ledger.append_event("ticket_rerun", {"ticket": 2}, ticket=2)
+        self.assertEqual(replay.replay(self.events()).tickets[2].status, "open")
 
 
 class AnswerPathsTest(ConductedCase):

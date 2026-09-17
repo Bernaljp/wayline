@@ -357,6 +357,11 @@ class View:
             self.feedback.append({"id": payload.get("id"), "source": payload.get("source")})
         elif name == DECISION and identifier is not None:
             self.answers[identifier] = {key: payload.get(key) for key in ("answer", "decided_by", "rationale", "confidence")}
+            # The answer is the record of a decision ticket's closing (the conductor journals nothing more), so the view
+            # holds the ticket done: a later run's take-over would otherwise reopen it as the journal's word (ticket 36).
+            known = self.tickets.get(identifier)
+            if known is not None and known.status in ("open", "blocked", "needs_human"):
+                known.status = "done"
         elif name == TICKET_CANCELLED and identifier is not None:
             self.cancels.pop(identifier, None)
         elif name == TICKET_RERUN and identifier is not None:

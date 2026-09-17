@@ -1108,6 +1108,8 @@ class Conductor:
                 continue
             if known is not None and known.rung == TIER_UP and ticket["status"] == "open":
                 continue  # opened again for its tier up, which the next `ticket_launched` journals
+            if ticket["kind"] == tickets.DECISION and ticket["id"] in self.view.answers:
+                continue  # an answered decision ticket is closed by `_apply_answers`, once, with what it says and does
             self._set_status(ticket["id"], status)
             self.say("  ticket %d: %s in its file and %s in the journal; the journal wins"
                      % (ticket["id"], ticket["status"], status))
