@@ -4,6 +4,17 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+- The rung ladder (ticket 60; Implementation Decision 16). A ticket's difficulty names a rung of
+  `policy.tiers`, an ordered list of seven rungs cheapest first (a `model`, an `effort`, and a
+  `budget`), and `policy.difficulty` maps each level 1 to 5 to a rung index (2, 3, 5, 6, 7). The cap:
+  ticket work never runs above `high`, so difficulty 4 launches on `fable low` and 5 on `fable high`,
+  while `policy.roles` and every verdict stay at decision 14's efforts. A rung's model is a CLI alias or
+  a full version name (`claude-opus-4-8`); its family keys the context cap and the verifier table. The
+  policy schema refuses a rung above `high` and the old `difficulty` shape, whose refusal names
+  `wayline upgrade`; `wayline upgrade` rewrites a project's old-shape `harness.json` override to the
+  nearest rungs and prints one line per level. `ticket_launched` and `verdict` carry `rung`, and
+  `wayline status` and the dashboard's ticket page label each launch `r<index> <model> <effort>`. The
+  escalation chain, pacing, and the fallback keep their behavior until tickets 61 and 62.
 - Worker slots count every session a conductor owes (`wayline.conductor`, ticket 59).
   `policy.max_parallel_workers` now holds at every moment, not only at the moment a wave picks: an
   attempt holds its slot while its session runs, while its result waits to be carried (the process

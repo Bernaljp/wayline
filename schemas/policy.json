@@ -1,23 +1,30 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "policy",
-  "description": "The global defaults in policy.json (Implementation Decisions 14); a project overrides any key in harness.json.policy.",
+  "description": "The global defaults in policy.json (Implementation Decisions 14); a project overrides any key in harness.json.policy. `tiers` is the rung ladder of Implementation Decisions 16, cheapest first, and `difficulty` maps each level to a rung's 1-based index; a rung's effort never passes high (the cap), which binds neither `roles` nor `verifier`. The old `difficulty` shape (a level mapped to a model and an effort) is refused, and `wayline upgrade` rewrites a project's override of it to rungs; a `difficulty` naming a rung the list does not have is refused by `project.check_policy`, which the schema cannot express.",
   "type": "object",
   "required": [
-    "difficulty", "budget", "roles", "verifier", "max_parallel_workers", "poll_seconds", "heartbeat_stale_s",
+    "tiers", "difficulty", "budget", "roles", "verifier", "max_parallel_workers", "poll_seconds", "heartbeat_stale_s",
     "acceptance_timeout_s", "pacing", "model_fallback", "context_pack", "escalation", "stall", "proposals", "goal", "absorb",
     "consultant", "kb", "provenance", "artifacts", "reservations", "jobs", "tick", "dashboard", "fixtures",
     "figures", "plot_index", "quiet_hours", "per_window_worker_budget"
   ],
   "additionalProperties": false,
   "properties": {
+    "tiers": {
+      "type": "array",
+      "description": "the rung ladder: the rungs a ticket can launch at, cheapest first (Implementation Decisions 16)",
+      "items": {"$ref": "#/$defs/rung"},
+      "minItems": 1
+    },
     "difficulty": {
       "type": "object",
+      "description": "each difficulty level's rung, as its 1-based index into tiers",
       "required": ["1", "2", "3", "4", "5"],
       "additionalProperties": false,
       "properties": {
-        "1": {"$ref": "#/$defs/tier"}, "2": {"$ref": "#/$defs/tier"}, "3": {"$ref": "#/$defs/tier"},
-        "4": {"$ref": "#/$defs/tier"}, "5": {"$ref": "#/$defs/tier"}
+        "1": {"$ref": "#/$defs/rung_index"}, "2": {"$ref": "#/$defs/rung_index"}, "3": {"$ref": "#/$defs/rung_index"},
+        "4": {"$ref": "#/$defs/rung_index"}, "5": {"$ref": "#/$defs/rung_index"}
       }
     },
     "budget": {
@@ -259,16 +266,28 @@
       "additionalProperties": false,
       "properties": {"model": {"$ref": "#/$defs/model"}, "effort": {"$ref": "#/$defs/effort"}}
     },
-    "tier": {
+    "rung_model": {
+      "type": "string",
+      "description": "a CLI alias (haiku, sonnet, opus, fable) or a full version name of one of those families (claude-opus-4-8)",
+      "pattern": "^(haiku|sonnet|opus|fable|claude-(haiku|sonnet|opus|fable)-[0-9][0-9a-z.-]*)$"
+    },
+    "capped_effort": {
+      "type": "string",
+      "description": "the cap of Implementation Decisions 16: ticket work never runs above high",
+      "enum": ["low", "medium", "high"]
+    },
+    "rung": {
       "type": "object",
+      "description": "one rung of the rung ladder: a model, an effort under the cap, and a budget",
       "required": ["model", "effort", "budget"],
       "additionalProperties": false,
       "properties": {
-        "model": {"$ref": "#/$defs/model"},
-        "effort": {"$ref": "#/$defs/effort"},
+        "model": {"$ref": "#/$defs/rung_model"},
+        "effort": {"$ref": "#/$defs/capped_effort"},
         "budget": {"type": "string", "enum": ["small", "medium", "large"]}
       }
     },
+    "rung_index": {"type": "integer", "minimum": 1, "description": "a 1-based index into tiers"},
     "budget": {
       "type": "object",
       "required": ["max_turns", "max_minutes"],

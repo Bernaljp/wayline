@@ -28,6 +28,7 @@ from wayline.schedule import CHEAP_ONLY, NORMAL, STOP
 
 __all__ = [
     "FIVE_HOUR", "SEVEN_DAY", "UNKNOWN", "WINDOWS", "FABLE", "FABLE_LIMIT_TYPE", "READINGS", "AUTO", "ASK", "WAIT", "CONSENTS", "OPUS",
+    "HAIKU", "SONNET", "FAMILIES", "family",
     "FALL_BACK", "ALWAYS_FALL_BACK", "ALWAYS_WAIT", "ASK_OPTIONS", "ALWAYS", "SUPERSEDED", "ASK_ORIGIN",
     "WAIT_UNDER_HOURS", "ASK_TIMEOUT_HOURS", "ask_origin", "ask_window", "ask_choice", "ask_falls_back", "ask_recommended", "ask_hours",
     "STOP_AT", "CHEAP_AT",
@@ -71,6 +72,19 @@ ASK_ORIGIN = "fallback ask: Fable's weekly window resets at "
 WAIT_UNDER_HOURS, ASK_TIMEOUT_HOURS = 12, 2
 OPUS = "opus"
 HAIKU = "haiku"  # the model a depth spot-check never runs on (decision 15)
+SONNET = "sonnet"
+# The model families, cheapest first: what a rung's `model` names, as a CLI alias or as a full version name
+# (`claude-opus-4-8`), and what `policy.verifier` and `policy.context_pack.max_chars` are keyed by (decision 16).
+FAMILIES = (HAIKU, SONNET, OPUS, FABLE)
+_VERSION_RE = re.compile(r"^claude-(%s)-[0-9][0-9a-z.-]*$" % "|".join(FAMILIES))
+
+
+def family(model):
+    """The family of a model name: the alias itself, or the family a full version name (`claude-opus-4-8`) belongs to; None for neither."""
+    if model in FAMILIES:
+        return model
+    match = _VERSION_RE.match(model) if isinstance(model, str) else None
+    return match.group(1) if match else None
 
 # `policy.pacing` as decision 14 ships it; a project's `harness.json` and a `control pacing` override them.
 STOP_AT, CHEAP_AT = 0.90, 0.80

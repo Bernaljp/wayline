@@ -25,12 +25,12 @@ from string import Template
 
 from wayline import HARNESS_ROOT, POLICY_PATH, TAG, replay
 from wayline.cli import parse_args
-from wayline.jsonschema import ValidationError, check, load_schema
+from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import (
     ACCEPTANCE, CONTROL, DECISION, PAUSED, SWITCHED, TICKET_LAUNCHED, TICKET_RESULT, UNPAUSED, VERDICT, Ledger, atomic_write,
     conductor_holder, now_ts,
 )
-from wayline.pacing import ALWAYS, ASK, AUTO, CONSENTS, FABLE, WAIT, ask_choice, ask_falls_back, ask_hours, epoch, iso, thresholds
+from wayline.pacing import ALWAYS, ASK, AUTO, CONSENTS, FABLE, WAIT, ask_choice, ask_falls_back, ask_hours, epoch, family, iso, thresholds
 from wayline.resources import (
     LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
 )
@@ -45,6 +45,7 @@ __all__ = [
     "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
     "home", "projects_path", "active_path", "read_active", "set_active", "read_projects",
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
+    "check_policy", "policy_problems", "old_difficulty_levels", "rung_label", "launch_label", "merge_policy",
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
@@ -209,12 +210,77 @@ def policy_for(project=None, harness_root=None):
     return _merge(value, overrides if isinstance(overrides, dict) else {})
 
 
+def merge_policy(base, overrides):
+    """The policy `base` under a project's `harness.json.policy` overrides (None or not a dict counts as none)."""
+    return _merge(base, overrides if isinstance(overrides, dict) else {})
+
+
 def _merge(base, overrides):
     """`overrides` wins key by key; two dicts under one key merge, so a project may override one number."""
     merged = dict(base)
     for key, value in overrides.items():
         merged[key] = _merge(merged[key], value) if isinstance(value, dict) and isinstance(merged.get(key), dict) else value
     return merged
+
+
+# --- the rung ladder (Implementation Decisions 16) ---------------------------------------------
+
+UPGRADE_HINT = "run wayline upgrade, which rewrites it to rungs"
+
+
+def old_difficulty_levels(difficulty):
+    """The levels a `difficulty` table maps to a model and an effort: the shape before the rung ladder, which `wayline upgrade` rewrites."""
+    if not isinstance(difficulty, dict):
+        return []
+    return sorted((level for level, entry in difficulty.items() if isinstance(entry, dict)), key=str)
+
+
+def policy_problems(policy):
+    """Everything wrong with a policy, as `(path, keyword, message)` triples like the validator's; [] when it is valid.
+
+    The schema first, unless `difficulty` is in the old shape, whose refusal names `wayline upgrade` instead of
+    the schema's type errors. Then what the schema cannot say: a `difficulty` entry naming a rung `tiers` lacks.
+    """
+    if not isinstance(policy, dict):
+        return [("$", "type", "the policy is not an object")]
+    old = old_difficulty_levels(policy.get("difficulty"))
+    if old:
+        return [("$.difficulty", "policy", "policy.difficulty maps level%s %s to a model and an effort, the shape before the rung ladder; %s"
+                 % ("" if len(old) == 1 else "s", ", ".join(map(str, old)), UPGRADE_HINT))]
+    problems = validate(policy, load_schema("policy"))
+    if problems:
+        return problems
+    rungs = policy.get("tiers") or []
+    for level, rung in sorted((policy.get("difficulty") or {}).items(), key=lambda item: str(item[0])):
+        if not 1 <= rung <= len(rungs):
+            problems.append(("$.difficulty.%s" % level, "policy",
+                             "policy.difficulty maps level %s to rung %s, which policy.tiers does not have; the rung ladder has %d rung(s), 1 to %d"
+                             % (level, rung, len(rungs), len(rungs))))
+    return problems
+
+
+def check_policy(policy, name="policy.json"):
+    """Raise ValidationError naming every problem `policy_problems` found, or return None when the policy is valid."""
+    problems = policy_problems(policy)
+    if problems:
+        raise ValidationError(problems, name)
+    return None
+
+
+def rung_label(rung, model, effort):
+    """The label of a launch as `status` and the dashboard show it: `r<index> <model> <effort>` (decision 16).
+
+    A journal written before the rung ladder carries no `rung`, and its launches read `<model> <effort>`.
+    """
+    text = "%s %s" % (model or "?", effort or "?")
+    return "r%d %s" % (rung, text) if isinstance(rung, int) and not isinstance(rung, bool) else text
+
+
+def launch_label(attempt):
+    """The label of a replayed attempt's launch (`replay.Attempt`), or None for one that never launched."""
+    if attempt is None or not attempt.model:
+        return None
+    return rung_label(attempt.rung, attempt.model, attempt.effort)
 
 
 def detect_hermes():
@@ -537,21 +603,26 @@ def refresh_symlinks(project, harness_root=None):
     return changes, notes
 
 
-def repin(project, harness_tag, harness_root=None):
+def repin(project, harness_tag, harness_root=None, rewrite=None):
     """Point a project at another harness tag: the pin, the CLAUDE.md block, the links, and a commit.
 
     What `upgrade` does to the project once the harness checkout is at the tag. The pin is set in
     the owner's own `harness.json` without reflowing the rest of it, and the files this changed are
     committed on the project's branch by path, so the next `run` is not refused for changes outside
-    `research/` that the harness itself made. Returns `(changes, notes)`.
+    `research/` that the harness itself made. `rewrite`, when given, edits the `harness.json` value in
+    place before it is written and returns whether it changed anything: the migration `upgrade` carries
+    (decision 16), so that the pin commit takes it. Returns `(changes, notes)`.
     """
     project = Path(project).resolve()
     harness_root = Path(harness_root or HARNESS_ROOT).resolve()
     path = project / HARNESS_JSON
     value = read_harness(project)
     changes, notes = [], []
-    if value["harness_tag"] != harness_tag:
+    moved = value["harness_tag"] != harness_tag
+    if moved:
         value["harness_tag"] = harness_tag
+    rewritten = rewrite is not None and rewrite(value)  # asked whether the tag moved or not
+    if moved or rewritten:
         check(value, load_schema("harness"), name=HARNESS_JSON)
         atomic_write(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
         changes.append(HARNESS_JSON)
@@ -719,8 +790,8 @@ def status_view(project, refresh=True):
         "radius": harness.get("radius"),
         # The memo leads the view while it is the owner's to read (ticket 29); `first` says whether it does.
         "position": position,
-        "frontier": [_ticket_line(entry, tickets) for entry in frontier(graph)],
-        "running": [_ticket_line(entry, tickets) for entry in _with_status(graph, "running")],
+        "frontier": [_ticket_line(entry, tickets, view) for entry in frontier(graph)],
+        "running": [_ticket_line(entry, tickets, view) for entry in _with_status(graph, "running")],
         "jobs": live_jobs,
         # Who answers each: the owner, or under `autonomous` the decider unless it is human-only or none is installed (ticket 35).
         # The ask of decision 15 adds when it falls back unanswered, where its timeout applies (ticket 57).
@@ -763,12 +834,17 @@ def _open_decisions(graph):
     return open_decisions(graph)
 
 
-def _ticket_line(entry, tickets):
-    """One ticket as `status` shows it: the scheduling fields plus the title from the ticket file."""
+def _ticket_line(entry, tickets, view=None):
+    """One ticket as `status` shows it: the scheduling fields, the title from the ticket file, and its latest launch's label.
+
+    `launch` is `r<index> <model> <effort>` from the latest `ticket_launched` (decision 16), None for a ticket never launched.
+    """
     fields = tickets.get(entry["id"], {})
     line = dict(entry)
     line["title"] = fields.get("title", "")
     line["demo"] = fields.get("demo")
+    known = view.tickets.get(entry["id"]) if view is not None else None
+    line["launch"] = launch_label(known.latest) if known is not None else None
     return line
 
 
@@ -878,9 +954,17 @@ def _waiting_on_fable(project, events, view, graph, fields, falls_back):
 
     if falls_back:
         return 0
+    from wayline import conductor  # the conductor imports this module; the rung ladder is resolved there
+
     policy = policy_for(project)
-    tiers = policy.get("difficulty") or {}
-    waiting = sum(1 for entry in frontier(graph) if (tiers.get(str(entry.get("difficulty"))) or {}).get("model") == FABLE)
+
+    def on_fable(difficulty):
+        try:
+            return conductor.tier_for(policy, difficulty).family == FABLE
+        except conductor.ConductorError:
+            return False
+
+    waiting = sum(1 for entry in frontier(graph) if on_fable(entry.get("difficulty")))
     failed = set()
     for event in events:
         payload = event.get("payload") or {}
@@ -892,17 +976,16 @@ def _waiting_on_fable(project, events, view, graph, fields, falls_back):
     for entry in _with_status(graph, "running"):
         known = view.tickets.get(entry["id"])
         attempt = known.latest if known is not None else None
-        if (attempt is not None and attempt.model == FABLE and attempt.owed == replay.RESULT
+        if (attempt is not None and family(attempt.model) == FABLE and attempt.owed == replay.RESULT
                 and (not attempt.sessions[-1].result.get("valid") or (entry["id"], attempt.number) in failed)):
             waiting += 1
-    verifiers = policy.get("verifier") or {}
     for entry in _with_status(graph, "done"):
         known, ticket = view.tickets.get(entry["id"]), fields.get(entry["id"])
         attempt = known.latest if known is not None else None
-        if attempt is None or ticket is None or (verifiers.get(attempt.model) or {}).get("model") != FABLE:
+        if attempt is None or ticket is None or not gates.verifies_on_fable(policy, attempt.model):
             continue
         asks = gates.ticket_asks(ticket, entry.get("difficulty"), attempt.model, relative_path(ticket),
-                                 commit=view.integrated.get(entry["id"]), outputs=ticket.get("outputs") or [])
+                                 commit=view.integrated.get(entry["id"]), outputs=ticket.get("outputs") or [], rung=attempt.rung)
         if any(ask.verdict_type not in view.passed(entry["id"]) for ask in asks):
             waiting += 1
     return waiting
@@ -996,6 +1079,8 @@ def _render_tickets(heading, entries):
     lines = ["%s (%d)" % (heading, len(entries))]
     for entry in entries:
         note = "  attempt %d" % entry["attempt"] if entry.get("attempt") else ""
+        if entry.get("launch"):
+            note += "  " + entry["launch"]  # `r5 opus high`, the rung the attempt ran on (decision 16)
         lines.append("  #%-3d %-10s d%d  %-14s %s%s" % (entry["id"], entry["kind"], entry["difficulty"], entry["role"], entry["title"], note))
     lines.append("")
     return lines

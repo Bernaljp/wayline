@@ -21,7 +21,7 @@ from unittest import mock
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests import machine
 from tests.projects import ProjectTestCase
-from wayline import conductor, project, resources, tickets, worker
+from wayline import conductor, gates, project, resources, tickets, worker
 from wayline.conductor import Conductor, ConductorError, WaveResult
 from wayline.ledger import Ledger
 from wayline.worker import Envelope, Patch
@@ -1040,25 +1040,55 @@ class ShellRunTest(ProjectTestCase):
 
 
 class TierTest(unittest.TestCase):
-    """The policy's difficulty table, which decides the model, the effort, and the budget."""
+    """The rung ladder (decision 16): a difficulty names a rung, which decides the model, the effort, and the budget."""
 
     def setUp(self):
         self.policy = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
 
-    def test_every_difficulty_resolves_to_the_table_of_decision_14(self):
-        expected = [("sonnet", "low", 40), ("sonnet", "medium", 40), ("opus", "high", 100), ("fable", "xhigh", 200), ("fable", "max", 200)]
-        for difficulty, (model, effort, turns) in enumerate(expected, start=1):
+    def test_every_difficulty_resolves_through_its_rung_to_the_ladder_of_decision_16(self):
+        expected = [(2, "sonnet", "low", 40), (3, "sonnet", "high", 40), (5, "opus", "high", 100), (6, "fable", "low", 200), (7, "fable", "high", 200)]
+        for difficulty, (rung, model, effort, turns) in enumerate(expected, start=1):
             with self.subTest(difficulty=difficulty):
                 tier = conductor.tier_for(self.policy, difficulty)
-                self.assertEqual((tier.model, tier.effort, tier.max_turns), (model, effort, turns))
+                self.assertEqual((tier.rung, tier.model, tier.effort, tier.max_turns, tier.family), (rung, model, effort, turns, model))
+                self.assertEqual(tier.label, "r%d %s %s" % (rung, model, effort))
+
+    def test_every_rung_of_the_shipped_ladder_resolves(self):
+        labels = [conductor.rung_tier(self.policy, rung).label for rung in range(1, 8)]
+        self.assertEqual(labels, ["r1 haiku medium", "r2 sonnet low", "r3 sonnet high", "r4 opus low", "r5 opus high",
+                                  "r6 fable low", "r7 fable high"])
+        self.assertEqual([conductor.rung_tier(self.policy, rung).max_turns for rung in (1, 4, 7)], [40, 100, 200])
+
+    def test_a_rung_on_a_full_version_name_keeps_the_name_and_takes_its_family(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["tiers"][4]["model"] = "claude-opus-4-8"
+        tier = conductor.tier_for(policy, 3)
+        self.assertEqual((tier.rung, tier.model, tier.family, tier.effort), (5, "claude-opus-4-8", "opus", "high"))
+        self.assertEqual(tier.context_chars, 200000, "the context pack is cut at the family's cap")
+        self.assertEqual(tier.label, "r5 claude-opus-4-8 high")
+        self.assertEqual(gates.verifier_tier(policy, tier.model), ("fable", "high"), "the verifier table is keyed by the family")
+
+    def test_a_fallback_tier_keeps_the_rung(self):
+        tier = conductor.fallback_tier(self.policy, conductor.tier_for(self.policy, 5))
+        self.assertEqual((tier.rung, tier.model, tier.family, tier.effort, tier.context_chars), (7, "opus", "opus", "high", 200000))
 
     def test_the_context_cap_follows_the_model(self):
         self.assertEqual(conductor.tier_for(self.policy, 1).context_chars, 120000)
         self.assertEqual(conductor.tier_for(self.policy, 5).context_chars, 300000)
 
     def test_a_model_outside_the_cap_table_takes_the_smallest_cap(self):
-        policy = dict(self.policy, difficulty=dict(self.policy["difficulty"], **{"1": {"model": "haiku", "effort": "low", "budget": "small"}}))
-        self.assertEqual(conductor.tier_for(policy, 1).context_chars, 120000)
+        self.assertEqual(conductor.rung_tier(self.policy, 1).context_chars, 120000, "the haiku rung")
+
+    def test_a_rung_the_ladder_does_not_have_is_refused(self):
+        with self.assertRaises(ConductorError) as caught:
+            conductor.rung_tier(self.policy, 8)
+        self.assertIn("1 to 7", str(caught.exception))
+
+    def test_the_old_difficulty_shape_names_upgrade(self):
+        policy = dict(self.policy, difficulty={"1": {"model": "sonnet", "effort": "low", "budget": "small"}})
+        with self.assertRaises(ConductorError) as caught:
+            conductor.tier_for(policy, 1)
+        self.assertIn("wayline upgrade", str(caught.exception))
 
     def test_the_ticket_budget_wins_over_the_tier(self):
         tier = conductor.tier_for(self.policy, 1, {"max_turns": 5, "max_minutes": 2})

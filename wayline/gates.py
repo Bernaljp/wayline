@@ -484,6 +484,7 @@ class Ask:
     author_model: str
     ticket: Optional[int] = None
     role: str = VERIFIER
+    rung: Optional[int] = None  # the rung the judged ticket attempt ran on (decision 16); None off a ticket
 
 
 @dataclass
@@ -506,16 +507,23 @@ class Verdict:
     ticket: Optional[int] = None
     fallback_from: Optional[str] = None
     proposals: list = field(default_factory=list)
+    rung: Optional[int] = None
 
     @property
     def payload(self):
-        """The `verdict` journal event's payload (Implementation Decisions 2); `fallback_from` only on a verdict taken by fallback."""
+        """The `verdict` journal event's payload (Implementation Decisions 2).
+
+        `rung` is the index of the rung the judged ticket attempt ran on (decision 16), absent on a verdict
+        about anything but a ticket; `fallback_from` only on a verdict taken by fallback.
+        """
         payload = {
             "subject_kind": self.subject_kind, "subject": self.subject,
             "verdict_type": self.verdict_type, "pass": self.passed,
             "session_id": self.session_id, "model": self.model,
             "findings": [dict(finding) for finding in self.findings],
         }
+        if self.rung is not None:
+            payload["rung"] = self.rung
         if self.fallback_from:
             payload["fallback_from"] = self.fallback_from
         return payload
@@ -524,6 +532,8 @@ class Verdict:
 def verifier_tier(policy, author_model):
     """The verifier's `(model, effort)` for an author on `author_model`, from `policy.verifier`.
 
+    The table is keyed by family, so an author on a full version name (`claude-opus-4-8`) reads its family's
+    row (decision 16). The verifier's effort is the table's, which the cap of decision 16 does not bind.
     The table is the default choice of a verifier, not the rule that makes a verdict one (decision 11):
     an entry naming the author's own model is taken as it stands, because what keeps a verdict from
     being the author's word is a fresh session carrying none of the author's context, and every verdict
@@ -531,7 +541,7 @@ def verifier_tier(policy, author_model):
     not know, are refused by name.
     """
     table = (policy or {}).get("verifier") or {}
-    entry = table.get(author_model)
+    entry = table.get(pacing.family(author_model) or author_model)
     if not isinstance(entry, dict) or not entry.get("model") or not entry.get("effort"):
         raise GateError("policy.verifier gives no model and effort for an author on %r; it names %s"
                         % (author_model, ", ".join(sorted(table)) or "nothing"))
@@ -704,7 +714,7 @@ def findings_text(findings, empty="no finding was named"):
 
 def verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
             verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None, ledger=None,
-            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None):
+            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None):
     """One Type-B verdict, journaled: every verdict in the harness comes through here.
 
     A verdict is journaled because its session id and its model are the whole of what makes it
@@ -714,7 +724,7 @@ def verdict(subject_kind, subject, question, paths, scope_limit, *, project, aut
     taken = take_verdict(subject_kind, subject, question, paths, scope_limit, project=project,
                          author_model=author_model, verdict_type=verdict_type, ticket=ticket,
                          harness_root=harness_root, policy=policy, cwd=cwd, memo=memo,
-                         run_dir=run_dir, role=role, fall_back=fall_back)
+                         run_dir=run_dir, role=role, fall_back=fall_back, rung=rung)
     ledger_for(ledger or Path(project).resolve()).append_event(
         VERDICT, taken.payload, ticket=taken.ticket, session_id=taken.session_id)
     return taken
@@ -729,12 +739,12 @@ def verdict_for(ask, **context):
     """
     return verdict(ask.subject_kind, ask.subject, ask.question, ask.paths, ask.scope_limit,
                    author_model=ask.author_model, verdict_type=ask.verdict_type,
-                   ticket=ask.ticket, role=ask.role, **context)
+                   ticket=ask.ticket, role=ask.role, rung=ask.rung, **context)
 
 
 def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
                  verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None,
-                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None):
+                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None):
     """One verifier session, validated but not journaled; `verdict` is this plus the journal.
 
     `role` names the judging role, the verifier unless a decision names another; whichever it
@@ -808,7 +818,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         passed=bool(returned["pass"]), question_limit=returned["question_limit"],
         findings=list(returned.get("findings") or []),
         session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
-        proposals=list(returned.get("proposals") or []),
+        proposals=list(returned.get("proposals") or []), rung=rung,
     )
 
 
@@ -857,8 +867,11 @@ def _unusable(envelope):
 # --- what a done ticket earns (decision 11, "what gets a verdict") -----------------------------
 
 
-def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=()):
+def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None):
     """The verdicts one done ticket earns: its own quality criteria, and an independent read.
+
+    `rung` is the rung the attempt that wrote the work ran on, carried into each verdict's journal event
+    (decision 16); the read a ticket earns stays keyed to its difficulty level, not its rung.
 
     Decision 11 lists the two separately, so a difficulty-4 ticket with quality criteria earns
     both: the criteria it set itself, and a read of the result by someone who did not write it.
@@ -882,7 +895,7 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
                         "in the project is a minor finding at most, never a fail."
                         % ("one criterion" if len(criteria) == 1 else "%d criteria" % len(criteria),
                            identifier),
-            verdict_type=QUALITY, author_model=author_model, ticket=identifier,
+            verdict_type=QUALITY, author_model=author_model, ticket=identifier, rung=rung,
         ))
     read = DIFFICULTY_VERDICTS.get(difficulty)
     if read == DIFF:
@@ -894,7 +907,7 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
             scope_limit="Read the diff itself with `git show %s`, not the files as they now stand, "
                         "and judge only what that diff changed, against the ticket."
                         % (commit or "HEAD"),
-            verdict_type=DIFF, author_model=author_model, ticket=identifier,
+            verdict_type=DIFF, author_model=author_model, ticket=identifier, rung=rung,
         ))
     elif read == RESULT:
         asks.append(Ask(
@@ -905,12 +918,12 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
             scope_limit="The ticket's `## Result` section and the artifacts it wrote, at the paths "
                         "listed. A claim the artifacts do not carry is a finding at the path where "
                         "you looked for it.",
-            verdict_type=RESULT, author_model=author_model, ticket=identifier,
+            verdict_type=RESULT, author_model=author_model, ticket=identifier, rung=rung,
         ))
     return asks
 
 
-def owed_asks(ticket, difficulty, author_model, commit, passed):
+def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None):
     """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
 
     `passed` is the verdict types the journal holds as passed since the ticket was last done
@@ -919,7 +932,7 @@ def owed_asks(ticket, difficulty, author_model, commit, passed):
     and the tick both read it here, so what the tick relaunches a conductor for is what that conductor then does.
     """
     earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
-                         outputs=ticket.get("outputs") or [])
+                         outputs=ticket.get("outputs") or [], rung=rung)
     passed = set(passed or ())
     return earned, [ask for ask in earned if ask.verdict_type not in passed]
 
