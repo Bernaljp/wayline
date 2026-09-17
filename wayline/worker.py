@@ -65,6 +65,9 @@ __all__ = [
 _log = logging.getLogger("wayline.worker")
 
 TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
+# Linux refuses one argument over 128 KiB (MAX_ARG_STRLEN) with E2BIG; a prompt longer than this goes on stdin,
+# which `claude -p` reads when no prompt argument is given (ticket 36: a specify redraft of 144 KB was refused).
+PROMPT_ARG_MAX = 100_000
 USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence")  # decision 5; research-notes/02 launch 4
 USAGE_TIMEOUT_S = 60
 AUTH_STATUS_ARGV = ("auth", "status", "--json")  # decision 7, the tick's login check; research-notes/02: exit 0 when logged in
@@ -1069,7 +1072,7 @@ def _check_paths(request):
     return cwd
 
 
-def _write_session(run_dir, request, prompt_text, executable, command, session_id):
+def _write_session(run_dir, request, prompt_text, executable, command, session_id, stdin="/dev/null"):
     """Write the request beside where the stream will go: prompt, agent, settings, schema, env.
 
     A previous run's `result.json` and `pid` are removed first, so a relaunch into a used
@@ -1093,7 +1096,7 @@ def _write_session(run_dir, request, prompt_text, executable, command, session_i
     record = {
         "executable": executable,
         "command": command,
-        "stdin": "/dev/null",
+        "stdin": stdin,
         "cwd": str(request.cwd),
         "env": {key: str(value) for key, value in request.env.items()},
         "resume_of": session_id,
@@ -1519,7 +1522,13 @@ class ClaudeCli:
         executable = self._executable()
         cwd = _check_paths(request)
         argv = build_argv(request, run_dir, session_id, message)
-        _write_session(run_dir, request, argv[2], executable, spelled_argv(argv, run_dir), session_id)
+        spelled, on_stdin = spelled_argv(argv, run_dir), len(argv[2].encode("utf-8")) > PROMPT_ARG_MAX
+        prompt_path = run_dir / "prompt.md"
+        if on_stdin:
+            del spelled[2]
+            argv = argv[:2] + argv[3:]
+        _write_session(run_dir, request, message if session_id is not None else request.prompt, executable, spelled, session_id,
+                       stdin=str(prompt_path) if on_stdin else "/dev/null")
         child_env = dict(os.environ)
         child_env.update({key: str(value) for key, value in request.env.items()})
         child_env.pop("CLAUDE_CODE_RETRY_WATCHDOG", None)  # workers fail fast; the conductor owns the wait
@@ -1527,13 +1536,14 @@ class ClaudeCli:
         stderr_path = run_dir / "stderr.txt"
         errors = []
         injected = _simulated_event(request) if session_id is None else None
-        with open(stream_path, "wb") as stream, open(stderr_path, "wb") as stderr:
+        with open(stream_path, "wb") as stream, open(stderr_path, "wb") as stderr, \
+                open(prompt_path if on_stdin else os.devnull, "rb") as stdin:
             if injected is not None:  # ahead of everything the session writes, which follows it in the file
                 stream.write((json.dumps(_rate_limit_message(injected)) + "\n").encode("utf-8"))
                 stream.flush()
             try:
                 process = subprocess.Popen(
-                    [executable] + argv[1:], stdin=subprocess.DEVNULL, stdout=stream, stderr=stderr,
+                    [executable] + argv[1:], stdin=stdin, stdout=stream, stderr=stderr,
                     cwd=str(cwd), env=child_env,
                 )
             except OSError as exc:

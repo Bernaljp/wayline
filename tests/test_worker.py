@@ -540,6 +540,22 @@ class ClaudeCliTest(StandInMixin, unittest.TestCase):
         self.assertEqual(envelope.session_id, "83508b6e-7d57-40cc-9243-83174fde6613")
         self.assertEqual(envelope.last_windows(), (0.15, 0.21))
 
+    def test_a_prompt_too_long_for_one_argument_goes_on_stdin(self):
+        # Linux refuses one argument over 128 KiB (E2BIG), as a live specify redraft of 144 KB was refused (ticket 36).
+        prompt = "x" * (worker.PROMPT_ARG_MAX + 1)
+        request = self.request(prompt=prompt)
+        envelope = worker.launch(request)
+        record = self.recorded()
+        self.assertEqual(record["argv"][0], "-p")
+        self.assertNotIn(prompt, record["argv"])
+        self.assertEqual(record["argv"][1:], worker.build_argv(request, self.run)[3:])
+        self.assertEqual(record["stdin"], str(self.run / "prompt.md"))
+        recorded_env = json.loads((self.run / "env.json").read_text(encoding="utf-8"))
+        self.assertEqual(recorded_env["stdin"], str(self.run / "prompt.md"))
+        self.assertEqual(recorded_env["command"][:2], ["claude", "-p"])
+        self.assertNotIn("$(cat %s)" % (self.run / "prompt.md"), recorded_env["command"])
+        self.assertTrue(envelope.valid)
+
     def test_settings_path_is_copied_into_the_session(self):
         source = self.root / "worker-settings.json"
         source.write_text('{"permissions": {"deny": ["Bash(git push *)"]}}', encoding="utf-8")
