@@ -512,12 +512,12 @@ class ReviewFindingsTest(SpecifyCase):
 class ConfirmationWordsTest(unittest.TestCase):
     def test_which_answers_confirm(self):
         for text in ("confirm", "Confirm the spec", "yes, go ahead", "OK", "approved.", "lgtm", "I confirm", "Looks good"):
-            self.assertTrue(specify._confirms(text), text)
+            self.assertTrue(specify.confirms(text), text)
         for text in ("revise: add a claim", "no", "not yet, confirm E2 first", "", None, "ok, but drop C3",
                      "yes after removing E2"):
-            self.assertFalse(specify._confirms(text), text)
-        self.assertEqual(specify._what_to_change("revise: add a claim"), "add a claim")
-        self.assertEqual(specify._what_to_change("drop E3"), "drop E3")
+            self.assertFalse(specify.confirms(text), text)
+        self.assertEqual(specify.what_to_change("revise: add a claim"), "add a claim")
+        self.assertEqual(specify.what_to_change("drop E3"), "drop E3")
 
 
 if __name__ == "__main__":

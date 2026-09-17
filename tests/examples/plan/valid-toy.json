@@ -1,0 +1,64 @@
+{
+  "tickets": [
+    {
+      "key": "T1",
+      "title": "Add the pairwise product features to the toy package",
+      "kind": "code",
+      "difficulty": 2,
+      "blocked_by": [],
+      "touches": ["toy/features.py"],
+      "resources": null,
+      "inputs": ["toy/make_synthetic.py"],
+      "outputs": ["toy/features.py"],
+      "acceptance": {"machine": ["test -f toy/features.py", "python3 -m py_compile toy/features.py"], "quality": []},
+      "goal_metric": null,
+      "context_pack": ["research/SPEC.md#methods", "toy/make_synthetic.py"],
+      "origin": "research/SPEC.md#methods",
+      "demo": "`python3 -c 'import toy.features'` imports, and `products(frame)` returns the 28 pairwise columns.",
+      "notes": "Keep the column order stable: x0*x1, x0*x2, ... as the spec's method describes.",
+      "adds_public_api": true,
+      "tags": {"data_types": ["tabular"], "libraries": ["scikit-learn"], "venues": []},
+      "retry": null
+    },
+    {
+      "key": "T2",
+      "title": "Document the product features",
+      "kind": "docs",
+      "difficulty": 1,
+      "blocked_by": ["T1"],
+      "touches": ["docs/features.md"],
+      "acceptance": {"machine": ["test -f docs/features.md", "grep -q products docs/features.md"]},
+      "context_pack": ["toy/features.py"],
+      "origin": "research/SPEC.md#methods",
+      "demo": "`docs/features.md` explains `products` and its column order."
+    },
+    {
+      "key": "T3",
+      "title": "Run E1: products against the raw features over ten seeds",
+      "kind": "experiment",
+      "difficulty": 3,
+      "blocked_by": ["T1", "#4"],
+      "touches": ["experiments/e1/", "results/e1/"],
+      "resources": {"gpu": 0, "cpu": 4, "ram_gb": 8, "wallclock_minutes": 30},
+      "acceptance": {"machine": ["test -f results/e1/summary.json"], "quality": ["Are the ten comparisons paired within a seed?"]},
+      "goal_metric": {"reports": "auroc", "expected_direction": "up"},
+      "context_pack": ["research/SPEC.md#e1-claims-c1", "toy/features.py"],
+      "origin": "research/SPEC.md#e1-claims-c1",
+      "demo": "`results/e1/summary.json` holds ten paired AUROC differences and their mean.",
+      "retry": {"host_oom": ["--rows=10000"], "gpu_oom": []}
+    }
+  ],
+  "decisions": [
+    {
+      "question": "Which grid does the small network's cross-validation search?",
+      "options": ["hidden sizes 8, 16, 32 with one learning rate", "hidden sizes 8 to 64 and three learning rates"],
+      "recommended": "hidden sizes 8, 16, 32 with one learning rate",
+      "evidence": ["research/SPEC.md#risks: the grid overrunning the 4-hour budget is the first risk"],
+      "blocking": "subgraph",
+      "human_only": false,
+      "pauses": ["T3"],
+      "origin": "research/SPEC.md#risks"
+    }
+  ],
+  "notes": ["No role covers a figure ticket, so the figure of E1's gains is left to the report."]
+}

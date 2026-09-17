@@ -356,8 +356,19 @@ def records_text(project, max_chars=None):
         ("the L0 and L1 records (research/refs/<slug>/dossier.json)", "\n".join(_dossier_lines(ledger)), None),
         ("research/kb/query_pack.md", _read(ledger, "kb/query_pack.md"), "[wayline: there is no query pack; no reference was absorbed]"),
     ]
+    return inline_records(entries, max_chars, "Read them in this order; what DECISIONS.md settles binds the answer.")
+
+
+def inline_records(entries, max_chars=None, lead=None, heading="# The records"):
+    """`entries` inlined in order under `heading`, cut at the context cap with every cut announced.
+
+    Each entry is `(heading, text, absent)`: the text is fenced under its heading, or `absent` stands
+    in for one that is missing. The cap keeps `PROMPT_ROOM` under `max_chars` for what is not a record,
+    and never goes under `RECORDS_MIN`. Returns `(text, cut)`. The planner's plan prompt inlines its
+    own records (the spec, the goal, the query pack) through this, so the two prompts cut alike.
+    """
     cap = None if max_chars is None else max(RECORDS_MIN, int(max_chars) - PROMPT_ROOM)
-    rendered, used, cut = ["# The records", "", "Read them in this order; what DECISIONS.md settles binds the answer."], 0, False
+    rendered, used, cut = [heading, ""] + ([lead] if lead else []), 0, False
     for heading, text, absent in entries:
         rendered.extend(["", "## %s" % heading, ""])
         if text is None or not text.strip():

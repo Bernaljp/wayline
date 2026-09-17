@@ -1,0 +1,17 @@
+{
+  "tickets": [
+    {
+      "title": "A ticket without a key",
+      "kind": "code",
+      "difficulty": 2,
+      "blocked_by": [],
+      "touches": ["src/"],
+      "acceptance": {"machine": ["test -f src/x.py"]},
+      "context_pack": ["research/SPEC.md"],
+      "origin": "research/SPEC.md#methods",
+      "demo": "x.py exists"
+    }
+  ],
+  "decisions": [],
+  "notes": []
+}

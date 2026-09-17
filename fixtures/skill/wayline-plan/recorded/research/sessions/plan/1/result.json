@@ -1,0 +1,689 @@
+{
+  "duration_api_ms": 2565370,
+  "stop_reason": "tool_use",
+  "session_id": "05fd7af7-5e70-4ca2-80f4-d68cbdb74182",
+  "total_cost_usd": 13.20525875,
+  "usage": {
+    "input_tokens": 136,
+    "cache_creation_input_tokens": 90536,
+    "cache_read_input_tokens": 217227,
+    "output_tokens": 226664,
+    "output_tokens_details": {
+      "thinking_tokens": 175155
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 90536,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 32,
+        "output_tokens": 9979,
+        "cache_read_input_tokens": 42523,
+        "cache_creation_input_tokens": 22848,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 22848
+        },
+        "type": "message",
+        "model": null
+      }
+    ],
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 5582,
+      "outputTokens": 18,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.005672,
+      "contextWindow": 200000,
+      "maxOutputTokens": 32000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-haiku-4-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-fable-5-1": {
+      "inputTokens": 136,
+      "outputTokens": 226664,
+      "cacheReadInputTokens": 217227,
+      "cacheCreationInputTokens": 90536,
+      "webSearchRequests": 0,
+      "costUSD": 13.19958675,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000,
+      "thinkingTokens": 175155,
+      "canonicalModel": "claude-fable-5-1",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required",
+  "subagent_stats": {
+    "spawned": 0,
+    "requested": {
+      "background": 0,
+      "foreground": 0,
+      "unset": 0
+    },
+    "started_in_background": 0,
+    "max_depth": 0,
+    "spawned_by_subagents": 0,
+    "completed": 0,
+    "failed": 0,
+    "killed": {
+      "parent": 0,
+      "user": 0,
+      "system": 0
+    },
+    "refused": {
+      "depth_limit": 0,
+      "concurrency_limit": 0,
+      "budget": 0
+    },
+    "by_type": {}
+  },
+  "is_error": false,
+  "num_turns": 24,
+  "subtype": "success",
+  "api_error_status": null,
+  "result": "{\"tickets\":[{\"key\":\"T1\",\"title\":\"Project venv with scikit-learn (toy/venv.sh)\",\"kind\":\"code\",\"difficulty\":1,\"blocked_by\":[],\"touches\":[\"toy/venv.sh\",\"requirements.txt\",\".gitignore\"],\"acceptance\":{\"machine\":[\"bash toy/venv.sh && .venv/bin/python -c 'import sklearn, numpy'\",\"grep -q '^scikit-learn' requirements.txt\",\"grep -q '^\\\\.venv/' .gitignore && grep -q '^data/' .gitignore && grep -q '^predictions/' .gitignore\"]},\"context_pack\":[\"research/CONTEXT.md#language\",\"research/DECISIONS.md#q3-scikit-learn-is-not-installed-what-fits-the-models\",\"research/SPEC.md#methods\"],\"origin\":\"research/SPEC.md#methods\",\"demo\":\"From a clean checkout, `bash toy/venv.sh` creates .venv/ at the project root and `.venv/bin/python -c 'import sklearn'` prints nothing and exits 0; a second run is a no-op.\",\"notes\":\"Q3: the project venv, never the tools venv. toy/venv.sh resolves the project root from its own location, runs `python3 -m venv .venv` only if .venv/ is missing, then `pip install -r requirements.txt` (scikit-learn pinned to one version, numpy). Add .venv/, data/, predictions/ to .gitignore so no ticket commits a venv, a set, or scores. CPU only; no GPU packages.\",\"adds_public_api\":true,\"tags\":{\"libraries\":[\"scikit-learn\",\"numpy\"],\"data_types\":[\"tabular\"],\"venues\":[]}},{\"key\":\"T2\",\"title\":\"auroc_gain metric script (toy/paired_gain.py) with a unit test\",\"kind\":\"code\",\"difficulty\":2,\"blocked_by\":[],\"touches\":[\"toy/paired_gain.py\",\"toy/test_paired_gain.py\"],\"acceptance\":{\"machine\":[\"python3 toy/paired_gain.py --help\",\"python3 toy/test_paired_gain.py\"]},\"context_pack\":[\"toy/eval.py\",\"research/SPEC.md#metrics\",\"research/SPEC.md#seams\",\"research/CONTEXT.md#language\",\"research/DECISIONS.md#q9-what-counts-as-the-products-gain-being-real\"],\"origin\":\"research/SPEC.md#metrics\",\"demo\":\"`python3 toy/paired_gain.py predictions/default --model lr-products --against lr-raw` prints one `seed k: model=\u2026 against=\u2026 gain=\u2026` line per seed, then `auroc_gain: <mean>`, `auroc_gain_sd: <sd>`, `auroc_gain_ci95: <lo> <hi>`, `n_seeds: 10`; the unit test passes on a tiny fixture it writes itself.\",\"notes\":\"Stdlib only (the spec runs it as `python3 toy/paired_gain.py {artifact}`); import auroc from toy/eval.py rather than re-implementing it. Usage: `paired_gain.py <predictions_dir> [--model lr-products] [--against lr-raw] [--seeds 0-9]`; the artifact is the directory, files are `<model>-<seed>.csv` with `label,score` rows (the scores seam). gain = auroc(model) - auroc(against) per seed; mean, sample sd (ddof=1), and a 95% t-interval (t=2.262 for n=10; a small table, no scipy). Exit nonzero naming the first missing seed file. The test builds two synthetic prediction sets with known AUROCs and checks the mean and sd to 4 decimals.\",\"adds_public_api\":true,\"tags\":{\"libraries\":[],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T3\",\"title\":\"Generate the twenty sets (toy/make_sets.py: D1 default, D2 null)\",\"kind\":\"code\",\"difficulty\":1,\"blocked_by\":[\"T1\"],\"touches\":[\"toy/make_sets.py\"],\"acceptance\":{\"machine\":[\"python3 toy/make_sets.py --set default --seeds 0-1 && test -f data/default/seed-0.csv && test $(wc -l < data/default/seed-1.csv) -eq 20001\",\"python3 toy/make_sets.py --set null --seeds 0 && test -f data/null/seed-0.csv && test $(grep -c '^split_b,' data/null/seed-0.csv) -eq 5000\"]},\"context_pack\":[\"toy/make_synthetic.py\",\"research/SPEC.md#data\",\"research/SPEC.md#seams\"],\"origin\":\"research/SPEC.md#data\",\"demo\":\"`python3 toy/make_sets.py --set default` writes data/default/seed-0.csv \u2026 seed-9.csv (signal 1.0, interaction 0.6); `--set null` writes data/null/seed-0..9.csv at interaction 0; each has 20001 lines, split_b its last 5000 rows; rerunning skips files that exist.\",\"notes\":\"Stdlib only; call make_synthetic.make(seed, interaction=\u2026) directly, never change make_synthetic.py. `--set default|null`, `--seeds 0-9` (default all ten). D2 is the same generator at interaction 0 (Q7 as the confirmed spec states it). Byte-identical output on rerun; skip an existing file. Do not commit data/ (ignored by T1).\",\"adds_public_api\":true,\"tags\":{\"libraries\":[],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T4\",\"title\":\"Logistic regression fits: raw, all 28 products, planted oracle (toy/fit_lr.py)\",\"kind\":\"code\",\"difficulty\":3,\"blocked_by\":[\"T1\",\"T3\"],\"touches\":[\"toy/fit_lr.py\",\"toy/features.py\",\"toy/test_features.py\"],\"acceptance\":{\"machine\":[\"bash toy/venv.sh && python3 toy/make_sets.py --set default --seeds 0 && .venv/bin/python toy/fit_lr.py --model products --set default --seed 0 && test $(wc -l < predictions/default/lr-products-0.csv) -eq 5001 && python3 toy/eval.py predictions/default/lr-products-0.csv\",\"bash toy/venv.sh && .venv/bin/python toy/fit_lr.py --model products --set default --seed 0 --describe | grep -q 'n_features: 36'\",\"bash toy/venv.sh && .venv/bin/python toy/fit_lr.py --model planted --set default --seed 0 --describe | grep -q 'n_features: 9'\",\"bash toy/venv.sh && .venv/bin/python toy/test_features.py\"]},\"context_pack\":[\"toy/eval.py:1-4\",\"toy/make_synthetic.py:13-30\",\"research/CONTEXT.md#language\",\"research/SPEC.md#methods\",\"research/SPEC.md#baselines\",\"research/SPEC.md#seams\",\"research/DECISIONS.md#q4-which-interaction-terms-does-the-with-products-model-get\"],\"origin\":\"research/SPEC.md#methods\",\"demo\":\"`.venv/bin/python toy/fit_lr.py --model products --set default --seed 0` fits on split_a and writes predictions/default/lr-products-0.csv with a `label,score` row per split_b row in file order; `--describe` prints `n_features: 36`, `train_rows: 15000`, `model: lr-products`.\",\"notes\":\"scikit-learn LogisticRegression with library defaults (the spec's method), no scaling. `--model raw|products|planted` -> files lr-raw, lr-products, lr-planted (B1, the method, B3). toy/features.py: raw = x0..x7; products = raw + the 28 x_i*x_j for i<j (no squares); planted = raw + x2*x3. Train on rows with split == split_a only; score = predict_proba[:,1] on split_b rows, kept in file order. Deterministic (lbfgs); if a ConvergenceWarning appears, report it in the result rather than silently changing max_iter. test_features.py checks the column counts (8, 36, 9) and that x2*x3 appears once. Never read a coefficient as a discovery (A2).\",\"adds_public_api\":true,\"tags\":{\"libraries\":[\"scikit-learn\",\"numpy\"],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T5\",\"title\":\"Small network baseline with 5-fold CV inside split_a (toy/fit_mlp.py)\",\"kind\":\"code\",\"difficulty\":3,\"blocked_by\":[\"T1\",\"T3\"],\"touches\":[\"toy/fit_mlp.py\"],\"acceptance\":{\"machine\":[\"bash toy/venv.sh && python3 toy/make_sets.py --set default --seeds 0 && .venv/bin/python toy/fit_mlp.py --set default --seed 0 --grid small && test $(wc -l < predictions/default/mlp-raw-0.csv) -eq 5001 && python3 toy/eval.py predictions/default/mlp-raw-0.csv\",\"bash toy/venv.sh && .venv/bin/python toy/fit_mlp.py --set default --seed 0 --grid full --describe | grep -q 'cv_folds: 5'\",\"bash toy/venv.sh && .venv/bin/python toy/fit_mlp.py --set default --seed 0 --grid full --describe | grep -q 'tuned_on: split_a'\"],\"quality\":[\"Does the network tune only inside split_a (5-fold CV, the same grid for every seed), score split_b once with the chosen setting, and does the full grid on seed 0 fit inside 18 minutes on 8 cores so ten seeds fit E2's 3 hours?\"]},\"context_pack\":[\"research/SPEC.md#methods\",\"research/SPEC.md#e2-claims-c2\",\"research/SPEC.md#risks\",\"research/DECISIONS.md#q10-how-are-regularization-and-network-settings-tuned-without-touching-split_b\",\"research/refs/paper-b/dossier.json\",\"toy/fit_lr.py\"],\"origin\":\"research/SPEC.md#methods\",\"demo\":\"`.venv/bin/python toy/fit_mlp.py --set default --seed 0 --grid full` runs GridSearchCV (cv=5, scoring roc_auc) over MLPClassifier settings on split_a, refits the best on all of split_a, writes predictions/default/mlp-raw-0.csv, and prints the chosen setting and the wall-clock time; `--describe` prints the grid, `cv_folds: 5`, `tuned_on: split_a`.\",\"notes\":\"B2 (Q2, Q8 as the confirmed spec states it): MLPClassifier on the raw 8 features, no products. Same code path as fit_lr.py for reading a set and writing scores (import from toy/features.py; do not edit it). Grid `full`: hidden_layer_sizes {(16,),(32,),(32,16),(64,32)} x alpha {1e-4,1e-3,1e-2}, early_stopping=True, max_iter=300, random_state=0; `small`: (16,) x {1e-3} for smoke tests. Use n_jobs=8 in GridSearchCV. Time the full grid on seed 0 and, per the spec's risk mitigation, trim `full` until one seed fits 18 minutes; record the timing and the final grid in the module docstring. The grid is fixed in code so every seed uses the same one.\",\"adds_public_api\":true,\"tags\":{\"libraries\":[\"scikit-learn\",\"numpy\"],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T6\",\"title\":\"E1: with vs without products on D1, seeds 0-9\",\"kind\":\"experiment\",\"difficulty\":3,\"blocked_by\":[\"T2\",\"T3\",\"T4\"],\"touches\":[\"data/default/\",\"predictions/default/\",\"results/e1/\"],\"resources\":{\"cpu\":2,\"gpu\":0,\"ram_gb\":4,\"wallclock_minutes\":20},\"retry\":null,\"acceptance\":{\"machine\":[\"test $(ls predictions/default/lr-products-*.csv | wc -l) -eq 10 && test $(ls predictions/default/lr-raw-*.csv | wc -l) -eq 10 && test $(ls predictions/default/lr-planted-*.csv | wc -l) -eq 10\",\"grep -q '^auroc_gain: ' results/e1/paired_gain.txt && grep -q '^n_seeds: 10' results/e1/paired_gain.txt\",\"grep -q '^auroc_gain: ' results/e1/oracle_gain.txt\"]},\"goal_metric\":{\"reports\":\"auroc_gain\",\"expected_direction\":\"up\"},\"context_pack\":[\"research/SPEC.md#e1-claims-c1\",\"research/SPEC.md#seams\",\"research/CONTEXT.md#language\",\"toy/make_sets.py\",\"toy/fit_lr.py\",\"toy/paired_gain.py\"],\"origin\":\"research/SPEC.md#e1-claims-c1\",\"demo\":\"One job: `bash toy/venv.sh; python3 toy/make_sets.py --set default; for k in 0..9: .venv/bin/python toy/fit_lr.py --set default --seed $k --model raw|products|planted`; then `python3 toy/paired_gain.py predictions/default --model lr-products --against lr-raw > results/e1/paired_gain.txt` and the same with `--model lr-planted > results/e1/oracle_gain.txt`; the first file ends with the mean gain over ten seeds and its sd.\",\"notes\":\"C1's test. Manifest results/e1/paired_gain.txt, results/e1/oracle_gain.txt, and every predictions/default/lr-*.csv. The oracle line (B3, x2*x3 alone) bounds what a product can add; it is a reference, not a criterion. Success per the spec: mean paired auroc_gain >= 0.02.\",\"tags\":{\"libraries\":[\"scikit-learn\"],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T7\",\"title\":\"E2: network baseline vs with-products regression on D1, seeds 0-9\",\"kind\":\"experiment\",\"difficulty\":3,\"blocked_by\":[\"T2\",\"T5\",\"T6\"],\"touches\":[\"data/default/\",\"predictions/default/\",\"results/e2/\"],\"resources\":{\"cpu\":8,\"gpu\":0,\"ram_gb\":16,\"wallclock_minutes\":180},\"retry\":{\"gpu_oom\":[],\"host_oom\":[\"--grid=small\"]},\"acceptance\":{\"machine\":[\"test $(ls predictions/default/mlp-raw-*.csv | wc -l) -eq 10\",\"grep -q '^auroc_gain: ' results/e2/paired_gain.txt && grep -q '^n_seeds: 10' results/e2/paired_gain.txt\",\"grep -q '^auroc_gain: ' results/e2/mlp_over_raw.txt\"]},\"goal_metric\":null,\"context_pack\":[\"research/SPEC.md#e2-claims-c2\",\"research/SPEC.md#risks\",\"research/SPEC.md#seams\",\"toy/fit_mlp.py\",\"toy/paired_gain.py\",\"results/e1/paired_gain.txt\"],\"origin\":\"research/SPEC.md#e2-claims-c2\",\"demo\":\"One job per seed (or one sequential job): `.venv/bin/python toy/fit_mlp.py --set default --seed $k --grid full`; then `python3 toy/paired_gain.py predictions/default --model lr-products --against mlp-raw > results/e2/paired_gain.txt` and `--model mlp-raw --against lr-raw > results/e2/mlp_over_raw.txt`; the first ends with the mean paired margin of the with-products regression over the network.\",\"notes\":\"C2's test; the same ten sets as E1 and E1's lr-products scores (deterministic: refit with toy/fit_lr.py if a file is missing). Ten seeds at the grid T5 fixed; stay inside 3 hours (spec budget). Manifest both result files and predictions/default/mlp-raw-*.csv. Success per the spec: mean paired margin above zero.\",\"tags\":{\"libraries\":[\"scikit-learn\"],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T8\",\"title\":\"E3: null control, interaction 0, seeds 0-9\",\"kind\":\"experiment\",\"difficulty\":3,\"blocked_by\":[\"T2\",\"T3\",\"T4\"],\"touches\":[\"data/null/\",\"predictions/null/\",\"results/e3/\"],\"resources\":{\"cpu\":2,\"gpu\":0,\"ram_gb\":4,\"wallclock_minutes\":20},\"retry\":null,\"acceptance\":{\"machine\":[\"test $(ls predictions/null/lr-products-*.csv | wc -l) -eq 10 && test $(ls predictions/null/lr-raw-*.csv | wc -l) -eq 10\",\"grep -q '^auroc_gain: ' results/e3/paired_gain.txt && grep -q '^n_seeds: 10' results/e3/paired_gain.txt\"]},\"goal_metric\":null,\"context_pack\":[\"research/SPEC.md#e3-claims-c3\",\"research/SPEC.md#anti-claims\",\"research/SPEC.md#seams\",\"toy/make_sets.py\",\"toy/fit_lr.py\",\"toy/paired_gain.py\"],\"origin\":\"research/SPEC.md#e3-claims-c3\",\"demo\":\"One job: `python3 toy/make_sets.py --set null`; fit lr-raw and lr-products for seeds 0-9 with `--set null`; `python3 toy/paired_gain.py predictions/null --model lr-products --against lr-raw > results/e3/paired_gain.txt`, whose mean gain should sit inside \u00b10.005.\",\"notes\":\"C3's test and the refutation check for A1/A2: on D2 nothing was planted, so the products should change AUROC by less than 0.005 in absolute value. Runs in parallel with E1. Manifest results/e3/paired_gain.txt and predictions/null/lr-*.csv.\",\"tags\":{\"libraries\":[\"scikit-learn\"],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T9\",\"title\":\"Analysis of E1 and E3: C1, C3, and A2's withdrawal rule\",\"kind\":\"analysis\",\"difficulty\":4,\"blocked_by\":[\"T6\",\"T8\"],\"touches\":[\"analysis/e1-e3/\"],\"resources\":{\"cpu\":1,\"gpu\":0,\"ram_gb\":2,\"wallclock_minutes\":30},\"acceptance\":{\"machine\":[\"test -f analysis/e1-e3/per_seed.csv && test $(tail -n +2 analysis/e1-e3/per_seed.csv | wc -l) -eq 20\",\"grep -q 'C1' analysis/e1-e3/verdict.md && grep -q 'C3' analysis/e1-e3/verdict.md && grep -Eq '^verdict_c1: (holds|withdrawn|fails)' analysis/e1-e3/verdict.md\"],\"quality\":[\"Does the verdict apply the spec's rules exactly (C1 holds iff E1's mean paired gain >= 0.02, under the Q9 answer; C3 holds iff |E3's mean| < 0.005, else C1 withdrawn per A2), cite every number to a manifested artifact, and read no coefficient as a discovery?\"]},\"context_pack\":[\"research/SPEC.md#success-criteria\",\"research/SPEC.md#anti-claims\",\"research/SPEC.md#e1-claims-c1\",\"research/SPEC.md#e3-claims-c3\",\"research/CONTEXT.md#language\",\"results/e1/paired_gain.txt\",\"results/e1/oracle_gain.txt\",\"results/e3/paired_gain.txt\",\"research/DECISIONS.md#q9-what-counts-as-the-products-gain-being-real\"],\"origin\":\"research/SPEC.md#success-criteria\",\"demo\":\"analysis/e1-e3/per_seed.csv holds one row per (set, seed) with auroc_raw, auroc_products, auroc_planted (default only), gain; verdict.md states the E1 mean, sd, 95% interval, the E3 mean, the oracle bound, and one line each `verdict_c1:` and `verdict_c3:`; the findings filed cite results/e1 and results/e3.\",\"notes\":\"File one finding per claim (C1, C3) and one for the anti-claims A1/A2. Apply the Q9 answer to C1 (the decision ticket that pauses this one). Report the oracle gain as the bound the 28 products approach, nothing more (Q4; which product matters is out of scope).\",\"tags\":{\"libraries\":[],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T10\",\"title\":\"Analysis of E2: C2, the network against explicit products\",\"kind\":\"analysis\",\"difficulty\":3,\"blocked_by\":[\"T7\"],\"touches\":[\"analysis/e2/\"],\"resources\":{\"cpu\":1,\"gpu\":0,\"ram_gb\":2,\"wallclock_minutes\":30},\"acceptance\":{\"machine\":[\"test -f analysis/e2/per_seed.csv && test $(tail -n +2 analysis/e2/per_seed.csv | wc -l) -eq 10\",\"grep -Eq '^verdict_c2: (holds|fails)' analysis/e2/verdict.md\"],\"quality\":[\"Does the verdict rest on the paired margin of lr-products over mlp-raw within each seed (mean above zero per the spec), report how much of the products' gain the network recovers, and cite every number to a manifested artifact?\"]},\"context_pack\":[\"research/SPEC.md#e2-claims-c2\",\"research/SPEC.md#claims\",\"research/CONTEXT.md#language\",\"results/e2/paired_gain.txt\",\"results/e2/mlp_over_raw.txt\",\"results/e1/paired_gain.txt\",\"research/refs/paper-b/dossier.json\"],\"origin\":\"research/SPEC.md#e2-claims-c2\",\"demo\":\"analysis/e2/per_seed.csv holds one row per seed with auroc_products, auroc_mlp, auroc_raw, margin; verdict.md states the mean paired margin, its sd and interval, the fraction of E1's gain the network recovers, the chosen grid settings per seed, and `verdict_c2:`.\",\"notes\":\"File one finding for C2. paper-b is the competing explanation; say what this size of network did and did not recover, and no more than the ten seeds show.\",\"tags\":{\"libraries\":[],\"data_types\":[\"tabular\",\"csv\"],\"venues\":[]}},{\"key\":\"T11\",\"title\":\"Results section: the three claims and the anti-claims from the findings\",\"kind\":\"writing\",\"difficulty\":3,\"blocked_by\":[\"T9\",\"T10\"],\"touches\":[\"report/\"],\"acceptance\":{\"machine\":[\"test -f report/results.md && grep -q 'C1' report/results.md && grep -q 'C2' report/results.md && grep -q 'C3' report/results.md\",\"grep -qi 'synthetic-only' report/results.md\"],\"quality\":[\"Does every claim sentence carry a provenance tag that resolves to a filed finding, does the prose use CONTEXT.md's terms (gain, no-product baseline, oracle reference), and does it state A1 and A2 without reading any product as a discovery?\"]},\"context_pack\":[\"research/CONTEXT.md#language\",\"research/SPEC.md#claims\",\"research/SPEC.md#anti-claims\",\"research/SPEC.md#out-of-scope\",\"analysis/e1-e3/verdict.md\",\"analysis/e2/verdict.md\",\"research/findings.jsonl\"],\"origin\":\"research/SPEC.md#claims\",\"demo\":\"report/results.md reads as the answer to the spec's question: a table of per-seed AUROC for the four models, the E1/E2/E3 means with sd, one paragraph per claim ending in its verdict, and the anti-claims stated as limits.\",\"notes\":\"Write from the findings only; a number not in a finding is not written. Keep to the spec's out-of-scope list.\",\"tags\":{\"libraries\":[],\"data_types\":[\"tabular\"],\"venues\":[]}},{\"key\":\"T12\",\"title\":\"toy/README.md: the scripts, their arguments, and the file layout\",\"kind\":\"docs\",\"difficulty\":1,\"blocked_by\":[\"T1\",\"T2\",\"T3\",\"T4\",\"T5\"],\"touches\":[\"toy/README.md\"],\"acceptance\":{\"machine\":[\"test -f toy/README.md && grep -q 'venv.sh' toy/README.md && grep -q 'make_sets.py' toy/README.md && grep -q 'fit_lr.py' toy/README.md && grep -q 'fit_mlp.py' toy/README.md && grep -q 'paired_gain.py' toy/README.md\",\"grep -q 'predictions/' toy/README.md && grep -q 'data/' toy/README.md\"]},\"context_pack\":[\"toy/venv.sh\",\"toy/make_sets.py\",\"toy/paired_gain.py\",\"toy/fit_lr.py\",\"toy/fit_mlp.py\",\"research/SPEC.md#seams\"],\"origin\":\"research/SPEC.md#seams\",\"demo\":\"toy/README.md lists each script with its usage line and the layout data/<set>/seed-<k>.csv and predictions/<set>/<model>-<k>.csv, so a person can reproduce E1-E3 from it.\",\"notes\":\"Document what the scripts do as written; do not change them.\",\"adds_public_api\":false,\"tags\":{\"libraries\":[],\"data_types\":[],\"venues\":[]}}],\"decisions\":[{\"question\":\"Q9: what counts as the products' gain being real for C1: the mean over ten seeds meeting +0.02 alone, or the mean and its 95% interval over seeds excluding 0?\",\"options\":[\"the mean paired gain over seeds meets the goal and its 95% interval over seeds excludes 0\",\"the mean paired gain meets the goal, no interval\",\"the gain is positive on every seed\"],\"recommended\":\"the mean paired gain over seeds meets the goal and its 95% interval over seeds excludes 0\",\"evidence\":[\"DECISIONS.md Q9 is open and human-only; the spec's success criterion states the mean alone and its risk mitigation reports the sd\",\"the per-seed ceiling spread on split_b is 0.0066 over seeds 0-4, a third of the target gain (DECISIONS.md Q5, Q9)\",\"toy/paired_gain.py (T2) prints the mean, sd, and 95% t-interval, so any answer can be applied without rerunning E1\"],\"blocking\":\"subgraph\",\"human_only\":true,\"pauses\":[\"T9\"],\"origin\":\"research/DECISIONS.md#q9-what-counts-as-the-products-gain-being-real\"}],\"notes\":[\"Q7, Q8, and Q10 are open in DECISIONS.md but the confirmed spec takes their recommended answers (D2/E3 as the null control, MLPClassifier as B2, 5-fold CV inside split_a); the tickets implement the spec as confirmed and no decision is opened for them.\",\"The scores seam names predictions/<model>-<seed>.csv; D1 and D2 share seeds 0-9, so the graph puts one directory per set under it: predictions/default/ and predictions/null/. Likewise data/default/ and data/null/ for the sets.\",\"GOAL.json names its metric auroc with target 0.02; by Q1 the target is the gain, which the spec's metric auroc_gain measures, so T6 reports auroc_gain as the goal metric.\",\"E1 also fits B3, the planted-only oracle (lr-planted), and reports its gain over the no-product baseline as a bound, not a criterion; no coefficient is read (Q4, A2).\",\"No figure ticket is cut: no role covers figure. A per-seed paired-gain plot for the report would need a figure role; the writing ticket uses the analysis tables instead.\",\"One docs ticket (T12) follows all five API-adding code tickets rather than one per ticket; nothing on the experiment path waits on it.\",\"Both analysis tickets carry a Type-B question because the claims' verdicts rest on them; the code tickets that build the features (T4) and the network (T5) are difficulty 3 so their diffs get an independent verdict.\"]}",
+  "structured_output": {
+    "tickets": [
+      {
+        "key": "T1",
+        "title": "Project venv with scikit-learn (toy/venv.sh)",
+        "kind": "code",
+        "difficulty": 1,
+        "blocked_by": [],
+        "touches": [
+          "toy/venv.sh",
+          "requirements.txt",
+          ".gitignore"
+        ],
+        "acceptance": {
+          "machine": [
+            "bash toy/venv.sh && .venv/bin/python -c 'import sklearn, numpy'",
+            "grep -q '^scikit-learn' requirements.txt",
+            "grep -q '^\\.venv/' .gitignore && grep -q '^data/' .gitignore && grep -q '^predictions/' .gitignore"
+          ]
+        },
+        "context_pack": [
+          "research/CONTEXT.md#language",
+          "research/DECISIONS.md#q3-scikit-learn-is-not-installed-what-fits-the-models",
+          "research/SPEC.md#methods"
+        ],
+        "origin": "research/SPEC.md#methods",
+        "demo": "From a clean checkout, `bash toy/venv.sh` creates .venv/ at the project root and `.venv/bin/python -c 'import sklearn'` prints nothing and exits 0; a second run is a no-op.",
+        "notes": "Q3: the project venv, never the tools venv. toy/venv.sh resolves the project root from its own location, runs `python3 -m venv .venv` only if .venv/ is missing, then `pip install -r requirements.txt` (scikit-learn pinned to one version, numpy). Add .venv/, data/, predictions/ to .gitignore so no ticket commits a venv, a set, or scores. CPU only; no GPU packages.",
+        "adds_public_api": true,
+        "tags": {
+          "libraries": [
+            "scikit-learn",
+            "numpy"
+          ],
+          "data_types": [
+            "tabular"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T2",
+        "title": "auroc_gain metric script (toy/paired_gain.py) with a unit test",
+        "kind": "code",
+        "difficulty": 2,
+        "blocked_by": [],
+        "touches": [
+          "toy/paired_gain.py",
+          "toy/test_paired_gain.py"
+        ],
+        "acceptance": {
+          "machine": [
+            "python3 toy/paired_gain.py --help",
+            "python3 toy/test_paired_gain.py"
+          ]
+        },
+        "context_pack": [
+          "toy/eval.py",
+          "research/SPEC.md#metrics",
+          "research/SPEC.md#seams",
+          "research/CONTEXT.md#language",
+          "research/DECISIONS.md#q9-what-counts-as-the-products-gain-being-real"
+        ],
+        "origin": "research/SPEC.md#metrics",
+        "demo": "`python3 toy/paired_gain.py predictions/default --model lr-products --against lr-raw` prints one `seed k: model=\u2026 against=\u2026 gain=\u2026` line per seed, then `auroc_gain: <mean>`, `auroc_gain_sd: <sd>`, `auroc_gain_ci95: <lo> <hi>`, `n_seeds: 10`; the unit test passes on a tiny fixture it writes itself.",
+        "notes": "Stdlib only (the spec runs it as `python3 toy/paired_gain.py {artifact}`); import auroc from toy/eval.py rather than re-implementing it. Usage: `paired_gain.py <predictions_dir> [--model lr-products] [--against lr-raw] [--seeds 0-9]`; the artifact is the directory, files are `<model>-<seed>.csv` with `label,score` rows (the scores seam). gain = auroc(model) - auroc(against) per seed; mean, sample sd (ddof=1), and a 95% t-interval (t=2.262 for n=10; a small table, no scipy). Exit nonzero naming the first missing seed file. The test builds two synthetic prediction sets with known AUROCs and checks the mean and sd to 4 decimals.",
+        "adds_public_api": true,
+        "tags": {
+          "libraries": [],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T3",
+        "title": "Generate the twenty sets (toy/make_sets.py: D1 default, D2 null)",
+        "kind": "code",
+        "difficulty": 1,
+        "blocked_by": [
+          "T1"
+        ],
+        "touches": [
+          "toy/make_sets.py"
+        ],
+        "acceptance": {
+          "machine": [
+            "python3 toy/make_sets.py --set default --seeds 0-1 && test -f data/default/seed-0.csv && test $(wc -l < data/default/seed-1.csv) -eq 20001",
+            "python3 toy/make_sets.py --set null --seeds 0 && test -f data/null/seed-0.csv && test $(grep -c '^split_b,' data/null/seed-0.csv) -eq 5000"
+          ]
+        },
+        "context_pack": [
+          "toy/make_synthetic.py",
+          "research/SPEC.md#data",
+          "research/SPEC.md#seams"
+        ],
+        "origin": "research/SPEC.md#data",
+        "demo": "`python3 toy/make_sets.py --set default` writes data/default/seed-0.csv \u2026 seed-9.csv (signal 1.0, interaction 0.6); `--set null` writes data/null/seed-0..9.csv at interaction 0; each has 20001 lines, split_b its last 5000 rows; rerunning skips files that exist.",
+        "notes": "Stdlib only; call make_synthetic.make(seed, interaction=\u2026) directly, never change make_synthetic.py. `--set default|null`, `--seeds 0-9` (default all ten). D2 is the same generator at interaction 0 (Q7 as the confirmed spec states it). Byte-identical output on rerun; skip an existing file. Do not commit data/ (ignored by T1).",
+        "adds_public_api": true,
+        "tags": {
+          "libraries": [],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T4",
+        "title": "Logistic regression fits: raw, all 28 products, planted oracle (toy/fit_lr.py)",
+        "kind": "code",
+        "difficulty": 3,
+        "blocked_by": [
+          "T1",
+          "T3"
+        ],
+        "touches": [
+          "toy/fit_lr.py",
+          "toy/features.py",
+          "toy/test_features.py"
+        ],
+        "acceptance": {
+          "machine": [
+            "bash toy/venv.sh && python3 toy/make_sets.py --set default --seeds 0 && .venv/bin/python toy/fit_lr.py --model products --set default --seed 0 && test $(wc -l < predictions/default/lr-products-0.csv) -eq 5001 && python3 toy/eval.py predictions/default/lr-products-0.csv",
+            "bash toy/venv.sh && .venv/bin/python toy/fit_lr.py --model products --set default --seed 0 --describe | grep -q 'n_features: 36'",
+            "bash toy/venv.sh && .venv/bin/python toy/fit_lr.py --model planted --set default --seed 0 --describe | grep -q 'n_features: 9'",
+            "bash toy/venv.sh && .venv/bin/python toy/test_features.py"
+          ]
+        },
+        "context_pack": [
+          "toy/eval.py:1-4",
+          "toy/make_synthetic.py:13-30",
+          "research/CONTEXT.md#language",
+          "research/SPEC.md#methods",
+          "research/SPEC.md#baselines",
+          "research/SPEC.md#seams",
+          "research/DECISIONS.md#q4-which-interaction-terms-does-the-with-products-model-get"
+        ],
+        "origin": "research/SPEC.md#methods",
+        "demo": "`.venv/bin/python toy/fit_lr.py --model products --set default --seed 0` fits on split_a and writes predictions/default/lr-products-0.csv with a `label,score` row per split_b row in file order; `--describe` prints `n_features: 36`, `train_rows: 15000`, `model: lr-products`.",
+        "notes": "scikit-learn LogisticRegression with library defaults (the spec's method), no scaling. `--model raw|products|planted` -> files lr-raw, lr-products, lr-planted (B1, the method, B3). toy/features.py: raw = x0..x7; products = raw + the 28 x_i*x_j for i<j (no squares); planted = raw + x2*x3. Train on rows with split == split_a only; score = predict_proba[:,1] on split_b rows, kept in file order. Deterministic (lbfgs); if a ConvergenceWarning appears, report it in the result rather than silently changing max_iter. test_features.py checks the column counts (8, 36, 9) and that x2*x3 appears once. Never read a coefficient as a discovery (A2).",
+        "adds_public_api": true,
+        "tags": {
+          "libraries": [
+            "scikit-learn",
+            "numpy"
+          ],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T5",
+        "title": "Small network baseline with 5-fold CV inside split_a (toy/fit_mlp.py)",
+        "kind": "code",
+        "difficulty": 3,
+        "blocked_by": [
+          "T1",
+          "T3"
+        ],
+        "touches": [
+          "toy/fit_mlp.py"
+        ],
+        "acceptance": {
+          "machine": [
+            "bash toy/venv.sh && python3 toy/make_sets.py --set default --seeds 0 && .venv/bin/python toy/fit_mlp.py --set default --seed 0 --grid small && test $(wc -l < predictions/default/mlp-raw-0.csv) -eq 5001 && python3 toy/eval.py predictions/default/mlp-raw-0.csv",
+            "bash toy/venv.sh && .venv/bin/python toy/fit_mlp.py --set default --seed 0 --grid full --describe | grep -q 'cv_folds: 5'",
+            "bash toy/venv.sh && .venv/bin/python toy/fit_mlp.py --set default --seed 0 --grid full --describe | grep -q 'tuned_on: split_a'"
+          ],
+          "quality": [
+            "Does the network tune only inside split_a (5-fold CV, the same grid for every seed), score split_b once with the chosen setting, and does the full grid on seed 0 fit inside 18 minutes on 8 cores so ten seeds fit E2's 3 hours?"
+          ]
+        },
+        "context_pack": [
+          "research/SPEC.md#methods",
+          "research/SPEC.md#e2-claims-c2",
+          "research/SPEC.md#risks",
+          "research/DECISIONS.md#q10-how-are-regularization-and-network-settings-tuned-without-touching-split_b",
+          "research/refs/paper-b/dossier.json",
+          "toy/fit_lr.py"
+        ],
+        "origin": "research/SPEC.md#methods",
+        "demo": "`.venv/bin/python toy/fit_mlp.py --set default --seed 0 --grid full` runs GridSearchCV (cv=5, scoring roc_auc) over MLPClassifier settings on split_a, refits the best on all of split_a, writes predictions/default/mlp-raw-0.csv, and prints the chosen setting and the wall-clock time; `--describe` prints the grid, `cv_folds: 5`, `tuned_on: split_a`.",
+        "notes": "B2 (Q2, Q8 as the confirmed spec states it): MLPClassifier on the raw 8 features, no products. Same code path as fit_lr.py for reading a set and writing scores (import from toy/features.py; do not edit it). Grid `full`: hidden_layer_sizes {(16,),(32,),(32,16),(64,32)} x alpha {1e-4,1e-3,1e-2}, early_stopping=True, max_iter=300, random_state=0; `small`: (16,) x {1e-3} for smoke tests. Use n_jobs=8 in GridSearchCV. Time the full grid on seed 0 and, per the spec's risk mitigation, trim `full` until one seed fits 18 minutes; record the timing and the final grid in the module docstring. The grid is fixed in code so every seed uses the same one.",
+        "adds_public_api": true,
+        "tags": {
+          "libraries": [
+            "scikit-learn",
+            "numpy"
+          ],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T6",
+        "title": "E1: with vs without products on D1, seeds 0-9",
+        "kind": "experiment",
+        "difficulty": 3,
+        "blocked_by": [
+          "T2",
+          "T3",
+          "T4"
+        ],
+        "touches": [
+          "data/default/",
+          "predictions/default/",
+          "results/e1/"
+        ],
+        "resources": {
+          "cpu": 2,
+          "gpu": 0,
+          "ram_gb": 4,
+          "wallclock_minutes": 20
+        },
+        "retry": null,
+        "acceptance": {
+          "machine": [
+            "test $(ls predictions/default/lr-products-*.csv | wc -l) -eq 10 && test $(ls predictions/default/lr-raw-*.csv | wc -l) -eq 10 && test $(ls predictions/default/lr-planted-*.csv | wc -l) -eq 10",
+            "grep -q '^auroc_gain: ' results/e1/paired_gain.txt && grep -q '^n_seeds: 10' results/e1/paired_gain.txt",
+            "grep -q '^auroc_gain: ' results/e1/oracle_gain.txt"
+          ]
+        },
+        "goal_metric": {
+          "reports": "auroc_gain",
+          "expected_direction": "up"
+        },
+        "context_pack": [
+          "research/SPEC.md#e1-claims-c1",
+          "research/SPEC.md#seams",
+          "research/CONTEXT.md#language",
+          "toy/make_sets.py",
+          "toy/fit_lr.py",
+          "toy/paired_gain.py"
+        ],
+        "origin": "research/SPEC.md#e1-claims-c1",
+        "demo": "One job: `bash toy/venv.sh; python3 toy/make_sets.py --set default; for k in 0..9: .venv/bin/python toy/fit_lr.py --set default --seed $k --model raw|products|planted`; then `python3 toy/paired_gain.py predictions/default --model lr-products --against lr-raw > results/e1/paired_gain.txt` and the same with `--model lr-planted > results/e1/oracle_gain.txt`; the first file ends with the mean gain over ten seeds and its sd.",
+        "notes": "C1's test. Manifest results/e1/paired_gain.txt, results/e1/oracle_gain.txt, and every predictions/default/lr-*.csv. The oracle line (B3, x2*x3 alone) bounds what a product can add; it is a reference, not a criterion. Success per the spec: mean paired auroc_gain >= 0.02.",
+        "tags": {
+          "libraries": [
+            "scikit-learn"
+          ],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T7",
+        "title": "E2: network baseline vs with-products regression on D1, seeds 0-9",
+        "kind": "experiment",
+        "difficulty": 3,
+        "blocked_by": [
+          "T2",
+          "T5",
+          "T6"
+        ],
+        "touches": [
+          "data/default/",
+          "predictions/default/",
+          "results/e2/"
+        ],
+        "resources": {
+          "cpu": 8,
+          "gpu": 0,
+          "ram_gb": 16,
+          "wallclock_minutes": 180
+        },
+        "retry": {
+          "gpu_oom": [],
+          "host_oom": [
+            "--grid=small"
+          ]
+        },
+        "acceptance": {
+          "machine": [
+            "test $(ls predictions/default/mlp-raw-*.csv | wc -l) -eq 10",
+            "grep -q '^auroc_gain: ' results/e2/paired_gain.txt && grep -q '^n_seeds: 10' results/e2/paired_gain.txt",
+            "grep -q '^auroc_gain: ' results/e2/mlp_over_raw.txt"
+          ]
+        },
+        "goal_metric": null,
+        "context_pack": [
+          "research/SPEC.md#e2-claims-c2",
+          "research/SPEC.md#risks",
+          "research/SPEC.md#seams",
+          "toy/fit_mlp.py",
+          "toy/paired_gain.py",
+          "results/e1/paired_gain.txt"
+        ],
+        "origin": "research/SPEC.md#e2-claims-c2",
+        "demo": "One job per seed (or one sequential job): `.venv/bin/python toy/fit_mlp.py --set default --seed $k --grid full`; then `python3 toy/paired_gain.py predictions/default --model lr-products --against mlp-raw > results/e2/paired_gain.txt` and `--model mlp-raw --against lr-raw > results/e2/mlp_over_raw.txt`; the first ends with the mean paired margin of the with-products regression over the network.",
+        "notes": "C2's test; the same ten sets as E1 and E1's lr-products scores (deterministic: refit with toy/fit_lr.py if a file is missing). Ten seeds at the grid T5 fixed; stay inside 3 hours (spec budget). Manifest both result files and predictions/default/mlp-raw-*.csv. Success per the spec: mean paired margin above zero.",
+        "tags": {
+          "libraries": [
+            "scikit-learn"
+          ],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T8",
+        "title": "E3: null control, interaction 0, seeds 0-9",
+        "kind": "experiment",
+        "difficulty": 3,
+        "blocked_by": [
+          "T2",
+          "T3",
+          "T4"
+        ],
+        "touches": [
+          "data/null/",
+          "predictions/null/",
+          "results/e3/"
+        ],
+        "resources": {
+          "cpu": 2,
+          "gpu": 0,
+          "ram_gb": 4,
+          "wallclock_minutes": 20
+        },
+        "retry": null,
+        "acceptance": {
+          "machine": [
+            "test $(ls predictions/null/lr-products-*.csv | wc -l) -eq 10 && test $(ls predictions/null/lr-raw-*.csv | wc -l) -eq 10",
+            "grep -q '^auroc_gain: ' results/e3/paired_gain.txt && grep -q '^n_seeds: 10' results/e3/paired_gain.txt"
+          ]
+        },
+        "goal_metric": null,
+        "context_pack": [
+          "research/SPEC.md#e3-claims-c3",
+          "research/SPEC.md#anti-claims",
+          "research/SPEC.md#seams",
+          "toy/make_sets.py",
+          "toy/fit_lr.py",
+          "toy/paired_gain.py"
+        ],
+        "origin": "research/SPEC.md#e3-claims-c3",
+        "demo": "One job: `python3 toy/make_sets.py --set null`; fit lr-raw and lr-products for seeds 0-9 with `--set null`; `python3 toy/paired_gain.py predictions/null --model lr-products --against lr-raw > results/e3/paired_gain.txt`, whose mean gain should sit inside \u00b10.005.",
+        "notes": "C3's test and the refutation check for A1/A2: on D2 nothing was planted, so the products should change AUROC by less than 0.005 in absolute value. Runs in parallel with E1. Manifest results/e3/paired_gain.txt and predictions/null/lr-*.csv.",
+        "tags": {
+          "libraries": [
+            "scikit-learn"
+          ],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T9",
+        "title": "Analysis of E1 and E3: C1, C3, and A2's withdrawal rule",
+        "kind": "analysis",
+        "difficulty": 4,
+        "blocked_by": [
+          "T6",
+          "T8"
+        ],
+        "touches": [
+          "analysis/e1-e3/"
+        ],
+        "resources": {
+          "cpu": 1,
+          "gpu": 0,
+          "ram_gb": 2,
+          "wallclock_minutes": 30
+        },
+        "acceptance": {
+          "machine": [
+            "test -f analysis/e1-e3/per_seed.csv && test $(tail -n +2 analysis/e1-e3/per_seed.csv | wc -l) -eq 20",
+            "grep -q 'C1' analysis/e1-e3/verdict.md && grep -q 'C3' analysis/e1-e3/verdict.md && grep -Eq '^verdict_c1: (holds|withdrawn|fails)' analysis/e1-e3/verdict.md"
+          ],
+          "quality": [
+            "Does the verdict apply the spec's rules exactly (C1 holds iff E1's mean paired gain >= 0.02, under the Q9 answer; C3 holds iff |E3's mean| < 0.005, else C1 withdrawn per A2), cite every number to a manifested artifact, and read no coefficient as a discovery?"
+          ]
+        },
+        "context_pack": [
+          "research/SPEC.md#success-criteria",
+          "research/SPEC.md#anti-claims",
+          "research/SPEC.md#e1-claims-c1",
+          "research/SPEC.md#e3-claims-c3",
+          "research/CONTEXT.md#language",
+          "results/e1/paired_gain.txt",
+          "results/e1/oracle_gain.txt",
+          "results/e3/paired_gain.txt",
+          "research/DECISIONS.md#q9-what-counts-as-the-products-gain-being-real"
+        ],
+        "origin": "research/SPEC.md#success-criteria",
+        "demo": "analysis/e1-e3/per_seed.csv holds one row per (set, seed) with auroc_raw, auroc_products, auroc_planted (default only), gain; verdict.md states the E1 mean, sd, 95% interval, the E3 mean, the oracle bound, and one line each `verdict_c1:` and `verdict_c3:`; the findings filed cite results/e1 and results/e3.",
+        "notes": "File one finding per claim (C1, C3) and one for the anti-claims A1/A2. Apply the Q9 answer to C1 (the decision ticket that pauses this one). Report the oracle gain as the bound the 28 products approach, nothing more (Q4; which product matters is out of scope).",
+        "tags": {
+          "libraries": [],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T10",
+        "title": "Analysis of E2: C2, the network against explicit products",
+        "kind": "analysis",
+        "difficulty": 3,
+        "blocked_by": [
+          "T7"
+        ],
+        "touches": [
+          "analysis/e2/"
+        ],
+        "resources": {
+          "cpu": 1,
+          "gpu": 0,
+          "ram_gb": 2,
+          "wallclock_minutes": 30
+        },
+        "acceptance": {
+          "machine": [
+            "test -f analysis/e2/per_seed.csv && test $(tail -n +2 analysis/e2/per_seed.csv | wc -l) -eq 10",
+            "grep -Eq '^verdict_c2: (holds|fails)' analysis/e2/verdict.md"
+          ],
+          "quality": [
+            "Does the verdict rest on the paired margin of lr-products over mlp-raw within each seed (mean above zero per the spec), report how much of the products' gain the network recovers, and cite every number to a manifested artifact?"
+          ]
+        },
+        "context_pack": [
+          "research/SPEC.md#e2-claims-c2",
+          "research/SPEC.md#claims",
+          "research/CONTEXT.md#language",
+          "results/e2/paired_gain.txt",
+          "results/e2/mlp_over_raw.txt",
+          "results/e1/paired_gain.txt",
+          "research/refs/paper-b/dossier.json"
+        ],
+        "origin": "research/SPEC.md#e2-claims-c2",
+        "demo": "analysis/e2/per_seed.csv holds one row per seed with auroc_products, auroc_mlp, auroc_raw, margin; verdict.md states the mean paired margin, its sd and interval, the fraction of E1's gain the network recovers, the chosen grid settings per seed, and `verdict_c2:`.",
+        "notes": "File one finding for C2. paper-b is the competing explanation; say what this size of network did and did not recover, and no more than the ten seeds show.",
+        "tags": {
+          "libraries": [],
+          "data_types": [
+            "tabular",
+            "csv"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T11",
+        "title": "Results section: the three claims and the anti-claims from the findings",
+        "kind": "writing",
+        "difficulty": 3,
+        "blocked_by": [
+          "T9",
+          "T10"
+        ],
+        "touches": [
+          "report/"
+        ],
+        "acceptance": {
+          "machine": [
+            "test -f report/results.md && grep -q 'C1' report/results.md && grep -q 'C2' report/results.md && grep -q 'C3' report/results.md",
+            "grep -qi 'synthetic-only' report/results.md"
+          ],
+          "quality": [
+            "Does every claim sentence carry a provenance tag that resolves to a filed finding, does the prose use CONTEXT.md's terms (gain, no-product baseline, oracle reference), and does it state A1 and A2 without reading any product as a discovery?"
+          ]
+        },
+        "context_pack": [
+          "research/CONTEXT.md#language",
+          "research/SPEC.md#claims",
+          "research/SPEC.md#anti-claims",
+          "research/SPEC.md#out-of-scope",
+          "analysis/e1-e3/verdict.md",
+          "analysis/e2/verdict.md",
+          "research/findings.jsonl"
+        ],
+        "origin": "research/SPEC.md#claims",
+        "demo": "report/results.md reads as the answer to the spec's question: a table of per-seed AUROC for the four models, the E1/E2/E3 means with sd, one paragraph per claim ending in its verdict, and the anti-claims stated as limits.",
+        "notes": "Write from the findings only; a number not in a finding is not written. Keep to the spec's out-of-scope list.",
+        "tags": {
+          "libraries": [],
+          "data_types": [
+            "tabular"
+          ],
+          "venues": []
+        }
+      },
+      {
+        "key": "T12",
+        "title": "toy/README.md: the scripts, their arguments, and the file layout",
+        "kind": "docs",
+        "difficulty": 1,
+        "blocked_by": [
+          "T1",
+          "T2",
+          "T3",
+          "T4",
+          "T5"
+        ],
+        "touches": [
+          "toy/README.md"
+        ],
+        "acceptance": {
+          "machine": [
+            "test -f toy/README.md && grep -q 'venv.sh' toy/README.md && grep -q 'make_sets.py' toy/README.md && grep -q 'fit_lr.py' toy/README.md && grep -q 'fit_mlp.py' toy/README.md && grep -q 'paired_gain.py' toy/README.md",
+            "grep -q 'predictions/' toy/README.md && grep -q 'data/' toy/README.md"
+          ]
+        },
+        "context_pack": [
+          "toy/venv.sh",
+          "toy/make_sets.py",
+          "toy/paired_gain.py",
+          "toy/fit_lr.py",
+          "toy/fit_mlp.py",
+          "research/SPEC.md#seams"
+        ],
+        "origin": "research/SPEC.md#seams",
+        "demo": "toy/README.md lists each script with its usage line and the layout data/<set>/seed-<k>.csv and predictions/<set>/<model>-<k>.csv, so a person can reproduce E1-E3 from it.",
+        "notes": "Document what the scripts do as written; do not change them.",
+        "adds_public_api": false,
+        "tags": {
+          "libraries": [],
+          "data_types": [],
+          "venues": []
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "question": "Q9: what counts as the products' gain being real for C1: the mean over ten seeds meeting +0.02 alone, or the mean and its 95% interval over seeds excluding 0?",
+        "options": [
+          "the mean paired gain over seeds meets the goal and its 95% interval over seeds excludes 0",
+          "the mean paired gain meets the goal, no interval",
+          "the gain is positive on every seed"
+        ],
+        "recommended": "the mean paired gain over seeds meets the goal and its 95% interval over seeds excludes 0",
+        "evidence": [
+          "DECISIONS.md Q9 is open and human-only; the spec's success criterion states the mean alone and its risk mitigation reports the sd",
+          "the per-seed ceiling spread on split_b is 0.0066 over seeds 0-4, a third of the target gain (DECISIONS.md Q5, Q9)",
+          "toy/paired_gain.py (T2) prints the mean, sd, and 95% t-interval, so any answer can be applied without rerunning E1"
+        ],
+        "blocking": "subgraph",
+        "human_only": true,
+        "pauses": [
+          "T9"
+        ],
+        "origin": "research/DECISIONS.md#q9-what-counts-as-the-products-gain-being-real"
+      }
+    ],
+    "notes": [
+      "Q7, Q8, and Q10 are open in DECISIONS.md but the confirmed spec takes their recommended answers (D2/E3 as the null control, MLPClassifier as B2, 5-fold CV inside split_a); the tickets implement the spec as confirmed and no decision is opened for them.",
+      "The scores seam names predictions/<model>-<seed>.csv; D1 and D2 share seeds 0-9, so the graph puts one directory per set under it: predictions/default/ and predictions/null/. Likewise data/default/ and data/null/ for the sets.",
+      "GOAL.json names its metric auroc with target 0.02; by Q1 the target is the gain, which the spec's metric auroc_gain measures, so T6 reports auroc_gain as the goal metric.",
+      "E1 also fits B3, the planted-only oracle (lr-planted), and reports its gain over the no-product baseline as a bound, not a criterion; no coefficient is read (Q4, A2).",
+      "No figure ticket is cut: no role covers figure. A per-seed paired-gain plot for the report would need a figure role; the writing ticket uses the analysis tables instead.",
+      "One docs ticket (T12) follows all five API-adding code tickets rather than one per ticket; nothing on the experiment path waits on it.",
+      "Both analysis tickets carry a Type-B question because the claims' verdicts rest on them; the code tickets that build the features (T4) and the network (T5) are difficulty 3 so their diffs get an independent verdict."
+    ]
+  },
+  "ttft_ms": 2208,
+  "type": "result",
+  "duration_ms": 2564368,
+  "uuid": "9aca3af0-f5f4-4424-9724-0851c00db443",
+  "ttft_stream_ms": 1121,
+  "time_to_request_ms": 48,
+  "first_content_frame_ms": 1121,
+  "queued_turn_count": 0,
+  "result_index": 0
+}

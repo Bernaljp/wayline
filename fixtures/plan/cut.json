@@ -1,0 +1,128 @@
+{
+  "tickets": [
+    {
+      "key": "T1",
+      "title": "Add the pairwise product features to the toy package",
+      "kind": "code",
+      "difficulty": 2,
+      "blocked_by": [],
+      "touches": ["toy/features.py"],
+      "resources": null,
+      "inputs": ["toy/make_synthetic.py"],
+      "outputs": ["toy/features.py"],
+      "acceptance": {"machine": ["test -f toy/features.py", "python3 -m py_compile toy/features.py"], "quality": []},
+      "goal_metric": null,
+      "context_pack": ["research/SPEC.md#methods", "toy/make_synthetic.py"],
+      "origin": "research/SPEC.md#methods",
+      "demo": "`python3 -c 'import toy.features'` imports, and `products(rows)` returns the 28 pairwise columns in a fixed order.",
+      "notes": "Keep the column order stable: x0*x1, x0*x2, ... x6*x7, as the spec's method describes (Q4).",
+      "adds_public_api": true,
+      "tags": {"data_types": ["tabular"], "libraries": ["scikit-learn"], "venues": []},
+      "retry": null
+    },
+    {
+      "key": "T2",
+      "title": "Document the product features",
+      "kind": "docs",
+      "difficulty": 1,
+      "blocked_by": ["T1"],
+      "touches": ["docs/features.md"],
+      "acceptance": {"machine": ["test -f docs/features.md", "grep -q products docs/features.md"], "quality": []},
+      "context_pack": ["toy/features.py"],
+      "origin": "research/SPEC.md#methods",
+      "demo": "`docs/features.md` explains `products` and its column order.",
+      "adds_public_api": false
+    },
+    {
+      "key": "T3",
+      "title": "Write the paired-gain metric script",
+      "kind": "code",
+      "difficulty": 2,
+      "blocked_by": [],
+      "touches": ["toy/paired_gain.py"],
+      "acceptance": {"machine": ["test -f toy/paired_gain.py", "python3 -m py_compile toy/paired_gain.py"], "quality": []},
+      "context_pack": ["research/SPEC.md#metrics", "toy/eval.py", "toy/predictions-sample.csv"],
+      "origin": "research/SPEC.md#metrics",
+      "demo": "`python3 toy/paired_gain.py <artifact>` prints the mean paired AUROC difference over the seeds.",
+      "adds_public_api": false
+    },
+    {
+      "key": "T4",
+      "title": "Run E1: products against the raw features over ten seeds",
+      "kind": "experiment",
+      "difficulty": 3,
+      "blocked_by": ["T1", "T3"],
+      "touches": ["experiments/e1/", "results/e1/"],
+      "resources": {"gpu": 0, "cpu": 4, "ram_gb": 8, "wallclock_minutes": 30},
+      "acceptance": {"machine": ["test -f results/e1/summary.json"], "quality": ["Are the ten comparisons paired within a seed, as the spec's method asks?"]},
+      "goal_metric": {"reports": "auroc", "expected_direction": "up"},
+      "context_pack": ["research/SPEC.md#e1-claims-c1", "toy/features.py", "toy/paired_gain.py"],
+      "origin": "research/SPEC.md#e1-claims-c1",
+      "demo": "`results/e1/summary.json` holds ten paired AUROC differences and their mean.",
+      "retry": {"host_oom": ["--rows=10000"], "gpu_oom": []}
+    },
+    {
+      "key": "T5",
+      "title": "Run E3: the null control at interaction 0",
+      "kind": "experiment",
+      "difficulty": 3,
+      "blocked_by": ["T1", "T3"],
+      "touches": ["experiments/e3/", "results/e3/"],
+      "resources": {"gpu": 0, "cpu": 4, "ram_gb": 8, "wallclock_minutes": 30},
+      "acceptance": {"machine": ["test -f results/e3/summary.json"], "quality": []},
+      "context_pack": ["research/SPEC.md#e3-claims-c3", "toy/features.py", "toy/paired_gain.py"],
+      "origin": "research/SPEC.md#e3-claims-c3",
+      "demo": "`results/e3/summary.json` holds ten paired differences on sets with no planted interaction."
+    },
+    {
+      "key": "T6",
+      "title": "Run E2: the small network on the raw features",
+      "kind": "experiment",
+      "difficulty": 3,
+      "blocked_by": ["T1", "T3"],
+      "touches": ["experiments/e2/", "results/e2/"],
+      "resources": {"gpu": 0, "cpu": 8, "ram_gb": 16, "wallclock_minutes": 180},
+      "acceptance": {"machine": ["test -f results/e2/summary.json"], "quality": ["Was the grid the same on every seed?"]},
+      "context_pack": ["research/SPEC.md#e2-claims-c2", "toy/features.py"],
+      "origin": "research/SPEC.md#e2-claims-c2",
+      "demo": "`results/e2/summary.json` holds the network's AUROC per seed and the paired margin against the products model."
+    },
+    {
+      "key": "T7",
+      "title": "File the findings of E1 to E3",
+      "kind": "analysis",
+      "difficulty": 3,
+      "blocked_by": ["T4", "T5", "T6"],
+      "touches": ["analysis/"],
+      "acceptance": {"machine": ["test -f analysis/findings.md"], "quality": ["Does every finding cite the summary it is read from?"]},
+      "context_pack": ["research/SPEC.md#success-criteria", "results/e1/summary.json", "results/e2/summary.json", "results/e3/summary.json"],
+      "origin": "research/SPEC.md#success-criteria",
+      "demo": "`analysis/findings.md` states for C1, C2, and C3 whether the success criterion held, with the numbers."
+    },
+    {
+      "key": "T8",
+      "title": "Write the results section",
+      "kind": "writing",
+      "difficulty": 3,
+      "blocked_by": ["T7"],
+      "touches": ["paper/results.md"],
+      "acceptance": {"machine": ["test -f paper/results.md"], "quality": ["Does every claim sentence end with a provenance tag that resolves?"]},
+      "context_pack": ["analysis/findings.md", "research/SPEC.md#claims"],
+      "origin": "research/SPEC.md#claims",
+      "demo": "`paper/results.md` reports the three claims with their outcomes."
+    }
+  ],
+  "decisions": [
+    {
+      "question": "Which grid does the small network's cross-validation search?",
+      "options": ["hidden sizes 8, 16, 32 with one learning rate", "hidden sizes 8 to 64 and three learning rates"],
+      "recommended": "hidden sizes 8, 16, 32 with one learning rate",
+      "evidence": ["research/SPEC.md#risks: the grid overrunning the 4-hour budget is the first risk"],
+      "blocking": "subgraph",
+      "human_only": false,
+      "pauses": ["T6"],
+      "origin": "research/SPEC.md#risks"
+    }
+  ],
+  "notes": ["No role covers a figure ticket, so the figure of E1's gains is left to the report."]
+}
