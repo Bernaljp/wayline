@@ -22,10 +22,25 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   id or relaunches it, carries a result no conductor carried, and queues again the verdicts a done
   ticket earned. Every later wave folds what the journal gained and applies the `control` events,
   answers, and feedback that other processes appended.
-- One resume per gate, for an invalid result or a failed acceptance (BRIEF 9.1). The rest of the
-  escalation ladder (a tier up, a split ticket, `needs_human`) is named in the `next` of the
-  `ticket_failed` event and built by ticket 38, which also acts on the stall counter that the
-  `wave` event lets a restart rebuild.
+- One resume per gate, for an invalid result or a failed acceptance (BRIEF 9.1), and the rest of the
+  escalation ladder (ticket 38). Every failure journals `ticket_failed` with the rung it goes to in
+  `next`, and each wave takes every failed ticket up its rung, in the order `policy.escalation.then`
+  gives after the resume (split, tier up, a person): `resume` resumes the failed attempt's session once
+  with the failure output (a failed verdict and a failed job included), `split` has the planner replace
+  it (`plan.cut_graph`, what `wayline plan --split` runs), `tier_up` opens the ticket again for a new
+  attempt one difficulty tier up, and `needs_human` hands it to a person with a notification. A split
+  that fails goes on to the tier up. A ticket a split cut is never split again, and a pinned ticket, or
+  one already on the top tier, skips the tier up. The rung is read
+  from the journal, so a restart takes the ladder up where it stood, and a run does not end while a
+  failed ticket still waits on a rung. A kind whose attempts failed twice at one tier has its default
+  difficulty raised one tier for the rest of the run (`difficulty_raised`), except for pinned tickets and
+  never counting an attempt that fell back to Opus (decision 15); `ticket_launched` carries the
+  difficulty an attempt launched at, which is what those failures are counted by.
+- The stall (ticket 38). A settling wave journals `wave`, and when the counter the replayed journal
+  keeps reaches `policy.stall.waves` the conductor journals `stall` and has the planner re-cut the open
+  tickets (`plan.cut_graph` with a replan, what `wayline plan --replan` runs), or, under radius
+  `strict`, ends the run with `stall_strict` and renders `REPORT.md`. `wayline run --simulate-failure
+  <id>` fails every acceptance of one ticket, so the owner can watch the whole ladder in minutes.
 - The integration protocol (ticket 08), one ticket at a time under the ledger lock. A rebase
   conflict is aborted and the `integrator` role is launched once in the worktree, on the
   conflicting paths, to finish the rebase itself; the conductor's second rebase is the check, and
@@ -107,9 +122,9 @@ from typing import NamedTuple, Optional
 from wayline import HARNESS_ROOT, decider, decisions, gates, notify, pacing, proposals, replay, resources, schedule, tick, tickets, worker
 from wayline import goal as goals
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, DISCARDED, FEEDBACK, FINDING, INTEGRATED, PROGRESS, JOB_FAILED, JOB_FINISHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
+    ACCEPTANCE, CONTROL, DIFFICULTY_RAISED, DISCARDED, FEEDBACK, FINDING, INTEGRATED, PROGRESS, JOB_FAILED, JOB_FINISHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
-    TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
+    TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, STALL, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
 from wayline.project import (
     ProjectError, ask_falls_back_at, consent_for, fallback_consent, falls_back_now, find_project, journal_written_answers, policy_for,
@@ -207,6 +222,20 @@ REVERT_TRAILER = "Wayline-Discarded: %s"
 DISCARDED_BRANCH = "ticket/%d-a%d"
 DISCARDED_WORKTREE = "%d-a%d"
 REVERT_MESSAGE = "ticket %d: discarded by keep-if-better\n\n" + REVERT_TRAILER
+# The rungs of the escalation ladder (decision 5; ticket 38), as `ticket_failed` names them in `next`.
+RESUME, TIER_UP, SPLIT, NEEDS_HUMAN = "resume", "tier_up", "split", "needs_human"
+# The order is the owner's (2026-09-17): a split before a tier up, since a tier up (to Fable above all) is the dearer step.
+LADDER = {"resume": 1, "then": [SPLIT, TIER_UP, NEEDS_HUMAN], "tier_up": 1, "raise_after_failures": 2}
+# The stall's two actions, and the reason a strict stall ends the run with (decision 5).
+REPLAN, STOP = "replan", "stop"
+STALL_STRICT = "stall_strict"
+STALL_WAVES = 2
+RESUME_FAILED = (
+    "The ticket failed after this session returned its result:\n\n%s\n\n"
+    "The ticket file, %s, holds the whole failure output under its `## Result` section (the end of a job's log, "
+    "a verifier's findings). Fix what failed in this worktree, which is checked out on the ticket branch, run "
+    "`wayline accept`, commit on the ticket branch, and return the structured result."
+)
 # How much of a failed job's log the journal and the ticket's failure output carry.
 LOG_TAIL_CHARS = 4000
 REJECTED = (
@@ -386,6 +415,9 @@ class WaveResult:
     jobs_finished: int = 0
     # The changes keep-if-better kept: progress toward the goal, for the stall counter (ticket 39).
     kept: int = 0
+    # The rungs of the escalation ladder this wave took, as `(ticket, rung)`, and whether it journaled a stall (ticket 38).
+    escalated: list = field(default_factory=list)
+    stalled: bool = False
 
     @property
     def touched(self):
@@ -395,7 +427,8 @@ class WaveResult:
         released whatever waited on them, so the next wave has work the last one did not.
         """
         return bool(self.launched or self.done or self.failed or self.running
-                    or self.accepted or self.rejected or self.decided or self.reconsidered or self.outcomes)
+                    or self.accepted or self.rejected or self.decided or self.reconsidered or self.outcomes
+                    or self.escalated or self.stalled)
 
 
 @dataclass
@@ -568,6 +601,14 @@ class Conductor:
         self.taken_over = False
         # The cancels and reruns that changed nothing, said once each rather than every wave.
         self.declined = set()
+        # The planner's cut at the `split` rung and at a stall (ticket 38): `planner(cut, fall_back)` returns what was
+        # written, and a test stands in its own. `plan_pre_check` is the registry's free pre-check before a cut.
+        # `reporter()` renders `REPORT.md` when a strict stall ends the run. `_replanned` is the stall whose replan
+        # this run has taken, so a cut that failed is not launched again at every wave.
+        self.planner = self._cut
+        self.plan_pre_check = True
+        self.reporter = self._render_report
+        self._replanned = None
 
     def say(self, message):
         print(message, file=self.out, flush=True)
@@ -599,7 +640,9 @@ class Conductor:
         self._poll(result)
         self._place_jobs(result)
         self._pace()
-        if not self._reached_goal(result) and not self._holds_launches():
+        if not self._reached_goal(result) and not self._holds_launches() and not self._stops_at_stall(result):
+            self._escalate(result)
+            self._replan(result)
             self._decide(result)
             picks = self._picks(self._graph())
             if picks:
@@ -608,6 +651,7 @@ class Conductor:
             self._reconsider_parked(result)
         self._ask_owner()
         self._journal_wave(result)
+        self._check_stall(result)
         self._end(result)
         result.ledger_commit = self._commit_ledger()
         self._tail()
@@ -744,6 +788,8 @@ class Conductor:
         if self.flight or self.verdicts:
             # Queued verdicts wait on pacing or on the hold on Fable's weekly window, and are taken once it allows.
             return
+        if self._owed_rungs() or self._owed_replan() is not None:
+            return  # a failed ticket still waits on its rung, or a stall on its replan: both wait, like any model work
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         autonomy, decider = self._autonomy(), decisions.decider_ready(self.harness_root, self.project)
@@ -756,8 +802,13 @@ class Conductor:
             result.ended, result.reason = True, "frontier_empty"
 
     def _graph(self):
+        """`graph.json`, regenerated, with each difficulty the one the next attempt launches at (`_effective_difficulty`)."""
         events, _ = self.ledger.read_events()
         graph, _ = tickets.refresh_graph(self.project, ledger=self.ledger, events=events)
+        found = {fields["id"]: fields for fields in tickets.read_tickets(self.project)}
+        for entry in graph["tickets"]:
+            if entry["id"] in found:
+                entry["difficulty"] = self._effective_difficulty(found[entry["id"]])
         return graph
 
     # --- what this wave launches (decision 5, wave steps 7 to 9) ---
@@ -1055,6 +1106,8 @@ class Conductor:
                 status = "open"
             if status is None or status == ticket["status"]:
                 continue
+            if known is not None and known.rung == TIER_UP and ticket["status"] == "open":
+                continue  # opened again for its tier up, which the next `ticket_launched` journals
             self._set_status(ticket["id"], status)
             self.say("  ticket %d: %s in its file and %s in the journal; the journal wins"
                      % (ticket["id"], ticket["status"], status))
@@ -1090,7 +1143,8 @@ class Conductor:
             if any(queued.ticket == identifier for queued in self.verdicts):
                 continue
             ticket, _ = self._ticket(identifier)
-            earned, asks = gates.owed_asks(ticket, entry.get("difficulty", ticket["difficulty"]), launched.model,
+            difficulty = launched.difficulty if launched.difficulty is not None else entry.get("difficulty", ticket["difficulty"])
+            earned, asks = gates.owed_asks(ticket, difficulty, launched.model,
                                            self.view.integrated.get(identifier), self.view.passed(identifier))
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
@@ -1104,7 +1158,8 @@ class Conductor:
     def _adopt(self, attempt, replayed, entry):
         """Take over one attempt a restart found still owed: carry its result, re-adopt it, resume it, or relaunch it."""
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
-        attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
+        # The difficulty it launched at: a raise journaled since does not move an attempt already under way.
+        attempt.difficulty = replayed.difficulty if replayed.difficulty is not None else entry.get("difficulty", attempt.ticket["difficulty"])
         attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
         if replayed.fallback_from:
             # Its session runs on Opus and is resumed there, whatever the hold and the consent say now.
@@ -1341,9 +1396,11 @@ class Conductor:
         self._write_ticket(attempt, "running")
         attempt.prompt = self._prompt(attempt)
         attempt.request = self._request(attempt, attempt.prompt)
-        self.say("wave %d: ticket %d %s (%s, %s %s, attempt %d)%s" % (
+        own = attempt.ticket.get("pinned_difficulty") or attempt.ticket["difficulty"]
+        self.say("wave %d: ticket %d %s (%s, %s %s, attempt %d)%s%s" % (
             self.number, attempt.id, attempt.ticket["title"], attempt.role.name,
             attempt.tier.model, attempt.tier.effort, attempt.number,
+            ", difficulty %s raised from %s" % (attempt.difficulty, own) if attempt.difficulty != own else "",
             ", falling back from %s" % attempt.fallback_from if attempt.fallback_from else ""))
 
     def _prompt(self, attempt, notes=()):
@@ -1393,6 +1450,7 @@ class Conductor:
             "skills": list(attempt.ticket.get("skills") or []),
             "worktree": str(attempt.worktree), "pid": started.pid,
             "context_chars": attempt.prompt.context_chars, "prompt_sha256": attempt.prompt.sha256,
+            "difficulty": attempt.difficulty,
         }
         if attempt.fallback_from:
             payload["fallback_from"] = attempt.fallback_from
@@ -1639,22 +1697,17 @@ class Conductor:
             record = self._runner().read(job)
             if record is not None and record.get("status") in resources.LIVE_JOB_STATUSES:
                 self._runner().kill(resources.handle_for(record))
-        ticket, body = self._ticket(identifier)
         note = [reason] + (["", "The end of the job's log:", "", "```", tail.rstrip("\n"), "```"] if tail else [])
-        self.ledger.append_event(TICKET_FAILED, {"ticket": identifier, "attempt": number, "reason": reason, "next": "resume"},
-                                 ticket=identifier)
-        self._set_status(identifier, "failed", note)
-        self._tail()
+        self._climb(identifier, number, self._step_for(identifier), reason, note)
         if result is not None:
             result.failed.append(identifier)
-        self.say("  ticket %d failed: %s (next: resume)" % (identifier, reason))
 
     def _close_jobs(self, identifier, number, jobs, result):
         """An experiment ticket whose jobs all exited 0 with their outputs manifested: done, and its verdicts queued."""
         ticket, body = self._ticket(identifier)
         known = self.view.tickets[identifier].latest
         attempt = _Attempt(ticket, body, number, self._worktree(identifier))
-        attempt.difficulty = ticket.get("pinned_difficulty") or ticket["difficulty"]
+        attempt.difficulty = known.difficulty if known.difficulty is not None else (ticket.get("pinned_difficulty") or ticket["difficulty"])
         attempt.tier = Tier(model=known.model, effort=known.effort)
         attempt.commit = self.view.integrated.get(identifier)
         judgment = self._keep_if_better(attempt, self.project, self._seed_outputs(ticket, jobs),
@@ -1805,12 +1858,8 @@ class Conductor:
         identifier = attempt.id
         problem = self._revert(attempt)
         if problem is not None:
-            self.ledger.append_event(TICKET_FAILED, {"ticket": identifier, "attempt": attempt.number, "reason": problem,
-                                                     "next": "needs_human"}, ticket=identifier)
-            self._set_status(identifier, "failed", [problem])
-            self._tail()
+            self._climb(identifier, attempt.number, NEEDS_HUMAN, problem, [problem])
             result.failed.append(identifier)
-            self.say("  ticket %d failed: %s (next: needs_human)" % (identifier, problem))
             return
         self._journal_judgment(attempt, judgment)
         worktree = self._set_aside_discarded(identifier, attempt.number)
@@ -1988,17 +2037,19 @@ class Conductor:
         problem = self._invalid(attempt)
         if attempt.stage == ACCEPTANCE_FAILED:
             if problem is not None:
-                self._fail(attempt, "the resumed session returned no usable result: %s" % problem, "tier_up")
+                self._fail(attempt, "the resumed session returned no usable result: %s" % problem, self._rung_from(attempt.id))
                 return "failed"
-            self._open_requested(attempt)  # what the resumed session asked is asked, whether or not its work passes now
-            self._admit_proposals(attempt)  # and what it proposed, whether or not its work passes now
+            # What the resumed session asked and proposed is taken, and a status other than done is acted on, as at a launch.
+            carried = self._act_on(attempt)
+            if carried not in ("done", RUNNING):
+                return carried
             if not self._accept(attempt, "worktree", attempt.worktree)["pass"]:
-                self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", "tier_up")
+                self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", self._rung_from(attempt.id))
                 return "failed"
         else:
             if problem is not None:
                 if attempt.stage in (INVALID_RESULT, TIMEOUT):
-                    self._fail(attempt, "the result was still unusable after one resume: %s" % problem, "tier_up")
+                    self._fail(attempt, "the result was still unusable after one resume: %s" % problem, self._rung_from(attempt.id))
                     return "failed"
                 return self._want_resume(attempt, INVALID_RESULT, RESUME_INVALID % problem)
             carried = self._act_on(attempt)
@@ -2069,8 +2120,14 @@ class Conductor:
         """Spend a gate's one resume (BRIEF 9.1): now, or as soon as the run may start model work."""
         if not attempt.session_id:
             self._fail(attempt, "there is no session id to resume: %s"
-                       % "; ".join(attempt.envelope.errors or ["the session never started"]), "tier_up")
+                       % "; ".join(attempt.envelope.errors or ["the session never started"]), self._rung_from(attempt.id))
             return "failed"
+        if stage == ACCEPTANCE_FAILED:
+            # The ladder's first rung (ticket 38): the failure is journaled with `next: resume`, then the session is resumed.
+            self.ledger.append_event(TICKET_FAILED, {"ticket": attempt.id, "attempt": attempt.number,
+                                                     "reason": "the machine acceptance failed in the worktree", "next": RESUME},
+                                     ticket=attempt.id, session_id=attempt.session_id)
+            self._tail()
         attempt.want = _Want(stage, message)
         self._start_wanted(attempt)
         return "session"
@@ -2249,8 +2306,8 @@ class Conductor:
             problem = self._jobs_problem(attempt)
             if problem is None:
                 return RUNNING
-            if attempt.stage in (INVALID_RESULT, TIMEOUT):
-                self._fail(attempt, "the result was still unusable after one resume: %s" % problem, "tier_up")
+            if attempt.stage in (INVALID_RESULT, TIMEOUT, ACCEPTANCE_FAILED):
+                self._fail(attempt, "the result was still unusable after one resume: %s" % problem, self._rung_from(attempt.id))
                 return "failed"
             return self._want_resume(attempt, INVALID_RESULT, RESUME_INVALID % problem)
         if status == "failed":
@@ -2671,7 +2728,11 @@ class Conductor:
     def _accept(self, attempt, where, cwd):
         """Run the ticket's machine acceptance in `cwd` and journal it under the label `where`."""
         commands = (attempt.ticket.get("acceptance") or {}).get("machine") or []
-        record = gates.acceptance_file_record(gates.run_machine_acceptance(commands, cwd, self._timeout()), where)
+        results = gates.run_machine_acceptance(commands, cwd, self._timeout())
+        simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
+        if simulated is not None:
+            results = list(results) + [simulated]
+        record = gates.acceptance_file_record(results, where)
         self.ledger.append_event(ACCEPTANCE, {
             "ticket": attempt.id, "attempt": attempt.number, "where": where,
             "pass": record["pass"], "results": record["results"],
@@ -2736,7 +2797,7 @@ class Conductor:
         resolved_by = INTEGRATOR if spent else "none"
         problem = self._off_branch(attempt)
         if problem is not None:
-            self._fail(attempt, problem, "split" if spent else self._next_step(attempt))
+            self._fail(attempt, problem, self._rung_from(attempt.id, SPLIT) if spent else self._next_step(attempt))
             return "failed"
         before = self._branch_paths(attempt)
         with self.ledger.lock():
@@ -2744,12 +2805,12 @@ class Conductor:
         if conflict is not None and spent:
             self._fail(attempt, "rebasing %s onto main conflicts in %s, and the integrator was already launched for "
                        "this attempt before the conductor restarted" % (BRANCH % attempt.id, ", ".join(conflict.paths)
-                                                                        or "a path git did not name"), "split")
+                                                                        or "a path git did not name"), self._rung_from(attempt.id, SPLIT))
             return "failed"
         if conflict is not None:
             if not conflict.paths:
                 self._fail(attempt, "rebasing %s onto main failed and git named no conflicting path, so there is "
-                           "nothing an integrator could resolve: %s" % (BRANCH % attempt.id, conflict.output), "split")
+                           "nothing an integrator could resolve: %s" % (BRANCH % attempt.id, conflict.output), self._rung_from(attempt.id, SPLIT))
                 return "failed"
             if self._integrator_waits(attempt):
                 attempt.integrating, attempt.want = True, _Want(INTEGRATE)
@@ -2769,11 +2830,11 @@ class Conductor:
                 self._fail(attempt, "rebasing %s onto main conflicted in %s; the integrator %s; the rebase after it "
                            "still fails%s" % (BRANCH % attempt.id, ", ".join(conflict.paths), told,
                                               " in " + ", ".join(again.paths) if again.paths else ": " + again.output),
-                           "split")
+                           self._rung_from(attempt.id, SPLIT))
                 return "failed"
             problem = self._off_branch(attempt) or _changed_by_integrator(before, self._branch_paths(attempt))
             if problem is not None:
-                self._fail(attempt, "the integrator %s; %s" % (told, problem), "split")
+                self._fail(attempt, "the integrator %s; %s" % (told, problem), self._rung_from(attempt.id, SPLIT))
                 return "failed"
         if not self._accept(attempt, "rebased", attempt.worktree)["pass"]:
             self._fail(attempt, "the machine acceptance failed after the rebase onto main", self._next_step(attempt))
@@ -2787,7 +2848,7 @@ class Conductor:
             self.ledger.write_json(self._integration_record(attempt.id, attempt.number), {"base": base, "commit": commit})
         if merge.returncode != 0:
             self._fail(attempt, "main could not be fast-forwarded to %s: %s"
-                       % (BRANCH % attempt.id, (merge.stderr or merge.stdout).strip()), "split")
+                       % (BRANCH % attempt.id, (merge.stderr or merge.stdout).strip()), self._rung_from(attempt.id, SPLIT))
             return "failed"
         if not self._accept(attempt, "main", self.project)["pass"]:
             self._fail(attempt, "the machine acceptance failed on main after the fast-forward to %s; main "
@@ -3302,12 +3363,8 @@ class Conductor:
         """A failed verdict: the ticket is failed with the findings as its failure output."""
         reason = REJECTED % (verdict.verdict_type, verdict.model or "verifier",
                              gates.findings_text(verdict.findings))
-        self._set_status(entry.ticket, "failed", self._verdict_note(verdict))
-        self.ledger.append_event(TICKET_FAILED, {
-            "ticket": entry.ticket, "attempt": entry.attempt, "reason": reason, "next": "resume",
-        }, ticket=entry.ticket, session_id=verdict.session_id)
-        self.say("  ticket %d failed its %s verdict (next: resume)"
-                 % (entry.ticket, verdict.verdict_type))
+        self._climb(entry.ticket, entry.attempt, self._step_for(entry.ticket), reason, self._verdict_note(verdict),
+                    session_id=verdict.session_id, said="failed its %s verdict" % verdict.verdict_type)
 
     def _verdict_note(self, verdict):
         """What a verdict has to say in the ticket file: who read it, on what, and what they found.
@@ -3337,22 +3394,404 @@ class Conductor:
         tickets.write_ticket(self.ledger, dict(ticket, status=status), body)
 
     def _next_step(self, attempt):
-        """The rung of the escalation ladder this failure lands on: the one resume, if it is unspent."""
-        return "tier_up" if attempt.resumed else "resume"
+        """The rung of the escalation ladder this failure lands on: the one resume while it is unspent, else what is above it."""
+        if not attempt.resumed and attempt.session_id and self._ladder()["resume"]:
+            return RESUME
+        return self._rung_from(attempt.id)
 
     def _fail(self, attempt, reason, next_step):
-        """Journal the failure and leave the worktree and the branch for the attempt that follows."""
+        """Journal the failure and leave the worktree and the branch for the attempt that follows.
+
+        A failure whose rung is `needs_human` hands the ticket to a person at once (`_after_failure`).
+        """
         self.ledger.append_event(TICKET_FAILED, {
             "ticket": attempt.id, "attempt": attempt.number, "reason": reason, "next": next_step,
         }, ticket=attempt.id, session_id=attempt.session_id)
         self._write_ticket(attempt, "failed", attempt.result)
         self.say("  ticket %d failed: %s (next: %s)" % (attempt.id, reason, next_step))
+        self._after_failure(attempt.id, next_step, reason)
+        if next_step == NEEDS_HUMAN:
+            attempt.ticket = dict(attempt.ticket, status="needs_human")
 
     def _needs_human(self, attempt, question):
         self.ledger.append_event(TICKET_NEEDS_HUMAN, {"ticket": attempt.id, "question": question},
                                  ticket=attempt.id)
         self._write_ticket(attempt, "needs_human", attempt.result)
         self.say("  ticket %d needs a person: %s" % (attempt.id, question))
+        self._tell_owner(attempt.id, question)
+
+    # --- the escalation ladder and the difficulty adjustment (decision 5; ticket 38) ---
+
+    def _ladder(self):
+        """`policy.escalation`, over the defaults of decision 14."""
+        ladder = dict(LADDER)
+        ladder.update(self.policy.get("escalation") or {})
+        return ladder
+
+    def _max_tier(self):
+        """The highest difficulty `policy.difficulty` names: no tier up and no raise goes past it."""
+        tiers = [int(key) for key in (self.policy.get("difficulty") or {}) if str(key).isdigit()]
+        return max(tiers, default=tickets.HARDEST)
+
+    def _effective_difficulty(self, fields):
+        """The difficulty the ticket's next attempt launches at.
+
+        A `pinned_difficulty` wins, whatever the run raised. Otherwise the ticket's own difficulty, moved up by
+        every raise the run journaled for its kind (`difficulty_raised` from that tier), and at least one tier
+        above the attempt its escalation last sent up a tier; never past the top tier. A raise and a tier up do
+        not add: the tier up is one tier above what the failed attempt launched at.
+        """
+        pinned = fields.get("pinned_difficulty")
+        if pinned is not None:
+            return pinned
+        difficulty, raised, seen = fields["difficulty"], self.view.raised.get(fields["kind"]) or {}, set()
+        while difficulty in raised and difficulty not in seen:
+            seen.add(difficulty)
+            difficulty = raised[difficulty]
+        known = self.view.tickets.get(fields["id"])
+        if known is not None and known.taken(TIER_UP):
+            # One tier above the attempt the ladder sent up (a journal older than `difficulty` counts the tier ups instead).
+            difficulty = max(difficulty, known.floor if known.floor is not None else fields["difficulty"] + known.taken(TIER_UP))
+        return min(difficulty, self._max_tier())
+
+    def _fields(self, identifier):
+        """The ticket's frontmatter, or None when no ticket file has that id."""
+        return next((fields for fields in tickets.read_tickets(self.project) if fields["id"] == identifier), None)
+
+    def _rung_from(self, identifier, start=None):
+        """The first rung after the resume this ticket can still take, in `policy.escalation.then` order, from `start` on.
+
+        A split is taken once, and never for a decision ticket, which is answered, nor for a ticket a split cut, so
+        splits do not recurse. A tier up is taken `policy.escalation.tier_up` times at most, and never for a pinned
+        ticket or one whose next attempt is on the top tier already. A rung already taken counts as spent, so a rung
+        that could not be taken sends the ticket on to the next. `start` is where a failure that names its own rung
+        begins (an integration that conflicted starts at the split); `needs_human` is what is left.
+        """
+        self._tail()  # what this wave journaled about the ticket so far counts
+        ladder, known, fields = self._ladder(), self.view.tickets.get(identifier), self._fields(identifier)
+        if fields is None:
+            return NEEDS_HUMAN
+        taken = known.taken if known is not None else (lambda name: 0)
+        order = [step for step in ladder["then"] if step in (SPLIT, TIER_UP)]
+        if start in order:
+            order = order[order.index(start):]
+        for step in order:
+            if step == SPLIT and not taken(SPLIT) and fields["kind"] != tickets.DECISION and not self._cut_by_split(identifier):
+                return SPLIT
+            if step == TIER_UP and taken(TIER_UP) < ladder["tier_up"] and fields.get("pinned_difficulty") is None \
+                    and self._effective_difficulty(fields) < self._max_tier():
+                return TIER_UP
+        return NEEDS_HUMAN
+
+    def _cut_by_split(self, identifier):
+        """Whether a split cut this ticket, as the note its body carries says."""
+        from wayline import plan  # the plan module pulls in the registry and the planner's session
+        try:
+            _, body = self._ticket(identifier)
+        except ConductorError:
+            return False
+        return plan.split_from(body) is not None
+
+    def _step_for(self, identifier):
+        """The rung of a failure met outside the attempt's own session (a job, a verdict): as `_next_step`, from the journal."""
+        self._tail()  # the session this wave journaled for the attempt is the one to resume
+        known = self.view.tickets.get(identifier)
+        latest = known.latest if known is not None else None
+        if latest is not None and latest.session_id and not latest.spent and self._ladder()["resume"]:
+            return RESUME
+        return self._rung_from(identifier)
+
+    def _climb(self, identifier, number, rung, reason, note=(), session_id=None, said="failed"):
+        """Journal `ticket_failed` with `rung` for a ticket no attempt object is carrying, and act on the rung as `_fail` does."""
+        self.ledger.append_event(TICKET_FAILED, {"ticket": identifier, "attempt": number, "reason": reason, "next": rung},
+                                 ticket=identifier, session_id=session_id)
+        self._set_status(identifier, "failed", list(note))
+        self.say("  ticket %d %s: %s (next: %s)" % (identifier, said, reason.split("\n")[0], rung))
+        self._after_failure(identifier, rung, reason)
+
+    def _after_failure(self, identifier, rung, reason):
+        """What every failure does once journaled: the difficulty adjustment, and a person told when the ladder is spent."""
+        self._tail()
+        self._adjust_difficulty(identifier)
+        if rung != NEEDS_HUMAN:
+            return
+        question = "it failed and no rung of the escalation ladder is left: %s" % reason
+        self.ledger.append_event(TICKET_NEEDS_HUMAN, {"ticket": identifier, "question": question}, ticket=identifier)
+        self._set_status(identifier, "needs_human")
+        self._tail()
+        self.say("  ticket %d needs a person: its escalation ladder is spent" % identifier)
+        self._tell_owner(identifier, question)
+
+    def _tell_owner(self, identifier, question):
+        """The notification of a ticket that needs a person (decision 7), claimed by this run so the tick does not send it again."""
+        self.notify(TICKET_NEEDS_HUMAN, "%s: ticket %d needs a human: %s" % (self.project.name, identifier, question.split("\n")[0]),
+                    self.project, identifier)
+
+    def _adjust_difficulty(self, identifier):
+        """Raise the ticket's kind one tier for the rest of the run once its attempts failed `raise_after_failures` times at a tier.
+
+        The failures counted are the run's failed attempts (`View.failures`: an attempt that fell back to Opus is never
+        among them, decision 15) of unpinned tickets of the same kind at the tier the failed attempt launched at. A kind
+        is raised from a tier once; a pinned ticket neither counts nor is raised.
+        """
+        found = {fields["id"]: fields for fields in tickets.read_tickets(self.project)}
+        fields, known = found.get(identifier), self.view.tickets.get(identifier)
+        if fields is None or fields.get("pinned_difficulty") is not None or known is None or known.latest is None:
+            return
+        tier = self.view.failures.get((identifier, known.latest.number))
+        kind = fields["kind"]
+        if tier is None or tier >= self._max_tier() or tier in (self.view.raised.get(kind) or {}):
+            return
+        failed = [key for key, difficulty in self.view.failures.items()
+                  if difficulty == tier and (found.get(key[0]) or {}).get("kind") == kind
+                  and (found.get(key[0]) or {}).get("pinned_difficulty") is None]
+        if len(failed) < self._ladder()["raise_after_failures"]:
+            return
+        self.ledger.append_event(DIFFICULTY_RAISED, {"kind": kind, "from": tier, "to": tier + 1})
+        self._tail()
+        self.say("  %d %s attempt(s) failed at difficulty %d (%s); %s tickets at difficulty %d launch at %d for the rest of the run"
+                 % (len(failed), kind, tier, ", ".join("ticket %d attempt %d" % key for key in sorted(failed)), kind, tier, tier + 1))
+
+    def _owed_rungs(self):
+        """The failed tickets that wait on a rung a wave takes (`resume`, `tier_up`, `split`), by id."""
+        found = {fields["id"]: fields for fields in tickets.read_tickets(self.project)}
+        return [identifier for identifier, known in sorted(self.view.tickets.items())
+                if known.rung in (RESUME, TIER_UP, SPLIT) and identifier not in self.flight
+                and (found.get(identifier) or {}).get("status") == "failed"]
+
+    def _escalate(self, result):
+        """Take every failed ticket up the rung its last `ticket_failed` names; model work, so only while launches are allowed.
+
+        A rung that sends the ticket on to another (a split that fails goes to the tier up) is followed in the same
+        wave, so the tier up it lands on launches now rather than a wave later. Each rung is looked at once a wave
+        per ticket, and every rung is taken a bounded number of times, so the pass ends.
+        """
+        seen = set()
+        while True:
+            owed = [(identifier, self.view.tickets[identifier].rung) for identifier in self._owed_rungs()]
+            owed = [item for item in owed if item not in seen]
+            if not owed or self._holds_launches():
+                return
+            for item in owed:
+                seen.add(item)
+                self._take_rung(item[0], result)
+
+    def _take_rung(self, identifier, result):
+        """One failed ticket taken up its rung, unless pacing holds it."""
+        if self._holds_launches():
+            return
+        rung = self.view.tickets[identifier].rung
+        if rung == SPLIT and self.action != schedule.NORMAL:
+            return  # the planner's session is never cheap, so `cheap_only` holds it as it holds a verdict
+        try:
+            if rung == RESUME:
+                took = self._resume_failed(identifier)
+            elif rung == TIER_UP:
+                took = self._tier_up(identifier)
+            else:
+                took = self._split(identifier)
+        except (ValueError, OSError) as failure:  # a role, a prompt, a settings file, or a git step
+            self.flight.pop(identifier, None)
+            above = self._rung_from(identifier)  # the rung that could not be taken counts as taken
+            self._climb(identifier, self.view.tickets[identifier].attempt, above,
+                        "the %s rung could not be taken: %s" % (rung, failure))
+            took = True
+        if took:
+            result.escalated.append((identifier, rung))
+
+    def _resume_failed(self, identifier):
+        """The `resume` rung: the failed attempt's session, resumed once with the failure output; whether it was taken.
+
+        A failure met after the session returned (a job, a verdict, the integration) is given to that session, in the
+        worktree it wrote, made again from the ticket branch or from `main` when the integration removed it. An attempt
+        with no session to resume, or whose resume is spent, goes to the next rung instead. The resume waits, like any
+        on Fable, while the hold stands and the consent waits; under fallback a fresh Opus session takes it.
+        """
+        known = self.view.tickets[identifier]
+        latest = known.latest
+        busy = sum(1 for attempt in self.flight.values() if attempt.running or attempt.adopted)
+        entry = {"difficulty": latest.difficulty if latest is not None else None}
+        if busy >= self._slots() or not schedule.affordable(entry, self.action):
+            return False  # a resume is a worker like any launch: it waits for a slot, and for the pacing to allow its tier
+        if latest is None or not latest.session_id or latest.spent:
+            self._climb(identifier, known.attempt, self._rung_from(identifier),
+                        "%s; its session cannot be resumed" % (known.failure or "it failed"))
+            return True
+        ticket, body = self._ticket(identifier)
+        attempt = _Attempt(ticket, body, latest.number, self._worktree(identifier))
+        attempt.role = worker.read_role(ticket["role"], self.harness_root, self.project)
+        attempt.difficulty = latest.difficulty if latest.difficulty is not None else self._effective_difficulty(ticket)
+        attempt.tier = tier_for(self.policy, attempt.difficulty, ticket.get("budget"))
+        if latest.fallback_from:
+            attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), latest.fallback_from
+        attempt.session_id, attempt.session_journaled = latest.session_id, True
+        attempt.started = True
+        self._prepare(attempt, self._fallback_notes(attempt) if latest.fallback_from else ())
+        if self._held_on_fable(attempt.request) and not self._falls_back():
+            self._held_back("ticket %d's resume" % identifier)
+            return False
+        message = RESUME_FAILED % (known.failure or "no reason was recorded", tickets.relative_path(ticket))
+        self._write_ticket(attempt, "running")
+        attempt.want = _Want(ACCEPTANCE_FAILED, message)
+        self.flight[identifier] = attempt
+        started = self._start_wanted(attempt)
+        if started is True:
+            self.say("  ticket %d: resuming session %s once with the failure output (escalation: resume)" % (identifier, latest.session_id))
+        return bool(started)
+
+    def _tier_up(self, identifier):
+        """The `tier_up` rung: the ticket is opened again, and its next attempt launches one tier up in a new session."""
+        fields = self._fields(identifier)
+        difficulty = self._effective_difficulty(fields)
+        tier = tier_for(self.policy, difficulty, fields.get("budget"))
+        self._set_status(identifier, "open", ["Escalated one tier up: the next attempt launches at difficulty %d (%s %s), "
+                                              "in a new session." % (difficulty, tier.model, tier.effort)])
+        self.say("  ticket %d: escalation: its next attempt launches one tier up, at difficulty %d (%s %s)"
+                 % (identifier, difficulty, tier.model, tier.effort))
+        return True
+
+    def _planner_falls_back(self, what):
+        """Whether the planner may launch now, and on what: `(may, fall_back)`; it waits when it is on Fable, held, and the consent waits."""
+        from wayline import specify  # the specify module pulls in the gates and the planner's session
+        if specify.planner_tier(self.policy)[0] != pacing.FABLE or not self._fable_held():
+            return True, False
+        if self._falls_back():
+            return True, True
+        self._held_back(what)
+        return False, False
+
+    def _cut(self, cut, fall_back):
+        """The planner's cut of the graph, what `wayline plan --split` and `--replan` run (ticket 34); returns what was written."""
+        from wayline import plan  # the plan module pulls in the registry and the planner's session
+        return plan.cut_graph(self.project, cut, harness_root=self.harness_root, policy=self.policy, fall_back=fall_back,
+                              notify=self.notify, say=lambda text: self.say("  " + text), pre_check=self.plan_pre_check)
+
+    def _launch_cut(self, cut, what):
+        """One cut of the graph under the wave's rules: what was written, None when it waits, or the failure it met."""
+        may, fall_back = self._planner_falls_back(what)
+        if not may:
+            return None
+        try:
+            return self.planner(cut, fall_back)
+        except gates.FableHeld:
+            self._held_back(what)
+            return None
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, what)
+            self.say("  %s: the usage limit refused it; it is launched again once the window allows" % what)
+            return None
+        except (ValueError, OSError) as failure:
+            return failure
+
+    def _split(self, identifier):
+        """The `split` rung: the planner replaces the ticket with smaller ones, which parks it; a split that fails needs a person."""
+        from wayline import plan
+        outcome = self._launch_cut(plan.Cut("split", of=identifier), "the planner's split of ticket %d" % identifier)
+        if outcome is None:
+            return False
+        self._tail()
+        if isinstance(outcome, BaseException):
+            known = self.view.tickets[identifier]
+            self._climb(identifier, known.attempt, self._rung_from(identifier), "the planner could not split it: %s" % outcome)
+            return True
+        self.say("  ticket %d: escalation: split by the planner into ticket(s) %s; it is parked"
+                 % (identifier, ", ".join(str(item) for item in outcome.get("tickets") or []) or "none"))
+        return True
+
+    # --- the stall (decision 5; ticket 38) ---
+
+    def _stall_waves(self):
+        waves = (self.policy.get("stall") or {}).get("waves", STALL_WAVES)
+        if isinstance(waves, bool) or not isinstance(waves, int) or waves < 1:
+            raise ConductorError("policy.stall.waves is %r; it is a whole number of waves, at least 1" % (waves,))
+        return waves
+
+    def _radius(self):
+        try:
+            return read_harness(self.project).get("radius")
+        except (ProjectError, ValueError, OSError):
+            return None
+
+    def _check_stall(self, result):
+        """Wave step 10: at `policy.stall.waves` settling waves without progress, journal `stall` and act on it.
+
+        The counter is the replayed journal's (`View.stall`), which the `wave` event this wave journaled has moved.
+        Under radius `strict` the run ends with `stall_strict` and `REPORT.md` is rendered; otherwise the planner
+        re-cuts the open tickets (`_replan`), at this wave's end or as soon as the run may launch model work.
+        """
+        if not result.outcomes or result.ended:
+            return
+        self._tail()
+        waves = self._stall_waves()
+        if self.view.stall < waves:
+            return
+        strict = self._radius() == "strict"
+        self.ledger.append_event(STALL, {"waves": self.view.stall, "action": STOP if strict else REPLAN})
+        self._tail()
+        result.stalled = True
+        if not strict:
+            self.say("  the run stalled: %d settling wave(s) without a closed ticket, a finding, or goal progress; the planner re-cuts "
+                     "the open tickets" % waves)
+            if not self._holds_launches():
+                self._replan(result)
+            return
+        self.ledger.append_event(RUN_ENDED, {"reason": STALL_STRICT})
+        result.ended, result.reason = True, STALL_STRICT
+        words = ("the run stalled: %d settling wave(s) without a closed ticket, a finding, or goal progress, and the radius is "
+                 "strict, so it stopped" % waves)
+        self.say("  " + words)
+        self.reporter()
+        self.notify(RUN_ENDED, "%s: %s; REPORT.md says where it stands" % (self.project.name, words), self.project)
+
+    def _stops_at_stall(self, result):
+        """Whether this wave ends the run on a strict stall: then it launches nothing, since nothing would carry what it started."""
+        if not result.outcomes or result.done or result.findings or result.jobs_finished or result.kept:
+            return False
+        return self.view.stall + 1 >= self._stall_waves() and self._radius() == "strict"
+
+    def _render_report(self):
+        """P7 at a strict stall: `REPORT.md` rendered from the ledger, offline when the writer cannot run; never raises."""
+        from wayline import provenance  # the provenance module pulls in the gates and the report
+        for offline in (False, True):
+            try:
+                rendered = provenance.render_report(self.project, harness_root=self.harness_root, policy=self.policy, offline=offline)
+            except (ValueError, OSError) as failure:
+                self.say("  REPORT.md could not be rendered%s: %s" % (" offline" if offline else "", failure))
+                continue
+            self.say("  rendered %s (linter %s)" % (rendered.path, "passed" if rendered.lint.passed else "failed"))
+            return rendered
+        return None
+
+    def _owed_replan(self):
+        """The time of the stall whose replan is still owed, or None: none was asked, this run took it, or a re-cut was written since."""
+        stalled = self.view.replan_at
+        if stalled is None or stalled == self._replanned:
+            return None
+        from wayline import plan
+        record = plan.read_plan(self.project) or {}
+        if record.get("cut") == "replan" and str(record.get("cut_at") or "") >= stalled:
+            return None
+        return stalled
+
+    def _replan(self, result):
+        """The stall's replan: the planner re-cuts every open or blocked ticket from what the journal says failed."""
+        stalled = self._owed_replan()
+        if stalled is None or self._holds_launches() or self.action != schedule.NORMAL:
+            return
+        from wayline import plan
+        outcome = self._launch_cut(plan.Cut("replan"), "the planner's replan after the stall")
+        if outcome is None:
+            return
+        self._replanned = stalled
+        self._tail()
+        if isinstance(outcome, BaseException):
+            self.say("  the planner could not re-cut the graph after the stall: %s" % outcome)
+            return
+        result.escalated.append((None, REPLAN))
+        self.say("  the planner re-cut the graph after the stall: ticket(s) %s written, %s parked%s" % (
+            ", ".join(str(item) for item in outcome.get("tickets") or []) or "none",
+            ", ".join(str(item) for item in outcome.get("superseded") or []) or "none",
+            "; decision ticket %d asks to confirm it" % outcome["gate"] if outcome.get("gate") else ""))
 
     # --- the ticket file ---
 
@@ -3540,12 +3979,6 @@ def _in_touch_set(path, touches):
 
 # --- the verb ---------------------------------------------------------------------------------
 
-# The flags of decision 1's verb table that later tickets build, named so `run` can say which.
-LATER = (
-    ("simulate_failure", "--simulate-failure", "ticket 38 (the stall and the escalation ladder)"),
-)
-
-
 def parse_simulated_limit(text):
     """`--simulate-limit`'s value as `(seconds, model)`: `S` for every model's windows, `fable:S` for Fable's weekly window; None otherwise."""
     model, _, seconds = str(text).rpartition(":")
@@ -3568,16 +4001,16 @@ def run_command(args):
     parser.add_argument("--simulate-limit", metavar="[fable:]S",
                         help="the next launch carries a rejected rate_limit_event resetting S seconds ahead, which pauses the run; "
                              "with fable:S the next Fable launch is refused on Fable's weekly window, which holds only Fable launches")
-    parser.add_argument("--simulate-failure", metavar="ID", help="pretend a ticket failed (ticket 38)")
+    parser.add_argument("--simulate-failure", metavar="ID", type=int,
+                        help="every acceptance of ticket ID fails, on every attempt, so the escalation ladder climbs to the top")
     parser.add_argument("--max-waves", type=int, metavar="N", help="stop after N waves, whatever the frontier still holds")
     try:
         options = parser.parse_args(args)
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else 2
-    for name, flag, owner in LATER:
-        if getattr(options, name):
-            print("wayline run: %s is not yet implemented; it arrives with %s" % (flag, owner), file=sys.stderr)
-            return 2
+    if options.simulate_failure is not None and options.simulate_failure < 1:
+        print("wayline run: --simulate-failure takes a ticket id, a whole number from 1", file=sys.stderr)
+        return 2
     simulated = None if options.simulate_limit is None else parse_simulated_limit(options.simulate_limit)
     if options.simulate_limit is not None and simulated is None:
         print("wayline run: --simulate-limit takes a number of seconds, 0 or more, or fable:<seconds>", file=sys.stderr)
@@ -3602,6 +4035,9 @@ def run_command(args):
     print("run      %s (%s, radius %s)" % (project, harness.get("autonomy"), harness.get("radius")))
     if simulated is not None:
         worker.simulate_limit(*simulated)
+    if options.simulate_failure is not None:
+        worker.simulate_failure(options.simulate_failure)
+        print("simulate every acceptance of ticket %d fails, on every attempt" % options.simulate_failure)
     try:
         waves = conductor.run(max_waves=options.max_waves, resume=options.resume)
     except (ConductorError, ValueError, OSError) as failure:
@@ -3609,6 +4045,7 @@ def run_command(args):
         return 1
     finally:
         worker.simulate_limit(None)  # a limit no launch took must not reach the next run in this process
+        worker.simulate_failure(None)
     done = [identifier for wave in waves for identifier in wave.done]
     failed = [identifier for wave in waves for identifier in wave.failed]
     running = [identifier for wave in waves for identifier in wave.running]
@@ -3640,6 +4077,8 @@ def _detach(project, options):
         print("wayline run: a conductor (pid %s) already runs on %s" % (holder.get("pid", "?"), project), file=sys.stderr)
         return 1
     run_args = ["--max-waves", str(options.max_waves)] if options.max_waves is not None else []
+    if options.simulate_failure is not None:
+        run_args += ["--simulate-failure", str(options.simulate_failure)]
     try:
         said = tick.launch_detached(project, run_args)
     except tick.UnitError as failure:

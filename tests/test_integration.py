@@ -17,7 +17,7 @@ from pathlib import Path
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from tests.test_conductor import ONE_TICKET, FIVE_TICKETS, done, drive, patch
+from tests.test_conductor import ONE_TICKET, FIVE_TICKETS, done, drive, hold_the_ladder, patch
 from wayline import conductor, pacing, project, registry, tickets, worker
 from wayline import ledger as ledger_module
 from wayline.conductor import Conductor
@@ -74,6 +74,7 @@ class TwoTicketsCase(ProjectTestCase):
         self.ledger = Ledger(self.project)
         self.git("branch", conductor.BRANCH % 2, "main")
         self.seen = []  # what each fake integrator found when it started
+        hold_the_ladder(self)
 
     # --- reading the project back ---
 

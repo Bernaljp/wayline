@@ -53,6 +53,7 @@ session launched, a re-cut when the tickets it supersedes are not the ones the p
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -82,7 +83,7 @@ __all__ = [
     "ticket_body", "adds_public_api", "retry_steps", "touch_problem", "base_checkout", "criteria_at_base", "check_tickets",
     "check_graph", "superseded_by", "prepare", "check_plan", "read_all", "registry_text", "rubric_text", "journal_text", "graph_text",
     "plan_prompt", "cut_graph", "write_plan", "park_open", "read_plan", "graph_sha", "plan_state", "graph_sent_back", "confirm",
-    "advance", "plan", "replan", "split", "render_report", "plan_command",
+    "advance", "plan", "replan", "split", "render_report", "plan_command", "SPLIT_NOTE", "split_from",
 ]
 
 PLANNER = specify.PLANNER
@@ -202,12 +203,22 @@ def existing_id(reference):
     return int(reference[len(EXISTING):])
 
 
+SPLIT_NOTE = "Cut from ticket %d by the planner's split."
+_SPLIT_NOTE_RE = re.compile(r"^Cut from ticket (\d+) by the planner's split\.$", re.MULTILINE)
+
+
+def split_from(body):
+    """The id of the ticket a split cut this one from, read from the note `ticket_body` writes; None for any other ticket."""
+    match = _SPLIT_NOTE_RE.search(body or "")
+    return int(match.group(1)) if match else None
+
+
 def ticket_body(item, of=None):
     """A cut ticket's body: `## Demo`, the planner's notes, and the public-API declaration the docs check reads back."""
     lines = [DEMO_HEADING, "", _prose(_one_line(item["demo"]))]
     notes = _prose(item.get("notes") or "")
     if of is not None:
-        notes = "Cut from ticket %d by the planner's split." % of + ("\n\n" + notes if notes else "")
+        notes = SPLIT_NOTE % of + ("\n\n" + notes if notes else "")
     if notes:
         lines += ["", NOTES_HEADING, "", notes]
     if item.get("adds_public_api"):

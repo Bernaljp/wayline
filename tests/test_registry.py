@@ -468,6 +468,27 @@ class OutcomeTest(unittest.TestCase):
         self.assertEqual(records[("role", "coder")],
                          {"assigned": 2, "passed_first_time": 0, "failed": 1, "last_used": "2026-09-12T10:30:00Z"})
 
+    def test_the_ladder_counts_one_failure_per_launch_and_a_resumed_close_is_no_first_time_pass(self):
+        records = registry.outcomes(self.events(
+            ("2026-09-12T10:00:00Z", "ticket_launched", {"ticket": 1, "attempt": 1, "role": "coder", "skills": []}),
+            ("2026-09-12T10:20:00Z", "ticket_failed", {"ticket": 1, "attempt": 1, "reason": "no", "next": "resume"}),
+            ("2026-09-12T10:25:00Z", "ticket_failed", {"ticket": 1, "attempt": 1, "reason": "still no", "next": "tier_up"}),
+            ("2026-09-12T10:30:00Z", "ticket_launched", {"ticket": 2, "attempt": 1, "role": "coder", "skills": []}),
+            ("2026-09-12T10:40:00Z", "ticket_failed", {"ticket": 2, "attempt": 1, "reason": "no", "next": "resume"}),
+            ("2026-09-12T11:00:00Z", "ticket_done", {"ticket": 2}),
+        ))
+        self.assertEqual(records[("role", "coder")],
+                         {"assigned": 2, "passed_first_time": 0, "failed": 2, "last_used": "2026-09-12T10:30:00Z"})
+
+    def test_a_relaunch_in_the_same_attempt_does_not_count_its_failure_twice(self):
+        records = registry.outcomes(self.events(
+            ("2026-09-12T10:00:00Z", "ticket_launched", {"ticket": 1, "attempt": 1, "role": "coder", "skills": []}),
+            ("2026-09-12T10:20:00Z", "ticket_failed", {"ticket": 1, "attempt": 1, "reason": "no", "next": "resume"}),
+            ("2026-09-12T10:25:00Z", "ticket_launched", {"ticket": 1, "attempt": 1, "role": "coder", "skills": []}),
+            ("2026-09-12T10:30:00Z", "ticket_failed", {"ticket": 1, "attempt": 1, "reason": "no", "next": "tier_up"}),
+        ))
+        self.assertEqual(records[("role", "coder")]["failed"], 1)
+
     def test_a_close_is_attributed_to_what_the_latest_launch_named(self):
         records = registry.outcomes(self.events(
             ("2026-09-12T10:00:00Z", "ticket_launched", {"ticket": 1, "attempt": 1, "role": "coder", "skills": ["first"]}),

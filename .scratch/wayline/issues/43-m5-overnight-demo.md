@@ -16,3 +16,7 @@
 - [ ] In the morning `REPORT.md` is rendered with every claim tagged, the linter passing, the verifier's sample passing, decider decisions first, "not pursued" and unread promotions listed, and a `notified` event delivered through `hermes send`.
 - [ ] From another machine through `ssh -L`, the outputs index lists the results, a single file and a zipped directory download, and the logs view tails a job log.
 - [ ] `docs/verification/m5.md` records the timeline, the window boundary, the journal excerpts, the report's linter output, and the tunnel session; the repository is tagged `v0.6.0`.
+
+## Notes
+
+- **Forcing an escalation (the owner's choice, 2026-09-17, from ticket 38).** Start the run with `wayline run --detach --simulate-failure <id>`; `--detach` passes the flag to the unit. The flag lives only in that conductor: if the tick relaunches the conductor after a pause, the relaunched run no longer fails the ticket, so start it again with the flag if the chain has not reached `needs_human` yet. Under the default `stall.waves` of 2, a ticket that keeps failing also stalls the run, and the planner re-cuts the open tickets on Fable: that is the stall replan this demo asks for, and it is accepted as part of the demo. The ladder's order is resume, split, tier up, needs_human.

@@ -4,6 +4,26 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+- The stall and the escalation ladder (`wayline.conductor`, ticket 38). Every failure journals
+  `ticket_failed` with its rung in `next`, and each wave takes every failed ticket up that rung, so a
+  restarted conductor carries on where the ladder stood. The order is `policy.escalation.then`, split
+  before tier up (the owner's choice, since a tier up to Fable is the dearer step): `resume` resumes
+  the failed attempt's session once with the failure output (a failed job and a failed verdict now
+  included, in a worktree made again when the integration removed it); `split` calls the planner's
+  split (`plan.cut_graph`), and one that fails goes on to the tier up; `tier_up` opens the ticket for
+  a new attempt one difficulty tier up; `needs_human` journals `ticket_needs_human` and notifies the
+  owner. A ticket a split cut is never split again; a pinned ticket, and one already on the top tier,
+  skip the tier up. `ticket_launched` carries `difficulty`, the effective difficulty the attempt launched
+  at; two attempts of a kind that failed at a tier past their resume journal `difficulty_raised`
+  and move that kind's unpinned tickets up a tier for the rest of the run, never counting an attempt
+  that fell back to Opus. A failed acceptance now journals `ticket_failed` with `next: resume` before
+  its resume, and a resumed session that reports `failed` again climbs the ladder. The registry's
+  outcome record counts one failure per launched attempt. At `policy.stall.waves` settling waves without progress the conductor journals `stall` and
+  the planner re-cuts the open tickets (`wayline plan --replan`), or, under radius `strict`, the run
+  ends with `stall_strict` and `REPORT.md` is rendered. A run no longer ends while a failed ticket
+  waits on a rung or a stall on its replan.
+- `wayline run --simulate-failure <id>` fails every acceptance of that ticket on every attempt, so
+  the whole ladder runs in a demo; `--detach` passes it to the unit.
 - `wayline plan` (`wayline.plan`, ticket 34): the planner's plan protocol cuts a confirmed
   `research/SPEC.md` into `research/tickets/NN-slug.md` and `graph.json`. The planner returns a
   `plan` record (new schema: tickets keyed `T1`, `T2`, ... with `blocked_by` among the keys or

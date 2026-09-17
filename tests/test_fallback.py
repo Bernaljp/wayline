@@ -497,11 +497,14 @@ class FallbackSessionTest(FallbackCase):
         self.fake.script(Envelope(num_turns=2), ticket=1)
         drive(driven)
         self.assertEqual([(call.kind, call.request.model) for call in self.calls(1)], [("launch", "opus"), ("resume", "opus")])
-        failed = self.payload("ticket_failed")
-        self.assertEqual((failed["attempt"], failed["next"]), (1, "tier_up"))
-        attempt = replay.replay(self.events()).tickets[1].attempts[1]
+        failed = [item["payload"] for item in self.events() if item["event"] == "ticket_failed"][0]
+        self.assertEqual((failed["attempt"], failed["next"]), (1, "split"))
+        view = replay.replay(self.events())
+        attempt = view.tickets[1].attempts[1]
         self.assertEqual((attempt.fallback_from, attempt.spent), ("fable", {"invalid_result"}))
-        self.assertEqual(self.statuses(), {1: "failed"})
+        self.assertEqual(view.failures, {}, "a failure on a launch that fell back never counts toward difficulty_raised")
+        self.assertNotIn("difficulty_raised", [item["event"] for item in self.events()])
+        self.assertEqual(self.statuses(), {1: "needs_human"}, "the tier-up attempt had nothing scripted")
 
     def test_a_restart_resumes_an_attempt_that_fell_back_on_opus_whatever_the_consent_says_now(self):
         self.add(1, difficulty=4)

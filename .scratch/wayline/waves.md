@@ -1,6 +1,6 @@
 # Wayline tickets: what can run in parallel, and what waits
 
-Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
+Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
 
 ## The rule
 
@@ -106,6 +106,7 @@ What is left of the critical path is 31 -> 33 -> 34 -> 36 -> 43 -> 50 -> 53, sev
 | 56 Verdicts on Opus and the verdict principle | #103 | 9 | 24, 55 | 43 |
 | 57 Ask the owner when Fable is spent | #104 | 10 | 35, 55 | nothing |
 | 58 A design pass over the dashboard | #114 | 1 | nothing | 45 |
+| 59 Worker slots count every session a conductor owes | #126 | 11 | 38 | nothing |
 
 ## Running tickets in parallel without corrupting git
 

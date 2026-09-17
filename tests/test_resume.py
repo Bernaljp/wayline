@@ -273,9 +273,10 @@ class ReconcileTest(TakeOverCase):
 
     def test_a_failure_the_journal_holds_wins_over_a_ticket_file_not_rewritten_yet(self):
         self.killed()
-        self.ledger.append_event("ticket_failed", {"ticket": 1, "attempt": 1, "reason": "no", "next": "resume"}, ticket=1)
+        self.ledger.append_event("ticket_failed", {"ticket": 1, "attempt": 1, "reason": "no", "next": "needs_human"}, ticket=1)
+        self.ledger.append_event("ticket_needs_human", {"ticket": 1, "question": "no"}, ticket=1)
         self.resume()
-        self.assertEqual(self.ticket()["status"], "failed")
+        self.assertEqual(self.ticket()["status"], "needs_human")
         self.assertEqual(self.calls, [])
         self.assertEqual(self.payload("run_ended"), {"reason": "frontier_empty"})
 
@@ -406,10 +407,12 @@ class ControlTest(ControlCase):
         self.assertEqual(self.events("ticket_result"), [])
         self.assertTrue(parked.ended, "nothing is left to run once the only ticket is parked")
 
-    def test_rerun_reopens_a_failed_ticket_and_launches_a_new_attempt(self):
-        fake, driven = self.conductor_over((Envelope(), None, 0), (Envelope(), None, 0), (done(), patch(), 0))
+    def test_rerun_reopens_a_ticket_the_ladder_handed_to_a_person_and_launches_a_new_attempt(self):
+        fake, driven = self.conductor_over((Envelope(), None, 0), (Envelope(), None, 0), (done(), patch(), 0),
+                                           escalation={"resume": 1, "tier_up": 0, "then": ["needs_human"], "raise_after_failures": 2},
+                                           stall={"waves": 99})
         self.until_quiet(driven)
-        self.assertEqual(self.ticket()["status"], "failed")
+        self.assertEqual(self.ticket()["status"], "needs_human")
         control(self.project, "rerun", {"ticket": 1})
         self.until_quiet(driven)
         self.assertEqual(self.payload("ticket_rerun"), {"ticket": 1, "by": "cli"})

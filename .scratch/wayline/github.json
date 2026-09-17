@@ -571,6 +571,15 @@
     "55"
    ],
    "milestone": "M5"
+  },
+  "59": {
+   "number": 126,
+   "id": 5484545541,
+   "title": "Worker slots count every session a conductor owes",
+   "blockers": [
+    "38"
+   ],
+   "milestone": "M5"
   }
  },
  "relationships": {

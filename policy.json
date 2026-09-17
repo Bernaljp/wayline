@@ -40,7 +40,7 @@
   "pacing": {"stop_at": 0.90, "cheap_at": 0.80},
   "model_fallback": {"wait_under_hours": 12, "ask_timeout_hours": 2},
   "context_pack": {"max_chars": {"sonnet": 120000, "opus": 200000, "fable": 300000}},
-  "escalation": {"resume": 1, "tier_up": 1, "then": ["split", "needs_human"], "raise_after_failures": 2},
+  "escalation": {"resume": 1, "then": ["split", "tier_up", "needs_human"], "tier_up": 1, "raise_after_failures": 2},
   "stall": {"waves": 2},
   "proposals": {
     "cap": {"strict": 0, "moderate": 3, "exploratory": 6},

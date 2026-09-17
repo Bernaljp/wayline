@@ -83,7 +83,7 @@
       "properties": {
         "resume": {"type": "integer", "minimum": 0},
         "tier_up": {"type": "integer", "minimum": 0},
-        "then": {"type": "array", "items": {"type": "string", "enum": ["split", "needs_human"]}},
+        "then": {"type": "array", "description": "the rungs after the resume, in order (ticket 38)", "items": {"type": "string", "enum": ["split", "tier_up", "needs_human"]}},
         "raise_after_failures": {"type": "integer", "minimum": 1}
       }
     },

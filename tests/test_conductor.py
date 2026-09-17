@@ -16,6 +16,7 @@ import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests import machine
@@ -42,6 +43,18 @@ def done(ticket_id=1, **extra):
     }
     result.update(extra)
     return Envelope(structured_output=result, num_turns=3, duration_ms=1200)
+
+
+def hold_the_ladder(case):
+    """Leave every failed ticket on its first rung for the length of a test: its failure is what the test reads.
+
+    The escalation ladder that climbs from a failure is ticket 38's, and `tests/test_escalation.py` covers it; a
+    suite about an integration or a sweep asserts the failure it met, which a climbing ladder would move on from.
+    """
+    for name, value in (("_escalate", lambda self, result: None), ("_owed_rungs", lambda self: [])):
+        patcher = mock.patch.object(conductor.Conductor, name, value)
+        patcher.start()
+        case.addCleanup(patcher.stop)
 
 
 def patch(files=None, message="ticket 1: write hello.txt", commit=True):
@@ -96,6 +109,12 @@ class ConductorCase(ProjectTestCase):
         self.assertTrue(found, "no %s event in the journal: %s" % (name, self.sequence()))
         return found[-1]["payload"]
 
+    def first(self, name):
+        """The first such event's payload: a failure's own, before the escalation ladder (ticket 38) climbs on from it."""
+        found = self.events(name)
+        self.assertTrue(found, "no %s event in the journal: %s" % (name, self.sequence()))
+        return found[0]["payload"]
+
     def ticket(self, identifier=1):
         return {fields["id"]: fields for fields in tickets.read_tickets(self.project)}[identifier]
 
@@ -131,6 +150,7 @@ class ConductorCase(ProjectTestCase):
                 fake.script(envelope, patch=applied)
             self.conductor = Conductor(self.project, out=io.StringIO())
             self.conductor.readings = machine.recorded
+            self.conductor.plan_pre_check = False  # a split the ladder reaches rebuilds the registry without the CLI's validator
             results = drive(self.conductor, waves)
             self.calls = list(fake.calls)  # the fake is reset when the block ends
         return results
@@ -283,7 +303,7 @@ class RebaseTest(ConductorCase):
         self.commit_on_main("hello.txt", "a different hello\n")
         head = self.git("rev-parse", "main")
         self.conduct((done(), patch()))
-        failed = self.payload("ticket_failed")
+        failed = self.first("ticket_failed")
         self.assertEqual(failed["next"], "split")
         self.assertIn("hello.txt", failed["reason"])
         self.assertIn("integrator", failed["reason"])  # nothing scripted it, so it could not be launched
@@ -298,7 +318,8 @@ class RebaseTest(ConductorCase):
         self.assertTrue(self.worktree().exists(), "the branch and its worktree stay for the next attempt")
         self.assertIn("ticket/1", self.branches())
         self.assertEqual(self.git("status", "--porcelain", cwd=self.worktree()), "")
-        self.assertEqual(self.ticket()["status"], "failed")
+        # The split nothing scripted fails, so the ladder hands the ticket to a person (ticket 38).
+        self.assertEqual(self.ticket()["status"], "needs_human")
 
 
 class InvalidResultTest(ConductorCase):
@@ -322,20 +343,20 @@ class InvalidResultTest(ConductorCase):
 
     def test_a_second_invalid_result_fails_the_ticket(self):
         self.conduct((Envelope(), None), (Envelope(), None))
-        self.assertEqual(self.payload("ticket_failed")["next"], "tier_up")
-        self.assertIn("after one resume", self.payload("ticket_failed")["reason"])
-        self.assertEqual(self.ticket()["status"], "failed")
+        self.assertEqual(self.first("ticket_failed")["next"], "split")
+        self.assertIn("after one resume", self.first("ticket_failed")["reason"])
+        self.assertEqual(self.ticket()["status"], "needs_human", "the split and the tier-up attempt had nothing scripted")
         self.assertNotIn("integrated", self.sequence())
         self.assertTrue(self.worktree().exists())
 
     def test_a_result_for_another_ticket_is_not_this_ticket_result(self):
         self.conduct((done(ticket_id=9), patch()), (done(ticket_id=9), patch()))
-        self.assertIn("ticket_id 9", self.payload("ticket_failed")["reason"])
+        self.assertIn("ticket_id 9", self.first("ticket_failed")["reason"])
 
     def test_a_run_that_ends_with_a_failed_ticket_still_ends(self):
         result = combined(self.conduct((Envelope(), None), (Envelope(), None)))
         self.assertTrue(result.ended)
-        self.assertEqual(result.failed, [1])
+        self.assertEqual(set(result.failed), {1})
 
 
 class FailedAcceptanceTest(ConductorCase):
@@ -358,8 +379,9 @@ class FailedAcceptanceTest(ConductorCase):
 
     def test_a_second_failure_fails_the_ticket(self):
         self.conduct((done(), patch(WRONG)), (done(), patch(WRONG, message="ticket 1: still wrong")))
-        self.assertEqual(self.payload("ticket_failed")["next"], "tier_up")
-        self.assertIn("still failed in the worktree", self.payload("ticket_failed")["reason"])
+        failures = [event["payload"] for event in self.events("ticket_failed")]
+        self.assertEqual([item["next"] for item in failures[:2]], ["resume", "split"])
+        self.assertIn("still failed in the worktree", failures[1]["reason"])
         self.assertNotIn("integrated", self.sequence())
         self.assertFalse((self.project / "hello.txt").exists())
 
@@ -369,9 +391,9 @@ class UncommittedWorkTest(ConductorCase):
 
     def test_an_uncommitted_file_in_the_touch_set_fails_the_ticket(self):
         self.conduct((done(), patch(commit=False)))
-        self.assertIn("uncommitted", self.payload("ticket_failed")["reason"])
-        self.assertIn("hello.txt", self.payload("ticket_failed")["reason"])
-        self.assertEqual(self.payload("ticket_failed")["next"], "resume")
+        self.assertIn("uncommitted", self.first("ticket_failed")["reason"])
+        self.assertIn("hello.txt", self.first("ticket_failed")["reason"])
+        self.assertEqual(self.first("ticket_failed")["next"], "resume")
         self.assertNotIn("integrated", self.sequence())
         self.assertFalse((self.project / "hello.txt").exists(), "main must not move on it")
 
@@ -409,8 +431,8 @@ class ResultStatusTest(ConductorCase):
         envelope = done()
         envelope.structured_output.update({"status": "failed", "summary": "the library does not exist"})
         self.conduct((envelope, None))
-        self.assertEqual(self.payload("ticket_failed")["reason"], "the library does not exist")
-        self.assertEqual(self.ticket()["status"], "failed")
+        self.assertEqual(self.first("ticket_failed")["reason"], "the library does not exist")
+        self.assertEqual(self.ticket()["status"], "needs_human", "its resume had nothing scripted")
 
     def test_needs_human_asks_the_question_the_worker_left(self):
         envelope = done()
@@ -443,7 +465,8 @@ class ResultStatusTest(ConductorCase):
         resumed = self.events("ticket_resumed")
         self.assertEqual([event["payload"]["reason"] for event in resumed], ["invalid_result"])
         self.assertIn("research/jobs/j-0001.json does not exist", self.calls[1].message)
-        self.assertEqual(self.ticket()["status"], "failed")
+        self.assertEqual(self.first("ticket_failed")["next"], "split")
+        self.assertEqual(self.ticket()["status"], "needs_human", "the split and the tier-up attempt had nothing scripted")
 
     def test_what_no_ticket_reads_yet_is_written_into_the_ticket_rather_than_dropped(self):
         self.conduct((done(
@@ -461,7 +484,7 @@ class ResultStatusTest(ConductorCase):
         envelope = done()
         envelope.structured_output.update({"status": "failed", "summary": "no"})
         self.conduct((envelope, None))
-        self.assertEqual(self.payload("ticket_failed")["next"], "resume")
+        self.assertEqual(self.first("ticket_failed")["next"], "resume")
 
 
 class RefuseToStartTest(ConductorCase):
@@ -506,11 +529,6 @@ class RefuseToStartTest(ConductorCase):
         self.assertEqual(code, 2)
         self.assertIn("stray.txt", err)
         self.assertNotIn("ticket_launched", [event["event"] for event in self.events()])
-
-    def test_a_flag_a_later_ticket_builds_says_which(self):
-        code, _, err = run_verb(["--simulate-failure", "5", "--project", str(self.project)])
-        self.assertEqual(code, 2)
-        self.assertIn("ticket 38", err)
 
 
 def run_verb(arguments):
@@ -559,8 +577,9 @@ class RunLoopTest(ConductorCase):
     def test_max_waves_stops_the_loop_whatever_the_frontier_holds(self):
         waves = self.conduct_run(max_waves=1)
         self.assertEqual(len(waves), 1)
-        self.assertEqual(self.ticket()["status"], "failed")  # the fake had nothing scripted
+        self.assertEqual(self.ticket()["status"], "needs_human")  # the fake had nothing scripted: no session, nothing to climb
         self.assertIn("no scripted envelope", self.payload("ticket_failed")["reason"])
+        self.assertEqual(self.payload("ticket_failed")["next"], "needs_human")
 
 
 class FiveTicketsCase(ProjectTestCase):
