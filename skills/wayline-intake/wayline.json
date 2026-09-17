@@ -1,9 +1,9 @@
 {
   "id": "intake",
   "scope_kind": "global",
-  "capability_summary": "Phase P0: turns whatever the owner has into research/INTAKE.md, records autonomy, radius, the fallback consent, budgets, and the human-only decision classes, and writes GOAL.json only when a script can measure the goal.",
+  "capability_summary": "Phase P0: turns whatever the owner has into research/INTAKE.md, records autonomy, radius, the fallback and ladder consents, budgets, and the human-only decision classes, and writes GOAL.json only when a script can measure the goal.",
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "medium",
   "fixtures": ["skill/wayline-intake"],
-  "sha256": "24df40cdec7a637450a29b0874f20cc8c2588352f75983a7cc14dc9c5197fab0"
+  "sha256": "2b4c1cc2cb383a0b6b9f0f98c13c036cf4c4d34c1a8b63af56b9e71aef139ea9"
 }

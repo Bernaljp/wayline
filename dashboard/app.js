@@ -262,6 +262,7 @@ function select(id) {
   dirty.autonomy = false;
   dirty.pacing = false;
   dirty.model_fallback = false;
+  dirty.ladder_changes = false;
   every('decisions', state.pollViews, loadDecisions);
   showGraph();
   startTail();
@@ -1296,7 +1297,7 @@ function refreshViews() {
 // --- the controls (ticket 35) ------------------------------------------------------------------
 
 // A control the owner changed and has not set yet keeps what they chose while the views poll.
-const dirty = { autonomy: false, pacing: false, model_fallback: false };
+const dirty = { autonomy: false, pacing: false, model_fallback: false, ladder_changes: false };
 
 // The line at the top of the controls panel: what it is doing, or what went wrong, before the
 // first reading of the decisions view fills the controls themselves.
@@ -1332,12 +1333,21 @@ function renderControls(controls) {
   }
   document.getElementById('model-fallback-current').textContent = controls.model_fallback
     ? `now ${controls.model_fallback_stated ? controls.model_fallback : 'ask (unset)'}: what Fable work does while Fable's weekly window is spent` : '';
+  if (!dirty.ladder_changes) {
+    replace(document.getElementById('ladder-changes-select'), (controls.ladder_changes_levels || []).map((consent) => {
+      const option = el('option', { value: consent, text: consent });
+      option.selected = consent === controls.ladder_changes;
+      return option;
+    }));
+  }
+  document.getElementById('ladder-changes-current').textContent = controls.ladder_changes
+    ? `now ${controls.ladder_changes_stated ? controls.ladder_changes : 'ask (unset)'}: whether an autonomous run may change the rung ladder on its own` : '';
   document.getElementById('autonomy-current').textContent = controls.autonomy
     ? `now ${controls.autonomy}; raised at any time, lowered only while no conductor runs` : '';
   document.getElementById('active-state').textContent = controls.active ? 'this is the active project' : 'another project is active';
   document.getElementById('pause-state').textContent = controls.paused_by_owner
     ? 'paused by the owner: nothing that needs a model launches' : 'not paused by the owner';
-  for (const id of ['autonomy-set', 'pacing-set', 'model-fallback-set', 'pause-button', 'resume-button']) document.getElementById(id).disabled = !TOKEN;
+  for (const id of ['autonomy-set', 'pacing-set', 'model-fallback-set', 'ladder-changes-set', 'pause-button', 'resume-button']) document.getElementById(id).disabled = !TOKEN;
   document.getElementById('switch-button').disabled = !TOKEN || Boolean(controls.active);
 }
 
@@ -1359,6 +1369,14 @@ function wireControls() {
       (done) => (done.changed ? `pacing set: stop at ${done.to.stop_at}, cheap only at ${done.to.cheap_at}` : 'the pacing thresholds are already these'));
   });
   document.getElementById('model-fallback-select').addEventListener('change', () => { dirty.model_fallback = true; });
+  document.getElementById('ladder-changes-select').addEventListener('change', () => { dirty.ladder_changes = true; });
+  document.getElementById('ladder-changes-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const consent = document.getElementById('ladder-changes-select').value;
+    dirty.ladder_changes = false;
+    await perform('ladder_changes', { ladder_changes: consent },
+      (done) => (done.changed ? `ladder consent set from ${done.from || 'ask (unset)'} to ${done.to}` : `the ladder consent is already ${done.to}`));
+  });
   document.getElementById('model-fallback-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const consent = document.getElementById('model-fallback-select').value;

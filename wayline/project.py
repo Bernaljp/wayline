@@ -48,7 +48,10 @@ __all__ = [
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
-    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "falls_back_now", "ask_falls_back_at", "fable_hold", "fable_falls_back",
+    "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "falls_back_now", "ask_falls_back_at",
+    "fable_hold", "fable_falls_back",
+    "LADDER_CLASS", "LADDER_CHANGES", "LADDER_CONSENTS", "ladder_consent", "ladder_is_human_only",
+    "human_only_classes_now", "set_ladder_changes",
     "set_model_fallback", "hold_status", "render_hold",
     "steer_ticket", "set_pacing", "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
@@ -99,6 +102,15 @@ MODEL_FALLBACK = {
 }
 # How the owner is shown a project that never recorded a consent, which behaves as `ask`.
 UNSET_CONSENT = "ask (unset)"
+
+# The ladder consent (Implementation Decisions 16), one line each, as the switch and the intake say what it does.
+# `ladder` is the decision class a proposed change to the rung ladder (`tiers` or `difficulty`) opens under.
+LADDER_CLASS = "ladder"
+LADDER_CHANGES = {
+    AUTO: "under `autonomous`, the decider may approve a proposed change to the rung ladder (`tiers` or `difficulty`) on its own.",
+    ASK: "a proposed change to the rung ladder (`tiers` or `difficulty`) is a human-only decision ticket of class `ladder` under every autonomy.",
+}
+LADDER_CONSENTS = (AUTO, ASK)
 
 # `LIVE_JOB_STATUSES` (Implementation Decisions 6) is the job runner's, re-exported here because
 # the views were reading it from this module before the runner existed.
@@ -1338,6 +1350,94 @@ def set_model_fallback(project, consent, by="cli"):
     return report
 
 
+# --- the ladder consent ---------------------------------------------------------------------------------------
+
+
+def ladder_consent(harness, view=None):
+    """`(consent, stated)`: the ladder consent a project holds, and whether anyone stated it (decision 16).
+
+    Read exactly as `fallback_consent` reads the fallback consent: a `control ladder_changes` journaled during
+    the run a replayed `view` is folding wins while that run is open, because the switch and the dashboard's
+    action journal it after writing `harness.json`; once the run ends, and when a new run starts,
+    `harness.json` says it again. A project whose `harness.json` has no `ladder_changes` behaves as `ask`, and
+    `stated` False is how it stays distinguishable from an explicit `ask`.
+    """
+    if view is not None and getattr(view, "ladder_changes", None) in LADDER_CONSENTS:
+        return view.ladder_changes, True
+    value = (harness or {}).get("ladder_changes")
+    return (value, True) if value in LADDER_CONSENTS else (ASK, False)
+
+
+def ladder_is_human_only(harness, view=None):
+    """Whether a decision of class `ladder` opens `human_only` (decision 16).
+
+    It does under `ask`, which a project that never recorded a consent behaves as, and it does not under
+    `auto`, where the decider may answer it. Under `interactive` and `checkpoints` the consent changes
+    nothing that the owner sees, because every decision ticket waits for the owner there anyway
+    (`schedule.awaits_owner`).
+    """
+    return ladder_consent(harness, view)[0] != AUTO
+
+
+def human_only_classes_now(harness, view=None):
+    """The decision classes the decider never resolves right now: `harness.json`'s, plus `ladder` while the consent is not `auto`.
+
+    One reader for the decider's prompt and for whoever opens a decision, so the prompt and the ticket never
+    disagree about the class (decision 16).
+    """
+    classes = [name for name in ((harness or {}).get("human_only") or []) if isinstance(name, str)]
+    if ladder_is_human_only(harness, view) and LADDER_CLASS not in classes:
+        classes.append(LADDER_CLASS)
+    return classes
+
+
+def set_ladder_changes(project, consent, by="cli"):
+    """`wayline switch --ladder`: write the consent to `harness.json`, then journal `control ladder_changes`.
+
+    Built the way `set_model_fallback` is built, and for the same reasons. Either consent is accepted at any
+    time, with a conductor running or not, since neither takes an irreversible step. A running conductor
+    applies the event at its next wave, and `harness.json` is what the next run starts from; it is written
+    first, so a crash between the two leaves a run that starts from the new consent. `by` is `cli`, or
+    `dashboard` for its `ladder_changes` action.
+
+    A change is measured against `harness.json` and against the consent a run still open in the journal holds,
+    so neither a hand edit of the file nor an intake that wrote it can pass a change off as none. An explicit
+    `ask` on a project without the key is a change: it records that the owner answered.
+
+    Returns `{from, to, changed, conductor}`, `from` None for a project that never recorded a consent.
+    """
+    project = Path(project).resolve()
+    if consent not in LADDER_CONSENTS:
+        raise ProjectError("the ladder consent is one of %s, got %r" % (", ".join(LADDER_CONSENTS), consent))
+    ledger = Ledger(project)
+    with ledger.lock():
+        harness = read_harness(project)
+        written = harness.get("ladder_changes")
+        holder = conductor_holder(project)
+        held = [written]
+        events, _ = ledger.read_events()
+        running = replay.replay(events).ladder_changes
+        if running in LADDER_CONSENTS:
+            held.append(running)
+        report = {"from": held[-1], "to": consent, "changed": any(value != consent for value in held), "conductor": holder}
+        if not report["changed"]:
+            return report
+        if written != consent:
+            # Beside the fallback consent, where the intake writes it, and beside radius on a project that never stated one.
+            after = "model_fallback" if "model_fallback" in harness else "radius"
+            updated = {}
+            for key, value in harness.items():
+                if key != "ladder_changes":
+                    updated[key] = value
+                if key == after:
+                    updated["ladder_changes"] = consent
+            updated.setdefault("ladder_changes", consent)
+            check(updated, load_schema("harness"), name=HARNESS_JSON)
+            atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
+        control(project, "ladder_changes", {"ladder_changes": consent}, by=by)
+    return report
+
+
 # --- the pacing thresholds -------------------------------------------------------------------------------
 
 
@@ -1671,32 +1771,43 @@ def switch_command(args):
         prog="wayline switch",
         description="make another project the active one; with --autonomy instead, raise the project's autonomy, "
                     "or lower it while no conductor is running; with --fallback, set its fallback consent at any time; "
+                    "with --ladder, set its ladder consent at any time; "
                     "with --stop-at or --cheap-at, set its pacing thresholds at any time")
     parser.add_argument("path", nargs="?", help="the project to switch to")
     parser.add_argument("--autonomy", choices=list(AUTONOMY), help="the autonomy to set on the project, instead of switching")
     parser.add_argument("--fallback", choices=list(CONSENTS),
                         help="the fallback consent to set on the project, instead of switching: whether Fable work falls back to "
                              "Opus while Fable's weekly window is spent")
+    parser.add_argument("--ladder", choices=list(LADDER_CONSENTS),
+                        help="the ladder consent to set on the project, instead of switching: whether an autonomous run may change "
+                             "the rung ladder on its own")
     parser.add_argument("--stop-at", type=float, metavar="FRACTION",
                         help="the pacing threshold at which nothing that needs a model launches, from 0 to 1, instead of switching")
     parser.add_argument("--cheap-at", type=float, metavar="FRACTION",
                         help="the pacing threshold at which only difficulty 1 and 2 launch, from 0 to 1, instead of switching")
-    parser.add_argument("--project", help="with --autonomy, --fallback, --stop-at, or --cheap-at, the project to set; the active one by default")
+    parser.add_argument("--project",
+                        help="with --autonomy, --fallback, --ladder, --stop-at, or --cheap-at, the project to set; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     if options.stop_at is not None or options.cheap_at is not None:
-        if options.path is not None or options.autonomy is not None or options.fallback is not None:
-            print("wayline switch: give --stop-at and --cheap-at on their own, not with a project to switch to, --autonomy, or --fallback "
-                  "(--project names the project they set)", file=sys.stderr)
+        if options.path is not None or options.autonomy is not None or options.fallback is not None or options.ladder is not None:
+            print("wayline switch: give --stop-at and --cheap-at on their own, not with a project to switch to, --autonomy, --fallback, "
+                  "or --ladder (--project names the project they set)", file=sys.stderr)
             return 2
         return _switch_pacing(options)
     if options.fallback is not None:
-        if options.path is not None or options.autonomy is not None:
-            print("wayline switch: give --fallback on its own, not with a project to switch to or --autonomy "
+        if options.path is not None or options.autonomy is not None or options.ladder is not None:
+            print("wayline switch: give --fallback on its own, not with a project to switch to, --autonomy, or --ladder "
                   "(--project names the project it sets)", file=sys.stderr)
             return 2
         return _switch_fallback(options)
+    if options.ladder is not None:
+        if options.path is not None or options.autonomy is not None:
+            print("wayline switch: give --ladder on its own, not with a project to switch to or --autonomy "
+                  "(--project names the project it sets)", file=sys.stderr)
+            return 2
+        return _switch_ladder(options)
     if options.autonomy is not None:
         if options.path is not None:
             print("wayline switch: give a project to switch to or --autonomy, not both (--project names the project --autonomy sets)",
@@ -1705,7 +1816,8 @@ def switch_command(args):
         return _switch_autonomy(options)
     if options.path is None or options.project is not None:
         parser.print_usage(sys.stderr)
-        print("wayline switch: give the project to switch to, or --autonomy <level>, --fallback <consent>, or --stop-at/--cheap-at <fraction> "
+        print("wayline switch: give the project to switch to, or --autonomy <level>, --fallback <consent>, --ladder <consent>, "
+              "or --stop-at/--cheap-at <fraction> "
               "(with --project for another project)",
               file=sys.stderr)
         return 2
@@ -1749,6 +1861,25 @@ def _switch_autonomy(options):
         print("  journaled for the conductor (pid %s) to apply at its next wave" % report["conductor"].get("pid", "?"))
     else:
         print("  no conductor is running; the next run starts %s" % report["to"])
+    return 0
+
+
+def _switch_ladder(options):
+    try:
+        project = find_project(options.project)
+        report = set_ladder_changes(project, options.ladder)
+    except (ProjectError, ValidationError, OSError) as failure:
+        print("wayline switch: %s" % failure, file=sys.stderr)
+        return 1
+    if not report["changed"]:
+        print("the ladder consent is already %s on %s" % (report["to"], project))
+        return 0
+    print("ladder consent from %s to %s on %s" % (report["from"] or UNSET_CONSENT, report["to"], project))
+    print("  %s: %s" % (report["to"], LADDER_CHANGES[report["to"]]))
+    if report["conductor"] is not None:
+        print("  journaled for the conductor (pid %s) to apply at its next wave" % report["conductor"].get("pid", "?"))
+    else:
+        print("  no conductor is running; the next run starts under %s" % report["to"])
     return 0
 
 

@@ -42,7 +42,7 @@ from typing import Optional
 from wayline import HARNESS_ROOT, decisions, gates, grill, pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, Ledger
-from wayline.project import ProjectError, policy_for, read_harness
+from wayline.project import ProjectError, human_only_classes_now, policy_for, read_harness
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets
 
 __all__ = [
@@ -442,8 +442,10 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
 
 
 def _classes(harness):
-    classes = [name for name in (harness.get("human_only") or []) if isinstance(name, str)]
-    return ", ".join("`%s`" % name for name in classes) if classes else "`goal` and `data`"
+    """The human-only classes the decider is told, `harness.json`'s plus `ladder` while the ladder consent is not `auto` (decision 16)."""
+    stated = [name for name in (harness.get("human_only") or []) if isinstance(name, str)]
+    classes = human_only_classes_now(dict(harness, human_only=stated or ["goal", "data"]))
+    return ", ".join("`%s`" % name for name in classes)
 
 
 # --- one launch -----------------------------------------------------------------------------------

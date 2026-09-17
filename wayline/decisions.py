@@ -47,8 +47,8 @@ from wayline import HARNESS_ROOT, grill, pacing, replay
 from wayline.ledger import DECISION, DECISION_OPENED, TICKET_CREATED, TICKET_RERUN, Ledger
 from wayline.notify import notify as send_notification
 from wayline.project import (
-    AUTONOMY, ProjectError, answering_autonomy, ask_falls_back_at, fallback_consent, graph_answered, pacing_thresholds, policy_for,
-    read_active, read_harness,
+    AUTONOMY, LADDER_CONSENTS, ProjectError, answering_autonomy, ask_falls_back_at, fallback_consent, graph_answered,
+    human_only_classes_now, ladder_consent, pacing_thresholds, policy_for, read_active, read_harness,
 )
 from wayline.schedule import awaits_owner
 from wayline.tickets import (
@@ -193,9 +193,23 @@ def _decision_opened(events, identifier):
     return held
 
 
+def _human_only_now(project, ledger):
+    """The classes the project holds human-only right now; a `harness.json` or journal that cannot be read holds the defaults."""
+    try:
+        harness = read_harness(project)
+    except (ProjectError, ValueError, OSError):
+        harness = {}
+    try:
+        events, _ = ledger.read_events()
+        view = replay.replay(events)
+    except (ProjectError, ValueError, OSError):
+        view = None
+    return human_only_classes_now(harness, view)
+
+
 def open_decision(project, question, options=(), recommended=None, evidence=(), blocking="subgraph", human_only=False,
                   reversible=True, pauses=(), blocked_by=(), proposed_by="planner", origin=None, title=None,
-                  context_pack=(), notify=None, announcement=None):
+                  context_pack=(), notify=None, announcement=None, decision_class=None):
     """Open one decision ticket; returns `{"ticket", "opened", "paused"}`.
 
     `pauses` names the tickets that wait for the answer: each one not yet running or closed gets the
@@ -206,6 +220,9 @@ def open_decision(project, question, options=(), recommended=None, evidence=(), 
     `decision_opened` is journaled by this call. `notify(event, text, project, ticket)` is the
     notifier, `wayline.notify.notify` by default, and `announcement(ticket)` the text it is given in place of
     the one this module writes. `blocking` None pauses nothing, which the ask of decision 15 opens with.
+    `decision_class` names the decision's class: one the project holds human-only right now
+    (`project.human_only_classes_now`, which carries `ladder` while the ladder consent is not `auto`, decision 16)
+    makes the ticket `human_only` whatever the caller passed.
 
     Raises `TicketError` for a question with no text, a `blocking` that is not `subgraph`, `all`, or None,
     a `blocking` None that names tickets to pause, a ticket named that does not exist, or edges that
@@ -224,6 +241,8 @@ def open_decision(project, question, options=(), recommended=None, evidence=(), 
     recommended = _one_line(recommended) if recommended and str(recommended).strip() else None
     ledger = Ledger(project)
     with ledger.lock():
+        if decision_class is not None and decision_class in _human_only_now(project, ledger):
+            human_only = True
         existing = {ticket["id"]: ticket for ticket in read_tickets(project)}
         unknown = sorted((set(pauses) | set(blocked_by)) - set(existing))
         if unknown:
@@ -572,6 +591,7 @@ def decisions_view(project):
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
     stop_at, cheap_at = pacing_thresholds(project, harness, view)
     consent, stated = fallback_consent(harness, view)
+    ladder, ladder_stated = ladder_consent(harness, view)
     policy = policy_for(project)
     active = read_active()
     return {
@@ -588,6 +608,9 @@ def decisions_view(project):
             "model_fallback": consent,
             "model_fallback_stated": stated,
             "model_fallback_levels": list(pacing.CONSENTS),
+            "ladder_changes": ladder,
+            "ladder_changes_stated": ladder_stated,
+            "ladder_changes_levels": list(LADDER_CONSENTS),
             "paused_by_owner": view.paused_by_owner,
             "active": active is not None and active.resolve() == project,
         },

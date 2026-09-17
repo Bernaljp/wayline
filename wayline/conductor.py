@@ -250,6 +250,7 @@ ARRIVALS = {
     "stop": lambda args, by: "asked by %s to stop %s" % (by, "once the running workers return" if args.get("drain") else "at this wave"),
     "autonomy": lambda args, by: "autonomy is now %s" % args.get("autonomy"),
     "model_fallback": lambda args, by: "fallback consent is now %s" % args.get("model_fallback"),
+    "ladder_changes": lambda args, by: "ladder consent is now %s" % args.get("ladder_changes"),
     "pacing": lambda args, by: "pacing thresholds: %s" % ", ".join("%s %s" % (key, args[key]) for key in ("stop_at", "cheap_at") if key in args),
 }
 

@@ -1,6 +1,6 @@
 ---
 name: wayline-intake
-description: "Phase P0 of a wayline run. Turns whatever the owner has (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) into research/INTAKE.md, the autonomy, radius, fallback consent, budgets, and human-only classes in harness.json, and research/GOAL.json when a quantitative goal is stated and a script can measure it. Use it at the start of a project, and whenever the owner wants to add or replace the goal."
+description: "Phase P0 of a wayline run. Turns whatever the owner has (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) into research/INTAKE.md, the autonomy, radius, fallback consent, ladder consent, budgets, and human-only classes in harness.json, and research/GOAL.json when a quantitative goal is stated and a script can measure it. Use it at the start of a project, and whenever the owner wants to add or replace the goal."
 ---
 
 # Intake
@@ -33,6 +33,11 @@ take the defaults and say what you assumed.
   window by a human-only decision ticket, and `wait` waits for the reset. Ask it with the autonomy and
   the budgets. When the owner does not say, pass nothing: the project then records no consent and
   behaves as `ask`, except that under `autonomous` an ask nobody answers falls back after two hours.
+- **Ladder consent**: `ladder_changes`, asked beside the autonomy and the fallback consent, with `ask`
+  recommended. It says whether an autonomous run may change the rung ladder (`tiers` or `difficulty`) on
+  its own: `auto` lets the decider approve such a change, `ask` makes it a human-only decision ticket of
+  class `ladder` under every autonomy. When the owner does not say, pass nothing: the project then records
+  no consent and behaves as `ask`.
 - **Radius**: `strict`, `moderate` (the default), or `exploratory`.
 - **Budgets**: GPU hours, wall clock hours, and the usage windows the run may spend.
 - **Decisions that stay human-only**: the classes the decider never resolves. `goal` and `data`
@@ -54,7 +59,7 @@ wayline intake --intent "the owner's paragraph" --plan plan.md \
   --reference "arXiv:1706.03762" --reference "papers/model.pdf" \
   --data "data/expression.csv" --data "split_b is held out and never leaves this machine" \
   --repo ../analysis --constraint "no GPU before October" \
-  --autonomy checkpoints --radius moderate --model-fallback ask --gpu-hours 10 --wallclock-hours 48 --usage-windows 4 \
+  --autonomy checkpoints --radius moderate --model-fallback ask --ladder-changes ask --gpu-hours 10 --wallclock-hours 48 --usage-windows 4 \
   --human-only "baselines: which baselines the claims are compared against"
 ```
 
@@ -69,7 +74,7 @@ wayline intake --from - <<'EOF'
  "data": ["data/expression.csv", "split_b is held out and never leaves this machine"],
  "code": ["../analysis"],
  "constraints": ["no GPU before October"],
- "autonomy": "checkpoints", "radius": "moderate", "model_fallback": "ask",
+ "autonomy": "checkpoints", "radius": "moderate", "model_fallback": "ask", "ladder_changes": "ask",
  "budgets": {"gpu_hours": 10, "wallclock_hours": 48, "usage_windows": 4},
  "human_only": ["baselines: which baselines the claims are compared against"],
  "goal": null, "sample": null}

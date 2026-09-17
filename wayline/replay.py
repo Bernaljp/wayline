@@ -26,6 +26,9 @@ from wayline.ledger import (
 # and the window a ticket's origin names when it is the ask of decision 15.
 from wayline.pacing import CONSENTS, FABLE, ask_window, epoch
 
+# The ladder consent of decision 16 (`project.LADDER_CONSENTS`, named here so replay keeps importing no project).
+LADDER_CONSENTS = ("auto", "ask")
+
 __all__ = [
     "STATUS_AFTER", "GATES", "READOPTED", "WORKER_DIED", "SESSION", "RESULT", "JOBS", "ENDS_ATTEMPT",
     "JOB_STATUS_AFTER", "Session", "Attempt", "TicketView", "View", "replay",
@@ -246,7 +249,9 @@ class View:
     end inside it. `model_fallback` is the fallback consent a `control model_fallback` set during
     the run that is running, None before one arrives and once the run ends: a new run starts from
     `harness.json`, which `wayline switch --fallback` writes before it journals the event, and a
-    control journaled while no run is open changes only what `harness.json` already says. `stall` is the stall counter of
+    control journaled while no run is open changes only what `harness.json` already says.
+    `ladder_changes` is the ladder consent of decision 16, folded the same way from a
+    `control ladder_changes`. `stall` is the stall counter of
     decision 5, rebuilt from the `wave` event the conductor journals at the end of every settling
     wave: progress resets it, and so does a `stall`, after which the count starts again. Nothing
     else does, so a run started with `--resume` and one started without rebuild the same view.
@@ -271,6 +276,7 @@ class View:
     paused_by_owner: bool = False
     autonomy: Optional[str] = None
     model_fallback: Optional[str] = None
+    ladder_changes: Optional[str] = None
     thresholds: dict = field(default_factory=dict)
     stall: int = 0
     run: Optional[dict] = None
@@ -318,11 +324,11 @@ class View:
             self.autonomy = payload.get("autonomy") or self.autonomy
             self.run = {"pid": payload.get("pid"), "resume": bool(payload.get("resume")),
                         "ts": event.get("ts"), "ended": None}
-            self.stop = self.switched = self.model_fallback = None
+            self.stop = self.switched = self.model_fallback = self.ladder_changes = None
         elif name == RUN_ENDED:
             if self.run is not None:
                 self.run["ended"] = payload.get("reason")
-            self.stop = self.switched = self.model_fallback = None
+            self.stop = self.switched = self.model_fallback = self.ladder_changes = None
             self.failures, self.raised, self.replan_at = {}, {}, None
         elif name == PAUSED:
             stands = {key: payload.get(key) for key in ("resets_at", "window", "utilization")}
@@ -436,6 +442,8 @@ class View:
             self.autonomy = args["autonomy"]
         elif command == "model_fallback" and args.get("model_fallback") in CONSENTS and self.run is not None and not self.run["ended"]:
             self.model_fallback = args["model_fallback"]
+        elif command == "ladder_changes" and args.get("ladder_changes") in LADDER_CONSENTS and self.run is not None and not self.run["ended"]:
+            self.ladder_changes = args["ladder_changes"]
         elif command == "pacing":
             self.thresholds.update({key: args[key] for key in ("stop_at", "cheap_at") if key in args})
 

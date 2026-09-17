@@ -36,7 +36,7 @@ alone must never be enough to act. So the URL `serve` prints carries the token o
 page reads it from its own address and sends it with each action.
 
 **The actions** (ticket 35) are `POST /api/projects/<id>/actions/<name>` for `answer`, `autonomy`,
-`pause`, `resume`, `switch`, `cancel`, `rerun`, `pacing`, `model_fallback` (ticket 57), and
+`pause`, `resume`, `switch`, `cancel`, `rerun`, `pacing`, `model_fallback` (ticket 57), `ladder_changes` (ticket 64), and
 `intake`. Each calls the function its
 verb calls and nothing else, so no action runs a shell. A JSON object carries the arguments, and
 `intake` takes the dropped file itself as the body, with its name in `X-Wayline-Filename`. The reply
@@ -68,7 +68,7 @@ from wayline import HARNESS_ROOT, TAG, dag, decisions
 from wayline.ledger import Ledger, atomic_write, conductor_holder
 from wayline.project import (
     FINDINGS, HARNESS_JSON, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for,
-    read_active, read_harness, read_jobs, read_projects, set_autonomy, set_model_fallback, set_pacing, status_view, steer_ticket, switch_project,
+    read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing, status_view, steer_ticket, switch_project,
 )
 from wayline.provenance import FINDINGS_MD, MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
 from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
@@ -125,7 +125,7 @@ JSON_TYPE = "application/json; charset=utf-8"
 TEXT_TYPE = "text/plain; charset=utf-8"
 
 # The actions of Implementation Decisions 8 this dashboard takes (ticket 35), in the order the spec lists them.
-ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "intake")
+ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake")
 ACTION_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/actions/(?P<name>[^/]+)/?$")
 # The header an intake drop names its file in, and the largest JSON body any other action reads.
 FILENAME_HEADER = "X-Wayline-Filename"
@@ -1539,7 +1539,7 @@ def run_action(name, project, body, headers=None, server=None):
 
     `body` is the raw request body. The functions are the ones the verbs call, told `by="dashboard"`
     wherever the journal records who asked: `project.answer`, `set_autonomy`, `control`,
-    `switch_project`, `steer_ticket`, `set_pacing`, `set_model_fallback`, and `intake.drop_material`. Raises
+    `switch_project`, `steer_ticket`, `set_pacing`, `set_model_fallback`, `set_ladder_changes`, and `intake.drop_material`. Raises
     `DashboardError` for a body the action cannot take and `ActionConflict` for a switch already under
     way, and lets a verb's own refusal (a `ValueError`) through, which the handler answers with 400.
     """
@@ -1575,6 +1575,9 @@ def run_action(name, project, body, headers=None, server=None):
     if name == "model_fallback":
         fields = _fields(body, ("model_fallback",))
         return HTTPStatus.OK, set_model_fallback(project, _string(fields, "model_fallback"), by="dashboard")
+    if name == "ladder_changes":
+        fields = _fields(body, ("ladder_changes",))
+        return HTTPStatus.OK, set_ladder_changes(project, _string(fields, "ladder_changes"), by="dashboard")
     if name == "switch":
         _fields(body)
         return _switch(project, server)
