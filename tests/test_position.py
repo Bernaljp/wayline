@@ -342,24 +342,44 @@ class MemoTest(PositionCase):
         headings = [line for line in text.split("\n") if line.startswith("## ")]
         self.assertEqual(headings, ["## Closest prior work", "## Feasibility", "## Goal feasibility", "## The hostile reviewer",
                                     "## Three directions, by distance from the intent"])
-        self.assertIn("| paper-a: *Interaction features for tabular classification* (2021), "
-                      "doi:10.5555/wayline.fixture.paper-a | Pairwise products", text)
-        self.assertIn("| verified (crossref) |", text)
-        self.assertIn("*paper-d* was dropped from the table: research/refs/paper-d/dossier.json says existence: unresolved.", text)
+        self.assertIn("- **paper-a**\n  - title: *Interaction features for tabular classification* (2021)\n"
+                      "  - identifier: doi:10.5555/wayline.fixture.paper-a\n  - what it reports: Pairwise products", text)
+        self.assertIn("  - scout: verified (crossref)", text)
+        self.assertNotIn("|---|", text)
+        self.assertIn("### What the references lack", text)
+        self.assertIn("so the scout has checked none of them", text)
+        self.assertIn("- A gradient-boosted tree baseline", text)
+        self.assertIn("Dropped, because the scout did not verify them:\n\n- *paper-d*: research/refs/paper-d/dossier.json says "
+                      "existence: unresolved.", text)
         self.assertIn("**Feasible.** No GPU is needed", text)
-        self.assertIn("The goal: auroc at least 0.85 on split_b.", text)
+        self.assertIn("The goal: auroc at least 0.85, held out on split_b.", text)
         self.assertIn("**Uncertain.**", text)
         self.assertIn("Revised target: **0.83**.", text)
+        self.assertIn("- why it is reachable: Below the likely ceiling", text)
         self.assertIn("4. Trying every pairwise product", text)
         self.assertIn("Nearest first, none farther than the radius `exploratory`.", text)
         self.assertIn("1. **The comparison as stated** (strict):", text)
         self.assertIn("3. **Where the products stop helping** (exploratory):", text)
 
-    def test_a_pipe_in_a_cell_does_not_break_the_table(self):
+    def test_lists_and_paragraphs_in_prose_are_kept(self):
         value = memo()
+        value["feasibility"]["reasoning"] = "Three changes are needed:\n1. **Seeds.** Run several.\n2. Add a baseline.\n\n\n\nThe rest holds."
+        value["goal_feasibility"]["reasoning"] = "- first problem\n- second problem\n  continued"
+        value["hostile_review"][0] = "Two points:\n- one\n- two"
         value["prior_work"][0]["reports"] = "AUROC | accuracy both rose"
         self.take(written(value))
-        self.assertIn("AUROC \\| accuracy both rose", self.text())
+        text = self.text()
+        self.assertIn("**Feasible.** Three changes are needed:\n\n1. **Seeds.** Run several.\n2. Add a baseline.\n\nThe rest holds.\n", text)
+        self.assertIn("**Uncertain.**\n\n- first problem\n- second problem\n  continued\n", text)
+        self.assertIn("1. Two points:\n\n   - one\n   - two\n2. A logistic", text)
+        self.assertIn("  - what it reports: AUROC | accuracy both rose", text)
+
+    def test_a_heading_in_prose_is_escaped(self):
+        value = memo()
+        value["feasibility"]["reasoning"] = "Fine.\n## Not a heading"
+        self.take(written(value))
+        self.assertIn("\\## Not a heading", self.text())
+        self.assertEqual([line for line in self.text().split("\n") if line.startswith("## Not")], [])
 
     def test_the_phase_moves_to_p2_with_the_session_and_never_back(self):
         self.take(written(memo()))

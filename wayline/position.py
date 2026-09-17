@@ -32,6 +32,7 @@ project moves past P2 (`position_view`).
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -64,6 +65,7 @@ FEASIBILITY = {"feasible": "Feasible", "feasible_with_changes": "Feasible with c
 GOAL_VERDICTS = {"reachable": "Reachable", "uncertain": "Uncertain", "out_of_reach": "Out of reach"}
 AUTONOMOUS = "autonomous"
 READING_TOOLS = ("Read", "Glob", "Grep")
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
 
 RESUME_INVALID = (
     "The memo you returned could not be read: %s. Return the whole memo again through the structured output, as the "
@@ -383,59 +385,104 @@ def verify_citations(project, memo, scout=None, say=lambda text: None):
 # --- POSITION.md ------------------------------------------------------------------------------------
 
 
-def _cell(text):
-    return _one_line(text).replace("|", "\\|")
-
-
 def _number(value):
     return "%g" % value if isinstance(value, (int, float)) and not isinstance(value, bool) else str(value)
 
 
+def _prose(text):
+    """A prose field as the critic wrote it: its paragraphs and lists kept, runs of blank lines folded to one.
+
+    Markdown needs a blank line before a list that follows a paragraph, and a session often leaves it
+    out, so one is put there. A line starting with `#` is escaped, so the memo's own headings stay the
+    only ones in the file.
+    """
+    lines, previous = [], ""
+    for raw in str(text or "").replace("\r\n", "\n").split("\n"):
+        line = raw.rstrip()
+        if line.lstrip().startswith("#"):
+            line = line.replace("#", "\\#", 1)
+        if not line.strip():
+            if lines and lines[-1] != "":
+                lines.append("")
+            previous = ""
+            continue
+        if _LIST_ITEM.match(line) and previous and not _LIST_ITEM.match(previous) and not previous.startswith(" "):
+            lines.append("")
+        lines.append(line)
+        previous = line
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _item(marker, text):
+    """A list item whose text may run to several lines: the continuation lines indented under the marker."""
+    body = _prose(text) or [""]
+    pad = " " * len(marker)
+    return [marker + body[0]] + [pad + line if line else "" for line in body[1:]]
+
+
+def _lead(label, text):
+    """`**Label.** text`, with the first paragraph run on after the label and the rest kept as written."""
+    body = _prose(text) or [""]
+    if _LIST_ITEM.match(body[0]):
+        return ["**%s.**" % label, ""] + body
+    return ["**%s.** %s" % (label, body[0])] + body[1:]
+
+
 def render_position(record):
-    """`POSITION.md` from the record `write_memo` keeps: the table, the verdicts, the objections, the directions."""
+    """`POSITION.md` from the record `write_memo` keeps: the prior work, the verdicts, the objections, the directions."""
     memo = record["memo"]
     lines = ["# Position", "",
              "Rendered by `wayline position` from `research/position.json`: the %s critic's memo, read from the dossiers, "
-             "`INTAKE.md`, and `GOAL.json` only." % (record.get("model") or "unnamed"), "",
-             "**Intent.** %s" % _one_line(memo["intent"]), "",
-             "## Closest prior work", ""]
-    if record["prior_work"]:
-        lines += ["| Reference | What it reports | Bearing on the intent | Scout |", "|---|---|---|---|"]
-        for row in record["prior_work"]:
-            citation = row["citation"]
-            name = "%s: *%s*" % (citation["slug"], _cell(citation.get("title") or "untitled"))
-            if citation.get("year"):
-                name += " (%s)" % citation["year"]
-            if citation.get("identifier"):
-                name += ", %s" % citation["identifier"]
-            scout = "verified" + (" (%s)" % citation["resolved_by"] if citation.get("resolved_by") else "")
-            lines.append("| %s | %s | %s | %s |" % (name, _cell(row["reports"]), _cell(row["bearing"]), scout))
-    else:
+             "`INTAKE.md`, and `GOAL.json` only." % (record.get("model") or "unnamed"), ""]
+    lines += _lead("Intent", memo["intent"]) + ["", "## Closest prior work", ""]
+    if not record["prior_work"]:
         lines.append("No reference the scout verified bears on the intent.")
-    for row in record["dropped"]:
-        lines += ["", "*%s* was dropped from the table: %s." % (_one_line(row["reference"]), _one_line(row["reason"]))]
+    for row in record["prior_work"]:
+        citation = row["citation"]
+        title = "*%s*" % _one_line(citation.get("title") or "untitled")
+        if citation.get("year"):
+            title += " (%s)" % citation["year"]
+        lines += ["- **%s**" % citation["slug"], "  - title: %s" % title]
+        if citation.get("identifier"):
+            lines.append("  - identifier: %s" % citation["identifier"])
+        lines += _item("  - what it reports: ", row["reports"])
+        lines += _item("  - bearing on the intent: ", row["bearing"])
+        if row.get("locator"):
+            lines.append("  - read at: `%s`" % _one_line(row["locator"]))
+        lines.append("  - scout: verified" + (" (%s)" % citation["resolved_by"] if citation.get("resolved_by") else ""))
+    if record["dropped"]:
+        lines += ["", "Dropped, because the scout did not verify them:", ""]
+        lines += ["- *%s*: %s." % (_one_line(row["reference"]), _one_line(row["reason"])) for row in record["dropped"]]
+    missing = memo.get("missing_prior_work") or []
+    if missing:
+        lines += ["", "### What the references lack", "",
+                  "Work the critic expected beside these and did not find among the dossiers. It named these from what it "
+                  "knows, so the scout has checked none of them: add the ones you want with `wayline absorb`.", ""]
+        for gap in missing:
+            lines += _item("- ", gap)
     feasibility = memo["feasibility"]
-    lines += ["", "## Feasibility", "",
-              "**%s.** %s" % (FEASIBILITY[feasibility["verdict"]], _one_line(feasibility["reasoning"])), "",
-              "- compute: %s" % _one_line(feasibility["compute"]),
-              "- data: %s" % _one_line(feasibility["data"])]
+    lines += ["", "## Feasibility", ""] + _lead(FEASIBILITY[feasibility["verdict"]], feasibility["reasoning"]) + [""]
+    lines += _item("- compute: ", feasibility["compute"]) + _item("- data: ", feasibility["data"])
     goal = memo["goal_feasibility"]
     stated = record.get("goal") or {}
     lines += ["", "## Goal feasibility", ""]
     if stated.get("metric") is not None:
         lines += ["The goal: %s %s %s%s." % (stated["metric"], "at least" if stated.get("direction") == "up" else "at most",
                                              _number(stated.get("target")),
-                                             " on %s" % stated["held_out_split"] if stated.get("held_out_split") else ""), ""]
-    lines.append("**%s.** %s" % (GOAL_VERDICTS[goal["verdict"]], _one_line(goal["reasoning"])))
+                                             ", held out on %s" % stated["held_out_split"] if stated.get("held_out_split") else ""), ""]
+    lines += _lead(GOAL_VERDICTS[goal["verdict"]], goal["reasoning"])
     if goal["revised_target"] is not None:
-        lines += ["", "Revised target: **%s**. %s The goal is the owner's to change; this is a proposal."
-                  % (_number(goal["revised_target"]["value"]), _one_line(goal["revised_target"]["why"]))]
+        lines += ["", "Revised target: **%s**. The goal is the owner's to change; this is a proposal." % _number(goal["revised_target"]["value"]), ""]
+        lines += _item("- why it is reachable: ", goal["revised_target"]["why"])
     lines += ["", "## The hostile reviewer", ""]
-    lines += ["%d. %s" % (index, _one_line(text)) for index, text in enumerate(memo["hostile_review"], 1)]
+    for index, text in enumerate(memo["hostile_review"], 1):
+        lines += _item("%d. " % index, text)
     lines += ["", "## Three directions, by distance from the intent", "",
               "Nearest first, none farther than the radius `%s`." % record.get("radius"), ""]
     for index, direction in enumerate(memo["directions"], 1):
-        lines.append("%d. **%s** (%s): %s" % (index, _one_line(direction["title"]), direction["distance"], _one_line(direction["text"])))
+        lines += _item("%d. **%s** (%s): " % (index, _one_line(direction["title"]), direction["distance"]), direction["text"])
     return "\n".join(lines).rstrip("\n") + "\n"
 
 

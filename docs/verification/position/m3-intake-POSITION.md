@@ -2,45 +2,116 @@
 
 Rendered by `wayline position` from `research/position.json`: the claude-opus-5 critic's memo, read from the dossiers, `INTAKE.md`, and `GOAL.json` only.
 
-**Intent.** Decide whether UMAP is a sound default 2-D embedding for reading differentiation trajectories in a ~3,000-cell, four-timepoint mouse hematopoiesis scRNA-seq time course, where neighbourhoods learned on days 0–4 must still hold when day 7 is held out.
+**Intent.** Decide whether UMAP should be the default 2-D embedding for reading differentiation trajectories in a roughly 3,000-cell, four-timepoint (days 0, 2, 4, 7) mouse haematopoiesis scRNA-seq time course, where the test is whether local neighbourhoods still hold when day 7 is held out.
 
 ## Closest prior work
 
-| Reference | What it reports | Bearing on the intent | Scout |
-|---|---|---|---|
-| mcinnes-2018-umap-uniform-manifold-approximation-projection: *UMAP: Uniform Manifold Approximation and Projection for Dimension Reduction* (2018), arXiv:1802.03426 | The UMAP methods paper: a manifold-learning dimension reduction method built on Riemannian geometry and algebraic topology, which the abstract calls competitive with t-SNE for visualization quality and says arguably preserves more global structure, with better run time. | This is the method under test. From the abstract alone, it makes no claim about neighbourhood stability on held-out data, about embedding new points, or about how faithful trajectories are. So it does not settle the question, and it supplies no baseline number for trustworthiness. It was read only at level 1 (abstract); a full read is needed before its claims can be checked against the held-out requirement. | verified (arxiv) |
-| butler-2018-integrating-single-cell-transcriptomic-data: *Integrating single-cell transcriptomic data across different conditions, technologies, and species* (2018), doi:10.1038/nbt.4096 | Seurat's integration strategy aligns scRNA-seq datasets through shared sources of variation. It is applied to, among others, hematopoietic progenitors sequenced with two technologies, and it learns distinct or transitional cell states jointly across datasets. | This is a competing explanation, not the same question. If day 7 was captured or processed separately, its neighbourhoods may fail because of batch or condition shift rather than because of UMAP. Integration of the kind this paper describes would then be needed before any embedding is judged. It is the only dossier that touches hematopoietic progenitors. | verified (crossref) |
+- **mcinnes-2018-umap-uniform-manifold-approximation-projection**
+  - title: *UMAP: Uniform Manifold Approximation and Projection for Dimension Reduction* (2018)
+  - identifier: arXiv:1802.03426
+  - what it reports: The abstract says UMAP is built on Riemannian geometry and algebraic topology, is competitive with t-SNE on visualisation quality, 'arguably preserves more of the global structure', runs faster, and has no computational limit on embedding dimension.
+  - bearing on the intent: This is the method under test and the source of the claims the project would check. Its claims are comparative and hedged ('arguably'), and the abstract says nothing about trajectories, stability across seeds, or embedding held-out points. The project has to measure those itself. This is only an abstract-level read (level 1); no full read was done.
+  - read at: `research/refs/mcinnes-2018-umap-uniform-manifold-approximation-projection/dossier.json#abstract`
+  - scout: verified (arxiv)
+- **butler-2018-integrating-single-cell-transcriptomic-data**
+  - title: *Integrating single-cell transcriptomic data across different conditions, technologies, and species* (2018)
+  - identifier: doi:10.1038/nbt.4096
+  - what it reports: The abstract says Seurat integrates scRNA-seq datasets across conditions, technologies and species by using shared sources of variation. One of its examples is haematopoietic progenitors profiled with two technologies, where it learns distinct or transitional cell states jointly.
+  - bearing on the intent: This bears on the question only indirectly. Timepoints sequenced separately may carry batch effects, and those can masquerade as or break neighbourhoods across days. So the project must decide whether integration comes before any embedding comparison. It says nothing about whether UMAP itself is sound.
+  - read at: `research/refs/butler-2018-integrating-single-cell-transcriptomic-data/dossier.json#abstract`
+  - scout: verified (crossref)
+- **harris-2020-array-programming-numpy**
+  - title: *Array programming with NumPy* (2020)
+  - identifier: doi:10.1038/s41586-020-2649-2
+  - what it reports: A review of array programming and NumPy's place in the scientific Python ecosystem.
+  - bearing on the intent: Tooling only. The pipeline would run on it, but it has no bearing on whether UMAP is suitable.
+  - read at: `research/refs/harris-2020-array-programming-numpy/dossier.json#relation_to_intent`
+  - scout: verified (crossref)
+- **virtanen-2020-scipy-1-0-fundamental-algorithms**
+  - title: *SciPy 1.0: fundamental algorithms for scientific computing in Python* (2020)
+  - identifier: doi:10.1038/s41592-019-0686-2
+  - what it reports: An overview of the capabilities and development practices of SciPy 1.0.
+  - bearing on the intent: Tooling only; it has no bearing on the scientific question.
+  - read at: `research/refs/virtanen-2020-scipy-1-0-fundamental-algorithms/dossier.json#abstract`
+  - scout: verified (crossref)
 
-*A comprehensive taxonomy of interpretive marmalade in high-dimensional sponge topology* was dropped from the table: research/refs/a-comprehensive-taxonomy-of-interpretive-marmalade-in-high-dimensional/dossier.json says existence: unresolved.
+Dropped, because the scout did not verify them:
+
+- *A comprehensive taxonomy of interpretive marmalade in high-dimensional sponge topology*: research/refs/a-comprehensive-taxonomy-of-interpretive-marmalade-in-high-dimensional/dossier.json says existence: unresolved.
+
+### What the references lack
+
+Work the critic expected beside these and did not find among the dossiers. It named these from what it knows, so the scout has checked none of them: add the ones you want with `wayline absorb`.
+
+- Kobak & Linderman (2021), 'Initialization is critical for preserving global data structure in both t-SNE and UMAP', Nature Biotechnology: argues that UMAP's apparent global-structure advantage comes largely from its initialisation.
+- Chari & Pachter (2023), 'The specious art of single-cell genomics', PLoS Computational Biology: argues that 2-D t-SNE/UMAP embeddings distort neighbourhoods and should not be read quantitatively.
+- Becht et al. (2019), 'Dimensionality reduction for visualizing single-cell data using UMAP', Nature Biotechnology: the paper that made UMAP the default in single-cell analysis.
+- van der Maaten & Hinton (2008), t-SNE, and Kobak & Berens (2019), 'The art of using t-SNE for single-cell transcriptomics': the direct competitor and its single-cell best practice.
+- Moon et al. (2019), PHATE, Nature Biotechnology, and Haghverdi et al. (2015/2016), diffusion maps and diffusion pseudotime: embeddings designed specifically for developmental trajectories, and so the competing methods for this exact task.
+- Wolf et al. (2019), PAGA, Genome Biology: graph abstraction for reading trajectories without trusting 2-D embedding distances.
+- Saelens et al. (2019), 'A comparison of single-cell trajectory inference methods', Nature Biotechnology: benchmark practice for trajectory fidelity.
+- Venna & Kaski (2001/2006), trustworthiness and continuity; Sainburg et al. (2021), parametric UMAP: the metric the goal uses, and the standard way to embed held-out points.
 
 ## Feasibility
 
-**Feasible with changes.** The work can be done, but four changes are needed before its answer means anything. 1. **Define "survives."** Per GOAL.json, the metric is trustworthiness at k=15 on days 0–4, which is the fit split, and day 7 is only named as held out. The project must say what "neighbourhoods survive a held-out timepoint" means: for example, trustworthiness and continuity of day-7 cells after they are projected into an embedding fit on days 0–4, compared with a refit that includes day 7. 2. **Add comparators.** "Sound default" is a comparative claim. It needs at least a linear baseline (PCA) and one or two other nonlinear embeddings run under the same protocol. 3. **Measure variance.** It needs repeated seeds, and a sweep over UMAP's neighbourhood size. 4. **Add a trajectory check.** Trustworthiness cannot tell whether a trajectory reads correctly. Something like whether cell ordering agrees with timepoint labels would at least add that. The intake also leaves several things unsaid or inconsistent: - Code is "None", yet the goal's eval_command points at eval/trustworthiness.py, which does not exist and must be written. - Budgets say GPU hours are "not stated", while Constraints and GOAL.json say 20. - The intake says no quantitative goal was stated, yet GOAL.json carries one. - The UMAP version is pinned (release 0.5.12), but no preprocessing beyond normalization is given: PCA dimension, neighbour metric, or whether the highly variable genes were chosen with day 7 included. Most of the reference list has no bearing on the question: - NumPy and SciPy are infrastructure. - PyTorch, the Transformer paper, and AlphaFold are unrelated. - Two DOIs resolved to unrelated papers. 10.1101/2020.03.22.002386 is a SARS-CoV-2 protein-interaction map, and 10.1371/journal.pcbi.1008074 is a cardiac–renal heart-failure model. They look like mistyped identifiers the owner should check.
+**Feasible with changes.** The intent can be carried out, with three changes.
 
-- compute: The stated compute is one RTX 3090 (24 GB), 16 CPU cores, no cloud, and at most 20 GPU hours. A dataset of 3,000 cells × 2,000 highly variable genes is small. UMAP and every comparator this question needs run on the 16 cores in seconds to minutes per fit. Even a sweep over seeds and parameters would use a small fraction of the 20 GPU hours, and probably no GPU at all.
-- data: The stated data is 3,000 normalized, log-transformed cells with 2,000 highly variable genes over days 0, 2, 4 and 7, with day 7 held out. That is enough to measure neighbourhood preservation, both on the days used to fit (0–4) and for day 7 projected into that fit. It is not enough to judge whether trajectories are read correctly. The intake names no ground truth for the trajectories: no cell-type or lineage labels, no known branch structure, no replicates, and no batch or capture information per timepoint.
+1. Define 'sound' operationally: which metrics, compared against which alternative embeddings, over how many seeds.
+2. Define what 'neighbourhoods survive a held-out timepoint' means computationally. Options are UMAP.transform of day 7 onto a days 0–4 fit, a refit on all days compared with the days 0–4 fit, or parametric UMAP.
+3. Write the evaluation script. GOAL.json points to eval/trustworthiness.py, but the intake says there is no code.
+
+The intake leaves several things unsaid:
+
+- how many cells each day has (so how large day 7 is);
+- whether PCA precedes the neighbour graph;
+- which space trustworthiness is measured against (the 2,000 genes or the principal components);
+- whether the timepoints were sequenced as separate batches, which Butler et al. suggest may need integration first;
+- what ground truth there is for the trajectories;
+- the number of seeds.
+
+Only one of the nine resolved references (McInnes et al.) is on topic; two more (NumPy, SciPy) are tooling. The rest – Transformers, AlphaFold, PyTorch, a SARS-CoV-2 interactome, and a cardiac–renal model – have nothing to do with this question. One reference did not resolve and looks fabricated. The reference list should be pruned. Also, the intake says no quantitative goal was stated, yet GOAL.json has one; that inconsistency should be confirmed with you.
+
+- compute: The intake states one RTX 3090 (24 GB), 16 CPU cores, no cloud, and at most 20 GPU hours. UMAP, t-SNE, PCA, diffusion maps and PHATE on 3,000 cells × 2,000 genes (or 30–50 principal components) each take seconds to a minute on CPU. A sweep of hundreds of runs over seeds and hyperparameters fits in a few CPU hours. The GPU is only needed for parametric UMAP, and even that is small. Compute is not a constraint.
+- data: The intake states about 3,000 cells over days 0, 2, 4 and 7. Counts are already normalised and log-transformed, 2,000 highly variable genes are selected, and day 7 is held out. That is enough to compare embeddings on neighbourhood preservation. It is not enough, by itself, to judge whether trajectories are read correctly: the intake mentions no cell-type annotations, lineage labels, or known marker ordering to serve as ground truth.
 
 ## Goal feasibility
 
-The goal: trustworthiness_k15 at least 0.98 on day 7.
+The goal: trustworthiness_k15 at least 0.98, held out on day 7.
 
-**Uncertain.** No dossier reports a trustworthiness value for UMAP or any comparator: the UMAP dossier has only its abstract, read at level 1. The GOAL.json baseline is null (value and source both null), so there is nothing to measure 0.98 against, and no number read here justifies calling it reachable or out of reach. The target has three further problems: - **It scores the wrong split.** It is set on day 0 to day 4, the split UMAP is fit on, so it measures how well the embedding reproduces its own fitting data, not whether neighbourhoods survive day 7, which is what the intent cares about. - **Its k may favour UMAP.** k=15 may coincide with UMAP's own neighbourhood size, which would tilt the metric toward UMAP. - **Its stopping rule fits a different question.** stop_when is goal_reached, direction up. That turns a decision question (is UMAP a sound default?) into an optimization loop that could stop once a tuned UMAP scores 0.98 on its training days, which would say little about the decision. Measure a baseline first: PCA and default UMAP, several seeds, on both the fit split and projected day 7. Then set the target relative to those numbers. Changing the metric, split or target is the owner's call (human-only class `goal`).
+**Uncertain.** GOAL.json asks for trustworthiness at k=15 of at least 0.98 on days 0 to 4, with day 7 held out. The baseline is null, and no dossier reports a trustworthiness value for UMAP or any competing method, on this data or on comparable data. The McInnes abstract gives only qualitative comparisons. So nothing I read supports 0.98 or any other number, and I propose no revised target.
+
+Whether 0.98 is reachable depends on things GOAL.json does not fix:
+
+- the reference space (the 2,000 genes or the principal components; a 2-D embedding usually scores higher against a 30-component PCA than against 2,000 noisy genes);
+- the embedding dimension;
+- how the held-out day enters the score.
+
+There is also a mismatch between the goal and the question. The intent is a decision ('is UMAP a sound default?'), but the goal is an 'up' target with stop_when: goal_reached. That invites tuning UMAP until it crosses 0.98, which answers a different question. It also leaves out continuity, seed variance and trajectory fidelity.
+
+A defensible target would be set like this:
+
+1. Implement eval/trustworthiness.py with the reference space and the handling of day 7 fixed in writing.
+2. Measure baselines on days 0–4 with at least 10 seeds each: PCA-2D, t-SNE, UMAP with default settings, diffusion maps and PHATE.
+3. Run a designed sweep over the UMAP settings that matter: n_neighbors, min_dist, initialisation (spectral or PCA), and input dimension.
+4. Take the best competitor's mean minus its seed spread as the reference point.
+
+The target would then be either 'UMAP within that margin of the best alternative' or 'the best value the sweep reaches'. Any change to the metric, target or splits is yours to decide (a human-only goal decision).
 
 ## The hostile reviewer
 
-1. The goal scores trustworthiness on days 0–4, the data UMAP was fit on, so it cannot show that neighbourhoods survive the held-out day 7, which is the claim the intent makes.
-2. "Sound default" is asserted with no comparator: without PCA and other embeddings under the same protocol, a UMAP score of 0.98 means nothing, and the baseline in GOAL.json is null.
-3. Trustworthiness is a local neighbourhood metric; it says nothing about whether differentiation trajectories, branch order, or distances between clusters are read correctly from the 2-D map, and the intake names no ground-truth lineage to check them against.
-4. Day 7 is the last timepoint, so projecting it into an embedding fit on days 0–4 is extrapolation. Terminal cell states absent from the fit may have no correct neighbourhoods to preserve, and failure may reflect biology or a batch shift (compare butler-2018) rather than UMAP.
-5. A single dataset of 3,000 cells with no replicates, and apparently a single run, gives no variance. UMAP is stochastic, so a result without seeds and a parameter sweep is an anecdote, not a default recommendation.
-6. Leakage risk: if the 2,000 highly variable genes, or the normalization, were computed with day 7 included, the held-out day is not truly held out.
-7. The stopping rule "goal_reached" invites tuning UMAP until it passes, which is a planted success rather than a test of the default.
-8. The reference list is mostly irrelevant (NumPy, SciPy, PyTorch, Transformer, AlphaFold, a SARS-CoV-2 interactome, a heart-failure model) and includes a title that does not exist, which undermines confidence that the relevant literature has been surveyed.
+1. The held-out test is ill-posed: day 7 cells are likely more differentiated states that are absent from days 0–4, so UMAP.transform can only place them onto the existing manifold. 'Neighbourhoods survive' then measures how well the method extrapolates, not whether it is sound, and a high score could simply mean day 7 cells were pulled onto earlier states.
+2. Trustworthiness@15 measures only whether nearby points in the embedding are also nearby in the original space. It says nothing about continuity, distances between clusters, branch topology or pseudotime order, which are exactly what 'reading differentiation trajectories' depends on. A 0.98 target on this metric does not answer the stated question.
+3. There is no comparison against the methods built for this task (diffusion maps/pseudotime, PHATE, PAGA, force-directed graphs, t-SNE with PCA initialisation), and without them 'UMAP is a sound default' cannot be judged.
+4. A fixed target with stop_when: goal_reached turns a decision into hyperparameter hunting: tuning UMAP until it passes 0.98 on the same days it is scored on is selection bias, and it will not generalise.
+5. The intake mentions no variance across seeds or subsamples. UMAP layouts are stochastic, and a single run per setting cannot support a claim that it is a 'default'.
+6. Prior work already argues that 2-D UMAP/t-SNE neighbourhoods are heavily distorted (Chari & Pachter) and that UMAP's global-structure advantage is largely due to initialisation (Kobak & Linderman). Neither is among the references, so the project risks rediscovering a known result.
+7. Possible confounding and leakage: if timepoints were sequenced as separate batches, day-specific batch effects shape the neighbourhoods; and if highly variable genes or PCA were fitted on all four days, including day 7, the held-out day is not really held out.
+8. n=1 dataset of 3,000 cells: any conclusion about a 'default' embedding extends from a single small time course with no replicate dataset.
 
 ## Three directions, by distance from the intent
 
 Nearest first, none farther than the radius `moderate`.
 
-1. **Held-out audit of default UMAP** (strict): Fit UMAP at pinned release 0.5.12 on days 0–4, project day 7, and report trustworthiness and continuity at k=15 for both the fit split and projected day 7, across multiple seeds. Compare against a refit that includes day 7 and against a PCA baseline, and use a decision rule fixed beforehand. This would show whether UMAP's neighbourhoods on this dataset hold for an unseen timepoint, and with what variance.
-2. **UMAP against comparators, with a trajectory check** (strict): Run the same held-out protocol for UMAP, PCA and one or two other nonlinear embeddings. Add a trajectory-level check, such as agreement between embedding-derived ordering and the day labels, alongside trustworthiness. This would show whether UMAP is the better default here, or just a defensible one, for the use the owner actually has: reading trajectories.
-3. **Probe why neighbourhoods fail** (moderate): Run follow-ups aimed at the failure modes of the claim: sweep UMAP's neighbourhood size and the k of the metric independently, re-embed from cell subsamples to test stability, recompute the highly variable genes without day 7 to test for leakage, and check whether day 7 neighbourhood loss persists after correcting for a batch shift. This would separate an embedding failure from data shift or evaluation artefacts.
+1. **Seeded benchmark of UMAP against trajectory-aware embeddings** (strict): Fit PCA, t-SNE (PCA initialisation), UMAP (spectral and PCA initialisation), diffusion maps and PHATE on days 0–4 with at least 10 seeds each. Score each on trustworthiness and continuity at several values of k, measured against a fixed reference space. This shows whether UMAP is within seed noise of the best alternative, which is the direct answer to 'sound default?', and it gives the goal a measured baseline.
+2. **Held-out day 7: transform vs refit vs original space** (strict): Embed day 7 in three ways: UMAP.transform onto the days 0–4 fit, a full refit on all four days, and parametric UMAP. For each, compare the day 7 cells' k-nearest-neighbour sets with their neighbours in the original space, fitting highly variable genes and PCA on days 0–4 only. Sweep n_neighbors and min_dist. This shows whether neighbourhoods really survive the held-out timepoint, and under which settings they do not.
+3. **Probe whether UMAP distorts trajectories** (moderate): Target the claim's failure directly. Compute pseudotime and branch assignments on the neighbour graph in the original space. Then check whether the ordering and branch topology read from each 2-D embedding agree with them (rank correlation, branch agreement) across seeds and subsamples. Optionally, add a simulated branching dataset with known topology. This shows whether a high trustworthiness score still hides distorted trajectories, which is the failure a hostile reviewer would push on.

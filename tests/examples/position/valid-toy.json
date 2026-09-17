@@ -26,6 +26,9 @@
       "locator": null
     }
   ],
+  "missing_prior_work": [
+    "A gradient-boosted tree baseline, the usual strong model for tabular data, which none of the dossiers covers."
+  ],
   "feasibility": {
     "verdict": "feasible",
     "compute": "CPU only, as INTAKE.md states; a logistic regression with or without pairwise products fits on a set of this size in seconds.",
@@ -35,7 +38,10 @@
   "goal_feasibility": {
     "verdict": "uncertain",
     "reasoning": "The generator draws each label from a logistic of a linear term and one product term, so no model can beat the AUROC of the true log-odds, and at the generator's default strengths that ceiling may be close to the 0.85 target. The ceiling cannot be computed without running the generator.",
-    "revised_target": {"value": 0.83, "why": "Below the likely ceiling of the true log-odds at the default strengths, so a model can reach it."}
+    "revised_target": {
+      "value": 0.83,
+      "why": "Below the likely ceiling of the true log-odds at the default strengths, so a model can reach it."
+    }
   },
   "hostile_review": [
     "The synthetic set plants the interaction, so recovering it shows only that the method recovers what was put there.",

@@ -57,5 +57,8 @@
       "title": "A flexible second baseline",
       "text": "The same comparison, plus a flexible model without products (gradient-boosted trees or a small network), the second baseline paper-b calls for."
     }
+  ],
+  "missing_prior_work": [
+    "A gradient-boosted tree baseline, the usual strong model for tabular data, which none of the dossiers covers."
   ]
 }

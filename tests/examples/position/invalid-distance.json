@@ -62,5 +62,8 @@
       "title": "Where the products stop helping",
       "text": "Sweep the generator's interaction strength and find the strength below which the products stop helping."
     }
+  ],
+  "missing_prior_work": [
+    "A gradient-boosted tree baseline, the usual strong model for tabular data, which none of the dossiers covers."
   ]
 }
