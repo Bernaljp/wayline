@@ -697,6 +697,19 @@ class EffectiveRungTest(EscalationCase):
         self.assertEqual(made._effective_rung(fields), 4, "a journal without a rung counts the tier ups")
         self.assertEqual(made._effective_rung(dict(fields, pinned_difficulty=5)), 7, "a pin names the rung outright")
 
+    def test_a_failure_that_begins_at_the_split_still_goes_on_to_the_tier_up(self):
+        """An integration that conflicted begins at the split, and climbs after it when the split is spent.
+
+        `start` names where the failure begins, not where the chain is cut, so the order the tier up and
+        the split are in does not decide whether the one after `start` is reachable.
+        """
+        made = self.conductor()
+        self.assertEqual(made._step_from(1, "split"), "split")
+        made.view.tickets[1] = replay.TicketView(1, status="failed", steps=["split"])
+        self.assertEqual(made._step_from(1, "split"), "tier_up", "the split is spent, so the tier up is next")
+        made.view.tickets[1] = replay.TicketView(1, status="failed", steps=["split", "tier_up"])
+        self.assertEqual(made._step_from(1, "split"), "needs_human")
+
     def test_the_next_rung_and_where_the_split_comes_first(self):
         made = self.conductor()
         self.assertEqual(made._next_rung(1), 3, "difficulty 1 is rung 2, and a tier up reaches rung 3")

@@ -3725,7 +3725,9 @@ class Conductor:
         taken = known.taken if known is not None else (lambda name: 0)
         order = self._step_order(identifier)
         if start in order:
-            order = order[order.index(start):]
+            # `start` is where this failure begins, not a cut: an integration that conflicted begins at the
+            # split, and still goes on to the tier up when the split is spent, whichever order the two are in.
+            order = [start] + [step for step in order if step != start]
         for step in order:
             if step == SPLIT and not taken(SPLIT) and fields["kind"] != tickets.DECISION and not self._cut_by_split(identifier):
                 return SPLIT
