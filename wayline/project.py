@@ -27,7 +27,7 @@ from wayline import HARNESS_ROOT, POLICY_PATH, TAG, replay
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, DECISION, PAUSED, SWITCHED, TICKET_LAUNCHED, TICKET_RESULT, UNPAUSED, VERDICT, Ledger, atomic_write,
+    ACCEPTANCE, CONTROL, DECISION, PAUSED, SWITCHED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, UNPAUSED, VERDICT, Ledger, atomic_write,
     conductor_holder, now_ts,
 )
 from wayline.pacing import ALWAYS, ASK, AUTO, CONSENTS, FABLE, WAIT, ask_choice, ask_falls_back, ask_hours, epoch, family, iso, thresholds
@@ -48,6 +48,7 @@ __all__ = [
     "check_policy", "policy_problems", "old_difficulty_levels", "rung_label", "launch_label", "merge_policy",
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
     "window_status", "goal_progress", "init_command", "status_command", "switch_command",
+    "NEEDS_HUMAN_NOTES", "needs_human_view",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
     "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "falls_back_now", "ask_falls_back_at",
     "fable_hold", "fable_falls_back",
@@ -812,6 +813,9 @@ def status_view(project, refresh=True):
                       for entry in _open_decisions(graph)],
         # Every decision made, the decider's first (decision 10), as the dashboard's decision log orders them.
         "decided": decided,
+        # The tickets waiting for a person, each with the question and, for one the chain left on the ladder's
+        # top rung, the note that says so (decision 16; ticket 61).
+        "needs_human": needs_human_view(graph, tickets, events),
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
         "window": window_status(events, harness, view),
         "hold": hold_status(project, events, harness, graph, tickets, view),
@@ -844,6 +848,38 @@ def _with_status(graph, status):
 def _open_decisions(graph):
     """The decision tickets `status` lists: the same ones the frontier is paused by (`tickets`)."""
     return open_decisions(graph)
+
+
+# What `reason` on `ticket_needs_human` says in a line of `status`, the dashboard, and `REPORT.md` (decision 16).
+NEEDS_HUMAN_NOTES = {"top_rung": "at the ladder's top rung"}
+
+
+def needs_human_view(graph, tickets, events):
+    """Every ticket that waits for a person, with the question it was handed over with and why.
+
+    `note` is what the `reason` of its last `ticket_needs_human` reads as, "at the ladder's top rung" for a
+    ticket the escalation chain left with nowhere to climb (decision 16), and None for a hand-off that named
+    no reason. The journal is what carries the question and the reason; the ticket file carries the status.
+    """
+    asked = {}
+    for record in events:
+        if record.get("event") != TICKET_NEEDS_HUMAN:
+            continue
+        payload = record.get("payload") or {}
+        asked[payload.get("ticket")] = payload
+    lines = []
+    for entry in graph["tickets"]:
+        if entry["status"] != "needs_human":
+            continue
+        payload = asked.get(entry["id"]) or {}
+        lines.append({
+            "id": entry["id"],
+            "title": (tickets.get(entry["id"]) or {}).get("title", ""),
+            "question": payload.get("question"),
+            "reason": payload.get("reason"),
+            "note": NEEDS_HUMAN_NOTES.get(payload.get("reason")),
+        })
+    return lines
 
 
 def _ticket_line(entry, tickets, view=None):
@@ -1057,6 +1093,7 @@ def render_status(view):
     lines.extend(_render_tickets("running tickets", view["running"]))
     lines.extend(_render_jobs(view["jobs"]))
     lines.extend(_render_decisions(view["decisions"]))
+    lines.extend(_render_needs_human(view.get("needs_human") or []))
     lines.extend(_render_decided(view.get("decided") or []))
     lines.append(_render_window(view["window"]))
     if view.get("hold"):
@@ -1114,6 +1151,24 @@ def _render_decisions(decisions):
         lines.append("  #%-3d %s%s%s" % (entry["id"], entry["title"], ("  (%s)" % ", ".join(marks)) if marks else "", timeout))
     lines.append("")
     return lines
+
+
+def _render_needs_human(entries):
+    """The tickets waiting for a person, each with why: a ticket the chain left on the top rung says so (decision 16)."""
+    lines = ["tickets needing a person (%d)" % len(entries)]
+    for entry in entries:
+        note = "  (%s)" % entry["note"] if entry.get("note") else ""
+        lines.append("  #%-3d %s%s" % (entry["id"], entry["title"], note))
+        if entry.get("question"):
+            lines.append("       %s" % _short_question(entry["question"]))
+    lines.append("")
+    return lines
+
+
+def _short_question(question):
+    """A question's first line, cut to what a terminal line holds."""
+    first = question.split("\n")[0].strip()
+    return first if len(first) <= 100 else first[:97] + "..."
 
 
 def _render_decided(decided):

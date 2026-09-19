@@ -522,6 +522,18 @@ class TicketEndpointTest(DashboardTestCase):
         self.assertEqual([entry["label"] for entry in view["sessions"]], ["r5 opus high", "r5 opus high"])
         self.assertIsNone(self.api("/tickets/1").json["result"])
 
+    def test_a_ticket_waiting_for_a_person_carries_its_question_and_why(self):
+        """Decision 16: `reason: top_rung` reads as "at the ladder's top rung" on the ticket page."""
+        self.assertIsNone(self.api("/tickets/2").json["needs_human"], "a ticket nobody waits on says nothing")
+        view = self.api("/tickets/8").json
+        self.assertEqual(view["fields"]["status"], "needs_human")
+        self.assertEqual(view["needs_human"]["question"], "Which label source wins where the two disagree?")
+        self.assertIsNone(view["needs_human"]["note"], "this one was not left on the top rung")
+        self.append("ticket_needs_human", {"ticket": 8, "question": "it failed on rung 7", "reason": "top_rung"}, ticket=8)
+        view = self.api("/tickets/8").json
+        self.assertEqual((view["needs_human"]["reason"], view["needs_human"]["note"]),
+                         ("top_rung", "at the ladder's top rung"))
+
     def test_a_running_tickets_jobs_are_named(self):
         view = self.api("/tickets/3").json
         self.assertEqual([entry["id"] for entry in view["sessions"]], ["3/1"])

@@ -28,7 +28,7 @@ journaled `ticket_cancelled` by the planner, a planner's decision ticket that pa
 tickets is parked with them, and the new tickets may wait on the kept ones as `#<id>`. `wayline plan
 --split <id>` (`split`) replaces one ticket with at least two no harder than it: the pieces inherit
 its blockers, whatever waited on it waits on all of them, and the ticket is parked the same way. Both
-are what the conductor calls at a stall and at the `split` rung of the escalation ladder (ticket 38).
+are what the conductor calls at a stall and at the `split` step of the escalation chain (ticket 38).
 A `revise` is a plan cut again with what the owner asked to change.
 
 **The confirmation**, by autonomy, as `wayline specify` asks it. Under `checkpoints` a decision ticket

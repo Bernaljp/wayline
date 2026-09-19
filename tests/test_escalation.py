@@ -1,10 +1,11 @@
-"""The stall and the escalation ladder (ticket 38; Implementation Decisions 5, 14, and 15).
+"""The stall and the escalation chain (ticket 38; by rung, ticket 61; Implementation Decisions 5, 14, 15, and 16).
 
 The conductor is driven wave by wave against the one-ticket and five-ticket fixtures with the fake
-worker, and the planner it calls at the `split` rung and at a stall is a fake that records each cut.
+worker, and the planner it calls at the `split` step and at a stall is a fake that records each cut.
 What is asserted is what the owner and a restarted conductor can see: the journal's `ticket_failed`
-rungs, `ticket_resumed`, `ticket_launched` with the difficulty it launched at, `difficulty_raised`,
-`stall`, `run_ended`, the ticket files, and the notifications.
+steps, `ticket_resumed`, `ticket_launched` with the difficulty and the rung it launched at,
+`difficulty_raised`, `ticket_needs_human` with its reason, `stall`, `run_ended`, the ticket files,
+and the notifications.
 """
 
 import copy
@@ -100,14 +101,34 @@ class EscalationCase(ConductorCase):
                 self.made.settle()
             self.made.settle()
             self.calls = list(fake.calls)
+        self.assertReplayIsStable()
         return results
 
-    def rungs(self):
+    def assertReplayIsStable(self):
+        """Decision 5: replaying the journal these waves wrote twice yields the same view, and a tail is a restart.
+
+        Every escalation test ends here, so no step of the chain can leave the journal in a shape a
+        restarted conductor would read differently from the one that wrote it.
+        """
+        events, _ = self.ledger.read_events()
+        whole = replay.replay(events)
+        self.assertEqual(replay.replay(events), whole, "replaying twice yields a different view")
+        for cut in sorted({0, len(events) // 2, len(events)}):
+            with self.subTest(cut=cut):
+                self.assertEqual(replay.replay(events[cut:], replay.replay(events[:cut])), whole,
+                                 "a view kept by tailing the journal is not the view a restart rebuilds")
+
+    def steps(self):
+        """The escalation step every `ticket_failed` named in `next`, in order."""
         return [item["payload"]["next"] for item in self.events("ticket_failed")]
 
     def launches(self):
         return [(item["payload"]["attempt"], item["payload"]["difficulty"], item["payload"]["model"], item["payload"]["effort"])
                 for item in self.events("ticket_launched")]
+
+    def rungs(self):
+        """The rung every `ticket_launched` ran on, in order: what a tier up moves (decision 16)."""
+        return [item["payload"]["rung"] for item in self.events("ticket_launched")]
 
     def set_fields(self, identifier=1, **changes):
         path = next(tickets.tickets_dir(self.project).glob("%02d-*.md" % identifier))
@@ -124,22 +145,26 @@ class EscalationCase(ConductorCase):
 
 
 class LadderTest(EscalationCase):
-    """Criterion 2: resume once, a split, one tier up as a new attempt, then a person; each rung journaled in `next`.
+    """Criterion 2: resume once, one tier up one rung, a split, then a person; each step journaled in `next`.
 
-    The owner put the split before the tier up (2026-09-17): a tier up, to Fable above all, is the dearer step.
+    Inside a model family the tier up comes first, since one rung up is the cheaper remedy (decision 16);
+    the split comes first only where the next rung would be on Fable, which `FableRungTest` covers.
     """
 
-    def test_a_simulated_failure_climbs_the_whole_ladder(self):
+    def test_a_simulated_failure_climbs_the_whole_chain(self):
         worker.simulate_failure(1)
-        results = self.conduct((done(), patch()), (done(), None), (done(), None), (done(), None))
-        self.assertEqual(self.rungs(), ["resume", "split", "tier_up", "resume", "needs_human"])
+        results = self.conduct((done(), patch()), (done(), None), (done(), None), (done(), None),
+                               (done(), None), (done(), None))
+        self.assertEqual(self.steps(), ["resume", "tier_up", "resume", "split", "needs_human"])
         self.assertEqual([item["payload"]["reason"] for item in self.events("ticket_resumed")],
                          ["acceptance_failed", "acceptance_failed"], "each attempt's acceptance is resumed once first")
-        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "high")])
+        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 1, "sonnet", "high")],
+                         "the tier up moved the rung, and left the difficulty level where it was")
+        self.assertEqual(self.rungs(), [2, 3], "one rung up the ladder, rung 2 to rung 3")
         self.assertEqual([call.kind for call in self.calls], ["launch", "resume", "launch", "resume"])
         self.assertEqual(self.planner.cuts, [("split", 1, False)])
-        self.assertIn("the planner could not split it", self.events("ticket_failed")[2]["payload"]["reason"],
-                      "a split that fails goes on to the tier up")
+        self.assertIn("the planner could not split it", self.events("ticket_failed")[4]["payload"]["reason"],
+                      "a split that fails goes on to the person, the last step left")
         self.assertEqual(self.payload("ticket_needs_human")["ticket"], 1)
         self.assertEqual([(name, ticket) for name, ticket, _ in self.notified], [("ticket_needs_human", 1)])
         self.assertEqual(self.ticket()["status"], "needs_human")
@@ -147,11 +172,20 @@ class LadderTest(EscalationCase):
         self.assertEqual(results[-1].reason, "frontier_empty")
         commands = [result["cmd"] for item in self.events("acceptance") for result in item["payload"]["results"]]
         self.assertIn("wayline run --simulate-failure 1", commands)
-        self.assertIn("Escalated one tier up: the next attempt launches at difficulty 2 (r3 sonnet high)", self.body())
+        self.assertIn("Escalated one rung up: the next attempt launches on rung 3 (r3 sonnet high)", self.body())
+
+    def test_the_simulated_failure_forces_a_one_rung_tier_up(self):
+        """Criterion 6: `wayline run --simulate-failure <id>` forces a tier up that shows in the journal."""
+        worker.simulate_failure(1)
+        self.conduct((done(), patch()), (done(), None), (done(), None), (done(), None),
+                     (done(), None), (done(), None))
+        launched = [item["payload"] for item in self.events("ticket_launched")]
+        self.assertEqual([(entry["attempt"], entry["rung"]) for entry in launched], [(1, 2), (2, 3)])
+        self.assertIn("tier_up", self.steps())
 
     def test_a_failure_the_worker_reports_is_resumed_once_with_its_output(self):
         results = self.conduct((failed(), None), (done(), patch()))
-        self.assertEqual(self.rungs(), ["resume"])
+        self.assertEqual(self.steps(), ["resume"])
         self.assertEqual(self.payload("ticket_resumed")["reason"], "acceptance_failed")
         self.assertEqual([call.kind for call in self.calls], ["launch", "resume"])
         self.assertIn("the library does not exist", self.calls[1].message)
@@ -161,20 +195,21 @@ class LadderTest(EscalationCase):
         self.assertEqual((results[-1].ended, results[-1].reason), (True, "frontier_empty"))
         self.assertIn((1, "resume"), [item for result in results for item in result.escalated])
 
-    def test_a_spent_resume_is_split_first_and_a_failed_split_goes_one_tier_up_in_a_new_session(self):
+    def test_a_spent_resume_goes_one_rung_up_in_a_new_session(self):
         self.conduct((failed(), None), (failed(summary="still missing"), None), (done(), patch()))
-        self.assertEqual(self.rungs(), ["resume", "split", "tier_up"])
-        self.assertEqual(self.planner.cuts, [("split", 1, False)])
-        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "high")])
+        self.assertEqual(self.steps(), ["resume", "tier_up"])
+        self.assertEqual(self.planner.cuts, [], "the tier up comes first inside a model family")
+        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 1, "sonnet", "high")])
+        self.assertEqual(self.rungs(), [2, 3])
         self.assertEqual([call.kind for call in self.calls], ["launch", "resume", "launch"])
         self.assertEqual(self.ticket()["status"], "done")
 
     def test_a_resumed_session_that_reports_failed_again_goes_up_a_rung_even_when_its_acceptance_passes(self):
         self.conduct((failed(), patch()), (failed(summary="still missing"), None), (done(), None))
-        self.assertEqual(self.rungs(), ["resume", "split", "tier_up"])
+        self.assertEqual(self.steps(), ["resume", "tier_up"])
         self.assertEqual(self.events("ticket_failed")[1]["payload"]["reason"], "still missing")
         self.assertEqual(self.ticket()["status"], "done", "the tier-up attempt closed it")
-        self.assertEqual(len(self.launches()), 2)
+        self.assertEqual(self.rungs(), [2, 3])
 
     def test_the_whole_ladder_ends_under_the_default_stall(self):
         self.policy["stall"]["waves"] = 2
@@ -183,7 +218,7 @@ class LadderTest(EscalationCase):
         self.assertTrue(results[-1].ended)
         self.assertEqual(self.ticket()["status"], "needs_human")
         self.assertIn(("replan", None, False), self.planner.cuts, "a ticket that keeps failing stalls the run")
-        self.assertEqual(self.rungs()[-1], "needs_human")
+        self.assertEqual(self.steps()[-1], "needs_human")
 
     def test_under_cheap_only_a_split_waits(self):
         self.set_fields(pinned_difficulty=1)
@@ -192,7 +227,7 @@ class LadderTest(EscalationCase):
             made.action = "cheap_only"
             made._pace = lambda: None
         results = self.conduct((failed(), None), (failed(), None), waves=5, before=cheap)
-        self.assertEqual(self.rungs(), ["resume", "split"])
+        self.assertEqual(self.steps(), ["resume", "split"])
         self.assertEqual(self.planner.cuts, [])
         self.assertFalse(results[-1].ended)
 
@@ -200,18 +235,18 @@ class LadderTest(EscalationCase):
         self.set_fields(pinned_difficulty=1)
         self.planner = Planner(park(self.project))
         results = self.conduct((failed(), None), (failed(), None))
-        self.assertEqual(self.rungs(), ["resume", "split"])
+        self.assertEqual(self.steps(), ["resume", "split"])
         self.assertEqual(self.planner.cuts, [("split", 1, False)])
         self.assertEqual(self.ticket()["status"], "parked")
         self.assertEqual((results[-1].ended, results[-1].reason), (True, "frontier_empty"))
         self.assertEqual(len(self.launches()), 1)
 
-    def test_a_split_that_lands_parks_the_ticket_and_nothing_goes_up_a_tier(self):
+    def test_a_split_that_lands_parks_the_ticket_and_nothing_climbs_after_it(self):
         self.planner = Planner(park(self.project))
-        results = self.conduct((failed(), None), (failed(), None))
-        self.assertEqual(self.rungs(), ["resume", "split"])
+        results = self.conduct((failed(), None), (failed(), None), (failed(), None), (failed(), None))
+        self.assertEqual(self.steps(), ["resume", "tier_up", "resume", "split"])
         self.assertEqual(self.ticket()["status"], "parked")
-        self.assertEqual(len(self.launches()), 1, "no attempt one tier up")
+        self.assertEqual(self.rungs(), [2, 3], "the tier up launched once; the split parked the ticket after it")
         self.assertTrue(results[-1].ended)
 
     def test_a_ticket_a_split_cut_is_not_split_again(self):
@@ -221,14 +256,26 @@ class LadderTest(EscalationCase):
         self.git("add", "--", "research")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger: a piece of ticket 7")
         self.conduct((failed(), None), (failed(), None), (done(), patch()))
-        self.assertEqual(self.rungs(), ["resume", "tier_up"])
+        self.assertEqual(self.steps(), ["resume", "tier_up"])
         self.assertEqual(self.planner.cuts, [])
         self.assertEqual(plan.split_from(self.body()), 7)
 
-    def test_the_top_tier_skips_the_tier_up(self):
+    def test_the_top_rung_skips_the_tier_up_and_ends_needs_human_with_its_reason(self):
+        """Criterion 3: rung 7 has nowhere to climb, so the split is taken and then a person, with `reason: top_rung`."""
         self.set_fields(difficulty=5)
         self.conduct((failed(), None), (failed(), None))
-        self.assertEqual(self.rungs(), ["resume", "split", "needs_human"])
+        self.assertEqual(self.steps(), ["resume", "split", "needs_human"])
+        self.assertEqual(self.rungs(), [7], "difficulty 5 is the ladder's top rung, and nothing launched above it")
+        self.assertEqual(self.payload("ticket_needs_human")["reason"], "top_rung")
+        self.assertIn("rung 7, the rung ladder's top rung", self.payload("ticket_needs_human")["question"])
+        self.assertIn("at the ladder's top rung", self.made.out.getvalue())
+
+    def test_a_ticket_below_the_top_rung_is_handed_over_without_a_reason(self):
+        """A pinned ticket the chain runs out on has somewhere to climb; only the top rung says why."""
+        self.set_fields(pinned_difficulty=1)
+        self.conduct((failed(), None), (failed(), None))
+        self.assertEqual(self.steps(), ["resume", "split", "needs_human"])
+        self.assertNotIn("reason", self.payload("ticket_needs_human"))
 
     def test_a_split_that_waits_for_fable_does_not_end_the_run(self):
         self.set_fields(pinned_difficulty=1)
@@ -238,7 +285,7 @@ class LadderTest(EscalationCase):
             made.ledger.append_event("paused", {"resets_at": "2099-01-01T00:00:00Z", "window": "seven_day",
                                                 "utilization": 1.0, "model": "fable"})
         results = self.conduct((failed(), None), (failed(), None), waves=5, before=hold)
-        self.assertEqual(self.rungs(), ["resume", "split"])
+        self.assertEqual(self.steps(), ["resume", "split"])
         self.assertEqual(self.planner.cuts, [], "the planner is on Fable, and the consent waits")
         self.assertFalse(results[-1].ended)
         self.assertEqual(self.ticket()["status"], "failed")
@@ -261,29 +308,37 @@ class LadderTest(EscalationCase):
         with resources.use_fake_jobs() as jobs:
             jobs.script([resources.JobState("failed", result="exit-code", exit_code=3, reason="exited 3")], job_id="t1-1")
             self.conduct((running, patch()), (done(), None))
-        self.assertEqual(self.rungs(), ["resume"])
+        self.assertEqual(self.steps(), ["resume"])
         self.assertIn("job t1-1 failed", self.calls[1].message)
         self.assertEqual(self.calls[1].kind, "resume")
         self.assertEqual(self.ticket()["status"], "done")
 
 
 class RestartTest(EscalationCase):
-    """The rung is read from the journal: a restarted conductor takes the ladder up where it stood."""
+    """The step is read from the journal: a restarted conductor takes the chain up where it stood."""
 
-    def record_failure(self, rung, session_id="s-1"):
+    def record_failure(self, step, session_id="s-1", rung=2, difficulty=1):
         self.ledger.append_event("ticket_launched", dict(LAUNCHED, ticket=1, attempt=1, worktree=str(self.worktree()),
-                                                         difficulty=1), ticket=1)
+                                                         difficulty=difficulty, rung=rung), ticket=1)
         self.ledger.append_event("ticket_session", {"ticket": 1, "attempt": 1, "session_id": session_id, "model": "sonnet"},
                                  ticket=1, session_id=session_id)
-        self.ledger.append_event("ticket_failed", {"ticket": 1, "attempt": 1, "reason": "it broke", "next": rung}, ticket=1)
+        self.ledger.append_event("ticket_failed", {"ticket": 1, "attempt": 1, "reason": "it broke", "next": step}, ticket=1)
         self.set_fields(status="failed")
 
-    def test_a_recorded_tier_up_launches_the_next_attempt_one_tier_up(self):
+    def test_a_recorded_tier_up_launches_the_next_attempt_one_rung_up(self):
         self.record_failure("tier_up")
         self.conduct((done(), patch()))
-        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 2, "sonnet", "high")])
+        self.assertEqual(self.launches(), [(1, 1, "sonnet", "low"), (2, 1, "sonnet", "high")])
+        self.assertEqual(self.rungs(), [2, 3], "one rung above the rung the failed attempt recorded")
         self.assertEqual(self.ticket()["status"], "done")
         self.assertNotIn("the journal wins", self.made.out.getvalue(), "a ticket opened for its tier up is not a contradiction")
+
+    def test_a_recorded_tier_up_in_a_journal_older_than_the_ladder_counts_the_tier_ups(self):
+        """A launch with no `rung` names no floor, so the count of tier ups moves the level's own rung instead."""
+        self.record_failure("tier_up", rung=None)
+        self.conduct((done(), patch()))
+        self.assertEqual(self.rungs(), [None, 3])
+        self.assertEqual(self.ticket()["status"], "done")
 
     def test_a_recorded_resume_resumes_the_recorded_session(self):
         self.record_failure("resume")
@@ -292,15 +347,96 @@ class RestartTest(EscalationCase):
         self.assertIn("it broke", self.calls[0].message)
         self.assertEqual(self.ticket()["status"], "done")
 
-    def test_a_recorded_resume_with_no_session_goes_up_a_rung(self):
+    def test_a_recorded_resume_with_no_session_goes_on_to_the_next_step(self):
         self.ledger.append_event("ticket_launched", dict(LAUNCHED, ticket=1, attempt=1, worktree=str(self.worktree()),
-                                                         difficulty=1), ticket=1)
+                                                         difficulty=1, rung=2), ticket=1)
         self.ledger.append_event("ticket_failed", {"ticket": 1, "attempt": 1, "reason": "it broke", "next": "resume"}, ticket=1)
         self.set_fields(status="failed")
         self.conduct((done(), patch()))
-        self.assertEqual(self.rungs(), ["resume", "split", "tier_up"])
+        self.assertEqual(self.steps(), ["resume", "tier_up"])
         self.assertIn("cannot be resumed", self.events("ticket_failed")[1]["payload"]["reason"])
+        self.assertEqual(self.rungs(), [2, 3])
         self.assertEqual(self.ticket()["status"], "done")
+
+
+class FableRungTest(EscalationCase):
+    """Criteria 2 and 4: the split comes first onto Fable, the tier up climbs inside Fable, and the hold is obeyed.
+
+    The one-ticket fixture is set to the difficulty whose rung the test needs: difficulty 3 is rung 5
+    (`opus high`), difficulty 4 rung 6 (`fable low`), difficulty 5 rung 7 (`fable high`).
+    """
+
+    def cut_by_a_split(self):
+        """Mark ticket 1 as one a split already cut, so the split is spent and the tier up is the only step left."""
+        path = next(tickets.tickets_dir(self.project).glob("01-*.md"))
+        fields, body = tickets.read_ticket(path)
+        tickets.write_ticket(self.ledger, fields, body + "\n" + plan.SPLIT_NOTE % 7 + "\n")
+        self.git("add", "--", "research")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger: a piece of ticket 7")
+
+    def hold_fable(self, made):
+        made.ledger.append_event("paused", {"resets_at": "2099-01-01T00:00:00Z", "window": "seven_day",
+                                            "utilization": 1.0, "model": "fable"})
+
+    def test_the_split_comes_before_a_tier_up_onto_fable(self):
+        self.set_fields(difficulty=3)
+        self.planner = Planner(park(self.project))
+        self.conduct((failed(), None), (failed(), None))
+        self.assertEqual(self.steps(), ["resume", "split"], "rung 5 to rung 6 climbs onto Fable, so the split goes first")
+        self.assertEqual(self.planner.cuts, [("split", 1, False)])
+        self.assertEqual(self.rungs(), [5], "nothing launched on Fable: the split parked it first")
+        self.assertEqual(self.ticket()["status"], "parked")
+
+    def test_a_split_that_fails_then_climbs_onto_fable(self):
+        self.set_fields(difficulty=3)
+        self.conduct((failed(), None), (failed(), None), (done(), patch()))
+        self.assertEqual(self.steps(), ["resume", "split", "tier_up"])
+        self.assertEqual(self.rungs(), [5, 6], "rung 5 to rung 6, one rung, once the split had its try")
+        self.assertEqual(self.launches(), [(1, 3, "opus", "high"), (2, 3, "fable", "low")],
+                         "the level stayed at 3 and the rung moved")
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_a_tier_up_inside_fable_comes_before_the_split(self):
+        self.set_fields(difficulty=4)
+        self.planner = Planner(park(self.project))
+        self.conduct((failed(), None), (failed(), None), (done(), patch()))
+        self.assertEqual(self.steps(), ["resume", "tier_up"], "rung 6 to rung 7 stays inside Fable")
+        self.assertEqual(self.planner.cuts, [])
+        self.assertEqual(self.rungs(), [6, 7])
+        self.assertEqual(self.launches(), [(1, 4, "fable", "low"), (2, 4, "fable", "high")])
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_a_tier_up_onto_a_held_fable_rung_falls_back_under_auto(self):
+        self.set_fields(difficulty=3)
+        self.cut_by_a_split()
+        self.set_harness(model_fallback="auto")
+        self.conduct((failed(), None), (failed(), None), (done(), patch()), before=self.hold_fable)
+        self.assertEqual(self.steps(), ["resume", "tier_up"], "the split is spent, so the tier up is what is left")
+        self.assertEqual(self.launches(), [(1, 3, "opus", "high"), (2, 3, "opus", "low")],
+                         "rung 6 fell back to Opus at rung 6's own effort")
+        self.assertEqual(self.rungs(), [5, 6], "the launch still names the Fable rung it fell back from")
+        self.assertEqual(self.events("ticket_launched")[-1]["payload"]["fallback_from"], "fable")
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_a_tier_up_onto_a_held_fable_rung_waits_under_wait(self):
+        self.set_fields(difficulty=3)
+        self.cut_by_a_split()
+        self.set_harness(model_fallback="wait")
+        results = self.conduct((failed(), None), (failed(), None), waves=5, before=self.hold_fable)
+        self.assertEqual(self.steps(), ["resume", "tier_up"])
+        self.assertEqual(self.rungs(), [5], "nothing launched on the held Fable rung")
+        self.assertFalse(results[-1].ended, "the tier up is owed, and waits for the reset")
+        self.assertEqual(self.ticket()["status"], "open", "opened for the tier up its launch still owes")
+
+    def test_a_tier_up_onto_a_held_fable_rung_asks_under_ask(self):
+        self.set_fields(difficulty=3)
+        self.cut_by_a_split()
+        self.set_harness(model_fallback="ask", autonomy="autonomous")
+        results = self.conduct((failed(), None), (failed(), None), waves=5, before=self.hold_fable)
+        self.assertEqual(self.steps(), ["resume", "tier_up"])
+        self.assertEqual(self.rungs(), [5], "nothing launched until the ask is answered")
+        self.assertEqual(len(self.events("decision_opened")), 1, "the hold dropped a launch, so the ask opened once")
+        self.assertFalse(results[-1].ended)
 
 
 class DifficultyTest(EscalationCase):
@@ -315,8 +451,8 @@ class DifficultyTest(EscalationCase):
         self.policy["max_parallel_workers"] = 1
 
     def record_failure(self, identifier, fallback=False):
-        """A failed attempt of a code ticket at difficulty 1, handed to a person so the ladder leaves it alone."""
-        payload = dict(LAUNCHED, ticket=identifier, attempt=1, worktree="/p", difficulty=1)
+        """A failed attempt of a code ticket at difficulty 1, handed to a person so the chain leaves it alone."""
+        payload = dict(LAUNCHED, ticket=identifier, attempt=1, worktree="/p", difficulty=1, rung=2)
         if fallback:
             payload["fallback_from"] = "fable"
         self.ledger.append_event("ticket_launched", payload, ticket=identifier)
@@ -335,6 +471,9 @@ class DifficultyTest(EscalationCase):
         return [(item["payload"]["difficulty"], item["payload"]["model"], item["payload"]["effort"])
                 for item in self.events("ticket_launched") if item["payload"]["ticket"] == identifier]
 
+    def launched_rungs(self, identifier):
+        return [item["payload"]["rung"] for item in self.events("ticket_launched") if item["payload"]["ticket"] == identifier]
+
     def test_the_second_failure_at_a_tier_raises_the_kind(self):
         self.record_failure(1)
         for identifier in (3, 4, 5):
@@ -349,12 +488,14 @@ class DifficultyTest(EscalationCase):
                      waves=6, before=watch)
         self.assertEqual(self.payload("difficulty_raised"), {"kind": "code", "from": 1, "to": 2})
         names = [(item["event"], item["payload"].get("next")) for item in self.events()]
-        self.assertLess(names.index(("ticket_failed", "split")), names.index(("difficulty_raised", None)),
+        self.assertLess(names.index(("ticket_failed", "tier_up")), names.index(("difficulty_raised", None)),
                         "a failure its resume may still mend does not count")
         self.assertEqual(self.launched_at(2)[:1], [(1, "sonnet", "low")])
         graph = snapshots[-1]  # read before the run ended, which ends the raise with it
         self.assertEqual((graph[5], graph[3]), (2, 2), "the kind is raised for the rest of the run")
-        self.assertEqual(self.launched_at(2)[1:], [(2, "sonnet", "high")], "the tier up is one tier above attempt 1, not two")
+        self.assertEqual(self.launched_at(2)[1:], [(2, "sonnet", "high")],
+                         "the raise moved the level to 2, whose rung is 3; the tier up would have reached the same rung")
+        self.assertEqual(self.launched_rungs(2), [2, 3], "a raise and a tier up do not add")
 
     def test_a_failure_its_resume_mends_does_not_count(self):
         self.record_failure(1)
@@ -465,27 +606,41 @@ class StallTest(EscalationCase):
 class ReplayTest(unittest.TestCase):
     """What the view keeps for the ladder and the adjustment, from recorded events."""
 
-    def launch(self, ticket, attempt=1, difficulty=1, fallback=False):
+    def launch(self, ticket, attempt=1, difficulty=1, fallback=False, rung=2):
         record = launched(ticket, attempt)
         record["payload"]["difficulty"] = difficulty
+        if rung is not None:
+            record["payload"]["rung"] = rung
         if fallback:
             record["payload"]["fallback_from"] = "fable"
         return record
 
-    def failure(self, ticket, rung, attempt=1):
-        return event("ticket_failed", {"ticket": ticket, "attempt": attempt, "reason": "no", "next": rung}, ticket=ticket)
+    def failure(self, ticket, step, attempt=1):
+        return event("ticket_failed", {"ticket": ticket, "attempt": attempt, "reason": "no", "next": step}, ticket=ticket)
 
-    def test_the_rung_is_the_last_failure_s_while_the_ticket_is_failed(self):
+    def test_the_step_is_the_last_failure_s_while_the_ticket_is_failed(self):
         view = replay.replay([self.launch(1), self.failure(1, "resume")])
-        self.assertEqual((view.tickets[1].rung, view.tickets[1].failure), ("resume", "no"))
+        self.assertEqual((view.tickets[1].step, view.tickets[1].failure), ("resume", "no"))
         view.apply(event("ticket_resumed", {"ticket": 1, "attempt": 1, "session_id": "s", "reason": "acceptance_failed"}, ticket=1))
-        self.assertIsNone(view.tickets[1].rung, "the resume took it up")
+        self.assertIsNone(view.tickets[1].step, "the resume took it up")
         self.assertIsNone(view.tickets[1].latest.ended, "the failed attempt is taken up again")
         self.assertEqual([identifier for identifier, _ in view.in_flight()], [1])
         view.apply(self.failure(1, "tier_up"))
         self.assertEqual(view.tickets[1].taken("tier_up"), 1)
         view.apply(event("ticket_rerun", {"ticket": 1, "by": "cli"}, ticket=1))
         self.assertEqual(view.tickets[1].taken("tier_up"), 0)
+
+    def test_a_tier_up_records_one_rung_above_the_rung_the_attempt_ran_on(self):
+        """The floor counts rungs, not difficulty levels (decision 16); a rerun clears it."""
+        view = replay.replay([self.launch(1, rung=5), self.failure(1, "tier_up")])
+        self.assertEqual(view.tickets[1].rung_floor, 6)
+        view.apply(event("ticket_rerun", {"ticket": 1, "by": "cli"}, ticket=1))
+        self.assertIsNone(view.tickets[1].rung_floor)
+
+    def test_a_journal_older_than_the_rung_ladder_records_no_floor(self):
+        view = replay.replay([self.launch(1, rung=None), self.failure(1, "tier_up")])
+        self.assertIsNone(view.tickets[1].rung_floor)
+        self.assertEqual(view.tickets[1].taken("tier_up"), 1)
 
     def test_a_failed_verdict_after_done_ends_the_attempt_as_failed(self):
         view = replay.replay([self.launch(1), event("ticket_done", {"ticket": 1}, ticket=1), self.failure(1, "resume")])
@@ -509,7 +664,7 @@ class ReplayTest(unittest.TestCase):
 
 
 class EffectiveDifficultyTest(EscalationCase):
-    """The difficulty the next attempt launches at: pins win, raises chain, tier ups add, the top tier caps."""
+    """The level the next attempt launches at: pins win, raises chain, the top level caps, and a tier up does not move it."""
 
     def test_the_rules(self):
         made = self.conductor()
@@ -518,15 +673,46 @@ class EffectiveDifficultyTest(EscalationCase):
         self.assertEqual(made._effective_difficulty(fields), 3)
         self.assertEqual(made._effective_difficulty(dict(fields, kind="docs")), 1)
         self.assertEqual(made._effective_difficulty(dict(fields, pinned_difficulty=1)), 1)
-        made.view.tickets[1] = replay.TicketView(1, status="failed", rungs=["tier_up"], floor=2)
-        self.assertEqual(made._effective_difficulty(fields), 3, "a raise and a tier up do not add")
-        made.view.tickets[1] = replay.TicketView(1, status="failed", rungs=["tier_up"], floor=4)
-        self.assertEqual(made._effective_difficulty(fields), 4, "one tier above the attempt that failed")
-        made.view.tickets[1] = replay.TicketView(1, status="failed", rungs=["tier_up"], floor=9)
-        self.assertEqual(made._effective_difficulty(fields), 5, "never past the top tier")
+        made.view.tickets[1] = replay.TicketView(1, status="failed", steps=["tier_up"], rung_floor=6)
+        self.assertEqual(made._effective_difficulty(fields), 3, "a tier up counts rungs, and leaves the level alone")
+
+
+class EffectiveRungTest(EscalationCase):
+    """Criterion 1: the rung the next attempt launches on: the level's rung, lifted by every tier up, capped at rung 7."""
+
+    def test_the_rules(self):
+        made = self.conductor()
+        fields = {"id": 1, "kind": "code", "difficulty": 1}
+        self.assertEqual(made._effective_rung(fields), 2, "difficulty 1 is rung 2")
+        made.view.raised = {"code": {1: 2}}
+        self.assertEqual(made._effective_rung(fields), 3, "a kind raised to level 2 is rung 3")
+        made.view.tickets[1] = replay.TicketView(1, status="failed", steps=["tier_up"], rung_floor=3)
+        self.assertEqual(made._effective_rung(fields), 3, "a raise and a tier up do not add")
+        made.view.tickets[1] = replay.TicketView(1, status="failed", steps=["tier_up"], rung_floor=5)
+        self.assertEqual(made._effective_rung(fields), 5, "one rung above the rung the attempt that failed ran on")
+        made.view.tickets[1] = replay.TicketView(1, status="failed", steps=["tier_up"], rung_floor=99)
+        self.assertEqual(made._effective_rung(fields), 7, "never past the ladder's top rung")
         made.view.raised = {}
-        made.view.tickets[1] = replay.TicketView(1, status="failed", rungs=["tier_up", "tier_up"])
-        self.assertEqual(made._effective_difficulty(fields), 3, "a journal without difficulty counts the tier ups")
+        made.view.tickets[1] = replay.TicketView(1, status="failed", steps=["tier_up", "tier_up"])
+        self.assertEqual(made._effective_rung(fields), 4, "a journal without a rung counts the tier ups")
+        self.assertEqual(made._effective_rung(dict(fields, pinned_difficulty=5)), 7, "a pin names the rung outright")
+
+    def test_the_next_rung_and_where_the_split_comes_first(self):
+        made = self.conductor()
+        self.assertEqual(made._next_rung(1), 3, "difficulty 1 is rung 2, and a tier up reaches rung 3")
+        self.assertFalse(made._tier_up_reaches_fable(1), "rung 2 to rung 3 stays inside sonnet")
+        self.assertEqual(made._step_order(1), ["tier_up", "split"])
+        self.set_fields(difficulty=3)
+        self.assertEqual(made._next_rung(1), 6, "difficulty 3 is rung 5, and a tier up reaches rung 6")
+        self.assertTrue(made._tier_up_reaches_fable(1), "rung 5 to rung 6 climbs onto Fable")
+        self.assertEqual(made._step_order(1), ["split", "tier_up"])
+        self.set_fields(difficulty=4)
+        self.assertEqual(made._next_rung(1), 7, "difficulty 4 is rung 6, and a tier up reaches rung 7")
+        self.assertFalse(made._tier_up_reaches_fable(1), "rung 6 to rung 7 stays inside Fable")
+        self.assertEqual(made._step_order(1), ["tier_up", "split"])
+        self.set_fields(difficulty=5)
+        self.assertIsNone(made._next_rung(1), "rung 7 has nowhere to climb")
+        self.assertFalse(made._tier_up_reaches_fable(1))
 
 
 class VerbTest(EscalationCase):
