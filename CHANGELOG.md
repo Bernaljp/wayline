@@ -21,7 +21,10 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   reset, `ask` waits for the ask's answer. The conductor's attribute that names a step of the escalation
   chain is renamed from `rung` to `step` (`replay.TicketView.step`, `_step_from`, `_owed_steps`), so rung
   now means only a rung of the rung ladder, and the journal records the ticket's rung floor rather than a
-  raised difficulty.
+  raised difficulty. Two rules follow the level no longer moving: a failure counts toward its kind's
+  `difficulty_raised` only when the attempt ran on the rung its level names, so one ticket's own climb no
+  longer raises every ticket of its kind; and `cheap_only` reads a graph entry's rung where it has one, so
+  a ticket the chain tier-upped past the cheap rungs is held by the window as it was before.
 
 - The rung ladder (ticket 60; Implementation Decision 16). A ticket's difficulty names a rung of
   `policy.tiers`, an ordered list of seven rungs cheapest first (a `model`, an `effort`, and a

@@ -16,7 +16,7 @@ from pathlib import Path
 from wayline.tickets import DECISION, HARDEST, SATISFIED, frontier, is_open_decision, open_decisions
 
 __all__ = [
-    "NORMAL", "CHEAP_ONLY", "STOP", "CHEAP_MAX", "affordable",
+    "NORMAL", "CHEAP_ONLY", "STOP", "CHEAP_MAX", "CHEAP_MAX_RUNG", "affordable",
     "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
     "everything_free", "nothing_held", "awaits_owner", "launchable", "order_key", "pick", "held_back", "holds_model_work",
     "AUTONOMOUS",
@@ -28,6 +28,11 @@ NORMAL = "normal"
 CHEAP_ONLY = "cheap_only"
 STOP = "stop"
 CHEAP_MAX = 2
+# The dearest rung of the rung ladder `cheap_only` still launches: the rung difficulty `CHEAP_MAX` names
+# in the shipped ladder (decision 16). A graph entry the conductor built carries the rung its next attempt
+# launches on, which a tier up may have lifted past the ticket's own difficulty level; an entry without one
+# is read by its level, as it was before the ladder.
+CHEAP_MAX_RUNG = 3
 # The one autonomy under which a decision ticket that is not human-only is the decider's rather than the owner's.
 AUTONOMOUS = "autonomous"
 
@@ -43,10 +48,19 @@ def holds_model_work(action):
 
 
 def affordable(entry, action=NORMAL):
-    """Whether this pacing action lets the ticket launch: any under `normal`, difficulty 1 and 2 under `cheap_only`."""
+    """Whether this pacing action lets the ticket launch: any under `normal`, the cheap rungs under `cheap_only`.
+
+    The entry's `rung` wins where it has one, so a ticket the escalation chain tier-upped onto a dearer
+    rung is held by `cheap_only` even though its difficulty level never moved (decision 16).
+    """
     if action == STOP:
         return False
-    return action != CHEAP_ONLY or (entry.get("difficulty") or 0) <= CHEAP_MAX
+    if action != CHEAP_ONLY:
+        return True
+    rung = entry.get("rung")
+    if rung:
+        return rung <= CHEAP_MAX_RUNG
+    return (entry.get("difficulty") or 0) <= CHEAP_MAX
 
 
 # --- touch sets ------------------------------------------------------------------------------

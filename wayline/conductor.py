@@ -3650,17 +3650,34 @@ class Conductor:
             rung = max(rung, floor)
         return min(rung, self._top_rung())
 
-    def _next_rung(self, identifier):
-        """The rung a tier up would launch the ticket's next attempt on, or None when it is on the ladder's top rung.
+    def _ran_on(self, identifier):
+        """The rung the ticket's latest attempt ran on, or None when no journal records one."""
+        known = self.view.tickets.get(identifier)
+        latest = known.latest if known is not None else None
+        return latest.rung if latest is not None else None
 
-        One rung above the rung the failed attempt ran on, which is the rung the ticket's next attempt would
-        launch on anyway (`_effective_rung` already holds the floor every earlier tier up left).
+    def _next_rung(self, identifier):
+        """The rung a tier up would launch the ticket's next attempt on, or None when there is none above it.
+
+        One rung above the rung the attempt that failed ran on, and never below the rung the ticket would
+        launch on anyway: a kind raise journaled since may already have lifted it that far, and then the
+        tier up lands where the raise put it rather than a rung past it. A journal older than the rung
+        ladder records no rung, so the rung the next attempt would launch on stands in for it.
         """
         fields = self._fields(identifier)
         if fields is None:
             return None
-        rung = self._effective_rung(fields)
-        return rung + 1 if rung < self._top_rung() else None
+        rung, ran = self._effective_rung(fields), self._ran_on(identifier)
+        rung = max(rung, ran + 1) if ran is not None else rung + 1
+        return rung if rung <= self._top_rung() else None
+
+    def _at_top_rung(self, identifier):
+        """Whether the chain left this ticket with nowhere to climb: it has a ticket file, and no rung above it.
+
+        A ticket whose file is gone has no rung at all, and is handed over without a reason rather than
+        reported as one the ladder ran out on.
+        """
+        return self._fields(identifier) is not None and self._next_rung(identifier) is None
 
     def _rung_family(self, rung):
         """The model family of a rung of the rung ladder, or None for a rung the ladder does not have."""
@@ -3675,11 +3692,15 @@ class Conductor:
 
         That is the one step the split comes before (decision 16): Fable's weekly window is the scarce
         resource, so the cheaper remedy is tried first, and the ticket climbs onto Fable only after it.
+        The family compared against is the one the attempt that failed ran on, not the one the rung
+        below the tier up's happens to be: a kind raise can lift the target two rungs above the attempt,
+        and the climb onto Fable is still a climb onto Fable.
         """
         above = self._next_rung(identifier)
-        if above is None:
+        if above is None or self._rung_family(above) != pacing.FABLE:
             return False
-        return self._rung_family(above) == pacing.FABLE and self._rung_family(above - 1) != pacing.FABLE
+        ran = self._ran_on(identifier)
+        return self._rung_family(ran if ran is not None else above - 1) != pacing.FABLE
 
     def _fields(self, identifier):
         """The ticket's frontmatter, or None when no ticket file has that id."""
@@ -3773,7 +3794,7 @@ class Conductor:
         self._adjust_difficulty(identifier)
         if step != NEEDS_HUMAN:
             return
-        top = self._next_rung(identifier) is None
+        top = self._at_top_rung(identifier)
         question = "it failed%s and no step of the escalation chain is left: %s" % (
             " on rung %d, the rung ladder's top rung" % self._top_rung() if top else "", reason)
         payload = {"ticket": identifier, "question": question}
@@ -3806,15 +3827,35 @@ class Conductor:
         kind = fields["kind"]
         if tier is None or tier >= self._max_tier() or tier in (self.view.raised.get(kind) or {}):
             return
+        if not self._ran_at_its_level(identifier, known.latest.number):
+            return
         failed = [key for key, difficulty in self.view.failures.items()
                   if difficulty == tier and (found.get(key[0]) or {}).get("kind") == kind
-                  and (found.get(key[0]) or {}).get("pinned_difficulty") is None]
+                  and (found.get(key[0]) or {}).get("pinned_difficulty") is None
+                  and self._ran_at_its_level(*key)]
         if len(failed) < self._ladder()["raise_after_failures"]:
             return
         self.ledger.append_event(DIFFICULTY_RAISED, {"kind": kind, "from": tier, "to": tier + 1})
         self._tail()
         self.say("  %d %s attempt(s) failed at difficulty %d (%s); %s tickets at difficulty %d launch at %d for the rest of the run"
                  % (len(failed), kind, tier, ", ".join("ticket %d attempt %d" % key for key in sorted(failed)), kind, tier, tier + 1))
+
+    def _ran_at_its_level(self, identifier, number):
+        """Whether this failed attempt counts toward its kind's raise: it ran on the rung its level names.
+
+        An attempt the escalation chain lifted a rung did not run at what its difficulty level says, so
+        counting it would raise a whole kind off one ticket's own climb (decision 16). It is left out for
+        the reason a fallback attempt is (decision 15): the level names one rung, and the attempt ran on
+        another. A journal older than the rung ladder records no rung, and counts as it always did.
+        """
+        known = self.view.tickets.get(identifier)
+        attempt = known.attempts.get(number) if known is not None else None
+        if attempt is None or attempt.rung is None or attempt.difficulty is None:
+            return True
+        try:
+            return attempt.rung == rung_of(self.policy, attempt.difficulty)
+        except ConductorError:
+            return True  # a policy with no rung for the level: the launch fails on it, and says so there
 
     def _owed_steps(self):
         """The failed tickets that wait on a step a wave takes (`resume`, `tier_up`, `split`), by id."""
@@ -3873,7 +3914,8 @@ class Conductor:
         """
         known = self.view.tickets[identifier]
         latest = known.latest
-        entry = {"difficulty": latest.difficulty if latest is not None else None}
+        entry = {"difficulty": latest.difficulty if latest is not None else None,
+                 "rung": latest.rung if latest is not None else None}
         if self._busy() >= self._slots() or not schedule.affordable(entry, self.action):
             return False  # a resume is a worker like any launch: it waits for a slot, and for the pacing to allow its tier
         if latest is None or not latest.session_id or latest.spent:

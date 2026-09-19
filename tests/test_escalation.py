@@ -231,6 +231,23 @@ class LadderTest(EscalationCase):
         self.assertEqual(self.planner.cuts, [])
         self.assertFalse(results[-1].ended)
 
+    def test_cheap_only_holds_a_ticket_the_chain_tier_upped_past_the_cheap_rungs(self):
+        """The level never moves now, so `cheap_only` reads the rung the next attempt launches on (ticket 61)."""
+        self.set_fields(difficulty=2)  # rung 3, the dearest rung `cheap_only` launches; a tier up reaches rung 4
+
+        def cheap_after_the_first_wave(made):
+            waves = []
+            pace, wave = made._pace, made.wave
+
+            def counted():
+                waves.append(True)
+                return wave()
+            made.wave, made._pace = counted, lambda: setattr(made, "action", "normal" if not waves else "cheap_only")
+        results = self.conduct((failed(), None), (failed(), None), waves=6, before=cheap_after_the_first_wave)
+        self.assertEqual(self.steps(), ["resume", "tier_up"])
+        self.assertEqual(self.rungs(), [3], "rung 4 is past the cheap rungs, so nothing launched")
+        self.assertFalse(results[-1].ended, "the tier-up attempt is owed, and waits for the window")
+
     def test_a_pinned_ticket_skips_the_tier_up(self):
         self.set_fields(pinned_difficulty=1)
         self.planner = Planner(park(self.project))
@@ -497,6 +514,19 @@ class DifficultyTest(EscalationCase):
                          "the raise moved the level to 2, whose rung is 3; the tier up would have reached the same rung")
         self.assertEqual(self.launched_rungs(2), [2, 3], "a raise and a tier up do not add")
 
+    def test_one_ticket_s_own_climb_does_not_raise_its_whole_kind(self):
+        """A tier up leaves the level alone (ticket 61), so both attempts are journaled at it; only one counts.
+
+        The attempt the chain lifted ran on a rung the level never named, so counting it would raise every
+        ticket of that kind off one ticket's own climb.
+        """
+        for identifier in (2, 3, 4):
+            self.set_fields(identifier, status="parked")  # ticket 5 alone runs, and climbs its own chain
+        self.conduct((failed(5), None, 5), (failed(5), None, 5), (failed(5), None, 5), (failed(5), None, 5), waves=8)
+        self.assertEqual(self.launched_rungs(5), [2, 3], "it tier-upped once, from rung 2 to rung 3")
+        self.assertEqual([entry[0] for entry in self.launched_at(5)], [1, 1], "and its level never moved")
+        self.assertEqual(self.events("difficulty_raised"), [], "one ticket climbing is not a kind to raise")
+
     def test_a_failure_its_resume_mends_does_not_count(self):
         self.record_failure(1)
         self.conduct((failed(2), None, 2), (done(2), patch({"reports/beta.md": "beta\n"}), 2), waves=3)
@@ -696,6 +726,31 @@ class EffectiveRungTest(EscalationCase):
         made.view.tickets[1] = replay.TicketView(1, status="failed", steps=["tier_up", "tier_up"])
         self.assertEqual(made._effective_rung(fields), 4, "a journal without a rung counts the tier ups")
         self.assertEqual(made._effective_rung(dict(fields, pinned_difficulty=5)), 7, "a pin names the rung outright")
+
+    def test_a_kind_raise_does_not_carry_the_tier_up_past_one_rung_or_onto_fable_unasked(self):
+        """The tier up is one rung above the attempt that failed, whatever a raise journaled since did.
+
+        A level-3 ticket runs on rung 5; a raise of its kind to level 4 lifts what it would launch on to
+        rung 6. The tier up then lands on rung 6, not rung 7, and it is still a climb onto Fable from the
+        Opus rung the attempt ran on, so the split keeps its place in front of it.
+        """
+        self.set_fields(difficulty=3)
+        made = self.conductor()
+        made.view.tickets[1] = replay.TicketView(1, status="failed", attempts={1: replay.Attempt(1, rung=5, difficulty=3)})
+        self.assertEqual((made._next_rung(1), made._step_order(1)), (6, ["split", "tier_up"]))
+        made.view.raised = {"code": {3: 4}}
+        self.assertEqual(made._effective_rung(self.ticket()), 6, "the raise alone reaches rung 6")
+        self.assertEqual(made._next_rung(1), 6, "one rung above the attempt that failed, not two")
+        self.assertEqual(made._step_order(1), ["split", "tier_up"], "it is still a climb onto Fable")
+
+    def test_a_ticket_whose_file_is_gone_is_handed_over_without_a_reason(self):
+        """`_next_rung` has nothing to read without a ticket file; that is not the ladder's top rung."""
+        made = self.conductor()
+        self.assertIsNone(made._next_rung(99))
+        self.assertFalse(made._at_top_rung(99), "no file is no rung, and no climb the ladder ran out of")
+        self.set_fields(difficulty=5)
+        made.view.tickets[1] = replay.TicketView(1, status="failed", attempts={1: replay.Attempt(1, rung=7, difficulty=5)})
+        self.assertTrue(made._at_top_rung(1))
 
     def test_a_failure_that_begins_at_the_split_still_goes_on_to_the_tier_up(self):
         """An integration that conflicted begins at the split, and climbs after it when the split is spent.
