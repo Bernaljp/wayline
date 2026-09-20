@@ -8,12 +8,16 @@ conductor see: the files under `research/feedback/` and `research/changes/`, the
 """
 
 import json
+import os
+import subprocess
+import sys
 import unittest
+from unittest import mock
 
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_specify import run
-from wayline import changes, project, provenance, tickets, worker
+from wayline import changes, gates, project, provenance, tickets, worker
 from wayline.ledger import Ledger
 from wayline.tickets import read_ticket, read_tickets, tickets_dir
 from wayline.worker import Envelope
@@ -183,6 +187,24 @@ class EvolverTest(EvolveCase):
         self.assertIn("001-hold-figure-captions-to-the-table", second, "the open record is named, so it is not proposed again")
         self.assertEqual(changes.read_state(self.ledger)["read"]["002-tickets-too-big"]["dismissed"], "One run is not a pattern.")
 
+    def test_the_verb_files_its_text_and_runs_the_loop(self):
+        self.fake.script(respond=lambda request, message: answer(record(), dismissed=[
+            {"feedback": "002-tickets-too-big", "reason": "One run is not a pattern."}]), role=changes.EVOLVER)
+        with mock.patch.object(changes.registry, "plugin_validate", return_value=({}, None)):  # the free pre-check reaches the real CLI
+            code, out, err = run("evolve", "tickets too big", "--project", str(self.project))
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual([event["payload"] for event in events_of(self.ledger, "feedback")],
+                         [{"id": "001-captions-overclaim", "source": "dashboard"}, {"id": "002-tickets-too-big", "source": "cli"}])
+        self.assertIn("evolved  2 item(s) into 1 change record(s)", out)
+        self.assertIn("harness ticket(s) 1 filed", out)
+        self.assertIn("dismissed 002-tickets-too-big: One run is not a pattern.", out)
+        code, out, _ = run("evolve", "--project", str(self.project))
+        self.assertEqual(code, 0)
+        self.assertIn("no feedback is pending", out)
+        code, _, err = run("evolve", "--tag", "next", "--project", str(self.project))
+        self.assertEqual(code, 2)
+        self.assertIn("vMAJOR.MINOR.PATCH", err)
+
     def test_nothing_pending_launches_nothing(self):
         self.evolve(answer(record()))
         report = self.evolve()
@@ -223,6 +245,71 @@ class EvolverTest(EvolveCase):
         self.assertIn("leaves", problem(**dict(GLOBAL, target="../elsewhere/agent.md")))
         self.assertIn("research/", problem(**dict(GLOBAL, target="research/journal.jsonl")))
         self.assertIn("holds no", problem(**dict(GLOBAL, target="nowhere/agent.md")))
+
+
+class ReviewFixesTest(EvolveCase):
+    """What the code review of ticket 45 found: a session is never spent twice on one item, whatever goes wrong around it."""
+
+    def test_a_list_that_cannot_be_filed_marks_its_items_read_and_writes_nothing(self):
+        with mock.patch.object(changes.registry, "librarian", return_value={"role": None, "skills": [], "notes": ["no role"]}):
+            with self.assertRaises(changes.ChangeError):
+                self.evolve(answer(record()))
+        self.assertEqual(changes.read_changes(self.project), [], "the role is checked before anything is written")
+        self.assertEqual(read_tickets(self.project), [])
+        self.assertIn("could not be filed", changes.read_state(self.ledger)["read"]["001-captions-overclaim"]["dismissed"])
+        self.assertEqual(changes.pending_feedback(self.project), [], "a wave does not launch the evolver over it again")
+
+    def test_a_failure_part_way_names_what_was_written(self):
+        with mock.patch.object(changes.decisions, "open_decision", side_effect=changes.TicketError("the graph would hold a cycle")):
+            with self.assertRaises(changes.TicketError):
+                self.evolve(answer(record(**LADDER)))
+        made = changes.read_state(self.ledger)["read"]["001-captions-overclaim"]
+        self.assertEqual(made["records"], ["001-send-difficulty-2-to-opus-low"])
+        self.assertIn("written before the failure: 001-send-difficulty-2-to-opus-low", made["dismissed"])
+
+    def test_an_item_another_live_process_is_evolving_is_not_pending(self):
+        state = changes.read_state(self.ledger)
+        state["claimed"]["001-captions-overclaim"] = {"pid": os.getppid(), "ts": "2026-09-20T10:00:00Z"}
+        self.ledger.write_json(changes.EVOLVE_JSON, state)
+        self.assertEqual(changes.pending_feedback(self.project), [])
+        self.assertEqual(self.evolve()["launched"], False, "the second process finds nothing to do")
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        state["claimed"]["001-captions-overclaim"]["pid"] = gone.pid
+        self.ledger.write_json(changes.EVOLVE_JSON, state)
+        self.assertEqual([item["id"] for item in changes.pending_feedback(self.project)], ["001-captions-overclaim"],
+                         "a claim whose process is gone holds nothing")
+
+    def test_a_session_claims_its_items_and_leaves_no_claim_behind(self):
+        seen = []
+
+        def respond(request, message):
+            seen.append(dict(changes.read_state(self.ledger)["claimed"]))
+            return answer(record())
+
+        self.fake.script(respond=respond, role=changes.EVOLVER)
+        self.evolve()
+        self.assertEqual([sorted(claims) for claims in seen], [["001-captions-overclaim"]])
+        self.assertEqual(seen[0]["001-captions-overclaim"]["pid"], os.getpid())
+        self.assertEqual(changes.read_state(self.ledger)["claimed"], {})
+
+    def test_a_launch_that_fails_releases_the_claim_and_leaves_the_items_pending(self):
+        with self.assertRaises(worker.LaunchError):
+            self.evolve()  # nothing is scripted, so the fake launcher refuses the call
+        self.assertEqual(changes.read_state(self.ledger)["claimed"], {})
+        self.assertEqual([item["id"] for item in changes.pending_feedback(self.project)], ["001-captions-overclaim"])
+
+    def test_a_global_ticket_names_its_branch_in_its_origin_and_earns_no_verdict(self):
+        self.evolve(answer(record(difficulty=5, **GLOBAL)))
+        kept = changes.read_changes(self.project)[0]
+        ticket = self.tickets()[kept["ticket"]]
+        self.assertEqual(ticket["origin"], "change %s: evolve/%s" % (kept["id"], kept["id"]))
+        self.assertEqual(changes.change_of(ticket), kept["id"])
+        self.assertTrue(tickets.works_in_the_harness(ticket))
+        self.assertEqual(gates.owed_asks(ticket, 5, "fable", None, ()), ([], []), "neither the conductor's restart nor the tick owes it one")
+        local = dict(ticket, origin="change %s" % kept["id"])
+        self.assertFalse(tickets.works_in_the_harness(local))
+        self.assertTrue(gates.owed_asks(local, 5, "fable", "0123abc", ())[0], "a local change at difficulty 5 earns its verdicts like any ticket")
 
 
 class LadderTest(EvolveCase):
@@ -293,11 +380,13 @@ class AutonomousLadderTest(EvolveCase):
         self.assertEqual(len(self.fake.calls), 1, "the report launched nothing, and no harness ticket ran")
 
     def test_the_owner_applies_a_proposal_by_hand(self):
-        self.evolve(answer(record(**GLOBAL)))
+        self.evolve(answer(record(difficulty=4, **GLOBAL)))
         kept = changes.read_changes(self.project)[0]
         applied = changes.apply_proposal(self.project, kept["id"], pre_check=False)
         self.assertEqual((applied["status"], applied["branch"]), ("open", "evolve/%s" % kept["id"]))
-        self.assertEqual(self.tickets()[applied["ticket"]]["kind"], "harness")
+        ticket = self.tickets()[applied["ticket"]]
+        self.assertEqual((ticket["kind"], ticket["difficulty"], ticket["acceptance"]["machine"]),
+                         ("harness", 4, ["grep -qi smaller prompts/roles/planner.md"]), "filed as the evolver graded and gated it")
         with self.assertRaises(changes.ChangeError):
             changes.apply_proposal(self.project, kept["id"], pre_check=False)
 

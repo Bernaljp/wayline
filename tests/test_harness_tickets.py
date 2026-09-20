@@ -10,16 +10,18 @@ repository.
 import json
 import shutil
 import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_changes import GLOBAL, answer, events_of, record
 from tests.test_conductor import done, drive, hold_the_ladder
 from tests.test_fixtures import Harness, good
-from wayline import changes, fixtures, project, registry, worker
+from wayline import changes, fixtures, project, registry, replay, tick, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
-from wayline.tickets import read_tickets
+from wayline.tickets import read_tickets, refresh_graph
 from wayline.worker import Patch
 
 IDENTITY = ["-c", "user.name=wayline test", "-c", "user.email=test@wayline.invalid"]
@@ -117,6 +119,22 @@ class ProofTest(Harness):
         self.answer_by_subject(3)
         self.assertTrue(changes.prove("prompt/greeting", self.old, self.root, self.policy).proven)
 
+    def test_an_old_run_that_could_not_happen_shows_no_failure(self):
+        def runner(directory, root, policy):
+            run = fixtures.FixtureRun("prompt/greeting", n=3)
+            if Path(root) == self.root:
+                run.structural, run.passed = 3, True
+            else:
+                run.skipped = "the launch failed: the CLI is not on PATH"
+            return run
+
+        proof = changes.prove("prompt/greeting", self.old, self.root, self.policy, runner=runner)
+        self.assertIn("nothing shows that it fails there", proof.problem)
+        self.assertIsNone(self.record_of()["baseline"])
+        (self.old / "prompts" / "greeting.md").unlink()
+        self.assertTrue(changes.prove("prompt/greeting", self.old, self.root, self.policy, runner=runner).proven,
+                        "a subject the old tree does not hold is the one run that fails by not happening")
+
     def test_a_change_without_its_fixture_is_refused(self):
         self.assertIn("ships no fixture", changes.prove("prompt/nothing-here", self.old, self.root, self.policy).problem)
 
@@ -208,6 +226,36 @@ class LocalChangeTest(ProjectTestCase):
         self.assertEqual([len(result.done) for result in results if result.done], [1], "and the ticket closed once")
         self.assertEqual(events_of(self.ledger, "ticket_failed"), [], "a stop for cost is not a failure")
         self.assertEqual(read_tickets(self.project)[0]["status"], "done")
+
+    def test_a_file_dropped_during_a_run_is_found_though_the_journal_names_no_feedback(self):
+        changes.mark_read(self.ledger, {"001-captions-overclaim": {"records": [], "dismissed": "test"}})
+        driven = self.conductor()
+        driven.wave()
+        self.assertEqual(self.fake.calls, [])
+        (self.project / "research" / "feedback" / "monday.md").write_text("captions overclaim\n", encoding="utf-8")
+        self.fake.script(answer(dismissed=[{"feedback": "monday", "reason": "Filed twice."}]), role=changes.EVOLVER)
+        driven.wave()
+        self.assertEqual(events_of(self.ledger, "feedback")[-1]["payload"], {"id": "monday", "source": "file"})
+        self.assertEqual(changes.read_state(self.ledger)["read"]["monday"]["dismissed"], "Filed twice.")
+
+    def test_a_branch_proven_already_is_not_proven_again(self):
+        self.script_the_change()
+        driven = self.conductor()
+        calls = []
+
+        def prover(fixture, old, new, policy):
+            calls.append(fixture)
+            return changes.Proof(fixture, old="structural 0/3", new="structural 3/3")
+
+        driven.prover = prover
+        drive(driven)
+        kept = changes.read_changes(self.project)[0]
+        self.assertEqual(calls, [SKILL_FIXTURE])
+        self.assertRegex(kept["proof"]["head"], r"^[0-9a-f]{40}$", "the head the baseline was committed at, before the rebase onto main")
+        attempt = SimpleNamespace(id=1, worktree=self.project)
+        standing = dict(kept, proof=dict(kept["proof"], head=self.git("rev-parse", "HEAD")))
+        self.assertIs(driven._prove(attempt, standing), True)
+        self.assertEqual(calls, [SKILL_FIXTURE], "the fixture was not run a second time")
 
     def test_the_conductor_rereads_harness_json_every_wave(self):
         driven = self.conductor()
@@ -316,6 +364,9 @@ class GlobalChangeTest(ProjectTestCase):
         self.assertIn(kept["id"], self.hgit("show", branch + ":CHANGELOG.md"))
         self.assertIn("waits for the owner", (self.project / "research" / "tickets" / "01-tell-the-planner-to-cut-smaller-tickets.md").read_text(encoding="utf-8"))
         self.assertTrue(any(kept["id"] in line and "waits for the owner's merge" in line for line in changes.proposal_lines(self.project)))
+        graph, _ = refresh_graph(self.project, ledger=self.ledger, events=self.ledger.read_events()[0], force=True)
+        view = replay.replay(self.ledger.read_events()[0])
+        self.assertEqual(tick.owed_verdicts(self.project, graph, view, driven.policy), [], "the tick does not relaunch a conductor for it")
 
         self.assertEqual(changes.settle_global(self.project, self.harness)["tagged"], [])
         self.hgit("merge", "-q", "--no-ff", "-m", "Merge " + branch, branch)
@@ -415,6 +466,15 @@ class RetrospectiveTest(ProjectTestCase):
         self.assertIsNone(changes.after_run(self.project, "stopped", say=lambda text: None, pre_check=False))
         self.assertEqual(self.fake.calls, [])
         self.assertEqual(len(changes.pending_feedback(self.project)), 1, "the retrospective waits for the next wayline evolve")
+
+    def test_pacing_that_held_the_session_in_the_wave_holds_it_after_the_run(self):
+        self.ledger.append_event("pacing", {"five_hour": 0.85, "seven_day": 0.5, "fable": 0.85, "action": "cheap_only", "fable_action": "cheap_only"})
+        self.a_bad_run()
+        said = []
+        self.assertIsNone(changes.after_run(self.project, "frontier_empty", say=said.append, pre_check=False))
+        self.assertEqual(self.fake.calls, [])
+        self.assertTrue(any("pacing is `cheap_only`" in line for line in said), said)
+        self.assertEqual(len(changes.pending_feedback(self.project)), 1, "the retrospective waits for wayline evolve")
 
     def test_nothing_after_a_run_fails_the_run(self):
         self.a_bad_run()

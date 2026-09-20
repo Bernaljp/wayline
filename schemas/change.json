@@ -54,6 +54,8 @@
         }
       }
     },
+    "difficulty": {"type": "integer", "minimum": 1, "maximum": 5, "description": "the difficulty its harness ticket is filed at, as the evolver graded it"},
+    "acceptance": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the machine criteria its harness ticket is filed with; kept here so a proposal applied later is filed as it would have been"},
     "proof": {
       "type": ["object", "null"],
       "description": "the fixture as the runner scored it on the old subject, where it must fail, and on the new one, where it must pass",
@@ -61,7 +63,8 @@
       "additionalProperties": false,
       "properties": {
         "old": {"type": "string"},
-        "new": {"type": "string"}
+        "new": {"type": "string"},
+        "head": {"type": "string", "description": "the head of the ticket branch once the baseline was committed; a branch still at it is not proven again"}
       }
     },
     "tag": {"type": ["string", "null"], "description": "the harness tag that covers an applied global change"},

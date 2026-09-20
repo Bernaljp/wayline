@@ -4,17 +4,17 @@
 
 **Blocked by:** 34 (Plan: the planner, plan-time checks, and ticket assignment), 42 (Dashboard outputs, downloads, and logs), 44 (Fixture format and runner (verbatim prototype 32)), 58 (A design pass over the dashboard; added on 2026-09-16, so the feedback form and its view are built in the dashboard's designed style), 64 (The ladder consent; added on 2026-09-17, so a change to the rung ladder follows the owner's consent)
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#46](https://github.com/Bernaljp/wayline/issues/46) (mirror; the local file is the source)
 
 **Milestone:** M6 Evolve. **Spec:** milestone M6 criterion 9; Implementation Decisions 12 (intake, change records, application), 16 (the ladder consent and the evolve loop), 10 (registry, model-authored skills), 4 (global changes are irreversible); BRIEF 12.
 
-- [ ] `wayline evolve "<text>"`, the dashboard's feedback form (a new action and view), and files dropped in `research/feedback/` each journal `feedback` with the source; after every `run_ended` the evolver runs a retrospective over the journal (failures, escalations, stalls, rework, turns per closed ticket, skills below the registry's median first-time pass rate).
-- [ ] `roles/evolver/` (fable, xhigh) turns feedback and the retrospective into change records under the `change` schema (`id, observed: {text, journal_events[]}, desired, mechanism, scope_kind, risk, fixture, status`), journaled as `change_record`.
-- [ ] Code files one `harness` ticket per record through the conductor: a local change's touch set is the project's `.claude/skills/<name>/`, `.claude/agents/<role>.md`, or `harness.json`; a global change's touch set is a path in the harness repository on the branch `evolve/<id>` checked out as a worktree of the harness repository.
-- [ ] A local change is used from the next wave: the registry is rebuilt at every planner launch and the conductor rereads `harness.json` every wave; a model-authored skill ships `SKILL.md`, `wayline.json`, and a fixture, and becomes assignable only when the fixture passes; the journal shows the librarian assigning it.
-- [ ] A global change runs the harness tests and the full fixture suite on its branch and waits for the owner to integrate it into the harness `main` (ticket 46 tags); under `autonomous` the change is written into `REPORT.md` as a proposal and nothing is applied (test).
-- [ ] A change record whose mechanism is `policy` and whose keys include `tiers` or `difficulty` is always `risk: high`, so a global one runs the tests and the whole fixture suite; under `autonomous` it goes to the decider only when `ladder_changes` is `auto`, and is otherwise a `human_only` decision ticket of class `ladder` (test).
-- [ ] A fixture born from feedback encodes the desired behavior and the runner shows it failing on the old subject before the harness ticket is accepted.
+- [x] `wayline evolve "<text>"`, the dashboard's feedback form (a new action and view), and files dropped in `research/feedback/` each journal `feedback` with the source; after every `run_ended` the evolver runs a retrospective over the journal (failures, escalations, stalls, rework, turns per closed ticket, skills below the registry's median first-time pass rate).
+- [x] `roles/evolver/` (fable, xhigh) turns feedback and the retrospective into change records under the `change` schema (`id, observed: {text, journal_events[]}, desired, mechanism, scope_kind, risk, fixture, status`), journaled as `change_record`.
+- [x] Code files one `harness` ticket per record through the conductor: a local change's touch set is the project's `.claude/skills/<name>/`, `.claude/agents/<role>.md`, or `harness.json`; a global change's touch set is a path in the harness repository on the branch `evolve/<id>` checked out as a worktree of the harness repository.
+- [x] A local change is used from the next wave: the registry is rebuilt at every planner launch and the conductor rereads `harness.json` every wave; a model-authored skill ships `SKILL.md`, `wayline.json`, and a fixture, and becomes assignable only when the fixture passes; the journal shows the librarian assigning it.
+- [x] A global change runs the harness tests and the full fixture suite on its branch and waits for the owner to integrate it into the harness `main` (ticket 46 tags); under `autonomous` the change is written into `REPORT.md` as a proposal and nothing is applied (test).
+- [x] A change record whose mechanism is `policy` and whose keys include `tiers` or `difficulty` is always `risk: high`, so a global one runs the tests and the whole fixture suite; under `autonomous` it goes to the decider only when `ladder_changes` is `auto`, and is otherwise a `human_only` decision ticket of class `ladder` (test).
+- [x] A fixture born from feedback encodes the desired behavior and the runner shows it failing on the old subject before the harness ticket is accepted.
 - [ ] Tests use the fake launcher for the evolver and the conductor path for a local and a global change; live: "tickets too big" and "captions overclaim" filed from the dashboard on the M5 run become change records and harness tickets.

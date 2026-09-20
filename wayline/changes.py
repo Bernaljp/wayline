@@ -54,6 +54,7 @@ marks the record `applied`.
 """
 
 import argparse
+import os
 import json
 import re
 import shutil
@@ -80,7 +81,7 @@ from wayline.tickets import (
 __all__ = [
     "ChangeError", "Proof", "EVOLVER", "LIST_SCHEMA", "CHANGE_SCHEMA", "FEEDBACK_DIR", "CHANGES_DIR", "EVOLVE_JSON", "SOURCES",
     "RETROSPECTIVE", "HARNESS_KIND", "LADDER_KEYS", "STATUSES", "file_feedback", "take_dropped", "pending_feedback", "read_state",
-    "mark_read", "evolver_tier", "evolves_on_fable", "is_ladder_change", "target_problem", "check_list", "touches_for",
+    "mark_read", "claim", "release", "evolver_tier", "evolves_on_fable", "is_ladder_change", "target_problem", "check_list", "touches_for",
     "read_changes", "read_change", "change_of", "global_change", "file_changes", "apply_proposal", "ladder_answered", "approves",
     "evolve_prompt", "evolve", "retrospective", "render_retrospective", "notable", "file_retrospective", "after_run",
     "proposal_lines", "prove", "global_worktree", "add_global_worktree", "remove_global_worktree", "check_global", "settle_global",
@@ -106,7 +107,8 @@ OPEN, PROPOSED, AWAITING_OWNER, APPLIED, DECLINED = "open", "proposed", "awaitin
 STATUSES = (OPEN, PROPOSED, AWAITING_OWNER, APPLIED, DECLINED)
 AUTONOMOUS = "autonomous"
 BRANCH = "evolve/%s"
-ORIGIN = "change %s"
+ORIGIN = "change %s"                  # a harness ticket's origin; a global one adds its branch (`tickets.works_in_the_harness`)
+GLOBAL_ORIGIN = "change %s: evolve/%s"
 LADDER_ORIGIN = "change %s: ladder"
 APPROVE, DECLINE = "approve", "decline"
 APPROVING = ("approve", "approved", "yes", "apply", "confirm", "confirmed", "ok", "okay")
@@ -115,6 +117,8 @@ TITLE_WORDS = 8
 FEEDBACK_MAX_CHARS = 20000              # what one item hands the evolver; a longer file is cut, and the cut is said
 JOURNAL_LINES = 400                     # the journal digest keeps this many of its last lines
 PAYLOAD_CHARS = 240
+DEMO_CHARS = 240                        # a harness ticket's one-line demo: the first sentence of what is desired
+EXCERPT_CHARS = 200                     # what the dashboard's view shows of an item
 # What the digest leaves out: events that say nothing about how a session behaved.
 QUIET = ("pacing", "wave", "notified", "manifest", "consulted", "report_rendered", "job_waiting")
 # The reasons a run ends that the owner chose; the retrospective is filed, and no session is launched on top of a stop.
@@ -122,7 +126,8 @@ OWNER_ENDED = ("stopped", "switched")
 TURNS_LISTED = 5
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
-_ORIGIN_RE = re.compile(r"^change ([0-9]{3}-[a-z0-9-]+)\Z")
+_ORIGIN_RE = re.compile(r"^change ([0-9]{3}-[a-z0-9-]+)(?:: evolve/[0-9]{3}-[a-z0-9-]+)?\Z")
+_RECORD_ID_RE = re.compile(r"^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _LADDER_ORIGIN_RE = re.compile(r"^change ([0-9]{3}-[a-z0-9-]+): ladder\Z")
 _LOCATOR_RE = re.compile(r"^research/journal\.jsonl#L([0-9]+)\Z")
 _LOCAL_SKILL_RE = re.compile(r"^\.claude/skills/wayline-[a-z0-9][a-z0-9-]*/\Z")
@@ -155,6 +160,14 @@ def _slug(text, words=SLUG_WORDS):
 
 def _one_line(text):
     return " ".join(str(text or "").split())
+
+
+def _first_sentence(text, limit=DEMO_CHARS):
+    """The first sentence of a paragraph, for a ticket's one-line `demo`; the body carries the whole of it."""
+    line = _one_line(text)
+    match = re.match(r"^(.+?[.!?])(?:\s|\Z)", line)
+    sentence = match.group(1) if match else line
+    return sentence if len(sentence) <= limit else sentence[:limit - 3].rsplit(" ", 1)[0].rstrip(" ,;:") + "..."
 
 
 def _journaled(events):
@@ -220,25 +233,69 @@ def take_dropped(project):
 
 
 def read_state(ledger):
-    """`research/evolve.json`: `{"read": {<feedback id>: {"records", "dismissed", "session_id", "ts"}}}`."""
+    """`research/evolve.json`: `{"read": {<feedback id>: {"records", "dismissed", "session_id", "ts"}}, "claimed": {<id>: {"pid", "ts"}}}`."""
     try:
         state = ledger.read_json(EVOLVE_JSON)
     except (OSError, ValueError, LedgerError):
         state = None
     state = state if isinstance(state, dict) else {}
     state.setdefault("read", {})
+    state.setdefault("claimed", {})
     return state
 
 
 def mark_read(ledger, made, session_id=None):
-    """Record what an evolver session made of each item: `made` maps a feedback id to `{"records", "dismissed"}`."""
+    """Record what an evolver session made of each item, and drop its claim: `made` maps a feedback id to `{"records", "dismissed"}`."""
     with ledger.lock():
         state = read_state(ledger)
         for identifier, outcome in made.items():
             state["read"][identifier] = {"records": list(outcome.get("records") or []), "dismissed": outcome.get("dismissed"),
                                          "session_id": session_id, "ts": now_ts()}
+            state["claimed"].pop(identifier, None)
         ledger.write_json(EVOLVE_JSON, state)
     return state
+
+
+def _alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except (OSError, ValueError, TypeError):
+        return False
+    return True
+
+
+def _claimed_elsewhere(state):
+    """The items another live process is evolving right now; a claim whose process is gone holds nothing."""
+    return {identifier for identifier, claim in state["claimed"].items()
+            if isinstance(claim, dict) and claim.get("pid") != os.getpid() and _alive(claim.get("pid"))}
+
+
+def claim(ledger, identifiers):
+    """Claim the items for this process for the length of an evolver session; the ids it got, in order.
+
+    A session lasts minutes, and `wayline evolve` and a running conductor both look for pending feedback, so
+    without a claim both would spend a session on the same items and file the same change twice.
+    """
+    with ledger.lock():
+        state = read_state(ledger)
+        taken = _claimed_elsewhere(state)
+        got = [identifier for identifier in identifiers if identifier not in taken and identifier not in state["read"]]
+        for identifier in got:
+            state["claimed"][identifier] = {"pid": os.getpid(), "ts": now_ts()}
+        if got:
+            ledger.write_json(EVOLVE_JSON, state)
+    return got
+
+
+def release(ledger, identifiers):
+    """Drop this process's claims on the items a session did not get to read: a refusal, a hold, a failure to launch."""
+    with ledger.lock():
+        state = read_state(ledger)
+        mine = [identifier for identifier in identifiers if (state["claimed"].get(identifier) or {}).get("pid") == os.getpid()]
+        for identifier in mine:
+            state["claimed"].pop(identifier)
+        if mine:
+            ledger.write_json(EVOLVE_JSON, state)
 
 
 def _text_of(path):
@@ -255,16 +312,18 @@ def pending_feedback(project, journaled=None):
     """The feedback no evolver session has read, in journal order, each with its text; dropped files are taken first.
 
     `journaled` is `{id: source}` when the caller already folded the journal (the conductor, once a wave): the
-    journal is then read again only when the directory holds a file it does not name.
+    journal is then read again only when the directory holds a file it does not name. An item another live
+    process has claimed for its own session is not pending here.
     """
     ledger = Ledger(project)
     files = _files(ledger)
     if journaled is None or set(files) - set(journaled):
         take_dropped(project)
         journaled = _journaled(ledger.read_events()[0])
-    read = read_state(ledger)["read"]
+    state = read_state(ledger)
+    skipped = set(state["read"]) | _claimed_elsewhere(state)
     return [{"id": identifier, "source": source, "text": _text_of(files[identifier]) if identifier in files else "(its file is gone)"}
-            for identifier, source in journaled.items() if identifier not in read]
+            for identifier, source in journaled.items() if identifier not in skipped]
 
 
 # --- the tier ---------------------------------------------------------------------------------------
@@ -411,11 +470,16 @@ def read_changes(project):
 
 
 def read_change(project, identifier):
-    """One change record, or None."""
-    for record in read_changes(project):
-        if record["id"] == identifier:
-            return record
-    return None
+    """One change record, read from its own file, or None: the conductor asks for one at a time, often."""
+    if not identifier or not _RECORD_ID_RE.match(str(identifier)):
+        return None
+    path = Path(project) / "research" / _record_path(identifier)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        check(record, load_schema(CHANGE_SCHEMA), name=str(path))
+    except (OSError, ValueError):
+        return None
+    return record
 
 
 def change_of(ticket):
@@ -495,14 +559,18 @@ def _feedback_path(ledger, identifier):
     return "research/%s/%s" % (FEEDBACK_DIR, path.name) if path is not None else None
 
 
-def _file_ticket(project, ledger, record, item, index, notify):
-    """One harness ticket for `record`, and the ladder's decision ticket when it changes the rung ladder; returns the record."""
-    acceptance = [command for command in item.get("acceptance") or [] if str(command).strip()]
+def _file_ticket(project, ledger, record, index, notify):
+    """One harness ticket for `record`, and the ladder's decision ticket when it changes the rung ladder; returns the record.
+
+    The difficulty and the machine criteria are the record's own, kept on it when the evolver returned them, so a
+    proposal the owner applies later is filed exactly as the one filed at once would have been.
+    """
+    acceptance = [command for command in record.get("acceptance") or [] if str(command).strip()]
     if record["scope_kind"] == GLOBAL:
         record = dict(record, branch=BRANCH % record["id"], worktree=str(global_worktree(record)))
     identifier = next_id(project)
     fields = {
-        "id": identifier, "title": _one_line(record["title"]), "kind": HARNESS_KIND, "difficulty": int(item.get("difficulty") or 2),
+        "id": identifier, "title": _one_line(record["title"]), "kind": HARNESS_KIND, "difficulty": int(record.get("difficulty") or 2),
         "status": "open", "blocked_by": [], "touches": touches_for(record),
     }
     assignment = registry.librarian(fields, index)
@@ -516,7 +584,8 @@ def _file_ticket(project, ledger, record, item, index, notify):
     fields.update({
         "role": assignment["role"], "skills": list(assignment["skills"]),
         "acceptance": {"machine": acceptance or ["test -f %s/%s/fixture.json" % (fixtures.FIXTURES, record["fixture"])], "quality": []},
-        "context_pack": context, "origin": ORIGIN % record["id"], "proposed_by": BY_EVOLVE, "demo": _one_line(record["desired"]),
+        "context_pack": context, "proposed_by": BY_EVOLVE, "demo": _first_sentence(record["desired"]),
+        "origin": GLOBAL_ORIGIN % (record["id"], record["id"]) if record["scope_kind"] == GLOBAL else ORIGIN % record["id"],
     })
     record = dict(record, status=OPEN, ticket=identifier)
     ledger.write_json(_record_path(record["id"]), record, schema=CHANGE_SCHEMA)
@@ -548,6 +617,10 @@ def file_changes(project, answer, *, harness_root=HARNESS_ROOT, autonomy=None, n
     autonomy = read_harness(project).get("autonomy") if autonomy is None else autonomy
     index = registry.build(project, harness_root, pre_check=pre_check) if index is None else index
     kept = []
+    filed = [item for item in answer.get("records") or [] if not (item["scope_kind"] == GLOBAL and autonomy == AUTONOMOUS)]
+    if filed and registry.librarian({"kind": HARNESS_KIND}, index)["role"] is None:
+        # Said before anything is written: a record kept without its ticket would be answered by nothing.
+        raise ChangeError("no assignable role covers a harness ticket, so no change record can be filed; the registry needs one first")
     with ledger.lock():
         number = len(read_changes(project))
         for item in answer.get("records") or []:
@@ -560,12 +633,14 @@ def file_changes(project, answer, *, harness_root=HARNESS_ROOT, autonomy=None, n
                 "risk": "high" if is_ladder_change(item) else item["risk"], "target": _target(item), "keys": list(item.get("keys") or []),
                 "fixture": item["fixture"], "status": PROPOSED, "ticket": None, "decision": None, "branch": None, "worktree": None,
                 "commit": None, "checks": [], "proof": None, "tag": None, "notes": item.get("notes") or "", "created": now_ts(),
+                "difficulty": int(item.get("difficulty") or 2),
+                "acceptance": [command for command in item.get("acceptance") or [] if str(command).strip()],
             }
             ledger.write_json(_record_path(record["id"]), record, schema=CHANGE_SCHEMA)
             ledger.append_event(CHANGE_RECORD, {K_ID: record["id"], K_SCOPE_KIND: record["scope_kind"],
                                                 K_MECHANISM: record["mechanism"], K_FIXTURE: record["fixture"]})
             if not (record["scope_kind"] == GLOBAL and autonomy == AUTONOMOUS):
-                record = _file_ticket(project, ledger, record, item, index, notify)
+                record = _file_ticket(project, ledger, record, index, notify)
             kept.append(record)
         if any(record["ticket"] is not None for record in kept):
             refresh_graph(project, ledger=ledger, events=ledger.read_events()[0], force=True)
@@ -583,7 +658,7 @@ def apply_proposal(project, identifier, *, harness_root=HARNESS_ROOT, notify=Non
         if record["status"] != PROPOSED:
             raise ChangeError("change record %s is %s, not proposed; there is nothing to apply" % (identifier, record["status"]))
         index = registry.build(project, harness_root, pre_check=pre_check)
-        record = _file_ticket(project, ledger, record, {"difficulty": 2, "acceptance": []}, index, notify)
+        record = _file_ticket(project, ledger, record, index, notify)
         refresh_graph(project, ledger=ledger, events=ledger.read_events()[0], force=True)
     return record
 
@@ -770,53 +845,84 @@ class _Session:
         return answer
 
 
+def _evolve_pending(project, ledger, pending, report, harness_root, policy, fall_back, notify, say, pre_check):
+    """The session over `pending`, its gates, and what it files, written into `report`; the items end read or still claimed."""
+    harness = read_harness(project)
+    index = registry.build(project, harness_root, pre_check=pre_check)
+    journal, journal_lines = _journal_digest(ledger)
+    session = _Session(project, harness_root, policy, fall_back, say)
+    say("evolver on %s %s%s over %d item(s): %s" % (session.model, session.effort,
+                                                    " (falling back from Fable)" if session.fallback_from else "",
+                                                    len(pending), ", ".join(report["pending"])))
+    prompt = evolve_prompt(session.role, pending, journal, read_changes(project), index, policy, harness, project, harness_root)
+    report["launched"] = True
+    shown = {item["id"] for item in pending}
+
+    def refused(why):
+        """Mark the items read with why nothing more came of them, naming whatever was written before the failure."""
+        written = {}
+        for record in read_changes(project):
+            if record.get("feedback") in shown:
+                written.setdefault(record["feedback"], []).append(record["id"])
+        mark_read(ledger, {identifier: {"records": written.get(identifier, []), "dismissed": why} for identifier in shown},
+                  session_id=session.session_id)
+
+    before = {record["id"] for record in read_changes(project)}
+    try:
+        answer = session.checked(prompt, lambda returned: check_list(returned, pending, journal_lines, project, harness_root, policy))
+    except ChangeError as failure:
+        if failure.failures or session.session_id:
+            refused("the evolver's list was refused: %s" % failure)
+        raise
+    try:
+        kept = file_changes(project, answer, harness_root=harness_root, autonomy=harness.get("autonomy"), notify=notify, index=index,
+                            pre_check=pre_check)
+    except (ValueError, OSError) as failure:
+        # The session is spent and its list was good. Left pending, the items would cost a session every wave and
+        # file the same change again under a new id, so they are read, and what went wrong is what they say.
+        left = sorted(record["id"] for record in read_changes(project) if record["id"] not in before)
+        refused("the evolver's list passed its checks and could not be filed: %s%s" % (
+            failure, "; written before the failure: %s" % ", ".join(left) if left else ""))
+        raise
+    made = {identifier: {"records": [], "dismissed": None} for identifier in shown}
+    for record in kept:
+        made[record["feedback"]]["records"].append(record["id"])
+    for item in answer.get("dismissed") or []:
+        made[item["feedback"]]["dismissed"] = item["reason"]
+        report["dismissed"][item["feedback"]] = item["reason"]
+    mark_read(ledger, made, session_id=session.session_id)
+    report["records"] = [record["id"] for record in kept]
+    report["proposed"] = [record["id"] for record in kept if record["status"] == PROPOSED]
+    report["tickets"] = [record["ticket"] for record in kept if record["ticket"] is not None]
+    report["decisions"] = [record["decision"] for record in kept if record["decision"] is not None]
+    report["recommendations"] = list(answer.get("recommendations") or [])
+
+
 def evolve(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None, say=lambda text: None, pre_check=True,
            tag=None):
     """One turn of the loop: take what was dropped, launch the evolver over what is pending, file what it returns, tag what landed.
 
     Returns `{"launched", "pending", "records", "proposed", "tickets", "decisions", "dismissed", "recommendations", "tagged",
     "waiting"}`. Nothing pending launches nothing. A usage window that refuses the session raises `gates.UsageLimited`
-    and a held Fable window `gates.FableHeld`, and the items stay pending; a list that fails its gates twice raises
-    `ChangeError` with the items marked read, so the conductor does not spend a session on them every wave.
+    and a held Fable window `gates.FableHeld`, and the items stay pending; a list that fails its gates twice, or one
+    that passed them and could not be filed, raises with the items marked read, so the conductor does not spend a
+    session on them every wave. The items are claimed for the length of the session (`claim`), so a second process
+    looking meanwhile finds nothing pending.
     """
     project = Path(project).resolve()
     policy = policy_for(project, harness_root) if policy is None else policy
     ledger = Ledger(project)
     report = {"launched": False, "pending": [], "records": [], "proposed": [], "tickets": [], "decisions": [], "dismissed": {},
               "recommendations": [], "tagged": [], "waiting": []}
-    pending = pending_feedback(project)
+    # The claim lasts the session: `wayline evolve` and a running conductor must not both spend one on the same items.
+    claimed = set(claim(ledger, [item["id"] for item in pending_feedback(project)]))
+    pending = [item for item in pending_feedback(project) if item["id"] in claimed]
     report["pending"] = [item["id"] for item in pending]
     if pending:
-        harness = read_harness(project)
-        index = registry.build(project, harness_root, pre_check=pre_check)
-        journal, journal_lines = _journal_digest(ledger)
-        session = _Session(project, harness_root, policy, fall_back, say)
-        say("evolver on %s %s%s over %d item(s): %s" % (session.model, session.effort,
-                                                        " (falling back from Fable)" if session.fallback_from else "",
-                                                        len(pending), ", ".join(report["pending"])))
-        prompt = evolve_prompt(session.role, pending, journal, read_changes(project), index, policy, harness, project, harness_root)
-        report["launched"] = True
         try:
-            answer = session.checked(prompt, lambda returned: check_list(returned, pending, journal_lines, project, harness_root, policy))
-        except ChangeError as failure:
-            if failure.failures or session.session_id:
-                mark_read(ledger, {item["id"]: {"records": [], "dismissed": "the evolver's list was refused: %s" % failure}
-                                   for item in pending}, session_id=session.session_id)
-            raise
-        kept = file_changes(project, answer, harness_root=harness_root, autonomy=harness.get("autonomy"), notify=notify, index=index,
-                            pre_check=pre_check)
-        made = {item["id"]: {"records": [], "dismissed": None} for item in pending}
-        for record in kept:
-            made[record["feedback"]]["records"].append(record["id"])
-        for item in answer.get("dismissed") or []:
-            made[item["feedback"]]["dismissed"] = item["reason"]
-            report["dismissed"][item["feedback"]] = item["reason"]
-        mark_read(ledger, made, session_id=session.session_id)
-        report["records"] = [record["id"] for record in kept]
-        report["proposed"] = [record["id"] for record in kept if record["status"] == PROPOSED]
-        report["tickets"] = [record["ticket"] for record in kept if record["ticket"] is not None]
-        report["decisions"] = [record["decision"] for record in kept if record["decision"] is not None]
-        report["recommendations"] = list(answer.get("recommendations") or [])
+            _evolve_pending(project, ledger, pending, report, harness_root, policy, fall_back, notify, say, pre_check)
+        finally:
+            release(ledger, report["pending"])  # what a refusal, a hold, or a failed launch left unread is pending again
     settled = settle_global(project, harness_root, tag=tag)
     report["tagged"], report["waiting"] = settled["tagged"], settled["waiting"]
     return report
@@ -943,6 +1049,22 @@ def file_retrospective(project, harness_root=HARNESS_ROOT, pre_check=True):
         return _file(ledger, render_retrospective(retro), RETROSPECTIVE, stem="retro-" + re.sub(r"[^0-9TZ]", "", now_ts()))
 
 
+def _paced_out(project, policy):
+    """Why the evolver's session is not launched on top of a run that just ended, or None when pacing allows it.
+
+    In the wave, `cheap_only` holds the evolver as it holds the decider and a verdict, and a paused run launches
+    nothing. The run that ended leaves that word in the journal, and what it protected is still to be protected.
+    """
+    from wayline import replay  # the replayed view is the one the conductor and the tick read
+    view = replay.replay(Ledger(project).read_events()[0])
+    if view.pause is not None:
+        return "the run ended paused on a usage window until %s" % view.pause.get("resets_at")
+    action = view.pacing.get("fable_action" if evolves_on_fable(policy) else "action") or "normal"
+    if action != "normal":
+        return "pacing is `%s`, which holds a max-effort session" % action
+    return None
+
+
 def after_run(project, reason=None, *, harness_root=HARNESS_ROOT, policy=None, notify=None, say=print, pre_check=True):
     """What `wayline run` does once `run_ended` is journaled: the retrospective, then the evolver over what is pending.
 
@@ -955,6 +1077,10 @@ def after_run(project, reason=None, *, harness_root=HARNESS_ROOT, policy=None, n
         if item is not None:
             say("retrospective %s filed for the evolve loop" % item["id"])
         if reason in OWNER_ENDED:
+            return None
+        held = _paced_out(project, policy_for(project, harness_root) if policy is None else policy)
+        if held is not None:
+            say("evolve   %s; the feedback waits for wayline evolve" % held)
             return None
         report = evolve(project, harness_root=harness_root, policy=policy, notify=notify, say=lambda text: say("  " + text), pre_check=pre_check)
     except (ChangeError, gates.GateError, versions.EvolveError, ProjectError, LedgerError, TicketError, registry.RegistryError,
@@ -1010,13 +1136,23 @@ def _copy_of(directory, holder):
     return target
 
 
+def _subject_missing(directory, root):
+    """Whether `root` lacks a subject file of the fixture in `directory`: the behaviour did not exist there, which fails it."""
+    try:
+        subject = fixtures.load_fixture(directory)["subject"]
+    except fixtures.FixtureError:
+        return False
+    return any(not (Path(root) / relative).is_file() for relative in [subject["path"]] + list(subject.get("also") or []))
+
+
 def prove(fixture_id, old_root, new_root, policy=None, runner=None):
     """Run the fixture on the changed subject, where it must pass, and on the subject as it was, where it must fail.
 
     Both runs happen on a copy of the fixture, so a change that is not proven leaves its worktree as the worker
     left it. A proven one gets the passing run as the fixture's baseline, written into `new_root`'s
     `fixture.json` for the caller to commit. A subject the old tree does not hold cannot run there, which is a
-    failure on the old subject; a fixture that cannot run on the new one proves nothing.
+    failure on the old subject. Any other run that could not happen shows nothing: not on the new subject, and
+    not on the old one either.
     """
     runner = runner or fixtures.run_fixture
     directory = Path(new_root) / fixtures.FIXTURES / fixture_id
@@ -1038,6 +1174,12 @@ def prove(fixture_id, old_root, new_root, policy=None, runner=None):
         proof.old = fixtures.describe(old)
         if old.partial:
             proof.waits = True
+            return proof
+        if old.skipped is not None and not _subject_missing(fresh, old_root):
+            # It ran on the change, so it is runnable; here it could not run for some other reason (a launch that
+            # failed, an input that did not render), and a run that did not happen shows no failure.
+            proof.problem = ("the fixture %s could not be run on the subject as it was (%s), so nothing shows that it fails there"
+                             % (fixture_id, old.skipped))
             return proof
         if old.passed:
             proof.problem = ("the fixture %s passes on the subject as it was (%s), so it does not encode the desired behaviour; "
@@ -1167,20 +1309,25 @@ def settle_global(project, harness_root=HARNESS_ROOT, tag=None):
 
 
 def changes_view(project):
-    """`GET /api/projects/<id>/changes`: the feedback items with what was made of each, and the change records."""
+    """`GET /api/projects/<id>/changes`: the feedback items with what was made of each, and the change records.
+
+    A view writes nothing, and it is served without the token: a file the owner dropped that the journal does not
+    hold yet is listed as `journaled: false`, and whoever next looks for pending feedback (`wayline evolve`, a
+    wave) journals it. Each item carries an excerpt, not its text.
+    """
     project = Path(project).resolve()
     ledger = Ledger(project)
-    take_dropped(project)
     events, _ = ledger.read_events()
-    files, read = _files(ledger), read_state(ledger)["read"]
+    files, read, journaled = _files(ledger), read_state(ledger)["read"], _journaled(events)
     filed = {(event.get("payload") or {}).get(K_ID): event.get("ts") for event in events if event.get("event") == FEEDBACK}
     statuses = {ticket["id"]: ticket["status"] for ticket in read_tickets(project)}
     items = []
-    for identifier, source in _journaled(events).items():
+    for identifier, source in list(journaled.items()) + [(identifier, FILE) for identifier in files if identifier not in journaled]:
         made = read.get(identifier)
-        items.append({"id": identifier, "source": source, "ts": filed.get(identifier), "read": made is not None,
-                      "records": list((made or {}).get("records") or []), "dismissed": (made or {}).get("dismissed"),
-                      "text": _text_of(files[identifier]) if identifier in files else None})
+        items.append({"id": identifier, "source": source, "ts": filed.get(identifier), "journaled": identifier in journaled,
+                      "read": made is not None, "records": list((made or {}).get("records") or []),
+                      "dismissed": (made or {}).get("dismissed"),
+                      "excerpt": _one_line(_text_of(files[identifier]))[:EXCERPT_CHARS] if identifier in files else None})
     records = [dict(record, ticket_status=statuses.get(record.get("ticket"))) for record in read_changes(project)]
     return {"feedback": list(reversed(items)), "changes": list(reversed(records)),
             "pending": sum(1 for item in items if not item["read"]), "sources": list(SOURCES)}

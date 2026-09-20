@@ -28,7 +28,9 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   run as the fixture's baseline, which is what makes a model-authored skill assignable. The conductor now
   reads the policy again whenever `harness.json` changes, launches the evolver in the wave that finds
   feedback pending, and commits a `harness.json` the owner's switches left uncommitted before a ticket that
-  edits it branches from `main`. The `wayline-evolve` skill is no longer a shell.
+  edits it branches from `main`. The items a session reads are claimed for its length, a list that cannot be filed
+  marks its items read, and a done global harness ticket is owed no verdict by the conductor's restart or the tick
+  (`gates.owed_asks`, `tickets.works_in_the_harness`). The `wayline-evolve` skill is no longer a shell.
 - The model that ran (ticket 63; Implementation Decision 16). Every session now runs with
   `CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP=1`, so a retired name such as `claude-opus-4-1` fails
   instead of running, silently and at the newer model's price, on its family's newest. The launcher

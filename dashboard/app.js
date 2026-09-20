@@ -1426,6 +1426,7 @@ function ticketActions(f) {
 
 // What the evolve loop made of each item, in the owner's terms.
 function feedbackState(item) {
+  if (item.journaled === false) return 'dropped in research/feedback/; journaled when the evolve loop next looks';
   if (!item.read) return 'waits for the evolver';
   if ((item.records || []).length) return `became ${item.records.join(', ')}`;
   return item.dismissed ? `dismissed: ${item.dismissed}` : 'read; no change came of it';

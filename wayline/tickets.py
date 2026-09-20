@@ -24,7 +24,7 @@ from wayline.ledger import Ledger
 
 __all__ = [
     "TicketError", "RESEARCH", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED",
-    "DECISION", "HARDEST", "RESULT_HEADING",
+    "DECISION", "HARNESS", "HARDEST", "RESULT_HEADING", "works_in_the_harness",
     "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
@@ -46,6 +46,7 @@ STATUSES = ("open", "running", "done", "accepted", "failed", "blocked", "needs_h
 SATISFIED = ("done", "accepted")
 # The kind whose open tickets pause their subgraph, and the difficulty whose blockers need a verdict.
 DECISION = "decision"
+HARNESS = "harness"
 HARDEST = 5
 
 # The heading the ledger appends an attempt's result under (Implementation Decisions 2).
@@ -56,6 +57,8 @@ ANSWER_HEADING = "## Answer"
 SUPERSEDED_ANSWER_HEADING = "## Superseded answer"
 
 _FILENAME_RE = re.compile(r"(\d+)-([a-z0-9][a-z0-9-]*)\.md\Z")
+# The origin of a harness ticket filed for a global change record: it names the branch of the harness repository it works on.
+_GLOBAL_CHANGE_RE = re.compile(r"^change [0-9]{3}-[a-z0-9-]+: evolve/[0-9]{3}-[a-z0-9-]+\Z")
 _SLUG_MAX = 48
 
 
@@ -113,6 +116,16 @@ def read_ticket(path):
 def tickets_dir(project):
     """`<project>/research/tickets`."""
     return Path(project) / RESEARCH / TICKETS
+
+
+def works_in_the_harness(ticket):
+    """Whether a harness ticket works on a branch of the harness repository: a global change record's (ticket 45).
+
+    Its origin names the branch, `change <id>: evolve/<id>`. Such a ticket closes `done` without an
+    integration into the project and earns no verdict here, because the owner reads the branch before
+    merging it; the conductor's restart and the tick both ask this, so neither counts it as work owed.
+    """
+    return (ticket or {}).get("kind") == HARNESS and bool(_GLOBAL_CHANGE_RE.match(str((ticket or {}).get("origin") or "")))
 
 
 def relative_path(ticket):

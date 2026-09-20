@@ -429,10 +429,11 @@ class FeedbackActionTest(ActionCase):
         (self.project / "research" / "feedback" / "monday.md").write_text("captions overclaim\n", encoding="utf-8")
         after = self.changes({"If-None-Match": first.etag})
         self.assertEqual(after.status, 200)
-        self.assertEqual([(item["id"], item["source"], item["read"]) for item in after.json["feedback"]],
-                         [("monday", "file", False), ("001-tickets-too-big", "dashboard", False)])
+        self.assertEqual([(item["id"], item["source"], item["journaled"], item["excerpt"]) for item in after.json["feedback"]],
+                         [("monday", "file", False, "captions overclaim"), ("001-tickets-too-big", "dashboard", True, "tickets too big")])
         self.assertEqual(after.json["pending"], 2)
-        self.assertEqual([event["payload"]["source"] for event in self.events("feedback")], ["dashboard", "file"])
+        self.assertEqual([event["payload"]["source"] for event in self.events("feedback")], ["dashboard"],
+                         "a view writes nothing: the dropped file is journaled by whoever next looks for pending feedback")
 
 
 class NoShellTest(ActionCase):

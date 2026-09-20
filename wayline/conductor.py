@@ -1443,8 +1443,6 @@ class Conductor:
                 continue
             if identifier in self.view.discarded:
                 continue  # a discarded change is not on `main`, and earns no verdict (ticket 39)
-            if entry.get("kind") == "harness" and self._global_change(identifier) is not None:
-                continue  # a global change waits on its branch for the owner, who reads it (ticket 45)
             if any(queued.ticket == identifier for queued in self.verdicts):
                 continue
             ticket, _ = self._ticket(identifier)
@@ -4452,9 +4450,9 @@ class Conductor:
         it or sends it to Opus as the fallback consent says, and a usage window that refuses it pauses the run. A list
         the evolver got wrong twice is marked read by `changes.evolve`, so it is said here and not launched again.
         """
-        if not self.view.feedback:
-            return
         from wayline import changes
+        # The journal this wave already folded names the items; a file the owner dropped since is found by one scan of
+        # `research/feedback/`, and only then is the journal read again.
         journaled = {item["id"]: item["source"] for item in self.view.feedback}
         if not changes.pending_feedback(self.project, journaled=journaled):
             return
@@ -4513,6 +4511,9 @@ class Conductor:
         baseline is committed on the branch, so the registry finds a model-authored skill's fixture passed.
         """
         from wayline import changes
+        proven = record.get("proof") or {}
+        if proven.get("head") and proven["head"] == self._head(attempt.worktree):
+            return True  # proven already, and the branch has not moved: an integration carried again is not proven again
         prover = self.prover or changes.prove
         holder = old = None
         try:
@@ -4535,8 +4536,8 @@ class Conductor:
         if proof.problem is not None:
             self._fail(attempt, proof.problem, self._next_step(attempt))
             return "failed"
-        changes.set_status(self.project, record["id"], record["status"], proof={"old": proof.old or "", "new": proof.new or ""})
-        changes.commit_all(attempt.worktree, "ticket %d: the baseline of fixture %s" % (attempt.id, record["fixture"]))
+        head = changes.commit_all(attempt.worktree, "ticket %d: the baseline of fixture %s" % (attempt.id, record["fixture"]))
+        changes.set_status(self.project, record["id"], record["status"], proof={"old": proof.old or "", "new": proof.new or "", "head": head})
         self.say("  ticket %d: fixture %s fails on the old subject and passes on the change" % (attempt.id, record["fixture"]))
         return True
 

@@ -46,7 +46,7 @@ from wayline import pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
 from wayline.project import fable_hold, policy_for, rung_named
-from wayline.tickets import next_id, read_ticket, tickets_dir, write_ticket
+from wayline.tickets import next_id, read_ticket, tickets_dir, works_in_the_harness, write_ticket
 from wayline.tickets import relative_path as ticket_relative_path
 
 __all__ = [
@@ -941,7 +941,12 @@ def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None):
     (`replay.View.passed`). A ticket that earned verdicts and is owed none is owed its acceptance, which a
     conductor killed between the last pass and `ticket_accepted` never journaled. The conductor's restart
     and the tick both read it here, so what the tick relaunches a conductor for is what that conductor then does.
+
+    A harness ticket that works on a branch of the harness repository (a global change, ticket 45) earns
+    none and is owed none: it is never integrated into the project, and the owner reads the branch.
     """
+    if works_in_the_harness(ticket):
+        return [], []
     earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
                          outputs=ticket.get("outputs") or [], rung=rung)
     passed = set(passed or ())
