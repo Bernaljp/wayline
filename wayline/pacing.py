@@ -9,9 +9,11 @@ the signals below, pauses the run until the window resets.
 
 Fable is also counted in a weekly window of its own (decision 15), which the Fable line of `/usage`
 prints and which only a Fable request's own `rate_limit_event` carries, as
-`seven_day_overage_included`. It never moves the action. A refusal on that window, or a reading of
-it at `pacing.stop_at`, holds only the launches on Fable (a `Limit` whose `model` is `fable`) while
-everything else keeps launching, and `cheap_at` does not apply to it, since Fable has no cheaper tier.
+`seven_day_overage_included`. It never moves the run's action. A refusal on that window, or a reading
+of it at `pacing.stop_at`, holds only the launches on Fable (a `Limit` whose `model` is `fable`) while
+everything else keeps launching. At `pacing.cheap_at` it steps a Fable launch one rung down instead
+(decision 16, `rung_action`): a Fable rung reads this window and the all-models week, every other rung
+the five-hour and all-models windows, and the `pacing` event carries both actions.
 
 Like `wayline.schedule`, nothing here reads the ledger or the clock: the time is passed in, so a
 test can stand on either side of a reset without sleeping. The one thing read from the machine is
@@ -27,7 +29,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from wayline.schedule import CHEAP_ONLY, NORMAL, STOP
 
 __all__ = [
-    "FIVE_HOUR", "SEVEN_DAY", "UNKNOWN", "WINDOWS", "FABLE", "FABLE_LIMIT_TYPE", "READINGS", "AUTO", "ASK", "WAIT", "CONSENTS", "OPUS",
+    "FIVE_HOUR", "SEVEN_DAY", "UNKNOWN", "WINDOWS", "FABLE", "FABLE_LIMIT_TYPE", "READINGS", "RUNG_WINDOWS", "windows_for", "rung_action",
+    "AUTO", "ASK", "WAIT", "CONSENTS", "OPUS",
     "HAIKU", "SONNET", "FAMILIES", "family",
     "FALL_BACK", "ALWAYS_FALL_BACK", "ALWAYS_WAIT", "ASK_OPTIONS", "ALWAYS", "SUPERSEDED", "ASK_ORIGIN",
     "WAIT_UNDER_HOURS", "ASK_TIMEOUT_HOURS", "ask_origin", "ask_window", "ask_choice", "ask_falls_back", "ask_recommended", "ask_hours",
@@ -50,6 +53,11 @@ FABLE = "fable"
 FABLE_LIMIT_TYPE = "seven_day_overage_included"
 # Every reading a `pacing` event carries: the two windows every model draws on, then Fable's.
 READINGS = WINDOWS + (FABLE,)
+
+# The two windows a launch reads, by the family of its rung's model (decision 16): a Fable rung reads
+# Fable's weekly window and the all-models week, every other rung the five-hour and all-models windows.
+# Both readings pace the launch, so a rung is stepped down by whichever of its own windows is fuller.
+RUNG_WINDOWS = {FABLE: (FABLE, SEVEN_DAY)}
 
 # The fallback consent (decision 15), the owner's standing answer for a project on Fable work while Fable's weekly
 # window is spent: `auto` falls back without asking, `ask` asks the owner, `wait` never falls back. A project whose
@@ -142,6 +150,8 @@ def action_for(five_hour, seven_day, stop_at=STOP_AT, cheap_at=CHEAP_AT):
 
     The same thresholds apply to both windows (spec decision): a fan-out can exhaust the week
     before the session window resets, so a full week is as much a reason to stop as a full session.
+    The two are the windows every model draws on; `rung_action` reads the same thresholds over the
+    windows a Fable rung draws on instead.
     """
     readings = [value for value in (five_hour, seven_day) if value is not None]
     if any(value >= stop_at for value in readings):
@@ -149,6 +159,27 @@ def action_for(five_hour, seven_day, stop_at=STOP_AT, cheap_at=CHEAP_AT):
     if any(value >= cheap_at for value in readings):
         return CHEAP_ONLY
     return NORMAL
+
+
+def windows_for(family_name):
+    """The two windows a launch on a rung of this family reads (decision 16).
+
+    A Fable rung reads Fable's weekly window and the all-models week; every other rung reads the
+    five-hour and all-models windows. The family is the rung's model's (`family`), so a rung naming
+    a full version name reads its family's windows.
+    """
+    return RUNG_WINDOWS.get(family_name, WINDOWS)
+
+
+def rung_action(family_name, reading, stop_at=STOP_AT, cheap_at=CHEAP_AT):
+    """`stop`, `cheap_only`, or `normal` for a launch on a rung of this family (decision 16).
+
+    `reading` is a utilization by window name, as the `pacing` event carries it. The action is
+    `action_for` over the two windows this rung reads, so a Fable rung is stepped down by Fable's
+    own weekly window as well as by the week every model draws on.
+    """
+    first, second = windows_for(family_name)
+    return action_for((reading or {}).get(first), (reading or {}).get(second), stop_at, cheap_at)
 
 
 def thresholds(*layers):

@@ -51,7 +51,7 @@ def hold_the_ladder(case):
     The escalation ladder that climbs from a failure is ticket 38's, and `tests/test_escalation.py` covers it; a
     suite about an integration or a sweep asserts the failure it met, which a climbing ladder would move on from.
     """
-    for name, value in (("_escalate", lambda self, result: None), ("_owed_rungs", lambda self: [])):
+    for name, value in (("_escalate", lambda self, result: None), ("_owed_steps", lambda self: [])):
         patcher = mock.patch.object(conductor.Conductor, name, value)
         patcher.start()
         case.addCleanup(patcher.stop)
@@ -350,9 +350,9 @@ class InvalidResultTest(ConductorCase):
 
     def test_a_second_invalid_result_fails_the_ticket(self):
         self.conduct((Envelope(), None), (Envelope(), None))
-        self.assertEqual(self.first("ticket_failed")["next"], "split")
+        self.assertEqual(self.first("ticket_failed")["next"], "tier_up", "rung 2 to rung 3 stays inside sonnet (ticket 61)")
         self.assertIn("after one resume", self.first("ticket_failed")["reason"])
-        self.assertEqual(self.ticket()["status"], "needs_human", "the split and the tier-up attempt had nothing scripted")
+        self.assertEqual(self.ticket()["status"], "needs_human", "the tier-up attempt and the split had nothing scripted")
         self.assertNotIn("integrated", self.sequence())
         self.assertTrue(self.worktree().exists())
 
@@ -387,7 +387,7 @@ class FailedAcceptanceTest(ConductorCase):
     def test_a_second_failure_fails_the_ticket(self):
         self.conduct((done(), patch(WRONG)), (done(), patch(WRONG, message="ticket 1: still wrong")))
         failures = [event["payload"] for event in self.events("ticket_failed")]
-        self.assertEqual([item["next"] for item in failures[:2]], ["resume", "split"])
+        self.assertEqual([item["next"] for item in failures[:2]], ["resume", "tier_up"])
         self.assertIn("still failed in the worktree", failures[1]["reason"])
         self.assertNotIn("integrated", self.sequence())
         self.assertFalse((self.project / "hello.txt").exists())
@@ -472,8 +472,8 @@ class ResultStatusTest(ConductorCase):
         resumed = self.events("ticket_resumed")
         self.assertEqual([event["payload"]["reason"] for event in resumed], ["invalid_result"])
         self.assertIn("research/jobs/j-0001.json does not exist", self.calls[1].message)
-        self.assertEqual(self.first("ticket_failed")["next"], "split")
-        self.assertEqual(self.ticket()["status"], "needs_human", "the split and the tier-up attempt had nothing scripted")
+        self.assertEqual(self.first("ticket_failed")["next"], "tier_up")
+        self.assertEqual(self.ticket()["status"], "needs_human", "the tier-up attempt and the split had nothing scripted")
 
     def test_what_no_ticket_reads_yet_is_written_into_the_ticket_rather_than_dropped(self):
         self.conduct((done(

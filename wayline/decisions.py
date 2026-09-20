@@ -33,6 +33,11 @@ answer, and the command that answers it. `close_ask` is the conductor's own answ
 `superseded` at the reset or on a change of consent, or `fall back` at the timeout of a project that never recorded
 a consent, each journaled with `decided_by: conductor`.
 
+**The rung that is not served** (ticket 63, decision 16). A launch the subscription refuses with a 404 naming its
+model holds every launch at that rung, and `open_not_served` opens one human-only decision ticket about it, keyed
+through its origin by the rung and the attempt that met the refusal, with `blocking: null` (the hold is what holds
+the work). Answering it is the owner's word that the policy was edited, and the hold lifts with it.
+
 **The view.** `decisions_view` is `GET /api/projects/<id>/decisions`: the open decision tickets with
 their question, options, evidence, and what they pause; the decision log with the decider's
 decisions first; and the settings the page's controls start from.
@@ -59,7 +64,7 @@ from wayline.tickets import (
 
 __all__ = [
     "DECISION_HEADING", "BLOCKINGS", "PAUSABLE", "PROPOSALS", "decision_record", "decision_question", "decision_body",
-    "open_decision", "open_requested", "requested_origin", "open_fable_ask", "close_ask", "decisions_view", "decision_log", "decider_ready",
+    "open_decision", "open_requested", "requested_origin", "open_fable_ask", "close_ask", "open_not_served", "decisions_view", "decision_log", "decider_ready",
     "decide", "turn_over", "for_the_decider", "parked_proposals",
 ]
 
@@ -408,6 +413,44 @@ def close_ask(project, identifier, answer, rationale):
         write_ticket(ledger, fields, with_answer(body, answer))
         return ledger.append_event(DECISION, {"ticket": identifier, "answer": answer, "decided_by": "conductor",
                                               "rationale": rationale, "confidence": None}, ticket=identifier)["payload"]
+
+
+# --- the rung the subscription does not serve (decision 16, ticket 63) ----------------------------------
+
+
+def open_not_served(project, rung, model, refused, ticket, attempt, notify=None):
+    """The decision ticket a rung whose model the subscription refused opens; the `open_decision` report.
+
+    `rung` is the rung's 1-based index, `model` the model it names, `refused` the name the CLI was given and
+    answered 404 for (the same name, unless the launch had fallen back), and `ticket` and `attempt` the launch
+    that met the refusal. It is `human_only` under every autonomy, because a policy naming a model nobody serves
+    needs the owner's edit and no decider can make it, and `blocking: null`, because what holds the work is the
+    hold on the rung rather than this ticket's subgraph. The origin names the rung and the attempt, so a result
+    carried twice opens one ticket and a crash between the file and the events is finished; the conductor opens
+    none while the rung is already held, which is what makes it one ticket per held rung.
+    """
+    project = Path(project).resolve()
+    question = ("Rung %d names the model %s, which this subscription does not serve: what should rung %d name instead?"
+                % (rung, model, rung))
+    evidence = [
+        "ticket %d attempt %d was refused with a 404 naming %s, which cost no window and no turn" % (ticket, attempt, refused),
+        "every launch at rung %d is held until this ticket is answered; launches at other rungs go on" % rung,
+        "edit policy.tiers rung %d in the harness's policy.json, or policy.tiers in the project's harness.json, "
+        "to a model the subscription serves, then answer this ticket" % rung,
+        "an alias (haiku, sonnet, opus, fable) always names its family's newest served model; a full version name "
+        "may be retired, and the legacy remap that used to hide that is off (decision 16)",
+    ]
+
+    def announcement(identifier):
+        return ("%s: rung %d's model %s is not served by this subscription, so every launch at that rung is held "
+                "while the rest of the run goes on. Decision ticket %d (human only) asks what rung %d should name; "
+                "edit the rung, then answer with wayline answer %d \"<what you set it to>\" or in the dashboard's "
+                "decisions view." % (project.name, rung, refused, identifier, rung, identifier))
+
+    return open_decision(project, question, evidence=evidence, blocking=None, human_only=True, proposed_by="conductor",
+                         origin=replay.not_served_origin(rung, ticket, attempt),
+                         title="Rung %d's model %s is not served" % (rung, refused), notify=notify,
+                         announcement=announcement)
 
 
 # --- the decider's answers (ticket 31) ------------------------------------------------------------------

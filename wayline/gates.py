@@ -45,7 +45,7 @@ from wayline import HARNESS_ROOT
 from wayline import pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
-from wayline.project import fable_hold, policy_for
+from wayline.project import fable_hold, policy_for, rung_named
 from wayline.tickets import next_id, read_ticket, tickets_dir, write_ticket
 from wayline.tickets import relative_path as ticket_relative_path
 
@@ -492,8 +492,9 @@ class Verdict:
     """One taken verdict: the record of the `verdict` schema, plus what it was about.
 
     `passed` is the schema's `pass`, spelled so it is not the keyword; `payload` spells it back
-    for the journal. `fallback_from` is `fable` on a verdict taken on Opus in place of a verifier on
-    Fable while Fable's weekly window was spent (decision 15).
+    for the journal. `fallback_from` names the Fable rung (`r7 fable high`, decision 16) a verdict
+    taken on Opus in place of a verifier on Fable came from, while Fable's weekly window was spent
+    (decision 15).
     """
 
     subject_kind: str
@@ -508,13 +509,17 @@ class Verdict:
     fallback_from: Optional[str] = None
     proposals: list = field(default_factory=list)
     rung: Optional[int] = None
+    # The model the verdict's own session ran on, when its result named another than the one it was launched
+    # with (decision 16); None when it ran as asked, which is every recorded verdict.
+    model_ran: Optional[str] = None
 
     @property
     def payload(self):
         """The `verdict` journal event's payload (Implementation Decisions 2).
 
         `rung` is the index of the rung the judged ticket attempt ran on (decision 16), absent on a verdict
-        about anything but a ticket; `fallback_from` only on a verdict taken by fallback.
+        about anything but a ticket; `fallback_from` only on a verdict taken by fallback; `model_ran` only on
+        one whose own session ran on another model than it was launched with (decision 16).
         """
         payload = {
             "subject_kind": self.subject_kind, "subject": self.subject,
@@ -526,6 +531,8 @@ class Verdict:
             payload["rung"] = self.rung
         if self.fallback_from:
             payload["fallback_from"] = self.fallback_from
+        if self.model_ran:
+            payload["model_ran"] = self.model_ran
         return payload
 
 
@@ -555,12 +562,13 @@ def verdict_tier(policy, author_model, fall_back=False):
     """The `(model, effort, fallback_from)` a verdict on work written on `author_model` is taken at (decision 15).
 
     The table's verifier, unless it is on Fable and `fall_back` is true: then Opus at the table's effort
-    (`fable high` becomes `opus high`), and `fallback_from` is `fable`. A verifier on any other model is
-    the table's under every consent, since Fable is the only model with a weekly window of its own.
+    (`fable high` becomes `opus high`), and `fallback_from` names the Fable rung it came from, `r7 fable
+    high` (decision 16). A verifier on any other model is the table's under every consent, since Fable is
+    the only model with a weekly window of its own.
     """
     model, effort = verifier_tier(policy, author_model)
     if model == pacing.FABLE and fall_back:
-        return pacing.OPUS, effort, pacing.FABLE
+        return pacing.OPUS, effort, rung_named(policy, model, effort)
     return model, effort, None
 
 
@@ -819,6 +827,9 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         findings=list(returned.get("findings") or []),
         session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
         proposals=list(returned.get("proposals") or []), rung=rung,
+        # What the verifier's own session ran on, when the result named another model than it was launched with
+        # (decision 16): a verdict stands or falls on who read the work, so the journal says which model did.
+        model_ran=None if worker.ran_as_asked(model, envelope) else worker.model_ran(envelope),
     )
 
 

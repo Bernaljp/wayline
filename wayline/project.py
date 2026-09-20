@@ -27,14 +27,14 @@ from wayline import HARNESS_ROOT, POLICY_PATH, TAG, replay
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, DECISION, PAUSED, SWITCHED, TICKET_LAUNCHED, TICKET_RESULT, UNPAUSED, VERDICT, Ledger, atomic_write,
+    ACCEPTANCE, CONTROL, DECISION, PAUSED, SWITCHED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, UNPAUSED, VERDICT, Ledger, atomic_write,
     conductor_holder, now_ts,
 )
 from wayline.pacing import ALWAYS, ASK, AUTO, CONSENTS, FABLE, WAIT, ask_choice, ask_falls_back, ask_hours, epoch, family, iso, thresholds
 from wayline.resources import (
     LIVE_JOB_STATUSES, ResourceError, render_resources, snapshot as resources_snapshot,
 )
-from wayline.schedule import awaits_owner
+from wayline.schedule import awaits_owner, steps_down
 from wayline.tickets import DECISION as DECISION_KIND
 from wayline.tickets import (
     GRAPH, SATISFIED, answer_section, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
@@ -45,9 +45,10 @@ __all__ = [
     "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
     "home", "projects_path", "active_path", "read_active", "set_active", "read_projects",
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
-    "check_policy", "policy_problems", "old_difficulty_levels", "rung_label", "launch_label", "merge_policy",
+    "check_policy", "policy_problems", "old_difficulty_levels", "rung_label", "rung_named", "launch_label", "merge_policy",
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
-    "window_status", "goal_progress", "init_command", "status_command", "switch_command",
+    "window_status", "stepping_down", "goal_progress", "init_command", "status_command", "switch_command",
+    "NEEDS_HUMAN_NOTES", "needs_human_view",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
     "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "falls_back_now", "ask_falls_back_at",
     "fable_hold", "fable_falls_back",
@@ -279,20 +280,36 @@ def check_policy(policy, name="policy.json"):
     return None
 
 
-def rung_label(rung, model, effort):
+def rung_label(rung, model, effort, ran=None):
     """The label of a launch as `status` and the dashboard show it: `r<index> <model> <effort>` (decision 16).
 
     A journal written before the rung ladder carries no `rung`, and its launches read `<model> <effort>`.
+    `ran` is the model the session actually ran on when the result named another than the rung's, and the
+    label says both: `r5 claude-opus-4-8 high, ran claude-opus-5`.
     """
     text = "%s %s" % (model or "?", effort or "?")
-    return "r%d %s" % (rung, text) if isinstance(rung, int) and not isinstance(rung, bool) else text
+    label = "r%d %s" % (rung, text) if isinstance(rung, int) and not isinstance(rung, bool) else text
+    return "%s, ran %s" % (label, ran) if ran else label
+
+
+def rung_named(policy, model, effort):
+    """The label of the rung of `policy.tiers` that names this model's family at this effort (decision 16).
+
+    What `fallback_from` carries: the rung a launch or a verdict came from, `r7 fable high`. A tier
+    no rung made (a verifier table's effort the ladder does not have, a policy without `tiers`) reads
+    `<model> <effort>`, as `rung_label` writes a launch the journal carries no rung for.
+    """
+    for index, entry in enumerate((policy or {}).get("tiers") or [], 1):
+        if isinstance(entry, dict) and entry.get("effort") == effort and family(entry.get("model")) == family(model):
+            return rung_label(index, entry["model"], effort)
+    return rung_label(None, model, effort)
 
 
 def launch_label(attempt):
     """The label of a replayed attempt's launch (`replay.Attempt`), or None for one that never launched."""
     if attempt is None or not attempt.model:
         return None
-    return rung_label(attempt.rung, attempt.model, attempt.effort)
+    return rung_label(attempt.rung, attempt.model, attempt.effort, attempt.model_ran)
 
 
 def detect_hermes():
@@ -812,8 +829,11 @@ def status_view(project, refresh=True):
                       for entry in _open_decisions(graph)],
         # Every decision made, the decider's first (decision 10), as the dashboard's decision log orders them.
         "decided": decided,
+        # The tickets waiting for a person, each with the question and, for one the chain left on the ladder's
+        # top rung, the note that says so (decision 16; ticket 61).
+        "needs_human": needs_human_view(graph, tickets, events),
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
-        "window": window_status(events, harness, view),
+        "window": window_status(events, harness, view, policy),
         "hold": hold_status(project, events, harness, graph, tickets, view),
         "goal": goal_progress(project, events),
         "resources": resources,
@@ -844,6 +864,38 @@ def _with_status(graph, status):
 def _open_decisions(graph):
     """The decision tickets `status` lists: the same ones the frontier is paused by (`tickets`)."""
     return open_decisions(graph)
+
+
+# What `reason` on `ticket_needs_human` says in a line of `status`, the dashboard, and `REPORT.md` (decision 16).
+NEEDS_HUMAN_NOTES = {"top_rung": "at the ladder's top rung"}
+
+
+def needs_human_view(graph, tickets, events):
+    """Every ticket that waits for a person, with the question it was handed over with and why.
+
+    `note` is what the `reason` of its last `ticket_needs_human` reads as, "at the ladder's top rung" for a
+    ticket the escalation chain left with nowhere to climb (decision 16), and None for a hand-off that named
+    no reason. The journal is what carries the question and the reason; the ticket file carries the status.
+    """
+    asked = {}
+    for record in events:
+        if record.get("event") != TICKET_NEEDS_HUMAN:
+            continue
+        payload = record.get("payload") or {}
+        asked[payload.get("ticket")] = payload
+    lines = []
+    for entry in graph["tickets"]:
+        if entry["status"] != "needs_human":
+            continue
+        payload = asked.get(entry["id"]) or {}
+        lines.append({
+            "id": entry["id"],
+            "title": (tickets.get(entry["id"]) or {}).get("title", ""),
+            "question": payload.get("question"),
+            "reason": payload.get("reason"),
+            "note": NEEDS_HUMAN_NOTES.get(payload.get("reason")),
+        })
+    return lines
 
 
 def _ticket_line(entry, tickets, view=None):
@@ -878,12 +930,14 @@ def read_jobs(project):
     return jobs, problems
 
 
-def window_status(events, harness=None, view=None):
+def window_status(events, harness=None, view=None, policy=None):
     """The usage windows as the journal last saw them: the pacing reading and whether a run is paused.
 
     The fold is the conductor's own (`replay.View`), so `status` and a conductor never disagree
     about a pause: it lasts until `unpaused`, whatever restarts come in between. The thresholds are
     the ones the conductor paces by: `harness.json`'s, under what a `control pacing` event set.
+    `fable_action` is the action a launch on a Fable rung runs under and `stepping_down` what the
+    window line says while `cheap_at` is in force (decision 16), None while no launch steps down.
     """
     harness = harness or {}
     view = replay.replay(events) if view is None else view
@@ -891,6 +945,8 @@ def window_status(events, harness=None, view=None):
     pause = view.pause or {}
     return {
         "action": view.pacing["action"],
+        "fable_action": view.pacing["fable_action"],
+        "stepping_down": stepping_down(view.pacing, policy),
         "five_hour": view.pacing["five_hour"],
         "seven_day": view.pacing["seven_day"],
         "fable": view.pacing["fable"],
@@ -901,6 +957,40 @@ def window_status(events, harness=None, view=None):
         "stop_at": stop_at,
         "cheap_at": cheap_at,
     }
+
+
+def stepping_down(reading, policy=None):
+    """What the window line says while `cheap_at` steps launches one rung down (decision 16), or None.
+
+    `stepping down one rung` while the windows every model draws on are at `cheap_at`, since every
+    launch steps. While Fable's weekly window alone is, only a Fable launch steps, and the line names
+    the rung it steps to (`stepping down to r6 fable low`), read from the ladder `policy` names; a
+    caller with no policy to read says one rung, which is what the step is either way.
+    """
+    if steps_down(reading.get("action")):
+        return "stepping down one rung"
+    if not steps_down(reading.get("fable_action")):
+        return None
+    stepped = _fable_step(policy)
+    return "stepping down to %s" % stepped if stepped else "stepping down one rung"
+
+
+def _fable_step(policy):
+    """The label of the rung a Fable launch steps down to (`r6 fable low`), or None when the ladder has no such step."""
+    from wayline import conductor  # the conductor imports this module; the rung ladder is resolved there
+
+    try:
+        rungs = conductor.ladder(policy or {})
+    except conductor.ConductorError:
+        return None
+    for index in range(len(rungs), 0, -1):
+        if conductor.rung_family(policy, index) != FABLE:
+            continue
+        stepped = conductor.stepped_down(policy, index)
+        if stepped != index:
+            entry = rungs[stepped - 1]
+            return rung_label(stepped, entry["model"], entry["effort"])
+    return None
 
 
 # The events a launch or a judgment made by fallback carries `fallback_from` on (decision 15), which the hold line counts.
@@ -1057,6 +1147,7 @@ def render_status(view):
     lines.extend(_render_tickets("running tickets", view["running"]))
     lines.extend(_render_jobs(view["jobs"]))
     lines.extend(_render_decisions(view["decisions"]))
+    lines.extend(_render_needs_human(view.get("needs_human") or []))
     lines.extend(_render_decided(view.get("decided") or []))
     lines.append(_render_window(view["window"]))
     if view.get("hold"):
@@ -1116,6 +1207,24 @@ def _render_decisions(decisions):
     return lines
 
 
+def _render_needs_human(entries):
+    """The tickets waiting for a person, each with why: a ticket the chain left on the top rung says so (decision 16)."""
+    lines = ["tickets needing a person (%d)" % len(entries)]
+    for entry in entries:
+        note = "  (%s)" % entry["note"] if entry.get("note") else ""
+        lines.append("  #%-3d %s%s" % (entry["id"], entry["title"], note))
+        if entry.get("question"):
+            lines.append("       %s" % _short_question(entry["question"]))
+    lines.append("")
+    return lines
+
+
+def _short_question(question):
+    """A question's first line, cut to what a terminal line holds."""
+    first = question.split("\n")[0].strip()
+    return first if len(first) <= 100 else first[:97] + "..."
+
+
 def _render_decided(decided):
     """The decisions made, the decider's first, each with its rationale under it when the decider gave one.
 
@@ -1143,12 +1252,18 @@ def _one_line(text, limit=100):
 
 
 def _render_window(window):
-    """The pacing action, the pause with its reset time when there is one, and the utilizations, Fable's weekly window last."""
+    """The pacing action, the pause with its reset time when there is one, the utilizations with Fable's weekly window last, and the step down.
+
+    The step down of decision 16 closes the line (`stepping down one rung`), so the owner reads
+    beside the utilizations what they are costing each launch; the hold line of decision 15 follows.
+    """
     parts = ["window   %s" % window["action"]]
     if window["paused"]:
         parts.append("paused on %s until %s" % (window["window"] or "unknown", window["resets_at"] or "unknown"))
     for key in ("five_hour", "seven_day", "fable"):
         parts.append("%s %s" % (key, "unknown" if window[key] is None else _number(window[key])))
+    if window.get("stepping_down"):
+        parts.append(window["stepping_down"])
     return "   ".join(parts)
 
 
@@ -1549,7 +1664,7 @@ def set_pacing(project, stop_at=None, cheap_at=None, by="cli"):
     """`wayline switch --stop-at/--cheap-at`: write the pacing thresholds to `harness.json`, then journal `control pacing`.
 
     The thresholds are fractions of a usage window (decision 5): at `stop_at` nothing that needs a model
-    launches, and at `cheap_at` only difficulty 1 and 2 do. Either may be given alone, and the other keeps
+    launches, and at `cheap_at` every launch runs one rung down the rung ladder (decision 16). Either may be given alone, and the other keeps
     what the project holds; a `cheap_at` above the `stop_at` it would pair with is refused. Allowed at any
     time, as the fallback consent is: a running conductor applies the event at its next wave, and
     `harness.json` is what the next run starts from, written first so a crash between the two leaves a run
@@ -1575,7 +1690,7 @@ def set_pacing(project, stop_at=None, cheap_at=None, by="cli"):
         written = dict(zip(("stop_at", "cheap_at"), thresholds(base, harness.get("pacing"))))
         target = dict(held, **given)
         if target["cheap_at"] > target["stop_at"]:
-            raise ProjectError("cheap_at %g is above stop_at %g: the cheap tiers are what launches before the stop, not after it"
+            raise ProjectError("cheap_at %g is above stop_at %g: the step down one rung is what a window costs before the stop, not after it"
                                % (target["cheap_at"], target["stop_at"]))
         holder = conductor_holder(project)
         report = {"from": held, "to": target, "changed": held != target or written != target, "conductor": holder}
@@ -1869,7 +1984,7 @@ def switch_command(args):
     parser.add_argument("--stop-at", type=float, metavar="FRACTION",
                         help="the pacing threshold at which nothing that needs a model launches, from 0 to 1, instead of switching")
     parser.add_argument("--cheap-at", type=float, metavar="FRACTION",
-                        help="the pacing threshold at which only difficulty 1 and 2 launch, from 0 to 1, instead of switching")
+                        help="the pacing threshold at which every launch runs one rung down, from 0 to 1, instead of switching")
     parser.add_argument("--project",
                         help="with --autonomy, --fallback, --ladder, --stop-at, or --cheap-at, the project to set; the active one by default")
     options, code = parse_args(parser, args)

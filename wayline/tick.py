@@ -889,9 +889,10 @@ def open_login_ticket(project, ledger, machine, now, expiry, lapsed, logged_out,
 def read_usage(project, ledger, policy, now, say):
     """`claude -p "/usage"` through the launcher seam, its Fable line included, with `pacing` journaled when the reading changed.
 
-    Returns the reading (`five_hour`, `seven_day`, `fable`, `action`), or None when `/usage` gave none. The
-    action is the conductor's, from the all-models windows under the project's thresholds; a conductor
-    running or relaunched takes the event in as a reading taken when it was journaled.
+    Returns the reading (`five_hour`, `seven_day`, `fable`, `action`, `fable_action`), or None when
+    `/usage` gave none. Both actions are the conductor's: `action` from the windows every model draws on
+    and `fable_action` from the windows a Fable rung reads (decision 16), under the project's thresholds;
+    a conductor running or relaunched takes the event in as a reading taken when it was journaled.
     """
     from wayline import worker  # the launcher module is the one place that runs the executable
     try:
@@ -908,12 +909,15 @@ def read_usage(project, ledger, policy, now, say):
     stop_at, cheap_at = thresholds_for(project, policy, view)
     known = usage.five_hour is not None or usage.seven_day is not None
     action = pacing.action_for(usage.five_hour, usage.seven_day, stop_at, cheap_at) if known else view.pacing["action"]
-    reading = {"five_hour": usage.five_hour, "seven_day": usage.seven_day, "fable": usage.fable, "action": action}
+    values = {"five_hour": usage.five_hour, "seven_day": usage.seven_day, "fable": usage.fable}
+    fable_known = usage.fable is not None or usage.seven_day is not None
+    fable_action = pacing.rung_action(pacing.FABLE, values, stop_at, cheap_at) if fable_known else view.pacing["fable_action"]
+    reading = dict(values, action=action, fable_action=fable_action)
     changed = reading != view.pacing
     if changed:
         ledger.append_event(PACING, reading)
-    say("  usage: five_hour %s, seven_day %s, fable %s: %s%s"
-        % (usage.five_hour, usage.seven_day, usage.fable, action, "; journaled pacing" if changed else ""))
+    say("  usage: five_hour %s, seven_day %s, fable %s: %s, fable %s%s"
+        % (usage.five_hour, usage.seven_day, usage.fable, action, fable_action, "; journaled pacing" if changed else ""))
     return reading
 
 

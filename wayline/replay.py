@@ -12,6 +12,7 @@ have died with or without a session id to resume), and a result whose outcome no
 closed is still owed its carrying.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -29,9 +30,16 @@ from wayline.pacing import CONSENTS, FABLE, ask_window, epoch
 # The ladder consent of decision 16 (`project.LADDER_CONSENTS`, named here so replay keeps importing no project).
 LADDER_CONSENTS = ("auto", "ask")
 
+# The origin of the decision ticket a rung opens when the subscription refuses its model (decision 16, ticket 63).
+# It names the rung and the attempt that met the refusal: a result carried twice opens one ticket, and a rung
+# refused again after its ask was answered opens another, so `held_rungs` can be rebuilt from the journal alone.
+_NOT_SERVED_ORIGIN = "not served: rung %d, ticket %d attempt %d"
+_NOT_SERVED_RE = re.compile(r"^not served: rung (\d+)\b")
+
 __all__ = [
     "STATUS_AFTER", "GATES", "READOPTED", "WORKER_DIED", "SESSION", "RESULT", "JOBS", "ENDS_ATTEMPT",
     "JOB_STATUS_AFTER", "Session", "Attempt", "TicketView", "View", "replay",
+    "not_served_origin", "origin_rung",
 ]
 
 # The status each ticket event leaves its ticket at (the transitions of Implementation Decisions 2).
@@ -113,6 +121,8 @@ class Attempt:
     difficulty: Optional[int] = None
     # The index of the rung it ran on (decision 16); None in a journal written before the rung ladder.
     rung: Optional[int] = None
+    # The model its session actually ran on, when the result said another than the rung's (decision 16); None otherwise.
+    model_ran: Optional[str] = None
     sessions: list = field(default_factory=list)
     stage: str = "launch"
     spent: set = field(default_factory=set)
@@ -141,21 +151,24 @@ class TicketView:
     id: int
     status: Optional[str] = None
     attempts: dict = field(default_factory=dict)
-    # The `next` of every `ticket_failed` since the ticket was last rerun: the rungs of the escalation ladder it was sent to (ticket 38).
-    rungs: list = field(default_factory=list)
-    # The `reason` of the last `ticket_failed`: the failure output the ladder's resume is given.
+    # The `next` of every `ticket_failed` since the ticket was last rerun: the steps of the escalation chain it was sent to
+    # (ticket 38). A step is `resume`, `tier_up`, `split`, or `needs_human`, never a rung of the rung ladder (decision 16).
+    steps: list = field(default_factory=list)
+    # The `reason` of the last `ticket_failed`: the failure output the chain's resume is given.
     failure: Optional[str] = None
-    # One tier above the difficulty the last attempt sent to `tier_up` launched at: where its next attempt starts.
-    floor: Optional[int] = None
+    # One rung above the rung the last attempt sent to `tier_up` ran on: the rung its next attempt starts from
+    # (decision 16). None while no tier up was journaled, or while the journal is older than the rung ladder and
+    # its launches carry no `rung`, which the conductor counts by tier ups instead.
+    rung_floor: Optional[int] = None
 
     @property
-    def rung(self):
-        """The rung a failed ticket waits on: the `next` of its last `ticket_failed`; None unless the ticket is `failed`."""
-        return self.rungs[-1] if self.status == "failed" and self.rungs else None
+    def step(self):
+        """The escalation step a failed ticket waits on: the `next` of its last `ticket_failed`; None unless the ticket is `failed`."""
+        return self.steps[-1] if self.status == "failed" and self.steps else None
 
-    def taken(self, rung):
-        """How many times the ladder sent this ticket to `rung` since it was last rerun."""
-        return self.rungs.count(rung)
+    def taken(self, step):
+        """How many times the chain sent this ticket to `step` since it was last rerun."""
+        return self.steps.count(step)
 
     @property
     def attempt(self):
@@ -192,6 +205,7 @@ class TicketView:
         attempt.fallback_from = fallback_from
         attempt.difficulty = _int(payload.get("difficulty"))
         attempt.rung = _int(payload.get("rung"))
+        attempt.model_ran = None  # what this launch ran on is its own result's word
         attempt.sessions = [Session("launch", pid=pid, ts=ts)]
 
     def session(self, payload):
@@ -205,6 +219,8 @@ class TicketView:
             return
         if payload.get("session_id"):
             attempt.session_id = payload["session_id"]
+        if payload.get("model_ran"):
+            attempt.model_ran = payload["model_ran"]
         if attempt.sessions and attempt.sessions[-1].result is None:
             attempt.sessions[-1].result = dict(payload)
 
@@ -212,7 +228,7 @@ class TicketView:
         attempt = self._named(payload)
         reason, session_id = payload.get("reason"), payload.get("session_id")
         if attempt is not None and attempt.ended == TICKET_FAILED and reason in GATES:
-            # The escalation ladder's resume takes a failed attempt up again, in the same session (ticket 38); what it
+            # The escalation chain's resume takes a failed attempt up again, in the same session (ticket 38); what it
             # returns is integrated afresh, whatever its failed result was.
             attempt.ended, attempt.integrated = None, False
         if attempt is None or attempt.ended:
@@ -235,9 +251,15 @@ class TicketView:
 
 
 def _pacing(payload=None):
+    """The reading a `pacing` event carries: both actions, the Fable one of decision 16 beside the run's.
+
+    A `pacing` event written before the rung ladder carries no `fable_action`, and reads as `normal`:
+    what it says of Fable's weekly window is a reading, and the run paced Fable launches by it alone.
+    """
     payload = payload or {}
     return {"five_hour": payload.get("five_hour"), "seven_day": payload.get("seven_day"),
-            "fable": payload.get("fable"), "action": payload.get("action") or "normal"}
+            "fable": payload.get("fable"), "action": payload.get("action") or "normal",
+            "fable_action": payload.get("fable_action") or "normal"}
 
 
 @dataclass
@@ -270,6 +292,10 @@ class View:
     it asked about (a refusal that names the week's reset after one that named none): the ask moves with
     it, so its answer still holds and nobody is asked twice about one spent week. A `paused` journaled
     once that reset has passed begins another week's hold, and the ask stays with its own.
+
+    `rung_asks` holds the decision ticket each not-served failure opened, by its ticket, and `held_rungs`
+    reads back the rungs held now (decision 16): a rung whose model the subscription refused is held until
+    the owner answers, because a policy naming a dead model needs an edit no conductor can make.
     """
 
     tickets: dict = field(default_factory=dict)
@@ -289,6 +315,9 @@ class View:
     reruns: dict = field(default_factory=dict)
     answers: dict = field(default_factory=dict)
     asks: dict = field(default_factory=dict)
+    # The rungs whose model the subscription refused (decision 16, ticket 63): `{ticket: {rung, opened}}` for every
+    # decision ticket a not-served failure opened, which `held_rungs` reads back as the rungs held now.
+    rung_asks: dict = field(default_factory=dict)
     feedback: list = field(default_factory=list)
     jobs: dict = field(default_factory=dict)
     findings: set = field(default_factory=set)
@@ -323,6 +352,8 @@ class View:
             self.discarded.pop(identifier, None)  # a new attempt is judged afresh
         if name == TICKET_CREATED and identifier is not None and ask_window(payload.get("origin")) is not None:
             self.asks[identifier] = {"resets_at": ask_window(payload["origin"]), "opened": event.get("ts")}
+        if name == TICKET_CREATED and identifier is not None and origin_rung(payload.get("origin")) is not None:
+            self.rung_asks[identifier] = {"rung": origin_rung(payload["origin"]), "opened": event.get("ts")}
         if name == RUN_STARTED:
             self.autonomy = payload.get("autonomy") or self.autonomy
             self.run = {"pid": payload.get("pid"), "resume": bool(payload.get("resume")),
@@ -411,13 +442,15 @@ class View:
         elif name in ENDS_ATTEMPT:
             ticket.end(name, payload)
         if name == TICKET_FAILED:
-            ticket.rungs.append(payload.get("next"))
+            ticket.steps.append(payload.get("next"))
             ticket.failure = payload.get("reason")
             failed = ticket._named(payload)
-            if payload.get("next") == "tier_up" and failed is not None and failed.difficulty is not None:
-                ticket.floor = max(ticket.floor or 0, failed.difficulty + 1)
+            # A tier up counts rungs, not difficulty levels (decision 16): the next attempt starts one rung
+            # above the rung the failed attempt ran on, whatever the ticket's level says.
+            if payload.get("next") == "tier_up" and failed is not None and failed.rung is not None:
+                ticket.rung_floor = max(ticket.rung_floor or 0, failed.rung + 1)
         elif name == TICKET_RERUN:
-            ticket.rungs, ticket.failure, ticket.floor = [], None, None
+            ticket.steps, ticket.failure, ticket.rung_floor = [], None, None
 
     def _control(self, payload, identifier):
         command = payload.get("command")
@@ -484,6 +517,15 @@ class View:
         found = [ticket for ticket, ask in self.asks.items() if ask["resets_at"] == resets_at]
         return max(found) if found else None
 
+    def held_rungs(self):
+        """The rungs held now, `{rung: the decision ticket holding it}` (decision 16, ticket 63).
+
+        A rung is held from the not-served failure that opened its decision ticket until that ticket is
+        answered; the answer is the owner's word that the policy was edited, and the journal is all this reads,
+        so a restarted conductor holds the same rungs a running one does.
+        """
+        return {ask["rung"]: ticket for ticket, ask in sorted(self.rung_asks.items()) if ticket not in self.answers}
+
     def passed(self, identifier):
         """The verdict types a ticket passed since it was last done."""
         return {item["verdict_type"] for item in self.verdicts.get(identifier, []) if item.get("pass")}
@@ -492,6 +534,17 @@ class View:
         """`(ticket id, attempt)` for every attempt still owed its session's result or that result's carrying, by id."""
         return [(identifier, ticket.latest) for identifier, ticket in sorted(self.tickets.items())
                 if ticket.latest is not None and ticket.latest.owed in (SESSION, RESULT)]
+
+
+def not_served_origin(rung, ticket, attempt):
+    """The origin of the decision ticket about a rung whose model the subscription does not serve (decision 16)."""
+    return _NOT_SERVED_ORIGIN % (int(rung), int(ticket), int(attempt))
+
+
+def origin_rung(origin):
+    """The rung a not-served origin names, or None for any other origin (the inverse of `not_served_origin`)."""
+    match = _NOT_SERVED_RE.match(origin) if isinstance(origin, str) else None
+    return int(match.group(1)) if match else None
 
 
 def replay(events, view=None):

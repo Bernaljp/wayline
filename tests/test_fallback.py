@@ -293,7 +293,7 @@ class FallbackLaunchTest(FallbackCase):
             self.script(identifier)
         self.assertEqual(sorted(driven.wave().launched), [1, 2, 3])
 
-        for identifier, effort in ((1, "low"), (2, "high")):  # rungs 6 and 7 fall back to opus at the same effort (decision 16)
+        for identifier, effort, came_from in ((1, "low", "r6 fable low"), (2, "high", "r7 fable high")):  # rungs 6 and 7 fall back to opus at the same effort (decision 16)
             with self.subTest(ticket=identifier):
                 (call,) = self.calls(identifier)
                 request = call.request
@@ -304,11 +304,11 @@ class FallbackLaunchTest(FallbackCase):
                 self.assertIn("cut here at the context cap; 250 character(s) are missing", request.prompt)
                 (launched,) = self.launches(identifier)
                 self.assertEqual((launched["model"], launched["effort"], launched["fallback_from"], launched["context_chars"]),
-                                 ("opus", effort, "fable", 150))
+                                 ("opus", effort, came_from, 150), "fallback_from names the Fable rung it came from")
         (opus,) = self.calls(3)
         self.assertEqual((opus.request.model, opus.request.effort), ("opus", "high"))
         self.assertNotIn("fallback_from", self.launches(3)[0], "a launch that was on Opus all along did not fall back")
-        self.assertIn("falling back from fable", driven.out.getvalue())
+        self.assertIn("falling back from r6 fable low", driven.out.getvalue())
 
         for _ in range(6):
             self.fake.script(passing(), role="verifier")
@@ -317,7 +317,8 @@ class FallbackLaunchTest(FallbackCase):
         self.assertEqual((sorted(carried.done), sorted(carried.accepted)), ([1, 2, 3], [1, 2, 3]),
                          "every verdict here runs on Fable, and under auto a fresh Opus session takes it (ticket 56)")
         self.assertEqual({(call.kind, call.request.model, call.request.effort) for call in self.verifier_calls()}, {("launch", "opus", "high")})
-        self.assertEqual({item["payload"].get("fallback_from") for item in self.events("verdict")}, {"fable"})
+        self.assertEqual({item["payload"].get("fallback_from") for item in self.events("verdict")}, {"r7 fable high"},
+                         "a verdict names the Fable rung its verifier came from (decision 16)")
         self.assertEqual({item["difficulty"] for item in tickets.read_tickets(self.project) if item["id"] in (1, 2)}, {4, 5},
                          "the difficulty is the ticket's, whatever model it ran on")
 
@@ -355,7 +356,7 @@ class FallbackLaunchTest(FallbackCase):
         self.assertEqual(driven.wave().launched, [])
         set_model_fallback(self.project, "auto", by="dashboard")
         self.assertEqual(driven.wave().launched, [1])
-        self.assertEqual(self.launches(1)[0]["fallback_from"], "fable")
+        self.assertEqual(self.launches(1)[0]["fallback_from"], "r6 fable low")
         set_model_fallback(self.project, "wait")
         driven.settle()
         carried = driven.wave()
@@ -388,8 +389,8 @@ class FallbackSessionTest(FallbackCase):
         first, again = self.launches(1)
         self.assertEqual((first["attempt"], again["attempt"]), (1, 1), "the same attempt")
         self.assertNotIn("fallback_from", first)
-        self.assertEqual((again["model"], again["effort"], again["fallback_from"]), ("opus", "low", "fable"))
-        self.assertLess(self.index("paused", model="fable"), self.index("ticket_launched", fallback_from="fable"))
+        self.assertEqual((again["model"], again["effort"], again["fallback_from"]), ("opus", "low", "r6 fable low"))
+        self.assertLess(self.index("paused", model="fable"), self.index("ticket_launched", fallback_from="r6 fable low"))
         self.assertNotIn("partial work", self.calls(1)[1].request.prompt, "a refused session left nothing behind")
         self.assertNotIn("relaunching it", driven.out.getvalue(), "the fallback is said once, by the line that launches it")
         self.assertEqual(driven.out.getvalue().count("never started work; it is launched again on opus low"), 1)
@@ -405,11 +406,11 @@ class FallbackSessionTest(FallbackCase):
         self.assertIn("partial work", fresh.request.prompt)
         relaunch = self.payload("ticket_resumed")
         self.assertEqual((relaunch["reason"], relaunch["session_id"], relaunch["attempt"]), ("worker_died", None, 1))
-        self.assertEqual((self.launches(1)[-1]["attempt"], self.launches(1)[-1]["fallback_from"]), (1, "fable"))
+        self.assertEqual((self.launches(1)[-1]["attempt"], self.launches(1)[-1]["fallback_from"]), (1, "r6 fable low"))
         kept = self.project / "research" / "sessions" / "1" / "1" / "stopped-1" / "stream.jsonl"
         self.assertTrue(kept.is_file(), "the stopped session's stream is kept beside the fresh one")
         latest = replay.replay(self.events()).tickets[1].latest
-        self.assertEqual((latest.number, latest.model, latest.fallback_from), (1, "opus", "fable"))
+        self.assertEqual((latest.number, latest.model, latest.fallback_from), (1, "opus", "r6 fable low"))
         drive(driven)
         self.assertEqual(self.statuses(), {1: "done"})
 
@@ -427,7 +428,7 @@ class FallbackSessionTest(FallbackCase):
         self.assertIn("stopped before it returned its result", fresh)
         self.assertIn("The machine acceptance failed in your worktree", fresh, "the gate's message goes with the work")
         attempt = replay.replay(self.events()).tickets[1].attempts[1]
-        self.assertEqual((attempt.stage, attempt.fallback_from), ("acceptance_failed", "fable"), "its one resume stays spent")
+        self.assertEqual((attempt.stage, attempt.fallback_from), ("acceptance_failed", "r6 fable low"), "its one resume stays spent")
         self.assertEqual(self.statuses(), {1: "done"})
 
     def test_under_auto_a_session_that_returned_and_is_owed_its_acceptance_resume_is_told_it_returned(self):
@@ -449,7 +450,8 @@ class FallbackSessionTest(FallbackCase):
         resumed = self.payload("ticket_resumed")
         self.assertEqual((resumed["reason"], resumed["session_id"]), ("acceptance_failed", None))
         attempt = replay.replay(self.events()).tickets[1].attempts[1]
-        self.assertEqual((attempt.stage, attempt.spent, attempt.fallback_from), ("acceptance_failed", {"acceptance_failed"}, "fable"))
+        self.assertEqual((attempt.stage, attempt.spent, attempt.fallback_from),
+                         ("acceptance_failed", {"acceptance_failed"}, "r6 fable low"))
         self.assertEqual(self.statuses(), {1: "done"})
 
     def test_a_restart_relaunches_a_fallen_back_session_that_never_started_with_its_notes(self):
@@ -498,10 +500,11 @@ class FallbackSessionTest(FallbackCase):
         drive(driven)
         self.assertEqual([(call.kind, call.request.model) for call in self.calls(1)], [("launch", "opus"), ("resume", "opus")])
         failed = [item["payload"] for item in self.events() if item["event"] == "ticket_failed"][0]
-        self.assertEqual((failed["attempt"], failed["next"]), (1, "split"))
+        self.assertEqual((failed["attempt"], failed["next"]), (1, "tier_up"),
+                         "rung 6 to rung 7 stays inside Fable, so the tier up comes first (ticket 61)")
         view = replay.replay(self.events())
         attempt = view.tickets[1].attempts[1]
-        self.assertEqual((attempt.fallback_from, attempt.spent), ("fable", {"invalid_result"}))
+        self.assertEqual((attempt.fallback_from, attempt.spent), ("r6 fable low", {"invalid_result"}))
         self.assertEqual(view.failures, {}, "a failure on a launch that fell back never counts toward difficulty_raised")
         self.assertNotIn("difficulty_raised", [item["event"] for item in self.events()])
         self.assertEqual(self.statuses(), {1: "needs_human"}, "the tier-up attempt had nothing scripted")

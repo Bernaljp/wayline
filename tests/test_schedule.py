@@ -158,9 +158,12 @@ class PickTest(unittest.TestCase):
         self.assertEqual(ids(schedule.pick(built, slots=2)), [2, 1])
         self.assertEqual(ids(schedule.pick(built, slots=2, action=schedule.CHEAP_ONLY)), [1, 2])
 
-    def test_cheap_only_launches_only_difficulty_1_and_2(self):
+    def test_cheap_only_defers_no_ticket_and_the_conductor_steps_each_launch_one_rung_down(self):
+        """Ticket 62: `cheap_only` launches every ticket, cheapest first; what it costs each launch is a rung (decision 16)."""
         built = graph(entry(1, difficulty=3), entry(2, difficulty=2), entry(3, difficulty=5), entry(4, difficulty=1))
-        self.assertEqual(ids(schedule.pick(built, slots=4, action=schedule.CHEAP_ONLY)), [4, 2])
+        self.assertEqual(ids(schedule.pick(built, slots=4, action=schedule.CHEAP_ONLY)), [4, 2, 1, 3])
+        self.assertTrue(schedule.steps_down(schedule.CHEAP_ONLY))
+        self.assertFalse(schedule.steps_down(schedule.NORMAL) or schedule.steps_down(schedule.STOP))
 
     def test_stop_launches_nothing(self):
         built = graph(entry(1, difficulty=1), entry(2, difficulty=2))

@@ -336,13 +336,15 @@ class UsageTest(TickCase):
     def test_usage_is_journaled_as_pacing_with_its_fable_line_and_only_when_it_changed(self):
         self.fake.usage_text = usage_text(24, 23, fable=43)
         result = self.run_tick()
-        self.assertEqual(result.pacing, {"five_hour": 0.24, "seven_day": 0.23, "fable": 0.43, "action": "normal"})
+        self.assertEqual(result.pacing, {"five_hour": 0.24, "seven_day": 0.23, "fable": 0.43,
+                                         "action": "normal", "fable_action": "normal"})
         self.assertEqual(self.pacings(), [result.pacing])
         self.run_tick()
         self.assertEqual(len(self.pacings()), 1)
         self.fake.usage_text = usage_text(95, 23, fable=43)
         self.run_tick()
-        self.assertEqual(self.pacings()[-1], {"five_hour": 0.95, "seven_day": 0.23, "fable": 0.43, "action": "stop"})
+        self.assertEqual(self.pacings()[-1], {"five_hour": 0.95, "seven_day": 0.23, "fable": 0.43,
+                                              "action": "stop", "fable_action": "normal"})
 
     def test_usage_that_cannot_be_read_journals_nothing(self):
         self.fake.usage_text = worker.LaunchError("the executable is not on PATH")
