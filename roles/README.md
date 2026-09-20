@@ -115,6 +115,21 @@ autonomy. A plan that fails the checks is returned to the same session once. `--
 launch it again over the graph as it stands, which is what the conductor calls at a stall and at the
 `split` rung of the escalation ladder.
 
+## The evolver is launched by the evolve loop, one session over the pending feedback
+
+`evolver` (ticket 45) is launched by code too (`kinds` empty), does not judge, and writes nothing.
+`wayline.changes.evolve` launches it on `policy.roles.evolver` (`fable`, `xhigh`), Opus in Fable's
+place when the hold on Fable's weekly window says so, with the `change_list` schema: from
+`wayline evolve`, from `wayline run` once `run_ended` is journaled, and from the conductor in the wave
+that finds feedback pending. Its prompt carries the pending items (the owner's, and the retrospective
+code filed), the journal numbered by line so that evidence is cited as `research/journal.jsonl#L<n>`,
+the change records already open, the registry, and the policy with the project's overrides; the
+project and the harness repository are open to it for reading. Code gives each record it returns an
+id and a status, forces `risk: high` on a change to the rung ladder, checks the evidence, the target,
+and the fixture's name, returns a failing list to the same session once, keeps the records as
+`research/changes/<id>.json`, and files one `harness` ticket per record, which the `coder` works
+like any ticket.
+
 ## The consultant answers one question about one dossier
 
 `consultant` (ticket 26) is launched by code as well (`kinds` empty), on `policy.roles.consultant`

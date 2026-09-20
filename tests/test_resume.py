@@ -763,7 +763,10 @@ class KillResumeTest(ProjectTestCase):
                                  env=environment, capture_output=True, text=True, timeout=300)
         self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
         events, _ = Ledger(target).read_events()
-        self.assertEqual((events[-1]["event"], events[-1]["payload"]), ("run_ended", {"reason": "frontier_empty"}))
+        ended = max(index for index, event in enumerate(events) if event["event"] == "run_ended")
+        self.assertEqual(events[ended]["payload"], {"reason": "frontier_empty"})
+        # A worker that died is rework, so the run earns a retrospective, filed once `run_ended` is journaled (ticket 45).
+        self.assertEqual([(event["event"], event["payload"]["source"]) for event in events[ended + 1:]], [("feedback", "retrospective")])
         self.assertEqual([(event["ticket"], event["payload"]["reason"]) for event in events if event["event"] == "ticket_resumed"],
                          [(2, "worker_died")])
         self.assertEqual([ticket["status"] for ticket in tickets.read_tickets(target)], ["done"] * 5)

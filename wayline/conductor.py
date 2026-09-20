@@ -132,6 +132,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -754,6 +755,26 @@ class Conductor:
         self.plan_pre_check = True
         self.reporter = self._render_report
         self._replanned = None
+        # The evolve loop (ticket 45, decision 12). A policy nobody handed in is read again every wave, so a local change
+        # to `harness.json` is used from the next one. `evolver(fall_back)` is the evolver's session over the pending
+        # feedback, `prover` runs a change's fixture on the old and the new subject, and `global_checks` runs the harness
+        # tests and the fixture suite on a global change's branch; a test stands in its own for each.
+        self._policy_given = policy is not None
+        self._policy_stamp = self._policy_files()
+        self._policy_trouble = None
+        self.evolver = self._run_evolver
+        self.prover = None
+        self.global_checks = None
+        self._changes = {}
+
+    @property
+    def policy(self):
+        return self._policy
+
+    @policy.setter
+    def policy(self, value):
+        """A policy assigned from outside is the caller's, and `_reread_policy` leaves it standing."""
+        self._policy, self._policy_given = value, True
 
     def say(self, message):
         print(message, file=self.out, flush=True)
@@ -773,6 +794,7 @@ class Conductor:
         self._dropped = []
         self._proposal_cap = {}  # the per-radius count admitted this wave (ticket 37), shared across every result it carries
         self._beat()
+        self._reread_policy()
         arrived = self._tail()
         self._pace()  # what `run` start and the journal read, before anything below can start a session
         first = not self.taken_over
@@ -789,6 +811,7 @@ class Conductor:
             self._escalate(result)
             self._replan(result)
             self._decide(result)
+            self._evolve(result)
             picks = self._picks(self._graph())
             if picks:
                 self._start(picks, result)
@@ -1420,6 +1443,8 @@ class Conductor:
                 continue
             if identifier in self.view.discarded:
                 continue  # a discarded change is not on `main`, and earns no verdict (ticket 39)
+            if entry.get("kind") == "harness" and self._global_change(identifier) is not None:
+                continue  # a global change waits on its branch for the owner, who reads it (ticket 45)
             if any(queued.ticket == identifier for queued in self.verdicts):
                 continue
             ticket, _ = self._ticket(identifier)
@@ -2385,7 +2410,18 @@ class Conductor:
                 attempt.worktree = self._set_aside_discarded(attempt.id, attempt.number) or attempt.worktree
                 self._close(attempt, discarded=judgment)
                 return "done"
+        record = self._change_record(attempt.id, attempt.ticket)
+        if record is not None:
+            # A harness ticket's fixture fails on the old subject and passes on the change before it is integrated (ticket 45).
+            proven = self._prove(attempt, record)
+            if proven is not True:
+                return proven
+            if record["scope_kind"] == "global":
+                return self._finish_global(attempt, record)
         outcome = self._integrate(attempt)
+        if record is not None and outcome == "done":
+            from wayline import changes
+            changes.set_status(self.project, record["id"], "applied")
         if outcome == "done" and running:
             self._leave_running(attempt)
             return "running"
@@ -3225,6 +3261,7 @@ class Conductor:
             self._fail(attempt, problem, self._step_from(attempt.id, SPLIT) if spent else self._next_step(attempt))
             return "failed"
         before = self._branch_paths(attempt)
+        self._commit_harness_json(attempt)
         with self.ledger.lock():
             conflict = self._rebase(attempt)
         if conflict is not None and spent:
@@ -3447,7 +3484,7 @@ class Conductor:
 
     # --- closing the ticket ---
 
-    def _close(self, attempt, discarded=None):
+    def _close(self, attempt, discarded=None, waits_for_owner=None):
         """The findings, the status, `ticket_done`, and the worktree the ticket no longer needs.
 
         A finding's provenance must resolve in the manifest (decision 6): a cited file on `main` that the
@@ -3457,16 +3494,25 @@ class Conductor:
         A change keep-if-better `discarded` (a `Judgment`) is closed without its integration: its findings
         are negative results, a file they cite in the worktree is cited there, it earns no verdict, and its
         worktree and branch stay (ticket 39).
+
+        A global change (ticket 45) is closed without an integration too: `waits_for_owner` is the note that says
+        where its branch stands, it earns no verdict here because the owner reads the branch, and its worktree
+        and branch stay.
         """
         notes = self._file_findings(attempt, attempt.result.get("findings") or [], discarded is not None, attempt.worktree)
         if discarded is not None:
             notes.append(self._discard_note(attempt, discarded))
+        if waits_for_owner is not None:
+            notes.append(waits_for_owner)
         if notes:
             attempt.body = tickets.with_result_note(attempt.body, notes)
         self._write_ticket(attempt, "done", attempt.result)
         self.ledger.append_event(TICKET_DONE, {"ticket": attempt.id}, ticket=attempt.id)
         if discarded is not None:
             self.say("  ticket %d done and not integrated: its change was discarded" % attempt.id)
+            return
+        if waits_for_owner is not None:
+            self.say("  ticket %d done and not integrated: its branch waits for the owner" % attempt.id)
             return
         self._queue_verdicts(attempt)
         self._remove_worktree(attempt.id)
@@ -4356,13 +4402,185 @@ class Conductor:
                 self.say("  ticket %d %s" % (attempt.id, line))
         tickets.write_ticket(self.ledger, attempt.ticket, attempt.body)
 
+    # --- the evolve loop (decision 12; ticket 45) ---
+
+    def _policy_files(self):
+        """`(st_mtime_ns, st_size)` of `harness.json` and the harness's `policy.json`: what says the policy may have changed."""
+        stamp = []
+        for path in (self.project / "harness.json", self.harness_root / "policy.json"):
+            try:
+                found = path.stat()
+                stamp.append((found.st_mtime_ns, found.st_size))
+            except OSError:
+                stamp.append(None)
+        return stamp
+
+    def _reread_policy(self):
+        """Read the policy again when `harness.json` changed, so a local change is used from this wave (decision 12).
+
+        A policy a caller handed in or assigned stands. One the schema or the ladder refuses is said once and the policy
+        the run already had stands, because a wave must not die on an override a harness ticket just wrote.
+        """
+        if self._policy_given:
+            return
+        stamp = self._policy_files()
+        if stamp == self._policy_stamp:
+            return
+        self._policy_stamp = stamp
+        try:
+            policy = policy_for(self.project, self.harness_root)
+            check_policy(policy, name="the policy of %s (policy.json under harness.json)" % self.project)
+        except (ValidationError, ValueError, OSError) as failure:
+            if str(failure) != self._policy_trouble:
+                self._policy_trouble = str(failure)
+                self.say("  harness.json changed, and the policy it gives is refused, so the one this run had stands: %s" % failure)
+            return
+        self._policy_trouble = None
+        self._policy = policy
+        self.say("  harness.json changed; this wave runs under the policy it gives")
+
+    def _run_evolver(self, fall_back):
+        """The evolver's session over the pending feedback, what `wayline evolve` runs; returns its report."""
+        from wayline import changes  # the evolve loop pulls in the registry, the fixtures, and the session helpers
+        return changes.evolve(self.project, harness_root=self.harness_root, policy=self.policy, fall_back=fall_back,
+                              notify=self.notify, say=lambda text: self.say("  " + text), pre_check=self.plan_pre_check)
+
+    def _evolve(self, result):
+        """Launch the evolver when feedback is pending, so a local change is filed now and used from the next wave.
+
+        It is a max-effort session like the decider's: `cheap_only` holds it, the hold on Fable's weekly window holds
+        it or sends it to Opus as the fallback consent says, and a usage window that refuses it pauses the run. A list
+        the evolver got wrong twice is marked read by `changes.evolve`, so it is said here and not launched again.
+        """
+        if not self.view.feedback:
+            return
+        from wayline import changes
+        journaled = {item["id"]: item["source"] for item in self.view.feedback}
+        if not changes.pending_feedback(self.project, journaled=journaled):
+            return
+        what = "the evolver's session"
+        if self.action != schedule.NORMAL:
+            return
+        fall_back = False
+        if changes.evolves_on_fable(self.policy) and self._fable_held():
+            if not self._falls_back():
+                self._held_back(what)
+                return
+            fall_back = True
+        try:
+            report = self.evolver(fall_back)
+        except gates.FableHeld:
+            self._held_back(what)
+            return
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, what)
+            self.say("  %s: the usage limit refused it; it is launched again once the window allows" % what)
+            return
+        except (ValueError, OSError) as failure:
+            self.say("  %s failed, and the feedback it read waits for the owner: %s" % (what, failure))
+            return
+        self._tail()
+        for line in changes.render_report(report).splitlines():
+            self.say("  " + line)
+
+    def _change_record(self, identifier, ticket=None):
+        """The change record harness ticket `identifier` was filed for, read now; None for any other ticket."""
+        if self._changes.get(identifier, True) is None:
+            return None
+        if ticket is None:
+            try:
+                ticket, _ = self._ticket(identifier)
+            except ConductorError:
+                return None
+        if ticket.get("kind") != "harness" or not str(ticket.get("origin") or "").startswith("change "):
+            self._changes[identifier] = None
+            return None
+        from wayline import changes
+        record = changes.read_change(self.project, changes.change_of(ticket))
+        self._changes[identifier] = None if record is None else record["id"]
+        return record
+
+    def _global_change(self, identifier):
+        """The record of the global change ticket `identifier` works on, whose worktree is one of the harness repository's."""
+        record = self._change_record(identifier)
+        return record if record is not None and record["scope_kind"] == "global" else None
+
+    def _prove(self, attempt, record):
+        """The fixture run on the old subject, where it fails, and on the change, where it passes: True, `failed`, or `session`.
+
+        The old subject of a local change is the project's `main`, the directory itself; that of a global change is
+        the commit its branch left the harness `main` at, checked out for the length of the proof. A proven change's
+        baseline is committed on the branch, so the registry finds a model-authored skill's fixture passed.
+        """
+        from wayline import changes
+        prover = self.prover or changes.prove
+        holder = old = None
+        try:
+            if record["scope_kind"] == "global":
+                holder = tempfile.mkdtemp(prefix="wayline-old-subject-")
+                old = changes.old_subject(self.harness_root, record, holder)
+            proof = prover(record["fixture"], old or self.project, attempt.worktree, self.policy)
+        except (ValueError, OSError) as failure:
+            self._fail(attempt, "the fixture %s could not be run: %s" % (record["fixture"], failure), self._next_step(attempt))
+            return "failed"
+        finally:
+            if old is not None:
+                changes.drop_old_subject(self.harness_root, old)
+            if holder is not None:
+                shutil.rmtree(holder, ignore_errors=True)
+        if proof.waits:
+            attempt.integrating, attempt.want = True, _Want(INTEGRATE)
+            self.say("  ticket %d: the run of fixture %s stopped for cost before it could say; it is carried again" % (attempt.id, record["fixture"]))
+            return "session"
+        if proof.problem is not None:
+            self._fail(attempt, proof.problem, self._next_step(attempt))
+            return "failed"
+        changes.set_status(self.project, record["id"], record["status"], proof={"old": proof.old or "", "new": proof.new or ""})
+        changes.commit_all(attempt.worktree, "ticket %d: the baseline of fixture %s" % (attempt.id, record["fixture"]))
+        self.say("  ticket %d: fixture %s fails on the old subject and passes on the change" % (attempt.id, record["fixture"]))
+        return True
+
+    def _finish_global(self, attempt, record):
+        """A global change is never integrated here: its branch is checked and waits for the owner (decision 12).
+
+        The harness tests and the full fixture suite run on `evolve/<id>`. A failure fails the attempt like a failed
+        acceptance; a pass closes the ticket as done, leaves the branch and its worktree for the owner to read and
+        merge, and marks the record `awaiting_owner`, which `wayline evolve` tags once the harness `main` holds it.
+        """
+        from wayline import changes
+        try:
+            commit, checks = changes.check_global(self.project, record, self.global_checks)
+        except (ValueError, OSError) as failure:
+            self._fail(attempt, "the branch %s could not be checked: %s" % (record["branch"], failure), self._next_step(attempt))
+            return "failed"
+        stored = [dict(item, tail=item.get("tail") or "") for item in checks]
+        failed = [item for item in checks if item["exit_code"] != 0]
+        if failed:
+            changes.set_status(self.project, record["id"], record["status"], commit=commit, checks=stored)
+            self._fail(attempt, "on %s, %s failed (exit %d): %s" % (record["branch"], failed[0]["name"], failed[0]["exit_code"],
+                                                                  " | ".join((failed[0].get("tail") or "").splitlines()[-3:])),
+                       self._next_step(attempt))
+            return "failed"
+        changes.set_status(self.project, record["id"], "awaiting_owner", commit=commit, checks=stored)
+        self._close(attempt, waits_for_owner="The harness tests and the full fixture suite pass on `%s` at %s, in %s. It waits for the "
+                    "owner to merge it into the harness main; `wayline evolve` then tags the result." % (record["branch"], commit[:12], record["worktree"]))
+        return "done"
+
     # --- worktrees and commits ---
 
     def _worktree(self, identifier):
+        record = self._global_change(identifier)
+        if record is not None:
+            return Path(record["worktree"])  # a global change works on `evolve/<id>`, in a worktree of the harness repository
         return self.project / WORKTREES / str(identifier)
 
     def _add_worktree(self, attempt):
         """`.worktrees/<id>` on `ticket/<id>` from `main`, reusing what an earlier attempt left."""
+        record = self._global_change(attempt.id)
+        if record is not None:
+            from wayline import changes
+            return changes.add_global_worktree(self.harness_root, record)
+        self._commit_harness_json(attempt)
         branch = BRANCH % attempt.id
         if (attempt.worktree / ".git").exists():
             if self._git(attempt.worktree, "rev-parse", "--abbrev-ref", "HEAD", ok=None).stdout.strip() == branch:
@@ -4377,7 +4595,25 @@ class Conductor:
                   str(attempt.worktree), branch if known else MAIN)
         return attempt.worktree
 
+    def _commit_harness_json(self, attempt):
+        """Commit a `harness.json` the owner's switches left uncommitted, before a ticket that edits it leaves or rejoins `main`.
+
+        `wayline switch` writes the file and commits nothing, and a harness ticket whose touch set names it (a local
+        policy change, ticket 45) would otherwise branch from a stale copy and meet a fast-forward git refuses.
+        """
+        if "harness.json" not in (attempt.ticket.get("touches") or []):
+            return
+        with self.ledger.lock():
+            if self._git(self.project, "status", "--porcelain", "--", "harness.json").stdout.strip():
+                self._git(self.project, "add", "--", "harness.json")
+                self._git(self.project, "commit", "-q", "-m", "wayline: harness.json as the owner's switches left it", "--", "harness.json")
+
     def _remove_worktree(self, identifier, branch=True):
+        record = self._global_change(identifier)
+        if record is not None:
+            from wayline import changes
+            changes.remove_global_worktree(self.harness_root, record, branch=branch)
+            return
         path = self._worktree(identifier)
         if path.exists():
             self._git(self.project, "worktree", "remove", "--force", str(path), ok=None)
@@ -4634,6 +4870,10 @@ def run_command(args):
     if running:
         print("ticket(s) %s still have jobs running; the next run polls them"
               % ", ".join(str(identifier) for identifier in running))
+    if waves and waves[-1].ended:
+        # After every `run_ended` the evolver runs a retrospective over the journal (decision 12); nothing in it fails this run.
+        from wayline import changes  # the evolve loop pulls in the registry, the fixtures, and the session helpers
+        changes.after_run(project, waves[-1].reason)
     return 1 if failed or rejected else 0
 
 

@@ -1353,10 +1353,15 @@ def _global_changes(context):
         lines = ["Autonomy is `autonomous`, so every global change below is a proposal and none was applied."]
     else:
         lines = ["Autonomy is `%s`: a global change is applied only by the owner, through `wayline promote`." % autonomy]
-    changes = ["- Change record `%s`: mechanism `%s`, fixture `%s`" % (
+    from wayline import changes as records  # the evolve loop (ticket 45) imports the gates, which import this module
+    # A record the project keeps says what it would change, where it stands, and the command that applies a proposal;
+    # one only the journal names (a record file removed by hand, a journal older than ticket 45) is named from its event.
+    kept = records.proposal_lines(context.project)
+    held = {record["id"] for record in records.read_changes(context.project)}
+    changes = kept + ["- Change record `%s`: mechanism `%s`, fixture `%s`" % (
         payload.get("id"), payload.get("mechanism"), payload.get("fixture"))
         for payload in (event.get("payload") or {} for event in context.events if event.get("event") == ledger.CHANGE_RECORD)
-        if payload.get("scope_kind") == "global"]
+        if payload.get("scope_kind") == "global" and payload.get("id") not in held]
     return _records(lines + (changes or ["- none"]))
 
 

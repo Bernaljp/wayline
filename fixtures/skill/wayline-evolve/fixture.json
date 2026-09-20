@@ -15,7 +15,7 @@
     "session_id": null,
     "journal_ts": null,
     "change_record": null,
-    "reason": "seed: ticket 27 registered the five interactive skills, evolve as a shell; ticket 45 writes the loop and records this fixture"
+    "reason": "seed: ticket 27 registered the five interactive skills, evolve as a shell; ticket 45 wrote the loop and the checks a recorded skill session will be held to"
   },
   "launch": {
     "model": "fable",
@@ -32,8 +32,31 @@
     "context_manifest": null,
     "input_hash": null
   },
-  "structural": [],
-  "note": "The skill is a shell, so there is nothing to check yet: ticket 45 writes the change record this fixture will assert on.",
+  "structural": [
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline feedback"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline evolve"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Write"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Edit"
+    },
+    {
+      "check": "file_exists",
+      "path": "research/evolve.json"
+    }
+  ],
+  "note": "The skill's session files the owner's feedback with `wayline feedback`, runs `wayline evolve`, and reads the records back; it writes nothing itself, so the checks read the verbs it ran and the record the loop keeps of what the evolver read. No skill session is recorded yet, so the fixture stays unrunnable (agent null); the loop itself is covered by tests/test_changes.py and tests/test_harness_tickets.py with the fake launcher, and docs/verification/m6.md holds the live run.",
   "baseline": null,
   "quarantine": {
     "status": "active",

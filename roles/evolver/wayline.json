@@ -1,0 +1,19 @@
+{
+  "id": "evolver",
+  "scope_kind": "global",
+  "capability_summary": "Turns owner feedback and the post-run retrospective into change records (observed behaviour with journal evidence, desired behaviour, mechanism, local or global, risk, the fixture that will prove it); read-only, returns a structured list that code files as harness tickets.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": [],
+  "sha256": "4de1e6c0a1d022ef5c27beb1bb6b13264ea8ad0d154515367e72cc7d4273ff3f",
+  "may_judge": false,
+  "output_schema": "change_list",
+  "allowed_tools": ["Read", "Glob", "Grep"],
+  "disallowed_tools": [
+    "Edit", "Write", "NotebookEdit", "Bash", "Agent", "WebFetch", "WebSearch", "mcp__*", "Workflow", "Skill",
+    "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete", "CronList", "Monitor",
+    "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger", "ScheduleWakeup", "TaskCreate",
+    "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "EnterPlanMode", "ExitPlanMode"
+  ]
+}

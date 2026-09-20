@@ -402,6 +402,39 @@ class DecisionsEndpointTest(ActionCase):
         self.assertEqual([(entry["ticket"], entry["decided_by"]) for entry in after.json["log"]], [(2, "human")])
 
 
+class FeedbackActionTest(ActionCase):
+    """Ticket 45: the feedback form files what `wayline feedback` files, and the changes view reads it back."""
+
+    def changes(self, headers=None):
+        return self.request("GET", "/api/projects/%s/changes" % self.project.name, headers=headers)
+
+    def test_the_form_files_feedback_from_the_dashboard(self):
+        response = self.act("feedback", {"text": "captions overclaim"})
+        self.assertEqual(response.status, 200, response.text)
+        self.assertEqual((response.json["id"], response.json["source"]), ("001-captions-overclaim", "dashboard"))
+        self.assertEqual([event["payload"] for event in self.events("feedback")], [{"id": "001-captions-overclaim", "source": "dashboard"}])
+        self.assertEqual((self.project / "research" / "feedback" / "001-captions-overclaim.md").read_text(encoding="utf-8"), "captions overclaim\n")
+
+    def test_feedback_without_words_or_without_the_token_is_refused(self):
+        self.assertEqual(self.act("feedback", {"text": "  "}).status, 400)
+        self.assertEqual(self.act("feedback", {}).status, 400)
+        self.assertEqual(self.act("feedback", {"text": "captions overclaim"}, token=None).status, 403)
+        self.assertEqual(self.events("feedback"), [])
+
+    def test_the_view_lists_the_feedback_a_dropped_file_and_the_change_records(self):
+        first = self.changes()
+        self.assertEqual((first.status, first.json["feedback"], first.json["changes"], first.json["pending"]), (200, [], [], 0))
+        self.assertEqual(self.changes({"If-None-Match": first.etag}).status, 304)
+        self.act("feedback", {"text": "tickets too big"})
+        (self.project / "research" / "feedback" / "monday.md").write_text("captions overclaim\n", encoding="utf-8")
+        after = self.changes({"If-None-Match": first.etag})
+        self.assertEqual(after.status, 200)
+        self.assertEqual([(item["id"], item["source"], item["read"]) for item in after.json["feedback"]],
+                         [("monday", "file", False), ("001-tickets-too-big", "dashboard", False)])
+        self.assertEqual(after.json["pending"], 2)
+        self.assertEqual([event["payload"]["source"] for event in self.events("feedback")], ["dashboard", "file"])
+
+
 class NoShellTest(ActionCase):
     """Criterion 3: every action calls a function in this process, and no action starts a shell."""
 
@@ -418,7 +451,7 @@ class NoShellTest(ActionCase):
 
         steps = [("answer", {"ticket": 2, "answer": "one line"}), ("autonomy", {"autonomy": "autonomous"}), ("pause", {}), ("resume", {}),
                  ("cancel", {"ticket": 3}), ("rerun", {"ticket": 3}), ("pacing", {"stop_at": 0.95}), ("model_fallback", {"model_fallback": "wait"}),
-                 ("ladder_changes", {"ladder_changes": "auto"})]
+                 ("ladder_changes", {"ladder_changes": "auto"}), ("feedback", {"text": "captions overclaim"})]
         with mock.patch.object(subprocess, "Popen", Watched):
             for name, body in steps:
                 with self.subTest(action=name):
@@ -455,7 +488,8 @@ class PageTest(unittest.TestCase):
     def test_the_page_carries_the_decisions_view_and_every_control(self):
         page = (STATIC / "index.html").read_text(encoding="utf-8")
         for element in ("decisions-open", "decisions-log", "autonomy-form", "autonomy-select", "pacing-form", "stop-at", "cheap-at",
-                        "switch-button", "pause-button", "resume-button", "intake-drop", "intake-file", "action-note"):
+                        "switch-button", "pause-button", "resume-button", "intake-drop", "intake-file", "action-note",
+                        "feedback-form", "feedback-text", "feedback-send", "changes-body"):
             with self.subTest(element=element):
                 self.assertIn('id="%s"' % element, page)
         self.assertEqual(page.count('step="any"'), 2, "a threshold off the 0.01 grid must not block the pacing form")
@@ -467,4 +501,5 @@ class PageTest(unittest.TestCase):
                 self.assertIn("'%s'" % name, script)
         self.assertIn("'X-Wayline-Token': TOKEN", script)
         self.assertIn("projectPath('/decisions')", script)
+        self.assertIn("projectPath('/changes')", script)
         self.assertIn("'X-Wayline-Filename': encodeURIComponent(file.name)", script)
