@@ -322,6 +322,8 @@ function renderOverview(view, project) {
       ['five hour', window_.five_hour],
       ['seven day', window_.seven_day],
       ['fable', window_.fable],
+      // What `cheap_at` costs each launch (decision 16), beside the hold line of decision 15.
+      ['stepping down', window_.stepping_down],
       ['hold', view.hold ? view.hold.line : null],
       ['goal', goal ? `${goal.metric} ${goal.value === null ? 'no reading yet' : goal.value} of ${goal.target} (${goal.direction})${goal.reached ? ' reached' : ''}` : 'none set'],
       ['cpu slot', cpu ? `loadavg1 ${cpu.loadavg1} of ${cpu.nproc}, ${cpu.free_cores.length} cores free, ${cpu.free ? 'free' : 'full'}` : null],
@@ -905,6 +907,11 @@ async function openTicket(id) {
   }
 }
 
+function needsHumanLine(entry) {
+  const question = entry.question || 'no question was journaled';
+  return entry.note ? `${entry.note}: ${question}` : question;
+}
+
 function renderTicket(view) {
   const f = view.fields || {};
   const parts = [
@@ -916,6 +923,9 @@ function renderTicket(view) {
       ['difficulty', f.difficulty],
       ['role', f.role],
       ['blocked by', (f.blocked_by || []).length ? f.blocked_by.join(', ') : 'nothing'],
+      // Why it waits for a person, with the note its `reason` reads as: "at the ladder's top rung"
+      // for a ticket the escalation chain left with nowhere to climb (decision 16).
+      ...(view.needs_human ? [['needs a person', needsHumanLine(view.needs_human)]] : []),
     ]),
     ticketActions(f),
     el('div', { id: 'ticket-decision' }),

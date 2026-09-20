@@ -34,7 +34,7 @@ from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, pacing, tickets, w
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, now_ts
-from wayline.project import ProjectError, fable_falls_back, find_project, policy_for, read_harness
+from wayline.project import NEEDS_HUMAN_NOTES, ProjectError, fable_falls_back, find_project, policy_for, read_harness
 
 __all__ = [
     "ProvenanceError", "MANIFEST", "FINDINGS", "FINDINGS_MD", "RUN_ID_RE",
@@ -1129,11 +1129,17 @@ def _decider_decisions(context):
 
 
 def _open_questions(context):
-    asked = {}
+    """The decision tickets still open and the tickets waiting for a person.
+
+    A ticket the escalation chain left with nowhere to climb carries `reason: top_rung` on its
+    `ticket_needs_human`, and its item says "at the ladder's top rung" (decision 16; ticket 61).
+    """
+    asked, why = {}, {}
     for event in context.events:
         if event.get("event") == ledger.TICKET_NEEDS_HUMAN:
             payload = event.get("payload") or {}
             asked[payload.get("ticket")] = payload.get("question")
+            why[payload.get("ticket")] = NEEDS_HUMAN_NOTES.get(payload.get("reason"))
     lines = []
     for number in sorted(context.tickets):
         fields = context.tickets[number]
@@ -1144,8 +1150,9 @@ def _open_questions(context):
     for number in sorted(context.tickets):
         fields = context.tickets[number]
         if fields["status"] == "needs_human":
-            lines.append("- Ticket %d, *%s*, needs a human: %s" % (
-                number, fields["title"], _inline(asked.get(number) or "no question was journaled")))
+            lines.append("- Ticket %d, *%s*, needs a human%s: %s" % (
+                number, fields["title"], ", %s" % why[number] if why.get(number) else "",
+                _inline(asked.get(number) or "no question was journaled")))
     return _records(lines or ["No decision ticket is open and no ticket needs a human."])
 
 

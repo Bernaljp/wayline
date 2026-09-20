@@ -155,8 +155,8 @@
   "escalation": {
     "resume": 1,
     "then": [
-      "split",
       "tier_up",
+      "split",
       "needs_human"
     ],
     "tier_up": 1,

@@ -117,6 +117,7 @@ K_FIVE_HOUR = "five_hour"
 K_SEVEN_DAY = "seven_day"
 K_FABLE = "fable"
 K_ACTION = "action"
+K_FABLE_ACTION = "fable_action"  # the action a launch on a Fable rung runs under (decision 16)
 K_RESETS_AT = "resets_at"
 K_WINDOW = "window"
 K_UTILIZATION = "utilization"
@@ -224,7 +225,7 @@ EVENTS = {
     RUN_STARTED: (K_RESUME, K_HARNESS_TAG, K_AUTONOMY, K_RADIUS, K_PID),
     RUN_ENDED: (K_REASON,),
     PHASE: (K_FROM, K_TO),
-    PACING: (K_FIVE_HOUR, K_SEVEN_DAY, K_FABLE, K_ACTION),
+    PACING: (K_FIVE_HOUR, K_SEVEN_DAY, K_FABLE, K_ACTION, K_FABLE_ACTION),
     PAUSED: (K_RESETS_AT, K_WINDOW, K_UTILIZATION, K_MODEL),
     UNPAUSED: (K_MODEL,),
     TICKET_CREATED: (K_TICKET, K_KIND, K_PROPOSED_BY, K_ORIGIN, K_BLOCKED_BY),
@@ -239,7 +240,7 @@ EVENTS = {
     TICKET_ACCEPTED: (K_TICKET,),
     TICKET_FAILED: (K_TICKET, K_ATTEMPT, K_REASON, K_NEXT),
     TICKET_BLOCKED: (K_TICKET, K_PATH),
-    TICKET_NEEDS_HUMAN: (K_TICKET, K_QUESTION),
+    TICKET_NEEDS_HUMAN: (K_TICKET, K_QUESTION, K_REASON),
     TICKET_CANCELLED: (K_TICKET, K_BY),
     TICKET_RERUN: (K_TICKET, K_BY),
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
@@ -279,16 +280,17 @@ EVENTS = {
 PAYLOAD_ENUMS = {
     (RUN_ENDED, K_REASON): ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched"),
     (PACING, K_ACTION): ("normal", "cheap_only", "stop"),
+    (PACING, K_FABLE_ACTION): ("normal", "cheap_only", "stop"),
     (PAUSED, K_WINDOW): ("five_hour", "seven_day", "unknown"),
     (PAUSED, K_MODEL): ("fable",),
     (UNPAUSED, K_MODEL): ("fable",),
-    (TICKET_LAUNCHED, K_FALLBACK_FROM): ("fable",),
     (TICKET_RESUMED, K_REASON): ("invalid_result", "acceptance_failed", "worker_died", "timeout", "readopted"),
     (ACCEPTANCE, K_WHERE): ("worktree", "rebased", "main"),
     (INTEGRATED, K_RESOLVED_BY): ("none", "integrator"),
     (TICKET_FAILED, K_NEXT): ("resume", "tier_up", "split", "needs_human"),
+    # Why a ticket was handed to a person when the escalation chain named it (decision 16); absent for any other hand-off.
+    (TICKET_NEEDS_HUMAN, K_REASON): ("top_rung",),
     (VERDICT, K_SUBJECT_KIND): ("ticket", "claim", "figure", "spec", "dossier", "paper"),
-    (VERDICT, K_FALLBACK_FROM): ("fable",),
     (PROPOSAL_PARKED, K_REASON): ("radius", "duplicate", "cap", "blockers"),
     (DECISION, K_DECIDED_BY): ("human", "decider", "conductor"),
     (DECISION, K_FALLBACK_FROM): ("fable",),

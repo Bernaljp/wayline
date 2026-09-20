@@ -26,19 +26,23 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   ticket earned. Every later wave folds what the journal gained and applies the `control` events,
   answers, and feedback that other processes appended.
 - One resume per gate, for an invalid result or a failed acceptance (BRIEF 9.1), and the rest of the
-  escalation ladder (ticket 38). Every failure journals `ticket_failed` with the rung it goes to in
-  `next`, and each wave takes every failed ticket up its rung, in the order `policy.escalation.then`
-  gives after the resume (split, tier up, a person): `resume` resumes the failed attempt's session once
+  escalation chain (ticket 38; by rung, ticket 61). Every failure journals `ticket_failed` with the step
+  it goes to in `next`, and each wave takes every failed ticket up its step, in the order
+  `policy.escalation.then` gives after the resume: `resume` resumes the failed attempt's session once
   with the failure output (a failed verdict and a failed job included), `split` has the planner replace
   it (`plan.cut_graph`, what `wayline plan --split` runs), `tier_up` opens the ticket again for a new
-  attempt one difficulty tier up, and `needs_human` hands it to a person with a notification. A split
-  that fails goes on to the tier up. A ticket a split cut is never split again, and a pinned ticket, or
-  one already on the top tier, skips the tier up. The rung is read
-  from the journal, so a restart takes the ladder up where it stood, and a run does not end while a
-  failed ticket still waits on a rung. A kind whose attempts failed twice at one tier has its default
-  difficulty raised one tier for the rest of the run (`difficulty_raised`), except for pinned tickets and
-  never counting an attempt that fell back to Opus (decision 15); `ticket_launched` carries the
-  difficulty an attempt launched at, which is what those failures are counted by.
+  attempt one rung up the rung ladder, and `needs_human` hands it to a person with a notification. The
+  tier up comes before the split while the next rung is on the failed attempt's own model family, and
+  the split comes first when the next rung is on Fable, so the scarce Fable week is spent only after the
+  cheaper remedy (decision 16). A split that fails goes on to the tier up. A ticket a split cut is never
+  split again, and a pinned ticket skips the tier up; a ticket already on the ladder's top rung has
+  nowhere to climb, so its tier up is skipped as spent and it ends `needs_human` with `reason: top_rung`
+  once the split has been tried. The step is read from the journal, so a restart takes the chain up where
+  it stood, and a run does not end while a failed ticket still waits on a step. A kind whose attempts
+  failed twice at one difficulty level has its default level raised one for the rest of the run
+  (`difficulty_raised`), and the rung follows from the level, except for pinned tickets and never
+  counting an attempt that fell back to Opus (decision 15); `ticket_launched` carries the difficulty and
+  the rung an attempt launched at, and those failures are counted by the difficulty.
 - The stall (ticket 38). A settling wave journals `wave`, and when the counter the replayed journal
   keeps reaches `policy.stall.waves` the conductor journals `stall` and has the planner re-cut the open
   tickets (`plan.cut_graph` with a replan, what `wayline plan --replan` runs), or, under radius
@@ -53,8 +57,10 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   first wave, and every wave folds in the `rate_limit_event`s the workers' streams gained, so the
   action of wave step 8 follows the windows while the workers are still running; `pacing` is
   journaled when the reading changes. `stop`, a window pause, the owner's pause, and a stop hold
-  every session that needs a model, verdicts and resumes included, and `cheap_only` launches only
-  difficulty 1 and 2 and holds the verdicts. What needs no model still happens first in the wave:
+  every session that needs a model, verdicts and resumes included. `cheap_only` launches every
+  ticket, each one rung down the rung ladder (ticket 62, decision 16: `stepped_down`, floor rung 2
+  and rung 6 out of Fable, and an attempt that is itself a tier up exempt), and holds the verdicts,
+  which are not on the ladder. What needs no model still happens first in the wave:
   the workers already running finish, and their machine checks and integration run. A hit limit
   journals `paused`, a session the limit stopped mid-work is resumed after the reset instead of
   failed, one it refused before its first turn is relaunched in the same attempt (decision 15), and
@@ -68,10 +74,14 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   runs on Fable) and everything else keeps launching; a Fable session stopped mid-work waits and is
   resumed on Fable after the reset. `/usage` is read again before a wave launches Fable work, and
   `unpaused` with `model: fable` ends the hold at the reset, or earlier when a reading puts Fable
-  under `stop_at`.
+  under `stop_at`. Below `stop_at` and at `cheap_at`, that window steps a Fable launch one rung down
+  instead, from rung 7 to rung 6 and no further (ticket 62): a launch on a Fable rung is paced by
+  Fable's weekly window and the all-models week, every other launch by the five-hour and all-models
+  windows, and `pacing` carries both actions.
 - The fallback to Opus (ticket 55, decision 15). While the hold stands and the fallback consent is
   `auto`, a launch on Fable runs on Opus at the same effort and budget under Opus's context cap,
-  every agent it defines on Fable moves with it, and `ticket_launched` carries `fallback_from`. A
+  every agent it defines on Fable moves with it, and `ticket_launched` carries `fallback_from`,
+  naming the Fable rung it came from (`r7 fable high`, decision 16). A
   Fable session the hold would keep waiting (refused before its first turn, stopped mid-work, or owed
   a gate's resume) starts again as a fresh Opus session in the same attempt and worktree, never as a
   resume of the Fable transcript. Under `wait`, and under `ask` until the ask is built, Fable work
@@ -144,6 +154,7 @@ from wayline.project import (
 
 __all__ = [
     "ConductorError", "Conductor", "WaveResult", "Tier", "tier_for", "rung_tier", "rung_of", "rung_label", "ladder", "fallback_tier",
+    "rung_family", "stepped_down", "FLOOR_RUNG",
     "porcelain_entries",
     "dirty_outside_research", "refuse_to_start", "run_command", "WORKTREES", "RESEARCH", "BRANCH",
 ]
@@ -234,10 +245,21 @@ REVERT_TRAILER = "Wayline-Discarded: %s"
 DISCARDED_BRANCH = "ticket/%d-a%d"
 DISCARDED_WORKTREE = "%d-a%d"
 REVERT_MESSAGE = "ticket %d: discarded by keep-if-better\n\n" + REVERT_TRAILER
-# The rungs of the escalation ladder (decision 5; ticket 38), as `ticket_failed` names them in `next`.
+# The steps of the escalation chain (decision 5; ticket 38), as `ticket_failed` names them in `next`.
+# A step is not a rung: a rung is a rung of the rung ladder, `policy.tiers` (decision 16).
 RESUME, TIER_UP, SPLIT, NEEDS_HUMAN = "resume", "tier_up", "split", "needs_human"
+# Why a `ticket_needs_human` was journaled, when the chain ran out on the ladder's top rung (decision 16).
+TOP_RUNG = "top_rung"
+# How `status`, the dashboard, and `REPORT.md` say that a ticket ended with nowhere left to climb.
+TOP_RUNG_NOTE = "at the ladder's top rung"
 # The order is the owner's (2026-09-17): a split before a tier up, since a tier up (to Fable above all) is the dearer step.
-LADDER = {"resume": 1, "then": [SPLIT, TIER_UP, NEEDS_HUMAN], "tier_up": 1, "raise_after_failures": 2}
+# `tier_up` counts rungs of the rung ladder, so a tier up moves one rung (decision 16). `then` is the order
+# after the resume while the tier up stays inside the failed attempt's model family; `_step_order` puts the
+# split first when the next rung is on Fable, because the Fable week is scarcer than the planner's session.
+LADDER = {"resume": 1, "then": [TIER_UP, SPLIT, NEEDS_HUMAN], "tier_up": 1, "raise_after_failures": 2}
+# The floor of the step down at `pacing.cheap_at` (decision 16): pacing never runs a launch below
+# this rung of the rung ladder, whatever the windows read (`stepped_down`).
+FLOOR_RUNG = 2
 # The stall's two actions, and the reason a strict stall ends the run with (decision 5).
 REPLAN, STOP = "replan", "stop"
 STALL_STRICT = "stall_strict"
@@ -413,6 +435,36 @@ def rung_tier(policy, rung, ticket_budget=None):
     )
 
 
+def rung_family(policy, rung):
+    """The family of the model rung `rung` names, or None for a rung the ladder does not have."""
+    rungs = ladder(policy)
+    index = rung if isinstance(rung, int) and not isinstance(rung, bool) else None
+    if index is None or not 1 <= index <= len(rungs):
+        return None
+    entry = rungs[index - 1]
+    return pacing.family(entry.get("model")) if isinstance(entry, dict) else None
+
+
+def stepped_down(policy, rung):
+    """The rung a launch runs on while `cheap_at` is in force: one below `rung` (decision 16).
+
+    Two floors hold. A launch never runs below `FLOOR_RUNG`, because a nearly spent window is a
+    reason to spend less on a ticket, never a reason to hand a hard ticket to the cheapest model
+    there is. And a launch on Fable never steps out of Fable: on Fable's own window the step takes
+    a launch from rung 7 to rung 6, and rung 6 stays where it is, because leaving Fable is what the
+    hold and the fallback do (decision 15), under the owner's consent, and not what pacing does.
+
+    A rung the ladder does not have is returned as it came: the launch fails on it in `rung_tier`,
+    where the owner reads why, rather than silently running one rung off.
+    """
+    below = rung - 1 if isinstance(rung, int) and not isinstance(rung, bool) else None
+    if below is None or rung <= FLOOR_RUNG or rung_family(policy, rung) is None:
+        return rung
+    if rung_family(policy, rung) == pacing.FABLE and rung_family(policy, below) != pacing.FABLE:
+        return rung
+    return below
+
+
 def rung_of(policy, difficulty):
     """The rung index `policy.difficulty` maps `difficulty` to; the old shape (a level mapped to a model) names `wayline upgrade`."""
     levels = policy.get("difficulty") or {}
@@ -482,7 +534,7 @@ class WaveResult:
     jobs_finished: int = 0
     # The changes keep-if-better kept: progress toward the goal, for the stall counter (ticket 39).
     kept: int = 0
-    # The rungs of the escalation ladder this wave took, as `(ticket, rung)`, and whether it journaled a stall (ticket 38).
+    # The escalation steps this wave took, as `(ticket, step)`, and whether it journaled a stall (ticket 38).
     escalated: list = field(default_factory=list)
     stalled: bool = False
 
@@ -595,8 +647,11 @@ class _Attempt:
     integrating: bool = False
     # How many of the session stream's `rate_limit_event`s pacing has already folded in.
     limits_read: int = 0
-    # `fable` when the attempt's session runs on Opus because Fable work fell back (decision 15), else None.
+    # The Fable rung (`r7 fable high`) the attempt's session came from when it runs on Opus because
+    # Fable work fell back (decisions 15 and 16), else None.
     fallback_from: Optional[str] = None
+    # The rung the attempt would have run on had pacing not stepped it down one (decision 16), for the launch line.
+    stepped_from: Optional[str] = None
     # What keep-if-better judged of this attempt (ticket 39), once it has, and whether the change was kept.
     judgment: Optional[goals.Judgment] = None
     kept: bool = False
@@ -650,8 +705,14 @@ class Conductor:
         # resource answer of step 7, which the job poller replaces with the free-slot rule of
         # `wayline.resources`. `clock` is the time pacing reads, which a test moves across a reset.
         self.action = schedule.NORMAL
+        # The action a launch on a Fable rung runs under (decision 16): the same thresholds over the
+        # windows a Fable rung reads, Fable's weekly window and the all-models week.
+        self.fable_action = schedule.NORMAL
         self.windows = pacing.Windows()
         self.clock = time.time
+        # The reading `run --simulate-limit cheap:[fable:]<seconds>` forces, as `(seconds, model)`, and the
+        # moment it lapses; the demo forces a step down with it rather than waiting for a nearly spent window.
+        self._simulated_step = self._simulated_until = None
         # The wave `/usage` was last read for before it launched Fable work (decision 15): once a wave at most.
         self._usage_wave = None
         # What was last said of `/usage` giving no reading and of verdicts waiting on the hold, so a week-long hold says each once.
@@ -685,7 +746,7 @@ class Conductor:
         self.taken_over = False
         # The cancels and reruns that changed nothing, said once each rather than every wave.
         self.declined = set()
-        # The planner's cut at the `split` rung and at a stall (ticket 38): `planner(cut, fall_back)` returns what was
+        # The planner's cut at the `split` step and at a stall (ticket 38): `planner(cut, fall_back)` returns what was
         # written, and a test stands in its own. `plan_pre_check` is the registry's free pre-check before a cut.
         # `reporter()` renders `REPORT.md` when a strict stall ends the run. `_replanned` is the stall whose replan
         # this run has taken, so a cut that failed is not launched again at every wave.
@@ -872,8 +933,8 @@ class Conductor:
         if self.flight or self.verdicts:
             # Queued verdicts wait on pacing or on the hold on Fable's weekly window, and are taken once it allows.
             return
-        if self._owed_rungs() or self._owed_replan() is not None:
-            return  # a failed ticket still waits on its rung, or a stall on its replan: both wait, like any model work
+        if self._owed_steps() or self._owed_replan() is not None:
+            return  # a failed ticket still waits on its step, or a stall on its replan: both wait, like any model work
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         autonomy, decider = self._autonomy(), decisions.decider_ready(self.harness_root, self.project)
@@ -886,13 +947,24 @@ class Conductor:
             result.ended, result.reason = True, "frontier_empty"
 
     def _graph(self):
-        """`graph.json`, regenerated, with each difficulty the one the next attempt launches at (`_effective_difficulty`)."""
+        """`graph.json`, regenerated, with what the next attempt launches at: its difficulty and its rung.
+
+        `difficulty` is `_effective_difficulty`, the level a pin or a kind raise moved; `rung` is
+        `_effective_rung`, the rung of the rung ladder that level names, lifted by every tier up the
+        escalation chain took (decision 16). Both are added to the entries this returns, not to the
+        `graph.json` that `refresh_graph` has already written: the file holds each ticket's own
+        difficulty, and what a run moved lives in the journal.
+        """
         events, _ = self.ledger.read_events()
         graph, _ = tickets.refresh_graph(self.project, ledger=self.ledger, events=events)
         found = {fields["id"]: fields for fields in tickets.read_tickets(self.project)}
         for entry in graph["tickets"]:
             if entry["id"] in found:
                 entry["difficulty"] = self._effective_difficulty(found[entry["id"]])
+                try:
+                    entry["rung"] = self._effective_rung(found[entry["id"]])
+                except ConductorError:
+                    pass  # a policy with no rung for the level: the launch fails on it, and says so there
         return graph
 
     # --- what this wave launches (decision 5, wave steps 7 to 9) ---
@@ -935,7 +1007,7 @@ class Conductor:
             picks = pick()  # the reading may have begun the hold or moved the action: pick again under what it says
         waiting = []
         for entry in tickets.frontier(graph):
-            if not schedule.affordable(entry, self.action) or schedule.awaits_owner(entry, autonomy, decider):
+            if schedule.holds_model_work(self.action) or schedule.awaits_owner(entry, autonomy, decider):
                 continue
             if self.view.hold is not None and not self._falls_back() and self._on_fable(entry):
                 self._held_back("ticket %d" % entry["id"])
@@ -949,6 +1021,41 @@ class Conductor:
             self._said_held_rungs = tuple(waiting)
         return picks
 
+    def _launch_rung(self, identifier, rung):
+        """The rung this ticket's next attempt runs on: its level's, stepped down one at `cheap_at` (decision 16).
+
+        The windows the rung's own family reads decide (`pacing.rung_action`, folded into `action`
+        and `fable_action` by `_pace`), and the floors of `stepped_down` hold. An attempt that is
+        itself a tier up of the escalation chain runs on the rung it climbed to whatever the windows
+        read, or pacing would step the escalation back down and cancel it.
+        """
+        if not schedule.steps_down(self._rung_action(rung)) or self._climbed(identifier):
+            return rung
+        return stepped_down(self.policy, rung)
+
+    def _tier_ran(self, rung, difficulty, budget=None):
+        """The tier of a session already under way: the rung `ticket_launched` named, else its difficulty's.
+
+        A session is resumed and re-adopted on the model it was launched on, and a launch stepped down
+        one rung at `cheap_at` (decision 16) ran below its level's rung. A journal written before the
+        rung ladder carries no rung, and a rung this policy no longer has is read as its level's.
+        """
+        if rung is not None:
+            try:
+                return rung_tier(self.policy, rung, budget)
+            except ConductorError:
+                pass
+        return tier_for(self.policy, difficulty, budget)
+
+    def _rung_action(self, rung):
+        """The pacing action a launch on this rung runs under: `fable_action` for a Fable rung, `action` for every other."""
+        return self.fable_action if rung_family(self.policy, rung) == pacing.FABLE else self.action
+
+    def _climbed(self, identifier):
+        """Whether the escalation chain has taken this ticket up a tier, which pacing never steps back down."""
+        known = self.view.tickets.get(identifier)
+        return known is not None and bool(known.taken(TIER_UP))
+
     def _rung_held(self, entry):
         """The decision ticket holding the rung this ticket would launch at, or None when nothing holds it (decision 16).
 
@@ -958,15 +1065,24 @@ class Conductor:
         held = self.view.held_rungs()
         if not held:
             return None
-        try:
-            return held.get(rung_of(self.policy, entry.get("difficulty")))
-        except ConductorError:
-            return None  # the launch fails on the missing rung, and says so there
+        rung = entry.get("rung")  # the effective rung `_graph` put on the entry, which a tier up may have lifted
+        if rung is None:
+            try:
+                rung = rung_of(self.policy, entry.get("difficulty"))
+            except ConductorError:
+                return None  # the launch fails on the missing rung, and says so there
+        return held.get(rung)
 
     def _on_fable(self, entry):
-        """Whether a ticket launches on Fable: the tier of its effective difficulty names Fable (decision 15)."""
+        """Whether a ticket launches on Fable: the rung its next attempt launches on is on Fable (decisions 15 and 16).
+
+        The rung is the one `_graph` put on the entry, which a tier up may have lifted past the level's own;
+        an entry from anywhere else falls back to the tier of its difficulty.
+        """
         try:
-            return tier_for(self.policy, entry.get("difficulty")).family == pacing.FABLE
+            rung = entry.get("rung")
+            tier = rung_tier(self.policy, rung) if rung is not None else tier_for(self.policy, entry.get("difficulty"))
+            return tier.family == pacing.FABLE
         except ConductorError:
             return False  # the launch fails on the missing tier, and says so there
 
@@ -1268,7 +1384,7 @@ class Conductor:
                 status = "open"
             if status is None or status == ticket["status"]:
                 continue
-            if known is not None and known.rung == TIER_UP and ticket["status"] == "open":
+            if known is not None and known.step == TIER_UP and ticket["status"] == "open":
                 continue  # opened again for its tier up, which the next `ticket_launched` journals
             if ticket["kind"] == tickets.DECISION and ticket["id"] in self.view.answers:
                 continue  # an answered decision ticket is closed by `_apply_answers`, once, with what it says and does
@@ -1324,7 +1440,8 @@ class Conductor:
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
         # The difficulty it launched at: a raise journaled since does not move an attempt already under way.
         attempt.difficulty = replayed.difficulty if replayed.difficulty is not None else entry.get("difficulty", attempt.ticket["difficulty"])
-        attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
+        # The rung it launched on, which a step down at `cheap_at` (decision 16) may have put below its level's.
+        attempt.tier = self._tier_ran(replayed.rung, attempt.difficulty, attempt.ticket.get("budget"))
         if replayed.fallback_from:
             # Its session runs on Opus and is resumed there, whatever the hold and the consent say now.
             attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), replayed.fallback_from
@@ -1563,19 +1680,27 @@ class Conductor:
         launches are reading, and both say their line in pick order rather than interleaved.
         """
         attempt.role = worker.read_role(attempt.ticket["role"], self.harness_root, self.project)
+        # The level is what the difficulty adjustment counts failures by; the rung is what the attempt runs on,
+        # and a tier up has moved the second without moving the first (decision 16).
         attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
-        attempt.tier = tier_for(self.policy, attempt.difficulty, attempt.ticket.get("budget"))
+        rung = self._effective_rung(attempt.ticket)
+        running = self._launch_rung(attempt.id, rung)
+        attempt.stepped_from = rung_tier(self.policy, rung, attempt.ticket.get("budget")).label if running != rung else None
+        attempt.tier = rung_tier(self.policy, running, attempt.ticket.get("budget"))
         if attempt.tier.family == pacing.FABLE and self._falls_back():
-            attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), pacing.FABLE
+            attempt.fallback_from, attempt.tier = attempt.tier.label, fallback_tier(self.policy, attempt.tier)
         self._add_worktree(attempt)
         self._write_ticket(attempt, "running")
         attempt.prompt = self._prompt(attempt)
         attempt.request = self._request(attempt, attempt.prompt)
         own = attempt.ticket.get("pinned_difficulty") or attempt.ticket["difficulty"]
-        self.say("wave %d: ticket %d %s (%s, %s, attempt %d)%s%s" % (
+        climbed = rung != rung_of(self.policy, attempt.difficulty)
+        self.say("wave %d: ticket %d %s (%s, %s, attempt %d)%s%s%s%s" % (
             self.number, attempt.id, attempt.ticket["title"], attempt.role.name,
             attempt.tier.label, attempt.number,
             ", difficulty %s raised from %s" % (attempt.difficulty, own) if attempt.difficulty != own else "",
+            ", one rung up the ladder" if climbed else "",
+            ", stepping down one rung from %s" % attempt.stepped_from if attempt.stepped_from else "",
             ", falling back from %s" % attempt.fallback_from if attempt.fallback_from else ""))
 
     def _prompt(self, attempt, notes=()):
@@ -2215,19 +2340,19 @@ class Conductor:
         problem = self._invalid(attempt)
         if attempt.stage == ACCEPTANCE_FAILED:
             if problem is not None:
-                self._fail(attempt, "the resumed session returned no usable result: %s" % problem, self._rung_from(attempt.id))
+                self._fail(attempt, "the resumed session returned no usable result: %s" % problem, self._step_from(attempt.id))
                 return "failed"
             # What the resumed session asked and proposed is taken, and a status other than done is acted on, as at a launch.
             carried = self._act_on(attempt)
             if carried not in ("done", RUNNING):
                 return carried
             if not self._accept(attempt, "worktree", attempt.worktree)["pass"]:
-                self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", self._rung_from(attempt.id))
+                self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", self._step_from(attempt.id))
                 return "failed"
         else:
             if problem is not None:
                 if attempt.stage in (INVALID_RESULT, TIMEOUT):
-                    self._fail(attempt, "the result was still unusable after one resume: %s" % problem, self._rung_from(attempt.id))
+                    self._fail(attempt, "the result was still unusable after one resume: %s" % problem, self._step_from(attempt.id))
                     return "failed"
                 return self._want_resume(attempt, INVALID_RESULT, RESUME_INVALID % problem)
             carried = self._act_on(attempt)
@@ -2328,7 +2453,7 @@ class Conductor:
                           " until decision ticket %d is answered" % held if held else ""),
                        # Straight to the tier up, skipping the split: a rung naming a model nobody serves is a policy
                        # typo, and re-cutting the ticket would spend the planner on it. A tier up onto a held rung waits.
-                       self._rung_from(attempt.id, start=TIER_UP))
+                       self._step_from(attempt.id, start=TIER_UP))
             return "failed"
         if worker.ran_as_asked(asked, envelope):
             return None
@@ -2337,7 +2462,7 @@ class Conductor:
                    % (asked, worker.model_ran(envelope) or "another model"),
                    # As for a refusal: neither failure says anything about the work, so the split, which makes the
                    # work smaller, is skipped and the ladder goes straight to the tier up.
-                   self._rung_from(attempt.id, start=TIER_UP))
+                   self._step_from(attempt.id, start=TIER_UP))
         return "failed"
 
     def _hold_rung(self, attempt, refused):
@@ -2373,10 +2498,10 @@ class Conductor:
         """Spend a gate's one resume (BRIEF 9.1): now, or as soon as the run may start model work."""
         if not attempt.session_id:
             self._fail(attempt, "there is no session id to resume: %s"
-                       % "; ".join(attempt.envelope.errors or ["the session never started"]), self._rung_from(attempt.id))
+                       % "; ".join(attempt.envelope.errors or ["the session never started"]), self._step_from(attempt.id))
             return "failed"
         if stage == ACCEPTANCE_FAILED:
-            # The ladder's first rung (ticket 38): the failure is journaled with `next: resume`, then the session is resumed.
+            # The chain's first step (ticket 38): the failure is journaled with `next: resume`, then the session is resumed.
             self.ledger.append_event(TICKET_FAILED, {"ticket": attempt.id, "attempt": attempt.number,
                                                      "reason": "the machine acceptance failed in the worktree", "next": RESUME},
                                      ticket=attempt.id, session_id=attempt.session_id)
@@ -2389,7 +2514,7 @@ class Conductor:
         """Start the session an attempt waits for, unless the run holds model work or the hold holds it on Fable.
 
         A session is a worker like any launch, so it also waits for a free worker slot when every slot
-        is taken (ticket 59), as the ladder's resume does; the wait is said once and the session starts
+        is taken (ticket 59), as the escalation chain's resume does; the wait is said once and the session starts
         at the first wave with a free slot.
 
         Under the fallback consent `auto` the hold holds nothing back: a session it would keep waiting on
@@ -2454,11 +2579,12 @@ class Conductor:
         if ran and last:
             notes.append(FALLBACK_LAST_MESSAGE % last)
         if attempt.tier.family == pacing.FABLE:
-            attempt.tier = fallback_tier(self.policy, attempt.tier)
-        attempt.fallback_from = pacing.FABLE
+            attempt.fallback_from, attempt.tier = attempt.tier.label, fallback_tier(self.policy, attempt.tier)
+        elif not attempt.fallback_from:  # a tier no rung made, or one already moved: the rung it came from is unnamed
+            attempt.fallback_from = pacing.FABLE
         if notes:
             self.ledger.write_json(self._attempt_dir(attempt).relative_to(self.ledger.research) / FALLBACK_NOTES,
-                                   {"fallback_from": pacing.FABLE, "notes": notes})
+                                   {"fallback_from": attempt.fallback_from, "notes": notes})
         attempt.prompt = self._prompt(attempt, notes)
         attempt.request = self._request(attempt, attempt.prompt)
         taken = ("its %s resume would run on Fable; a fresh session takes it" % want.stage if returned
@@ -2567,7 +2693,7 @@ class Conductor:
             if problem is None:
                 return RUNNING
             if attempt.stage in (INVALID_RESULT, TIMEOUT, ACCEPTANCE_FAILED):
-                self._fail(attempt, "the result was still unusable after one resume: %s" % problem, self._rung_from(attempt.id))
+                self._fail(attempt, "the result was still unusable after one resume: %s" % problem, self._step_from(attempt.id))
                 return "failed"
             return self._want_resume(attempt, INVALID_RESULT, RESUME_INVALID % problem)
         if status == "failed":
@@ -2830,9 +2956,14 @@ class Conductor:
         """Wave step 8: the action from the latest readings, journaled as `pacing` when the reading changed.
 
         With nothing read from either surface yet, the action stands as it is: a run is never
-        slowed or stopped on a guess. Fable's weekly window never moves the action; its reading
-        begins or ends the hold on Fable launches instead (`_hold_by_reading`).
+        slowed or stopped on a guess. `action` is the one a launch off Fable runs under, read from
+        the five-hour and all-models windows, and `fable_action` the one a launch on a Fable rung
+        runs under, read from Fable's weekly window and the all-models week (decision 16); the
+        event carries both. Fable's weekly window never moves the run's action: at `stop_at` it
+        begins or ends the hold on Fable launches (`_hold_by_reading`), and at `cheap_at` it steps
+        a Fable launch one rung down, to rung 6 and no further.
         """
+        self._force_reading()
         if not self.windows.known():
             return
         now = self.clock()
@@ -2840,13 +2971,47 @@ class Conductor:
         reading = {name: self.windows.utilization(name, now) for name in pacing.READINGS}
         if self.windows.known(pacing.WINDOWS):
             self.action = pacing.action_for(reading["five_hour"], reading["seven_day"], stop_at, cheap_at)
-        reading["action"] = self.action
+        if self.windows.known(pacing.windows_for(pacing.FABLE)):
+            self.fable_action = pacing.rung_action(pacing.FABLE, reading, stop_at, cheap_at)
+        reading["action"], reading["fable_action"] = self.action, self.fable_action
         if reading != self.view.pacing:
             self.ledger.append_event(PACING, reading)
             self._tail()
-            self.say("  pacing: %s (five_hour %s, seven_day %s, fable %s; stop at %s, cheap only at %s)"
-                     % (self.action, reading["five_hour"], reading["seven_day"], reading["fable"], stop_at, cheap_at))
+            self.say("  pacing: %s (five_hour %s, seven_day %s, fable %s %s; stop at %s, cheap only at %s)"
+                     % (self.action, reading["five_hour"], reading["seven_day"], reading["fable"],
+                        self.fable_action, stop_at, cheap_at))
         self._hold_by_reading(reading["fable"], stop_at)
+
+    def simulate_step_down(self, seconds, model=None):
+        """Force a reading past `cheap_at` and under `stop_at` for `seconds`: `run --simulate-limit cheap:[fable:]<seconds>`.
+
+        On every model's windows, or on Fable's weekly window alone with `model` `fable`, so the M5
+        demo can show launches one rung down without waiting for a window to be nearly spent. The
+        reading is taken again at every wave, so a real one read meanwhile does not undo it, and it
+        lapses on its own once the seconds are out, because a reading whose reset has passed is no
+        reading (`Windows.utilization`). `seconds` None disarms it.
+        """
+        self._simulated_step = None if seconds is None else (float(seconds), model)
+        self._simulated_until = None
+
+    def _force_reading(self):
+        """Take the simulated reading of `simulate_step_down`, while its seconds last."""
+        if self._simulated_step is None:
+            return
+        seconds, model = self._simulated_step
+        now = self.clock()
+        stop_at, cheap_at = self._thresholds()
+        forced = round((cheap_at + stop_at) / 2, 4) if cheap_at < stop_at else cheap_at
+        if self._simulated_until is None:
+            self._simulated_until = now + seconds
+            self.say("  simulating a reading of %s on %s until %s, at or above cheap_at %s and under stop_at %s"
+                     % (forced, "Fable's weekly window" if model == pacing.FABLE else "the windows every model draws on",
+                        pacing.iso(self._simulated_until), cheap_at, stop_at))
+        if now >= self._simulated_until:
+            self._simulated_step = None
+            return
+        for name in (pacing.FABLE,) if model == pacing.FABLE else pacing.WINDOWS:
+            self.windows.record(name, forced, int(self._simulated_until), now)
 
     def _hold_by_reading(self, fable, stop_at):
         """The hold a reading of Fable's weekly window calls for: begun at `stop_at` or above, ended under it.
@@ -3057,7 +3222,7 @@ class Conductor:
         resolved_by = INTEGRATOR if spent else "none"
         problem = self._off_branch(attempt)
         if problem is not None:
-            self._fail(attempt, problem, self._rung_from(attempt.id, SPLIT) if spent else self._next_step(attempt))
+            self._fail(attempt, problem, self._step_from(attempt.id, SPLIT) if spent else self._next_step(attempt))
             return "failed"
         before = self._branch_paths(attempt)
         with self.ledger.lock():
@@ -3065,12 +3230,12 @@ class Conductor:
         if conflict is not None and spent:
             self._fail(attempt, "rebasing %s onto main conflicts in %s, and the integrator was already launched for "
                        "this attempt before the conductor restarted" % (BRANCH % attempt.id, ", ".join(conflict.paths)
-                                                                        or "a path git did not name"), self._rung_from(attempt.id, SPLIT))
+                                                                        or "a path git did not name"), self._step_from(attempt.id, SPLIT))
             return "failed"
         if conflict is not None:
             if not conflict.paths:
                 self._fail(attempt, "rebasing %s onto main failed and git named no conflicting path, so there is "
-                           "nothing an integrator could resolve: %s" % (BRANCH % attempt.id, conflict.output), self._rung_from(attempt.id, SPLIT))
+                           "nothing an integrator could resolve: %s" % (BRANCH % attempt.id, conflict.output), self._step_from(attempt.id, SPLIT))
                 return "failed"
             if self._integrator_waits(attempt):
                 attempt.integrating, attempt.want = True, _Want(INTEGRATE)
@@ -3090,11 +3255,11 @@ class Conductor:
                 self._fail(attempt, "rebasing %s onto main conflicted in %s; the integrator %s; the rebase after it "
                            "still fails%s" % (BRANCH % attempt.id, ", ".join(conflict.paths), told,
                                               " in " + ", ".join(again.paths) if again.paths else ": " + again.output),
-                           self._rung_from(attempt.id, SPLIT))
+                           self._step_from(attempt.id, SPLIT))
                 return "failed"
             problem = self._off_branch(attempt) or _changed_by_integrator(before, self._branch_paths(attempt))
             if problem is not None:
-                self._fail(attempt, "the integrator %s; %s" % (told, problem), self._rung_from(attempt.id, SPLIT))
+                self._fail(attempt, "the integrator %s; %s" % (told, problem), self._step_from(attempt.id, SPLIT))
                 return "failed"
         if not self._accept(attempt, "rebased", attempt.worktree)["pass"]:
             self._fail(attempt, "the machine acceptance failed after the rebase onto main", self._next_step(attempt))
@@ -3108,7 +3273,7 @@ class Conductor:
             self.ledger.write_json(self._integration_record(attempt.id, attempt.number), {"base": base, "commit": commit})
         if merge.returncode != 0:
             self._fail(attempt, "main could not be fast-forwarded to %s: %s"
-                       % (BRANCH % attempt.id, (merge.stderr or merge.stdout).strip()), self._rung_from(attempt.id, SPLIT))
+                       % (BRANCH % attempt.id, (merge.stderr or merge.stdout).strip()), self._step_from(attempt.id, SPLIT))
             return "failed"
         if not self._accept(attempt, "main", self.project)["pass"]:
             self._fail(attempt, "the machine acceptance failed on main after the fast-forward to %s; main "
@@ -3513,8 +3678,8 @@ class Conductor:
         Pacing holds the whole queue rather than part of it: a ticket whose first verdict passed
         and whose second was never taken is neither accepted nor failed, and leaving one in that
         state across a window boundary is worse than leaving both for the next wave. `cheap_only`
-        holds it too, because a verdict runs a tier above the work it judges and so is never on
-        the cheap tier that difficulty 1 and 2 run on.
+        holds it too, because a verdict runs above the work it judges, is not on the rung ladder,
+        and so is never stepped down to a cheaper rung the way a ticket launch is (decision 16).
 
         While the hold on Fable's weekly window stands, a done ticket any of whose verdicts runs on
         Fable keeps every one of them queued, and the other tickets' verdicts are taken, unless the
@@ -3654,15 +3819,15 @@ class Conductor:
         tickets.write_ticket(self.ledger, dict(ticket, status=status), body)
 
     def _next_step(self, attempt):
-        """The rung of the escalation ladder this failure lands on: the one resume while it is unspent, else what is above it."""
+        """The step of the escalation chain this failure lands on: the one resume while it is unspent, else what is after it."""
         if not attempt.resumed and attempt.session_id and self._ladder()["resume"]:
             return RESUME
-        return self._rung_from(attempt.id)
+        return self._step_from(attempt.id)
 
     def _fail(self, attempt, reason, next_step):
         """Journal the failure and leave the worktree and the branch for the attempt that follows.
 
-        A failure whose rung is `needs_human` hands the ticket to a person at once (`_after_failure`).
+        A failure whose step is `needs_human` hands the ticket to a person at once (`_after_failure`).
         """
         self.ledger.append_event(TICKET_FAILED, {
             "ticket": attempt.id, "attempt": attempt.number, "reason": reason, "next": next_step,
@@ -3680,7 +3845,7 @@ class Conductor:
         self.say("  ticket %d needs a person: %s" % (attempt.id, question))
         self._tell_owner(attempt.id, question)
 
-    # --- the escalation ladder and the difficulty adjustment (decision 5; ticket 38) ---
+    # --- the escalation chain and the difficulty adjustment (decision 5; ticket 38; by rung, decision 16) ---
 
     def _ladder(self):
         """`policy.escalation`, over the defaults of decision 14."""
@@ -3694,12 +3859,11 @@ class Conductor:
         return max(tiers, default=tickets.HARDEST)
 
     def _effective_difficulty(self, fields):
-        """The difficulty the ticket's next attempt launches at.
+        """The difficulty level the ticket's next attempt launches at.
 
         A `pinned_difficulty` wins, whatever the run raised. Otherwise the ticket's own difficulty, moved up by
-        every raise the run journaled for its kind (`difficulty_raised` from that tier), and at least one tier
-        above the attempt its escalation last sent up a tier; never past the top tier. A raise and a tier up do
-        not add: the tier up is one tier above what the failed attempt launched at.
+        every raise the run journaled for its kind (`difficulty_raised` from that level); never past the top level.
+        A tier up no longer moves the level (decision 16): it counts rungs, and `_effective_rung` is where it lands.
         """
         pinned = fields.get("pinned_difficulty")
         if pinned is not None:
@@ -3708,38 +3872,124 @@ class Conductor:
         while difficulty in raised and difficulty not in seen:
             seen.add(difficulty)
             difficulty = raised[difficulty]
+        return min(difficulty, self._max_tier())
+
+    # --- the rung the next attempt launches on (decision 16; ticket 61) ---
+
+    def _top_rung(self):
+        """The highest rung the rung ladder has: no tier up climbs past it."""
+        return len(ladder(self.policy))
+
+    def _effective_rung(self, fields):
+        """The rung of the rung ladder the ticket's next attempt launches on.
+
+        The level's own rung (`policy.difficulty` over `_effective_difficulty`, so a pin and a kind raise both
+        count), lifted to the rung floor every tier up the chain took left behind: one rung above the rung the
+        attempt it sent up ran on. A raise and a tier up do not add, they take the higher of the two. A journal
+        written before the rung ladder carries no `rung` on its launches, so its floor is counted by tier ups
+        from the level's rung instead. Never past the ladder's top rung.
+        """
+        rung = rung_of(self.policy, self._effective_difficulty(fields))
         known = self.view.tickets.get(fields["id"])
         if known is not None and known.taken(TIER_UP):
-            # One tier above the attempt the ladder sent up (a journal older than `difficulty` counts the tier ups instead).
-            difficulty = max(difficulty, known.floor if known.floor is not None else fields["difficulty"] + known.taken(TIER_UP))
-        return min(difficulty, self._max_tier())
+            floor = known.rung_floor if known.rung_floor is not None else rung + known.taken(TIER_UP)
+            rung = max(rung, floor)
+        return min(rung, self._top_rung())
+
+    def _ran_on(self, identifier):
+        """The rung the ticket's latest attempt ran on, or None when no journal records one."""
+        known = self.view.tickets.get(identifier)
+        latest = known.latest if known is not None else None
+        return latest.rung if latest is not None else None
+
+    def _next_rung(self, identifier):
+        """The rung a tier up would launch the ticket's next attempt on, or None when there is none above it.
+
+        One rung above the rung the attempt that failed ran on, and never below the rung the ticket would
+        launch on anyway: a kind raise journaled since may already have lifted it that far, and then the
+        tier up lands where the raise put it rather than a rung past it. A journal older than the rung
+        ladder records no rung, so the rung the next attempt would launch on stands in for it.
+        """
+        fields = self._fields(identifier)
+        if fields is None:
+            return None
+        rung, ran = self._effective_rung(fields), self._ran_on(identifier)
+        rung = max(rung, ran + 1) if ran is not None else rung + 1
+        return rung if rung <= self._top_rung() else None
+
+    def _at_top_rung(self, identifier):
+        """Whether the chain left this ticket with nowhere to climb: it has a ticket file, and no rung above it.
+
+        A ticket whose file is gone has no rung at all, and is handed over without a reason rather than
+        reported as one the ladder ran out on.
+        """
+        return self._fields(identifier) is not None and self._next_rung(identifier) is None
+
+    def _rung_family(self, rung):
+        """The model family of a rung of the rung ladder, or None for a rung the ladder does not have."""
+        rungs = ladder(self.policy)
+        if not isinstance(rung, int) or isinstance(rung, bool) or not 1 <= rung <= len(rungs):
+            return None
+        entry = rungs[rung - 1]
+        return pacing.family(entry.get("model")) if isinstance(entry, dict) else None
+
+    def _tier_up_reaches_fable(self, identifier):
+        """Whether a tier up would take this ticket onto Fable from a rung that is not (rung 5 to rung 6).
+
+        That is the one step the split comes before (decision 16): Fable's weekly window is the scarce
+        resource, so the cheaper remedy is tried first, and the ticket climbs onto Fable only after it.
+        The family compared against is the one the attempt that failed ran on, not the one the rung
+        below the tier up's happens to be: a kind raise can lift the target two rungs above the attempt,
+        and the climb onto Fable is still a climb onto Fable.
+        """
+        above = self._next_rung(identifier)
+        if above is None or self._rung_family(above) != pacing.FABLE:
+            return False
+        ran = self._ran_on(identifier)
+        return self._rung_family(ran if ran is not None else above - 1) != pacing.FABLE
 
     def _fields(self, identifier):
         """The ticket's frontmatter, or None when no ticket file has that id."""
         return next((fields for fields in tickets.read_tickets(self.project) if fields["id"] == identifier), None)
 
-    def _rung_from(self, identifier, start=None):
-        """The first rung after the resume this ticket can still take, in `policy.escalation.then` order, from `start` on.
+    def _step_order(self, identifier):
+        """The escalation steps after the resume, in the order this ticket takes them (decision 16).
+
+        `policy.escalation.then` gives the order while the tier up stays inside the failed attempt's own model
+        family: the tier up first, since one rung up is the cheaper remedy. When the tier up would take the
+        ticket onto Fable and the failed attempt was not there, the split comes first, so the scarce Fable week
+        is spent only after the planner has had its try.
+        """
+        order = [step for step in self._ladder()["then"] if step in (SPLIT, TIER_UP)]
+        if SPLIT in order and TIER_UP in order and self._tier_up_reaches_fable(identifier):
+            order = sorted(order, key=lambda step: 0 if step == SPLIT else 1)
+        return order
+
+    def _step_from(self, identifier, start=None):
+        """The first step after the resume this ticket can still take, in `_step_order` order, from `start` on.
 
         A split is taken once, and never for a decision ticket, which is answered, nor for a ticket a split cut, so
         splits do not recurse. A tier up is taken `policy.escalation.tier_up` times at most, and never for a pinned
-        ticket or one whose next attempt is on the top tier already. A rung already taken counts as spent, so a rung
-        that could not be taken sends the ticket on to the next. `start` is where a failure that names its own rung
-        begins (an integration that conflicted starts at the split); `needs_human` is what is left.
+        ticket or one already on the ladder's top rung, which has nowhere to climb (decision 16). A step already
+        taken counts as spent, so a step that could not be taken sends the ticket on to the next. `start` is where a
+        failure that names its own step begins (an integration that conflicted starts at the split); `needs_human`
+        is what is left.
         """
         self._tail()  # what this wave journaled about the ticket so far counts
         ladder, known, fields = self._ladder(), self.view.tickets.get(identifier), self._fields(identifier)
         if fields is None:
             return NEEDS_HUMAN
         taken = known.taken if known is not None else (lambda name: 0)
-        order = [step for step in ladder["then"] if step in (SPLIT, TIER_UP)]
+        order = self._step_order(identifier)
         if start in order:
-            order = order[order.index(start):]
+            # `start` is where this failure begins, not a cut: an integration that conflicted begins at the
+            # split, and still goes on to the tier up when the split is spent, whichever order the two are in.
+            order = [start] + [step for step in order if step != start]
         for step in order:
             if step == SPLIT and not taken(SPLIT) and fields["kind"] != tickets.DECISION and not self._cut_by_split(identifier):
                 return SPLIT
             if step == TIER_UP and taken(TIER_UP) < ladder["tier_up"] and fields.get("pinned_difficulty") is None \
-                    and self._effective_difficulty(fields) < self._max_tier():
+                    and self._next_rung(identifier) is not None:
                 return TIER_UP
         return NEEDS_HUMAN
 
@@ -3753,33 +4003,44 @@ class Conductor:
         return plan.split_from(body) is not None
 
     def _step_for(self, identifier):
-        """The rung of a failure met outside the attempt's own session (a job, a verdict): as `_next_step`, from the journal."""
+        """The step of a failure met outside the attempt's own session (a job, a verdict): as `_next_step`, from the journal."""
         self._tail()  # the session this wave journaled for the attempt is the one to resume
         known = self.view.tickets.get(identifier)
         latest = known.latest if known is not None else None
         if latest is not None and latest.session_id and not latest.spent and self._ladder()["resume"]:
             return RESUME
-        return self._rung_from(identifier)
+        return self._step_from(identifier)
 
-    def _climb(self, identifier, number, rung, reason, note=(), session_id=None, said="failed"):
-        """Journal `ticket_failed` with `rung` for a ticket no attempt object is carrying, and act on the rung as `_fail` does."""
-        self.ledger.append_event(TICKET_FAILED, {"ticket": identifier, "attempt": number, "reason": reason, "next": rung},
+    def _climb(self, identifier, number, step, reason, note=(), session_id=None, said="failed"):
+        """Journal `ticket_failed` with `step` for a ticket no attempt object is carrying, and act on it as `_fail` does."""
+        self.ledger.append_event(TICKET_FAILED, {"ticket": identifier, "attempt": number, "reason": reason, "next": step},
                                  ticket=identifier, session_id=session_id)
         self._set_status(identifier, "failed", list(note))
-        self.say("  ticket %d %s: %s (next: %s)" % (identifier, said, reason.split("\n")[0], rung))
-        self._after_failure(identifier, rung, reason)
+        self.say("  ticket %d %s: %s (next: %s)" % (identifier, said, reason.split("\n")[0], step))
+        self._after_failure(identifier, step, reason)
 
-    def _after_failure(self, identifier, rung, reason):
-        """What every failure does once journaled: the difficulty adjustment, and a person told when the ladder is spent."""
+    def _after_failure(self, identifier, step, reason):
+        """What every failure does once journaled: the difficulty adjustment, and a person told when the chain is spent.
+
+        A ticket the chain leaves on the ladder's top rung, with nowhere to climb, is handed over with
+        `reason: top_rung`, which `status`, the dashboard, and `REPORT.md` read as "at the ladder's top
+        rung" (decision 16).
+        """
         self._tail()
         self._adjust_difficulty(identifier)
-        if rung != NEEDS_HUMAN:
+        if step != NEEDS_HUMAN:
             return
-        question = "it failed and no rung of the escalation ladder is left: %s" % reason
-        self.ledger.append_event(TICKET_NEEDS_HUMAN, {"ticket": identifier, "question": question}, ticket=identifier)
+        top = self._at_top_rung(identifier)
+        question = "it failed%s and no step of the escalation chain is left: %s" % (
+            " on rung %d, the rung ladder's top rung" % self._top_rung() if top else "", reason)
+        payload = {"ticket": identifier, "question": question}
+        if top:
+            payload["reason"] = TOP_RUNG
+        self.ledger.append_event(TICKET_NEEDS_HUMAN, payload, ticket=identifier)
         self._set_status(identifier, "needs_human")
         self._tail()
-        self.say("  ticket %d needs a person: its escalation ladder is spent" % identifier)
+        self.say("  ticket %d needs a person: its escalation chain is spent%s"
+                 % (identifier, " and it is %s" % TOP_RUNG_NOTE if top else ""))
         self._tell_owner(identifier, question)
 
     def _tell_owner(self, identifier, question):
@@ -3802,9 +4063,12 @@ class Conductor:
         kind = fields["kind"]
         if tier is None or tier >= self._max_tier() or tier in (self.view.raised.get(kind) or {}):
             return
+        if not self._ran_at_its_level(identifier, known.latest.number):
+            return
         failed = [key for key, difficulty in self.view.failures.items()
                   if difficulty == tier and (found.get(key[0]) or {}).get("kind") == kind
-                  and (found.get(key[0]) or {}).get("pinned_difficulty") is None]
+                  and (found.get(key[0]) or {}).get("pinned_difficulty") is None
+                  and self._ran_at_its_level(*key)]
         if len(failed) < self._ladder()["raise_after_failures"]:
             return
         self.ledger.append_event(DIFFICULTY_RAISED, {"kind": kind, "from": tier, "to": tier + 1})
@@ -3812,75 +4076,93 @@ class Conductor:
         self.say("  %d %s attempt(s) failed at difficulty %d (%s); %s tickets at difficulty %d launch at %d for the rest of the run"
                  % (len(failed), kind, tier, ", ".join("ticket %d attempt %d" % key for key in sorted(failed)), kind, tier, tier + 1))
 
-    def _owed_rungs(self):
-        """The failed tickets that wait on a rung a wave takes (`resume`, `tier_up`, `split`), by id."""
+    def _ran_at_its_level(self, identifier, number):
+        """Whether this failed attempt counts toward its kind's raise: it ran on the rung its level names.
+
+        An attempt the escalation chain lifted a rung did not run at what its difficulty level says, so
+        counting it would raise a whole kind off one ticket's own climb (decision 16). It is left out for
+        the reason a fallback attempt is (decision 15): the level names one rung, and the attempt ran on
+        another. A journal older than the rung ladder records no rung, and counts as it always did.
+        """
+        known = self.view.tickets.get(identifier)
+        attempt = known.attempts.get(number) if known is not None else None
+        if attempt is None or attempt.rung is None or attempt.difficulty is None:
+            return True
+        try:
+            return attempt.rung == rung_of(self.policy, attempt.difficulty)
+        except ConductorError:
+            return True  # a policy with no rung for the level: the launch fails on it, and says so there
+
+    def _owed_steps(self):
+        """The failed tickets that wait on a step a wave takes (`resume`, `tier_up`, `split`), by id."""
         found = {fields["id"]: fields for fields in tickets.read_tickets(self.project)}
         return [identifier for identifier, known in sorted(self.view.tickets.items())
-                if known.rung in (RESUME, TIER_UP, SPLIT) and identifier not in self.flight
+                if known.step in (RESUME, TIER_UP, SPLIT) and identifier not in self.flight
                 and (found.get(identifier) or {}).get("status") == "failed"]
 
     def _escalate(self, result):
-        """Take every failed ticket up the rung its last `ticket_failed` names; model work, so only while launches are allowed.
+        """Take every failed ticket up the step its last `ticket_failed` names; model work, so only while launches are allowed.
 
-        A rung that sends the ticket on to another (a split that fails goes to the tier up) is followed in the same
-        wave, so the tier up it lands on launches now rather than a wave later. Each rung is looked at once a wave
-        per ticket, and every rung is taken a bounded number of times, so the pass ends.
+        A step that sends the ticket on to another (a split that fails goes to the tier up) is followed in the same
+        wave, so the tier up it lands on launches now rather than a wave later. Each step is looked at once a wave
+        per ticket, and every step is taken a bounded number of times, so the pass ends.
         """
         seen = set()
         while True:
-            owed = [(identifier, self.view.tickets[identifier].rung) for identifier in self._owed_rungs()]
+            owed = [(identifier, self.view.tickets[identifier].step) for identifier in self._owed_steps()]
             owed = [item for item in owed if item not in seen]
             if not owed or self._holds_launches():
                 return
             for item in owed:
                 seen.add(item)
-                self._take_rung(item[0], result)
+                self._take_step(item[0], result)
 
-    def _take_rung(self, identifier, result):
-        """One failed ticket taken up its rung, unless pacing holds it."""
+    def _take_step(self, identifier, result):
+        """One failed ticket taken up its escalation step, unless pacing holds it."""
         if self._holds_launches():
             return
-        rung = self.view.tickets[identifier].rung
-        if rung == SPLIT and self.action != schedule.NORMAL:
+        step = self.view.tickets[identifier].step
+        if step == SPLIT and self.action != schedule.NORMAL:
             return  # the planner's session is never cheap, so `cheap_only` holds it as it holds a verdict
         try:
-            if rung == RESUME:
+            if step == RESUME:
                 took = self._resume_failed(identifier)
-            elif rung == TIER_UP:
+            elif step == TIER_UP:
                 took = self._tier_up(identifier)
             else:
                 took = self._split(identifier)
         except (ValueError, OSError) as failure:  # a role, a prompt, a settings file, or a git step
             self.flight.pop(identifier, None)
-            above = self._rung_from(identifier)  # the rung that could not be taken counts as taken
-            self._climb(identifier, self.view.tickets[identifier].attempt, above,
-                        "the %s rung could not be taken: %s" % (rung, failure))
+            after = self._step_from(identifier)  # the step that could not be taken counts as taken
+            self._climb(identifier, self.view.tickets[identifier].attempt, after,
+                        "the %s step could not be taken: %s" % (step, failure))
             took = True
         if took:
-            result.escalated.append((identifier, rung))
+            result.escalated.append((identifier, step))
 
     def _resume_failed(self, identifier):
-        """The `resume` rung: the failed attempt's session, resumed once with the failure output; whether it was taken.
+        """The `resume` step: the failed attempt's session, resumed once with the failure output; whether it was taken.
 
         A failure met after the session returned (a job, a verdict, the integration) is given to that session, in the
         worktree it wrote, made again from the ticket branch or from `main` when the integration removed it. An attempt
-        with no session to resume, or whose resume is spent, goes to the next rung instead. The resume waits, like any
+        with no session to resume, or whose resume is spent, goes to the next step instead. The resume waits, like any
         on Fable, while the hold stands and the consent waits; under fallback a fresh Opus session takes it.
         """
         known = self.view.tickets[identifier]
         latest = known.latest
-        entry = {"difficulty": latest.difficulty if latest is not None else None}
-        if self._busy() >= self._slots() or not schedule.affordable(entry, self.action):
-            return False  # a resume is a worker like any launch: it waits for a slot, and for the pacing to allow its tier
+        if self._busy() >= self._slots() or schedule.holds_model_work(self.action):
+            return False  # a resume is a worker like any launch: it waits for a slot, and for the pacing to allow a session
+        # A resume is the attempt's own session again, on the model it was launched on: pacing steps a
+        # launch down a rung (decision 16), never a session already under way.
         if latest is None or not latest.session_id or latest.spent:
-            self._climb(identifier, known.attempt, self._rung_from(identifier),
+            self._climb(identifier, known.attempt, self._step_from(identifier),
                         "%s; its session cannot be resumed" % (known.failure or "it failed"))
             return True
         ticket, body = self._ticket(identifier)
         attempt = _Attempt(ticket, body, latest.number, self._worktree(identifier))
         attempt.role = worker.read_role(ticket["role"], self.harness_root, self.project)
         attempt.difficulty = latest.difficulty if latest.difficulty is not None else self._effective_difficulty(ticket)
-        attempt.tier = tier_for(self.policy, attempt.difficulty, ticket.get("budget"))
+        attempt.tier = self._tier_ran(latest.rung, attempt.difficulty, ticket.get("budget"))
         if latest.fallback_from:
             attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), latest.fallback_from
         attempt.session_id, attempt.session_journaled = latest.session_id, True
@@ -3899,14 +4181,19 @@ class Conductor:
         return bool(started)
 
     def _tier_up(self, identifier):
-        """The `tier_up` rung: the ticket is opened again, and its next attempt launches one tier up in a new session."""
+        """The `tier_up` step: the ticket is opened again, and its next attempt launches one rung up in a new session.
+
+        The rung is the one `_effective_rung` reads back from the journal's floor, so the launch itself needs
+        nothing from here: it reads the same rung, and a Fable rung the hold is holding falls back, waits, or
+        asks there as the fallback consent says (decision 15), like any other launch on Fable.
+        """
         fields = self._fields(identifier)
-        difficulty = self._effective_difficulty(fields)
-        tier = tier_for(self.policy, difficulty, fields.get("budget"))
-        self._set_status(identifier, "open", ["Escalated one tier up: the next attempt launches at difficulty %d (%s), "
-                                              "in a new session." % (difficulty, tier.label)])
-        self.say("  ticket %d: escalation: its next attempt launches one tier up, at difficulty %d (%s)"
-                 % (identifier, difficulty, tier.label))
+        rung = self._effective_rung(fields)
+        tier = rung_tier(self.policy, rung, fields.get("budget"))
+        self._set_status(identifier, "open", ["Escalated one rung up: the next attempt launches on rung %d (%s), "
+                                              "in a new session." % (rung, tier.label)])
+        self.say("  ticket %d: escalation: its next attempt launches one rung up, on rung %d (%s)"
+                 % (identifier, rung, tier.label))
         return True
 
     def _planner_falls_back(self, what):
@@ -3943,7 +4230,7 @@ class Conductor:
             return failure
 
     def _split(self, identifier):
-        """The `split` rung: the planner replaces the ticket with smaller ones, which parks it; a split that fails needs a person."""
+        """The `split` step: the planner replaces the ticket with smaller ones, which parks it; a split that fails needs a person."""
         from wayline import plan
         outcome = self._launch_cut(plan.Cut("split", of=identifier), "the planner's split of ticket %d" % identifier)
         if outcome is None:
@@ -3951,7 +4238,7 @@ class Conductor:
         self._tail()
         if isinstance(outcome, BaseException):
             known = self.view.tickets[identifier]
-            self._climb(identifier, known.attempt, self._rung_from(identifier), "the planner could not split it: %s" % outcome)
+            self._climb(identifier, known.attempt, self._step_from(identifier), "the planner could not split it: %s" % outcome)
             return True
         self.say("  ticket %d: escalation: split by the planner into ticket(s) %s; it is parked"
                  % (identifier, ", ".join(str(item) for item in outcome.get("tickets") or []) or "none"))
@@ -4238,16 +4525,33 @@ def _in_touch_set(path, touches):
 
 # --- the verb ---------------------------------------------------------------------------------
 
+class _Simulated(NamedTuple):
+    """What `--simulate-limit` asks for: how long, on whose windows, and whether it steps down or pauses."""
+
+    seconds: float
+    model: Optional[str]
+    step_down: bool
+
+
 def parse_simulated_limit(text):
-    """`--simulate-limit`'s value as `(seconds, model)`: `S` for every model's windows, `fable:S` for Fable's weekly window; None otherwise."""
-    model, _, seconds = str(text).rpartition(":")
+    """`--simulate-limit`'s value as a `_Simulated`, or None when it is not one of its spellings.
+
+    `S` arms a hit limit on every model's windows and `fable:S` one on Fable's weekly window, which
+    pause the run and hold Fable launches (decisions 5 and 15). `cheap:S` and `cheap:fable:S` force a
+    reading past `pacing.cheap_at` and under `pacing.stop_at` for that many seconds instead, on every
+    model's windows or on Fable's alone, so a demo can show launches one rung down (decision 16).
+    """
+    rest, step_down = str(text), False
+    if rest.startswith("cheap:"):
+        rest, step_down = rest[len("cheap:"):], True
+    model, _, seconds = rest.rpartition(":")
     if model not in ("", pacing.FABLE):
         return None
     try:
         value = float(seconds)
     except ValueError:
         return None
-    return (value, model or None) if 0 <= value < float("inf") else None
+    return _Simulated(value, model or None, step_down) if 0 <= value < float("inf") else None
 
 
 def run_command(args):
@@ -4257,11 +4561,13 @@ def run_command(args):
     parser.add_argument("--project", help="the project to run; the active one by default")
     parser.add_argument("--resume", action="store_true", help="say in run_started that this run resumes one (every run replays the journal)")
     parser.add_argument("--detach", action="store_true", help="run as the transient user unit wayline-conductor, which outlives this shell")
-    parser.add_argument("--simulate-limit", metavar="[fable:]S",
+    parser.add_argument("--simulate-limit", metavar="[cheap:][fable:]S",
                         help="the next launch carries a rejected rate_limit_event resetting S seconds ahead, which pauses the run; "
-                             "with fable:S the next Fable launch is refused on Fable's weekly window, which holds only Fable launches")
+                             "with fable:S the next Fable launch is refused on Fable's weekly window, which holds only Fable launches; "
+                             "with cheap:S (or cheap:fable:S) no launch is refused and a reading past cheap_at stands for S seconds, "
+                             "under which every launch runs one rung down")
     parser.add_argument("--simulate-failure", metavar="ID", type=int,
-                        help="every acceptance of ticket ID fails, on every attempt, so the escalation ladder climbs to the top")
+                        help="every acceptance of ticket ID fails, on every attempt, so the escalation chain climbs one rung and on to the top")
     parser.add_argument("--max-waves", type=int, metavar="N", help="stop after N waves, whatever the frontier still holds")
     try:
         options = parser.parse_args(args)
@@ -4272,7 +4578,9 @@ def run_command(args):
         return 2
     simulated = None if options.simulate_limit is None else parse_simulated_limit(options.simulate_limit)
     if options.simulate_limit is not None and simulated is None:
-        print("wayline run: --simulate-limit takes a number of seconds, 0 or more, or fable:<seconds>", file=sys.stderr)
+        print("wayline run: --simulate-limit takes <seconds>, fable:<seconds> (Fable's weekly window alone), or either "
+              "prefixed by cheap: (a reading past cheap_at for that long, rather than a hit limit); the seconds are 0 or more",
+              file=sys.stderr)
         return 2
 
     try:
@@ -4292,8 +4600,12 @@ def run_command(args):
     announce_dashboard(project)
     conductor = Conductor(project)
     print("run      %s (%s, radius %s)" % (project, harness.get("autonomy"), harness.get("radius")))
-    if simulated is not None:
-        worker.simulate_limit(*simulated)
+    if simulated is not None and simulated.step_down:
+        conductor.simulate_step_down(simulated.seconds, simulated.model)
+        print("simulate a reading past cheap_at for %g second(s) on %s; every launch runs one rung down"
+              % (simulated.seconds, "Fable's weekly window" if simulated.model else "every model's windows"))
+    elif simulated is not None:
+        worker.simulate_limit(simulated.seconds, simulated.model)
     if options.simulate_failure is not None:
         worker.simulate_failure(options.simulate_failure)
         print("simulate every acceptance of ticket %d fails, on every attempt" % options.simulate_failure)

@@ -45,7 +45,7 @@ from wayline import HARNESS_ROOT
 from wayline import pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
-from wayline.project import fable_hold, policy_for
+from wayline.project import fable_hold, policy_for, rung_named
 from wayline.tickets import next_id, read_ticket, tickets_dir, write_ticket
 from wayline.tickets import relative_path as ticket_relative_path
 
@@ -492,8 +492,9 @@ class Verdict:
     """One taken verdict: the record of the `verdict` schema, plus what it was about.
 
     `passed` is the schema's `pass`, spelled so it is not the keyword; `payload` spells it back
-    for the journal. `fallback_from` is `fable` on a verdict taken on Opus in place of a verifier on
-    Fable while Fable's weekly window was spent (decision 15).
+    for the journal. `fallback_from` names the Fable rung (`r7 fable high`, decision 16) a verdict
+    taken on Opus in place of a verifier on Fable came from, while Fable's weekly window was spent
+    (decision 15).
     """
 
     subject_kind: str
@@ -561,12 +562,13 @@ def verdict_tier(policy, author_model, fall_back=False):
     """The `(model, effort, fallback_from)` a verdict on work written on `author_model` is taken at (decision 15).
 
     The table's verifier, unless it is on Fable and `fall_back` is true: then Opus at the table's effort
-    (`fable high` becomes `opus high`), and `fallback_from` is `fable`. A verifier on any other model is
-    the table's under every consent, since Fable is the only model with a weekly window of its own.
+    (`fable high` becomes `opus high`), and `fallback_from` names the Fable rung it came from, `r7 fable
+    high` (decision 16). A verifier on any other model is the table's under every consent, since Fable is
+    the only model with a weekly window of its own.
     """
     model, effort = verifier_tier(policy, author_model)
     if model == pacing.FABLE and fall_back:
-        return pacing.OPUS, effort, pacing.FABLE
+        return pacing.OPUS, effort, rung_named(policy, model, effort)
     return model, effort, None
 
 

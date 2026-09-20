@@ -283,11 +283,11 @@ class NotServedTest(ModelCase):
         ladder = dict(driven.policy["escalation"], resume=0, then=["tier_up", "needs_human"])
         driven.policy = dict(driven.policy, escalation=ladder)  # the split is the planner's, and has tests of its own
         self.script(1, envelope=not_served("claude-sonnet-4-6"))
-        self.script(1)  # ticket 1 goes on at rung 5
+        self.script(1)  # ticket 1 goes on at rung 4, one rung up from the held rung (ticket 61)
         self.fake.script(failing(2), ticket=2)
         self.take(driven, 3)
         self.assertEqual([step for _, step in self.failures()], ["tier_up", "tier_up"])
-        self.assertEqual(self.launches(), [(1, 1, 3), (2, 1, 2), (1, 2, 5)],
+        self.assertEqual(self.launches(), [(1, 1, 3), (2, 1, 2), (1, 2, 4)],
                          "ticket 2's tier up waits on the held rung while ticket 1 goes on at another")
         self.assertEqual(self.statuses()[2], "open")
 

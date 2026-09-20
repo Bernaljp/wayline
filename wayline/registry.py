@@ -469,7 +469,7 @@ def outcomes(events):
     A launch names the role and the skills it ran with, so a close is attributed to whatever the
     ticket's most recent launch named. `passed_first_time` counts the closes that came back on the
     first attempt without a failure before them, which is the number the evolve loop compares skills by.
-    `failed` counts failed launches: the escalation ladder (ticket 38) journals a `ticket_failed` at each
+    `failed` counts failed launches: the escalation chain (ticket 38) journals a `ticket_failed` at each
     rung of one attempt, and the attempt failed once.
     """
     records, launched = {}, {}
