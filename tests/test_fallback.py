@@ -500,7 +500,8 @@ class FallbackSessionTest(FallbackCase):
         drive(driven)
         self.assertEqual([(call.kind, call.request.model) for call in self.calls(1)], [("launch", "opus"), ("resume", "opus")])
         failed = [item["payload"] for item in self.events() if item["event"] == "ticket_failed"][0]
-        self.assertEqual((failed["attempt"], failed["next"]), (1, "split"))
+        self.assertEqual((failed["attempt"], failed["next"]), (1, "tier_up"),
+                         "rung 6 to rung 7 stays inside Fable, so the tier up comes first (ticket 61)")
         view = replay.replay(self.events())
         attempt = view.tickets[1].attempts[1]
         self.assertEqual((attempt.fallback_from, attempt.spent), ("r6 fable low", {"invalid_result"}))

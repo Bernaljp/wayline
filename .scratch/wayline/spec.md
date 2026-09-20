@@ -403,7 +403,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `ticket_done`, `ticket_accepted` | `ticket` |
   | `ticket_failed` | `ticket`, `attempt`, `reason`, `next`: `resume`, `tier_up`, `split`, `needs_human` |
   | `ticket_blocked` | `ticket`, `path` |
-  | `ticket_needs_human` | `ticket`, `question` |
+  | `ticket_needs_human` | `ticket`, `question`; `reason`: `top_rung` (the ticket ended at the rung ladder's top rung, with nowhere left to climb, decision 16; absent otherwise) |
   | `ticket_cancelled`, `ticket_rerun` | `ticket`, `by` |
   | `difficulty_raised` | `kind`, `from`, `to` |
   | `verdict` | `subject_kind`: `ticket`, `claim`, `figure`, `spec`, `dossier`, `paper`; `subject`, `verdict_type`, `pass`, `session_id`, `model`, `findings`, `rung` (the index of the rung the judged ticket attempt ran on, decision 16; absent on a verdict about anything but a ticket; ticket 60); `fallback_from` (the Fable rung a verdict taken on Opus in place of a verifier on Fable came from, as `r7 fable high`, decisions 15 and 16; absent otherwise) |
@@ -680,7 +680,7 @@ Numbered so the milestones can point at them. Every decision below either restat
 | `pacing.stop_at`, `pacing.cheap_at` | 0.90, 0.80, both windows; at `cheap_at` a launch runs one rung down on every window, Fable's included, floor rung 2 and rung 6 out of Fable; Fable's weekly window takes `stop_at` alone, which holds Fable launches | map ticket 20, spec, Fable fallback map, finer model tiers map |
 | `model_fallback.wait_under_hours`, `model_fallback.ask_timeout_hours` | 12 (the ask recommends `wait` when the reset is nearer); 2 (only for a project without the key, under `autonomous`) | Fable fallback map |
 | `context_pack.max_chars` | sonnet 120000; opus 200000; fable 300000 (about 30k, 50k, and 75k tokens) | spec, measured in M1 |
-| `escalation` | resume 1, then split, then tier_up (1), then needs_human; `raise_after_failures` 2 | BRIEF 8.4, map ticket 24, the owner's order of 2026-09-17 |
+| `escalation` | resume 1, then tier_up (1 rung) before split while the next rung is on the failed attempt's model family, and split before tier_up when the next rung is on Fable, then needs_human; `raise_after_failures` 2 | BRIEF 8.4, map ticket 24, the owner's order of 2026-09-17, finer tiers map (decision 16) |
 | `stall.waves` | 2 | BRIEF 9.7 |
 | `proposals.cap` | strict 0, moderate 3, exploratory 6; dedup similarity 0.8 mechanical, 0.6 to 0.8 judged | map ticket 25, spec |
 | `goal` | min_seeds 3, margin 1 standard deviation | map ticket 39 |

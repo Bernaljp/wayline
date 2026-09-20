@@ -229,8 +229,8 @@ class TierUpExemptTest(StepDownCase):
         driven = self.conductor()
         self.script(1)
         drive(driven)
-        self.assertEqual(self.launches()[1][0], 5, "the tier up went to difficulty 3, rung 5, and pacing left it there")
-        self.assert_ran_on(1, 5)
+        self.assertEqual(self.launches()[1][0], 4, "the tier up went one rung up, to rung 4, and pacing left it there")
+        self.assert_ran_on(1, 4)
         self.assertIn("cheap_only", driven.out.getvalue())
 
     def test_the_view_the_journal_rebuilds_is_the_same_read_twice(self):

@@ -20,6 +20,28 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   Fable's window is at `cheap_at`), and `wayline run --simulate-limit cheap:<seconds>` (or
   `cheap:fable:<seconds>`) forces a reading past `cheap_at` and under `stop_at` for that long, so the
   overnight demo can show launches one rung down without waiting for a window to fill.
+- Escalation by rung (`wayline.conductor`, ticket 61; Implementation Decision 16). A tier up now counts
+  rungs of the rung ladder, not difficulty levels: it launches the next attempt one rung above the rung
+  the attempt that failed ran on, with that rung's model, effort, and budget, and leaves the ticket's
+  difficulty level where it was. `difficulty_raised` still moves a kind's level by one after two failures
+  at that level, and the rung follows from the level; a raise and a tier up take the higher of the two
+  rather than adding. The order after the one resume is now the tier up and then the split while the next
+  rung is on the failed attempt's own model family, and the split before the tier up when the next rung is
+  on Fable (rung 5 to rung 6), so the scarce Fable week is spent only after the cheaper remedy;
+  `policy.escalation.then` ships as `tier_up, split, needs_human`. A ticket on rung 7 has nowhere to climb:
+  its tier up is skipped as spent, the split is taken if it is untried, and it then ends `needs_human` with
+  the new `reason: top_rung`, which `wayline status`, the dashboard's ticket page, and the `needs_human`
+  items of `REPORT.md` show as "at the ladder's top rung". `wayline status` gains a "tickets needing a
+  person" section. A tier up onto a Fable rung the hold is holding behaves as any Fable launch under the
+  fallback consent: `auto` runs it on the Opus rung at the same effort and budget, `wait` waits for the
+  reset, `ask` waits for the ask's answer. The conductor's attribute that names a step of the escalation
+  chain is renamed from `rung` to `step` (`replay.TicketView.step`, `_step_from`, `_owed_steps`), so rung
+  now means only a rung of the rung ladder, and the journal records the ticket's rung floor rather than a
+  raised difficulty. Two rules follow the level no longer moving: a failure counts toward its kind's
+  `difficulty_raised` only when the attempt ran on the rung its level names, so one ticket's own climb no
+  longer raises every ticket of its kind; and `cheap_only` reads a graph entry's rung where it has one, so
+  a ticket the chain tier-upped past the cheap rungs is held by the window as it was before.
+
 - The rung ladder (ticket 60; Implementation Decision 16). A ticket's difficulty names a rung of
   `policy.tiers`, an ordered list of seven rungs cheapest first (a `model`, an `effort`, and a
   `budget`), and `policy.difficulty` maps each level 1 to 5 to a rung index (2, 3, 5, 6, 7). The cap:
@@ -30,7 +52,7 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   `wayline upgrade`; `wayline upgrade` rewrites a project's old-shape `harness.json` override to the
   nearest rungs and prints one line per level. `ticket_launched` and `verdict` carry `rung`, and
   `wayline status` and the dashboard's ticket page label each launch `r<index> <model> <effort>`. The
-  escalation chain, pacing, and the fallback keep their behavior until tickets 61 and 62.
+  escalation chain climbs it from ticket 61; pacing and the fallback keep their behavior until ticket 62.
 - Worker slots count every session a conductor owes (`wayline.conductor`, ticket 59).
   `policy.max_parallel_workers` now holds at every moment, not only at the moment a wave picks: an
   attempt holds its slot while its session runs, while its result waits to be carried (the process

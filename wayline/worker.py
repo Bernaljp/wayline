@@ -2032,7 +2032,7 @@ _failing = {"ticket": None}
 # The command a simulated failure names in the acceptance record, and what it says it printed.
 SIMULATED_FAILURE_CMD = "wayline run --simulate-failure %d"
 SIMULATED_FAILURE_TAIL = ("the owner armed a simulated failure for this ticket: every acceptance of every attempt fails, so the "
-                          "whole escalation chain runs (resume, a tier up, a split, needs_human)\n")
+                          "whole escalation chain runs (resume, then a tier up one rung and a split, then needs_human)\n")
 
 
 def simulate_failure(ticket):
@@ -2040,7 +2040,7 @@ def simulate_failure(ticket):
 
     Unlike a simulated limit it is not taken by one launch: every attempt at the ticket, through either
     backend, comes back with a failing acceptance (`simulated_failure`), which is what lets the owner
-    watch the escalation ladder climb in minutes.
+    watch the escalation chain climb in minutes.
     """
     if ticket is not None and (isinstance(ticket, bool) or not isinstance(ticket, int) or ticket < 1):
         raise LaunchError("a simulated failure names a ticket id, a whole number from 1, not %r" % (ticket,))

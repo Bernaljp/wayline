@@ -141,21 +141,24 @@ class TicketView:
     id: int
     status: Optional[str] = None
     attempts: dict = field(default_factory=dict)
-    # The `next` of every `ticket_failed` since the ticket was last rerun: the rungs of the escalation ladder it was sent to (ticket 38).
-    rungs: list = field(default_factory=list)
-    # The `reason` of the last `ticket_failed`: the failure output the ladder's resume is given.
+    # The `next` of every `ticket_failed` since the ticket was last rerun: the steps of the escalation chain it was sent to
+    # (ticket 38). A step is `resume`, `tier_up`, `split`, or `needs_human`, never a rung of the rung ladder (decision 16).
+    steps: list = field(default_factory=list)
+    # The `reason` of the last `ticket_failed`: the failure output the chain's resume is given.
     failure: Optional[str] = None
-    # One tier above the difficulty the last attempt sent to `tier_up` launched at: where its next attempt starts.
-    floor: Optional[int] = None
+    # One rung above the rung the last attempt sent to `tier_up` ran on: the rung its next attempt starts from
+    # (decision 16). None while no tier up was journaled, or while the journal is older than the rung ladder and
+    # its launches carry no `rung`, which the conductor counts by tier ups instead.
+    rung_floor: Optional[int] = None
 
     @property
-    def rung(self):
-        """The rung a failed ticket waits on: the `next` of its last `ticket_failed`; None unless the ticket is `failed`."""
-        return self.rungs[-1] if self.status == "failed" and self.rungs else None
+    def step(self):
+        """The escalation step a failed ticket waits on: the `next` of its last `ticket_failed`; None unless the ticket is `failed`."""
+        return self.steps[-1] if self.status == "failed" and self.steps else None
 
-    def taken(self, rung):
-        """How many times the ladder sent this ticket to `rung` since it was last rerun."""
-        return self.rungs.count(rung)
+    def taken(self, step):
+        """How many times the chain sent this ticket to `step` since it was last rerun."""
+        return self.steps.count(step)
 
     @property
     def attempt(self):
@@ -212,7 +215,7 @@ class TicketView:
         attempt = self._named(payload)
         reason, session_id = payload.get("reason"), payload.get("session_id")
         if attempt is not None and attempt.ended == TICKET_FAILED and reason in GATES:
-            # The escalation ladder's resume takes a failed attempt up again, in the same session (ticket 38); what it
+            # The escalation chain's resume takes a failed attempt up again, in the same session (ticket 38); what it
             # returns is integrated afresh, whatever its failed result was.
             attempt.ended, attempt.integrated = None, False
         if attempt is None or attempt.ended:
@@ -417,13 +420,15 @@ class View:
         elif name in ENDS_ATTEMPT:
             ticket.end(name, payload)
         if name == TICKET_FAILED:
-            ticket.rungs.append(payload.get("next"))
+            ticket.steps.append(payload.get("next"))
             ticket.failure = payload.get("reason")
             failed = ticket._named(payload)
-            if payload.get("next") == "tier_up" and failed is not None and failed.difficulty is not None:
-                ticket.floor = max(ticket.floor or 0, failed.difficulty + 1)
+            # A tier up counts rungs, not difficulty levels (decision 16): the next attempt starts one rung
+            # above the rung the failed attempt ran on, whatever the ticket's level says.
+            if payload.get("next") == "tier_up" and failed is not None and failed.rung is not None:
+                ticket.rung_floor = max(ticket.rung_floor or 0, failed.rung + 1)
         elif name == TICKET_RERUN:
-            ticket.rungs, ticket.failure, ticket.floor = [], None, None
+            ticket.steps, ticket.failure, ticket.rung_floor = [], None, None
 
     def _control(self, payload, identifier):
         command = payload.get("command")

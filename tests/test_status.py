@@ -218,8 +218,21 @@ class RenderStatusTest(ProjectTestCase):
 
     def test_the_text_names_every_section(self):
         for heading in ("project", "harness", "frontier (2)", "running tickets (1)", "running jobs (1)",
-                        "open decision tickets (1)", "window", "goal", "tickets", "last 10 events"):
+                        "open decision tickets (1)", "tickets needing a person (1)", "window", "goal", "tickets",
+                        "last 10 events"):
             self.assertIn(heading, self.text)
+
+    def test_a_ticket_waiting_for_a_person_is_listed_with_its_question(self):
+        self.assertIn("#8   Reconcile the two label sources", self.text)
+        self.assertIn("Which label source wins where the two disagree?", self.text)
+        self.assertNotIn("at the ladder's top rung", self.text, "this one was not left on the top rung")
+
+    def test_a_ticket_the_chain_left_on_the_top_rung_says_so(self):
+        """Decision 16: `reason: top_rung` reads as "at the ladder's top rung" in status."""
+        Ledger(self.project).append_event(
+            "ticket_needs_human", {"ticket": 8, "question": "it failed on rung 7", "reason": "top_rung"}, ticket=8)
+        text = render_status(status_view(self.project))
+        self.assertIn("#8   Reconcile the two label sources  (at the ladder's top rung)", text)
 
     def test_the_text_names_the_frontier_tickets_by_title(self):
         self.assertIn("Plot the learning curves", self.text)

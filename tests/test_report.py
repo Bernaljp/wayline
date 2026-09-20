@@ -382,6 +382,7 @@ class ReportTest(RunCase):
         self.assertIn("Decision ticket 11", second)
         self.assertIn("Ticket 7, *Convert the second reference's PDF*, needs a human: Install the converter venv", second)
         self.assertNotIn("Decision ticket 8", second)
+        self.assertNotIn("at the ladder's top rung", second, "no ticket here ended on the top rung")
 
     def test_the_goal_trajectory_is_drawn_with_the_discarded_change(self):
         third = self.section(3)
@@ -673,6 +674,19 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(role.kinds, ["writing"])
         self.assertFalse(role.may_judge)
         self.assertIn("C8", role.system_prompt)
+
+
+
+class TopRungItemTest(RunCase):
+    """Decision 16: a ticket the escalation chain left with nowhere to climb says so among the `needs_human` items."""
+
+    def test_the_needs_human_item_names_the_top_rung(self):
+        self.book.append_event("ticket_needs_human",
+                               {"ticket": 7, "question": "it failed on rung 7, the rung ladder's top rung: no",
+                                "reason": "top_rung"}, ticket=7)
+        self.render()
+        second = self.section(2)
+        self.assertIn("Ticket 7, *Convert the second reference's PDF*, needs a human, at the ladder's top rung:", second)
 
 
 if __name__ == "__main__":

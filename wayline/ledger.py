@@ -239,7 +239,7 @@ EVENTS = {
     TICKET_ACCEPTED: (K_TICKET,),
     TICKET_FAILED: (K_TICKET, K_ATTEMPT, K_REASON, K_NEXT),
     TICKET_BLOCKED: (K_TICKET, K_PATH),
-    TICKET_NEEDS_HUMAN: (K_TICKET, K_QUESTION),
+    TICKET_NEEDS_HUMAN: (K_TICKET, K_QUESTION, K_REASON),
     TICKET_CANCELLED: (K_TICKET, K_BY),
     TICKET_RERUN: (K_TICKET, K_BY),
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
@@ -287,6 +287,8 @@ PAYLOAD_ENUMS = {
     (ACCEPTANCE, K_WHERE): ("worktree", "rebased", "main"),
     (INTEGRATED, K_RESOLVED_BY): ("none", "integrator"),
     (TICKET_FAILED, K_NEXT): ("resume", "tier_up", "split", "needs_human"),
+    # Why a ticket was handed to a person when the escalation chain named it (decision 16); absent for any other hand-off.
+    (TICKET_NEEDS_HUMAN, K_REASON): ("top_rung",),
     (VERDICT, K_SUBJECT_KIND): ("ticket", "claim", "figure", "spec", "dossier", "paper"),
     (PROPOSAL_PARKED, K_REASON): ("radius", "duplicate", "cap", "blockers"),
     (DECISION, K_DECIDED_BY): ("human", "decider", "conductor"),
