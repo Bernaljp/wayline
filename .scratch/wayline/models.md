@@ -50,17 +50,16 @@ Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`low`, `medium`, `
 
 ## Order from here
 
-On 2026-09-17, 52 of the 64 tickets are closed, and this schedule takes the 12 still open from today. The waves they fall into are in "What is left on 2026-09-17" of `.scratch/wayline/waves.md`; earlier schedules are in this file's history. It follows four rules: at most three sessions in flight; one Fable session at a time; a milestone demo runs alone, and the demos land in milestone order so that every tag contains the code of the tags before it (`upgrade` moves a project between tags); 61 lands after 59, since both edit the wave. A step starts when every ticket of the step before it has landed on `master` and is pushed, and the tickets of one step start together, each in its own worktree.
+On 2026-09-21, 59 of the 64 tickets are closed, and this schedule takes the five still open from today. The waves they fall into are in "What is left on 2026-09-21" of `.scratch/wayline/waves.md`; earlier schedules are in this file's history. It follows three rules: at most three sessions in flight; one Fable session at a time; a milestone demo runs alone, and the demos land in milestone order so that every tag contains the code of the tags before it (`upgrade` moves a project between tags). A step starts when every ticket of the step before it has landed on `master` and is pushed, and the tickets of one step start together, each in its own worktree.
 
 | Step | Tickets, with their grade | Notes |
 |---|---|---|
-| 1 | 60 fable high, 59 opus high, 64 opus low | Ready now. 60 is the only Fable session; 59 goes before 61. |
-| 2 | 61 opus high, 62 opus high, 63 opus high | All three wait for 60, and 61 for 59 too. They touch the conductor, pacing, and the launcher; expect one merge between 61 and 62 in the wave. |
-| 3 | 45 fable high | Waits for 64. |
-| 4 | 43 opus high | The M5 overnight demo, alone, started at the top of a window in the evening; it shows the rung ladder live and tags v0.6.0. |
-| 5 | 50 fable high, 51 opus high | Both wait for 43. |
-| 6 | 47 opus high | The M6 demo, alone. |
-| 7 | 53 fable high | The M7 demo and the last ticket, alone. |
+| 1 | 43 opus high | The M5 overnight demo, alone, started in the evening; it tags v0.6.0. Start it on a night that crosses a real window reset, so the run shows the reset instead of a simulated one. |
+| 2 | 50 fable high, 51 opus high | Both wait for 43. |
+| 3 | 47 opus high | The M6 demo, alone. |
+| 4 | 53 fable high | The M7 demo and the last ticket, alone. |
+
+Before step 1, four cheap things de-risk the night. Rehearse the run with the fake worker launcher, which spends no usage. Close ticket 44's clause about quarantined fixtures listed in the retrospective, and ticket 46's half about the retrospective recommending a promotion, both of which waited on ticket 45. Tick ticket 17, whose job command sits on the experimenter role ticket 19 created, and ticket 23, whose live skims ran in the M3 demo. The owner's own checks still owed are ticket 13's timer, phone notification, and uninstall, ticket 35's decision answered through the tunnel, ticket 11's impressions through the tunnel, and ticket 29's read of the live position memo; the M5 run itself covers ticket 58's renders over a live run, ticket 40's writer on Fable, and ticket 10's rule about what keeps running while a run is paused.
 
 ## Per ticket
 

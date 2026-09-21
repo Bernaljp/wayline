@@ -6,19 +6,17 @@ Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026
 
 A ticket can start when every ticket in its **Blocked by** line is done: its commit is on `master`, `python -m unittest` passes there, its local `Status:` line is updated, and its GitHub issue is closed. Tickets in the same wave never depend on each other, so any subset of a wave can run at the same time. A ticket may also start as soon as its own blockers are done, even if the rest of its wave is not; the waves below are the earliest start, not a required batch.
 
-## What is left on 2026-09-17
+## What is left on 2026-09-21
 
-52 of the 64 tickets are closed: 01 to 42, 44, 46, 48, 49, 52, and 54 to 58. Counting those as done, the 12 still open fall into five waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, step by step with each ticket's model and effort, is "Order from here" in `.scratch/wayline/models.md`.
+59 of the 64 tickets are closed: every one but 43, 47, 50, 51, and 53. Counting those as done, the five still open fall into three waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, step by step with each ticket's model and effort, is "Order from here" in `.scratch/wayline/models.md`.
 
 | Wave left | Tickets | Notes |
 |---|---|---|
-| 1 | 59 (M5, #126), 60 (M5, #143), 64 (M6, #147) | Ready now. 60 is the rung ladder, the first finer tiers ticket; 64 is the ladder consent. |
-| 2 | 45 (M6, #46), 61 (M5, #144), 62 (M5, #145), 63 (M5, #146) | 61, 62, and 63 wait for 60, and 45 for 64. 59 and 61 both edit the conductor's wave: 59 first, or expect one merge. |
-| 3 | 43 (M5, #44) | The overnight run; it now also waits for the four rung ladder tickets and ships the ladder as v0.6.0. |
-| 4 | 47 (M6, #48), 50 (M7, #51), 51 (M7, #52) | 47 is the M6 demo: after 50 and 51. |
-| 5 | 53 (M7, #54) | The last ticket. |
+| 1 | 43 (M5, #44) | The overnight run, ready now. It tags v0.6.0, and it has to cross a window boundary. |
+| 2 | 47 (M6, #48), 50 (M7, #51), 51 (M7, #52) | All three wait for 43. 47 is the M6 demo, and it comes after 50 and 51. |
+| 3 | 53 (M7, #54) | The last ticket and the M7 demo. |
 
-What is left of the critical path is 60 -> 61 -> 43 -> 50 -> 53, five tickets (62 and 63 sit beside 61 and gate 43 the same way).
+What is left of the critical path is 43 -> 50 -> 53, three tickets.
 
 ## Waves (earliest start)
 
