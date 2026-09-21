@@ -1,9 +1,9 @@
 {
   "id": "evolve",
   "scope_kind": "global",
-  "capability_summary": "A shell until ticket 45: turns owner feedback and the post-run retrospective into change records, one harness ticket per record, and a fixture that fails on the old behaviour.",
+  "capability_summary": "The interactive half of the evolve loop: files the owner's feedback, runs wayline evolve over it, and reads back the change records, the harness tickets, and the fixtures that will prove them.",
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "large",
   "fixtures": ["skill/wayline-evolve"],
-  "sha256": "56f6b9d3ef526f42521691cd152b78e7c59f221863cafb317b18263aa9593bba"
+  "sha256": "905cf35d5c0fa946021292e2ee71613a791ef395cd45fa63ad1c8b37af9e6dd8"
 }

@@ -134,6 +134,19 @@
     </div>
   </section>
 
+  <section id="evolve" aria-labelledby="evolve-heading">
+    <div class="view-head"><h2 id="evolve-heading">Feedback</h2><p class="note">Say what should have gone better. The evolve loop turns it into change records, harness tickets, and fixtures.</p></div>
+    <div class="panel">
+      <form id="feedback-form" class="answer-form">
+        <textarea id="feedback-text" rows="3" required placeholder="what should have gone better, in your own words" aria-label="feedback for the evolve loop"></textarea>
+        <button type="submit" id="feedback-send" class="action primary">file feedback</button>
+      </form>
+      <div id="changes-body">
+        <p class="state loading">reading the feedback</p>
+      </div>
+    </div>
+  </section>
+
   <section id="outputs" aria-labelledby="outputs-heading">
     <div class="view-head"><h2 id="outputs-heading">Outputs</h2><p class="note">Every file is downloadable; markdown and images open below.</p></div>
     <div id="outputs-body" class="panel">

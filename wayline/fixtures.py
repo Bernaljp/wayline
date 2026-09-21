@@ -56,7 +56,7 @@ from wayline.registry import FIXTURE_KINDS
 __all__ = [
     "FixtureError", "Check", "Sample", "FixtureRun", "SuiteResult", "CHECKS", "JUDGE_ROLE", "VERDICT_SCHEMA",
     "jsonpath", "structural_checks", "subject_sha256", "input_hash", "context_manifest", "render_input",
-    "discover", "load_fixture", "run", "run_fixture", "record", "describe", "fixture_command",
+    "discover", "load_fixture", "run", "run_fixture", "record", "set_baseline", "describe", "fixture_command",
 ]
 
 FIXTURES = "fixtures"
@@ -1449,15 +1449,29 @@ def record(project, session_id, kind, slug, root=HARNESS_ROOT, subject_path=None
     if runs:
         outcome = run_fixture(directory, root, policy, use_cache=False, samples=runs)
         print("  baseline: " + describe(outcome))
-        fixture = load_fixture(directory)
-        fixture["baseline"] = {"recorded_at": now_ts(), "subject_sha256": fixture["subject"]["sha256"],
-                               "input_hash": fixture["input"]["input_hash"], "structural": _score(outcome.structural, outcome.n),
-                               "judged": _score(outcome.judged, outcome.n), "passed": outcome.passed, "unstable": _unstable(outcome)}
-        _write_json(directory / "fixture.json", fixture)
+        fixture = set_baseline(directory, outcome)
         if fixture["baseline"]["unstable"]:
             print("  the baseline is unstable (structural %s, judged %s): tighten the checks or the rubric before it gates anything"
                   % (fixture["baseline"]["structural"], fixture["baseline"]["judged"] or "-"))
     return directory
+
+
+def set_baseline(directory, outcome, root=None):
+    """Write `outcome` into `fixture.json` as the fixture's baseline; returns the record as written.
+
+    The recorder sets it from the first runs of a fixture it just recorded. With `root`, the subject is hashed
+    again there first: the evolve loop (ticket 45) sets the baseline of a fixture born from feedback on the
+    changed subject, the one the fixture passes on, not on the subject it was recorded against.
+    """
+    directory = Path(directory)
+    fixture = load_fixture(directory)
+    if root is not None:
+        fixture["subject"]["sha256"] = subject_sha256(fixture, root)
+    fixture["baseline"] = {"recorded_at": now_ts(), "subject_sha256": fixture["subject"]["sha256"],
+                           "input_hash": fixture["input"]["input_hash"], "structural": _score(outcome.structural, outcome.n),
+                           "judged": _score(outcome.judged, outcome.n), "passed": outcome.passed, "unstable": _unstable(outcome)}
+    _write_json(directory / "fixture.json", fixture)
+    return fixture
 
 
 def _reduced_trace(path):

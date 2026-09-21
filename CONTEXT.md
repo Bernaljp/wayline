@@ -116,6 +116,22 @@ _Avoid_: ladder policy, permission
 The loop that turns owner feedback into tested, versioned harness changes.
 _Avoid_: self-improvement, learning
 
+**Change record**:
+One change the evolve loop proposes: what was observed with its journal evidence, what is desired, the mechanism, local or global, the risk, and the fixture that will prove it.
+_Avoid_: patch, improvement, fix
+
+**Harness ticket**:
+The ticket of kind `harness` filed for one change record; a local one is integrated into the project, a global one works on `evolve/<id>` of the harness repository and waits for the owner.
+_Avoid_: meta ticket, self ticket
+
+**Evolver**:
+The max-effort, read-only session that writes change records from the pending feedback and the retrospective.
+_Avoid_: improver, optimizer
+
+**Retrospective**:
+What code computes from the journal after a run ended, filed as feedback for the evolver.
+_Avoid_: post-mortem, review
+
 **Dashboard**:
 The local web view of the ledger and the conductor, a client of the CLI functions, reached through a tunnel.
 _Avoid_: UI, app, GUI

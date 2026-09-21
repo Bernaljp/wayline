@@ -1805,10 +1805,13 @@ def graph_answered(project, ledger, fields, text):
     `blocking: all` ticket that is closed holds nothing; so every path an answer takes (`answer`, the file,
     the decider) calls this under the ledger's lock, and a graph the owner sent back runs nothing before
     `wayline plan` cuts it again. Any other ticket's answer is left alone. Returns the ids parked.
-    """
-    from wayline import plan  # the plan module imports this one
 
-    return plan.graph_sent_back(project, ledger, fields, text)
+    The same holds for the ladder decision of a change record (ticket 45): an answer that does not approve the
+    change to the rung ladder parks its harness ticket here, before the closed decision can release it.
+    """
+    from wayline import changes, plan  # both modules import this one
+
+    return list(plan.graph_sent_back(project, ledger, fields, text) or []) + changes.ladder_answered(project, fields, text, ledger=ledger)
 
 
 def journal_written_answers(project, ledger):

@@ -1,0 +1,27 @@
+{
+  "records": [
+    {
+      "feedback": "001-captions-overclaim",
+      "title": "Hold figure captions to the table",
+      "observed": {
+        "text": "The caption of figure 2 says the method wins everywhere; the table shows two ties.",
+        "journal_events": [
+          "research/journal.jsonl#L212"
+        ]
+      },
+      "desired": "A caption claims only what the table it draws from shows.",
+      "mechanism": "skill",
+      "scope_kind": "local",
+      "risk": "low",
+      "target": ".claude/skills/wayline-caption-claims/",
+      "keys": [],
+      "fixture": "skill/wayline-caption-claims",
+      "notes": "Record the fixture from the writer's session of ticket 7.",
+      "difficulty": 2,
+      "acceptance": [
+        "test -f .claude/skills/wayline-caption-claims/SKILL.md"
+      ]
+    }
+  ],
+  "recommendations": []
+}

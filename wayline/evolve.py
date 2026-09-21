@@ -46,7 +46,8 @@ __all__ = [
     "EvolveError", "UNPINNED_ENV", "KINDS", "PROMOTE_AFTER_TICKETS",
     "parse_tag", "next_tag", "harness_tags", "tags_at_head", "pin_problem",
     "changelog_entries", "entries_between", "upgrade", "render_upgrade", "upgrade_command", "migrate_difficulty", "nearest_rung",
-    "main_branch", "promote", "run_check", "render_promotion", "promote_command",
+    "main_branch", "promote", "run_check", "run_checks", "render_promotion", "promote_command",
+    "git", "identity", "exists", "worktree_path", "add_unreleased", "release",
     "promotion_candidates", "render_recommendations",
 ]
 
@@ -686,6 +687,17 @@ def promote(kind, name, project, harness_root=None, tag=None, run=None):
     return _branch(harness_root, main, project, base, run or run_check)
 
 
+def run_checks(worktree, run=None):
+    """The harness tests and the full fixture suite, run in a worktree of the harness repository: what gates every global change."""
+    checks = []
+    for check_name, argv in (("tests", [sys.executable, "-m", "unittest"]),
+                             ("fixtures", [sys.executable, "-m", "wayline", "fixture", "run", "--suite", "--root", str(worktree)])):
+        code, output = (run or run_check)(argv, worktree)
+        checks.append({"name": check_name, "command": argv, "exit_code": code,
+                       "tail": "\n".join(output.splitlines()[-CHECK_TAIL_LINES:])})
+    return checks
+
+
 def _branch(harness_root, main, project, base, run):
     kind, name, branch, worktree = base["kind"], base["name"], base["branch"], Path(base["worktree"])
     plan = _plan(kind, name, project, harness_root, main)
@@ -710,12 +722,7 @@ def _branch(harness_root, main, project, base, run):
         raise
     commit = _git(worktree, "rev-parse", "HEAD").stdout.strip()
 
-    checks = []
-    for check_name, argv in (("tests", [sys.executable, "-m", "unittest"]),
-                             ("fixtures", [sys.executable, "-m", "wayline", "fixture", "run", "--suite", "--root", str(worktree)])):
-        code, output = run(argv, worktree)
-        checks.append({"name": check_name, "command": argv, "exit_code": code,
-                       "tail": "\n".join(output.splitlines()[-CHECK_TAIL_LINES:])})
+    checks = run_checks(worktree, run)
     return dict(base, state="branched", commit=commit, checks=checks, passed=all(item["exit_code"] == 0 for item in checks),
                 fixtures=plan.fixture_ids, notes=plan.notes, next=[
                     "review %s and merge it into the harness %s; then run wayline promote %s %s again, and it tags the result"
@@ -813,6 +820,11 @@ def promote_command(args):
         return 1
     print(render_promotion(report))
     return 1 if report["state"] == "branched" and not report["passed"] else 0
+
+
+# What `wayline.changes` (ticket 45) shares with a promotion: a global change is branched from the harness `main`
+# into a worktree under `~/.wayline/worktrees/`, checked there, and tagged once `main` holds it, the same way.
+git, identity, exists, worktree_path, add_unreleased, release = _git, _identity, _exists, _worktree, _add_unreleased, _release
 
 
 # --- the recommendation -----------------------------------------------------------------------------

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "change",
+  "description": "One change record of the evolve loop (Implementation Decisions 12), kept as research/changes/<id>.json and journaled as change_record: what the owner or the retrospective observed, with the journal lines that show it, what should happen instead, the mechanism that would make it so, whether the change is local to the project or global to the harness, its risk, and the fixture that will prove it. The evolver writes the content; code gives it the id, the status, the harness ticket, and, for a global change, the branch and the checks. A record whose mechanism is policy and whose keys include tiers or difficulty changes the rung ladder and is always risk high (decision 16).",
+  "type": "object",
+  "required": ["id", "observed", "desired", "mechanism", "scope_kind", "risk", "fixture", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^[0-9]{3}-[a-z0-9]+(-[a-z0-9]+)*$", "description": "a number and a slug of the title; a global change works on the harness branch evolve/<id>"},
+    "title": {"type": "string", "pattern": "\\S"},
+    "feedback": {"type": ["string", "null"], "description": "the feedback item the record answers, by its id; a retrospective is an item like any other"},
+    "observed": {
+      "type": "object",
+      "required": ["text", "journal_events"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {"type": "string", "pattern": "\\S", "description": "what happened, in the owner's terms"},
+        "journal_events": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^research/journal\\.jsonl#L[0-9]+$"},
+          "description": "the journal lines that show it, as locators; code checks that each names a line the journal holds"
+        }
+      }
+    },
+    "desired": {"type": "string", "pattern": "\\S", "description": "what should happen instead, which the fixture encodes"},
+    "mechanism": {"type": "string", "enum": ["prompt", "skill", "role", "policy", "hook", "code"]},
+    "scope_kind": {"type": "string", "enum": ["local", "global"]},
+    "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+    "target": {"type": "string", "pattern": "\\S", "description": "the path the change is made at: the project's .claude/skills/<name>/, .claude/agents/<role>.md, or harness.json for a local change; a path in the harness repository for a global one"},
+    "keys": {"type": "array", "items": {"type": "string", "pattern": "^[a-z_]+$"}, "description": "the top-level policy keys a policy change touches; tiers or difficulty among them makes it a change to the rung ladder"},
+    "fixture": {"type": "string", "pattern": "^(prompt|role|skill|verifier|conductor)/[a-z0-9][a-z0-9-]*$", "description": "the fixture that will prove it, <kind>/<slug>: it fails on the old subject and passes on the new one before the change is accepted"},
+    "status": {
+      "type": "string",
+      "enum": ["open", "proposed", "awaiting_owner", "applied", "declined"],
+      "description": "open: its harness ticket is filed; proposed: a global change under autonomy autonomous, written into REPORT.md and never applied; awaiting_owner: a global change whose branch passed the tests and the fixture suite and waits for the owner's merge; applied: a local change on the project's main, or a global one the harness main holds and a tag covers; declined: the ladder decision said no"
+    },
+    "ticket": {"type": ["integer", "null"], "description": "the harness ticket filed for it; null for a proposal"},
+    "decision": {"type": ["integer", "null"], "description": "the decision ticket of class ladder that holds a change to the rung ladder"},
+    "branch": {"type": ["string", "null"], "description": "evolve/<id> in the harness repository, for a global change"},
+    "worktree": {"type": ["string", "null"], "description": "where that branch is checked out, as a worktree of the harness repository"},
+    "commit": {"type": ["string", "null"], "description": "the branch's head when the checks ran"},
+    "checks": {
+      "type": "array",
+      "description": "the harness tests and the full fixture suite as they ran on a global change's branch",
+      "items": {
+        "type": "object",
+        "required": ["name", "exit_code"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "command": {"type": "array", "items": {"type": "string"}},
+          "exit_code": {"type": "integer"},
+          "tail": {"type": "string"}
+        }
+      }
+    },
+    "difficulty": {"type": "integer", "minimum": 1, "maximum": 5, "description": "the difficulty its harness ticket is filed at, as the evolver graded it"},
+    "acceptance": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the machine criteria its harness ticket is filed with; kept here so a proposal applied later is filed as it would have been"},
+    "proof": {
+      "type": ["object", "null"],
+      "description": "the fixture as the runner scored it on the old subject, where it must fail, and on the new one, where it must pass",
+      "required": ["old", "new"],
+      "additionalProperties": false,
+      "properties": {
+        "old": {"type": "string"},
+        "new": {"type": "string"},
+        "head": {"type": "string", "description": "the head of the ticket branch once the baseline was committed; a branch still at it is not proven again"}
+      }
+    },
+    "tag": {"type": ["string", "null"], "description": "the harness tag that covers an applied global change"},
+    "notes": {"type": "string"},
+    "created": {"type": "string"}
+  }
+}

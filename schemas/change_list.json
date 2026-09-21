@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "change_list",
+  "description": "What one evolver session returns (Implementation Decisions 12): the change records it proposes for the feedback and the retrospective it was shown, the items it found nothing to change for, and what it recommends to the owner. The session writes nothing; code gives each record its id and status, forces risk high on a change to the rung ladder, checks the evidence and the target, keeps the record as research/changes/<id>.json, and files one harness ticket for it. The schema holds the shape; the checks of wayline.changes hold the rest, so a list that fails them is returned to the evolver with the failures rather than refused as malformed.",
+  "type": "object",
+  "required": ["records", "dismissed", "recommendations"],
+  "additionalProperties": false,
+  "properties": {
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["feedback", "title", "observed", "desired", "mechanism", "scope_kind", "risk", "target", "keys", "fixture", "difficulty", "acceptance", "notes"],
+        "additionalProperties": false,
+        "properties": {
+          "feedback": {"type": "string", "pattern": "\\S", "description": "the id of the feedback item this record answers, as the prompt lists it"},
+          "title": {"type": "string", "pattern": "\\S", "description": "a short imperative title; the record's id and the harness ticket's title are cut from it"},
+          "observed": {
+            "type": "object",
+            "required": ["text", "journal_events"],
+            "additionalProperties": false,
+            "properties": {
+              "text": {"type": "string", "pattern": "\\S"},
+              "journal_events": {"type": "array", "items": {"type": "string", "pattern": "^research/journal\\.jsonl#L[0-9]+$"}}
+            }
+          },
+          "desired": {"type": "string", "pattern": "\\S"},
+          "mechanism": {"type": "string", "enum": ["prompt", "skill", "role", "policy", "hook", "code"]},
+          "scope_kind": {"type": "string", "enum": ["local", "global"]},
+          "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+          "target": {"type": "string", "pattern": "\\S"},
+          "keys": {"type": "array", "items": {"type": "string", "pattern": "^[a-z_]+$"}, "description": "for a policy change, the top-level policy keys it touches; empty otherwise"},
+          "fixture": {"type": "string", "pattern": "^(prompt|role|skill|verifier)/[a-z0-9][a-z0-9-]*$", "description": "the id of the fixture the harness ticket will record, <kind>/<slug>"},
+          "difficulty": {"type": "integer", "minimum": 1, "maximum": 5},
+          "acceptance": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "shell commands that pass once the change is made and fail before it, run in the worktree"},
+          "notes": {"type": "string", "description": "what the worker who makes the change should know: the session to record the fixture from, the checks that encode the desired behaviour"}
+        }
+      }
+    },
+    "dismissed": {
+      "type": "array",
+      "description": "the feedback items no record answers, each with why",
+      "items": {
+        "type": "object",
+        "required": ["feedback", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "feedback": {"type": "string", "pattern": "\\S"},
+          "reason": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    },
+    "recommendations": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "what the owner may want to do that is theirs alone, such as promoting a local skill with a good record"}
+  }
+}

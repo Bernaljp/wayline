@@ -36,7 +36,8 @@ alone must never be enough to act. So the URL `serve` prints carries the token o
 page reads it from its own address and sends it with each action.
 
 **The actions** (ticket 35) are `POST /api/projects/<id>/actions/<name>` for `answer`, `autonomy`,
-`pause`, `resume`, `switch`, `cancel`, `rerun`, `pacing`, `model_fallback` (ticket 57), `ladder_changes` (ticket 64), and
+`pause`, `resume`, `switch`, `cancel`, `rerun`, `pacing`, `model_fallback` (ticket 57), `ladder_changes` (ticket 64),
+`feedback` (ticket 45: the feedback form, filed as `wayline feedback` files it, read back by `GET .../changes`), and
 `intake`. Each calls the function its
 verb calls and nothing else, so no action runs a shell. A JSON object carries the arguments, and
 `intake` takes the dropped file itself as the body, with its name in `X-Wayline-Filename`. The reply
@@ -126,7 +127,7 @@ JSON_TYPE = "application/json; charset=utf-8"
 TEXT_TYPE = "text/plain; charset=utf-8"
 
 # The actions of Implementation Decisions 8 this dashboard takes (ticket 35), in the order the spec lists them.
-ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake")
+ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake", "feedback")
 ACTION_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/actions/(?P<name>[^/]+)/?$")
 # The header an intake drop names its file in, and the largest JSON body any other action reads.
 FILENAME_HEADER = "X-Wayline-Filename"
@@ -336,7 +337,8 @@ def ledger_snapshot(project):
     """One `(st_mtime_ns, st_size)` per ledger file: the change detection of decision 8.
 
     The directories scanned are the ones the read-only views read: `harness.json`, the files at the
-    root of `research/`, `research/tickets/`, and `research/jobs/`. Session streams and job logs are
+    root of `research/`, `research/tickets/`, `research/jobs/`, and the evolve loop's `research/feedback/`
+    and `research/changes/` (ticket 45). Session streams and job logs are
     tailed by byte offset instead, which needs no snapshot. Dot files are skipped: they are the
     ledger's lock and the temp files an atomic write leaves for a few milliseconds, neither of which
     is content a view shows.
@@ -345,7 +347,7 @@ def ledger_snapshot(project):
     research = project / RESEARCH
     values = {}
     _stat_into(values, project / HARNESS_JSON, HARNESS_JSON)
-    for relative in ("", "tickets", "jobs"):
+    for relative in ("", "tickets", "jobs", "feedback", "changes"):
         prefix = "/".join(part for part in (RESEARCH, relative) if part)
         try:
             with os.scandir(research / relative) as entries:
@@ -1156,6 +1158,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/outputs/?$"), "api_outputs"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/download/(?P<relpath>.+)$"), "api_download"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/decisions/?$"), "api_decisions"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/changes/?$"), "api_changes"),
         (ACTION_ROUTE, "api_action_get"),
     )
 
@@ -1419,6 +1422,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return None
         return self._json(decisions.decisions_view(path), tag)
 
+    def api_changes(self, query, project):
+        """The evolve loop's view (ticket 45): the feedback filed and what was made of each item, and the change records."""
+        from wayline import changes  # the evolve loop imports the registry and the fixtures, which no other view needs
+        path = self._project(project)
+        tag = etag("changes", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        if self._not_modified(tag):
+            return None
+        return self._json(changes.changes_view(path), tag)
+
     def api_action_get(self, query, project, name):
         """An action asked for with `GET`: 405, with the method it takes."""
         return self._send(HTTPStatus.METHOD_NOT_ALLOWED, b"an action is a POST with the token in the X-Wayline-Token header\n",
@@ -1631,6 +1643,13 @@ def run_action(name, project, body, headers=None, server=None):
     if name == "ladder_changes":
         fields = _fields(body, ("ladder_changes",))
         return HTTPStatus.OK, set_ladder_changes(project, _string(fields, "ladder_changes"), by="dashboard")
+    if name == "feedback":
+        from wayline import changes  # the evolve loop imports the registry and the fixtures, which no view needs
+        fields = _fields(body, ("text",))
+        try:
+            return HTTPStatus.OK, changes.file_feedback(project, _string(fields, "text"), source="dashboard")
+        except changes.ChangeError as failure:
+            raise DashboardError(str(failure)) from None
     if name == "switch":
         _fields(body)
         return _switch(project, server)

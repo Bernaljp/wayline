@@ -249,6 +249,7 @@ function select(id) {
   replace(document.getElementById('graph-body'), [loadingState('drawing the graph')]);
   replace(document.getElementById('outputs-body'), [loadingState('indexing the outputs')]);
   replace(document.getElementById('decisions-open'), [loadingState('reading the open decision tickets')]);
+  replace(document.getElementById('changes-body'), [loadingState('reading the feedback')]);
   controlsState('reading the controls');
   for (const tab of document.querySelectorAll('button.tab')) {
     tab.setAttribute('aria-current', String(tab.dataset.id === id));
@@ -264,6 +265,7 @@ function select(id) {
   dirty.model_fallback = false;
   dirty.ladder_changes = false;
   every('decisions', state.pollViews, loadDecisions);
+  every('changes', state.pollViews, loadChanges);
   showGraph();
   startTail();
 }
@@ -1302,6 +1304,7 @@ function refreshViews() {
   loadProjects();
   loadOverview();
   loadDecisions();
+  loadChanges();
   loadGraph();
 }
 
@@ -1417,6 +1420,73 @@ function ticketActions(f) {
     return button;
   });
   return el('p', { class: 'inline' }, buttons);
+}
+
+// --- the feedback form and the evolve loop's view (ticket 45) -----------------------------------
+
+// What the evolve loop made of each item, in the owner's terms.
+function feedbackState(item) {
+  if (item.journaled === false) return 'dropped in research/feedback/; journaled when the evolve loop next looks';
+  if (!item.read) return 'waits for the evolver';
+  if ((item.records || []).length) return `became ${item.records.join(', ')}`;
+  return item.dismissed ? `dismissed: ${item.dismissed}` : 'read; no change came of it';
+}
+
+function changeState(record) {
+  const ticket = record.ticket === null || record.ticket === undefined ? '' : ` (ticket #${record.ticket}${record.ticket_status ? `, ${record.ticket_status}` : ''})`;
+  const said = {
+    open: `its harness ticket is filed${ticket}`,
+    proposed: `proposed, not applied: wayline evolve --apply ${record.id}`,
+    awaiting_owner: `${record.branch} passed the tests and the fixture suite; merge it, then run wayline evolve`,
+    applied: record.tag ? `applied, tagged ${record.tag}` : `applied${ticket}`,
+    declined: 'declined',
+  };
+  return said[record.status] || record.status;
+}
+
+async function loadChanges() {
+  const project = state.project;
+  if (!project) return;
+  try {
+    const view = await get(projectPath('/changes'));
+    if (view && project === state.project) renderChanges(view);
+  } catch (failure) {
+    if (project === state.project) replace(document.getElementById('changes-body'), [errorState(failure)]);
+  }
+}
+
+function renderChanges(view) {
+  const items = view.feedback || [];
+  const records = view.changes || [];
+  const parts = [subhead('feedback', items.length)];
+  parts.push(tableOrNone(['item', 'from', 'what came of it', 'when'], items.map((item) => [
+    item.id, item.source, feedbackState(item), (item.ts || '').replace('T', ' ').replace('Z', ''),
+  ]), 'no feedback has been filed on this project yet', ['short', 'short', 'clamp', 'short']));
+  parts.push(subhead('change records', records.length));
+  parts.push(tableOrNone(['record', 'change', 'mechanism', 'where', 'risk', 'fixture', 'state'], records.map((record) => [
+    record.id, record.desired || '', `${record.mechanism}, ${record.scope_kind}`, record.target || '', record.risk, record.fixture, changeState(record),
+  ]), 'no change record yet: the evolver writes them from the feedback above', ['short', 'clamp', 'short', 'short', 'short', 'short', 'clamp']));
+  replace(document.getElementById('changes-body'), parts);
+}
+
+function wireFeedback() {
+  const form = document.getElementById('feedback-form');
+  const text = document.getElementById('feedback-text');
+  const send = document.getElementById('feedback-send');
+  send.disabled = !TOKEN;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const words = text.value.trim();
+    if (!words) {
+      say('feedback: say what should have gone better', true);
+      return;
+    }
+    send.disabled = true;
+    const reply = await perform('feedback', { text: words },
+      (done) => `feedback ${done.id} filed: a running conductor hands it to the evolver at its next wave, and wayline evolve does so by hand`);
+    if (reply) text.value = '';
+    send.disabled = !TOKEN;
+  });
 }
 
 // --- the decisions view (ticket 35) ------------------------------------------------------------
@@ -1786,6 +1856,7 @@ wireTicketView();
 wireGraph();
 wireControls();
 wireIntake();
+wireFeedback();
 intakeEmpty();
 if (!TOKEN) say('Actions need the dashboard token: open the URL wayline serve printed, which carries it. The views work without it.');
 every('projects', 5, loadProjects);

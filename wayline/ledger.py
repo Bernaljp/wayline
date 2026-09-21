@@ -298,7 +298,8 @@ PAYLOAD_ENUMS = {
     (STALL, K_ACTION): ("replan", "stop"),
     (NOTIFIED, K_CHANNEL): ("notify-send", "hermes", "none"),
     (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes"),
-    (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file"),
+    # `retrospective` is the one code files after a run ended (ticket 45), read by the evolver like the owner's.
+    (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective"),
     (CHANGE_RECORD, K_SCOPE_KIND): ("local", "global"),
 }
 

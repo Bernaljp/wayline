@@ -1,0 +1,29 @@
+{
+  "id": "001-hold-figure-captions-to-the-table",
+  "title": "Hold figure captions to the table",
+  "feedback": "001-captions-overclaim",
+  "observed": {
+    "text": "It overclaimed.",
+    "journal_events": [
+      "line 212"
+    ]
+  },
+  "desired": "A caption claims only what the table it draws from shows.",
+  "mechanism": "skill",
+  "scope_kind": "local",
+  "risk": "low",
+  "target": ".claude/skills/wayline-caption-claims/",
+  "keys": [],
+  "fixture": "skill/wayline-caption-claims",
+  "status": "open",
+  "ticket": 14,
+  "decision": null,
+  "branch": null,
+  "worktree": null,
+  "commit": null,
+  "checks": [],
+  "proof": null,
+  "tag": null,
+  "notes": "Record the fixture from the writer's session of ticket 7.",
+  "created": "2026-09-20T10:00:00Z"
+}

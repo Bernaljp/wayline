@@ -4,6 +4,33 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+- Feedback, change records, and harness tickets (ticket 45; Implementation Decisions 12 and 16). The owner
+  says what should have gone better and the harness changes itself under test. Feedback arrives from
+  `wayline feedback "<text>"`, `wayline evolve "<text>"`, the dashboard's feedback form (the `feedback`
+  action, read back by the `changes` view), or a file dropped in `research/feedback/`, each journaled as
+  `feedback` with its source; after every `run_ended`, `wayline run` files a retrospective over the journal
+  (failures, escalations, stalls, rework, turns per closed ticket, skills below the registry's median
+  first-time pass rate, quarantined fixtures) as one more item, source `retrospective`, unless the run
+  launched only harness tickets. The new `evolver` role (`fable xhigh`, read-only, `change_list` schema)
+  turns the pending items into change records, kept as `research/changes/<id>.json` under the new `change`
+  schema and journaled as `change_record`; its list passes Type-A checks (evidence the journal holds, a
+  target the mechanism and scope allow, a fixture that does not exist yet) with one return. Code files one
+  `harness` ticket per record through the conductor: a local change targets `.claude/skills/wayline-<name>/`,
+  `.claude/agents/<role>.md`, or `harness.json` and is integrated like any ticket; a global change works on
+  `evolve/<id>`, a worktree of the harness repository under `~/.wayline/worktrees/`, runs the harness tests
+  and the full fixture suite there, and waits as `awaiting_owner` until the owner merges it, after which
+  `wayline evolve` tags the harness the way a promotion does. Under autonomy `autonomous` a global change
+  is only proposed: no ticket, a line in `REPORT.md`, and `wayline evolve --apply <id>` for the owner. A
+  `policy` change whose keys include `tiers` or `difficulty` is always `risk: high` and waits on a decision
+  ticket of class `ladder`, human-only unless the ladder consent is `auto`; an answer that does not approve
+  parks its harness ticket at once. Before a harness ticket is integrated the conductor runs its fixture on
+  the subject as it was, where it must fail, and on the change, where it must pass, and commits the passing
+  run as the fixture's baseline, which is what makes a model-authored skill assignable. The conductor now
+  reads the policy again whenever `harness.json` changes, launches the evolver in the wave that finds
+  feedback pending, and commits a `harness.json` the owner's switches left uncommitted before a ticket that
+  edits it branches from `main`. The items a session reads are claimed for its length, a list that cannot be filed
+  marks its items read, and a done global harness ticket is owed no verdict by the conductor's restart or the tick
+  (`gates.owed_asks`, `tickets.works_in_the_harness`). The `wayline-evolve` skill is no longer a shell.
 - The model that ran (ticket 63; Implementation Decision 16). Every session now runs with
   `CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP=1`, so a retired name such as `claude-opus-4-1` fails
   instead of running, silently and at the newer model's price, on its family's newest. The launcher
