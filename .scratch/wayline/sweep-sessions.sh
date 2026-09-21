@@ -65,10 +65,25 @@ while IFS=$'\t' read -r path ref lock; do
     for proc in /proc/[0-9]*; do
         cwd=$(readlink "$proc/cwd" 2>/dev/null) || continue
         case "$cwd" in
-            "$path"|"$path"/*) grep -qx "${proc#/proc/}" <<< "$pids" || others="$others ${proc#/proc/}" ;;
+            "$path"|"$path"/*) ;;
+            *) continue ;;
         esac
+        pid=${proc#/proc/}
+        # A session's own children are the session's (its MCP servers inherit its directory), and
+        # `claude rm` stops them with it. Walk each process's parents to tell those from a stranger's.
+        walk=$pid
+        mine=""
+        for _ in 1 2 3 4 5 6 7 8; do
+            if grep -qx "$walk" <<< "$pids"; then mine=yes; break; fi
+            parent=$(sed 's/.*) //' "/proc/$walk/stat" 2>/dev/null | awk '{print $2}')
+            if [ -z "$parent" ] || [ "$parent" = "0" ] || [ "$parent" = "1" ]; then break; fi
+            walk=$parent
+        done
+        if [ -z "$mine" ]; then
+            others="$others $pid ($(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | awk '{print $1}' | xargs -r basename))"
+        fi
     done
-    if [ -n "$others" ]; then echo "kept $name: a program runs in it (pid$others)"; continue; fi
+    if [ -n "$others" ]; then echo "kept $name: another program runs in it:$others"; continue; fi
     if [ -n "$ids" ]; then
         echo "removing $name with its session $(echo $ids)"
         for id in $ids; do act claude rm "$id"; done
