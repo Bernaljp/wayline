@@ -60,7 +60,12 @@ The planner has one protocol per phase; the harness gives you the one below that
    `resources` on a ticket that runs a job; `acceptance.machine`, commands run from the project
    root that fail now and pass once the work is done (a file that must exist, a test that must
    pass, a script that must print a number), and `acceptance.quality`, the one question a verifier
-   answers when the ticket needs a verdict; `context_pack`, the locators the worker reads, smallest
+   answers when the ticket needs a verdict. An `experiment` ticket's machine criteria run when its
+   worker returns `status: running`, before any of its jobs has run, so they check what the worker
+   prepared (the script it committed, its job file, a `--help` or a dry run of the command), never
+   a file a job writes: the jobs' outputs are checked when the jobs exit, against the paths the
+   ticket's `outputs` name, and the `analysis` ticket after it reads them and can hold them to
+   whatever it needs; `context_pack`, the locators the worker reads, smallest
    first (`path`, `path:first-last`, or `path#heading-slug`; the spec's experiment E1 is
    `research/SPEC.md#e1-claims-c1`); `origin`, the locator the ticket comes from; `demo`, what a
    person would watch; `notes` for the worker; and `tags` (data types, libraries, venues) for the

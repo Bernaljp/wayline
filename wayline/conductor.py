@@ -3765,6 +3765,15 @@ class Conductor:
         that it never reads the consent apart from the wave: true takes it on Opus at the table's effort.
         """
         for index, ask in enumerate(entry.asks):
+            if index:
+                # A refusal an earlier verdict of this ticket carried may have paused the run or begun the hold since.
+                on_fable = gates.verifies_on_fable(self.policy, ask.author_model) and self._fable_held()
+                if self._holds_launches() or (on_fable and not self._falls_back()):
+                    self.verdicts.append(_Queued(entry.ticket, entry.attempt, entry.asks[index:]))
+                    if on_fable and not self._holds_launches():
+                        self._held_back("the verdicts on ticket %d" % entry.ticket)
+                    return
+                fall_back = fall_back or on_fable
             try:
                 verdict = gates.verdict_for(ask, project=self.project, harness_root=self.harness_root,
                                             policy=self.policy, ledger=self.ledger, fall_back=fall_back)
@@ -3792,6 +3801,7 @@ class Conductor:
                      % (entry.ticket, ask.verdict_type, "passed" if verdict.passed else "failed",
                         verdict.model or "an unnamed model", verdict.session_id or "unknown",
                         ", falling back from %s" % verdict.fallback_from if verdict.fallback_from else ""))
+            self._heard_verdict(verdict, "ticket %d's %s verdict" % (entry.ticket, ask.verdict_type))
             self._admit_verdict_proposals(entry.ticket, ask, verdict)
             if not verdict.passed:
                 self._reject(entry, verdict)
@@ -3799,6 +3809,23 @@ class Conductor:
                 return
         self._accept_ticket(entry, verdict)
         result.accepted.append(entry.ticket)
+
+    def _heard_verdict(self, verdict, source):
+        """Fold the `rate_limit_event`s a verdict's sessions wrote into the readings, as `_observe` folds a worker's.
+
+        The verdict answered, so it stands; a rejected event among them pauses the run, or on Fable's weekly
+        window begins the hold (decision 15: a refusal can ride a session that still returned its answer).
+        """
+        events = list(getattr(verdict, "rate_limit_events", None) or [])
+        if not events:
+            return
+        now = self.clock()
+        for event in events:
+            self.windows.observe(event, now, pacing.WINDOWS if self.view.hold is not None else pacing.READINGS)
+            limit = pacing.rejected(event)
+            if limit is not None:
+                self._pause(limit, source)
+        self._pace()
 
     def _admit_verdict_proposals(self, ticket, ask, verdict):
         """Admission on the critic's and the verifier's `proposals` (ticket 37), the same rules as a worker's result's.

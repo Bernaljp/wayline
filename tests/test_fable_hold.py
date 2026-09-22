@@ -20,7 +20,7 @@ from tests.test_verdicts import passing
 from wayline import dashboard, gates, pacing, replay, tickets, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
-from wayline.project import render_status, status_view
+from wayline.project import render_status, set_model_fallback, status_view
 from wayline.worker import Envelope
 
 # The `error` of the failed `task_updated` a Fable subagent's refusal leaves in its parent's stream.
@@ -394,6 +394,57 @@ class RefusedVerdictTest(HoldCase):
         self.assertEqual([(call.kind, call.request.model) for call in self.verifier_calls()], [("launch", "fable"), ("launch", "fable")])
         self.assertLess(self.index("unpaused", model="fable"), self.index("verdict"))
         self.assertEqual((self.statuses(), last.reason), ({1: "accepted"}, "frontier_empty"))
+
+
+class HeardInAVerdictTest(HoldCase):
+    """A refusal a verdict's own stream carries begins the hold, although the verdict answered (decision 15).
+
+    A Fable refusal can hide inside a session that still returns its answer (a subagent's task, or the
+    event `--simulate-limit fable:` writes ahead of the session). A worker's stream is folded as it is
+    read; a verdict's is folded once the gate returns it, so the answer stands and the hold begins, and
+    no later verdict of the same ticket launches on Fable past it. Found on the M5 overnight run, where
+    the simulated refusal fell on a verdict and held nothing.
+    """
+
+    def verdicts_of(self, identifier):
+        return [item["payload"] for item in self.events("verdict") if item["ticket"] == identifier]
+
+    def run_until_the_first_verdict(self, consent):
+        self.add(1, difficulty=3)  # an Opus author: every verdict it earns runs on Fable
+        path = tickets.tickets_dir(self.project) / "01-write-the-hello-file.md"
+        fields, body = tickets.read_ticket(path)
+        acceptance = dict(fields["acceptance"], quality=["hello.txt greets the reader in one plain sentence."])
+        tickets.write_ticket(self.ledger, dict(fields, acceptance=acceptance), body)  # a quality verdict, then the diff's
+        if consent:
+            set_model_fallback(self.project, consent)
+        driven = self.conductor()
+        self.resets = int(self.now[0]) + HOUR
+        self.script(1)
+        answered = passing()
+        answered.rate_limit_events = [rejected_on_fable(self.resets)]
+        self.fake.script(answered, role="verifier")
+        self.fake.script(passing(), role="verifier")
+        self.take(driven, 3)
+        return driven
+
+    def test_the_answer_stands_and_the_hold_begins_with_the_rest_of_the_ticket_s_verdicts_queued(self):
+        driven = self.run_until_the_first_verdict(None)
+        (hold,) = self.holds()
+        self.assertEqual((hold["resets_at"], hold["window"]), (pacing.iso(self.resets), "seven_day"))
+        self.assertEqual([item["pass"] for item in self.verdicts_of(1)], [True], "the verdict that answered is journaled")
+        self.assertEqual([(call.kind, call.request.model) for call in self.verifier_calls()], [("launch", "fable")],
+                         "the ticket's next verdict is not launched on Fable past the hold")
+        self.assertEqual(self.statuses(), {1: "done"})
+        self.assertIn("wait for a verdict on Fable", driven.out.getvalue())
+
+    def test_under_auto_the_rest_of_the_ticket_s_verdicts_fall_back_to_opus(self):
+        self.run_until_the_first_verdict("auto")
+        self.assertEqual(len(self.holds()), 1)
+        self.assertEqual([(call.kind, call.request.model) for call in self.verifier_calls()],
+                         [("launch", "fable"), ("launch", "opus")])
+        taken = self.verdicts_of(1)
+        self.assertEqual([item.get("fallback_from") for item in taken], [None, "r7 fable high"])
+        self.assertEqual(self.statuses(), {1: "accepted"})
 
 
 class SimulatedFableLimitTest(HoldCase):

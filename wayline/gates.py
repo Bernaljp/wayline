@@ -224,10 +224,14 @@ def run_machine_acceptance(commands, cwd, timeout_s):
 
     A command that outlives `timeout_s` has its whole process group killed and reports exit
     code 124, as `timeout(1)` does, so a hung check cannot hold the worker open.
+
+    Python writes no bytecode while the acceptance runs: the conductor runs it on `main` in the project's own
+    checkout, and a `__pycache__/` left there is a change outside `research/` that refuses the next `run`.
     """
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     results = []
     for command in commands:
-        results.append(run_shell(command, cwd, timeout_s))
+        results.append(run_shell(command, cwd, timeout_s, env=env))
     return results
 
 
@@ -512,6 +516,9 @@ class Verdict:
     # The model the verdict's own session ran on, when its result named another than the one it was launched
     # with (decision 16); None when it ran as asked, which is every recorded verdict.
     model_ran: Optional[str] = None
+    # Every `rate_limit_event` the verdict's sessions wrote, for the conductor to fold into its readings as it
+    # does a worker's: a refusal can ride a session that still answered (decision 15). Never journaled.
+    rate_limit_events: list = field(default_factory=list, compare=False, repr=False)
 
     @property
     def payload(self):
@@ -813,10 +820,12 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     )
     envelope = worker.launch(request)
     raise_if_refused(envelope, model, what)
+    heard = list(envelope.rate_limit_events)
     problem = _unusable(envelope)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_VERDICT % problem)
         raise_if_refused(envelope, model, what)
+        heard += envelope.rate_limit_events
         problem = _unusable(envelope)
     if problem is not None:
         raise GateError("%s could not be taken: %s" % (what, problem))
@@ -830,6 +839,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         # What the verifier's own session ran on, when the result named another model than it was launched with
         # (decision 16): a verdict stands or falls on who read the work, so the journal says which model did.
         model_ran=None if worker.ran_as_asked(model, envelope) else worker.model_ran(envelope),
+        rate_limit_events=heard,
     )
 
 

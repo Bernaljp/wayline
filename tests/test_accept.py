@@ -90,6 +90,13 @@ class RunMachineAcceptanceTest(unittest.TestCase):
         self.assertEqual(results[0]["exit_code"], 0)
         self.assertIn("here", results[0]["tail"])
 
+    def test_python_run_by_the_acceptance_leaves_no_bytecode_behind(self):
+        """The M5 overnight run: the acceptance on `main` left `__pycache__/`, and the next `run` refused the dirty tree."""
+        (self.worktree / "probe.py").write_text("VALUE = 1\n", encoding="utf-8")
+        results = run_machine_acceptance(["python3 -c 'import probe'"], self.worktree, 60)
+        self.assertEqual(results[0]["exit_code"], 0, results[0]["tail"])
+        self.assertEqual(sorted(path.name for path in self.worktree.iterdir()), ["probe.py"])
+
     def test_a_failing_command_keeps_its_output(self):
         results = run_machine_acceptance(["echo boom >&2; exit 3"], self.worktree, 60)
         self.assertEqual(results[0]["exit_code"], 3)
