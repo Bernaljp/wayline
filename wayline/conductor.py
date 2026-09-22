@@ -4889,6 +4889,9 @@ def _detach(project, options):
         print("wayline run: a conductor (pid %s) already runs on %s" % (holder.get("pid", "?"), project), file=sys.stderr)
         return 1
     run_args = ["--max-waves", str(options.max_waves)] if options.max_waves is not None else []
+    if options.simulate_limit is not None:
+        # Checked already, so the unit refuses nothing the terminal accepted; spelled as it was given.
+        run_args += ["--simulate-limit", options.simulate_limit]
     if options.simulate_failure is not None:
         run_args += ["--simulate-failure", str(options.simulate_failure)]
     try:

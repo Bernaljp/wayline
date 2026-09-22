@@ -14,6 +14,7 @@ import os
 import time
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -693,6 +694,19 @@ class SimulateLimitVerbTest(PacingCase):
         code, _, err = run_verb(["--simulate-limit", "-5", "--project", str(self.project)])
         self.assertEqual(code, 2)
         self.assertIn("--simulate-limit", err)
+
+    def test_the_simulated_limit_reaches_the_detached_unit(self):
+        """The M5 demo pauses a detached run: `--detach` hands the flag to the unit, spelled as it was given."""
+        from wayline import conductor
+        for spelling in ("3600", "fable:600", "cheap:900"):
+            with self.subTest(spelling=spelling), \
+                    mock.patch.object(conductor.tick, "launch_detached", return_value="") as launch, \
+                    mock.patch.object(conductor, "conductor_holder", return_value=None), \
+                    mock.patch.object(conductor, "announce_dashboard"), \
+                    mock.patch.object(conductor, "refuse_to_start", return_value=[]):
+                code, out, err = run_verb(["--detach", "--simulate-limit", spelling, "--project", str(self.project)])
+                self.assertEqual(code, 0, out + err)
+                self.assertEqual(launch.call_args[0][1], ["--simulate-limit", spelling])
 
 
 # --- wayline status ----------------------------------------------------------------------------
