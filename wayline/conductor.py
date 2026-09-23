@@ -3236,7 +3236,7 @@ class Conductor:
 
     def _accept(self, attempt, where, cwd):
         """Run the ticket's machine acceptance in `cwd` and journal it under the label `where`."""
-        commands = (attempt.ticket.get("acceptance") or {}).get("machine") or []
+        commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:

@@ -46,7 +46,7 @@ from wayline import pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
 from wayline.project import fable_hold, policy_for, rung_named
-from wayline.tickets import next_id, read_ticket, tickets_dir, works_in_the_harness, write_ticket
+from wayline.tickets import DOCS, machine_acceptance, next_id, read_ticket, tickets_dir, works_in_the_harness, write_ticket
 from wayline.tickets import relative_path as ticket_relative_path
 
 __all__ = [
@@ -228,7 +228,10 @@ def run_machine_acceptance(commands, cwd, timeout_s):
     Python writes no bytecode while the acceptance runs: the conductor runs it on `main` in the project's own
     checkout, and a `__pycache__/` left there is a change outside `research/` that refuses the next `run`.
     """
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    # The harness's own `bin/` first, as a worker has it: a criterion that runs `wayline` (every docs ticket's
+    # build does) runs this checkout's, not whichever the conductor's PATH found, or none under a unit.
+    path = os.pathsep.join([str(HARNESS_ROOT / "bin")] + ([os.environ["PATH"]] if os.environ.get("PATH") else []))
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PATH=path)
     results = []
     for command in commands:
         results.append(run_shell(command, cwd, timeout_s, env=env))
@@ -360,7 +363,7 @@ def accept(args):
     except ValueError as failure:  # GateError, or a ticket the schema refuses
         return _fail(str(failure))
 
-    commands = (ticket.get("acceptance") or {}).get("machine") or []
+    commands = machine_acceptance(ticket)
     timeout_s = _policy_value(project, "acceptance_timeout_s", 600)
     if not isinstance(timeout_s, (int, float)) or timeout_s <= 0:
         return _fail("policy.acceptance_timeout_s is %r; it must be a positive number of seconds" % (timeout_s,))
@@ -425,7 +428,8 @@ KILL_ARGUMENT = "kill_argument"          # the second thread: the memo adjudicat
 CLAIM_SUPPORT = "claim_support"          # a sampled report claim: do its cited artifacts support it
 DEPTH_SPOT_CHECK = "depth_spot_check"    # an L2 dossier: were its most important items and its flaws read in depth
 SPEC_COVERAGE = "spec_coverage"          # the spec: does every claim have an experiment, and every experiment defend a claim
-VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK, SPEC_COVERAGE)
+DOCS_READ = "docs_read"                  # a docs ticket: is the site clear and complete against the package's purpose
+VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK, SPEC_COVERAGE, DOCS_READ)
 
 # What an independent read of a done ticket reads, by the ticket's effective difficulty.
 DIFFICULTY_VERDICTS = {3: DIFF, 4: RESULT, 5: RESULT}
@@ -888,6 +892,24 @@ def _unusable(envelope):
 # --- what a done ticket earns (decision 11, "what gets a verdict") -----------------------------
 
 
+DOCS_QUESTION = (
+    "Is the documentation site ticket %d left clear and complete against the package's purpose: could "
+    "someone who did not write the package learn it from the tutorials, do a task from the how-to "
+    "guides, find every public function and class in the reference, understand the design from the "
+    "explanation, and trust that the examples and the gallery show what the package does?"
+)
+DOCS_SCOPE = (
+    "The site's sources under `docs/` against the package's purpose as `research/INTAKE.md`, "
+    "`research/SPEC.md`, and `README.md` state it, and against the package's code. `wayline docs build` "
+    "has already checked the structure, the docstrings' presence, the examples, the warnings, and the "
+    "links (its record is `research/.cache/docs/checks.json`), so do not re-check those; judge what "
+    "a check cannot: whether a reader could use the package from this site. A page that says "
+    "something the code does not do is a finding at that page and line."
+)
+DOCS_READ_PATHS = ("docs/", ".readthedocs.yaml", "research/INTAKE.md", "research/SPEC.md", "README.md",
+                   "research/.cache/docs/checks.json")
+
+
 def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False):
     """The verdicts one done ticket earns: its own quality criteria, and an independent read.
 
@@ -898,7 +920,8 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
     both: the criteria it set itself, and a read of the result by someone who did not write it.
     Both have to pass before the ticket is accepted. A difficulty-3 ticket is read as its diff, a
     difficulty-4 or -5 ticket as its result; a difficulty-1 or -2 ticket earns a verdict only
-    through its own quality criteria. `no_diff` is a ticket whose integration added no commit of its
+    through its own quality criteria. A `docs` ticket's independent read is the docs read at every
+    difficulty, one read of the site for clarity and completeness (decision 13). `no_diff` is a ticket whose integration added no commit of its
     own (its work is findings, say): its commit would be whatever `main` stood at, so it is read as
     its result instead of as a diff that is not its own.
     """
@@ -920,6 +943,17 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
                            identifier),
             verdict_type=QUALITY, author_model=author_model, ticket=identifier, rung=rung,
         ))
+    if ticket.get("kind") == DOCS:
+        # The site's one independent read, whatever the difficulty (decision 13): the machine checks
+        # have said it builds and is complete by inventory; only a reader can say it can be used.
+        asks.append(Ask(
+            subject_kind="ticket", subject=subject,
+            question=DOCS_QUESTION % identifier,
+            paths=paths + [path for path in DOCS_READ_PATHS if path not in paths],
+            scope_limit=DOCS_SCOPE,
+            verdict_type=DOCS_READ, author_model=author_model, ticket=identifier, rung=rung,
+        ))
+        return asks
     read = DIFFICULTY_VERDICTS.get(difficulty)
     if read == DIFF and no_diff:
         read = RESULT

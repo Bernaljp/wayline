@@ -1,0 +1,25 @@
+{
+  "id": "documentarian",
+  "scope_kind": "global",
+  "capability_summary": "Writes the documentation site of the project's package for one docs ticket and passes wayline docs build.",
+  "applicability_tags": {"kinds": ["docs"], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "1a7fd2466e2adfc739e9445964723cb286784509ff254b66b7358c94bc9d6fe6",
+  "may_judge": false,
+  "output_schema": "result",
+  "allowed_tools": [
+    "Read", "Edit", "Write", "Glob", "Grep",
+    "Bash(wayline docs *)", "Bash(wayline accept*)", "Bash(wayline consult *)",
+    "Bash(python *)", "Bash(python3 *)",
+    "Bash(git add *)", "Bash(git commit *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)",
+    "Bash(ls *)", "Bash(cat *)"
+  ],
+  "disallowed_tools": [
+    "WebFetch", "WebSearch", "NotebookEdit", "Agent",
+    "mcp__*", "Workflow", "Skill", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync"
+  ]
+}

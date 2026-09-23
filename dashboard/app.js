@@ -1092,9 +1092,23 @@ function renderOutputs(view) {
     const entries = view[name] || [];
     parts.push(subhead(name, entries.length));
     parts.push(listOrNone(entries, (entry) => outputRow(entry), `nothing under ${name} yet`, 'outputs'));
+    if (name === 'docs' && (view.site || []).length) parts.push(siteRow(view.site[0]));
   }
   parts.push(el('div', { id: 'outputs-preview' }));
   replace(document.getElementById('outputs-body'), parts);
+}
+
+// The built documentation site (ticket 51) opens as a site in its own tab, served in a sandbox by
+// `site/`. Its link never carries the token: the site's pages are model-written and a script in one
+// can read its own URL. The navigation carries the cookie instead; the loopback bind the tunnel uses
+// asks no token at all, and on a wide bind a sandboxed page's own requests carry no cookie, so there
+// the site renders without its stylesheet.
+function siteRow(site) {
+  const checks = site.passed === true ? 'every check passed' : site.passed === false ? 'a check failed' : 'no checks recorded';
+  return el('p', { class: 'note' }, [
+    el('a', { href: `/api/projects/${encodeURIComponent(state.project)}/${site.url}`, target: '_blank', rel: 'noopener', text: 'open the documentation site' }),
+    document.createTextNode(` built ${site.built || 'at an unrecorded time'}; ${checks}`),
+  ]);
 }
 
 function outputRow(entry) {

@@ -72,8 +72,25 @@
     "docs": {
       "type": "object",
       "additionalProperties": false,
+      "description": "the documentation site (Implementation Decisions 13): the theme and layout chosen once per project by `wayline docs init`, the package the site documents, and the project's own environment Sphinx runs in",
       "properties": {
-        "theme": {"type": "string"}
+        "theme": {"type": "string", "description": "the Sphinx html_theme; docs/conf.py must name it"},
+        "package": {"type": "string", "description": "the package directory the site documents, relative to the project (src/toy)"},
+        "layout": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tutorials", "how_to", "reference", "explanation", "gallery", "examples"],
+          "properties": {
+            "tutorials": {"type": "string"},
+            "how_to": {"type": "string"},
+            "reference": {"type": "string"},
+            "explanation": {"type": "string"},
+            "gallery": {"type": "string"},
+            "examples": {"type": "string"}
+          },
+          "description": "each part of the site as a directory relative to the project, under docs/"
+        },
+        "python": {"type": ["string", "null"], "description": "the interpreter of the project's own environment Sphinx is installed in; absent or null is research/.cache/docs/venv, which wayline docs env creates"}
       }
     },
     "owner_email": {"type": ["string", "null"], "description": "sent in the scout's User-Agent to the polite pools"}

@@ -1,0 +1,18 @@
+{
+  "harness_tag": "v0.0.0",
+  "autonomy": "autonomous",
+  "radius": "moderate",
+  "policy": {},
+  "docs": {
+    "theme": "alabaster",
+    "package": "src/tinydocs",
+    "layout": {
+      "tutorials": "docs/tutorials",
+      "how_to": "docs/how-to",
+      "reference": "docs/reference",
+      "explanation": "docs/explanation",
+      "gallery": "docs/gallery",
+      "examples": "docs/examples"
+    }
+  }
+}

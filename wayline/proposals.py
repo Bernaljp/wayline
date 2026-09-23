@@ -70,7 +70,7 @@ DEDUP_MAX_MINUTES = 5
 # A kind's default role, absent anything else to size an auto-admitted ticket by: the planner's own
 # convention in the toy fixtures, for a ticket that was never planned by a person.
 KIND_ROLE = {
-    "dossier": "reader", "lit": "reader", "code": "coder", "docs": "writer", "experiment": "experimenter",
+    "dossier": "reader", "lit": "reader", "code": "coder", "docs": "documentarian", "experiment": "experimenter",
     "analysis": "analyst", "figure": "figure-designer", "writing": "writer", "review": "critic",
     "decision": "decider", "harness": "coder",
 }

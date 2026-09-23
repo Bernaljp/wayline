@@ -152,6 +152,20 @@ against that ticket, and the one past `policy.consultant.max_questions_per_ticke
 before a session starts. One L2 absorb may put as many reader questions to the consultant as one
 ticket may ask.
 
+## The documentarian takes the `docs` tickets
+
+`documentarian` (ticket 51) is the one role whose `kinds` name `docs`, so the librarian gives it
+every `docs` ticket; the `coder` no longer covers them. It runs as a ticket worker like the coder,
+on the rung the ticket's difficulty gives, and its protocol is three verbs of `wayline.docs`:
+`wayline docs init` records the theme once per project in `harness.json.docs` (with the package and
+the layout) and lays out the missing skeleton, `wayline docs env` installs `docs/requirements.txt`
+into the project's own environment (the harness never imports Sphinx), and `wayline docs build`
+runs the machine checks. The conductor accepts every `docs` ticket by `wayline docs build` besides
+the ticket's own criteria (`tickets.machine_acceptance`), so a failing check returns the ticket with
+the list, and a done `docs` ticket earns one read of the site's clarity and completeness against the
+package's purpose (`gates.DOCS_READ`) in place of the read its difficulty would give it. Its Bash
+rules are the coder's with `wayline docs *` added and no `Agent`: a site is written in one session.
+
 ## Why `disallowed_tools` names tools the harness never asked for
 
 `--settings` adds to the owner's user configuration rather than replacing it, so a worker starts

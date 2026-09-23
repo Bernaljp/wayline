@@ -52,7 +52,12 @@ The planner has one protocol per phase; the harness gives you the one below that
    is a `code` ticket before it; the experiments of a claim are followed by an `analysis` ticket
    that files the findings, and the findings by a `writing` ticket. A `code` ticket that adds a
    function, a class, a command, or a file another ticket or a person calls says so with
-   `adds_public_api: true`, and a `docs` ticket that waits on it follows.
+   `adds_public_api: true`, and a `docs` ticket that waits on it follows. A `docs` ticket builds
+   the package's documentation site: its touch set is `docs/` and `.readthedocs.yaml`, with
+   `harness.json` on the project's first one (it records the site's theme) and the package's
+   modules when their docstrings are its to write; the harness accepts it by `wayline docs build`
+   besides the criteria you give it, so give it criteria of its own that fail now (a page that must
+   exist, a symbol a page must name).
 4. Give every ticket, by BRIEF 8.2: a `title` a person can tell from the others; the `kind`;
    `difficulty` 1 to 5 by the rubric, never inflated to buy turns; `blocked_by`, keys of this plan
    or `#<id>` of tickets the project holds; `touches`, paths under the project the worker may

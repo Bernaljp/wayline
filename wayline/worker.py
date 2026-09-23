@@ -55,6 +55,7 @@ from wayline import HARNESS_ROOT, pacing, registry
 from wayline.frontmatter import FrontmatterError, load_document
 from wayline.jsonschema import SchemaError, check_schema, load_schema, validate
 from wayline.ledger import now_ts
+from wayline.tickets import machine_acceptance
 
 __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
@@ -722,7 +723,7 @@ def _ticket_section(ticket, budget):
     if ticket.get("demo"):
         lines.append("- demo: %s" % ticket["demo"])
     lines.append("- touch set: %s" % ", ".join("`%s`" % item for item in ticket["touches"]))
-    machine = (ticket.get("acceptance") or {}).get("machine") or []
+    machine = machine_acceptance(ticket)
     if machine:
         lines.append("- acceptance, which the conductor runs again in the worktree, after the rebase, and on `main`:")
         lines.extend("    - `%s`" % command for command in machine)
@@ -894,7 +895,7 @@ def integrator_prompt(ticket, role, conflicts, touches=None, max_chars=None, bud
         "",
         "- touch set: %s, the paths both the branch and `main` changed" % paths,
     ]
-    machine = (ticket.get("acceptance") or {}).get("machine") or []
+    machine = machine_acceptance(ticket)
     if machine:
         head.append("- acceptance, which the conductor runs again on the rebased branch and on `main`:")
         head.extend("    - `%s`" % command for command in machine)
