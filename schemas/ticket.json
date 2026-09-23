@@ -56,7 +56,7 @@
     },
     "context_pack": {"type": "array", "items": {"type": "string"}},
     "origin": {"type": ["string", "null"]},
-    "proposed_by": {"type": "string", "pattern": "^(planner|worker:[0-9]+|decider|human|evolve|verifier|tick|conductor)$", "description": "BRIEF 8.2's five authors, plus the verifier: a failing kill argument files the writing ticket that scopes the claims down (Implementation Decisions 11), and no one else wrote it; the tick, which opens the human-only decision ticket when the login nears its end (Implementation Decisions 7); and the conductor, which opens the ask of Implementation Decision 15 while Fable's weekly window is spent"},
+    "proposed_by": {"type": "string", "pattern": "^(planner|worker:[0-9]+|decider|human|evolve|verifier|tick|conductor|figure)$", "description": "BRIEF 8.2's five authors, plus the figure role, which opens the human-only decision tickets of a figure pick and a refusal and proposes the tickets its findings for the text earn (ticket 50); the verifier: a failing kill argument files the writing ticket that scopes the claims down (Implementation Decisions 11), and no one else wrote it; the tick, which opens the human-only decision ticket when the login nears its end (Implementation Decisions 7); and the conductor, which opens the ask of Implementation Decision 15 while Fable's weekly window is spent"},
     "demo": {"type": ["string", "null"]},
     "pinned_difficulty": {"oneOf": [{"$ref": "#/$defs/difficulty"}, {"type": "null"}], "description": "set by the human; escalation never changes it"},
     "retry": {

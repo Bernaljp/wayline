@@ -1,0 +1,18 @@
+{
+  "drew_final": false,
+  "inputs": [],
+  "schematic_elements": [],
+  "selection_statistics": [],
+  "findings_for_text": [],
+  "traps_hit": [],
+  "equations": [],
+  "applied": [],
+  "refusals": [
+    {
+      "change_request": "cr1",
+      "reason": "Dropping the seeds would hide that method Y overlaps X.",
+      "alternative_generator": "figures/fig1/alternatives/cr1/draft.py",
+      "alternative_png": "figures/fig1/alternatives/cr1/draft.png"
+    }
+  ]
+}

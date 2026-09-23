@@ -102,6 +102,7 @@ TAGGED = "tagged"
 PINNED = "pinned"
 REPORT_RENDERED = "report_rendered"
 PAPER_STARTED = "paper_started"
+FIGURE_RESULT = "figure_result"
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -219,6 +220,8 @@ K_CLAIMS = "claims"
 K_TAGGED = "tagged"
 K_LINTER_PASS = "linter_pass"
 K_VENUE = "venue"
+K_FIGURE_ID = "figure_id"
+K_VERSION = "version"
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -275,6 +278,7 @@ EVENTS = {
     PINNED: (K_TAG, K_PREVIOUS),
     REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS),
     PAPER_STARTED: (K_VENUE,),
+    FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -300,8 +304,10 @@ PAYLOAD_ENUMS = {
     (NOTIFIED, K_CHANNEL): ("notify-send", "hermes", "none"),
     (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes"),
     # `retrospective` is the one code files after a run ended (ticket 45), read by the evolver like the owner's.
-    (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective"),
+    # `figure` is the figure role's, carrying the traps a figure result would promote into the plot index (ticket 50).
+    (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective", "figure"),
     (CHANGE_RECORD, K_SCOPE_KIND): ("local", "global"),
+    (FIGURE_RESULT, K_STATUS): ("candidates_ranked", "selected", "verified", "failed_checks", "honesty_failed", "refused", "blocked"),
 }
 
 

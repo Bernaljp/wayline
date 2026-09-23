@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "figure_drafts",
+  "description": "What the figure designer returns from its drafts step (Implementation Decisions 13; research-notes 11 Section 4.1, step 3): one entry per candidate code handed it, rendered or not. A draft that did not render is reported with its error, never left out; code checks every PNG on disk and every pitfall against the ones the index handed in.",
+  "type": "object",
+  "required": ["drafts", "traps_hit"],
+  "additionalProperties": false,
+  "properties": {
+    "drafts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index_id", "rendered", "generator", "png", "pitfalls_consulted"],
+        "additionalProperties": false,
+        "oneOf": [
+          {"properties": {"rendered": {"const": true}, "generator": {"type": "string", "pattern": "\\S"}, "png": {"type": "string", "pattern": "\\S"}}},
+          {"properties": {"rendered": {"const": false}}, "required": ["error"]}
+        ],
+        "properties": {
+          "index_id": {"type": "string", "pattern": "\\S", "description": "the candidate's id, exactly as the prompt named it"},
+          "rendered": {"type": "boolean"},
+          "generator": {"type": ["string", "null"], "description": "the draft's script, relative to the project"},
+          "png": {"type": ["string", "null"], "description": "the draft's PNG at the target width, relative to the project"},
+          "error": {"type": ["string", "null"], "description": "why the draft did not render: the last lines of the traceback"},
+          "pitfalls_consulted": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the pitfalls the prompt listed for this candidate that were read before drawing it, copied verbatim"}
+        }
+      }
+    },
+    "traps_hit": {"$ref": "#/$defs/traps"}
+  },
+  "$defs": {
+    "traps": {
+      "type": "array",
+      "description": "a library trap met while drawing that no listed pitfall named; promote_to_index when the plot index should carry it",
+      "items": {
+        "type": "object",
+        "required": ["library", "chart_type", "description", "fix", "promote_to_index"],
+        "additionalProperties": false,
+        "properties": {
+          "library": {"type": "string", "pattern": "\\S"},
+          "chart_type": {"type": "string", "pattern": "\\S"},
+          "description": {"type": "string", "pattern": "\\S"},
+          "fix": {"type": "string", "pattern": "\\S"},
+          "promote_to_index": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

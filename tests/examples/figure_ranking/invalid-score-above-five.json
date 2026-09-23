@@ -1,0 +1,15 @@
+{
+  "ranking": [
+    {
+      "index_id": "boxplot-seaborn",
+      "rank": 1,
+      "score": {
+        "claim_legibility": 6,
+        "honesty": 5,
+        "venue_fit": 4,
+        "legibility_at_size": 4
+      },
+      "reasons": "The ordering carries the claim."
+    }
+  ]
+}

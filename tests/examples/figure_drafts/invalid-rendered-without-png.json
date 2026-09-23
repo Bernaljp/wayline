@@ -1,0 +1,15 @@
+{
+  "drafts": [
+    {
+      "index_id": "boxplot-seaborn",
+      "rendered": true,
+      "generator": "figures/fig1/candidates/1-boxplot-seaborn/draft.py",
+      "png": null,
+      "error": null,
+      "pitfalls_consulted": [
+        "Give panel-box patches a negative zorder."
+      ]
+    }
+  ],
+  "traps_hit": []
+}
