@@ -557,6 +557,21 @@ class ClaudeCliTest(StandInMixin, unittest.TestCase):
         self.assertNotIn("$(cat %s)" % (self.run / "prompt.md"), recorded_env["command"])
         self.assertTrue(envelope.valid)
 
+    def test_a_prompt_that_begins_with_a_dash_goes_on_stdin(self):
+        """The M5 overnight run: the dedup judge's prompt began `- subject: ...`, and `claude -p` read it as an option.
+
+        `Error: unknown option '- subject: whether two writing proposals are the same admission ...'`, an empty
+        stream, and every judged duplicate check of the night unanswered. On stdin a prompt is never an option.
+        """
+        prompt = "- subject: whether two proposals are the same admission\n\nAre they?"
+        request = self.request(prompt=prompt)
+        envelope = worker.launch(request)
+        record = self.recorded()
+        self.assertNotIn(prompt, record["argv"])
+        self.assertEqual(record["stdin"], str(self.run / "prompt.md"))
+        self.assertEqual((self.run / "prompt.md").read_text(encoding="utf-8").rstrip("\n"), prompt)
+        self.assertTrue(envelope.valid)
+
     def test_settings_path_is_copied_into_the_session(self):
         source = self.root / "worker-settings.json"
         source.write_text('{"permissions": {"deny": ["Bash(git push *)"]}}', encoding="utf-8")

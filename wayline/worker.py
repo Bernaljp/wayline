@@ -72,6 +72,7 @@ _log = logging.getLogger("wayline.worker")
 TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
 # Linux refuses one argument over 128 KiB (MAX_ARG_STRLEN) with E2BIG; a prompt longer than this goes on stdin,
 # which `claude -p` reads when no prompt argument is given (ticket 36: a specify redraft of 144 KB was refused).
+# So does a prompt that begins with `-`, which the CLI would parse as an option (the M5 run's dedup judge).
 PROMPT_ARG_MAX = 100_000
 USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence")  # decision 5; research-notes/02 launch 4
 USAGE_TIMEOUT_S = 60
@@ -1547,7 +1548,9 @@ class ClaudeCli:
         executable = self._executable()
         cwd = _check_paths(request)
         argv = build_argv(request, run_dir, session_id, message)
-        spelled, on_stdin = spelled_argv(argv, run_dir), len(argv[2].encode("utf-8")) > PROMPT_ARG_MAX
+        # A prompt too long for one argument, or one the CLI would parse as an option (it begins with `-`), goes on stdin.
+        on_stdin = len(argv[2].encode("utf-8")) > PROMPT_ARG_MAX or argv[2].startswith("-")
+        spelled = spelled_argv(argv, run_dir)
         prompt_path = run_dir / "prompt.md"
         if on_stdin:
             del spelled[2]
