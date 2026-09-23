@@ -16,7 +16,8 @@ SHIPPED = ["journal_event", "ticket", "result", "harness", "policy", "job", "man
            "dossier", "registry_entry", "l1_record", "code_dossier", "verdict", "guidelines", "inventory", "goal",
            "claim_classes", "report_prose", "figure_request", "figure_result",
            "dossier_entry", "dossier_entry_list", "dossier_sections", "absorb_result", "fixture", "fixture_verdict",
-           "dedup_verdict", "spec", "consultant_answer", "plan", "position", "change", "change_list"]
+           "dedup_verdict", "spec", "consultant_answer", "plan", "position", "change", "change_list",
+           "figure_drafts", "figure_ranking", "figure_finish"]
 
 
 def load(path):

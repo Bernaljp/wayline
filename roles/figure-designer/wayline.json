@@ -1,0 +1,25 @@
+{
+  "id": "figure-designer",
+  "scope_kind": "global",
+  "capability_summary": "Draws one figure from real result data: drafts of the plot index's candidates, then the chosen one finished in the house style with caption and notes; refuses a change that would make the figure false.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "34ebf850b7995d4288195f3adea325345f96f9687f1b83c1ef49de09fd50a2d0",
+  "may_judge": false,
+  "output_schema": "figure_drafts",
+  "allowed_tools": [
+    "Read", "Edit", "Write", "Glob", "Grep",
+    "Bash(python *)", "Bash(python3 *)", "Bash(.venv/bin/python *)",
+    "Bash(ls *)", "Bash(cat *)"
+  ],
+  "disallowed_tools": [
+    "WebFetch", "WebSearch", "NotebookEdit", "Agent",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode",
+    "Bash(git *)", "Bash(wayline *)"
+  ]
+}

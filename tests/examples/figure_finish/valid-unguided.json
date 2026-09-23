@@ -1,0 +1,30 @@
+{
+  "drew_final": true,
+  "inputs": [
+    {
+      "path": "results/t7-a1/scores.csv",
+      "panels": [
+        "a"
+      ]
+    }
+  ],
+  "schematic_elements": [],
+  "selection_statistics": [],
+  "findings_for_text": [
+    {
+      "text": "The runtime advantage holds only above 1000 cells.",
+      "manuscript_locator": null,
+      "suggested_ticket": true
+    }
+  ],
+  "traps_hit": [],
+  "equations": [
+    {
+      "id": "auroc",
+      "drawn": "AUROC = P(s+ > s-)",
+      "implementation": "src/metrics.py:10-24"
+    }
+  ],
+  "applied": [],
+  "refusals": []
+}

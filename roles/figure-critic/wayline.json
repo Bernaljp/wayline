@@ -1,0 +1,19 @@
+{
+  "id": "figure-critic",
+  "scope_kind": "global",
+  "capability_summary": "Ranks another session's figure drafts against the claim, the data, and the venue, with a score per rubric criterion and reasons; read-only, never draws.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "medium",
+  "fixtures": [],
+  "sha256": "406d40cd422ab026e5edce29e7b7b7ab55eecf79f4d09f2db0902d225aba1cdd",
+  "may_judge": true,
+  "output_schema": "figure_ranking",
+  "allowed_tools": ["Read", "Glob", "Grep"],
+  "disallowed_tools": [
+    "Edit", "Write", "NotebookEdit", "Bash", "Agent", "WebFetch", "WebSearch", "mcp__*", "Workflow", "Skill",
+    "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete", "CronList", "Monitor",
+    "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger", "ScheduleWakeup", "TaskCreate",
+    "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "EnterPlanMode", "ExitPlanMode"
+  ]
+}

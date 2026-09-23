@@ -144,6 +144,10 @@ _Avoid_: state, database, memory
 The append-only event log the conductor replays to resume and the report is built from.
 _Avoid_: log, history
 
+**Refusal**:
+A guided change request the figure role declines because the figure would then assert something false; it carries the nearest honest alternative, and only the owner can override it.
+_Avoid_: rejection, veto
+
 **Keep-if-better**:
 The rule that keeps a goal ticket's change only when its mean over the seeds beats the best kept value on the held-out split by more than one standard deviation; a change it does not keep is discarded.
 _Avoid_: hill climbing, accept-if-improved

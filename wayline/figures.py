@@ -583,8 +583,43 @@ def figures_command(args):
         return _build_index_command(rest)
     if sub == "refresh":
         return _refresh_command(rest)
-    print("wayline figures: unknown subcommand %r (build-index|refresh)" % sub, file=sys.stderr)
+    if sub == "fold-traps":
+        return _fold_traps_command(rest)
+    print("wayline figures: unknown subcommand %r (build-index|refresh|fold-traps)" % sub, file=sys.stderr)
     return 2
+
+
+def _fold_traps_command(args):
+    """`wayline figures fold-traps <figure_result.json>`: the evolve loop's way into the index (ticket 50)."""
+    parser = argparse.ArgumentParser(prog="wayline figures fold-traps",
+                                     description="fold a figure result's promoted traps into figures/plot_index.json")
+    parser.add_argument("result", help="a figure_result/1 file, relative to the project or absolute")
+    parser.add_argument("--project", help="the project; the active one by default")
+    parser.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    try:
+        project = find_project(options.project)
+        source = Path(options.result)
+        source = source if source.is_absolute() else Path(project) / source
+        traps = json.loads(source.read_text(encoding="utf-8")).get("traps_hit") or []
+        path = Path(project) / FIGURES / PLOT_INDEX_JSON
+        index = load_index(path)
+        promoted = [trap for trap in traps if trap.get("promote_to_index")]
+        unmatched = fold_traps_hit(index, promoted)
+        write_index(path, index)
+    except (ProjectError, FigureIndexError, OSError, ValueError, AttributeError) as failure:
+        print("wayline figures fold-traps: %s" % failure, file=sys.stderr)
+        return 1
+    report = {"promoted": len(promoted), "folded": len(promoted) - len(unmatched), "unmatched": unmatched}
+    if options.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        lines = ["%d of %d promoted trap(s) folded into %s" % (report["folded"], report["promoted"], path)]
+        lines += ["  no entry for %s, %s: left out" % (trap.get("library"), trap.get("chart_type")) for trap in unmatched]
+        print("\n".join(lines))
+    return 0
 
 
 def _add_common(parser):
