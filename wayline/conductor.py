@@ -714,6 +714,7 @@ class Conductor:
         # The reading `run --simulate-limit cheap:[fable:]<seconds>` forces, as `(seconds, model)`, and the
         # moment it lapses; the demo forces a step down with it rather than waiting for a nearly spent window.
         self._simulated_step = self._simulated_until = None
+        self._simulated_fable = False  # `run --simulate-limit fable:<seconds>`: its hold stands until its own reset
         # The wave `/usage` was last read for before it launched Fable work (decision 15): once a wave at most.
         self._usage_wave = None
         # What was last said of `/usage` giving no reading and of verdicts waiting on the hold, so a week-long hold says each once.
@@ -3056,8 +3057,27 @@ class Conductor:
         self._simulated_step = None if seconds is None else (float(seconds), model)
         self._simulated_until = None
 
+    def simulate_fable_hold(self, on=True):
+        """`run --simulate-limit fable:<seconds>`: the hold the simulated refusal begins stands until its own reset.
+
+        The simulated refusal is written into one Fable session's stream; a real `/usage` reading taken before the
+        next Fable wave would read the week as it truly is and end the hold at once, so nothing on Fable would ever
+        be seen falling back (the M5 overnight run). While a hold stands, Fable's week is read as spent until the
+        hold's reset, as `simulate_step_down` forces its reading for its seconds; past the reset nothing is forced.
+        """
+        self._simulated_fable = bool(on)
+
+    def _force_fable_hold(self):
+        """Read Fable's weekly window as spent while the simulated hold stands (`simulate_fable_hold`)."""
+        hold = self.view.hold if self._simulated_fable else None
+        resets = pacing.epoch((hold or {}).get("resets_at"))
+        now = self.clock()
+        if resets is not None and resets > now:
+            self.windows.record(pacing.FABLE, 1.0, resets, now)
+
     def _force_reading(self):
         """Take the simulated reading of `simulate_step_down`, while its seconds last."""
+        self._force_fable_hold()
         if self._simulated_step is None:
             return
         seconds, model = self._simulated_step
@@ -4898,6 +4918,7 @@ def run_command(args):
               % (simulated.seconds, "Fable's weekly window" if simulated.model else "every model's windows"))
     elif simulated is not None:
         worker.simulate_limit(simulated.seconds, simulated.model)
+        conductor.simulate_fable_hold(simulated.model == pacing.FABLE)
     if options.simulate_failure is not None:
         worker.simulate_failure(options.simulate_failure)
         print("simulate every acceptance of ticket %d fails, on every attempt" % options.simulate_failure)

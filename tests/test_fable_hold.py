@@ -521,6 +521,36 @@ class SimulatedFableLimitTest(HoldCase):
         self.assertEqual(self.statuses(), {1: "accepted", 2: "done"}, "the Fable session the limit hit ran as it would have")
         self.assertIsNone(worker.simulated_limit())
 
+    def test_a_real_reading_does_not_lift_the_simulated_hold_before_its_seconds_are_out(self):
+        """The M5 overnight run: a live `/usage` read Fable at 7%, under `stop_at`, and ended the simulated hold at once.
+
+        `--simulate-limit fable:<seconds>` exists to show Fable work held and falling back for that long, the way
+        `cheap:<seconds>` shows the step down; a real reading ends the hold only once its reset has passed.
+        """
+        self.add(1, difficulty=4)
+        self.add(2, difficulty=4)
+        set_model_fallback(self.project, "auto")
+        self.hold_journaled(1)
+        driven = self.conductor()
+        driven.simulate_fable_hold()
+        self.fake.usage_text, _ = usage_text(self.now[0], fable=7)
+        self.script(1)
+        self.script(2)
+        self.assertEqual(driven.wave().launched, [1])
+        driven.settle()
+        self.now[0] += 60
+        # The tick's reading, journaled by another process: the one that ended the hold live.
+        self.ledger.append_event("pacing", {"five_hour": 0.24, "seven_day": 0.71, "fable": 0.07, "action": "normal"},
+                                 ts=journal_ts(self.now[0]))
+        self.assertEqual(driven.wave().launched, [2], "the next wave hears the reading under stop_at, and still holds")
+        launched = [item["payload"] for item in self.events("ticket_launched")]
+        self.assertEqual([(item["model"], item.get("fallback_from")) for item in launched], [("opus", "r6 fable low")] * 2)
+        self.assertEqual(self.events("unpaused"), [], "the simulated hold stands until its own reset")
+        self.now[0] += 2 * HOUR
+        driven.settle()
+        driven.wave()
+        self.assertEqual(self.events("unpaused")[-1]["payload"], {"model": "fable"})
+
     def test_a_simulated_limit_on_another_model_or_without_seconds_is_refused(self):
         for value in ("opus:60", "fable:-5", "fable:", "soon"):
             with self.subTest(value=value):
