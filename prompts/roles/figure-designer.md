@@ -17,7 +17,9 @@ hashes the files, and records them.
 4. `pitfalls_consulted` lists, verbatim, the pitfalls listed for that candidate that you read
    before drawing it; list every one you read and none that was not listed for it.
 5. A library trap you hit that no listed pitfall named goes into `traps_hit`, with the fix;
-   `promote_to_index: true` when the next figure of that chart type should be told about it.
+   `promote_to_index: true` when the next figure of that chart type should be told about it. Its
+   `chart_type` is the candidate's chart type exactly as this prompt names it, because that is how
+   the harness finds the index entry the trap belongs to.
 6. Return the drafts once, through the structured output, before you stop.
 
 ## Finish

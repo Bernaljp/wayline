@@ -563,7 +563,8 @@ class _Run:
                 ", for %s" % target["venue"] if target.get("venue") else "",
                 ", at most %d words" % target["max_words"] if target.get("max_words") else ""),
             "- the house style (the color budget; draw data in its colors only): `%s`" % (request.get("style") or figure_checks.DEFAULT_STYLE),
-            "- the project's Python: `%s`" % figure_checks.Tools().python_for(self.project),
+            "- run a script from the project root as `%s <script>`: the one spelling your permissions allow, and the "
+            "interpreter the machine checks regenerate the figure with" % _python_spelling(self.project),
         ]
         if claim.get("evidence"):
             lines.append("- the claim's evidence: %s" % "; ".join(claim["evidence"]))
@@ -1063,6 +1064,15 @@ def _honesty_finding(finding):
     rule = found.group(1) if found and found.group(1) in HONESTY_RULES else "implied_claim"
     body = text[found.end():].strip() if found and found.group(1) in HONESTY_RULES else text
     return {"rule": rule, "text": body or text or "no text was given", "locator": finding.get("locator")}
+
+
+def _python_spelling(project):
+    """How the designer runs Python: the project's `.venv/bin/python` when it has one, else `python3`.
+
+    `figure_checks.Tools.python_for` makes the same choice for the clean room, and the designer's `Bash(...)` rules
+    allow exactly these two spellings, not an absolute path to an interpreter.
+    """
+    return ".venv/bin/python" if (Path(project) / ".venv" / "bin" / "python").exists() else "python3"
 
 
 def _describe_shape(shape):
