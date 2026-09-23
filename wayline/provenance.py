@@ -1268,7 +1268,64 @@ def _closed(context):
     lines.extend(["", "Done, meaning the machine checks passed and no verdict has (%d):" % len(done)])
     lines.extend("- Ticket %d, *%s* (%s, difficulty %s)" % (fields["id"], fields["title"], fields["kind"], fields.get("difficulty"))
                  for fields in done)
-    return _records(lines)
+    return _records(lines + _docs_site(context))
+
+
+def _docs_site(context):
+    """The documentation site, which is part of done whenever a `code` ticket added public API (decisions 11, 13).
+
+    Nothing when no ticket declared public API and none is a `docs` ticket. Otherwise the declaring
+    tickets, the `docs` tickets and their statuses, the last build on `main` (`docs.read_record`), and
+    every declaring ticket no closed `docs` ticket waits on, which is the site still owed.
+    """
+    from wayline import docs  # the docs module reads the code dossier's inventory; keep this module's import light
+    from wayline.plan import adds_public_api
+
+    bodies = {}
+    for path in sorted(tickets.tickets_dir(context.project).glob("*.md")):
+        try:
+            fields, body = tickets.read_ticket(path)
+        except (OSError, tickets.TicketError, ValueError):
+            continue
+        bodies[fields["id"]] = body
+    declared = [context.tickets[number] for number in sorted(context.tickets)
+                if context.tickets[number]["kind"] == "code" and adds_public_api(bodies.get(number, ""))]
+    documenting = [context.tickets[number] for number in sorted(context.tickets) if context.tickets[number]["kind"] == "docs"]
+    if not declared and not documenting:
+        return []
+    lines = ["", "The documentation site, part of done because %s:" % (
+        "ticket(s) %s added public API" % ", ".join(str(fields["id"]) for fields in declared)
+        if declared else "the graph holds docs tickets")]
+    for fields in documenting:
+        lines.append("- Ticket %d, *%s* (docs): %s" % (fields["id"], fields["title"], fields["status"]))
+    record = docs.read_record(context.project)
+    if record is None:
+        lines.append("- The site has not been built on `main` (no `%s`)." % docs.CHECKS_JSON.as_posix())
+    else:
+        failed = [check["check"] for check in record.get("checks") or [] if not check.get("pass")]
+        lines.append("- The site `%s`, built %s: %s." % (
+            record.get("site") or docs.SITE_INDEX.as_posix(), record.get("ran_at") or "at an unrecorded time",
+            "every machine check passed" if not failed else "the %s check(s) failed" % ", ".join(failed)))
+    # A closed docs ticket documents what it waits on, directly or through the tickets it waits on.
+    documented = set()
+    for item in documenting:
+        if item["status"] in tickets.SATISFIED:
+            documented |= _upstream(context.tickets, item["id"])
+    for fields in declared:
+        if fields["id"] not in documented:
+            lines.append("- Owed: ticket %d added public API and no closed docs ticket documents it." % fields["id"])
+    return lines
+
+
+def _upstream(by_id, identifier):
+    """Every ticket `identifier` waits on, through any chain of `blocked_by`."""
+    seen, stack = set(), list((by_id.get(identifier) or {}).get("blocked_by") or [])
+    while stack:
+        number = stack.pop()
+        if number not in seen:
+            seen.add(number)
+            stack.extend((by_id.get(number) or {}).get("blocked_by") or [])
+    return seen
 
 
 def _fell_back(context):

@@ -122,7 +122,17 @@ CONTENT_TYPES = {
     ".ico": "image/vnd.microsoft.icon",
     ".txt": "text/plain; charset=utf-8",
     ".md": "text/markdown; charset=utf-8",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
 }
+# The documentation site's pages are model-written, so they are served in a sandbox: an opaque origin whose
+# scripts can neither read the dashboard's pages (and the token they carry) nor act as the owner. The page's
+# link never carries the token in its URL, which a script in the page could read (app.js `siteRow`).
+SITE_CSP = "sandbox allow-scripts allow-popups"
 JSON_TYPE = "application/json; charset=utf-8"
 TEXT_TYPE = "text/plain; charset=utf-8"
 
@@ -895,7 +905,42 @@ def outputs_view(project):
         "report": [entry for entry in (_file_entry(project, project / RESEARCH / "REPORT.md"),) if entry is not None],
         "paper": _tree_entries(project, Path(RESEARCH) / "paper"),
         "docs": _tree_entries(project, Path("docs")),
+        "site": _site_entries(project),
     }
+
+
+def _site_entries(project):
+    """The built documentation site on `main` (ticket 51): its front page, where `site/` serves it, and its last checks.
+
+    One entry or none. `url` is relative to `/api/projects/<id>/`, where the pages are served inline in
+    a sandbox rather than downloaded, so the owner reads the site as a site.
+    """
+    from wayline import docs  # the docs module reads the code dossier's inventory; keep the server's import light
+
+    entry = _file_entry(project, project / docs.SITE_INDEX)
+    if entry is None:
+        return []
+    record = docs.read_record(project) or {}
+    return [dict(entry, url="site/index.html", built=record.get("ran_at"), passed=record.get("pass"))]
+
+
+def site_target(project, relpath):
+    """The file of the built site `site/<path>` names, or None: `index.html` for a directory, nothing outside the site."""
+    from wayline import docs
+
+    root = (Path(project) / docs.HTML_DIR).resolve()
+    relative = unquote(relpath or "")
+    if relative.startswith("/") or ".." in Path(relative).parts:
+        return None
+    try:
+        resolved = (root / relative).resolve()
+    except OSError:  # pragma: no cover - a symlink loop under the site
+        return None
+    if not resolved.is_relative_to(root):
+        return None
+    if resolved.is_dir():
+        resolved = resolved / "index.html"
+    return resolved if resolved.is_file() else None
 
 
 def _outputs_snapshot(project):
@@ -912,6 +957,8 @@ def _outputs_snapshot(project):
     _stat_into(values, project / RESEARCH / FINDINGS, RESEARCH + "/" + FINDINGS)
     _stat_into(values, project / RESEARCH / FINDINGS_MD, RESEARCH + "/" + FINDINGS_MD)
     _stat_into(values, project / RESEARCH / "REPORT.md", RESEARCH + "/REPORT.md")
+    from wayline.docs import CHECKS_JSON  # the docs module reads the code dossier's inventory; keep the server's import light
+    _stat_into(values, project / CHECKS_JSON, CHECKS_JSON.as_posix())
     for root in (project / RESEARCH / "refs", project / RESEARCH / "paper", project / "docs"):
         if not root.is_dir():
             continue
@@ -1157,6 +1204,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/logs/(?P<kind>[a-z]+)/(?P<log_id>.+)$"), "api_logs"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/outputs/?$"), "api_outputs"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/download/(?P<relpath>.+)$"), "api_download"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/site/(?P<relpath>.*)$"), "api_site"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/decisions/?$"), "api_decisions"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/changes/?$"), "api_changes"),
         (ACTION_ROUTE, "api_action_get"),
@@ -1445,6 +1493,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if target.is_dir():
             return self._download_zip(path, target)
         return self._download_file(target)
+
+    def api_site(self, query, project, relpath):
+        """One page or asset of the built documentation site, inline and sandboxed (ticket 51)."""
+        target = site_target(self._project(project), relpath)
+        if target is None:
+            return self._text(HTTPStatus.NOT_FOUND, "no such page of the documentation site: %s\n" % (relpath or "index.html"))
+        return self._send(HTTPStatus.OK, target.read_bytes(), content_type(target),
+                          (("Content-Security-Policy", SITE_CSP), ("Cache-Control", "no-cache")))
 
     def _download_file(self, target):
         try:

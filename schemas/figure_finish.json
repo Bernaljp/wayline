@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "figure_finish",
+  "description": "What the figure designer returns from its finish step (Implementation Decisions 13; research-notes 11 Section 4.1, step 6, and the guided path): whether it drew the final figure at the paths the prompt named, what the figure draws from, and every structured replacement for telling the author something. Code fills the hashes and run ids itself and never takes them from here.",
+  "type": "object",
+  "required": ["drew_final", "inputs", "schematic_elements", "selection_statistics", "findings_for_text", "traps_hit", "equations", "applied", "refusals"],
+  "additionalProperties": false,
+  "properties": {
+    "drew_final": {"type": "boolean", "description": "true when the generator, the figure files, the caption, and the notes are at the paths the prompt named; false only on a guided revision whose every change request was refused"},
+    "inputs": {
+      "type": "array",
+      "description": "the request's data files the final figure draws, each with the panels it is drawn in",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "pattern": "\\S", "description": "one of the request's data paths, exactly as the prompt listed it"},
+          "panels": {"type": "array", "items": {"type": "string", "pattern": "^[a-z]$"}, "description": "the panels it is drawn in; leave it out for every panel"}
+        }
+      }
+    },
+    "schematic_elements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["panel", "element", "reason", "caption_phrase"],
+        "additionalProperties": false,
+        "properties": {
+          "panel": {"type": "string", "pattern": "\\S"},
+          "element": {"type": "string", "pattern": "\\S"},
+          "reason": {"type": "string", "pattern": "\\S"},
+          "caption_phrase": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    },
+    "selection_statistics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["panel", "criterion", "displayed", "global", "tolerance"],
+        "additionalProperties": false,
+        "properties": {
+          "panel": {"type": "string", "pattern": "\\S"},
+          "criterion": {"type": "string", "pattern": "\\S"},
+          "displayed": {"type": "number"},
+          "global": {"type": "number"},
+          "tolerance": {"type": "number", "minimum": 0}
+        }
+      }
+    },
+    "findings_for_text": {
+      "type": "array",
+      "description": "what the manuscript's text should know: a capability the analysis does not realize, a number worth reporting; each becomes a proposal",
+      "items": {
+        "type": "object",
+        "required": ["text"],
+        "additionalProperties": false,
+        "properties": {
+          "text": {"type": "string", "pattern": "\\S"},
+          "manuscript_locator": {"type": ["string", "null"]},
+          "suggested_ticket": {"type": "boolean"}
+        }
+      }
+    },
+    "traps_hit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["library", "chart_type", "description", "fix", "promote_to_index"],
+        "additionalProperties": false,
+        "properties": {
+          "library": {"type": "string", "pattern": "\\S"},
+          "chart_type": {"type": "string", "pattern": "\\S"},
+          "description": {"type": "string", "pattern": "\\S"},
+          "fix": {"type": "string", "pattern": "\\S"},
+          "promote_to_index": {"type": "boolean"}
+        }
+      }
+    },
+    "equations": {
+      "type": "array",
+      "description": "every equation the figure typesets, with the code that computes it, for one verifier each",
+      "items": {
+        "type": "object",
+        "required": ["id", "drawn", "implementation"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+          "drawn": {"type": "string", "pattern": "\\S", "description": "the equation as the figure typesets it"},
+          "implementation": {"type": "string", "pattern": "\\S", "description": "the file and lines that compute it, as path:start-end"}
+        }
+      }
+    },
+    "applied": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the ids of the change requests the revision carries out"},
+    "refusals": {
+      "type": "array",
+      "description": "the change requests that would make the figure assert something false, each with the nearest honest alternative drawn as a new candidate, or null alternative paths when none is possible",
+      "items": {
+        "type": "object",
+        "required": ["change_request", "reason", "alternative_generator", "alternative_png"],
+        "additionalProperties": false,
+        "properties": {
+          "change_request": {"type": "string", "pattern": "\\S"},
+          "reason": {"type": "string", "pattern": "\\S"},
+          "alternative_generator": {"type": ["string", "null"]},
+          "alternative_png": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

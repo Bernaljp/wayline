@@ -80,7 +80,7 @@ from wayline.tickets import (
 
 __all__ = [
     "ChangeError", "Proof", "EVOLVER", "LIST_SCHEMA", "CHANGE_SCHEMA", "FEEDBACK_DIR", "CHANGES_DIR", "EVOLVE_JSON", "SOURCES",
-    "RETROSPECTIVE", "HARNESS_KIND", "LADDER_KEYS", "STATUSES", "file_feedback", "take_dropped", "pending_feedback", "read_state",
+    "RETROSPECTIVE", "FIGURE", "file_from_figure", "HARNESS_KIND", "LADDER_KEYS", "STATUSES", "file_feedback", "take_dropped", "pending_feedback", "read_state",
     "mark_read", "claim", "release", "evolver_tier", "evolves_on_fable", "is_ladder_change", "target_problem", "check_list", "touches_for",
     "read_changes", "read_change", "change_of", "global_change", "file_changes", "apply_proposal", "ladder_answered", "approves",
     "evolve_prompt", "evolve", "retrospective", "render_retrospective", "notable", "file_retrospective", "after_run",
@@ -97,6 +97,7 @@ EVOLVE_JSON = "evolve.json"             # research/evolve.json: what the evolver
 SESSIONS = "sessions/evolve"            # research/sessions/evolve/<n>
 EVOLVER_BUDGET = "large"                # policy.budget: the evolver is a large-budget role (policy.roles, fable xhigh)
 CLI, DASHBOARD, FILE, RETROSPECTIVE = "cli", "dashboard", "file", "retrospective"
+FIGURE = "figure"                       # the figure role's traps for the plot index (ticket 50), filed by code like the retrospective
 SOURCES = (CLI, DASHBOARD)              # the sources a person files under; `file` is what `take_dropped` finds
 HARNESS_KIND = "harness"
 BY_EVOLVE = "evolve"                    # `proposed_by` on a harness ticket, and `by` on the one a refusal parks
@@ -1047,6 +1048,23 @@ def file_retrospective(project, harness_root=HARNESS_ROOT, pre_check=True):
         return None
     with ledger.lock():
         return _file(ledger, render_retrospective(retro), RETROSPECTIVE, stem="retro-" + re.sub(r"[^0-9TZ]", "", now_ts()))
+
+
+def file_from_figure(project, text, stem):
+    """File what a figure result hands the evolve loop (ticket 50): the traps it would promote into the plot index.
+
+    `stem` names the item after the figure and its version, so a result filed again after a restart finds its item
+    already there and files nothing twice; returns the item, or None when it was filed before.
+    """
+    text = str(text or "").strip()
+    if not text:
+        raise ChangeError("there is no text to file as feedback")
+    ledger = Ledger(project)
+    with ledger.lock():
+        events, _ = ledger.read_events()
+        if stem in _journaled(events) or stem in _files(ledger):
+            return None
+        return _file(ledger, text, FIGURE, stem=stem)
 
 
 def _paced_out(project, policy):

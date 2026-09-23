@@ -1,0 +1,26 @@
+{
+  "ranking": [
+    {
+      "index_id": "boxplot-seaborn",
+      "rank": 1,
+      "score": {
+        "claim_legibility": 5,
+        "honesty": 5,
+        "venue_fit": 4,
+        "legibility_at_size": 4
+      },
+      "reasons": "The ordering carries the claim."
+    },
+    {
+      "index_id": "bar-seaborn",
+      "rank": 2,
+      "score": {
+        "claim_legibility": 3,
+        "honesty": 3,
+        "venue_fit": 4,
+        "legibility_at_size": 5
+      },
+      "reasons": "Bars hide the seed spread."
+    }
+  ]
+}

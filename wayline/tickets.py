@@ -24,7 +24,7 @@ from wayline.ledger import Ledger
 
 __all__ = [
     "TicketError", "RESEARCH", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED",
-    "DECISION", "HARNESS", "HARDEST", "RESULT_HEADING", "works_in_the_harness",
+    "DECISION", "HARNESS", "HARDEST", "RESULT_HEADING", "works_in_the_harness", "DOCS", "DOCS_BUILD", "machine_acceptance",
     "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
@@ -48,6 +48,11 @@ SATISFIED = ("done", "accepted")
 DECISION = "decision"
 HARNESS = "harness"
 HARDEST = 5
+# The kind whose acceptance always includes the documentation site's machine checks (decision 13).
+DOCS = "docs"
+DOCS_BUILD = "wayline docs build"
+# A criterion that already runs the build, however it is spelled (`--offline`, after a `cd`), is not doubled.
+_RUNS_DOCS_BUILD = re.compile(r"(?:^|[\s;&|(/])wayline\s+docs\s+build\b")
 
 # The heading the ledger appends an attempt's result under (Implementation Decisions 2).
 RESULT_HEADING = "## Result"
@@ -126,6 +131,20 @@ def works_in_the_harness(ticket):
     merging it; the conductor's restart and the tick both ask this, so neither counts it as work owed.
     """
     return (ticket or {}).get("kind") == HARNESS and bool(_GLOBAL_CHANGE_RE.match(str((ticket or {}).get("origin") or "")))
+
+
+def machine_acceptance(ticket):
+    """The Type-A commands a ticket is accepted by: its own `acceptance.machine`, and for a `docs` ticket the site's checks.
+
+    `wayline docs build` is appended to every `docs` ticket that does not already name it, so a site that
+    fails a check returns the ticket with the list whatever criteria the planner wrote. The plan-time
+    check that no criterion passes at the base commit reads the planner's own criteria, not this: the
+    build of a site that already passes says nothing about the new work.
+    """
+    commands = list(((ticket or {}).get("acceptance") or {}).get("machine") or [])
+    if (ticket or {}).get("kind") == DOCS and not any(_RUNS_DOCS_BUILD.search(str(command)) for command in commands):
+        commands.append(DOCS_BUILD)
+    return commands
 
 
 def relative_path(ticket):

@@ -4,6 +4,36 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+- The documentation site (ticket 51; Implementation Decisions 13). A package the harness implemented gets a
+  Sphinx site someone else can use, built in the project's own environment while the harness stays standard
+  library. `wayline docs init` chooses the theme once per project and records it, the package, and the layout
+  in `harness.json.docs`, then lays out whatever is missing: `docs/conf.py`, the four parts (tutorials,
+  how-to guides, reference, explanation), the gallery, the examples page, one reference page per public
+  module, `docs/requirements.txt`, and `.readthedocs.yaml`. `wayline docs env` installs the requirements
+  into the interpreter `harness.json.docs.python` names, or into a venv at `research/.cache/docs/venv`, on
+  the interpreter's own pip when it has no `ensurepip`. `wayline docs build` runs seven machine checks and
+  writes `research/.cache/docs/checks.json`: the structure and the recorded theme, a docstring on every
+  public symbol of the package's `ast` inventory (the code dossier's), every example run, a warning-free
+  Sphinx build, every public symbol in the built `objects.inv`, every part reachable from the front page
+  with a figure in the gallery and every example shown, and every internal link and anchor, with external
+  links asked through the fetch seam unless `--offline`. It prints the failures last and exits 1 on one.
+  The new `documentarian` role (`sonnet high`) takes every `docs` ticket, which the `coder` no longer
+  covers; the conductor and `wayline accept` add `wayline docs build` to a `docs` ticket's own criteria
+  (`tickets.machine_acceptance`), so a failing check returns the ticket with the list; and a done `docs`
+  ticket earns the `docs_read` verdict (`gates.DOCS_READ`), one read of the site's clarity and completeness
+  against the package's purpose, in place of the read its difficulty would give it. `REPORT.md`'s tickets
+  closed section names the site whenever a `code` ticket added public API, with its last build and any
+  public API no closed `docs` ticket documents, and the outputs index serves the site built on `main`
+  inline under `site/`, in a sandbox.
+
+## v0.6.0 (2026-09-23)
+
+M5 Overnight and report: the toy project from intake to a report across the real five-hour and weekly
+resets of 2026-09-23, with the pause and the conductor's own continuation, two stall replans, verdicts
+turning done into accepted, keep-if-better, the Fable fallback under `auto`, the rung ladder's tier up,
+top rung, and step down, the notification through hermes, and the outputs over loopback
+(`docs/verification/m5.md`, ticket 43).
+
 - Feedback, change records, and harness tickets (ticket 45; Implementation Decisions 12 and 16). The owner
   says what should have gone better and the harness changes itself under test. Feedback arrives from
   `wayline feedback "<text>"`, `wayline evolve "<text>"`, the dashboard's feedback form (the `feedback`

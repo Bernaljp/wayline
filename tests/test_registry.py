@@ -102,7 +102,7 @@ class ShippedSkillsTest(unittest.TestCase):
         sidecar = registry.read_sidecar(HARNESS_ROOT / "roles" / "coder" / "wayline.json", "role", "coder")
         for field in registry.SIDECAR_FIELDS + registry.ROLE_FIELDS:
             self.assertIn(field, sidecar)
-        self.assertEqual(sidecar["applicability_tags"]["kinds"], ["code", "docs", "harness"])
+        self.assertEqual(sidecar["applicability_tags"]["kinds"], ["code", "harness"])
         self.assertEqual(sidecar["output_schema"], "result")
 
 
@@ -320,7 +320,7 @@ class BuildTest(ProjectTestCase):
         entry = self.entry(self.build(), "role", "coder")
         self.assertEqual(entry["scope_kind"], "local")
         self.assertEqual(entry["path"], ".claude/agents/coder.md")
-        self.assertEqual(entry["applicability_tags"]["kinds"], ["code", "docs", "harness"])
+        self.assertEqual(entry["applicability_tags"]["kinds"], ["code", "harness"])
         self.assertTrue(entry["assignable"])
 
     def test_a_local_role_the_harness_does_not_have_cannot_be_launched(self):

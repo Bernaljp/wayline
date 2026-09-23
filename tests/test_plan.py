@@ -313,7 +313,7 @@ class CutTest(PlanCase):
         self.assertEqual(request.cwd, self.project)
         for text in ("- the cut: the first cut", "## research/SPEC.md", "# Spec: Do pairwise interaction terms", "### E1 (claims: C1)",
                      "## research/GOAL.json", "## research/kb/query_pack.md", "paper-a extends paper-b",
-                     "# The registry", "`coder` for code, docs, harness tickets", "`experimenter` for experiment tickets",
+                     "# The registry", "`coder` for code, harness tickets", "`documentarian` for docs tickets", "`experimenter` for experiment tickets",
                      "no role covers `lit`, `figure`, `review` tickets", "# The difficulty rubric", "- 3: a new code path",
                      "# What the journal says", "# The paths you may open", "## Plan", "# The plan", "adds_public_api"):
             self.assertIn(text, request.prompt)
@@ -344,7 +344,7 @@ class CutTest(PlanCase):
         self.assertEqual(four["resources"], {"gpu": 0, "cpu": 4, "ram_gb": 8, "wallclock_minutes": 30})
         self.assertEqual(four["goal_metric"], {"reports": "auroc", "expected_direction": "up"})
         self.assertEqual(four["retry"], {"host_oom": ["--rows=10000"], "gpu_oom": []}, "a ladder step in the file's spelling")
-        self.assertEqual((self.ticket(2)["role"], self.ticket(7)["role"], self.ticket(8)["role"]), ("coder", "analyst", "writer"))
+        self.assertEqual((self.ticket(2)["role"], self.ticket(7)["role"], self.ticket(8)["role"]), ("documentarian", "analyst", "writer"))
         self.assertEqual(self.ticket(6)["blocked_by"], [1, 3, 9], "the decision ticket pauses the network experiment")
         names = sorted(path.name for path in tickets_dir(self.project).glob("*.md"))
         self.assertEqual(names[:2], [tickets.filename(one), "02-document-the-product-features.md"])

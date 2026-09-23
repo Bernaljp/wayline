@@ -152,6 +152,42 @@ against that ticket, and the one past `policy.consultant.max_questions_per_ticke
 before a session starts. One L2 absorb may put as many reader questions to the consultant as one
 ticket may ask.
 
+## The figure designer and the figure critic are launched by the figure role, one job per session
+
+`figure-designer` and `figure-critic` (ticket 50) are launched by code (`kinds` empty), from
+`wayline.figure_role`, which is the figure role of Implementation Decisions 13: `wayline figure make`
+on a `figure_request/1`, and the paper's builder the same way. Both run on `policy.roles`
+(`opus`, `high`), from the project root. Code does every step that is not a drawing or a judgment:
+it classifies the data shape, takes the candidates from `figures/plot_index.json` (or the layouts of
+`figures/structure_index.json` for a framework figure), makes the pick, runs the 19 machine checks,
+and asks the verifier for the honesty verdict through the gate.
+
+The designer has two jobs, each a fresh session given only its own section of
+`prompts/roles/figure-designer.md`: `## Drafts` returns `figure_drafts` (the sidecar's
+`output_schema`), and `## Finish` returns `figure_finish`, on the chosen draft or on a guided
+revision's change requests. It writes only under `figures/<figure_id>/` (`TICKET_TOUCHES`), runs
+Python and nothing else, and commits nothing. Its prompt carries doctrine and never a library fact:
+what a library gets wrong arrives candidate by candidate from the plot index, and the designer says
+which pitfalls it read as `pitfalls_consulted`.
+
+The critic is a fresh, read-only session over the drafts, never the session that drew them. It has
+`may_judge`, like the critic, and returns `figure_ranking`: every rendered draft ranked, with a score
+on `claim_legibility`, `honesty`, `venue_fit`, and `legibility_at_size`, and the reasons.
+
+## The documentarian takes the `docs` tickets
+
+`documentarian` (ticket 51) is the one role whose `kinds` name `docs`, so the librarian gives it
+every `docs` ticket; the `coder` no longer covers them. It runs as a ticket worker like the coder,
+on the rung the ticket's difficulty gives, and its protocol is three verbs of `wayline.docs`:
+`wayline docs init` records the theme once per project in `harness.json.docs` (with the package and
+the layout) and lays out the missing skeleton, `wayline docs env` installs `docs/requirements.txt`
+into the project's own environment (the harness never imports Sphinx), and `wayline docs build`
+runs the machine checks. The conductor accepts every `docs` ticket by `wayline docs build` besides
+the ticket's own criteria (`tickets.machine_acceptance`), so a failing check returns the ticket with
+the list, and a done `docs` ticket earns one read of the site's clarity and completeness against the
+package's purpose (`gates.DOCS_READ`) in place of the read its difficulty would give it. Its Bash
+rules are the coder's with `wayline docs *` added and no `Agent`: a site is written in one session.
+
 ## Why `disallowed_tools` names tools the harness never asked for
 
 `--settings` adds to the owner's user configuration rather than replacing it, so a worker starts
