@@ -174,6 +174,22 @@ class LadderTest(EscalationCase):
         self.assertIn("wayline run --simulate-failure 1", commands)
         self.assertIn("Escalated one rung up: the next attempt launches on rung 3 (r3 sonnet high)", self.body())
 
+    def test_a_worker_that_reports_the_simulated_failure_as_blocked_still_climbs(self):
+        """The M5 overnight run: told the owner armed the failure, the resumed worker returned `blocked`.
+
+        That is the honest answer, and `blocked` sends a ticket to the planner's re-cut, off the ladder the
+        flag exists to show. While the failure is simulated, `blocked` and `needs_human` are that attempt
+        failing, so the chain takes its next step as it does for a failure.
+        """
+        worker.simulate_failure(1)
+        told = "the owner armed a simulated failure; nothing in the ticket can make it pass"
+        self.conduct((done(), patch()), (done(status="blocked", blocked_on=told), None), (done(), None),
+                     (done(status="needs_human", summary=told), None), (done(), None), (done(), None))
+        self.assertEqual(self.steps()[:4], ["resume", "tier_up", "resume", "split"])
+        self.assertEqual(self.rungs(), [2, 3])
+        self.assertEqual(self.events("ticket_blocked"), [], "the simulated failure is no reason to re-cut the ticket")
+        self.assertIn("under the simulated failure", self.events("ticket_failed")[1]["payload"]["reason"])
+
     def test_the_simulated_failure_forces_a_one_rung_tier_up(self):
         """Criterion 6: `wayline run --simulate-failure <id>` forces a tier up that shows in the journal."""
         worker.simulate_failure(1)

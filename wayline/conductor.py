@@ -2710,13 +2710,20 @@ class Conductor:
         self._admit_proposals(attempt)
         outside = attempt.result.get("touched_outside_declared") or []
         blocked_on = attempt.result.get("blocked_on")
+        status = attempt.result.get("status")
+        if not outside and (blocked_on or status == "needs_human") and worker.simulated_failure(attempt.id) is not None:
+            # The owner's simulated failure (`run --simulate-failure`) is what a worker told of it honestly reports as
+            # blocked or for a person; either is this attempt failing, so the chain climbs as the flag exists to show.
+            said = blocked_on or (attempt.result.get("summary") or "").strip() or status
+            self._fail(attempt, "the worker reported %s under the simulated failure: %s"
+                       % ("blocked" if blocked_on else status, said), self._next_step(attempt))
+            return "failed"
         if outside or blocked_on:
             path = ", ".join(outside) if outside else blocked_on
             self._write_ticket(attempt, "blocked", attempt.result)
             self.ledger.append_event(TICKET_BLOCKED, {"ticket": attempt.id, "path": path}, ticket=attempt.id)
             self.say("  ticket %d is blocked on %s; the planner re-cuts it" % (attempt.id, path))
             return "failed"
-        status = attempt.result.get("status")
         if status == "done":
             return "done"
         summary = (attempt.result.get("summary") or "").strip()
