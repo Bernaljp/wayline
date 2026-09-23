@@ -18,7 +18,7 @@ from pathlib import Path
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_conductor import ConductorCase, done, patch, combined, drive
-from wayline import conductor, gates, project, schedule, tickets, worker
+from wayline import conductor, gates, project, replay, schedule, tickets, worker
 from wayline.gates import GateError
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
@@ -161,6 +161,13 @@ class TicketAsksTest(unittest.TestCase):
         self.assertEqual([ask.verdict_type for ask in self.asks(3)], [gates.DIFF])
         self.assertEqual([ask.verdict_type for ask in self.asks(4)], [gates.RESULT])
         self.assertEqual([ask.verdict_type for ask in self.asks(5)], [gates.RESULT])
+
+    def test_a_difficulty_three_ticket_with_no_diff_of_its_own_is_read_as_its_result(self):
+        """The M5 run's scope-down writing tickets filed findings and committed nothing; their diff was the ledger's."""
+        ticket = self.ticket(acceptance={"machine": [], "quality": []})
+        asks = gates.ticket_asks(ticket, 3, "sonnet", TICKET_FILE, commit="abc123def456", no_diff=True)
+        self.assertEqual([ask.verdict_type for ask in asks], [gates.RESULT])
+        self.assertNotIn("abc123def456", " ".join(ask.question + ask.scope_limit for ask in asks))
 
     def test_a_hard_ticket_with_criteria_earns_both(self):
         self.assertEqual([ask.verdict_type for ask in self.asks(4, [CRITERION])],
@@ -534,6 +541,23 @@ class ConductorVerdictTest(ConductorCase):
         self.conduct((done(), patch()))
         self.assertEqual(self.events("verdict"), [])
         self.assertEqual(self.ticket()["status"], "done")
+
+    def test_a_ticket_that_committed_nothing_earns_a_read_of_its_result_not_of_a_diff(self):
+        """The M5 run: a difficulty-3 ticket whose work is findings integrates no commit, and `main`'s head is not its diff."""
+        path = tickets.tickets_dir(self.project) / "01-write-the-hello-file.md"
+        fields, body = tickets.read_ticket(path)
+        tickets.write_ticket(self.ledger, dict(fields, difficulty=3, acceptance=dict(fields["acceptance"], machine=["true"])), body)
+        self.git("add", "--", "research")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ticket: its work commits nothing")
+        with worker.use_fake() as fake:
+            fake.script(done(outputs_written=[]), ticket=1)
+            fake.script(passing(), role=gates.VERIFIER)
+            made = conductor.Conductor(self.project, out=io.StringIO())
+            drive(made)
+        self.assertTrue(self.payload("integrated").get("empty"))
+        self.assertEqual([item["payload"]["verdict_type"] for item in self.events("verdict")], [gates.RESULT])
+        self.assertEqual(self.ticket()["status"], "accepted")
+        self.assertIn(1, replay.replay(self.ledger.read_events()[0]).integrated_empty)
 
     def test_a_passing_verdict_accepts_the_ticket(self):
         self.quality()

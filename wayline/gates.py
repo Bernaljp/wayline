@@ -224,10 +224,14 @@ def run_machine_acceptance(commands, cwd, timeout_s):
 
     A command that outlives `timeout_s` has its whole process group killed and reports exit
     code 124, as `timeout(1)` does, so a hung check cannot hold the worker open.
+
+    Python writes no bytecode while the acceptance runs: the conductor runs it on `main` in the project's own
+    checkout, and a `__pycache__/` left there is a change outside `research/` that refuses the next `run`.
     """
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     results = []
     for command in commands:
-        results.append(run_shell(command, cwd, timeout_s))
+        results.append(run_shell(command, cwd, timeout_s, env=env))
     return results
 
 
@@ -512,6 +516,9 @@ class Verdict:
     # The model the verdict's own session ran on, when its result named another than the one it was launched
     # with (decision 16); None when it ran as asked, which is every recorded verdict.
     model_ran: Optional[str] = None
+    # Every `rate_limit_event` the verdict's sessions wrote, for the conductor to fold into its readings as it
+    # does a worker's: a refusal can ride a session that still answered (decision 15). Never journaled.
+    rate_limit_events: list = field(default_factory=list, compare=False, repr=False)
 
     @property
     def payload(self):
@@ -813,10 +820,12 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     )
     envelope = worker.launch(request)
     raise_if_refused(envelope, model, what)
+    heard = list(envelope.rate_limit_events)
     problem = _unusable(envelope)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_VERDICT % problem)
         raise_if_refused(envelope, model, what)
+        heard += envelope.rate_limit_events
         problem = _unusable(envelope)
     if problem is not None:
         raise GateError("%s could not be taken: %s" % (what, problem))
@@ -830,6 +839,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         # What the verifier's own session ran on, when the result named another model than it was launched with
         # (decision 16): a verdict stands or falls on who read the work, so the journal says which model did.
         model_ran=None if worker.ran_as_asked(model, envelope) else worker.model_ran(envelope),
+        rate_limit_events=heard,
     )
 
 
@@ -878,7 +888,7 @@ def _unusable(envelope):
 # --- what a done ticket earns (decision 11, "what gets a verdict") -----------------------------
 
 
-def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None):
+def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False):
     """The verdicts one done ticket earns: its own quality criteria, and an independent read.
 
     `rung` is the rung the attempt that wrote the work ran on, carried into each verdict's journal event
@@ -888,7 +898,9 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
     both: the criteria it set itself, and a read of the result by someone who did not write it.
     Both have to pass before the ticket is accepted. A difficulty-3 ticket is read as its diff, a
     difficulty-4 or -5 ticket as its result; a difficulty-1 or -2 ticket earns a verdict only
-    through its own quality criteria.
+    through its own quality criteria. `no_diff` is a ticket whose integration added no commit of its
+    own (its work is findings, say): its commit would be whatever `main` stood at, so it is read as
+    its result instead of as a diff that is not its own.
     """
     identifier = ticket["id"]
     subject = str(ticket_path)
@@ -909,6 +921,8 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
             verdict_type=QUALITY, author_model=author_model, ticket=identifier, rung=rung,
         ))
     read = DIFFICULTY_VERDICTS.get(difficulty)
+    if read == DIFF and no_diff:
+        read = RESULT
     if read == DIFF:
         asks.append(Ask(
             subject_kind="ticket", subject=subject,
@@ -934,7 +948,7 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
     return asks
 
 
-def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None):
+def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False):
     """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
 
     `passed` is the verdict types the journal holds as passed since the ticket was last done
@@ -948,7 +962,7 @@ def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None):
     if works_in_the_harness(ticket):
         return [], []
     earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
-                         outputs=ticket.get("outputs") or [], rung=rung)
+                         outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff)
     passed = set(passed or ())
     return earned, [ask for ask in earned if ask.verdict_type not in passed]
 

@@ -427,6 +427,10 @@ CLAIM_SCOPE = (
     "claim matters, or is well written, is not your question."
 )
 CLAIM_TITLE = "Scope down a report claim its artifacts do not support"
+# What a scope-down ticket's findings cite: the M5 run's cited the report's own tags, and the ledger refused them.
+PROVENANCE_FORM = ("A finding's provenance is the artifact's path in the project and a locator, the form the manifest "
+                   "resolves (`analysis/ablation/signal-4.json#paired_gain`), never a report tag such as "
+                   "`{res:<run>/<path>}`: the ledger refuses a provenance it cannot find in `manifest.json` or on disk.")
 
 _TAGS_AT_END = re.compile(r"(?:\{(?:res|ref):[^{}]+\}\s*)+$")
 _FOOTNOTE = re.compile(r"^\[\^(\d+)\]:\s*`(res|ref):([^`]+)`\s*$")
@@ -912,6 +916,8 @@ def _claim_ticket(project, book, claim, subject, taken, from_finding):
         gates.findings_text(taken.findings),
         "",
         remedy,
+        "",
+        PROVENANCE_FORM,
         "",
         "## The artifacts the verifier opened",
         "",

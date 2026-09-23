@@ -609,6 +609,8 @@ class VerifyTest(RunCase):
         self.assertEqual(filed[0]["origin"], outcome["failed"][0])
         self.assertEqual(filed[0]["proposed_by"], "verifier")
         self.assertEqual(filed[0]["touches"], [], "REPORT.md is rendered by code; the correction travels in the result")
+        _, body = tickets.read_ticket(next(tickets.tickets_dir(self.project).glob("%02d-*.md" % filed[0]["id"])))
+        self.assertIn("never a report tag", body, "the M5 run's scope-down findings cited `res:` tags and were refused")
         created = self.events("ticket_created")[-1]["payload"]
         self.assertEqual((created["ticket"], created["kind"]), (filed[0]["id"], "writing"))
 

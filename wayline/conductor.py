@@ -613,6 +613,7 @@ class _Attempt:
     resumed: bool = False
     # The commit `main` was fast-forwarded to, which is what a verdict on the diff reads.
     commit: Optional[str] = None
+    no_diff: bool = False  # the integration added no commit of the ticket's own
     # The graph's effective difficulty, which is the ticket's unless the human pinned one.
     difficulty: Optional[int] = None
     # Whether a worker process actually started, which is when `ticket_launched` is journaled.
@@ -714,6 +715,7 @@ class Conductor:
         # The reading `run --simulate-limit cheap:[fable:]<seconds>` forces, as `(seconds, model)`, and the
         # moment it lapses; the demo forces a step down with it rather than waiting for a nearly spent window.
         self._simulated_step = self._simulated_until = None
+        self._simulated_fable = False  # `run --simulate-limit fable:<seconds>`: its hold stands until its own reset
         # The wave `/usage` was last read for before it launched Fable work (decision 15): once a wave at most.
         self._usage_wave = None
         # What was last said of `/usage` giving no reading and of verdicts waiting on the hold, so a week-long hold says each once.
@@ -745,6 +747,7 @@ class Conductor:
         self.started_at = self.last_wave_at = self.harness_tag = None
         # Resume is start: the first wave takes over what the replayed journal says is owed.
         self.taken_over = False
+        worker.take_answered_refusals()  # a refusal a session of another run carried is not this run's
         # The cancels and reruns that changed nothing, said once each rather than every wave.
         self.declined = set()
         # The planner's cut at the `split` step and at a stall (ticket 38): `planner(cut, fall_back)` returns what was
@@ -796,6 +799,7 @@ class Conductor:
         self._beat()
         self._reread_policy()
         arrived = self._tail()
+        self._fold_answered_refusals()
         self._pace()  # what `run` start and the journal read, before anything below can start a session
         first = not self.taken_over
         if first:
@@ -812,6 +816,7 @@ class Conductor:
             self._replan(result)
             self._decide(result)
             self._evolve(result)
+            self._fold_answered_refusals()  # the decider, the planner, and the evolver answer in this wave
             picks = self._picks(self._graph())
             if picks:
                 self._start(picks, result)
@@ -1124,7 +1129,12 @@ class Conductor:
         return True
 
     def _fable_held(self):
-        """Whether the hold on Fable's weekly window stands, reading `/usage` first when this wave has not."""
+        """Whether the hold on Fable's weekly window stands, reading `/usage` first when this wave has not.
+
+        A refusal a session that answered carried is folded first, whenever it came: a stall's replan starts at
+        the end of the very wave whose decider carried one, before the next wave's fold (the M5 overnight run).
+        """
+        self._fold_answered_refusals()
         self._read_usage_before_fable()
         return self.view.hold is not None
 
@@ -1448,7 +1458,8 @@ class Conductor:
             ticket, _ = self._ticket(identifier)
             difficulty = launched.difficulty if launched.difficulty is not None else entry.get("difficulty", ticket["difficulty"])
             earned, asks = gates.owed_asks(ticket, difficulty, launched.model,
-                                           self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung)
+                                           self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung,
+                                           no_diff=identifier in self.view.integrated_empty)
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -2710,13 +2721,20 @@ class Conductor:
         self._admit_proposals(attempt)
         outside = attempt.result.get("touched_outside_declared") or []
         blocked_on = attempt.result.get("blocked_on")
+        status = attempt.result.get("status")
+        if not outside and (blocked_on or status in ("blocked", "needs_human")) and worker.simulated_failure(attempt.id) is not None:
+            # The owner's simulated failure (`run --simulate-failure`) is what a worker told of it honestly reports as
+            # blocked or for a person; either is this attempt failing, so the chain climbs as the flag exists to show.
+            said = blocked_on or (attempt.result.get("summary") or "").strip() or status
+            self._fail(attempt, "the worker reported %s under the simulated failure: %s"
+                       % ("blocked" if blocked_on or status == "blocked" else status, said), self._next_step(attempt))
+            return "failed"
         if outside or blocked_on:
             path = ", ".join(outside) if outside else blocked_on
             self._write_ticket(attempt, "blocked", attempt.result)
             self.ledger.append_event(TICKET_BLOCKED, {"ticket": attempt.id, "path": path}, ticket=attempt.id)
             self.say("  ticket %d is blocked on %s; the planner re-cuts it" % (attempt.id, path))
             return "failed"
-        status = attempt.result.get("status")
         if status == "done":
             return "done"
         summary = (attempt.result.get("summary") or "").strip()
@@ -2746,6 +2764,7 @@ class Conductor:
         The owner paused the run, a usage limit paused it until its window resets, pacing says
         `stop`, or the run is stopping.
         """
+        self._fold_answered_refusals()  # a refusal a session that answered carried pauses before anything launches
         return (self.view.paused_by_owner or self.view.pause is not None
                 or schedule.holds_model_work(self.action) or self._stop_requested() is not None)
 
@@ -2950,6 +2969,18 @@ class Conductor:
         resets = pacing.epoch(stands.get("resets_at"))
         return resets is not None and resets > self.clock()
 
+    def _fold_answered_refusals(self):
+        """Pause or hold on every refusal a session that still answered carried (`worker.take_answered_refusals`).
+
+        A worker's stream is folded as it is read (`_observe`) and a verdict's as the gate returns it
+        (`_heard_verdict`); the decider, the planner, and the evolver have no stream the conductor reads, so a Fable
+        refusal riding one of their answers would begin no hold (decision 15). Folding one twice holds once.
+        """
+        for event in worker.take_answered_refusals():
+            limit = pacing.rejected(event)
+            if limit is not None:
+                self._pause(limit, "a session that answered")
+
     def _hold(self, limit, source, written=None):
         """Journal the hold on Fable's weekly window, `paused` with `model: fable`, unless it stands as long already.
 
@@ -3028,8 +3059,27 @@ class Conductor:
         self._simulated_step = None if seconds is None else (float(seconds), model)
         self._simulated_until = None
 
+    def simulate_fable_hold(self, on=True):
+        """`run --simulate-limit fable:<seconds>`: the hold the simulated refusal begins stands until its own reset.
+
+        The simulated refusal is written into one Fable session's stream; a real `/usage` reading taken before the
+        next Fable wave would read the week as it truly is and end the hold at once, so nothing on Fable would ever
+        be seen falling back (the M5 overnight run). While a hold stands, Fable's week is read as spent until the
+        hold's reset, as `simulate_step_down` forces its reading for its seconds; past the reset nothing is forced.
+        """
+        self._simulated_fable = bool(on)
+
+    def _force_fable_hold(self):
+        """Read Fable's weekly window as spent while the simulated hold stands (`simulate_fable_hold`)."""
+        hold = self.view.hold if self._simulated_fable else None
+        resets = pacing.epoch((hold or {}).get("resets_at"))
+        now = self.clock()
+        if resets is not None and resets > now:
+            self.windows.record(pacing.FABLE, 1.0, resets, now)
+
     def _force_reading(self):
         """Take the simulated reading of `simulate_step_down`, while its seconds last."""
+        self._force_fable_hold()
         if self._simulated_step is None:
             return
         seconds, model = self._simulated_step
@@ -3315,7 +3365,11 @@ class Conductor:
                        "carries the commit and a person has to look" % commit[:12], "needs_human")
             return "failed"
         if self.view.integrated.get(attempt.id) != commit:  # journaled already by a conductor that died after it
-            self.ledger.append_event(INTEGRATED, {"ticket": attempt.id, "commit": commit, "resolved_by": resolved_by},
+            integrated = {"ticket": attempt.id, "commit": commit, "resolved_by": resolved_by}
+            if commit == base:
+                integrated["empty"] = True  # the fast-forward moved nothing: the ticket added no commit of its own
+                attempt.no_diff = True
+            self.ledger.append_event(INTEGRATED, integrated,
                                      ticket=attempt.id)
         self.say("  integrated %s into main as %s%s" % (BRANCH % attempt.id, commit[:12],
                                                         " (resolved by the integrator)" if resolved_by == INTEGRATOR else ""))
@@ -3709,6 +3763,7 @@ class Conductor:
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
             tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
+            no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty,
         )
         if not asks:
             return
@@ -3765,6 +3820,15 @@ class Conductor:
         that it never reads the consent apart from the wave: true takes it on Opus at the table's effort.
         """
         for index, ask in enumerate(entry.asks):
+            if index:
+                # A refusal an earlier verdict of this ticket carried may have paused the run or begun the hold since.
+                on_fable = gates.verifies_on_fable(self.policy, ask.author_model) and self._fable_held()
+                if self._holds_launches() or self.action != schedule.NORMAL or (on_fable and not self._falls_back()):
+                    self.verdicts.append(_Queued(entry.ticket, entry.attempt, entry.asks[index:]))
+                    if on_fable and not self._holds_launches() and self.action == schedule.NORMAL:
+                        self._held_back("the verdicts on ticket %d" % entry.ticket)
+                    return
+                fall_back = fall_back or on_fable
             try:
                 verdict = gates.verdict_for(ask, project=self.project, harness_root=self.harness_root,
                                             policy=self.policy, ledger=self.ledger, fall_back=fall_back)
@@ -3792,6 +3856,7 @@ class Conductor:
                      % (entry.ticket, ask.verdict_type, "passed" if verdict.passed else "failed",
                         verdict.model or "an unnamed model", verdict.session_id or "unknown",
                         ", falling back from %s" % verdict.fallback_from if verdict.fallback_from else ""))
+            self._heard_verdict(verdict, "ticket %d's %s verdict" % (entry.ticket, ask.verdict_type))
             self._admit_verdict_proposals(entry.ticket, ask, verdict)
             if not verdict.passed:
                 self._reject(entry, verdict)
@@ -3799,6 +3864,23 @@ class Conductor:
                 return
         self._accept_ticket(entry, verdict)
         result.accepted.append(entry.ticket)
+
+    def _heard_verdict(self, verdict, source):
+        """Fold the `rate_limit_event`s a verdict's sessions wrote into the readings, as `_observe` folds a worker's.
+
+        The verdict answered, so it stands; a rejected event among them pauses the run, or on Fable's weekly
+        window begins the hold (decision 15: a refusal can ride a session that still returned its answer).
+        """
+        events = list(getattr(verdict, "rate_limit_events", None) or [])
+        if not events:
+            return
+        now = self.clock()
+        for event in events:
+            self.windows.observe(event, now, pacing.WINDOWS if self.view.hold is not None else pacing.READINGS)
+            limit = pacing.rejected(event)
+            if limit is not None:
+                self._pause(limit, source)
+        self._pace()
 
     def _admit_verdict_proposals(self, ticket, ask, verdict):
         """Admission on the critic's and the verifier's `proposals` (ticket 37), the same rules as a worker's result's.
@@ -4843,6 +4925,7 @@ def run_command(args):
               % (simulated.seconds, "Fable's weekly window" if simulated.model else "every model's windows"))
     elif simulated is not None:
         worker.simulate_limit(simulated.seconds, simulated.model)
+        conductor.simulate_fable_hold(simulated.model == pacing.FABLE)
     if options.simulate_failure is not None:
         worker.simulate_failure(options.simulate_failure)
         print("simulate every acceptance of ticket %d fails, on every attempt" % options.simulate_failure)
@@ -4889,6 +4972,9 @@ def _detach(project, options):
         print("wayline run: a conductor (pid %s) already runs on %s" % (holder.get("pid", "?"), project), file=sys.stderr)
         return 1
     run_args = ["--max-waves", str(options.max_waves)] if options.max_waves is not None else []
+    if options.simulate_limit is not None:
+        # Checked already, so the unit refuses nothing the terminal accepted; spelled as it was given.
+        run_args += ["--simulate-limit", options.simulate_limit]
     if options.simulate_failure is not None:
         run_args += ["--simulate-failure", str(options.simulate_failure)]
     try:

@@ -58,7 +58,7 @@ from wayline.ledger import now_ts
 
 __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
-    "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
+    "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "take_answered_refusals", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "launches_on", "fall_back", "stderr_tail", "stderr_of",
     "NO_LEGACY_REMAP", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
@@ -72,6 +72,7 @@ _log = logging.getLogger("wayline.worker")
 TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
 # Linux refuses one argument over 128 KiB (MAX_ARG_STRLEN) with E2BIG; a prompt longer than this goes on stdin,
 # which `claude -p` reads when no prompt argument is given (ticket 36: a specify redraft of 144 KB was refused).
+# So does a prompt that begins with `-`, which the CLI would parse as an option (the M5 run's dedup judge).
 PROMPT_ARG_MAX = 100_000
 USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence")  # decision 5; research-notes/02 launch 4
 USAGE_TIMEOUT_S = 60
@@ -1547,7 +1548,9 @@ class ClaudeCli:
         executable = self._executable()
         cwd = _check_paths(request)
         argv = build_argv(request, run_dir, session_id, message)
-        spelled, on_stdin = spelled_argv(argv, run_dir), len(argv[2].encode("utf-8")) > PROMPT_ARG_MAX
+        # A prompt too long for one argument, or one the CLI would parse as an option (it begins with `-`), goes on stdin.
+        on_stdin = len(argv[2].encode("utf-8")) > PROMPT_ARG_MAX or argv[2].startswith("-")
+        spelled = spelled_argv(argv, run_dir)
         prompt_path = run_dir / "prompt.md"
         if on_stdin:
             del spelled[2]
@@ -1991,12 +1994,47 @@ def backend():
 
 def launch(request, on_start=None):
     """Run one session and return its envelope; `on_start(Started)` fires when the process exists."""
-    return backend().launch(request, on_start)
+    return _keep_answered_refusals(backend().launch(request, on_start), request)
 
 
 def resume(request, session_id, message, on_start=None):
     """Continue a session with `message` and return the envelope of the continuation."""
-    return backend().resume(request, session_id, message, on_start)
+    return _keep_answered_refusals(backend().resume(request, session_id, message, on_start), request)
+
+
+# --- refusals that rode a session which still answered (decision 15; the M5 overnight run) -----------
+
+_answered_refusals = []
+_answered_lock = threading.Lock()
+
+
+def _keep_answered_refusals(envelope, request=None):
+    """Keep the rejected `rate_limit_event`s of a session that returned a usable answer, and return the envelope.
+
+    A session with no answer is the caller's to read as refused (`gates.raise_if_refused`). One that answered is
+    read as an answer, and a Fable refusal it carried (a subagent's, or the one `--simulate-limit fable:` writes)
+    would be spent unheard by every caller that has no stream of its own to fold: the decider, the planner, the
+    evolver. The conductor takes these at its next wave (`take_answered_refusals`) and holds or pauses on them.
+    A ticket's worker and a verifier are left out: the conductor reads their streams itself (`_observe`,
+    `_heard_verdict`), and hearing a refusal twice would pause twice for one that named no reset.
+    """
+    env = getattr(request, "env", None) or {}
+    if "WAYLINE_TICKET" in env or getattr(request, "role", None) == "verifier":
+        return envelope
+    if envelope is not None and getattr(envelope, "valid", False):
+        rejected = [event for event in (envelope.rate_limit_events or []) if getattr(event, "status", None) == "rejected"]
+        if rejected:
+            with _answered_lock:
+                _answered_refusals.extend(rejected)
+    return envelope
+
+
+def take_answered_refusals():
+    """Every rejected event a session that still answered carried since the last call, oldest first; they are forgotten."""
+    with _answered_lock:
+        taken = list(_answered_refusals)
+        _answered_refusals.clear()
+    return taken
 
 
 def pid_alive(pid, run_dir=None):

@@ -17,10 +17,11 @@ from tests.projects import ProjectTestCase
 from tests.test_conductor import done, drive, patch, run_verb
 from tests.test_pacing import HOUR, REFUSED_TEXT, PacingCase, output
 from tests.test_verdicts import passing
+from tests.test_worker import SCHEMA, make_request
 from wayline import dashboard, gates, pacing, replay, tickets, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
-from wayline.project import render_status, status_view
+from wayline.project import render_status, set_model_fallback, status_view
 from wayline.worker import Envelope
 
 # The `error` of the failed `task_updated` a Fable subagent's refusal leaves in its parent's stream.
@@ -396,6 +397,122 @@ class RefusedVerdictTest(HoldCase):
         self.assertEqual((self.statuses(), last.reason), ({1: "accepted"}, "frontier_empty"))
 
 
+class HeardInAVerdictTest(HoldCase):
+    """A refusal a verdict's own stream carries begins the hold, although the verdict answered (decision 15).
+
+    A Fable refusal can hide inside a session that still returns its answer (a subagent's task, or the
+    event `--simulate-limit fable:` writes ahead of the session). A worker's stream is folded as it is
+    read; a verdict's is folded once the gate returns it, so the answer stands and the hold begins, and
+    no later verdict of the same ticket launches on Fable past it. Found on the M5 overnight run, where
+    the simulated refusal fell on a verdict and held nothing.
+    """
+
+    def verdicts_of(self, identifier):
+        return [item["payload"] for item in self.events("verdict") if item["ticket"] == identifier]
+
+    def run_until_the_first_verdict(self, consent):
+        self.add(1, difficulty=3)  # an Opus author: every verdict it earns runs on Fable
+        path = tickets.tickets_dir(self.project) / "01-write-the-hello-file.md"
+        fields, body = tickets.read_ticket(path)
+        acceptance = dict(fields["acceptance"], quality=["hello.txt greets the reader in one plain sentence."])
+        tickets.write_ticket(self.ledger, dict(fields, acceptance=acceptance), body)  # a quality verdict, then the diff's
+        if consent:
+            set_model_fallback(self.project, consent)
+        driven = self.conductor()
+        self.resets = int(self.now[0]) + HOUR
+        self.script(1)
+        answered = passing()
+        answered.rate_limit_events = [rejected_on_fable(self.resets)]
+        self.fake.script(answered, role="verifier")
+        self.fake.script(passing(), role="verifier")
+        self.take(driven, 3)
+        return driven
+
+    def test_the_answer_stands_and_the_hold_begins_with_the_rest_of_the_ticket_s_verdicts_queued(self):
+        driven = self.run_until_the_first_verdict(None)
+        (hold,) = self.holds()
+        self.assertEqual((hold["resets_at"], hold["window"]), (pacing.iso(self.resets), "seven_day"))
+        self.assertEqual([item["pass"] for item in self.verdicts_of(1)], [True], "the verdict that answered is journaled")
+        self.assertEqual([(call.kind, call.request.model) for call in self.verifier_calls()], [("launch", "fable")],
+                         "the ticket's next verdict is not launched on Fable past the hold")
+        self.assertEqual(self.statuses(), {1: "done"})
+        self.assertIn("wait for a verdict on Fable", driven.out.getvalue())
+
+    def test_under_auto_the_rest_of_the_ticket_s_verdicts_fall_back_to_opus(self):
+        self.run_until_the_first_verdict("auto")
+        self.assertEqual(len(self.holds()), 1)
+        self.assertEqual([(call.kind, call.request.model) for call in self.verifier_calls()],
+                         [("launch", "fable"), ("launch", "opus")])
+        taken = self.verdicts_of(1)
+        self.assertEqual([item.get("fallback_from") for item in taken], [None, "r7 fable high"])
+        self.assertEqual(self.statuses(), {1: "accepted"})
+
+
+class AnsweredRefusalTest(HoldCase):
+    """Any session the conductor starts can carry a Fable refusal and still answer: the decider, the planner, the evolver.
+
+    The launcher keeps the rejected events of every session that returned a usable answer, and the conductor
+    folds them at its next wave, so a refusal is never spent on a session that had no stream of its own read
+    (found on the M5 overnight run, where the simulated refusal fell on the evolver and held nothing).
+    """
+
+    def request(self, name):
+        run_dir = self.temp / name
+        run_dir.mkdir()
+        # A session with no ticket: the decider's, say, whose stream the conductor does not read itself.
+        return make_request(run_dir, schema_path=str(SCHEMA), env={"WAYLINE_PROJECT": str(self.project), "WAYLINE_RUN": str(run_dir)})
+
+    def test_a_refusal_riding_an_answered_session_begins_the_hold_at_the_next_wave(self):
+        self.add(1, difficulty=4)
+        driven = self.conductor()
+        resets = int(self.now[0]) + HOUR
+        answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "decided"})
+        answered.rate_limit_events = [rejected_on_fable(resets)]
+        self.fake.script(answered)
+        self.assertTrue(worker.launch(self.request("decider")).valid)
+        self.script(1)
+        self.assertEqual(driven.wave().launched, [], "the Fable ticket is held by the refusal the decider's session carried")
+        (hold,) = self.holds()
+        self.assertEqual(hold["resets_at"], pacing.iso(resets))
+        self.assertEqual(worker.take_answered_refusals(), [], "a refusal is folded once")
+
+    def test_the_refusal_is_heard_whenever_the_conductor_asks_whether_it_may_launch(self):
+        """The M5 run again: a decider's refusal, then a stall whose replan starts in the same wave, before any fold."""
+        self.add(1, difficulty=4)
+        driven = self.conductor()
+        driven.wave()
+        driven.settle()
+        answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "decided"})
+        answered.rate_limit_events = [rejected_on_fable(int(self.now[0]) + HOUR)]
+        self.fake.script(answered)
+        worker.launch(self.request("decider"))
+        self.assertTrue(driven._fable_held(), "the planner a stall launches next asks this before it starts")
+        self.assertEqual(len(self.holds()), 1)
+
+    def test_a_ticket_worker_s_refusal_is_left_to_the_stream_the_conductor_reads(self):
+        """Heard twice, a refusal that names no reset would pause twice: `_observe` reads a worker's own stream."""
+        answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "done"})
+        answered.rate_limit_events = [rejected_on_fable(int(self.now[0]) + HOUR)]
+        with worker.use_fake() as fake:
+            fake.script(answered)
+            run_dir = self.temp / "ticket-worker"
+            run_dir.mkdir()
+            worker.launch(make_request(run_dir, schema_path=str(SCHEMA)))  # WAYLINE_TICKET is set: a ticket's worker
+        self.assertEqual(worker.take_answered_refusals(), [])
+
+    def test_a_refusal_left_by_another_run_is_not_this_run_s(self):
+        answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "decided"})
+        with worker.use_fake() as fake:
+            answered.rate_limit_events = [rejected_on_fable(int(self.now[0]) + HOUR)]
+            fake.script(answered)
+            worker.launch(self.request("decider"))
+        self.add(1, difficulty=4)
+        driven = self.conductor()
+        self.script(1)
+        self.assertEqual(driven.wave().launched, [1])
+        self.assertEqual(self.holds(), [])
+
+
 class SimulatedFableLimitTest(HoldCase):
     """Criterion 6: `wayline run --simulate-limit fable:<seconds>` holds Fable alone; `<seconds>` keeps its meaning."""
 
@@ -415,6 +532,36 @@ class SimulatedFableLimitTest(HoldCase):
         self.assertEqual(self.pauses(), [])
         self.assertEqual(self.statuses(), {1: "accepted", 2: "done"}, "the Fable session the limit hit ran as it would have")
         self.assertIsNone(worker.simulated_limit())
+
+    def test_a_real_reading_does_not_lift_the_simulated_hold_before_its_seconds_are_out(self):
+        """The M5 overnight run: a live `/usage` read Fable at 7%, under `stop_at`, and ended the simulated hold at once.
+
+        `--simulate-limit fable:<seconds>` exists to show Fable work held and falling back for that long, the way
+        `cheap:<seconds>` shows the step down; a real reading ends the hold only once its reset has passed.
+        """
+        self.add(1, difficulty=4)
+        self.add(2, difficulty=4)
+        set_model_fallback(self.project, "auto")
+        self.hold_journaled(1)
+        driven = self.conductor()
+        driven.simulate_fable_hold()
+        self.fake.usage_text, _ = usage_text(self.now[0], fable=7)
+        self.script(1)
+        self.script(2)
+        self.assertEqual(driven.wave().launched, [1])
+        driven.settle()
+        self.now[0] += 60
+        # The tick's reading, journaled by another process: the one that ended the hold live.
+        self.ledger.append_event("pacing", {"five_hour": 0.24, "seven_day": 0.71, "fable": 0.07, "action": "normal"},
+                                 ts=journal_ts(self.now[0]))
+        self.assertEqual(driven.wave().launched, [2], "the next wave hears the reading under stop_at, and still holds")
+        launched = [item["payload"] for item in self.events("ticket_launched")]
+        self.assertEqual([(item["model"], item.get("fallback_from")) for item in launched], [("opus", "r6 fable low")] * 2)
+        self.assertEqual(self.events("unpaused"), [], "the simulated hold stands until its own reset")
+        self.now[0] += 2 * HOUR
+        driven.settle()
+        driven.wave()
+        self.assertEqual(self.events("unpaused")[-1]["payload"], {"model": "fable"})
 
     def test_a_simulated_limit_on_another_model_or_without_seconds_is_refused(self):
         for value in ("opus:60", "fable:-5", "fable:", "soon"):
