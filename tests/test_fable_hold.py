@@ -475,6 +475,19 @@ class AnsweredRefusalTest(HoldCase):
         self.assertEqual(hold["resets_at"], pacing.iso(resets))
         self.assertEqual(worker.take_answered_refusals(), [], "a refusal is folded once")
 
+    def test_the_refusal_is_heard_whenever_the_conductor_asks_whether_it_may_launch(self):
+        """The M5 run again: a decider's refusal, then a stall whose replan starts in the same wave, before any fold."""
+        self.add(1, difficulty=4)
+        driven = self.conductor()
+        driven.wave()
+        driven.settle()
+        answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "decided"})
+        answered.rate_limit_events = [rejected_on_fable(int(self.now[0]) + HOUR)]
+        self.fake.script(answered)
+        worker.launch(self.request("decider"))
+        self.assertTrue(driven._fable_held(), "the planner a stall launches next asks this before it starts")
+        self.assertEqual(len(self.holds()), 1)
+
     def test_a_refusal_left_by_another_run_is_not_this_run_s(self):
         answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "decided"})
         with worker.use_fake() as fake:

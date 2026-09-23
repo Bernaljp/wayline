@@ -1127,7 +1127,12 @@ class Conductor:
         return True
 
     def _fable_held(self):
-        """Whether the hold on Fable's weekly window stands, reading `/usage` first when this wave has not."""
+        """Whether the hold on Fable's weekly window stands, reading `/usage` first when this wave has not.
+
+        A refusal a session that answered carried is folded first, whenever it came: a stall's replan starts at
+        the end of the very wave whose decider carried one, before the next wave's fold (the M5 overnight run).
+        """
+        self._fold_answered_refusals()
         self._read_usage_before_fable()
         return self.view.hold is not None
 
@@ -2756,6 +2761,7 @@ class Conductor:
         The owner paused the run, a usage limit paused it until its window resets, pacing says
         `stop`, or the run is stopping.
         """
+        self._fold_answered_refusals()  # a refusal a session that answered carried pauses before anything launches
         return (self.view.paused_by_owner or self.view.pause is not None
                 or schedule.holds_model_work(self.action) or self._stop_requested() is not None)
 
