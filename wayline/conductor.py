@@ -745,6 +745,7 @@ class Conductor:
         self.started_at = self.last_wave_at = self.harness_tag = None
         # Resume is start: the first wave takes over what the replayed journal says is owed.
         self.taken_over = False
+        worker.take_answered_refusals()  # a refusal a session of another run carried is not this run's
         # The cancels and reruns that changed nothing, said once each rather than every wave.
         self.declined = set()
         # The planner's cut at the `split` step and at a stall (ticket 38): `planner(cut, fall_back)` returns what was
@@ -796,6 +797,7 @@ class Conductor:
         self._beat()
         self._reread_policy()
         arrived = self._tail()
+        self._fold_answered_refusals()
         self._pace()  # what `run` start and the journal read, before anything below can start a session
         first = not self.taken_over
         if first:
@@ -812,6 +814,7 @@ class Conductor:
             self._replan(result)
             self._decide(result)
             self._evolve(result)
+            self._fold_answered_refusals()  # the decider, the planner, and the evolver answer in this wave
             picks = self._picks(self._graph())
             if picks:
                 self._start(picks, result)
@@ -2956,6 +2959,18 @@ class Conductor:
         """Whether a pause or the hold waits for a reset that is still ahead."""
         resets = pacing.epoch(stands.get("resets_at"))
         return resets is not None and resets > self.clock()
+
+    def _fold_answered_refusals(self):
+        """Pause or hold on every refusal a session that still answered carried (`worker.take_answered_refusals`).
+
+        A worker's stream is folded as it is read (`_observe`) and a verdict's as the gate returns it
+        (`_heard_verdict`); the decider, the planner, and the evolver have no stream the conductor reads, so a Fable
+        refusal riding one of their answers would begin no hold (decision 15). Folding one twice holds once.
+        """
+        for event in worker.take_answered_refusals():
+            limit = pacing.rejected(event)
+            if limit is not None:
+                self._pause(limit, "a session that answered")
 
     def _hold(self, limit, source, written=None):
         """Journal the hold on Fable's weekly window, `paused` with `model: fable`, unless it stands as long already.

@@ -17,6 +17,7 @@ from tests.projects import ProjectTestCase
 from tests.test_conductor import done, drive, patch, run_verb
 from tests.test_pacing import HOUR, REFUSED_TEXT, PacingCase, output
 from tests.test_verdicts import passing
+from tests.test_worker import SCHEMA, make_request
 from wayline import dashboard, gates, pacing, replay, tickets, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
@@ -445,6 +446,46 @@ class HeardInAVerdictTest(HoldCase):
         taken = self.verdicts_of(1)
         self.assertEqual([item.get("fallback_from") for item in taken], [None, "r7 fable high"])
         self.assertEqual(self.statuses(), {1: "accepted"})
+
+
+class AnsweredRefusalTest(HoldCase):
+    """Any session the conductor starts can carry a Fable refusal and still answer: the decider, the planner, the evolver.
+
+    The launcher keeps the rejected events of every session that returned a usable answer, and the conductor
+    folds them at its next wave, so a refusal is never spent on a session that had no stream of its own read
+    (found on the M5 overnight run, where the simulated refusal fell on the evolver and held nothing).
+    """
+
+    def request(self, name):
+        run_dir = self.temp / name
+        run_dir.mkdir()
+        return make_request(run_dir, schema_path=str(SCHEMA))
+
+    def test_a_refusal_riding_an_answered_session_begins_the_hold_at_the_next_wave(self):
+        self.add(1, difficulty=4)
+        driven = self.conductor()
+        resets = int(self.now[0]) + HOUR
+        answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "decided"})
+        answered.rate_limit_events = [rejected_on_fable(resets)]
+        self.fake.script(answered)
+        self.assertTrue(worker.launch(self.request("decider")).valid)
+        self.script(1)
+        self.assertEqual(driven.wave().launched, [], "the Fable ticket is held by the refusal the decider's session carried")
+        (hold,) = self.holds()
+        self.assertEqual(hold["resets_at"], pacing.iso(resets))
+        self.assertEqual(worker.take_answered_refusals(), [], "a refusal is folded once")
+
+    def test_a_refusal_left_by_another_run_is_not_this_run_s(self):
+        answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "decided"})
+        with worker.use_fake() as fake:
+            answered.rate_limit_events = [rejected_on_fable(int(self.now[0]) + HOUR)]
+            fake.script(answered)
+            worker.launch(self.request("decider"))
+        self.add(1, difficulty=4)
+        driven = self.conductor()
+        self.script(1)
+        self.assertEqual(driven.wave().launched, [1])
+        self.assertEqual(self.holds(), [])
 
 
 class SimulatedFableLimitTest(HoldCase):

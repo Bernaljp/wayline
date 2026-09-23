@@ -58,7 +58,7 @@ from wayline.ledger import now_ts
 
 __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
-    "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
+    "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "take_answered_refusals", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "launches_on", "fall_back", "stderr_tail", "stderr_of",
     "NO_LEGACY_REMAP", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
     "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
@@ -1991,12 +1991,42 @@ def backend():
 
 def launch(request, on_start=None):
     """Run one session and return its envelope; `on_start(Started)` fires when the process exists."""
-    return backend().launch(request, on_start)
+    return _keep_answered_refusals(backend().launch(request, on_start))
 
 
 def resume(request, session_id, message, on_start=None):
     """Continue a session with `message` and return the envelope of the continuation."""
-    return backend().resume(request, session_id, message, on_start)
+    return _keep_answered_refusals(backend().resume(request, session_id, message, on_start))
+
+
+# --- refusals that rode a session which still answered (decision 15; the M5 overnight run) -----------
+
+_answered_refusals = []
+_answered_lock = threading.Lock()
+
+
+def _keep_answered_refusals(envelope):
+    """Keep the rejected `rate_limit_event`s of a session that returned a usable answer, and return the envelope.
+
+    A session with no answer is the caller's to read as refused (`gates.raise_if_refused`). One that answered is
+    read as an answer, and a Fable refusal it carried (a subagent's, or the one `--simulate-limit fable:` writes)
+    would be spent unheard by every caller that has no stream of its own to fold: the decider, the planner, the
+    evolver. The conductor takes these at its next wave (`take_answered_refusals`) and holds or pauses on them.
+    """
+    if envelope is not None and getattr(envelope, "valid", False):
+        rejected = [event for event in (envelope.rate_limit_events or []) if getattr(event, "status", None) == "rejected"]
+        if rejected:
+            with _answered_lock:
+                _answered_refusals.extend(rejected)
+    return envelope
+
+
+def take_answered_refusals():
+    """Every rejected event a session that still answered carried since the last call, oldest first; they are forgotten."""
+    with _answered_lock:
+        taken = list(_answered_refusals)
+        _answered_refusals.clear()
+    return taken
 
 
 def pid_alive(pid, run_dir=None):
