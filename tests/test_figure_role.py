@@ -205,6 +205,22 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual(seeds["grouping"], ["arm"])
         self.assertIn("distribution", seeds["family_hint"])  # repeated measures per arm: the spread is there to show
 
+    def test_the_biggest_table_inside_a_nested_result_stands_for_it(self):
+        temp = Path(tempfile.mkdtemp(prefix="wayline-shape-"))
+        self.addCleanup(shutil.rmtree, temp, ignore_errors=True)
+        (temp / "analysis.json").write_text(json.dumps({
+            "bootstrap": {"seed": 0}, "cost": {"values": [0.1, 0.2], "mean": 0.15},
+            "auroc": {"raw": [0.76, 0.77, 0.78], "raw_x3x4": [0.85, 0.84, 0.86], "raw_x1x2": [0.76, 0.77, 0.78]},
+            "runs": {"list": [{"arm": "raw", "seed": 1}, {"arm": "raw", "seed": 2}]}}), encoding="utf-8")
+        shape = figure_role.classify_shape(temp, [{"path": "analysis.json"}])
+        self.assertEqual(shape["inputs"][0]["records_under"], "auroc")
+        self.assertEqual((shape["rows"], shape["n_variables"]), (3, 3))
+
+    def test_the_claim_goes_before_a_shape_it_disagrees_with(self):
+        request = json.loads((FIXTURE / "request.json").read_text(encoding="utf-8"))
+        taken = figure_role.take_candidates(request, {"family_hint": ["evolution"]}, INDEX)
+        self.assertEqual([candidate["family"] for candidate in taken], ["ranking", "distribution", "evolution", "ranking"])
+
     def test_a_missing_file_is_said_to_be_missing(self):
         shape = figure_role.classify_shape(FIXTURE, [{"path": "results/nothing.csv"}])
         self.assertEqual(shape["inputs"][0]["structure"], "missing")
@@ -223,7 +239,7 @@ class CandidatesTest(unittest.TestCase):
     def test_the_projects_library_first_then_the_claims_other_families(self):
         taken = figure_role.take_candidates(self.request, self.shape, INDEX)
         self.assertEqual([candidate["index_id"] for candidate in taken],
-                         ["barplot-matplotlib", "lollipop-matplotlib", "violin-seaborn"])
+                         ["barplot-matplotlib", "violin-seaborn", "lollipop-matplotlib"])
         self.assertTrue(all(candidate["library"] == "matplotlib" for candidate in taken))
 
     def test_pitfalls_come_from_the_index_entry_or_the_librarys_shared_ones(self):
@@ -316,7 +332,7 @@ class UnguidedTest(FigureRoleCase):
 
     def test_a_low_margin_is_flagged(self):
         self.script_drafts()
-        self.script_ranking(totals={"barplot-matplotlib": 16, "lollipop-matplotlib": 15, "violin-seaborn": 10})
+        self.script_ranking(totals={"barplot-matplotlib": 16, "violin-seaborn": 15, "lollipop-matplotlib": 10})
         self.script_finish()
         self.script_verdict()
         result, _ = self.make()
@@ -508,13 +524,13 @@ class HumanPickTest(FigureRoleCase):
         again, waits = self.resume()
         self.assertEqual(again["status"], "candidates_ranked")
         self.assertIn("waits for the owner", waits)
-        answer(self.project, ticket["id"], "rank 2, the lollipop reads better")
+        answer(self.project, ticket["id"], "rank 2, the violin reads better")
         self.script_finish()
         self.script_verdict()
         result, _ = self.resume()
         self.assert_written_and_journaled(result, "verified")
         self.assertEqual(result["selected"], {"rank": 2, "by": "human", "margin": 3, "margin_low": False})
-        self.assertIn("lollipop-matplotlib", self.calls("figure-designer")[-1].request.prompt.split("# Where you start")[1][:400])
+        self.assertIn("violin-seaborn", self.calls("figure-designer")[-1].request.prompt.split("# Where you start")[1][:400])
 
     def test_the_decider_cannot_answer_the_pick(self):
         self.script_drafts()
@@ -525,7 +541,7 @@ class HumanPickTest(FigureRoleCase):
             decisions.decide(self.project, ticket["id"], "rank 1", "the critic's first")
 
 
-class GuidedTest(FigureRoleCase):
+class GuidedCase(FigureRoleCase):
     def guided(self, **fields):
         request = dict(self.request, mode="guided", revision_of=FIG1 + "/result.json",
                        change_requests=[{"id": "cr1", "text": "Drop method B so X looks clearly best.", "from": "human"},
@@ -550,6 +566,13 @@ class GuidedTest(FigureRoleCase):
     def refusal_ticket(self):
         return [t for t in read_tickets(self.project) if t["kind"] == "decision" and "refusal" in (t.get("origin") or "")][0]
 
+    def refused(self):
+        self.refuse()
+        self.make(self.guided(change_requests=[{"id": "cr1", "text": "Drop method B so X looks clearly best.", "from": "human"}]))
+        return self.refusal_ticket()
+
+
+class GuidedTest(GuidedCase):
     def test_a_revision_enters_at_the_finish_with_its_requests(self):
         self.script_finish(applied=["cr1", "cr2"])
         self.script_verdict()
@@ -580,11 +603,6 @@ class GuidedTest(FigureRoleCase):
         self.assertEqual(result["status"], "verified")
         self.assertEqual([r["change_request"] for r in result["refusals"]], ["cr1"])
         self.refusal_ticket()
-
-    def refused(self):
-        self.refuse()
-        self.make(self.guided(change_requests=[{"id": "cr1", "text": "Drop method B so X looks clearly best.", "from": "human"}]))
-        return self.refusal_ticket()
 
     def test_nobody_but_the_owner_overrides_a_refusal(self):
         ticket = self.refused()
@@ -620,6 +638,111 @@ class GuidedTest(FigureRoleCase):
         again, why = self.resume()
         self.assertEqual(again["status"], "verified")  # carried out once; nothing more to resume
         self.assertIn("guided revision", why)
+
+
+class ResumeAndGuardTest(GuidedCase):
+    """The review's findings on ticket 50: what a stopped run keeps, and what it never loses."""
+
+    def test_a_failed_sub_verdict_survives_a_held_honesty_verdict(self):
+        self.script_drafts()
+        self.script_ranking()
+        self.script_finish(equations=[{"id": "speed", "drawn": "v = 1/t", "implementation": "results/t8-a1/timing.csv:1-4"}])
+        self.script_verdict(False, [{"text": "The code computes 1/(t+1).", "locator": "results/t8-a1/timing.csv:2", "severity": "blocker"}])
+        result, reason = self.make()  # the honesty verdict is not scripted: it cannot be taken
+        self.assertEqual(result["status"], "blocked")
+        report = json.loads((self.project / FIG1 / "checks.json").read_text(encoding="utf-8"))
+        self.assertEqual([item["pass"] for item in report["equation_verdicts"]], [False])
+        self.script_verdict(True)
+        result, _ = self.resume()
+        self.assert_written_and_journaled(result, "honesty_failed")
+        self.assertEqual(result["honesty_verdict"]["findings"][0]["rule"], "equation_mismatch")
+        self.assertEqual(len(self.calls("verifier")), 2)  # the sub-verdict was not taken twice
+
+    def test_an_override_a_window_stopped_is_still_owed(self):
+        ticket = self.refused()
+        answer(self.project, ticket["id"], "override: draw it as asked")
+        result, reason = self.resume()  # no finish scripted: the pass cannot run
+        self.assertEqual(result["status"], "blocked")
+        self.assertIsNone(result["refusals"][0]["overridden_by"])
+        self.script_finish(applied=["cr1"])
+        self.script_verdict()
+        result, _ = self.resume()
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["refusals"][0]["overridden_by"], "human (decision ticket %d)" % ticket["id"])
+
+    def test_every_request_is_applied_or_refused_and_drew_final_false_needs_them_all_refused(self):
+        refusal = {"change_request": "cr1", "reason": "Dropping B hides the overlap.", "alternative_generator": None, "alternative_png": None}
+        self.fake.script(Envelope(session_id="s-finish", model="opus", structured_output=self.finish_value(
+            drew_final=False, inputs=[], refusals=[refusal])), role="figure-designer")
+        self.script_finish(applied=["cr2"], refusals=[refusal])
+        self.script_verdict()
+        result, _ = self.make(self.guided())
+        self.assertEqual(result["status"], "verified")
+        (resumed,) = [call for call in self.fake.calls if call.kind == "resume"]
+        self.assertIn("drew_final is false", resumed.message)
+        self.assertIn("cr2 is neither", resumed.message)
+        self.assertEqual(result["applied"], ["cr2"])
+
+    def test_the_override_pass_starts_from_the_revision_and_keeps_what_it_applied(self):
+        self.refuse(drew_final=True, applied=["cr2"])
+        self.script_verdict()
+        self.make(self.guided())
+        answer(self.project, self.refusal_ticket()["id"], "override: draw it as asked")
+        self.script_finish(applied=["cr1"])
+        self.script_verdict()
+        result, _ = self.resume()
+        self.assertEqual(result["status"], "verified")
+        prompt = self.calls("figure-designer")[-1].request.prompt
+        self.assertIn("as the earlier pass of this revision left it", prompt)
+        self.assertIn("Already carried out in it, to keep:\n- `cr2`", prompt)
+        self.assertEqual(result["applied"], ["cr1", "cr2"])
+
+    def test_a_repair_does_not_duplicate_an_alternative_nor_drop_the_override(self):
+        self.refuse(drew_final=True, applied=["cr2"])
+        refusal = self.fake.queue[-1].envelope.structured_output["refusals"]
+        self.fake.script(Envelope(session_id="s-finish", model="opus", structured_output=self.finish_value(applied=["cr2"], refusals=refusal)),
+                         role="figure-designer")
+        self.script_verdict()
+        outcomes = iter([failing_checks("palette"), passing_checks])
+        result, _ = self.make(self.guided(), checks=lambda *args, **kwargs: next(outcomes)(*args, **kwargs))
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual([c["index_id"] for c in result["candidates"]].count("alternative-cr1"), 1)
+
+    def test_stale_crops_are_never_read(self):
+        stale = self.project / FIG1 / "crops" / "z.png"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_bytes(PNG.read_bytes())
+        self.happy_path()
+        result, _ = self.make()
+        self.assertEqual(result["final"]["crops"], [])
+        self.assertNotIn("crops/z.png", self.calls("verifier")[0].request.prompt)
+
+    def test_drafts_the_critic_never_ranked_are_ranked_on_resume(self):
+        self.script_drafts()
+        result, reason = self.make()  # no critic scripted
+        self.assertEqual(result["status"], "blocked")
+        self.script_ranking()
+        self.script_finish()
+        self.script_verdict()
+        result, _ = self.resume()
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["version"], 1)
+        self.assertEqual(len(self.calls("figure-designer")), 2)  # the drafts once, the finish once
+
+    def test_data_that_changed_since_the_request_blocks_before_any_session(self):
+        (self.project / "results" / "t7-a1" / "scores.csv").write_text("method,auroc\nX,0.99\n", encoding="utf-8")
+        result, reason = self.make()
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("results/t7-a1/scores.csv no longer has the sha256", reason)
+        self.assertEqual(self.fake.calls, [])
+
+    def test_an_unreadable_index_is_a_blocked_result_not_a_traceback(self):
+        (self.project / "figures" / "plot_index.json").write_text("{not json", encoding="utf-8")
+        result, reason = self.make()
+        self.assert_written_and_journaled(result, "blocked")
+        self.assertIn("cannot be read", reason)
+        taken = figure_role.take_candidates(dict(self.request, kind="framework", register="conceptual"), {}, INDEX, {"layouts": 1})
+        self.assertEqual(taken, [])
 
 
 class HandOnTest(FigureRoleCase):

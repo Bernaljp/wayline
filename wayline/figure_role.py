@@ -56,6 +56,7 @@ import csv
 import hashlib
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -207,19 +208,50 @@ def _json_shape(value):
             and all(_number(cell) is not None for item in value for cell in item):
         return {"structure": "matrix", "rows": len(value), "columns": [], "width": max(len(item) for item in value)}
     if isinstance(value, dict):
-        lists = {key: cell for key, cell in value.items() if isinstance(cell, list) and cell and not isinstance(cell[0], (dict, list))}
-        lengths = {len(cell) for cell in lists.values()}
-        if len(lists) >= 2 and len(lengths) == 1:
-            rows = [{key: cell[index] for key, cell in lists.items()} for index in range(lengths.pop())]
-            return _table(rows, list(lists))
-        records = [(key, cell) for key, cell in value.items() if isinstance(cell, list) and cell and all(isinstance(item, dict) for item in cell)]
-        if records:
-            key, cell = max(records, key=lambda pair: len(pair[1]))
-            shape = _json_shape(cell)
-            shape["records_under"] = key
+        found = _largest_block(value, ())
+        if found is not None:
+            path, shape = found
+            if path:
+                shape["records_under"] = ".".join(path)
             return shape
         return {"structure": "nested", "rows": 1, "columns": [], "keys": sorted(str(key) for key in value)[:40]}
     return {"structure": "opaque", "rows": None, "columns": []}
+
+
+def _columns_block(value):
+    """A table from a record whose scalar lists share one length (at least two of them), else None."""
+    lists = {key: cell for key, cell in value.items() if isinstance(cell, list) and cell and not isinstance(cell[0], (dict, list))}
+    lengths = {len(cell) for cell in lists.values()}
+    if len(lists) < 2 or len(lengths) != 1:
+        return None
+    rows = [{key: cell[index] for key, cell in lists.items()} for index in range(lengths.pop())]
+    return _table(rows, list(lists))
+
+
+def _largest_block(value, path, depth=0):
+    """`(key path, table)` of the biggest table anywhere in a nested record: equal-length columns, or a list of records.
+
+    A result file often keeps its table under a key (`{"auroc": {"raw": [...], "flag": [...]}}`); the one with the most
+    cells stands for the file, and the path to it is said, so the designer is pointed at it.
+    """
+    best = None
+    block = _columns_block(value)
+    if block is not None:
+        best = (path, block)
+    for key, cell in value.items():
+        candidate = None
+        if isinstance(cell, list) and cell and all(isinstance(item, dict) for item in cell):
+            candidate = (path + (str(key),), _json_shape(cell))
+        elif isinstance(cell, dict) and depth < 4:
+            candidate = _largest_block(cell, path + (str(key),), depth + 1)
+        if candidate is not None and candidate[1].get("structure") == "table" and (
+                best is None or _cells(candidate[1]) > _cells(best[1])):
+            best = candidate
+    return best
+
+
+def _cells(shape):
+    return (shape.get("rows") or 0) * len(shape.get("columns") or [])
 
 
 def _file_shape(path):
@@ -320,14 +352,18 @@ def claim_families(claim_type):
 
 
 def _families(request, shape):
-    """The families to take candidates from, best first: the claim's that the shape suits, then the shape's, then the claim's."""
+    """The families to take candidates from, best first: the claim's that the shape suits, then the claim's, then the shape's.
+
+    The claim goes before the shape where they disagree, because the claim is what the figure has to say and a shape
+    read off a file (a wide table, a nested record) can suit a family the claim has no use for.
+    """
     asked = (request.get("candidates") or {}).get("families")
     if asked:
         return list(asked)
     hints, claimed = shape.get("family_hint") or [], claim_families(request["claim"].get("claim_type"))
     ordered = [family for family in claimed if family in hints]
-    ordered += [family for family in hints if family not in ordered]
     ordered += [family for family in claimed if family not in ordered]
+    ordered += [family for family in hints if family not in ordered]
     return ordered
 
 
@@ -350,12 +386,13 @@ def _slug(text, limit=40):
 def take_candidates(request, shape, index, structures=None, policy=None):
     """Up to `candidates.max` candidates from the plot index (research-notes 11 Section 4.1, step 2).
 
-    Entries are taken family by family in the order `_families` gives, the project's library first:
-    an entry the index implements in the target's library carries its own pitfalls; one implemented
-    only in another library is still a chart type the project's library can draw, and carries the
-    pitfalls every entry of the project's library shares. Chart types already taken, and the ids the
-    request excludes, are skipped. A framework figure or a graphical abstract takes the layouts of
-    the structure index instead.
+    Entries are taken a family at a time, round the families in the order `_families` gives, so the
+    claim's first family always has the first candidate and a family the index is crowded with cannot
+    take every slot. Within a family the project's library comes first: an entry the index implements
+    in the target's library carries its own pitfalls; one implemented only in another library is still
+    a chart type the project's library can draw, and carries the pitfalls every entry of the project's
+    library shares. Chart types already taken, and the ids the request excludes, are skipped. A
+    framework figure or a graphical abstract takes the layouts of the structure index instead.
     """
     asked = request.get("candidates") or {}
     policy_max = (((policy or {}).get("figures") or {}).get("candidates") or {}).get("max")
@@ -363,14 +400,24 @@ def take_candidates(request, shape, index, structures=None, policy=None):
     exclude = set(asked.get("exclude_index_ids") or [])
     library = request["target"]["library"]
     if request["kind"] != "result":
-        layouts = [layout for layout in (structures or figures.structure_index())["structures"] if layout["id"] not in exclude]
+        layouts = [layout for layout in (structures or figures.structure_index()).get("structures") or []
+                   if isinstance(layout, dict) and layout.get("id") and layout["id"] not in exclude]
         return [{"index_id": layout["id"], "chart_type": layout["description"], "family": "framework", "library": library,
                  "index_library": None, "function_or_geom": None, "source_url": None,
                  "layout": layout.get("panel_layout"), "pitfalls": []} for layout in layouts[:maximum]]
     families = _families(request, shape)
     shared = _library_pitfalls(index, library)
-    entries = [entry for entry in index.get("entries") or [] if entry.get("family") in families and entry.get("id") not in exclude]
-    ranked = sorted(entries, key=lambda entry: (library not in _libraries(entry), families.index(entry["family"])))
+    queues = {family: [] for family in families}
+    for entry in index.get("entries") or []:
+        if isinstance(entry, dict) and entry.get("family") in queues and entry.get("id") and entry["id"] not in exclude:
+            queues[entry["family"]].append(entry)
+    for family in queues:
+        queues[family].sort(key=lambda entry: library not in _libraries(entry))  # stable: the index's own order within
+    ranked = []
+    while any(queues.values()):
+        for family in families:
+            if queues[family]:
+                ranked.append(queues[family].pop(0))
     taken, seen = [], set()
     for entry in ranked:
         chart = str(entry.get("chart_type") or "").strip().lower()
@@ -438,6 +485,8 @@ class _Run:
         self.directory = FIGURES + "/" + self.figure_id
         self.ticket = _ticket_id(request)
         self.equations = []
+        self.prior_verdicts = {}  # equation id -> the sub-verdict an earlier pass took on this same drawing
+        self.overridden = []      # the refusals this pass carries out, each with the owner's `by`
         self.designer_model = _tier(policy, DESIGNER)[0]
 
     # --- launching -------------------------------------------------------------------------------
@@ -579,19 +628,46 @@ class _Run:
 
     # --- the steps -------------------------------------------------------------------------------
 
+    def check_data(self):
+        """Every data file the request names is on disk with the hash it names; else the run stops before a session."""
+        changed = []
+        for entry in self.request["data"]:
+            path = self.project / entry["path"]
+            if not path.is_file():
+                changed.append("%s is not a file in the project" % entry["path"])
+            elif sha256_of(path) != entry["sha256"]:
+                changed.append("%s no longer has the sha256 the request names" % entry["path"])
+        if changed:
+            raise _Stop("blocked", "the request's data changed since it was written, so the figure would not show the run it "
+                                   "names: %s; write the request again from the current files" % "; ".join(changed))
+
     def unguided(self):
+        self.check_data()
         shape = classify_shape(self.project, self.request["data"])
         self.result["data_shape"] = shape
-        index = figures.load_index(self.project / FIGURES / figures.PLOT_INDEX_JSON)
-        structures = _read_json(self.project / FIGURES / figures.STRUCTURE_INDEX_JSON) or figures.structure_index()
+        try:
+            index = figures.load_index(self.project / FIGURES / figures.PLOT_INDEX_JSON)
+        except figures.FigureIndexError as failure:
+            raise _Stop("blocked", "the plot index cannot be read: %s; run wayline figures build-index" % failure) from None
+        structures = _read_json(self.project / FIGURES / figures.STRUCTURE_INDEX_JSON)
+        if not isinstance(structures, dict) or not isinstance(structures.get("structures"), list):
+            structures = figures.structure_index()
+        if not isinstance(index, dict) or not isinstance(index.get("entries"), list):
+            raise _Stop("blocked", "the plot index has no entries list; run wayline figures build-index")
         candidates = take_candidates(self.request, shape, index, structures, self.policy)
+        self.drafted(candidates)
+        return self.rank_and_pick()
+
+    def drafted(self, candidates):
         if not candidates:
             raise _Stop("blocked", "the plot index offers no candidate for the families %s; run wayline figures build-index"
-                        % ", ".join(_families(self.request, shape)))
+                        % ", ".join(_families(self.request, self.result.get("data_shape") or {})))
         for number, candidate in enumerate(candidates, start=1):
             folder = "%s/candidates/%d-%s" % (self.directory, number, _slug(candidate["index_id"]))
             candidate["generator"], candidate["png"] = folder + "/draft.py", folder + "/draft.png"
         self.draw(candidates)
+
+    def rank_and_pick(self):
         self.rank()
         return self.pick()
 
@@ -728,11 +804,23 @@ class _Run:
         return self.finish(start)
 
     def guided(self, overridden=()):
-        """A guided revision: the finishing session on `revision_of` and the change requests (research-notes 11 Section 4.1)."""
-        previous = _previous_final(self.project, self.request.get("revision_of"))
-        start = ["- the figure as it stands, from `%s`:" % self.request["revision_of"]]
+        """A guided revision: the finishing session on the figure as it stands and the change requests (research-notes 11 Section 4.1).
+
+        The figure as it stands is this result's own final figure when an earlier pass drew one (an override pass
+        starts from the revision the first pass made, with its applied requests in it), else the one `revision_of` names.
+        """
+        current = self.result.get("final")
+        if current:
+            start = ["- the figure as it stands, as the earlier pass of this revision left it:"]
+            previous = current
+        else:
+            start = ["- the figure as it stands, from `%s`:" % self.request["revision_of"]]
+            previous = _previous_final(self.project, self.request.get("revision_of"))
         if previous:
             start += ["  - `%s`: `%s`" % (key, previous[key]) for key in ("generator", "pdf", "png", "caption", "notes") if previous.get(key)]
+        applied = [item for item in self.request.get("change_requests") or [] if item["id"] in (self.result.get("applied") or [])]
+        if overridden and applied:
+            start += ["", "Already carried out in it, to keep:"] + ["- `%s`: %s" % (item["id"], item["text"]) for item in applied]
         requests = overridden or self.request.get("change_requests") or []
         start += ["", "The change requests:" if not overridden else "The requests the owner overrode:"]
         start += ["- `%s` (from %s): %s" % (item["id"], item.get("from", "human"), item["text"]) for item in requests]
@@ -740,82 +828,111 @@ class _Run:
 
     def finish(self, start, overridden=()):
         self.paths = _final_paths(self.directory, self.figure_id)
+        self.overridden = list(overridden)
         request, role = self._launch_request(DESIGNER, "", FINISH_SCHEMA, self.directory + "/")
         request.prompt = self.finish_prompt(start, role, overridden)
-        asked = {item["id"] for item in self.request.get("change_requests") or []}
+        guided = self.request["mode"] == "guided"
+        asked = [item["id"] for item in (overridden or self.request.get("change_requests") or [])] if guided else []
+        overridden_ids = {item["id"] for item in overridden}
         data = {entry["path"] for entry in self.request["data"]}
 
         def check(value):
             problems = []
+            refused = [refusal["change_request"] for refusal in value["refusals"]]
             if value["drew_final"]:
                 for key in ["generator", "caption", "notes"] + list(self.request["target"]["formats"]):
                     if not self._inside_file(self.paths[key]):
                         problems.append("the %s is not at %s" % (key, self.paths[key]))
                 if not value["inputs"]:
                     problems.append("inputs is empty: name the data files the figure draws")
-            elif self.request["mode"] != "guided" or not value["refusals"]:
+            elif not guided or not asked or set(refused) != set(asked) or value["applied"]:
                 problems.append("drew_final is false, which only a guided revision whose every request was refused may say")
             unknown = [entry["path"] for entry in value["inputs"] if entry["path"] not in data]
             if unknown:
                 problems.append("inputs names %s, which the request's data does not list" % ", ".join(unknown))
-            for refusal in value["refusals"]:
-                if refusal["change_request"] not in asked:
-                    problems.append("refusal of %r, which is not one of the change requests" % refusal["change_request"])
-            for key in value["applied"]:
+            for key in refused + list(value["applied"]):
                 if key not in asked:
-                    problems.append("applied names %r, which is not one of the change requests" % key)
-            if overridden and any(refusal["change_request"] in {item["id"] for item in overridden} for refusal in value["refusals"]):
+                    problems.append("%r is not one of the change requests handed to you" % key)
+            both = set(refused) & set(value["applied"])
+            if both:
+                problems.append("%s is both applied and refused" % ", ".join(sorted(both)))
+            untouched = [key for key in asked if key not in refused and key not in value["applied"]]
+            if untouched:
+                problems.append("every change request is applied or refused; %s is neither" % ", ".join(untouched))
+            if overridden_ids & set(refused):
                 problems.append("a request the owner overrode is refused again; carry it out as asked")
             return problems
 
         self._finish_check = check
         envelope, value = self._converse(request, "the designer's finish", check)
-        self._take_finish(value, overridden)
+        self._take_finish(value)
         if not value["drew_final"]:
             raise _Stop("refused", "every change request was refused; the owner may override each through its decision ticket")
-        if overridden:
-            self._record_overrides(overridden)
         self.run_checks(request, envelope)
         return self.honesty()
 
-    def _take_finish(self, value, overridden):
+    def _take_finish(self, value):
+        """What a finish (or its repair) returned, into the result; an override is marked carried out only here."""
+        drawn = self._final_from(value) if value["drew_final"] else None  # raises before anything is taken
         for key in ("schematic_elements", "selection_statistics", "findings_for_text"):
             self.result[key] = list(value[key])
         self.result["traps_hit"] = list(self.result.get("traps_hit") or []) + [trap for trap in value["traps_hit"]
                                                                                 if trap not in (self.result.get("traps_hit") or [])]
         self.equations = list(value["equations"])
+        self.prior_verdicts = {}  # a new drawing: no sub-verdict taken on an earlier one stands for it
+        refused_now = {refusal["change_request"] for refusal in value["refusals"]}
         refusals = [refusal for refusal in self.result.get("refusals") or []
-                    if refusal["overridden_by"] or refusal["change_request"] not in {item["change_request"] for item in value["refusals"]}]
+                    if refusal["overridden_by"] or refusal["change_request"] not in refused_now]
+        candidates = self.result.setdefault("candidates", [])
         for refusal in value["refusals"]:
             alternative = refusal["alternative_png"] if self._inside_file(refusal["alternative_png"]) else None
             refusals.append({"change_request": refusal["change_request"], "reason": refusal["reason"],
                              "alternative_candidate": alternative, "overridden_by": None})
+            identifier = "alternative-%s" % refusal["change_request"]
+            candidates[:] = [candidate for candidate in candidates if candidate["index_id"] != identifier]
             if alternative:
-                self.result.setdefault("candidates", []).append({
-                    "rank": None, "index_id": "alternative-%s" % refusal["change_request"],
+                candidates.append({
+                    "rank": None, "index_id": identifier,
                     "chart_type": "the nearest honest alternative to change request %s" % refusal["change_request"],
                     "library": self.request["target"]["library"],
                     "generator": refusal["alternative_generator"] if self._inside_file(refusal["alternative_generator"]) else None,
                     "png": alternative, "rendered": True, "pitfalls_consulted": []})
+        if not candidates:
+            del self.result["candidates"]
+        for item in self.overridden:
+            for refusal in refusals:
+                if refusal["change_request"] == item["id"] and not refusal["overridden_by"]:
+                    refusal["overridden_by"] = item["by"]
         self.result["refusals"] = refusals
+        self.result["applied"] = sorted(set(self.result.get("applied") or []) | set(value["applied"]) | {item["id"] for item in self.overridden})
         for refusal in value["refusals"]:
             self._ask_override(refusal)
-        if value["drew_final"]:
-            by_path = {entry["path"]: entry for entry in self.request["data"]}
-            manifest = {entry["path"]: entry for entry in read_manifest(self.project).get("entries", [])}
-            inputs = []
-            for entry in value["inputs"]:
-                declared = by_path[entry["path"]]
-                path = self.project / entry["path"]
-                run_id = declared.get("run_id") or (manifest.get(entry["path"]) or {}).get("run_id") or "unmanifested"
-                item = {"path": entry["path"], "sha256": sha256_of(path) if path.is_file() else declared["sha256"], "run_id": run_id}
-                if entry.get("panels"):
-                    item["panels"] = list(entry["panels"])
-                inputs.append(item)
-            final = {"generator": self.paths["generator"], "pdf": self.paths.get("pdf") if "pdf" in self.request["target"]["formats"] else None,
-                     "png": self.paths.get("png") if "png" in self.request["target"]["formats"] else None,
-                     "caption": self.paths["caption"], "notes": self.paths["notes"], "crops": [], "inputs": inputs}
-            self.result["final"] = final
+        if drawn is not None:
+            self.result["final"] = drawn
+            if self.overridden:
+                self._record_overrides(self.overridden)
+
+    def _final_from(self, value):
+        """The `final` block of a drawn figure; the run stops when a data file changed since the request named it."""
+        by_path = {entry["path"]: entry for entry in self.request["data"]}
+        manifest = {entry["path"]: entry for entry in read_manifest(self.project).get("entries", [])}
+        inputs = []
+        for entry in value["inputs"]:
+            declared = by_path[entry["path"]]
+            path = self.project / entry["path"]
+            digest = sha256_of(path) if path.is_file() else None
+            if digest != declared["sha256"]:
+                raise _Stop("blocked", "%s changed while the figure was drawn (its sha256 is not the one the request names), "
+                                       "so the figure would not show the run it names" % entry["path"])
+            run_id = declared.get("run_id") or (manifest.get(entry["path"]) or {}).get("run_id") or "unmanifested"
+            item = {"path": entry["path"], "sha256": digest, "run_id": run_id}
+            if entry.get("panels"):
+                item["panels"] = list(entry["panels"])
+            inputs.append(item)
+        formats = self.request["target"]["formats"]
+        return {"generator": self.paths["generator"], "pdf": self.paths["pdf"] if "pdf" in formats else None,
+                "png": self.paths["png"] if "png" in formats else None,
+                "caption": self.paths["caption"], "notes": self.paths["notes"], "crops": [], "inputs": inputs}
 
     def _ask_override(self, refusal):
         text = next((item["text"] for item in self.request.get("change_requests") or [] if item["id"] == refusal["change_request"]), "")
@@ -846,42 +963,64 @@ class _Run:
             failed = "\n".join("- %s: %s" % (check["id"], check["detail"]) for check in checks if not check["pass"])
             self.say("  figure %s: %d machine check(s) failed; back to the designer once" % (self.figure_id, sum(1 for c in checks if not c["pass"])))
             _, value = self._converse(request, "the designer's repair", self._finish_check, envelope=envelope, message=REPAIR_CHECKS % failed)
-            self._take_finish(value, ())
+            if not value["drew_final"]:
+                raise _Stop("failed_checks", "the repair drew no figure, and the machine checks still fail: %s"
+                            % ", ".join(check["id"] for check in checks if not check["pass"]))
+            self._take_finish(value)
             checks = self._checks()
         if not all(check["pass"] for check in checks):
             raise _Stop("failed_checks", "%d machine check(s) failed after one repair: %s" % (
                 sum(1 for check in checks if not check["pass"]), ", ".join(check["id"] for check in checks if not check["pass"])))
 
     def _checks(self):
+        """The machine checks on the final figure, with its crops made fresh: none left from an earlier drawing is read."""
+        shutil.rmtree(self.project / self.directory / "crops", ignore_errors=True)
         checks = self.checks(self.project, self.request, self.result, policy=self.policy.get("figures") or {})
         self.result["checks"] = checks
         crops = sorted((self.project / self.directory / "crops").glob("*.png"))
         self.result["final"]["crops"] = [path.relative_to(self.project).as_posix() for path in crops]
         return checks
 
+    def _report(self, sub):
+        """`checks.json`, the check report the verdict reads, with the equations and every sub-verdict taken so far."""
+        report = self.directory + "/" + CHECKS_JSON
+        _write_json(self.project / report, {
+            "figure_id": self.figure_id, "version": self.result["version"], "checks": self.result["checks"],
+            "schematic_elements": self.result["schematic_elements"], "selection_statistics": self.result["selection_statistics"],
+            "refusals": self.result.get("refusals") or [], "equations": self.equations, "equation_verdicts": sub})
+        return report
+
     def honesty(self):
+        """The equation sub-verdicts, then the one honesty verdict; each sub-verdict is written down as it is taken.
+
+        A run stopped between them (a window, a held verdict) leaves the sub-verdicts it took in `checks.json`, and
+        `resume_figure` takes up from there: a failed sub-verdict still fails the figure, and none is taken twice.
+        """
+        prior = getattr(self, "prior_verdicts", {}) or {}
+        owed = [equation for equation in self.equations if equation["id"] not in prior]
         budget = (self.request.get("budget") or {}).get("verifier_sessions")
-        if budget is not None and budget < 1 + len(self.equations):
+        if budget is not None and budget < 1 + len(owed):
             raise _Stop("blocked", "the honesty verdict and %d equation sub-verdict(s) need %d verifier session(s); the budget allows %d"
-                        % (len(self.equations), 1 + len(self.equations), budget))
+                        % (len(owed), 1 + len(owed), budget))
         final = self.result["final"]
         final["output_sha256"] = {fmt: sha256_of(self.project / final[fmt]) for fmt in ("pdf", "png") if final.get(fmt)}
-        mismatches, sub = [], []
-        for equation in self.equations:
+        sub = [prior[equation["id"]] for equation in self.equations if equation["id"] in prior]
+        report = self._report(sub)
+        for equation in owed:
             verdict = self._verdict(
                 "%s#%s" % (self.directory, equation["id"]), EQUATION_QUESTION % (equation["drawn"], equation["implementation"]),
                 [final["generator"], equation["implementation"]], EQUATION_SCOPE, gates.EQUATION_MATCH)
             sub.append({"equation": equation["id"], "pass": verdict.passed, "session": verdict.session_id,
                         "findings": [finding.get("text") for finding in verdict.findings]})
-            if not verdict.passed:
+            report = self._report(sub)
+        by_id = {item["equation"]: item for item in sub}
+        mismatches = []
+        for equation in self.equations:
+            item = by_id[equation["id"]]
+            if not item["pass"]:
                 mismatches.append({"rule": "equation_mismatch", "locator": equation["implementation"], "text": "equation %s (%s) does not match %s: %s" % (
                     equation["id"], equation["drawn"], equation["implementation"],
-                    "; ".join(finding.get("text", "") for finding in verdict.findings) or "the sub-verdict failed without a finding")})
-        report = self.directory + "/" + CHECKS_JSON
-        _write_json(self.project / report, {
-            "figure_id": self.figure_id, "checks": self.result["checks"], "schematic_elements": self.result["schematic_elements"],
-            "selection_statistics": self.result["selection_statistics"], "refusals": self.result.get("refusals") or [],
-            "equation_verdicts": sub})
+                    "; ".join(text for text in item["findings"] if text) or "the sub-verdict failed without a finding")})
         paths = list(final["crops"]) + [final[key] for key in ("png", "pdf", "caption", "notes") if final.get(key)]
         paths += [self.directory + "/" + REQUEST_JSON, report] + [entry["path"] for entry in final["inputs"]]
         spec = self.project / "research" / "SPEC.md"
@@ -1140,16 +1279,17 @@ def _check_request(request):
         raise FigureError("the request is not a figure_request/1: %s" % "; ".join("%s: %s" % (error.path, error.message) for error in problems[:5]))
 
 
-def _run(project, request, result, harness_root, policy, autonomy, checks, notify, say, step, reason_ok=None):
+def _run(project, request, result, harness_root, policy, autonomy, checks, notify, say, step):
     run = _Run(project, request, result, harness_root=harness_root or HARNESS_ROOT, policy=policy, autonomy=autonomy,
                checks=checks or figure_checks.run_checks, notify=notify, say=say or (lambda text: None))
     reason = None
     try:
+        run.check_data()
         step(run)
     except _Stop as stop:
         result["status"], reason = stop.status, stop.reason
         if stop.status == "blocked" and result.get("selected") and not result.get("final"):
-            result["status"] = "selected"  # picked, and waiting to be finished: `resume` finishes it
+            result["status"] = "selected"  # picked, and waiting to be finished: `resume_figure` finishes it
             reason = "the pick stands; the finish did not run: %s" % stop.reason
     return write_result(project, result, reason, notify=notify, policy=policy, harness_root=harness_root), reason
 
@@ -1179,10 +1319,12 @@ def make(project, request, *, harness_root=None, policy=None, autonomy=None, che
 
 
 def resume_figure(project, figure_id, *, harness_root=None, policy=None, autonomy=None, checks=None, notify=None, say=None):
-    """Carry on a figure that waited: the owner's pick, the owner's overrides, or a verdict a window held.
+    """Carry on a figure that waited: the owner's pick, the owner's overrides, or a step a window or a failure stopped.
 
-    Returns `(figure_result, reason)`; the result is unchanged (and nothing is written) when there is nothing to
-    carry on yet, and `reason` then says what it waits on.
+    A stopped figure is taken up at the step it stopped at, and nothing it already has is done again: a held verdict
+    is taken with the sub-verdicts already written down, a drawing that failed to finish is finished from its pick,
+    and drafts the critic never ranked are ranked. Returns `(figure_result, reason)`; the result is unchanged (and
+    nothing is written) when there is nothing to carry on yet, and `reason` then says what it waits on.
     """
     project = Path(project).resolve()
     request = _read_json(project / FIGURES / figure_id / REQUEST_JSON)
@@ -1192,10 +1334,10 @@ def resume_figure(project, figure_id, *, harness_root=None, policy=None, autonom
     _check_request(request)
     policy = policy if policy is not None else policy_for(project, harness_root)
     autonomy = _autonomy(project, autonomy)
+    go = lambda step: _run(project, request, result, harness_root, policy, autonomy, checks, notify, say, step)
     overridden = _overrides(project, request, result)
     if overridden:
-        return _run(project, request, result, harness_root, policy, autonomy, checks, notify, say,
-                    lambda run: run.guided(overridden))
+        return go(lambda run: run.guided(overridden))
     status = result["status"]
     if status == "candidates_ranked":
         ticket, answer = _answered(project, _pick_origin(figure_id, result["version"]))
@@ -1208,21 +1350,38 @@ def resume_figure(project, figure_id, *, harness_root=None, policy=None, autonom
         threshold = (policy.get("figures") or {}).get("margin_threshold", DEFAULT_MARGIN)
         result["selected"] = {"rank": rank, "by": "human", "margin": margin, "margin_low": margin is not None and margin < threshold}
         result["status"] = "selected"
-        return _run(project, request, result, harness_root, policy, autonomy, checks, notify, say, lambda run: run.finish_selected())
+        return go(lambda run: run.finish_selected())
     if status == "selected":
-        return _run(project, request, result, harness_root, policy, autonomy, checks, notify, say, lambda run: run.finish_selected())
-    if status == "blocked" and result.get("final") and all(check["pass"] for check in result.get("checks") or [{"pass": False}]):
-        def verdict_again(run):
-            run.paths = _final_paths(run.directory, figure_id)
-            run.equations = []  # the equations were verdicted with the finish; a held honesty verdict is taken alone
-            run.honesty()
-        return _run(project, request, result, harness_root, policy, autonomy, checks, notify, say, verdict_again)
+        return go(lambda run: run.finish_selected())
     if status == "refused":
         return result, "every change request was refused and no refusal is overridden by the owner"
-    if status == "blocked":
-        return make(project, request, harness_root=harness_root, policy=policy, autonomy=autonomy, checks=checks,
-                    notify=notify, say=say)
-    return result, "figure %s is %s; a change to it is a guided revision (a new request with revision_of)" % (figure_id, status)
+    if status != "blocked":
+        return result, "figure %s is %s; a change to it is a guided revision (a new request with revision_of)" % (figure_id, status)
+    if result.get("final") and result.get("checks") and all(check["pass"] for check in result["checks"]):
+        return go(lambda run: _verdict_again(run, figure_id))
+    if request["mode"] == "guided":
+        return go(lambda run: run.guided())
+    if result.get("selected"):
+        return go(lambda run: run.finish_selected())
+    ranked = [candidate for candidate in result.get("candidates") or [] if candidate.get("rank")]
+    if ranked:
+        return go(lambda run: run.pick())
+    if any(candidate.get("rendered") for candidate in result.get("candidates") or []):
+        return go(lambda run: run.rank_and_pick())
+    return make(project, request, harness_root=harness_root, policy=policy, autonomy=autonomy, checks=checks,
+                notify=notify, say=say)
+
+
+def _verdict_again(run, figure_id):
+    """The verdicts of a figure whose checks passed, taken up from what `checks.json` wrote down."""
+    run.paths = _final_paths(run.directory, figure_id)
+    report = _read_json(run.project / run.directory / CHECKS_JSON) or {}
+    if report.get("version") != run.result["version"] or not isinstance(report.get("equations"), list):
+        raise _Stop("blocked", "checks.json does not hold this version's equations, so its verdicts cannot be taken up; "
+                               "a guided revision draws the figure again")
+    run.equations = report["equations"]
+    run.prior_verdicts = {item["equation"]: item for item in report.get("equation_verdicts") or []}
+    return run.honesty()
 
 
 def _rank_of(text, result):
@@ -1238,10 +1397,12 @@ def _rank_of(text, result):
 
 
 def _overrides(project, request, result):
-    """The refusals the owner overrode and the role has not carried out: set `overridden_by`, return the requests.
+    """The refusals the owner overrode and the role has not yet drawn, each with the `by` it is marked with once drawn.
 
     Only an answer journaled with `decided_by: human` counts. The decision ticket is human-only, so the decider
-    cannot answer it; an answer recorded as anyone else's is ignored here all the same.
+    cannot answer it; an answer recorded as anyone else's is ignored here all the same. Nothing is marked here:
+    `overridden_by` is set when the pass that draws the override takes its finish, so a pass a window stops
+    leaves the override owed and the next `resume_figure` tries it again.
     """
     texts = {item["id"]: item["text"] for item in request.get("change_requests") or []}
     wanted = []
@@ -1253,9 +1414,8 @@ def _overrides(project, request, result):
             continue
         if not str(answer.get("answer") or "").strip().lower().startswith(OVERRIDE):
             continue
-        refusal["overridden_by"] = "human (decision ticket %d)" % ticket
         wanted.append({"id": refusal["change_request"], "text": texts.get(refusal["change_request"], ""), "reason": refusal["reason"],
-                       "from": "human"})
+                       "from": "human", "by": "human (decision ticket %d)" % ticket})
     return wanted
 
 
@@ -1282,7 +1442,7 @@ def figure_command(args):
             result, reason = make(project, request, say=say)
         else:
             result, reason = resume_figure(project, options.target, say=say)
-    except (FigureError, ProjectError, worker.RoleError, OSError) as failure:
+    except (ValueError, KeyError, worker.RoleError, OSError) as failure:  # FigureError, ProjectError, and an unreadable index are ValueErrors
         print("wayline figure: %s" % failure, file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2) if options.json else _render(result, reason))

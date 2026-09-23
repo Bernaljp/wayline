@@ -199,6 +199,11 @@
         }
       }
     },
+    "applied": {
+      "type": "array",
+      "description": "the change requests a guided revision carried out, an overridden refusal among them once its override is drawn (ticket 50)",
+      "items": {"type": "string", "pattern": "\\S"}
+    },
     "refusals": {
       "type": "array",
       "items": {
