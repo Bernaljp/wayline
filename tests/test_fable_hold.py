@@ -459,7 +459,8 @@ class AnsweredRefusalTest(HoldCase):
     def request(self, name):
         run_dir = self.temp / name
         run_dir.mkdir()
-        return make_request(run_dir, schema_path=str(SCHEMA))
+        # A session with no ticket: the decider's, say, whose stream the conductor does not read itself.
+        return make_request(run_dir, schema_path=str(SCHEMA), env={"WAYLINE_PROJECT": str(self.project), "WAYLINE_RUN": str(run_dir)})
 
     def test_a_refusal_riding_an_answered_session_begins_the_hold_at_the_next_wave(self):
         self.add(1, difficulty=4)
@@ -487,6 +488,17 @@ class AnsweredRefusalTest(HoldCase):
         worker.launch(self.request("decider"))
         self.assertTrue(driven._fable_held(), "the planner a stall launches next asks this before it starts")
         self.assertEqual(len(self.holds()), 1)
+
+    def test_a_ticket_worker_s_refusal_is_left_to_the_stream_the_conductor_reads(self):
+        """Heard twice, a refusal that names no reset would pause twice: `_observe` reads a worker's own stream."""
+        answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "done"})
+        answered.rate_limit_events = [rejected_on_fable(int(self.now[0]) + HOUR)]
+        with worker.use_fake() as fake:
+            fake.script(answered)
+            run_dir = self.temp / "ticket-worker"
+            run_dir.mkdir()
+            worker.launch(make_request(run_dir, schema_path=str(SCHEMA)))  # WAYLINE_TICKET is set: a ticket's worker
+        self.assertEqual(worker.take_answered_refusals(), [])
 
     def test_a_refusal_left_by_another_run_is_not_this_run_s(self):
         answered = Envelope(structured_output={"skill_token": "UNKNOWN", "report": "decided"})

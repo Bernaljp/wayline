@@ -2722,12 +2722,12 @@ class Conductor:
         outside = attempt.result.get("touched_outside_declared") or []
         blocked_on = attempt.result.get("blocked_on")
         status = attempt.result.get("status")
-        if not outside and (blocked_on or status == "needs_human") and worker.simulated_failure(attempt.id) is not None:
+        if not outside and (blocked_on or status in ("blocked", "needs_human")) and worker.simulated_failure(attempt.id) is not None:
             # The owner's simulated failure (`run --simulate-failure`) is what a worker told of it honestly reports as
             # blocked or for a person; either is this attempt failing, so the chain climbs as the flag exists to show.
             said = blocked_on or (attempt.result.get("summary") or "").strip() or status
             self._fail(attempt, "the worker reported %s under the simulated failure: %s"
-                       % ("blocked" if blocked_on else status, said), self._next_step(attempt))
+                       % ("blocked" if blocked_on or status == "blocked" else status, said), self._next_step(attempt))
             return "failed"
         if outside or blocked_on:
             path = ", ".join(outside) if outside else blocked_on
@@ -3823,9 +3823,9 @@ class Conductor:
             if index:
                 # A refusal an earlier verdict of this ticket carried may have paused the run or begun the hold since.
                 on_fable = gates.verifies_on_fable(self.policy, ask.author_model) and self._fable_held()
-                if self._holds_launches() or (on_fable and not self._falls_back()):
+                if self._holds_launches() or self.action != schedule.NORMAL or (on_fable and not self._falls_back()):
                     self.verdicts.append(_Queued(entry.ticket, entry.attempt, entry.asks[index:]))
-                    if on_fable and not self._holds_launches():
+                    if on_fable and not self._holds_launches() and self.action == schedule.NORMAL:
                         self._held_back("the verdicts on ticket %d" % entry.ticket)
                     return
                 fall_back = fall_back or on_fable

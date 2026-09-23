@@ -190,6 +190,13 @@ class LadderTest(EscalationCase):
         self.assertEqual(self.events("ticket_blocked"), [], "the simulated failure is no reason to re-cut the ticket")
         self.assertIn("under the simulated failure", self.events("ticket_failed")[1]["payload"]["reason"])
 
+    def test_a_bare_blocked_status_under_the_simulated_failure_climbs_too(self):
+        worker.simulate_failure(1)
+        self.conduct((done(), patch()), (done(status="blocked"), None), (done(), None), (done(), None),
+                     (done(), None), (done(), None))
+        self.assertEqual(self.steps()[:2], ["resume", "tier_up"])
+        self.assertEqual(self.rungs()[:2], [2, 3])
+
     def test_the_simulated_failure_forces_a_one_rung_tier_up(self):
         """Criterion 6: `wayline run --simulate-failure <id>` forces a tier up that shows in the journal."""
         worker.simulate_failure(1)
