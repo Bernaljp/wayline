@@ -888,7 +888,7 @@ def _unusable(envelope):
 # --- what a done ticket earns (decision 11, "what gets a verdict") -----------------------------
 
 
-def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None):
+def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False):
     """The verdicts one done ticket earns: its own quality criteria, and an independent read.
 
     `rung` is the rung the attempt that wrote the work ran on, carried into each verdict's journal event
@@ -898,7 +898,9 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
     both: the criteria it set itself, and a read of the result by someone who did not write it.
     Both have to pass before the ticket is accepted. A difficulty-3 ticket is read as its diff, a
     difficulty-4 or -5 ticket as its result; a difficulty-1 or -2 ticket earns a verdict only
-    through its own quality criteria.
+    through its own quality criteria. `no_diff` is a ticket whose integration added no commit of its
+    own (its work is findings, say): its commit would be whatever `main` stood at, so it is read as
+    its result instead of as a diff that is not its own.
     """
     identifier = ticket["id"]
     subject = str(ticket_path)
@@ -919,6 +921,8 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
             verdict_type=QUALITY, author_model=author_model, ticket=identifier, rung=rung,
         ))
     read = DIFFICULTY_VERDICTS.get(difficulty)
+    if read == DIFF and no_diff:
+        read = RESULT
     if read == DIFF:
         asks.append(Ask(
             subject_kind="ticket", subject=subject,
@@ -944,7 +948,7 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
     return asks
 
 
-def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None):
+def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False):
     """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
 
     `passed` is the verdict types the journal holds as passed since the ticket was last done
@@ -958,7 +962,7 @@ def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None):
     if works_in_the_harness(ticket):
         return [], []
     earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
-                         outputs=ticket.get("outputs") or [], rung=rung)
+                         outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff)
     passed = set(passed or ())
     return earned, [ask for ask in earned if ask.verdict_type not in passed]
 

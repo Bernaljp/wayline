@@ -399,7 +399,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `ticket_result` | `ticket`, `attempt`, `session_id`, `status`, `turns`, `duration_ms`, `usage`, `permission_denials`, `valid`; `jobs` (the job ids a `running` result leaves for the poller, ticket 19; absent otherwise); `model_ran` (the model the result's `modelUsage` says ran, on a session whose model was not the rung's, decision 16; absent otherwise; ticket 63) |
   | `ticket_resumed` | `ticket`, `attempt`, `session_id`, `reason`: `invalid_result`, `acceptance_failed`, `worker_died`, `timeout`, `readopted` |
   | `acceptance` | `ticket`, `attempt`, `where`: `worktree`, `rebased`, `main`; `pass`, `results` |
-  | `integrated` | `ticket`, `commit`, `resolved_by`: `none`, `integrator` |
+  | `integrated` | `ticket`, `commit`, `resolved_by`: `none`, `integrator`; `empty` (true when the fast-forward added no commit of the ticket's own, whose independent read is then of its result rather than a diff; absent otherwise; ticket 43) |
   | `ticket_done`, `ticket_accepted` | `ticket` |
   | `ticket_failed` | `ticket`, `attempt`, `reason` (prose; the model check of decision 16 writes one opening with `model_mismatch` or `model_not_served`, ticket 63), `next`: `resume`, `tier_up`, `split`, `needs_human` |
   | `ticket_blocked` | `ticket`, `path` |

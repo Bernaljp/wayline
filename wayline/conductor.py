@@ -613,6 +613,7 @@ class _Attempt:
     resumed: bool = False
     # The commit `main` was fast-forwarded to, which is what a verdict on the diff reads.
     commit: Optional[str] = None
+    no_diff: bool = False  # the integration added no commit of the ticket's own
     # The graph's effective difficulty, which is the ticket's unless the human pinned one.
     difficulty: Optional[int] = None
     # Whether a worker process actually started, which is when `ticket_launched` is journaled.
@@ -1457,7 +1458,8 @@ class Conductor:
             ticket, _ = self._ticket(identifier)
             difficulty = launched.difficulty if launched.difficulty is not None else entry.get("difficulty", ticket["difficulty"])
             earned, asks = gates.owed_asks(ticket, difficulty, launched.model,
-                                           self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung)
+                                           self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung,
+                                           no_diff=identifier in self.view.integrated_empty)
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -3363,7 +3365,11 @@ class Conductor:
                        "carries the commit and a person has to look" % commit[:12], "needs_human")
             return "failed"
         if self.view.integrated.get(attempt.id) != commit:  # journaled already by a conductor that died after it
-            self.ledger.append_event(INTEGRATED, {"ticket": attempt.id, "commit": commit, "resolved_by": resolved_by},
+            integrated = {"ticket": attempt.id, "commit": commit, "resolved_by": resolved_by}
+            if commit == base:
+                integrated["empty"] = True  # the fast-forward moved nothing: the ticket added no commit of its own
+                attempt.no_diff = True
+            self.ledger.append_event(INTEGRATED, integrated,
                                      ticket=attempt.id)
         self.say("  integrated %s into main as %s%s" % (BRANCH % attempt.id, commit[:12],
                                                         " (resolved by the integrator)" if resolved_by == INTEGRATOR else ""))
@@ -3757,6 +3763,7 @@ class Conductor:
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
             tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
+            no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty,
         )
         if not asks:
             return

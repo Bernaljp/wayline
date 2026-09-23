@@ -322,6 +322,9 @@ class View:
     jobs: dict = field(default_factory=dict)
     findings: set = field(default_factory=set)
     integrated: dict = field(default_factory=dict)
+    # The tickets whose last integration added no commit of their own (`integrated` with `empty`): a diff of theirs is nothing
+    # to read, so their independent read is of their result (the M5 run's scope-down writing tickets).
+    integrated_empty: set = field(default_factory=set)
     verdicts: dict = field(default_factory=dict)
     # Keep-if-better (ticket 39): every evaluation's `progress` by its run id, so a restart judges no attempt twice, and
     # the `discarded` payload of each ticket whose latest attempt was not kept, whose branch and worktree stay.
@@ -420,6 +423,10 @@ class View:
             self.discarded[identifier] = dict(payload)
         elif name == INTEGRATED and identifier is not None:
             self.integrated[identifier] = payload.get("commit")
+            if payload.get("empty"):
+                self.integrated_empty.add(identifier)
+            else:
+                self.integrated_empty.discard(identifier)
             ticket = self.tickets.get(identifier)
             if ticket is not None and ticket.latest is not None and not ticket.latest.ended:
                 ticket.latest.integrated = True
