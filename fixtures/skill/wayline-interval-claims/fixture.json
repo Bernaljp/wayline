@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "id": "skill/wayline-interval-claims",
+  "kind": "skill",
+  "subject": {
+    "path": "skills/wayline-interval-claims/SKILL.md",
+    "sha256": "47345dc5095e583043239267ab9ff08889f33991f7098b79d428bbc401111903",
+    "also": [
+      "skills/wayline-interval-claims/wayline.json"
+    ]
+  },
+  "origin": {
+    "project": null,
+    "ticket": 61,
+    "session_id": "cdeae41d-25ff-4833-9b5f-eae3c704b9f5",
+    "journal_ts": null,
+    "change_record": "research/changes/018-give-this-project-s-writing-tickets-a-skill.json",
+    "reason": "feedback 009-captions-overclaim-the-caption-of: the caption of figures/e1-signal4 and the report's own prose (research/sessions/writer/1, structured_output.groups[2].text and negative_results) stated verdicts ('as much as', 'does not') over allpairs_cost and wrong_pair_vs_raw at signal 4.0, both of whose 95% intervals include zero (analysis/ablation/signal-4.json#allpairs_cost.ci95 = [-0.00080, 0.00032], #wrong_pair_vs_raw.ci95 = [-0.00068, 0.00111]), and tagged sixteen per-arm counts for four signals under one signal-8.json#goal_check.seeds_at_or_above_target key, and four signals' ceiling means under one signal-8.json#ceiling.means key, of which only the signal-8 figures are actually at that key. This fixture pins that session as the failing baseline the skill's procedure has to fix."
+  },
+  "launch": {
+    "role": "writer",
+    "model": "fable",
+    "effort": "xhigh",
+    "permission_mode": "dontAsk",
+    "max_turns": 100,
+    "output_format": "stream-json",
+    "json_schema": "input/schema.json",
+    "fallback_model": "fable"
+  },
+  "input": {
+    "prompt": "input/prompt.md",
+    "agent": "input/agent.json",
+    "context_manifest": null,
+    "input_hash": null
+  },
+  "structural": [
+    {
+      "check": "schema_valid"
+    }
+  ],
+  "judged": {
+    "rubric": "rubric.md",
+    "show_judge": [
+      "$.groups",
+      "$.negative_results"
+    ],
+    "judge": {
+      "model": "haiku",
+      "effort": "low",
+      "tools": [],
+      "votes": 1,
+      "must_differ_from_subject_session": true
+    },
+    "sample_size": 3,
+    "pass_rule": {
+      "at_least": 2
+    },
+    "strict": false
+  },
+  "baseline": {
+    "recorded_at": "2026-09-26T18:45:39.837Z",
+    "subject_sha256": "47345dc5095e583043239267ab9ff08889f33991f7098b79d428bbc401111903",
+    "input_hash": null,
+    "structural": "3/3",
+    "judged": "2/3",
+    "passed": true,
+    "unstable": true
+  },
+  "quarantine": {
+    "status": "active",
+    "flake_limit": 2,
+    "flakes": [],
+    "stable_runs_to_restore": 3,
+    "stable_runs": 0,
+    "restored_at": null,
+    "counted_from": 0
+  },
+  "note": "The subject (.claude/skills/wayline-interval-claims/SKILL.md and its wayline.json) could not be created by this ticket's session: writes under any .claude/skills/<name>/ path were denied by a layer above this project's own touch_set_guard.sh, on every attempt (Write and Bash, two different filenames), while the same session's writes under this fixture's own directory and a probe write to .claude/probe.txt (outside .claude/skills/) went through to the project's hook and were judged on the touch set as expected. subject.sha256 is null and baseline is null because of that: nothing here has been run against the actual subject yet. input/prompt.md and input/agent.json are the real pinned pack of research/sessions/writer/1 (session cdeae41d-25ff-4833-9b5f-eae3c704b9f5), the actual writer session whose prose is the ticket's two worked examples, with a `/wayline-interval-claims` line prepended the way worker.assemble_prompt puts a ticket's first skill at the top of the prompt; recorded/ holds that session's real structured_output. `wayline fixture record --session` could not be used to build this pack automatically: this project's journal never carries a session_id on a report_rendered or ticket_launched event (checked across the whole of research/journal.jsonl), so record's lookup by --session finds no event to key on, for this session or any other in this project. Once the skill files exist, subject.sha256 and the baseline can be filled in by rerunning `wayline fixture record --no-baseline` style bookkeeping by hand or by `wayline fixture run skill/wayline-interval-claims`.",
+  "tags": [
+    "writing",
+    "interval-claims"
+  ],
+  "last_run": {
+    "ts": "2026-09-26T18:27:59.577Z",
+    "subject_sha256": "47345dc5095e583043239267ab9ff08889f33991f7098b79d428bbc401111903",
+    "input_hash": "f3112f90c4001c712253c2504976f4daf14941bd655573fdd537fde000c12c35",
+    "definition_sha256": "cc580123967430777016d549a8f28326e0a0f2c51412f867de51c9af537e4f0a",
+    "structural": "3/3",
+    "judged": "2/3",
+    "outcome": {
+      "structural": true,
+      "judged": true
+    }
+  }
+}

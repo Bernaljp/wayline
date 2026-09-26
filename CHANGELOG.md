@@ -26,6 +26,8 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   public API no closed `docs` ticket documents, and the outputs index serves the site built on `main`
   inline under `site/`, in a sandbox.
 
+- Promoted the local skill `wayline-interval-claims` from the project `toy` with its fixture `skill/wayline-interval-claims` (`wayline promote`).
+
 ## v0.6.0 (2026-09-23)
 
 M5 Overnight and report: the toy project from intake to a report across the real five-hour and weekly
