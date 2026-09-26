@@ -13,7 +13,9 @@ and compares it with the one the launch named. Three halves are tested here:
   `wayline status` and the dashboard's ticket page give a launch whose model was not its rung's.
 """
 
+import os
 import unittest
+from unittest import mock
 
 from tests.projects import ProjectTestCase
 from tests.test_conductor import drive, failing, patch
@@ -129,6 +131,15 @@ class RemapTest(unittest.TestCase):
     def test_a_role_session_the_harness_builds_elsewhere_carries_it(self):
         """The smoke verb's request, built by the launcher itself, stands for every builder outside the conductor."""
         self.assertEqual(worker.smoke_request("/tmp/run").env[worker.NO_LEGACY_REMAP], "1")
+
+    def test_every_request_may_answer_past_the_cli_s_default_output_cap(self):
+        """The M6 demo's planner, cutting tickets smaller, wrote one answer past the CLI's 64000-token default."""
+        with mock.patch.dict(os.environ):
+            os.environ.pop(worker.MAX_OUTPUT_TOKENS, None)
+            self.assertEqual(self.request().env[worker.MAX_OUTPUT_TOKENS], str(worker.OUTPUT_TOKENS))
+            os.environ[worker.MAX_OUTPUT_TOKENS] = "32000"
+            self.assertEqual(self.request().env[worker.MAX_OUTPUT_TOKENS], "32000", "the owner's own setting stands")
+        self.assertEqual(self.request(env={worker.MAX_OUTPUT_TOKENS: "8000"}).env[worker.MAX_OUTPUT_TOKENS], "8000")
 
     def test_a_fallen_back_request_carries_it_too(self):
         request, moved = worker.fall_back(self.request(model="fable"))

@@ -873,10 +873,10 @@ def _subject_sample(directory, record, rendered, manifest, index, use_cache, bud
             _account(run, budget, stored, cached)
             budget.refused = "a usage window refused the subject session %s: nothing more is launched" % stored.get("session_id")
             raise _CostStop()
-        if _timed_out(stored):
-            # Kept under its own name and never served from the cache: a session stopped at its time limit failed this
-            # sample, and says nothing of what the subject returns under another limit.
-            _write_json(attempt / "timeout.json", stored)
+        if _cut_short(stored):
+            # Kept under its own name and never served from the cache: a session stopped at its time limit or its output
+            # cap failed this sample, and says nothing of what the subject returns under another limit.
+            _write_json(attempt / "cut-short.json", stored)
         else:
             _write_json(attempt / "envelope.json", stored)
     _account(run, budget, stored, cached)
@@ -894,9 +894,15 @@ def _values(attempt):
     return {"harness": str(HARNESS_ROOT), "project": str(attempt / "project"), "run": str(attempt / "session")}
 
 
-def _timed_out(stored):
-    """Whether a subject session was stopped at its time limit before it returned a result."""
-    return stored.get("structured_output") is None and any(str(error).startswith("timeout:") for error in stored.get("errors") or [])
+_OUTPUT_CAP_RE = re.compile(r"exceeded the \d+ output token maximum")
+
+
+def _cut_short(stored):
+    """Whether a subject session was stopped by a launch limit before it returned a result: its time, or its output cap."""
+    if stored.get("structured_output") is not None:
+        return False
+    return (any(str(error).startswith("timeout:") for error in stored.get("errors") or [])
+            or bool(_OUTPUT_CAP_RE.search(stored.get("result_text") or "")))
 
 
 def subject_minutes(record, policy):

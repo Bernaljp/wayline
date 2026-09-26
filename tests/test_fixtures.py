@@ -495,6 +495,12 @@ class SelectionTest(Harness):
         second = self.run_fixtures(subject=[good()], judge=[verdict("pass")] * 3, ids=["prompt/greeting"])
         self.assertEqual((second.runs[0].structural, len(self.subject_calls())), (3, 1), "only the sample that timed out is launched again")
 
+    def test_a_subject_session_stopped_at_its_output_cap_is_not_cached_either(self):
+        capped = Envelope(subtype="success", result_text="API Error: Claude's response exceeded the 64000 output token maximum.")
+        self.run_fixtures(subject=[capped, good(), good()], judge=[], ids=["prompt/greeting"])
+        second = self.run_fixtures(subject=[good()], judge=[verdict("pass")] * 3, ids=["prompt/greeting"])
+        self.assertEqual((second.runs[0].structural, len(self.subject_calls())), (3, 1))
+
     def test_a_subject_session_gets_its_role_s_budget_in_minutes_when_the_fixture_names_none(self):
         self.run_fixtures(subject=[good()] * 3, judge=[verdict("pass")] * 3, ids=["prompt/greeting"])
         self.assertEqual({call.request.max_minutes for call in self.subject_calls()}, {fixtures.SUBJECT_MAX_MINUTES},
