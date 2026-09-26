@@ -2,7 +2,7 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
-## Unreleased
+## v0.7.0 (2026-09-26)
 
 - The documentation site (ticket 51; Implementation Decisions 13). A package the harness implemented gets a
   Sphinx site someone else can use, built in the project's own environment while the harness stays standard
