@@ -1,0 +1,18 @@
+{
+  "id": "interval-claims",
+  "scope_kind": "global",
+  "capability_summary": "Keeps a claim sentence about a result or a figure inside the interval its cited artifact holds: no verdict word over a difference whose interval includes zero, and no number outside its tagged leaf field.",
+  "applicability_tags": {
+    "kinds": [
+      "writing"
+    ],
+    "data_types": [],
+    "libraries": [],
+    "venues": []
+  },
+  "cost_hint": "small",
+  "fixtures": [
+    "skill/wayline-interval-claims"
+  ],
+  "sha256": "1b9f9d9919348797bf1c114b29f261a713cf43694b41784f2eca4e19bc4bff3e"
+}

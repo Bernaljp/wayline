@@ -1,0 +1,40 @@
+{
+  "title": "report_prose",
+  "description": "The writer's prose for REPORT.md under C8 (Implementation Decisions 11): one paragraph for each claim group the prompt listed, and one on the negative results. Every claim sentence ends with provenance tags copied from the evidence the prompt gave; code renders everything else in the report from the ledger, and the linter checks every sentence of this prose.",
+  "type": "object",
+  "required": [
+    "groups",
+    "negative_results"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "groups": {
+      "type": "array",
+      "description": "one paragraph per claim group, in the prompt's order; a group the prompt did not name is dropped",
+      "items": {
+        "type": "object",
+        "required": [
+          "group",
+          "text"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "group": {
+            "type": "string",
+            "pattern": "\\S",
+            "description": "the group's key, exactly as the prompt printed it"
+          },
+          "text": {
+            "type": "string",
+            "pattern": "\\S",
+            "description": "the paragraph: what the findings of this group establish, every claim sentence ending with its tags"
+          }
+        }
+      }
+    },
+    "negative_results": {
+      "type": "string",
+      "description": "one paragraph on what did not work, every claim sentence ending with its tags; the empty string when the prompt listed no negative result"
+    }
+  }
+}
