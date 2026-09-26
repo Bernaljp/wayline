@@ -27,6 +27,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from wayline import backends_off
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, LedgerError, now_ts
@@ -87,6 +88,8 @@ class ResourceError(RuntimeError):
 
 def read_gpus():
     """One `nvidia-smi --query-gpu` reading per GPU; `[]` when nvidia-smi is absent (CPU-only degrade)."""
+    if backends_off():  # `WAYLINE_BACKENDS=none`: a machine with no GPU, as on a CPU-only box
+        return []
     try:
         done = subprocess.run(
             ["nvidia-smi", "--query-gpu=" + GPU_QUERY_FIELDS, "--format=csv,noheader,nounits"],
@@ -115,6 +118,8 @@ def read_gpus():
 
 def read_gpu_processes():
     """Per-process GPU memory via `nvidia-smi --query-compute-apps`; `[]` when there are none, or no nvidia-smi."""
+    if backends_off():  # `WAYLINE_BACKENDS=none`: a machine with no GPU, as on a CPU-only box
+        return []
     try:
         done = subprocess.run(
             ["nvidia-smi", "--query-compute-apps=" + COMPUTE_APPS_FIELDS, "--format=csv,noheader,nounits"],

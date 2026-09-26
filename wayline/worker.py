@@ -51,7 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Union
 
-from wayline import HARNESS_ROOT, pacing, registry
+from wayline import HARNESS_ROOT, BackendTouched, pacing, real_backend, registry
 from wayline.frontmatter import FrontmatterError, load_document
 from wayline.jsonschema import SchemaError, check_schema, load_schema, validate
 from wayline.ledger import now_ts
@@ -1534,6 +1534,8 @@ class ClaudeCli:
             if not (os.path.isfile(override) and os.access(override, os.X_OK)):
                 raise LaunchError("WAYLINE_CLAUDE=%s is not an executable file" % override)
             return os.path.abspath(override)  # the child runs in another cwd
+        # A test's stand-in comes through the override above; the installed executable is the subscription.
+        real_backend("the %s executable" % self.executable)
         found = shutil.which(self.executable)
         if found is None:
             # The user manager's PATH, which the tick and a detached conductor start from, lacks the directory the
@@ -2303,7 +2305,7 @@ def validate_plugin(path, timeout=60):
     """
     try:
         executable = CLAUDE_CLI._executable()
-    except LaunchError as failure:
+    except (LaunchError, BackendTouched) as failure:  # under `WAYLINE_BACKENDS=none` it is as absent as on a machine without it
         return {}, "%s did not run: %s" % (PRE_CHECK_LABEL, failure)
     argv = [executable, *PRE_CHECK_ARGV, str(path), "--json"]
     try:
