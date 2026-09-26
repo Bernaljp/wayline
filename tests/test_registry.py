@@ -413,6 +413,15 @@ class BuildTest(ProjectTestCase):
         write_fixture(self.project, "skill/sweep", baseline={"structural": "3/3", "judged": "2/3"})
         self.assertFalse(self.entry(self.build(), "skill", "sweep")["assignable"])
 
+    def test_a_baseline_the_runner_decided_is_read_by_its_pass_rule(self):
+        """The runner writes `passed` under decision 12's rule (the judged layer at least 2 of 3), and that is the answer."""
+        self.local_skill("wayline-sweep", kinds=["experiment"], fixtures=["skill/sweep"])
+        write_fixture(self.project, "skill/sweep", baseline={"structural": "3/3", "judged": "2/3", "passed": True, "unstable": True})
+        entry = self.entry(self.build(), "skill", "sweep")
+        self.assertTrue(entry["assignable"], entry.get("problems"))
+        write_fixture(self.project, "skill/sweep", baseline={"structural": "3/3", "judged": "3/3", "passed": False})
+        self.assertFalse(self.entry(self.build(), "skill", "sweep")["assignable"])
+
     def test_a_local_skill_whose_fixture_was_recorded_into_the_harness_tree_is_assignable(self):
         """Decision 12's fixture layout is the harness's tree, so the gate looks in both."""
         harness = self.temp / "harness"
