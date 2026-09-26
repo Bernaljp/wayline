@@ -112,6 +112,30 @@ class InterfaceTest(unittest.TestCase):
         })
         self.assertEqual(worker.session_env("/proj", 3, 2, "src/")["TICKET_TOUCHES"], "src/")
 
+    def test_a_touch_under_claude_admits_its_staged_path(self):
+        """Claude Code refuses every write under `.claude/` in a headless session, so the worker writes it staged."""
+        env = worker.session_env("/proj", 3, 2, [".claude/skills/wayline-x/", "fixtures/skill/wayline-x/"])
+        self.assertEqual(env["TICKET_TOUCHES"], ".claude/skills/wayline-x/:fixtures/skill/wayline-x/:.wayline-staged/skills/wayline-x/")
+        self.assertEqual(worker.staged_path(".claude/agents/planner.md"), ".wayline-staged/agents/planner.md")
+        self.assertIsNone(worker.staged_path("src/x.py"))
+
+    def test_what_was_staged_is_placed_under_claude_and_the_stage_removed(self):
+        with tempfile.TemporaryDirectory() as holder:
+            root = Path(holder)
+            (root / ".claude" / "skills" / "wayline-x").mkdir(parents=True)
+            (root / ".claude" / "skills" / "wayline-x" / "old.md").write_text("gone\n", encoding="utf-8")
+            (root / ".wayline-staged" / "skills" / "wayline-x").mkdir(parents=True)
+            (root / ".wayline-staged" / "skills" / "wayline-x" / "SKILL.md").write_text("new\n", encoding="utf-8")
+            (root / ".wayline-staged" / "agents").mkdir(parents=True)
+            (root / ".wayline-staged" / "agents" / "planner.md").write_text("words\n", encoding="utf-8")
+            placed = worker.place_staged(root, [".claude/skills/wayline-x/", ".claude/agents/planner.md", ".claude/agents/critic.md", "src/"])
+            self.assertEqual(placed, [".claude/skills/wayline-x/", ".claude/agents/planner.md"])
+            self.assertEqual((root / ".claude/skills/wayline-x/SKILL.md").read_text(encoding="utf-8"), "new\n")
+            self.assertFalse((root / ".claude/skills/wayline-x/old.md").exists(), "a staged directory replaces the one it stands for")
+            self.assertEqual((root / ".claude/agents/planner.md").read_text(encoding="utf-8"), "words\n")
+            self.assertFalse((root / ".wayline-staged").exists())
+            self.assertEqual(worker.place_staged(root, [".claude/agents/planner.md"]), [], "nothing staged, nothing placed")
+
     def test_the_worker_reaches_wayline_accept_through_the_harness_bin(self):
         """The contract tells the worker to run `wayline accept`, so the command has to resolve."""
         first = worker.session_env("/proj", 3, 2, ["src/"], harness_root="/harness", path="/usr/bin:/bin")

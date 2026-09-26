@@ -3234,8 +3234,31 @@ class Conductor:
             tickets.write_ticket(self.ledger, dict(ticket, status="open"), tickets.retire_answer(body))
             self.say("  ticket %d rerun by %s; it is open for a new attempt" % (identifier, by))
 
+    def _place_staged(self, attempt):
+        """What the worker could only stage under `.wayline-staged/` put under `.claude/` and committed on the ticket's branch.
+
+        Claude Code refuses a headless session's writes under `.claude/` (`worker.STAGED`), so a local skill or role
+        override arrives staged. `wayline accept` places it when the worker runs it; this places what is still staged
+        and commits the placement either way, before the acceptance, the proof, and the integration read the branch.
+        """
+        touches = [touch for touch in attempt.ticket["touches"] if worker.staged_path(touch) is not None]
+        if not touches:
+            return
+        worker.place_staged(attempt.worktree, touches)
+        paths = [touch for touch in touches if (attempt.worktree / touch).exists()]
+        if self._git(attempt.worktree, "ls-files", "--", worker.STAGED).stdout.strip():
+            paths.append(worker.STAGED)
+        if not paths:
+            return
+        self._git(attempt.worktree, "add", "-A", "--", *paths)
+        if self._git(attempt.worktree, "diff", "--cached", "--quiet", "--", *paths, ok=None).returncode != 0:
+            self._git(attempt.worktree, "commit", "-q", "-m", "ticket %d: place the staged %s" % (attempt.id, ", ".join(touches)), "--", *paths)
+            self.say("  ticket %d: placed the staged %s" % (attempt.id, ", ".join(touches)))
+
     def _accept(self, attempt, where, cwd):
         """Run the ticket's machine acceptance in `cwd` and journal it under the label `where`."""
+        if where == "worktree" and Path(cwd) == Path(attempt.worktree):
+            self._place_staged(attempt)
         commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)

@@ -192,6 +192,22 @@ class LocalChangeTest(ProjectTestCase):
         self.assertIn("caption-claims", assignment["skills"])
         self.assertIn("caption-claims", events_of(self.ledger, "assigned")[-1]["payload"]["skills"], "the journal shows the librarian assigning it")
 
+    def test_a_skill_the_worker_could_only_stage_is_placed_under_claude_before_its_acceptance(self):
+        staged = {(worker.staged_path(path) if path.startswith(".claude/") else path): text for path, text in skill_files().items()}
+        self.fake.script(answer(record()), role=changes.EVOLVER)
+        self.fake.script(done(1, outputs_written=[worker.staged_path(SKILL + "/SKILL.md")]),
+                         patch=Patch(files=staged, message="ticket 1: the caption skill, staged"), role="coder")
+        for _ in range(3):
+            self.fake.script(word("hedged"), role=SUBJECT_ROLE)
+        results = drive(self.conductor())
+        self.assertEqual([identifier for result in results for identifier in result.done], [1])
+        self.assertEqual(changes.read_changes(self.project)[0]["status"], "applied")
+        self.assertTrue((self.project / SKILL / "SKILL.md").is_file(), "the staged skill is on the project's main, where it belongs")
+        self.assertFalse((self.project / worker.STAGED).exists(), "and nothing is left staged")
+        acceptance = events_of(self.ledger, "acceptance")[0]["payload"]
+        self.assertTrue(acceptance["pass"], acceptance)
+        self.assertIn("place the staged", self.git("log", "--format=%s", "-3"))
+
     def test_a_skill_whose_fixture_never_passed_is_not_assignable(self):
         files = skill_files()
         directory = self.project / SKILL

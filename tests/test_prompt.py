@@ -364,6 +364,12 @@ class PromptTest(unittest.TestCase):
         self.assertIn("never edit `research/`", text)
         self.assertIn("at most 5 times", text)
 
+    def test_a_touch_under_claude_is_written_at_its_staged_path(self):
+        text = self.assemble(ticket(touches=[".claude/agents/planner.md", "fixtures/role/planner-small/"])).text.split("# The contract")[1]
+        self.assertIn("Claude Code refuses every write under `.claude/`", text)
+        self.assertIn("write `.claude/agents/planner.md` at `.wayline-staged/agents/planner.md`", text)
+        self.assertNotIn(".wayline-staged", self.assemble().text, "a ticket with no touch under .claude/ is told nothing of it")
+
     def test_the_sha256_changes_with_the_prompt(self):
         first = self.assemble()
         second = self.assemble(ticket(title="Add the other tokenizer"))

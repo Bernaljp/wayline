@@ -62,7 +62,7 @@ __all__ = [
     "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "take_answered_refusals", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "launches_on", "fall_back", "stderr_tail", "stderr_of",
     "NO_LEGACY_REMAP", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
-    "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
+    "session_dir", "session_env", "STAGED", "staged_path", "with_staged", "place_staged", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command", "login_command", "auth_status_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
     "schema_bullets", "schema_section", "protocol_for",
@@ -870,6 +870,10 @@ def _contract_section(ticket, consult_max):
         "# The contract",
         "",
         "- Write only under the touch set: %s. A hook blocks every write outside it." % ", ".join("`%s`" % item for item in ticket["touches"]),
+    ] + [
+        "- Claude Code refuses every write under `.claude/`, so write `%s` at `%s` instead; `wayline accept` moves it into place, "
+        "and you commit it where it lands." % (touch, staged_path(touch)) for touch in ticket["touches"] if staged_path(touch) is not None
+    ] + [
         "- Run `wayline accept` from the worktree root before you stop; the stop is blocked until the file it writes exists.",
         "- Commit your work on the branch `ticket/%s`. The conductor integrates that branch, so anything uncommitted is lost." % ticket["id"],
         "- Never integrate, never close the ticket, never edit `research/`: the conductor does all three.",
@@ -943,6 +947,60 @@ def integrator_prompt(ticket, role, conflicts, touches=None, max_chars=None, bud
     return Prompt(text, used, cut)
 
 
+# --- the staged copy of a touch under .claude/ ---------------------------------------------------
+
+# Claude Code refuses every write under `.claude/` in a headless session, whatever the allow rules say (the M6
+# demo, ticket 47, found it: bare, relative, rooted, and absolute `Write(...)` rules, a settings file's allow list,
+# `acceptEdits`, and `--add-dir` were all refused). A local skill or role override lives there, so the worker
+# writes it at the same path under `.wayline-staged/`, which the launch admits beside it, and code moves it into
+# place: `wayline accept` in the worktree, and the conductor before its own acceptance.
+STAGED = ".wayline-staged"
+CLAUDE_DIR = ".claude/"
+
+
+def staged_path(touch):
+    """Where a worker writes a touch under `.claude/`: the same path under `.wayline-staged/`; None for any other touch."""
+    text = str(touch)
+    return STAGED + "/" + text[len(CLAUDE_DIR):] if text.startswith(CLAUDE_DIR) else None
+
+
+def with_staged(touches):
+    """A touch set with the staged path of each touch under `.claude/` added after it."""
+    touches = [str(item) for item in touches]
+    return touches + [staged_path(item) for item in touches if staged_path(item) is not None and staged_path(item) not in touches]
+
+
+def place_staged(root, touches):
+    """Move what was staged for each touch under `.claude/` into place in `root`; the touches placed.
+
+    A staged directory replaces the directory it stands for whole, so a file the worker dropped from a skill is
+    gone from it too; a staged file replaces the file. The stage is removed once it is empty.
+    """
+    root = Path(root)
+    placed = []
+    for touch in touches:
+        staged = staged_path(touch)
+        if staged is None or not (root / staged).exists():
+            continue
+        source, target = root / staged, root / str(touch)
+        if source.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(target))
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, target)
+        placed.append(str(touch))
+    stage = root / STAGED
+    for directory in sorted((path for path in stage.rglob("*") if path.is_dir()), reverse=True) if stage.is_dir() else []:
+        if not any(directory.iterdir()):
+            directory.rmdir()
+    if stage.is_dir() and not any(stage.iterdir()):
+        stage.rmdir()
+    return placed
+
+
 # --- the session directory ----------------------------------------------------------------------
 
 
@@ -963,7 +1021,7 @@ def session_env(project, ticket, attempt, touches, harness_root=HARNESS_ROOT, pa
     if isinstance(touches, (str, Path)):
         touches = [touches]
     return {
-        "TICKET_TOUCHES": ":".join(str(item) for item in touches),
+        "TICKET_TOUCHES": ":".join(with_staged(touches)),
         "TICKET_ACCEPTANCE_FILE": str(run / "acceptance.json"),
         "WAYLINE_PROJECT": str(project),
         "WAYLINE_TICKET": str(ticket),
