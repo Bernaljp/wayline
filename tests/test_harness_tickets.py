@@ -93,7 +93,7 @@ class ProofTest(Harness):
         proof = changes.prove("prompt/greeting", self.old, self.root, self.policy)
         self.assertTrue(proof.proven, proof.problem)
         self.assertIn("structural 3/3", proof.new)
-        self.assertIn("structural 0/3", proof.old)
+        self.assertIn("structural 0/1", proof.old)
         baseline = self.record_of()["baseline"]
         self.assertEqual((baseline["passed"], baseline["structural"]), (True, "3/3"))
         self.assertEqual(baseline["subject_sha256"], fixtures.subject_sha256(self.record_of(), self.root))
@@ -112,7 +112,15 @@ class ProofTest(Harness):
             self.fake.script(good(word="bye"))
         proof = changes.prove("prompt/greeting", self.old, self.root, self.policy)
         self.assertIn("does not pass on the change", proof.problem)
-        self.assertEqual(len(self.fake.calls), 3)
+        self.assertEqual(len(self.fake.calls), 1, "one failing sample decides a layer that must pass n of n; no more are launched")
+        self.assertIn("sample 1: path_in failed", proof.problem, "the worker is told which check failed, and why")
+
+    def test_the_session_s_own_error_is_said_when_a_sample_returned_nothing(self):
+        self.fake.script(worker.Envelope(subtype="success", result_text="API Error: Claude's response exceeded the 64000 output token maximum.",
+                                         errors=["the result carries no structured_output (subtype success)"]))
+        proof = changes.prove("prompt/greeting", self.old, self.root, self.policy)
+        self.assertIn("sample 1: schema_valid failed", proof.problem)
+        self.assertIn("exceeded the 64000 output token maximum", proof.problem)
 
     def test_a_subject_the_old_tree_does_not_hold_fails_there(self):
         (self.old / "prompts" / "greeting.md").unlink()
@@ -128,8 +136,8 @@ class ProofTest(Harness):
         self.answer_by_subject()
         proof = changes.prove("prompt/override", self.old, self.root, self.policy, harness_root=harness)
         self.assertTrue(proof.proven, proof.problem)
-        self.assertEqual(len(self.fake.calls), 6, "the old subject ran: the harness's role, which the override replaces")
-        self.assertIn("structural 0/3", proof.old)
+        self.assertEqual(len(self.fake.calls), 4, "the old subject ran, the harness's role the override replaces, and its first sample failed it")
+        self.assertIn("structural 0/1", proof.old)
         self.assertIn("roles/%s/agent.md" % ROLE, proof.old)
 
     def test_a_new_skill_is_run_without_it_on_the_old_subject(self):
@@ -139,9 +147,9 @@ class ProofTest(Harness):
         self.answer_by_subject()
         proof = changes.prove("prompt/skill", self.old, self.root, self.policy)
         self.assertTrue(proof.proven, proof.problem)
-        self.assertEqual(len(self.fake.calls), 6, "the pack ran without the skill")
+        self.assertEqual(len(self.fake.calls), 4, "the pack ran without the skill, and its first sample failed it")
         self.assertNotIn("list whom you greeted", self.fake.calls[-1].request.prompt)
-        self.assertIn("structural 0/3", proof.old)
+        self.assertIn("structural 0/1", proof.old)
         self.assertIn("without the skill", proof.old)
 
     def test_an_old_run_that_could_not_happen_shows_no_failure(self):
@@ -396,7 +404,7 @@ class GlobalChangeTest(ProjectTestCase):
         self.assertEqual([item["name"] for item in kept["checks"]], ["tests", "fixtures"])
         self.assertEqual([argv for argv, _ in self.checked], [["-m", "unittest"], ["-m", "wayline", "fixture"]])
         self.assertTrue(all(cwd == kept["worktree"] for _, cwd in self.checked), "both ran in the branch's worktree")
-        self.assertIn("structural 0/3", kept["proof"]["old"])
+        self.assertIn("structural 0/1", kept["proof"]["old"])
         names = [event["event"] for event in self.ledger.read_events()[0]]
         self.assertIn("ticket_done", names)
         self.assertNotIn("integrated", names, "nothing is integrated into the project")

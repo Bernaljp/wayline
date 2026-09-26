@@ -55,7 +55,7 @@ from wayline.registry import FIXTURE_KINDS
 
 __all__ = [
     "FixtureError", "Check", "Sample", "FixtureRun", "SuiteResult", "CHECKS", "JUDGE_ROLE", "VERDICT_SCHEMA",
-    "jsonpath", "structural_checks", "subject_sha256", "subject_minutes", "input_hash", "context_manifest", "render_input",
+    "jsonpath", "structural_checks", "subject_sha256", "subject_minutes", "sample_failures", "input_hash", "context_manifest", "render_input",
     "discover", "load_fixture", "run", "run_fixture", "record", "set_baseline", "describe", "fixture_command",
 ]
 
@@ -67,6 +67,7 @@ SUITE_STATE = "fixtures.json"            # <home>/fixtures.json: when the last f
 WEEK_SECONDS = 7 * 86400                 # the weekly window when no session reported its reset
 JUDGE_MAX_TURNS = 3                      # one question, no tools: the answer is the first turn
 JUDGE_MAX_MINUTES = 5
+RESULT_TEXT_CHARS = 400                  # what a sample keeps of a session's last words when it returned no output
 SUBJECT_MAX_MINUTES = 30                 # policy.budget.small, when neither the fixture nor its role names one
 EXIT_REGRESSION = 1
 EXIT_COST = 2
@@ -636,6 +637,8 @@ def _stored(envelope):
         "usage": envelope.usage, "exit_code": envelope.exit_code, "errors": list(envelope.errors),
         "rate_limit_events": [event.as_dict() for event in envelope.rate_limit_events],
         "stream": str(envelope.stream_path) if envelope.stream_path else None,
+        # What the session said last when it returned nothing: an API error ends a session with a success result.
+        "result_text": (envelope.result_text or result.get("result") or "")[:RESULT_TEXT_CHARS] if result.get("structured_output") is None else None,
     }
 
 
@@ -788,8 +791,12 @@ def _unrunnable(record, directory):
     return None
 
 
-def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budget=None, samples=None):
-    """Run one fixture, update its `last_run` and `quarantine` (and `baseline` on a rewrite), write `runs/`."""
+def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budget=None, samples=None, stop_at_failure=False):
+    """Run one fixture, update its `last_run` and `quarantine` (and `baseline` on a rewrite), write `runs/`.
+
+    With `stop_at_failure` no sample is launched after one fails its structural checks, which must pass n of n:
+    the run is then decided over the samples it took, what a change's proof needs and all it pays for.
+    """
     directory, root = Path(directory), Path(root)
     policy = projects.policy_for(None) if policy is None else policy
     budget = _Budget(None) if budget is None else budget
@@ -821,6 +828,9 @@ def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budge
     try:
         for index in range(run.n):
             run.samples.append(_subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run, policy))
+            if stop_at_failure and not run.samples[-1].structural_passed:
+                run.n = len(run.samples)
+                break
         if judged and all(sample.structural_passed for sample in run.samples):
             _judge_samples(directory, record, judged, policy, use_cache, budget, run)
     except _CostStop:
@@ -1098,6 +1108,21 @@ def _write_runs(directory, run, stamp):
     for sample in run.samples:
         _write_json(target / ("%d.json" % sample.index), sample.as_dict())
     _write_json(target / "summary.json", run.as_dict())
+
+
+def sample_failures(run):
+    """One line per sample that failed: the checks it failed with their details, the session's own error, the judge's reason."""
+    lines = []
+    for sample in run.samples:
+        said = ["%s failed: %s" % ((check.check or {}).get("check"), check.detail) for check in sample.checks if not check.passed]
+        stored = getattr(sample, "stored", None) or {}
+        if said and (stored.get("result_text") or stored.get("errors")):
+            said.append("the session said: %s" % (stored.get("result_text") or stored["errors"][0]))
+        if not said and sample.verdict and sample.verdict.get("verdict") == "fail":
+            said.append("the judge said fail: %s" % sample.verdict.get("reason"))
+        if said:
+            lines.append("sample %d: %s" % (sample.index + 1, "; ".join(said)))
+    return lines
 
 
 def describe(run):

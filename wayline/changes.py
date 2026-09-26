@@ -45,7 +45,9 @@ parks the harness ticket at once when the answer does not approve.
 conductor integrates a harness ticket: on the changed subject, where it must pass, and on the subject as it
 was, where it must fail. A local role override that did not exist runs there as the harness's role it replaces,
 and a local skill that did not exist runs as no skill (`_old_stand_in`), so the old behaviour is shown failing;
-any other subject that did not exist fails without a run. Both runs happen on a copy, so a change that is
+any other subject that did not exist fails without a run. Each run stops at its first sample that fails the
+structural layer, which must pass n of n, and a change that does not pass says which checks failed in which
+sample and what the session said, for the worker who is resumed with it. Both runs happen on a copy, so a change that is
 not proven leaves nothing behind; a proven one gets the passing run as its baseline, which is what makes a
 model-authored skill assignable to the registry.
 
@@ -1212,7 +1214,9 @@ def prove(fixture_id, old_root, new_root, policy=None, runner=None, harness_root
     failure on the old subject. Any other run that could not happen shows nothing: not on the new subject, and
     not on the old one either.
     """
-    runner = runner or fixtures.run_fixture
+    if runner is None:
+        def runner(directory, root, policy):  # one failing sample decides a proof: its layers must pass n of n
+            return fixtures.run_fixture(directory, root=root, policy=policy, stop_at_failure=True)
     directory = Path(new_root) / fixtures.FIXTURES / fixture_id
     proof = Proof(fixture_id)
     if not (directory / "fixture.json").is_file():
@@ -1226,7 +1230,8 @@ def prove(fixture_id, old_root, new_root, policy=None, runner=None, harness_root
             proof.waits = True
             return proof
         if not new.passed:
-            proof.problem = "the fixture %s does not pass on the change: %s" % (fixture_id, new.skipped or proof.new)
+            proof.problem = "the fixture %s does not pass on the change: %s" % (
+                fixture_id, new.skipped or "; ".join([proof.new] + fixtures.sample_failures(new)))
             return proof
         stand_in, said = _old_stand_in(fresh, old_root, holder, harness_root)
         old = runner(_copy_of(directory, Path(holder) / "old"), root=stand_in or old_root, policy=policy)
