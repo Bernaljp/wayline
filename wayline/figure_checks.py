@@ -45,7 +45,7 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from wayline import HARNESS_ROOT
+from wayline import HARNESS_ROOT, backends_off
 from wayline.provenance import RUN_ID_RE, read_manifest, sha256_of
 
 __all__ = [
@@ -149,7 +149,8 @@ class Tools:
         if found:
             return [found]
         if name == "ruff" and self.which("uvx"):
-            return [self.which("uvx"), "ruff"]
+            # uvx asks the package index on every run; with the backends off (the suite) it runs from its cache.
+            return [self.which("uvx")] + (["--offline"] if backends_off() else []) + ["ruff"]
         return None
 
     def run(self, name, args, cwd=None, timeout_s=None):

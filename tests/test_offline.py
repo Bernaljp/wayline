@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 import tests
-from wayline import BACKENDS_ENV, BackendTouched, resources, tools, worker
+from wayline import BACKENDS_ENV, BackendTouched, figure_checks, resources, tools, worker
 from wayline.fetch import Fetcher, UrllibBackend
 
 
@@ -68,6 +68,14 @@ class FlagTest(unittest.TestCase):
             self.assertEqual(resources.read_gpu_processes(), [])
             self.assertIsNone(tools.driver_cuda())
         self.assertFalse(ran.called)
+
+    def test_ruff_through_uvx_runs_from_the_cache_and_never_asks_the_index(self):
+        """`uvx ruff` asks the package index on every run; the figure checks' `generator_clean` ran it in the suite."""
+        which = {"uvx": "/bin/uvx"}.get
+        self.assertEqual(figure_checks.Tools(which=which).argv("ruff"), ["/bin/uvx", "--offline", "ruff"])
+        with mock.patch.dict(os.environ):
+            os.environ.pop(BACKENDS_ENV, None)
+            self.assertEqual(figure_checks.Tools(which=which).argv("ruff"), ["/bin/uvx", "ruff"])
 
     def test_lifting_it_holds_for_one_test_only(self):
         case = unittest.TestCase()
