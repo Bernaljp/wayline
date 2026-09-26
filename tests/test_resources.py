@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests import lift_backends
 from wayline import resources as r
 
 # research-notes 05 R14, verbatim.
@@ -24,6 +25,9 @@ def _done(stdout="", returncode=0, stderr=""):
 
 
 class ReadGpusTest(unittest.TestCase):
+    def setUp(self):
+        lift_backends(self)  # nvidia-smi is replaced by a recorded answer here
+
     def test_parses_the_recorded_reading(self):
         with mock.patch("wayline.resources.subprocess.run", return_value=_done(R14_GPU_CSV)):
             gpus = r.read_gpus()
@@ -50,6 +54,9 @@ class ReadGpusTest(unittest.TestCase):
 
 
 class ReadGpuProcessesTest(unittest.TestCase):
+    def setUp(self):
+        lift_backends(self)  # nvidia-smi is replaced by a recorded answer here
+
     def test_no_compute_processes_is_an_empty_list(self):
         with mock.patch("wayline.resources.subprocess.run", return_value=_done("")):
             self.assertEqual(r.read_gpu_processes(), [])

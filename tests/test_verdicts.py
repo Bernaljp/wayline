@@ -654,6 +654,10 @@ class ConductorVerdictTest(ConductorCase):
 
     def test_the_verb_exits_nonzero_and_names_the_ticket_its_verdict_failed(self):
         """A rejected ticket is in neither the frontier nor the running set, so the verb says it."""
+        harness = json.loads((self.project / "harness.json").read_text(encoding="utf-8"))
+        harness["policy"] = {"poll_seconds": 1}  # the verb waits this long between waves, and the shipped 60 s is a minute
+        (self.project / "harness.json").write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+        self.git("add", "--", "harness.json")
         self.quality()
         out, err = io.StringIO(), io.StringIO()
         with worker.use_fake() as fake:

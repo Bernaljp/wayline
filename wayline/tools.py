@@ -30,6 +30,7 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 
+from wayline import backends_off, real_backend
 from wayline.cli import parse_args
 from wayline.ledger import now_ts
 
@@ -141,6 +142,8 @@ class Tools:
 
 def driver_cuda(run=run_tool):
     """`(major, minor)` of the CUDA version the NVIDIA driver speaks, or None without a GPU."""
+    if run is run_tool and backends_off():  # `WAYLINE_BACKENDS=none`: a machine with no GPU
+        return None
     done = run(["nvidia-smi"])
     if done.returncode != 0:
         return None
@@ -213,6 +216,8 @@ def install(extras=(), grobid=False, root=None, run=run_tool, python=None, uv=No
     is how `--marker` is added to a machine that already has docling; the record is rewritten
     from what the venv actually holds afterwards, never merged with what it said before.
     """
+    if run is run_tool:
+        real_backend("the network (the tools install)")
     root = Path(root) if root is not None else tools_home()
     root.mkdir(parents=True, exist_ok=True)
     echo = echo or (lambda line: None)

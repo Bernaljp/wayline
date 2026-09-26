@@ -30,7 +30,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from wayline import TAG
+from wayline import TAG, real_backend
 
 __all__ = [
     "FetchError", "Response", "Request", "request_hash", "user_agent", "canonical_url",
@@ -224,9 +224,12 @@ class UrllibBackend(Backend):
     def __init__(self, limiter=None, timeout=_TIMEOUT_S, opener=None):
         self.limiter = limiter if limiter is not None else RateLimiter()
         self.timeout = timeout
+        self.real = opener is None  # a test's opener answers from memory; urllib's own asks the network
         self.opener = opener or urllib.request.build_opener()
 
     def send(self, request):
+        if self.real:
+            real_backend("the network (%s)" % request.host)
         outbound = urllib.request.Request(request.url, headers=dict(request.headers), method=request.method)
         with self.limiter.hold(request.host):
             try:
