@@ -241,6 +241,15 @@ class LocalChangeTest(ProjectTestCase):
         self.assertTrue(acceptance["pass"], acceptance)
         self.assertIn("place the staged", self.git("log", "--format=%s", "-3"))
 
+    def test_the_planner_never_splits_a_change_record_s_harness_ticket(self):
+        """The record owns its ticket, as no cut of the graph takes it back: a split would leave the record answered by nothing."""
+        changes.file_changes(self.project, answer(record()).structured_output, pre_check=False)
+        driven = self.conductor()
+        driven._tail()
+        self.assertEqual(changes.change_of(driven._fields(1)), "001-hold-figure-captions-to-the-table")
+        self.assertNotEqual(driven._step_from(1, start="split"), "split")
+        self.assertEqual(driven._step_from(1, start="split"), "tier_up", "the tier up is still there to take")
+
     def test_a_skill_whose_fixture_never_passed_is_not_assignable(self):
         files = skill_files()
         directory = self.project / SKILL

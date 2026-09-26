@@ -4118,7 +4118,8 @@ class Conductor:
         """The first step after the resume this ticket can still take, in `_step_order` order, from `start` on.
 
         A split is taken once, and never for a decision ticket, which is answered, nor for a ticket a split cut, so
-        splits do not recurse. A tier up is taken `policy.escalation.tier_up` times at most, and never for a pinned
+        splits do not recurse, nor for the harness ticket of a change record, which the record owns as no cut of the
+        graph takes it back (`plan.superseded_by`). A tier up is taken `policy.escalation.tier_up` times at most, and never for a pinned
         ticket or one already on the ladder's top rung, which has nowhere to climb (decision 16). A step already
         taken counts as spent, so a step that could not be taken sends the ticket on to the next. `start` is where a
         failure that names its own step begins (an integration that conflicted starts at the split); `needs_human`
@@ -4135,7 +4136,8 @@ class Conductor:
             # split, and still goes on to the tier up when the split is spent, whichever order the two are in.
             order = [start] + [step for step in order if step != start]
         for step in order:
-            if step == SPLIT and not taken(SPLIT) and fields["kind"] != tickets.DECISION and not self._cut_by_split(identifier):
+            if step == SPLIT and not taken(SPLIT) and fields["kind"] != tickets.DECISION and not self._cut_by_split(identifier) \
+                    and self._change_record(identifier, fields) is None:
                 return SPLIT
             if step == TIER_UP and taken(TIER_UP) < ladder["tier_up"] and fields.get("pinned_difficulty") is None \
                     and self._next_rung(identifier) is not None:
