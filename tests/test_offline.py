@@ -71,11 +71,17 @@ class FlagTest(unittest.TestCase):
 
     def test_ruff_through_uvx_runs_from_the_cache_and_never_asks_the_index(self):
         """`uvx ruff` asks the package index on every run; the figure checks' `generator_clean` ran it in the suite."""
-        which = {"uvx": "/bin/uvx"}.get
-        self.assertEqual(figure_checks.Tools(which=which).argv("ruff"), ["/bin/uvx", "--offline", "ruff"])
+        cached, uncached = self.temp / "cached" / "uvx", self.temp / "uncached" / "uvx"
+        for stand_in, code in ((cached, 0), (uncached, 2)):  # uvx --offline ruff --version, with and without ruff in its cache
+            stand_in.parent.mkdir()
+            stand_in.write_text("#!/bin/sh\nexit %d\n" % code)
+            stand_in.chmod(0o755)
+        self.assertEqual(figure_checks.Tools(which={"uvx": str(cached)}.get).argv("ruff"), [str(cached), "--offline", "ruff"])
+        self.assertIsNone(figure_checks.Tools(which={"uvx": str(uncached)}.get).argv("ruff"),
+                          "a cache without ruff is a machine without ruff, whose check says the tool is missing")
         with mock.patch.dict(os.environ):
             os.environ.pop(BACKENDS_ENV, None)
-            self.assertEqual(figure_checks.Tools(which=which).argv("ruff"), ["/bin/uvx", "ruff"])
+            self.assertEqual(figure_checks.Tools(which={"uvx": "/bin/uvx"}.get).argv("ruff"), ["/bin/uvx", "ruff"])
 
     def test_lifting_it_holds_for_one_test_only(self):
         case = unittest.TestCase()

@@ -507,6 +507,9 @@ class SelectionTest(Harness):
                          "a role the harness does not have runs on the small budget")
         self.assertEqual(fixtures.subject_minutes({"launch": {"role": "planner"}}, {"budget": {"large": {"max_minutes": 180}}}), 180)
         self.assertEqual(fixtures.subject_minutes({"launch": {"role": "planner", "max_minutes": 45}}, {}), 45)
+        write(self.root / "roles" / ROLE / "wayline.json", json.dumps({"cost_hint": "medium"}))
+        self.assertEqual(fixtures.subject_minutes({"launch": {"role": ROLE}}, {"budget": {"medium": {"max_minutes": 90}}}, self.root), 90,
+                         "the sidecar of the tree the fixture runs against is read first")
 
     def test_a_judge_without_a_usable_verdict_is_asked_again_next_time(self):
         broken = Envelope(subtype="error_max_structured_output_retries", is_error=True)

@@ -1174,6 +1174,9 @@ def cut_graph(project, cut, *, harness_root=HARNESS_ROOT, policy=None, fall_back
             raise PlanError("%s has no ticket %s to split" % (project, cut.of))
         if not _work(found[0]):
             raise PlanError("ticket %d is a decision ticket, which is answered rather than split" % cut.of)
+        if not _cuttable(found[0]):
+            raise PlanError("ticket %d is the harness ticket of change record %s, which owns it; it is not split"
+                            % (cut.of, changes.change_of(found[0])))
         if found[0]["status"] not in SPLITTABLE:
             raise PlanError("ticket %d is %s, so it is not split" % (cut.of, found[0]["status"]))
     index = registry.build(project, harness_root=harness_root, events=events, pre_check=pre_check)

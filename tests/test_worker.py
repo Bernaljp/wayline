@@ -131,7 +131,8 @@ class InterfaceTest(unittest.TestCase):
             placed = worker.place_staged(root, [".claude/skills/wayline-x/", ".claude/agents/planner.md", ".claude/agents/critic.md", "src/"])
             self.assertEqual(placed, [".claude/skills/wayline-x/", ".claude/agents/planner.md"])
             self.assertEqual((root / ".claude/skills/wayline-x/SKILL.md").read_text(encoding="utf-8"), "new\n")
-            self.assertFalse((root / ".claude/skills/wayline-x/old.md").exists(), "a staged directory replaces the one it stands for")
+            self.assertEqual((root / ".claude/skills/wayline-x/old.md").read_text(encoding="utf-8"), "gone\n",
+                             "a staged directory is merged file by file: what was not restaged stays")
             self.assertEqual((root / ".claude/agents/planner.md").read_text(encoding="utf-8"), "words\n")
             self.assertFalse((root / ".wayline-staged").exists())
             self.assertEqual(worker.place_staged(root, [".claude/agents/planner.md"]), [], "nothing staged, nothing placed")

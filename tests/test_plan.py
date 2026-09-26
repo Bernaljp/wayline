@@ -807,6 +807,13 @@ class ReplanTest(PlanCase):
         self.assertEqual(report["written"]["superseded"], [2, 4, 5, 6, 7, 8, 9])
         self.assertEqual(self.statuses()[harness], "open")
 
+    def test_the_planner_is_never_asked_to_split_a_change_record_s_harness_ticket(self):
+        harness = self.harness_ticket()
+        self.set_status(harness, "failed")
+        report = plan.split(self.project, harness, notify=self.notify, pre_check=False)
+        self.assertIn("change record", report["stopped"] or "")
+        self.assertEqual(self.calls(plan.PLANNER), [], "refused before a session is launched")
+
     def test_a_kept_code_ticket_that_adds_public_api_still_needs_its_docs_ticket(self):
         self.set_status(1, "failed")  # kept by the re-cut, with its docs ticket 2 taken back
         self.script(planned(self.recut()), planned(self.recut()))

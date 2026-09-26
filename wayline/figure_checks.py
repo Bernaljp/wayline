@@ -131,6 +131,20 @@ def check_outcome(check_id, passed, detail, tool=None):
 # --- the outside world ----------------------------------------------------------------------------
 
 
+_RUNS = {}
+
+
+def _runs(argv):
+    """Whether `argv` exits 0, asked once per process: the cached answer for an offline `uvx ruff`."""
+    key = tuple(argv)
+    if key not in _RUNS:
+        try:
+            _RUNS[key] = subprocess.run(argv, capture_output=True, timeout=60).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            _RUNS[key] = False
+    return _RUNS[key]
+
+
 class Tools:
     """How the checks reach programs: poppler, ruff, and the Python the generator runs in.
 
@@ -149,8 +163,12 @@ class Tools:
         if found:
             return [found]
         if name == "ruff" and self.which("uvx"):
-            # uvx asks the package index on every run; with the backends off (the suite) it runs from its cache.
-            return [self.which("uvx")] + (["--offline"] if backends_off() else []) + ["ruff"]
+            if not backends_off():
+                return [self.which("uvx"), "ruff"]
+            # uvx asks the package index on every run; with the backends off (the suite) it runs from its cache, and a
+            # cache that holds no ruff is a machine without ruff.
+            argv = [self.which("uvx"), "--offline", "ruff"]
+            return argv if _runs(argv + ["--version"]) else None
         return None
 
     def run(self, name, args, cwd=None, timeout_s=None):

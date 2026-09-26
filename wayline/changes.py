@@ -1167,10 +1167,6 @@ def _subject_missing(directory, root):
     return any(not (Path(root) / relative).is_file() for relative in [subject["path"]] + list(subject.get("also") or []))
 
 
-_LOCAL_ROLE_FILE_RE = re.compile(r"^\.claude/agents/([a-z][a-z0-9-]*)\.md\Z")
-_LOCAL_SKILL_FILE_RE = re.compile(r"^\.claude/skills/wayline-[a-z0-9][a-z0-9-]*/.+\Z")
-
-
 def _old_stand_in(directory, old_root, holder, harness_root):
     """`(root, said)`: a tree that carries the subject as it was before a local change, when the old tree lacks it.
 
@@ -1190,14 +1186,14 @@ def _old_stand_in(directory, old_root, holder, harness_root):
     for relative in paths:
         target = stand_in / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        role = _LOCAL_ROLE_FILE_RE.match(relative)
-        harness_role = Path(harness_root) / "roles" / role.group(1) / registry.ROLE_FILE if role else None
+        role = fixtures.local_role_of(relative)
+        harness_role = Path(harness_root) / "roles" / role / registry.ROLE_FILE if role else None
         if (Path(old_root) / relative).is_file():
             shutil.copy(Path(old_root) / relative, target)
         elif harness_role is not None and harness_role.is_file():
             shutil.copy(harness_role, target)
-            said.append("on the harness's roles/%s/%s, which the override replaces" % (role.group(1), registry.ROLE_FILE))
-        elif _LOCAL_SKILL_FILE_RE.match(relative):
+            said.append("on the harness's roles/%s/%s, which the override replaces" % (role, registry.ROLE_FILE))
+        elif fixtures.is_local_skill_file(relative):
             target.write_text("", encoding="utf-8")
             said.append("without the skill, which did not exist")
         else:
@@ -1239,7 +1235,7 @@ def prove(fixture_id, old_root, new_root, policy=None, runner=None, harness_root
         if old.partial:
             proof.waits = True
             return proof
-        if old.skipped is not None and not _subject_missing(fresh, old_root):
+        if old.skipped is not None and not _subject_missing(fresh, stand_in or old_root):
             # It ran on the change, so it is runnable; here it could not run for some other reason (a launch that
             # failed, an input that did not render), and a run that did not happen shows no failure.
             proof.problem = ("the fixture %s could not be run on the subject as it was (%s), so nothing shows that it fails there"

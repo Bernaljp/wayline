@@ -140,6 +140,24 @@ class ProofTest(Harness):
         self.assertIn("structural 0/1", proof.old)
         self.assertIn("roles/%s/agent.md" % ROLE, proof.old)
 
+    def test_a_stand_in_old_run_that_could_not_happen_shows_no_failure(self):
+        override = ".claude/agents/%s.md" % ROLE
+        write(self.root / override, "---\nname: %s\ndescription: Greets.\n---\n\nGreet each person, and list whom you greeted.\n" % ROLE)
+        self.make_fixture(slug="override", subject=override, judged=False)
+        harness = self.temp / "the-harness"
+        write(harness / "roles" / ROLE / "agent.md", "---\nname: %s\ndescription: Greets.\n---\n\nSay bye.\n" % ROLE)
+
+        def runner(directory, root, policy):
+            run = fixtures.FixtureRun("prompt/override", n=3)
+            if Path(root) == self.root:
+                run.structural, run.passed = 3, True
+            else:
+                run.skipped = "the launch failed: the CLI is not on PATH"
+            return run
+
+        proof = changes.prove("prompt/override", self.old, self.root, self.policy, runner=runner, harness_root=harness)
+        self.assertIn("nothing shows that it fails there", proof.problem or "", "the stand-in holds the subject, so its run was owed")
+
     def test_a_new_skill_is_run_without_it_on_the_old_subject(self):
         skill = ".claude/skills/wayline-greet/SKILL.md"
         write(self.root / skill, "Greet each person, and list whom you greeted.\n")
@@ -204,6 +222,7 @@ class LocalChangeTest(ProjectTestCase):
         self.script_the_change()
         for _ in range(3):
             self.fake.script(word("hedged"), role=SUBJECT_ROLE)
+        self.fake.script(word("overclaimed"), role=SUBJECT_ROLE)  # the old subject: the pack with no skill, which fails
         driven = self.conductor()
         results = drive(driven)
         self.assertEqual([identifier for result in results for identifier in result.done], [1])
@@ -232,6 +251,7 @@ class LocalChangeTest(ProjectTestCase):
                          patch=Patch(files=staged, message="ticket 1: the caption skill, staged"), role="coder")
         for _ in range(3):
             self.fake.script(word("hedged"), role=SUBJECT_ROLE)
+        self.fake.script(word("overclaimed"), role=SUBJECT_ROLE)
         results = drive(self.conductor())
         self.assertEqual([identifier for result in results for identifier in result.done], [1])
         self.assertEqual(changes.read_changes(self.project)[0]["status"], "applied")
@@ -240,6 +260,20 @@ class LocalChangeTest(ProjectTestCase):
         acceptance = events_of(self.ledger, "acceptance")[0]["payload"]
         self.assertTrue(acceptance["pass"], acceptance)
         self.assertIn("place the staged", self.git("log", "--format=%s", "-3"))
+
+    def test_a_staged_skill_is_committed_in_a_project_that_ignores_claude(self):
+        (self.project / ".gitignore").write_text(".claude/\n", encoding="utf-8")
+        self.git("add", ".gitignore")
+        self.git("-c", "user.name=owner", "-c", "user.email=o@example.org", "commit", "-q", "-m", "ignore .claude/")
+        staged = {(worker.staged_path(path) if path.startswith(".claude/") else path): text for path, text in skill_files().items()}
+        self.fake.script(answer(record()), role=changes.EVOLVER)
+        self.fake.script(done(1), patch=Patch(files=staged, message="ticket 1: the caption skill, staged"), role="coder")
+        for _ in range(3):
+            self.fake.script(word("hedged"), role=SUBJECT_ROLE)
+        self.fake.script(word("overclaimed"), role=SUBJECT_ROLE)
+        results = drive(self.conductor())
+        self.assertEqual([identifier for result in results for identifier in result.done], [1])
+        self.assertIn(SKILL + "/SKILL.md", self.git("ls-files", SKILL), "the skill is committed though the project ignores .claude/")
 
     def test_the_planner_never_splits_a_change_record_s_harness_ticket(self):
         """The record owns its ticket, as no cut of the graph takes it back: a split would leave the record answered by nothing."""

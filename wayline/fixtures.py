@@ -55,7 +55,7 @@ from wayline.registry import FIXTURE_KINDS
 
 __all__ = [
     "FixtureError", "Check", "Sample", "FixtureRun", "SuiteResult", "CHECKS", "JUDGE_ROLE", "VERDICT_SCHEMA",
-    "jsonpath", "structural_checks", "subject_sha256", "subject_minutes", "sample_failures", "input_hash", "context_manifest", "render_input",
+    "jsonpath", "structural_checks", "subject_sha256", "subject_minutes", "sample_failures", "local_role_of", "is_local_skill_file", "input_hash", "context_manifest", "render_input",
     "discover", "load_fixture", "run", "run_fixture", "record", "set_baseline", "describe", "fixture_command",
 ]
 
@@ -480,6 +480,17 @@ def _role_of(record, agents):
     return next(iter(agents))
 
 
+def local_role_of(relative):
+    """The role a project's `.claude/agents/<role>.md` overrides, or None for any other path."""
+    match = _ROLE_FILE_RE.match(str(relative))
+    return match.group(2) if match else None
+
+
+def is_local_skill_file(relative):
+    """Whether a path is a file of a project's own skill, under `.claude/skills/<name>/`."""
+    return str(relative).startswith(".claude/") and bool(_SKILL_FILE_RE.match(str(relative)))
+
+
 def render_input(directory, record, root):
     """`(prompt, agents, schema_text, deliveries)` a run sends: the pinned pack with the current subject put into it.
 
@@ -827,7 +838,8 @@ def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budge
     stopped = False
     try:
         for index in range(run.n):
-            run.samples.append(_subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run, policy))
+            run.samples.append(_subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run,
+                                               subject_minutes(record, policy, root)))
             if stop_at_failure and not run.samples[-1].structural_passed:
                 run.n = len(run.samples)
                 break
@@ -852,7 +864,7 @@ def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budge
     return run
 
 
-def _subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run, policy=None):
+def _subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run, minutes=SUBJECT_MAX_MINUTES):
     prompt, agents, schema_text, _ = rendered
     launch = record["launch"]
     key = _sha({"prompt": prompt, "agent": json.dumps(agents, sort_keys=True), "manifest": manifest,
@@ -865,7 +877,7 @@ def _subject_sample(directory, record, rendered, manifest, index, use_cache, bud
         attempt, stored, cached = hit, _read_json(hit / "envelope.json"), True
     else:
         attempt = _fresh(slot)
-        stored = _launch_subject(directory, record, rendered, attempt, policy)
+        stored = _launch_subject(directory, record, rendered, attempt, minutes)
         cached = False
         if _refused(stored) and stored.get("structured_output") is None:
             # Kept under its own name and never served from the cache: a refusal says nothing about the subject.
@@ -905,24 +917,28 @@ def _cut_short(stored):
             or bool(_OUTPUT_CAP_RE.search(stored.get("result_text") or "")))
 
 
-def subject_minutes(record, policy):
+def subject_minutes(record, policy, root=None):
     """A subject session's time limit: the fixture's own `max_minutes`, else the budget its role launches with.
 
     The role's `cost_hint` names the budget (`policy.budget.<hint>.max_minutes`), so a fixture of the planner, a
     large-budget role, is given the time the planner is given; a role the harness does not have runs on the small one.
+    The sidecar is read from `root`, the tree the fixture runs against, before the installed harness.
     """
     launch = record.get("launch") or {}
     if launch.get("max_minutes"):
         return launch["max_minutes"]
-    sidecar = HARNESS_ROOT / "roles" / str(launch.get("role") or "") / "wayline.json"
-    try:
-        hint = json.loads(sidecar.read_text(encoding="utf-8")).get("cost_hint") if launch.get("role") else None
-    except (OSError, ValueError):
-        hint = None
+    hint = None
+    for base in ([Path(root)] if root else []) + [HARNESS_ROOT]:
+        sidecar = base / "roles" / str(launch.get("role") or "") / "wayline.json"
+        try:
+            hint = json.loads(sidecar.read_text(encoding="utf-8")).get("cost_hint") if launch.get("role") else None
+        except (OSError, ValueError):
+            continue
+        break
     return ((policy or {}).get("budget") or {}).get(hint or "", {}).get("max_minutes") or SUBJECT_MAX_MINUTES
 
 
-def _launch_subject(directory, record, rendered, attempt, policy=None):
+def _launch_subject(directory, record, rendered, attempt, minutes=SUBJECT_MAX_MINUTES):
     prompt, agents, schema_text, deliveries = rendered
     launch = record["launch"]
     values = _values(attempt)
@@ -957,7 +973,7 @@ def _launch_subject(directory, record, rendered, attempt, policy=None):
         agent_json=agent_json, allowed_tools=list(launch.get("allowed_tools") or []),
         disallowed_tools=list(launch.get("disallowed_tools") or []), settings_path=settings_path,
         add_dirs=[_fill(entry, values) for entry in launch.get("add_dirs") or []], cwd=str(project_dir), env=env,
-        schema_path=schema_path, max_minutes=subject_minutes(record, policy))
+        schema_path=schema_path, max_minutes=minutes)
     return _stored(worker.launch(request))
 
 

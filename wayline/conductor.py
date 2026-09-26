@@ -127,6 +127,7 @@ worker's own account of its quality: `accepted` comes from a verifier on another
 """
 
 import argparse
+import functools
 import json
 import os
 import shutil
@@ -3250,7 +3251,7 @@ class Conductor:
             paths.append(worker.STAGED)
         if not paths:
             return
-        self._git(attempt.worktree, "add", "-A", "--", *paths)
+        self._git(attempt.worktree, "add", "-A", "-f", "--", *paths)  # a project may ignore .claude/; this touch is its work
         if self._git(attempt.worktree, "diff", "--cached", "--quiet", "--", *paths, ok=None).returncode != 0:
             self._git(attempt.worktree, "commit", "-q", "-m", "ticket %d: place the staged %s" % (attempt.id, ", ".join(touches)), "--", *paths)
             self.say("  ticket %d: placed the staged %s" % (attempt.id, ", ".join(touches)))
@@ -4621,16 +4622,14 @@ class Conductor:
         proven = record.get("proof") or {}
         if proven.get("head") and proven["head"] == self._head(attempt.worktree):
             return True  # proven already, and the branch has not moved: an integration carried again is not proven again
-        prover = self.prover
+        # The old subject of a local override or a new skill stands in from this conductor's own harness.
+        prover = self.prover or functools.partial(changes.prove, harness_root=self.harness_root)
         holder = old = None
         try:
             if record["scope_kind"] == "global":
                 holder = tempfile.mkdtemp(prefix="wayline-old-subject-")
                 old = changes.old_subject(self.harness_root, record, holder)
-            if self.prover is None:  # the old subject of a local override or a new skill stands in from this harness
-                proof = changes.prove(record["fixture"], old or self.project, attempt.worktree, self.policy, harness_root=self.harness_root)
-            else:
-                proof = prover(record["fixture"], old or self.project, attempt.worktree, self.policy)
+            proof = prover(record["fixture"], old or self.project, attempt.worktree, self.policy)
         except (ValueError, OSError) as failure:
             self._fail(attempt, "the fixture %s could not be run: %s" % (record["fixture"], failure), self._next_step(attempt))
             return "failed"

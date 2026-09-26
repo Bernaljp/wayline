@@ -979,8 +979,9 @@ def with_staged(touches):
 def place_staged(root, touches):
     """Move what was staged for each touch under `.claude/` into place in `root`; the touches placed.
 
-    A staged directory replaces the directory it stands for whole, so a file the worker dropped from a skill is
-    gone from it too; a staged file replaces the file. The stage is removed once it is empty.
+    A staged directory is merged into the one it stands for file by file, so a worker that restages one file of a
+    skill on a resume, or one override under a touch of all of `.claude/agents/`, leaves the rest as it was; a
+    staged file replaces the file. The stage is removed once it is empty.
     """
     root = Path(root)
     placed = []
@@ -990,10 +991,10 @@ def place_staged(root, touches):
             continue
         source, target = root / staged, root / str(touch)
         if source.is_dir():
-            if target.exists():
-                shutil.rmtree(target)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(source), str(target))
+            for item in sorted(path for path in source.rglob("*") if path.is_file()):
+                destination = target / item.relative_to(source)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(item, destination)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             os.replace(source, target)
