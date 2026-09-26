@@ -17,7 +17,7 @@ from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_changes import GLOBAL, answer, events_of, record
 from tests.test_conductor import done, drive, hold_the_ladder
-from tests.test_fixtures import Harness, good
+from tests.test_fixtures import ROLE, Harness, good, write
 from wayline import changes, fixtures, project, registry, replay, tick, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
@@ -118,6 +118,31 @@ class ProofTest(Harness):
         (self.old / "prompts" / "greeting.md").unlink()
         self.answer_by_subject(3)
         self.assertTrue(changes.prove("prompt/greeting", self.old, self.root, self.policy).proven)
+
+    def test_a_role_override_the_old_tree_lacks_is_run_on_the_harness_role_it_replaces(self):
+        override = ".claude/agents/%s.md" % ROLE
+        write(self.root / override, "---\nname: %s\ndescription: Greets.\n---\n\nGreet each person, and list whom you greeted.\n" % ROLE)
+        self.make_fixture(slug="override", subject=override, judged=False)
+        harness = self.temp / "the-harness"
+        write(harness / "roles" / ROLE / "agent.md", "---\nname: %s\ndescription: Greets.\n---\n\nSay bye.\n" % ROLE)
+        self.answer_by_subject()
+        proof = changes.prove("prompt/override", self.old, self.root, self.policy, harness_root=harness)
+        self.assertTrue(proof.proven, proof.problem)
+        self.assertEqual(len(self.fake.calls), 6, "the old subject ran: the harness's role, which the override replaces")
+        self.assertIn("structural 0/3", proof.old)
+        self.assertIn("roles/%s/agent.md" % ROLE, proof.old)
+
+    def test_a_new_skill_is_run_without_it_on_the_old_subject(self):
+        skill = ".claude/skills/wayline-greet/SKILL.md"
+        write(self.root / skill, "Greet each person, and list whom you greeted.\n")
+        self.make_fixture(slug="skill", subject=skill, judged=False)
+        self.answer_by_subject()
+        proof = changes.prove("prompt/skill", self.old, self.root, self.policy)
+        self.assertTrue(proof.proven, proof.problem)
+        self.assertEqual(len(self.fake.calls), 6, "the pack ran without the skill")
+        self.assertNotIn("list whom you greeted", self.fake.calls[-1].request.prompt)
+        self.assertIn("structural 0/3", proof.old)
+        self.assertIn("without the skill", proof.old)
 
     def test_an_old_run_that_could_not_happen_shows_no_failure(self):
         def runner(directory, root, policy):

@@ -4619,13 +4619,16 @@ class Conductor:
         proven = record.get("proof") or {}
         if proven.get("head") and proven["head"] == self._head(attempt.worktree):
             return True  # proven already, and the branch has not moved: an integration carried again is not proven again
-        prover = self.prover or changes.prove
+        prover = self.prover
         holder = old = None
         try:
             if record["scope_kind"] == "global":
                 holder = tempfile.mkdtemp(prefix="wayline-old-subject-")
                 old = changes.old_subject(self.harness_root, record, holder)
-            proof = prover(record["fixture"], old or self.project, attempt.worktree, self.policy)
+            if self.prover is None:  # the old subject of a local override or a new skill stands in from this harness
+                proof = changes.prove(record["fixture"], old or self.project, attempt.worktree, self.policy, harness_root=self.harness_root)
+            else:
+                proof = prover(record["fixture"], old or self.project, attempt.worktree, self.policy)
         except (ValueError, OSError) as failure:
             self._fail(attempt, "the fixture %s could not be run: %s" % (record["fixture"], failure), self._next_step(attempt))
             return "failed"

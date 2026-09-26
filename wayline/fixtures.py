@@ -55,7 +55,7 @@ from wayline.registry import FIXTURE_KINDS
 
 __all__ = [
     "FixtureError", "Check", "Sample", "FixtureRun", "SuiteResult", "CHECKS", "JUDGE_ROLE", "VERDICT_SCHEMA",
-    "jsonpath", "structural_checks", "subject_sha256", "input_hash", "context_manifest", "render_input",
+    "jsonpath", "structural_checks", "subject_sha256", "subject_minutes", "input_hash", "context_manifest", "render_input",
     "discover", "load_fixture", "run", "run_fixture", "record", "set_baseline", "describe", "fixture_command",
 ]
 
@@ -67,7 +67,7 @@ SUITE_STATE = "fixtures.json"            # <home>/fixtures.json: when the last f
 WEEK_SECONDS = 7 * 86400                 # the weekly window when no session reported its reset
 JUDGE_MAX_TURNS = 3                      # one question, no tools: the answer is the first turn
 JUDGE_MAX_MINUTES = 5
-SUBJECT_MAX_MINUTES = 30                 # policy.budget.small, when the fixture names none
+SUBJECT_MAX_MINUTES = 30                 # policy.budget.small, when neither the fixture nor its role names one
 EXIT_REGRESSION = 1
 EXIT_COST = 2
 
@@ -820,7 +820,7 @@ def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budge
     stopped = False
     try:
         for index in range(run.n):
-            run.samples.append(_subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run))
+            run.samples.append(_subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run, policy))
         if judged and all(sample.structural_passed for sample in run.samples):
             _judge_samples(directory, record, judged, policy, use_cache, budget, run)
     except _CostStop:
@@ -842,7 +842,7 @@ def run_fixture(directory, root=HARNESS_ROOT, policy=None, use_cache=True, budge
     return run
 
 
-def _subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run):
+def _subject_sample(directory, record, rendered, manifest, index, use_cache, budget, run, policy=None):
     prompt, agents, schema_text, _ = rendered
     launch = record["launch"]
     key = _sha({"prompt": prompt, "agent": json.dumps(agents, sort_keys=True), "manifest": manifest,
@@ -855,7 +855,7 @@ def _subject_sample(directory, record, rendered, manifest, index, use_cache, bud
         attempt, stored, cached = hit, _read_json(hit / "envelope.json"), True
     else:
         attempt = _fresh(slot)
-        stored = _launch_subject(directory, record, rendered, attempt)
+        stored = _launch_subject(directory, record, rendered, attempt, policy)
         cached = False
         if _refused(stored) and stored.get("structured_output") is None:
             # Kept under its own name and never served from the cache: a refusal says nothing about the subject.
@@ -863,7 +863,12 @@ def _subject_sample(directory, record, rendered, manifest, index, use_cache, bud
             _account(run, budget, stored, cached)
             budget.refused = "a usage window refused the subject session %s: nothing more is launched" % stored.get("session_id")
             raise _CostStop()
-        _write_json(attempt / "envelope.json", stored)
+        if _timed_out(stored):
+            # Kept under its own name and never served from the cache: a session stopped at its time limit failed this
+            # sample, and says nothing of what the subject returns under another limit.
+            _write_json(attempt / "timeout.json", stored)
+        else:
+            _write_json(attempt / "envelope.json", stored)
     _account(run, budget, stored, cached)
     project_dir = attempt / "project"
     schema = json.loads(_fill(schema_text, _values(attempt))) if schema_text is not None else None
@@ -879,7 +884,29 @@ def _values(attempt):
     return {"harness": str(HARNESS_ROOT), "project": str(attempt / "project"), "run": str(attempt / "session")}
 
 
-def _launch_subject(directory, record, rendered, attempt):
+def _timed_out(stored):
+    """Whether a subject session was stopped at its time limit before it returned a result."""
+    return stored.get("structured_output") is None and any(str(error).startswith("timeout:") for error in stored.get("errors") or [])
+
+
+def subject_minutes(record, policy):
+    """A subject session's time limit: the fixture's own `max_minutes`, else the budget its role launches with.
+
+    The role's `cost_hint` names the budget (`policy.budget.<hint>.max_minutes`), so a fixture of the planner, a
+    large-budget role, is given the time the planner is given; a role the harness does not have runs on the small one.
+    """
+    launch = record.get("launch") or {}
+    if launch.get("max_minutes"):
+        return launch["max_minutes"]
+    sidecar = HARNESS_ROOT / "roles" / str(launch.get("role") or "") / "wayline.json"
+    try:
+        hint = json.loads(sidecar.read_text(encoding="utf-8")).get("cost_hint") if launch.get("role") else None
+    except (OSError, ValueError):
+        hint = None
+    return ((policy or {}).get("budget") or {}).get(hint or "", {}).get("max_minutes") or SUBJECT_MAX_MINUTES
+
+
+def _launch_subject(directory, record, rendered, attempt, policy=None):
     prompt, agents, schema_text, deliveries = rendered
     launch = record["launch"]
     values = _values(attempt)
@@ -914,7 +941,7 @@ def _launch_subject(directory, record, rendered, attempt):
         agent_json=agent_json, allowed_tools=list(launch.get("allowed_tools") or []),
         disallowed_tools=list(launch.get("disallowed_tools") or []), settings_path=settings_path,
         add_dirs=[_fill(entry, values) for entry in launch.get("add_dirs") or []], cwd=str(project_dir), env=env,
-        schema_path=schema_path, max_minutes=launch.get("max_minutes") or SUBJECT_MAX_MINUTES)
+        schema_path=schema_path, max_minutes=subject_minutes(record, policy))
     return _stored(worker.launch(request))
 
 

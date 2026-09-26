@@ -43,7 +43,9 @@ parks the harness ticket at once when the answer does not approve.
 
 **The proof.** A fixture born from feedback encodes the desired behaviour, so `prove` runs it twice before the
 conductor integrates a harness ticket: on the changed subject, where it must pass, and on the subject as it
-was, where it must fail (a subject that did not exist fails). Both runs happen on a copy, so a change that is
+was, where it must fail. A local role override that did not exist runs there as the harness's role it replaces,
+and a local skill that did not exist runs as no skill (`_old_stand_in`), so the old behaviour is shown failing;
+any other subject that did not exist fails without a run. Both runs happen on a copy, so a change that is
 not proven leaves nothing behind; a proven one gets the passing run as its baseline, which is what makes a
 model-authored skill assignable to the registry.
 
@@ -1163,7 +1165,45 @@ def _subject_missing(directory, root):
     return any(not (Path(root) / relative).is_file() for relative in [subject["path"]] + list(subject.get("also") or []))
 
 
-def prove(fixture_id, old_root, new_root, policy=None, runner=None):
+_LOCAL_ROLE_FILE_RE = re.compile(r"^\.claude/agents/([a-z][a-z0-9-]*)\.md\Z")
+_LOCAL_SKILL_FILE_RE = re.compile(r"^\.claude/skills/wayline-[a-z0-9][a-z0-9-]*/.+\Z")
+
+
+def _old_stand_in(directory, old_root, holder, harness_root):
+    """`(root, said)`: a tree that carries the subject as it was before a local change, when the old tree lacks it.
+
+    A local role override that did not exist is the harness's `roles/<role>/agent.md`, which the role launched with
+    until the override (`worker.read_role`); a local skill that did not exist is no skill, so an empty file stands in
+    and the pinned skill text leaves the prompt. Both run, so the old behaviour is shown failing rather than presumed
+    to. `(old_root, None)` when the old tree holds every subject file, and `(None, None)` when nothing can stand in.
+    """
+    try:
+        subject = fixtures.load_fixture(directory)["subject"]
+    except fixtures.FixtureError:
+        return old_root, None
+    paths = [subject["path"]] + list(subject.get("also") or [])
+    if all((Path(old_root) / relative).is_file() for relative in paths):
+        return old_root, None
+    stand_in, said = Path(holder) / "old-subject", []
+    for relative in paths:
+        target = stand_in / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        role = _LOCAL_ROLE_FILE_RE.match(relative)
+        harness_role = Path(harness_root) / "roles" / role.group(1) / registry.ROLE_FILE if role else None
+        if (Path(old_root) / relative).is_file():
+            shutil.copy(Path(old_root) / relative, target)
+        elif harness_role is not None and harness_role.is_file():
+            shutil.copy(harness_role, target)
+            said.append("on the harness's roles/%s/%s, which the override replaces" % (role.group(1), registry.ROLE_FILE))
+        elif _LOCAL_SKILL_FILE_RE.match(relative):
+            target.write_text("", encoding="utf-8")
+            said.append("without the skill, which did not exist")
+        else:
+            return None, None
+    return stand_in, "; ".join(dict.fromkeys(said))
+
+
+def prove(fixture_id, old_root, new_root, policy=None, runner=None, harness_root=HARNESS_ROOT):
     """Run the fixture on the changed subject, where it must pass, and on the subject as it was, where it must fail.
 
     Both runs happen on a copy of the fixture, so a change that is not proven leaves its worktree as the worker
@@ -1188,8 +1228,9 @@ def prove(fixture_id, old_root, new_root, policy=None, runner=None):
         if not new.passed:
             proof.problem = "the fixture %s does not pass on the change: %s" % (fixture_id, new.skipped or proof.new)
             return proof
-        old = runner(_copy_of(directory, Path(holder) / "old"), root=old_root, policy=policy)
-        proof.old = fixtures.describe(old)
+        stand_in, said = _old_stand_in(fresh, old_root, holder, harness_root)
+        old = runner(_copy_of(directory, Path(holder) / "old"), root=stand_in or old_root, policy=policy)
+        proof.old = fixtures.describe(old) + (" (%s)" % said if said else "")
         if old.partial:
             proof.waits = True
             return proof
