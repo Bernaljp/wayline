@@ -15,8 +15,8 @@
     "large": {"max_turns": 200, "max_minutes": 180}
   },
   "roles": {
-    "planner": {"model": "fable", "effort": "xhigh"},
-    "decider": {"model": "fable", "effort": "max"},
+    "planner": {"model": "opus", "effort": "xhigh"},
+    "decider": {"model": "opus", "effort": "max"},
     "critic": {"model": "opus", "effort": "high"},
     "synthesizer": {"model": "opus", "effort": "high"},
     "reader": {"model": "sonnet", "effort": "medium"},
@@ -25,15 +25,15 @@
     "figure-designer": {"model": "opus", "effort": "high"},
     "figure-critic": {"model": "opus", "effort": "high"},
     "documentarian": {"model": "sonnet", "effort": "high"},
-    "writer": {"model": "fable", "effort": "xhigh"},
-    "evolver": {"model": "fable", "effort": "xhigh"},
+    "writer": {"model": "opus", "effort": "xhigh"},
+    "evolver": {"model": "opus", "effort": "xhigh"},
     "classifier": {"model": "haiku", "effort": "low"},
     "dedup-judge": {"model": "haiku", "effort": "low"},
     "fixture-judge": {"model": "haiku", "effort": "low"}
   },
   "verifier": {
     "sonnet": {"model": "opus", "effort": "high"},
-    "opus": {"model": "fable", "effort": "high"},
+    "opus": {"model": "opus", "effort": "max"},
     "fable": {"model": "opus", "effort": "max"}
   },
   "max_parallel_workers": 2,

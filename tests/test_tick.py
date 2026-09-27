@@ -19,7 +19,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, on_fable
 from wayline import cli, decisions, notify, pacing, project, resources, tick, tickets, worker
 from wayline.ledger import Ledger
 
@@ -639,8 +639,9 @@ class FableVerdictTest(TickCase):
     def setUp(self):
         super().setUp()
         self.ran()  # a conductor killed while its verdicts waited
+        on_fable(self.project, "verifier.opus")
         self.add_ticket(1, status="done", difficulty=3)
-        self.done_on(1, "opus")  # a difficulty-3 diff read on an Opus author goes to a Fable verifier
+        self.done_on(1, "opus")  # a difficulty-3 diff read on an Opus author goes to the Fable verifier the project gives it
         self.resets = NOW + 2 * DAY
         self.journal("paused", {"resets_at": pacing.iso(self.resets), "window": "seven_day", "utilization": 1.0, "model": "fable"})
 

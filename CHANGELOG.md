@@ -2,6 +2,21 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
+## Unreleased
+
+- Opus 5.5 in the roles and the verifier table (ticket 65; Implementation Decisions 11, 14, 15, and 16). The
+  shipped policy runs the planner, the writer, and the evolver on `opus xhigh` and the decider on `opus max`,
+  where they were on Fable at the same efforts, and reads work written on Opus in a fresh `opus max` session,
+  where it was `fable high`. Why: since 2026-09-22 `--model opus` launches Opus 5.5, which ranks above Fable
+  5.1 on every row of its system card's summary table and costs about a third as much on the matched probe
+  (research note 04). No role and no verdict now draws on Fable's weekly window unless a project's
+  `harness.json` puts one there, so a spent Fable week holds only the Fable rungs 6 and 7. The roles keep their
+  efforts, the ones the fallback of decision 15 already gave them on Opus, and the planner and the decider cut
+  their records at `context_pack.max_chars.opus` (200000), which the decider's records on the M5 toy project
+  (166,153 characters) fit. A Fable author's verifier stays `opus max`, and the rung ladder is unchanged. The
+  tests of the hold, the fallback, and the ask put the role or verifier they exercise back on Fable in their
+  project's `harness.json`, as an owner would.
+
 ## v0.7.0 (2026-09-26)
 
 - The documentation site (ticket 51; Implementation Decisions 13). A package the harness implemented gets a

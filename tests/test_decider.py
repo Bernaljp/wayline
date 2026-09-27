@@ -18,7 +18,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, fable_policy, on_fable
 from tests.test_conductor import drive
 from tests.test_decisions import ConductedCase
 from wayline import cli, decider, decisions, grill, pacing, project, provenance, tickets, worker
@@ -76,7 +76,7 @@ def run(*args):
 
 
 class DeciderRoleTest(unittest.TestCase):
-    """`roles/decider/` as the harness ships it: read-only, its own schema and protocol, launched at fable max."""
+    """`roles/decider/` as the harness ships it: read-only, its own schema and protocol, launched at opus max."""
 
     def setUp(self):
         self.role = worker.read_role(decider.DECIDER)
@@ -98,10 +98,14 @@ class DeciderRoleTest(unittest.TestCase):
         self.assertEqual(self.role.protocol, (HARNESS_ROOT / "prompts" / "roles" / "decider.md").read_text(encoding="utf-8"))
         self.assertIn("answer: null", self.role.protocol)
 
-    def test_the_tier_is_fable_max_and_falls_back_to_opus_max(self):
-        self.assertEqual(decider.decider_tier(self.policy), ("fable", "max", None))
-        self.assertEqual(decider.decider_tier(self.policy, fall_back=True), ("opus", "max", "fable"))
-        self.assertTrue(decider.decides_on_fable(self.policy))
+    def test_the_tier_is_opus_max_and_a_decider_on_fable_falls_back_to_opus_max(self):
+        for fall_back in (False, True):
+            self.assertEqual(decider.decider_tier(self.policy, fall_back=fall_back), ("opus", "max", None))
+        self.assertFalse(decider.decides_on_fable(self.policy))
+        decider_on_fable = fable_policy(self.policy, "decider")
+        self.assertEqual(decider.decider_tier(decider_on_fable), ("fable", "max", None))
+        self.assertEqual(decider.decider_tier(decider_on_fable, fall_back=True), ("opus", "max", "fable"))
+        self.assertTrue(decider.decides_on_fable(decider_on_fable))
         with self.assertRaises(decider.DeciderError):
             decider.decider_tier({"roles": {"decider": {"model": "gpt", "effort": "max"}}})
 
@@ -228,14 +232,14 @@ class DecideRestTest(RecordedGrillCase):
                 record = records[identifier]
                 self.assertEqual((record["answer"], record["decided_by"], record["confidence"]), (answer, "decider", confidence))
                 self.assertTrue(record["rationale"])
-                self.assertEqual(record["model"], worker.RESOLVED_MODELS["fable"])
+                self.assertEqual(record["model"], worker.RESOLVED_MODELS["opus"])
                 self.assertNotIn("fallback_from", record)
                 self.assertTrue(record["session_id"])
                 self.assertTrue(record["timestamp"])
         self.assertEqual({key: records[key]["answer"] for key in ("Q7", "Q9")}, {"Q7": None, "Q9": None}, "the owner's stay open")
         text = (self.project / "research" / "DECISIONS.md").read_text(encoding="utf-8")
         self.assertIn("- decided-by: decider", text)
-        self.assertIn("- model: %s" % worker.RESOLVED_MODELS["fable"], text)
+        self.assertIn("- model: %s" % worker.RESOLVED_MODELS["opus"], text)
 
     def test_every_decision_is_journaled_with_its_model_and_session(self):
         self.decide_rest(Q8=decision(Q8_ANSWER), Q10=decision(Q10_ANSWER))
@@ -243,7 +247,7 @@ class DecideRestTest(RecordedGrillCase):
         self.assertEqual(len(decided), 2)
         for event in decided:
             self.assertIsNone(event["payload"]["ticket"])
-            self.assertEqual(event["payload"]["model"], worker.RESOLVED_MODELS["fable"])
+            self.assertEqual(event["payload"]["model"], worker.RESOLVED_MODELS["opus"])
             self.assertTrue(event["session_id"])
             self.assertTrue(event["payload"]["rationale"])
         self.assertTrue(decided[0]["payload"]["answer"].startswith("Q8 "))
@@ -253,14 +257,14 @@ class DecideRestTest(RecordedGrillCase):
         self.assertEqual([entry["id"] for entry in log[:2]], ["Q8", "Q10"])
         self.assertTrue(all(entry["decided_by"] == "human" for entry in log[2:]))
 
-    def test_the_launch_is_fable_at_max_effort_with_the_decision_schema_and_the_records_in_its_prompt(self):
+    def test_the_launch_is_opus_at_max_effort_with_the_decision_schema_and_the_records_in_its_prompt(self):
         self.decide_rest(Q8=decision(Q8_ANSWER), Q10=decision(Q10_ANSWER))
         calls = self.decider_calls()
         self.assertEqual([call.kind for call in calls], ["launch", "launch"], "one fresh session per decision, no resume")
         first = calls[0].request
-        self.assertEqual((first.model, first.effort, first.role), ("fable", "max", "decider"))
+        self.assertEqual((first.model, first.effort, first.role), ("opus", "max", "decider"))
         self.assertEqual(first.schema_path.name, "decision.json")
-        self.assertEqual(json.loads(first.agent_text())["decider"]["model"], "fable")
+        self.assertEqual(json.loads(first.agent_text())["decider"]["model"], "opus")
         self.assertEqual(first.cwd, self.project.resolve(), "no worktree: the decider writes nothing")
         self.assertNotIn("TICKET_TOUCHES", first.env, "without a touch set the guard blocks every write")
         self.assertEqual(first.allowed_tools, ["Read", "Glob", "Grep"])
@@ -294,7 +298,7 @@ class DecideRestTest(RecordedGrillCase):
         with mock.patch.object(decisions, "send_notification", self.notify):
             code, out, err = run("grill", "--decide-rest", "--project", str(self.project))
         self.assertEqual(code, 0, out + err)
-        self.assertIn("the grill's Q8  decided: %s (confidence 0.7, on %s)" % (Q8_ANSWER, worker.RESOLVED_MODELS["fable"]), out)
+        self.assertIn("the grill's Q8  decided: %s (confidence 0.7, on %s)" % (Q8_ANSWER, worker.RESOLVED_MODELS["opus"]), out)
         self.assertIn("the grill's Q10  decided:", out)
         self.assertIn("--revise", out, "how to reverse one is printed")
         self.assertIn("tier 3: ask the owner these 2 questions", out)
@@ -424,6 +428,10 @@ class RefusedAnswerTest(RecordedGrillCase):
 class FallbackTest(RecordedGrillCase):
     """Decision 15: while Fable's weekly window is spent the decider falls back as the consent says, and each decision records its model."""
 
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "decider")  # the project puts the decider on Fable, which the hold holds
+
     def hold(self):
         self.ledger.append_event("paused", {"resets_at": pacing.iso(time.time() + 10 * HOUR), "window": "seven_day",
                                             "utilization": 1.0, "model": "fable"})
@@ -475,7 +483,7 @@ class ConductorDecidesTest(ConductedCase):
         self.assertEqual(decided[0]["ticket"], 2)
         self.assertEqual(decided[0]["payload"], {"ticket": 2, "answer": "one line", "decided_by": "decider",
                                                  "rationale": "INTAKE.md asks for a report read at a glance", "confidence": 0.7,
-                                                 "model": worker.RESOLVED_MODELS["fable"]})
+                                                 "model": worker.RESOLVED_MODELS["opus"]})
         self.assertTrue(decided[0]["session_id"])
         self.assertEqual(tickets.answer_section(self.body(2)), "one line")
         self.assertIn("ticket 2: decision ticket 2  decided: one line", self.out.getvalue())
@@ -483,20 +491,20 @@ class ConductorDecidesTest(ConductedCase):
         records = grill.read_records(self.project)
         self.assertEqual([(record.get("ticket"), record["answer"], record["decided_by"]) for record in records],
                          [(2, "one line", "decider")])
-        self.assertEqual(records[0]["model"], worker.RESOLVED_MODELS["fable"])
+        self.assertEqual(records[0]["model"], worker.RESOLVED_MODELS["opus"])
         self.assertTrue(records[0]["session_id"])
         text = (self.project / "research" / "DECISIONS.md").read_text(encoding="utf-8")
         self.assertIn("### Ticket 2. Which form does the beta report take?", text)
         self.assertIn("- decided-by: decider", text)
 
-    def test_the_launch_is_the_decider_at_fable_max_on_the_project_with_no_worktree(self):
+    def test_the_launch_is_the_decider_at_opus_max_on_the_project_with_no_worktree(self):
         self.script()
         self.fake.script(envelope("one line"), role=decider.DECIDER)
         self.conduct()
         calls = self.decider_calls()
         self.assertEqual(len(calls), 1)
         request = calls[0].request
-        self.assertEqual((request.model, request.effort, request.schema_path.name), ("fable", "max", "decision.json"))
+        self.assertEqual((request.model, request.effort, request.schema_path.name), ("opus", "max", "decision.json"))
         self.assertEqual(request.cwd, self.project)
         self.assertFalse((self.project / ".worktrees" / "2").exists())
         self.assertEqual(self.events("ticket_launched")[0]["payload"]["ticket"], 1, "no ticket_launched for a decision ticket")
@@ -584,6 +592,7 @@ class ConductorDecidesTest(ConductedCase):
 
     def test_while_fable_is_held_the_decider_waits_under_wait_and_falls_back_under_auto(self):
         """The decider is model work on Fable: the hold keeps it as it keeps a verdict, and the run stays open for the reset."""
+        on_fable(self.project, "decider")
         self.ledger.append_event("paused", {"resets_at": pacing.iso(time.time() + 10 * HOUR), "window": "seven_day",
                                             "utilization": 1.0, "model": "fable"})
         project.set_model_fallback(self.project, "wait")
@@ -638,7 +647,7 @@ class ParkedProposalsTest(ConductedCase):
         answers = [event["payload"] for event in self.events("decision") if event["payload"].get("ticket") is None]
         self.assertEqual([entry["answer"] for entry in answers], ["proposal p1: admit", "proposal p2: keep parked"])
         self.assertEqual(answers[0]["rationale"], "it probes the claim's failure, inside a moderate radius")
-        self.assertEqual(answers[0]["model"], worker.RESOLVED_MODELS["fable"])
+        self.assertEqual(answers[0]["model"], worker.RESOLVED_MODELS["opus"])
         self.assertEqual(decider.reconsidered(self.project, self.events()), {"p1", "p2"})
         prompt = [call for call in self.fake.calls if "parked proposal p1" in call.request.prompt][0].request.prompt
         self.assertIn('- the question: Is the parked proposal p1, "Sweep the interaction strength", admitted to the run?', prompt)

@@ -592,8 +592,8 @@ class SpotCheckTest(AbsorbTestCase):
         verdict = take_spot_check(self.project, SLUG)
         self.assertTrue(verdict.passed)
         critic = self.fake.calls[-1].request
-        # The synthesizer wrote the flaws on opus, and the table's verifier for opus is fable.
-        self.assertEqual((critic.role, critic.model), ("critic", "fable"))
+        # The synthesizer wrote the flaws on opus, and the table's verifier for opus is opus max.
+        self.assertEqual((critic.role, critic.model, critic.effort), ("critic", "opus", "max"))
         record = read_dossier(self.ledger, SLUG)["l2"]["spot_check"]
         self.assertEqual((record["status"], record["author_model"]), ("passed", "opus"))
         self.assertIn("Depth spot-check: passed by the critic.", (self.refs / "dossier.md").read_text(encoding="utf-8"))

@@ -13,7 +13,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, on_fable
 from tests.test_conductor import done, drive, patch, run_verb
 from tests.test_pacing import HOUR, REFUSED_TEXT, PacingCase, output
 from tests.test_verdicts import passing
@@ -115,6 +115,10 @@ class HoldCase(PacingCase):
 
 class RefusalHoldTest(HoldCase):
     """Criteria 2 to 5: each form of a Fable refusal holds only Fable launches, and the reset lifts the hold."""
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which a refusal holds
 
     def test_a_refused_fable_ticket_holds_only_fable_launches_is_relaunched_never_resumed_and_the_reset_lifts_the_hold(self):
         self.add(1, difficulty=4)
@@ -367,6 +371,10 @@ class UsageBeforeFableWaveTest(HoldCase):
 class RefusedVerdictTest(HoldCase):
     """Criterion 5 on the gates: a refused verdict is no verdict, is never resumed, and is launched again fresh."""
 
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which refuses
+
     def test_take_verdict_raises_usage_limited_instead_of_resuming_a_refused_session(self):
         self.conductor()
         self.fake.script(refused(), role="verifier")
@@ -406,6 +414,10 @@ class HeardInAVerdictTest(HoldCase):
     no later verdict of the same ticket launches on Fable past it. Found on the M5 overnight run, where
     the simulated refusal fell on a verdict and held nothing.
     """
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, whose refusal the verdict carries
 
     def verdicts_of(self, identifier):
         return [item["payload"] for item in self.events("verdict") if item["ticket"] == identifier]

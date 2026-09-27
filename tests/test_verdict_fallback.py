@@ -20,6 +20,7 @@ import time
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
+from tests.projects import fable_overrides, fable_policy, on_fable
 from tests.test_absorb import SLUG, WORKFLOW, AbsorbTestCase
 from tests.test_conductor import drive
 from tests.test_fallback import FallbackCase
@@ -38,7 +39,8 @@ from wayline.provenance import verify_claims
 from wayline.worker import Envelope
 
 HELD_HOURS = 10
-HARNESS = {"harness_tag": "v0.0.0", "autonomy": "autonomous", "radius": "moderate"}
+# The Opus author's verifier on Fable, as it shipped before ticket 65: what a verdict that waits for Fable needs.
+HARNESS = {"harness_tag": "v0.0.0", "autonomy": "autonomous", "radius": "moderate", "policy": fable_overrides("verifier.opus")}
 
 # Every kind of verdict passes the one gate: (subject_kind, verdict_type, the judging role).
 KINDS = (
@@ -89,7 +91,7 @@ class PrincipleTest(GateCase):
         self.assertLessEqual({pacing.FABLE, pacing.OPUS, pacing.HAIKU}, set(worker.MODEL_ALIASES))
 
     def test_the_tier_moves_only_a_verifier_on_fable(self):
-        policy = policy_for(self.project)
+        policy = fable_policy(policy_for(self.project), "verifier.opus")
         self.assertEqual(gates.verdict_tier(policy, "opus"), ("fable", "high", None))
         # `fallback_from` names the rung the verifier came from (decision 16), `fable high` being rung 7.
         self.assertEqual(gates.verdict_tier(policy, "opus", fall_back=True), ("opus", "high", "r7 fable high"))
@@ -99,6 +101,10 @@ class PrincipleTest(GateCase):
 
 class GateFallbackTest(GateCase):
     """Criterion 3 at the gate: a verifier on Fable is Opus at the table's effort under `auto`, and waits otherwise."""
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
 
     def held(self, consent, hours=HELD_HOURS):
         hold(self.ledger, hours)
@@ -173,6 +179,10 @@ class GateFallbackTest(GateCase):
 class KillArgumentFallbackTest(GateCase):
     """Both threads of the kill argument fall back together, or wait together."""
 
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
+
     def run_gate(self, *scripted):
         self.calls = []
         with worker.use_fake() as fake:
@@ -220,6 +230,10 @@ class KillArgumentFallbackTest(GateCase):
 
 class ConductorVerdictFallbackTest(FallbackCase):
     """Criterion 3 in the conductor, and criterion 6's replay: verdicts queued under `wait` and taken under `auto`."""
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
 
     def verdicts(self):
         return [item["payload"] for item in self.events("verdict")]
@@ -335,6 +349,7 @@ class ClaimFallbackTest(RunCase):
 
     def setUp(self):
         super().setUp()
+        on_fable(self.project, "verifier.opus", "writer")  # findings written on Opus are read on Fable; the writer drafts on Fable
         self.render()
 
     def verify(self, scripted=7):

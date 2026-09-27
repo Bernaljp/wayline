@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 from tests.paths import HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, fable_policy
 from tests.test_specify import run
 from wayline import changes, gates, project, provenance, tickets, worker
 from wayline.ledger import Ledger
@@ -146,15 +146,18 @@ class EvolveCase(ProjectTestCase):
 class EvolverTest(EvolveCase):
     """Criteria 2 and 3: the evolver's records become change records, and code files one harness ticket per record."""
 
-    def test_the_role_is_read_only_and_runs_at_fable_xhigh(self):
+    def test_the_role_is_read_only_and_runs_at_opus_xhigh(self):
         role = worker.read_role(changes.EVOLVER)
         self.assertEqual(role.output_schema, "change_list")
         self.assertEqual(role.allowed_tools, ["Read", "Glob", "Grep"])
         for tool in ("Edit", "Write", "Bash", "Agent"):
             self.assertIn(tool, role.disallowed_tools)
         policy = project.policy_for(self.project, HARNESS_ROOT)
-        self.assertEqual(changes.evolver_tier(policy), ("fable", "xhigh", None))
-        self.assertEqual(changes.evolver_tier(policy, fall_back=True), ("opus", "xhigh", "fable"))
+        for fall_back in (False, True):
+            self.assertEqual(changes.evolver_tier(policy, fall_back=fall_back), ("opus", "xhigh", None))
+        evolver_on_fable = fable_policy(policy, "evolver")
+        self.assertEqual(changes.evolver_tier(evolver_on_fable), ("fable", "xhigh", None))
+        self.assertEqual(changes.evolver_tier(evolver_on_fable, fall_back=True), ("opus", "xhigh", "fable"))
 
     def test_feedback_becomes_a_change_record_and_a_harness_ticket(self):
         report = self.evolve(answer(record()))

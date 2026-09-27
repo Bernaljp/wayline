@@ -27,7 +27,7 @@ running (decision 7).
 
 **The ask of decision 15** (ticket 57). Under the fallback consent `ask`, the conductor asks the owner whether
 Fable work falls back to Opus while Fable's weekly window is spent: `open_fable_ask` opens one decision ticket per
-spent window, keyed by the window's reset through its origin, `human_only` (the decider runs on Fable) and with
+spent window, keyed by the window's reset through its origin, `human_only` (the consent is the owner's to give) and with
 `blocking: null` (the hold already holds the Fable work), and notifies with the reset, what is held, the recommended
 answer, and the command that answers it. `close_ask` is the conductor's own answer to one nobody answered:
 `superseded` at the reset or on a change of consent, or `fall back` at the timeout of a project that never recorded

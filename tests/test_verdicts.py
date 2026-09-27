@@ -103,19 +103,21 @@ class VerifierTableTest(unittest.TestCase):
 
     def test_the_shipped_table_is_the_spec_table(self):
         self.assertEqual(gates.verifier_tier(self.policy, "sonnet"), ("opus", "high"))
-        self.assertEqual(gates.verifier_tier(self.policy, "opus"), ("fable", "high"))
+        self.assertEqual(gates.verifier_tier(self.policy, "opus"), ("opus", "max"))
         self.assertEqual(gates.verifier_tier(self.policy, "fable"), ("opus", "max"))
 
-    def test_the_shipped_table_sends_no_author_to_its_own_model(self):
+    def test_the_shipped_table_puts_no_verifier_on_fable(self):
+        """Ticket 65: Opus 5.5 reads Opus's work in a fresh session, so no verdict draws on Fable's weekly window."""
         for author in ("sonnet", "opus", "fable"):
             with self.subTest(author=author):
-                self.assertNotEqual(gates.verifier_tier(self.policy, author)[0], author)
+                self.assertEqual(gates.verifier_tier(self.policy, author)[0], "opus")
+                self.assertFalse(gates.verifies_on_fable(self.policy, author))
 
     def test_an_override_that_names_the_authors_model_is_taken(self):
         """The table is the default choice, not the rule: a fresh session on the author's model is a verdict (ticket 56)."""
         overridden = dict(self.policy, verifier=dict(self.policy["verifier"],
-                                                     opus={"model": "opus", "effort": "max"}))
-        self.assertEqual(gates.verifier_tier(overridden, "opus"), ("opus", "max"))
+                                                     sonnet={"model": "sonnet", "effort": "high"}))
+        self.assertEqual(gates.verifier_tier(overridden, "sonnet"), ("sonnet", "high"))
 
     def test_an_author_the_table_does_not_name_is_refused_by_name(self):
         with self.assertRaises(GateError) as caught:
@@ -316,12 +318,11 @@ class VerdictGateTest(GateCase):
         self.assertEqual((request.model, request.effort), ("opus", "high"))
         self.assertEqual(request.role, "verifier")
 
-    def test_under_the_shipped_table_each_author_is_read_on_another_model(self):
-        for author, expected in (("sonnet", "opus"), ("opus", "fable"), ("fable", "opus")):
+    def test_under_the_shipped_table_each_author_is_read_by_a_fresh_opus_session(self):
+        for author in ("sonnet", "opus", "fable"):
             with self.subTest(author=author):
                 self.take(passing(), author_model=author)
-                self.assertEqual(self.calls[0].request.model, expected)
-                self.assertNotEqual(self.calls[0].request.model, author)
+                self.assertEqual((self.calls[0].kind, self.calls[0].session_id, self.calls[0].request.model), ("launch", None, "opus"))
 
     def test_the_session_can_write_nothing_and_can_stop(self):
         """The two variables `verdict_env` leaves out are what read-only and stoppable mean."""

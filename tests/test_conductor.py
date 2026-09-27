@@ -1066,7 +1066,7 @@ class TierTest(unittest.TestCase):
         self.assertEqual((tier.rung, tier.model, tier.family, tier.effort), (5, "claude-opus-4-8", "opus", "high"))
         self.assertEqual(tier.context_chars, 200000, "the context pack is cut at the family's cap")
         self.assertEqual(tier.label, "r5 claude-opus-4-8 high")
-        self.assertEqual(gates.verifier_tier(policy, tier.model), ("fable", "high"), "the verifier table is keyed by the family")
+        self.assertEqual(gates.verifier_tier(policy, tier.model), ("opus", "max"), "the verifier table is keyed by the family")
 
     def test_a_fallback_tier_keeps_the_rung(self):
         tier = conductor.fallback_tier(self.policy, conductor.tier_for(self.policy, 5))

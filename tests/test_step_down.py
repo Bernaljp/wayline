@@ -14,6 +14,7 @@ import io
 import json
 import unittest
 
+from tests.projects import on_fable
 from tests.test_conductor import ConductorCase, done, drive, patch, run_verb
 from tests.test_fable_hold import HoldCase, journal_ts
 from tests.test_pacing import HOUR
@@ -266,6 +267,10 @@ class NotOnTheLadderTest(StepDownCase):
 
 class HeldRungFallsBackTest(StepDownCase):
     """Criterion 4: while the hold stands, a Fable rung falls back to the Opus rung at the same effort and budget."""
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
 
     def fall_back(self):
         harness = json.loads((self.project / "harness.json").read_text(encoding="utf-8"))

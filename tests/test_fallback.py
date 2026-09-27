@@ -16,6 +16,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
+from tests.projects import on_fable
 from tests.test_conductor import ConductorCase, done, drive, patch
 from tests.test_fable_hold import HoldCase, journal_ts, refused, rejected_on_fable
 from tests.test_pacing import HOUR
@@ -279,6 +280,10 @@ class FallbackCase(HoldCase):
 class FallbackLaunchTest(FallbackCase):
     """Criterion 3: under `auto` a held Fable launch runs on Opus at its own effort and budget, under Opus's cap."""
 
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
+
     def test_under_auto_held_fable_tickets_launch_on_opus_at_their_own_effort_and_budget_under_the_opus_cap(self):
         self.add(1, difficulty=4)
         self.add(2, difficulty=5)
@@ -532,6 +537,10 @@ class FallbackSessionTest(FallbackCase):
 class HoldLineTest(HoldCase):
     """Criterion 6: the hold line of `wayline status` and the dashboard overview, rendered from laid-down journals."""
 
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # ticket 2, done on Opus, waits for its verdict on Fable
+
     def lay_down(self):
         """Ticket 1 on Fable open, ticket 2 done on Opus with its verdict on Fable, ticket 3 on Fable stopped at the limit,
         and ticket 5 on Fable owed its acceptance resume."""
@@ -592,6 +601,10 @@ class HoldLineTest(HoldCase):
 
 class WriterFallbackTest(RunCase):
     """Criterion 3 outside the conductor: the report's writer on Fable falls back to Opus at its own effort, and its prose is judged as Opus's."""
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "writer", "verifier.opus")  # the writer on Fable, and Opus's prose read on Fable
 
     def hold(self, hours):
         Ledger(self.project).append_event("paused", {"resets_at": pacing.iso(time.time() + hours * HOUR), "window": "seven_day",
