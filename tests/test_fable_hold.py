@@ -13,7 +13,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from tests.projects import LADDER, ProjectTestCase, on_fable
+from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, on_fable
 from tests.test_conductor import done, drive, patch, run_verb
 from tests.test_pacing import HOUR, REFUSED_TEXT, PacingCase, output
 from tests.test_verdicts import passing
@@ -71,7 +71,7 @@ class HoldCase(PacingCase):
 
     def setUp(self):
         super().setUp()
-        on_fable(self.project, LADDER)
+        on_fable(self.project, SEVEN_RUNG_LADDER)
         # Committed, as an owner commits it, so `wayline run` finds nothing outside `research/` to refuse.
         self.git("add", "harness.json")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "harness: the Fable rungs back")

@@ -14,7 +14,7 @@ import io
 import json
 import unittest
 
-from tests.projects import LADDER, fable_policy, on_fable
+from tests.projects import SEVEN_RUNG_LADDER, fable_policy, on_fable
 from tests.test_conductor import ConductorCase, done, drive, patch, run_verb
 from tests.test_fable_hold import HoldCase, journal_ts
 from tests.test_pacing import HOUR
@@ -64,7 +64,7 @@ class SteppedDownTest(ConductorCase):
     def setUp(self):
         super().setUp()
         self.shipped = project.policy_for(self.project)
-        self.policy = fable_policy(self.shipped, LADDER)  # the Fable rungs a project puts back, as v1.0.0 shipped them
+        self.policy = fable_policy(self.shipped, SEVEN_RUNG_LADDER)  # the Fable rungs a project puts back, as v1.0.0 shipped them
 
     def test_the_shipped_ladder_steps_its_top_rung_down_inside_opus(self):
         """No shipped rung is on Fable (ticket 70), so rung 6, `opus high`, steps to rung 5, `opus medium`."""

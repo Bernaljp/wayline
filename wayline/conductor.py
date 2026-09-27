@@ -53,20 +53,20 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   conflicting paths, to finish the rebase itself; the conductor's second rebase is the check, and
   a second conflict fails the ticket with `next: split`. The integrator is model work, so it waits
   while the run holds launches, and the attempt waits in flight with it.
-- Pacing and the window pause (ticket 10, `wayline.pacing`). `run` reads `/usage` before its
-  first wave, and every wave folds in the `rate_limit_event`s the workers' streams gained, so the
-  action of wave step 8 follows the windows while the workers are still running; `pacing` is
-  journaled when the reading changes. `stop`, a window pause, the owner's pause, and a stop hold
-  every session that needs a model, verdicts and resumes included. `cheap_only` launches every
-  ticket, each one rung down the rung ladder (ticket 62, decision 16: `stepped_down`, floor rung 2,
-  never out of Fable from a project's own Fable rungs, and an attempt that is itself a tier up
-  exempt), and holds the verdicts, which are not on the ladder. What needs no model still happens first in the wave:
-  the workers already running finish, and their machine checks and integration run. A hit limit
-  journals `paused`, a session the limit stopped mid-work is resumed after the reset instead of
-  failed, one it refused before its first turn is relaunched in the same attempt (decision 15), and
-  the first wave past the reset journals `unpaused`. No job poller, so an experiment ticket
-  whose jobs outlive its worker stays `running` and holds the run open until ticket 19's poller
-  closes it or `wayline stop` ends the run.
+- Pacing and the window pause (ticket 10, `wayline.pacing`). `run` reads `/usage` before its first
+  wave, and every wave folds in the `rate_limit_event`s the workers' streams gained, so the action of
+  wave step 8 follows the windows while the workers are still running; `pacing` is journaled when the
+  reading changes. `stop`, a window pause, the owner's pause, and a stop hold every session that needs
+  a model, verdicts and resumes included. `cheap_only` launches every ticket, each one rung down the
+  rung ladder (ticket 62, decision 16: `stepped_down`, floor rung 2, never out of Fable from a
+  project's own Fable rungs, and an attempt that is itself a tier up exempt), and holds the verdicts,
+  which are not on the ladder. What needs no model still happens first in the wave: the workers
+  already running finish, and their machine checks and integration run. A hit limit journals `paused`,
+  a session the limit stopped mid-work is resumed after the reset instead of failed, one it refused
+  before its first turn is relaunched in the same attempt (decision 15), and the first wave past the
+  reset journals `unpaused`. No job poller, so an experiment ticket whose jobs outlive its worker
+  stays `running` and holds the run open until ticket 19's poller closes it or `wayline stop` ends the
+  run.
 - The hold on Fable's weekly window (ticket 54, decision 15). A refusal on that window, or a reading
   of it at `pacing.stop_at`, journals `paused` with `model: fable` instead of the whole-run pause.
   While the hold stands, launchable drops every launch on Fable (a ticket whose tier is Fable, a
@@ -76,7 +76,7 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   `unpaused` with `model: fable` ends the hold at the reset, or earlier when a reading puts Fable
   under `stop_at`. Below `stop_at` and at `cheap_at`, that window steps a Fable launch one rung down
   instead, from a project's top Fable rung to the Fable rung below it and no further (ticket 62; the
-  shipped ladder has no Fable rung since ticket 70): a launch on a Fable rung is paced by
+  shipped rung ladder has no Fable rung since ticket 70): a launch on a Fable rung is paced by
   Fable's weekly window and the all-models week, every other launch by the five-hour and all-models
   windows, and `pacing` carries both actions.
 - The fallback to Opus (ticket 55, decision 15). While the hold stands and the fallback consent is
@@ -454,7 +454,7 @@ def stepped_down(policy, rung):
     Two floors hold. A launch never runs below `FLOOR_RUNG`, because a nearly spent window is a
     reason to spend less on a ticket, never a reason to hand a hard ticket to the cheapest model
     there is. And a launch on Fable never steps out of Fable: the step is read by family, never by
-    index, so on a project's own Fable rungs (the shipped ladder has none since ticket 70) it takes a
+    index, so on a project's own Fable rungs (the shipped rung ladder has none since ticket 70) it takes a
     launch from the top Fable rung to the one below it, and the lowest Fable rung stays where it is,
     because leaving Fable is what the hold and the fallback do (decision 15), under the owner's
     consent, and not what pacing does.
@@ -4087,15 +4087,15 @@ class Conductor:
         return pacing.family(entry.get("model")) if isinstance(entry, dict) else None
 
     def _tier_up_reaches_fable(self, identifier):
-        """Whether a tier up would take this ticket onto Fable from a rung that is not (rung 5 to rung 6 on the v1.0.0 ladder).
+        """Whether a tier up would take this ticket onto Fable from a rung that is not.
 
-        Read by family, so only a project's own Fable rungs make it true: on the shipped ladder a tier
-        up stays on Opus up to the top rung (ticket 70). That is the one step the split comes before
-        (decision 16): Fable's weekly window is the scarce resource, so the cheaper remedy is tried
-        first, and the ticket climbs onto Fable only after it.
-        The family compared against is the one the attempt that failed ran on, not the one the rung
-        below the tier up's happens to be: a kind raise can lift the target two rungs above the attempt,
-        and the climb onto Fable is still a climb onto Fable.
+        Rung 5 to rung 6 on the v1.0.0 rung ladder. Read by family, so only a project's own Fable
+        rungs make it true: on the shipped rung ladder a tier up stays on Opus up to the top rung
+        (ticket 70). That is the one step the split comes before (decision 16): Fable's weekly window
+        is the scarce resource, so the cheaper remedy is tried first, and the ticket climbs onto Fable
+        only after it. The family compared against is the one the attempt that failed ran on, not the
+        one the rung below the tier up's happens to be: a kind raise can lift the target two rungs
+        above the attempt, and the climb onto Fable is still a climb onto Fable.
         """
         above = self._next_rung(identifier)
         if above is None or self._rung_family(above) != pacing.FABLE:

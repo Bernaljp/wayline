@@ -85,14 +85,14 @@ SEVEN_RUNGS = [
     {"model": "fable", "effort": "high", "budget": "large"},
 ]
 SEVEN_RUNG_DIFFICULTY = {"1": 2, "2": 3, "3": 5, "4": 6, "5": 7}
-LADDER = "ladder"
+SEVEN_RUNG_LADDER = "seven-rung ladder"
 
 
 def fable_overrides(*names):
-    """The policy overrides that put each of `names` (keys of `ON_FABLE`, or `ladder` for `SEVEN_RUNGS`) on Fable."""
+    """The policy overrides that put each of `names` (keys of `ON_FABLE`, or `SEVEN_RUNG_LADDER` for `SEVEN_RUNGS`) on Fable."""
     overrides = {}
     for name in names:
-        if name == LADDER:
+        if name == SEVEN_RUNG_LADDER:
             overrides.update(tiers=[dict(rung) for rung in SEVEN_RUNGS], difficulty=dict(SEVEN_RUNG_DIFFICULTY))
             continue
         section, key, entry = ON_FABLE[name]

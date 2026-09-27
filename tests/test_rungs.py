@@ -12,7 +12,7 @@ import re
 import unittest
 
 from tests import machine
-from tests.projects import LADDER, ProjectTestCase, fable_overrides, fable_policy, on_fable
+from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, fable_overrides, fable_policy, on_fable
 from tests.test_conductor import ConductorCase, done, drive, patch
 from wayline import conductor, gates, plan, project, tickets, worker
 from wayline.ledger import Ledger, make_event
@@ -63,7 +63,7 @@ class LaunchRequestTest(ConductorCase):
 
     def put_fable_rungs_back(self):
         """The project's `harness.json` restores the seven rungs, committed as an owner commits it."""
-        on_fable(self.project, LADDER)
+        on_fable(self.project, SEVEN_RUNG_LADDER)
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "the Fable rungs back")
 
     def check_launch(self, difficulty, expected=EXPECTED):
@@ -136,7 +136,7 @@ class LaunchRequestTest(ConductorCase):
     def test_a_valid_override_does_not_refuse_the_run(self):
         harness_path = self.project / project.HARNESS_JSON
         harness = json.loads(harness_path.read_text(encoding="utf-8"))
-        harness["policy"] = dict(fable_overrides(LADDER), difficulty={"4": 7})
+        harness["policy"] = dict(fable_overrides(SEVEN_RUNG_LADDER), difficulty={"4": 7})
         harness_path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "override")
         self.assertEqual(conductor.refuse_to_start(self.project), [])
@@ -201,7 +201,7 @@ class LabelTest(unittest.TestCase):
         self.assertIn("Rung 6, opus at high, a large budget.", text)
         self.assertNotIn("fable", text)
         self.assertIn("policy.tiers", text)
-        self.assertIn("Rung 7, fable at high, a large budget.", plan.rubric_text(fable_policy(policy, LADDER)))
+        self.assertIn("Rung 7, fable at high, a large budget.", plan.rubric_text(fable_policy(policy, SEVEN_RUNG_LADDER)))
 
 
 class StatusLabelTest(ProjectTestCase):

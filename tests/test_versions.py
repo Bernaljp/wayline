@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.paths import HARNESS_ROOT
-from tests.projects import LADDER, ProjectTestCase, SEVEN_RUNGS, fable_overrides
+from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, SEVEN_RUNGS, fable_overrides
 from wayline import TAG, conductor, evolve, fixtures, registry
 from wayline.ledger import Ledger
 from wayline.project import init_project, merge_policy, read_harness
@@ -259,7 +259,7 @@ class UpgradeCase(HarnessRepositoryCase):
 class SevenRungOverrideTest(UpgradeCase):
     """The old-shape rewrite onto a ladder that has Fable rungs, as v1.0.0 shipped it and as a project may keep it."""
 
-    LADDERS = (fable_overrides(LADDER), fable_overrides(LADDER))
+    LADDERS = (fable_overrides(SEVEN_RUNG_LADDER), fable_overrides(SEVEN_RUNG_LADDER))
 
     def test_upgrade_rewrites_an_old_shape_difficulty_override_to_the_nearest_rungs(self):
         self.override({"1": {"model": "sonnet", "effort": "low", "budget": "small"}, "2": {"model": "sonnet", "effort": "medium", "budget": "small"},
@@ -286,7 +286,7 @@ class SevenRungOverrideTest(UpgradeCase):
 class LadderMoveTest(UpgradeCase):
     """Ticket 70: `v0.1.0` ships the seven rungs of v1.0.0 and `v0.2.0` the six without Fable, so the indices move."""
 
-    LADDERS = (fable_overrides(LADDER), None)
+    LADDERS = (fable_overrides(SEVEN_RUNG_LADDER), None)
 
     def test_upgrade_carries_each_rung_of_the_override_by_its_model_and_effort(self):
         self.override({"1": 2, "2": 4, "3": 5, "4": 6, "5": 7})

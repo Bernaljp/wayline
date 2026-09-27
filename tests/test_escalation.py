@@ -17,7 +17,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from tests import machine
-from tests.projects import LADDER, fable_policy
+from tests.projects import SEVEN_RUNG_LADDER, fable_policy
 from tests.test_conductor import FIVE_TICKETS, ConductorCase, done, patch
 from tests.test_replay import event, launched
 from wayline import conductor, plan, project, replay, resources, tickets, worker
@@ -286,7 +286,7 @@ class LadderTest(EscalationCase):
 
     def test_the_top_rung_skips_the_tier_up_and_ends_needs_human_with_its_reason(self):
         """Criterion 3: rung 7 has nowhere to climb, so the split is taken and then a person, with `reason: top_rung`."""
-        self.policy = fable_policy(self.policy, LADDER)  # the seven rungs v1.0.0 shipped; `ShippedLadderTest` has the six
+        self.policy = fable_policy(self.policy, SEVEN_RUNG_LADDER)  # the seven rungs v1.0.0 shipped; `ShippedRungLadderTest` has the six
         self.set_fields(difficulty=5)
         self.conduct((failed(), None), (failed(), None))
         self.assertEqual(self.steps(), ["resume", "split", "needs_human"])
@@ -396,7 +396,7 @@ class FableRungTest(EscalationCase):
 
     def setUp(self):
         super().setUp()
-        self.policy = fable_policy(self.policy, LADDER)
+        self.policy = fable_policy(self.policy, SEVEN_RUNG_LADDER)
 
     def cut_by_a_split(self):
         """Mark ticket 1 as one a split already cut, so the split is spent and the tier up is the only step left."""
@@ -727,12 +727,12 @@ class EffectiveDifficultyTest(EscalationCase):
 class EffectiveRungTest(EscalationCase):
     """Criterion 1: the rung the next attempt launches on: the level's rung, lifted by every tier up, capped at rung 7.
 
-    On the seven rungs v1.0.0 shipped, which a project may put back; `ShippedLadderTest` has the six that ship now.
+    On the seven rungs v1.0.0 shipped, which a project may put back; `ShippedRungLadderTest` has the six that ship now.
     """
 
     def setUp(self):
         super().setUp()
-        self.policy = fable_policy(self.policy, LADDER)
+        self.policy = fable_policy(self.policy, SEVEN_RUNG_LADDER)
 
     def test_the_rules(self):
         made = self.conductor()
@@ -807,10 +807,10 @@ class EffectiveRungTest(EscalationCase):
         self.assertFalse(made._tier_up_reaches_fable(1))
 
 
-class ShippedLadderTest(EscalationCase):
+class ShippedRungLadderTest(EscalationCase):
     """Ticket 70: the six rungs that ship, all off Fable, so a tier up stays on Opus up to the top rung."""
 
-    def test_the_shipped_ladder_has_no_fable_rung(self):
+    def test_the_shipped_rung_ladder_has_no_fable_rung(self):
         rungs = conductor.ladder(self.policy)
         self.assertEqual([(rung["model"], rung["effort"], rung["budget"]) for rung in rungs], [
             ("haiku", "medium", "small"), ("sonnet", "low", "small"), ("sonnet", "high", "small"),

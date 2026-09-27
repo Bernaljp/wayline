@@ -20,7 +20,7 @@ from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests import machine
-from tests.projects import LADDER, ProjectTestCase, fable_policy
+from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, fable_policy
 from wayline import conductor, gates, project, resources, tickets, worker
 from wayline.conductor import Conductor, ConductorError, WaveResult
 from wayline.ledger import Ledger
@@ -1048,7 +1048,7 @@ class TierTest(unittest.TestCase):
 
     def setUp(self):
         self.shipped = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
-        self.policy = fable_policy(self.shipped, LADDER)
+        self.policy = fable_policy(self.shipped, SEVEN_RUNG_LADDER)
 
     def test_every_difficulty_resolves_through_its_rung_to_the_shipped_ladder(self):
         expected = [(2, "sonnet", "low", 40), (3, "sonnet", "high", 40), (5, "opus", "medium", 100), (6, "opus", "high", 200), (6, "opus", "high", 200)]
