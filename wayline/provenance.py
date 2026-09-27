@@ -432,6 +432,8 @@ PROVENANCE_FORM = ("A finding's provenance is the artifact's path in the project
                    "resolves (`analysis/ablation/signal-4.json#paired_gain`), never a report tag such as "
                    "`{res:<run>/<path>}`: the ledger refuses a provenance it cannot find in `manifest.json` or on disk.")
 
+VENUE_PREFIX = "paper venue: "  # the answer a `decision` on the paper's venue opens with (`decider.VENUE_ANSWER`, ticket 53)
+
 _TAGS_AT_END = re.compile(r"(?:\{(?:res|ref):[^{}]+\}\s*)+$")
 _FOOTNOTE = re.compile(r"^\[\^(\d+)\]:\s*`(res|ref):([^`]+)`\s*$")
 _CITATION = re.compile(r"\[\^(\d+)\](?!:)")
@@ -607,16 +609,16 @@ def _classify_batch(project, role, policy, harness_root, batch):
         "",
     ]
     lines.extend("[%d] %s" % (number, body) for number, (_, body) in enumerate(batch, start=1))
-    prompt = _joined("\n".join(lines), role.protocol, worker.schema_section("# The classes", CLASSES_SCHEMA))
-    request = _request(project, role, policy, harness_root, prompt, CLASSES_SCHEMA, "small",
-                       _session_dir(project, CLASSIFIER))
+    prompt = joined("\n".join(lines), role.protocol, worker.schema_section("# The classes", CLASSES_SCHEMA))
+    request = structured_request(project, role, policy, harness_root, prompt, CLASSES_SCHEMA, "small",
+                       session_dir(project, CLASSIFIER))
     envelope = _launch_structured(request, lambda answer: _classes_problem(answer, len(batch)), "sentence classifier")
     by_number = {entry["n"]: entry["class"] for entry in envelope.structured_output["classes"]}
     return {digest: by_number[number] for number, (digest, _) in enumerate(batch, start=1)}
 
 
 def _classes_problem(envelope, count):
-    problem = _schema_problem(envelope, CLASSES_SCHEMA)
+    problem = schema_problem(envelope, CLASSES_SCHEMA)
     if problem is not None:
         return problem
     numbers = [entry["n"] for entry in envelope.structured_output["classes"]]
@@ -785,14 +787,14 @@ def sample_claims(claims, policy, difficulties, seed=None):
     return [claim for claim in claims if claim in chosen]
 
 
-def claim_subject(claim):
+def claim_subject(claim, document=REPORT_PATH):
     """The verdict subject of one claim: the report and a hash of the sentence with its tags.
 
     A claim whose tags change is a new subject and is read again; the same claim in a later render
     is the same subject, and the verdict it already has stands.
     """
     digest = hashlib.sha256((claim.digest + "\n" + "\n".join(claim.tags)).encode("utf-8")).hexdigest()
-    return "%s#claim-%s" % (REPORT_PATH, digest[:16])
+    return "%s#claim-%s" % (document, digest[:16])
 
 
 def claim_paths(claim):
@@ -807,8 +809,11 @@ def claim_paths(claim):
     return paths
 
 
-def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None):
-    """Sample the tagged claims of `research/REPORT.md` and take one Type-B verdict on each.
+def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None, document=REPORT_PATH, prose_author=None):
+    """Sample the tagged claims of `research/REPORT.md`, or of `document`, and take one Type-B verdict on each.
+
+    `document` is the paper's `research/paper/paper.md` when `wayline paper --verify` samples it (decision 11: every
+    claim in the report and the paper, by sampling), with `prose_author` the model the paper's writer ran on.
 
     Every verdict goes through `gates.verdict` with `subject_kind: claim`, so it is journaled with
     its session and its model, on the verifier the table gives for the claim's author: the ticket that
@@ -823,10 +828,11 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
     book = Ledger(project)
     policy = policy_for(project, harness_root) if policy is None else policy
     try:
-        text = (book.research / REPORT).read_text(encoding="utf-8")
+        text = (project / document).read_text(encoding="utf-8")
     except OSError:
-        raise ProvenanceError("%s is not there; render it with wayline report first" % REPORT_PATH) from None
-    context = _context(project)
+        raise ProvenanceError("%s is not there; %s first" % (document, "render it with wayline report" if document == REPORT_PATH
+                                                               else "draft it")) from None
+    context = report_context(project)
     claims = tagged_claims(restore_tags(text), read_claims_cache(book))
     difficulties = {number: fields.get("pinned_difficulty") or fields.get("difficulty")
                     for number, fields in context.tickets.items()}
@@ -834,7 +840,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
     verdicted = {(event.get("payload") or {}).get("subject") for event in context.events
                  if event.get("event") == ledger.VERDICT and (event.get("payload") or {}).get("subject_kind") == CLAIM}
     authors = _finding_authors(context)
-    writer_model = _prose_author(book, policy)
+    writer_model = prose_author or _prose_author(book, policy)
     outcome = {"claims": len(claims), "sampled": len(chosen), "already_verdicted": 0, "passed": [], "failed": [], "tickets": [],
                "waiting": [], "fell_back": []}
     try:
@@ -843,7 +849,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
     except gates.FableHeld:
         fall_back, held = False, True
     for claim in chosen:
-        subject = claim_subject(claim)
+        subject = claim_subject(claim, document)
         if subject in verdicted:
             outcome["already_verdicted"] += 1
             continue
@@ -853,7 +859,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
             outcome["waiting"].append(subject)
             continue
         taken = gates.verdict(
-            CLAIM, subject, CLAIM_QUESTION % _inline(claim.text), claim_paths(claim), CLAIM_SCOPE,
+            CLAIM, subject, CLAIM_QUESTION % one_line(claim.text), claim_paths(claim), CLAIM_SCOPE,
             project=project, author_model=author, verdict_type=gates.CLAIM_SUPPORT, harness_root=harness_root,
             policy=policy, ledger=book, fall_back=fall_back,
         )
@@ -864,7 +870,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None)
             outcome["passed"].append(subject)
             continue
         outcome["failed"].append(subject)
-        filed = _claim_ticket(project, book, claim, subject, taken, from_finding)
+        filed = _claim_ticket(project, book, claim, subject, taken, from_finding, document)
         if filed is not None:
             outcome["tickets"].append(filed)
     return outcome
@@ -895,10 +901,9 @@ def _finding_authors(context):
     return authors
 
 
-def _claim_ticket(project, book, claim, subject, taken, from_finding):
-    for fields in tickets.read_tickets(project):
-        if fields["kind"] == "writing" and fields.get("origin") == subject and fields["status"] not in tickets.SATISFIED + ("parked",):
-            return None
+def _claim_ticket(project, book, claim, subject, taken, from_finding, document=REPORT_PATH):
+    if gates.open_writing_ticket(project, subject) is not None:
+        return None
     paths = claim_paths(claim)
     remedy = ("The sentence is a finding as its ticket recorded it, and the report renders findings as "
               "recorded. Return in the result a finding that says only what the artifact supports, with its "
@@ -909,7 +914,7 @@ def _claim_ticket(project, book, claim, subject, taken, from_finding):
     body = "\n".join([
         "## The claim the verifier could not support",
         "",
-        "> %s" % _inline(claim.text),
+        "> %s" % one_line(claim.text),
         "",
         "Verifier session `%s` (%s) opened the cited artifacts and found:" % (taken.session_id, taken.model),
         "",
@@ -925,9 +930,10 @@ def _claim_ticket(project, book, claim, subject, taken, from_finding):
     return gates.file_writing_ticket(
         # No touch set: REPORT.md and the ledger are written by code, so the correction travels in
         # the result, never as an edit a later render would overwrite.
-        project, book, title=CLAIM_TITLE, touches=[], inputs=[REPORT_PATH] + paths,
+        project, book, title=CLAIM_TITLE, touches=[], inputs=[document] + paths,
         quality=["Does every claim sentence the verifier could not support now say only what its cited artifacts do?"],
-        origin=subject, demo="wayline report --verify reads this claim again and its verdict passes.", body=body,
+        origin=subject, demo="wayline %s --verify reads this claim again and its verdict passes."
+        % ("report" if document == REPORT_PATH else "paper"), body=body,
     )
 
 
@@ -946,7 +952,7 @@ def report_evidence(context):
 
 
 def _evidence_item(finding, manifest):
-    return {"id": finding.get("id"), "ticket": finding.get("ticket"), "text": _inline(finding.get("text")),
+    return {"id": finding.get("id"), "ticket": finding.get("ticket"), "text": one_line(finding.get("text")),
             "tags": finding_tags(finding, manifest)}
 
 
@@ -977,10 +983,10 @@ def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, of
                       "the writer's prose has not been drafted; no writer session was launched")
     policy = policy_for(project, harness_root) if policy is None else policy
     role = worker.read_role(WRITER, harness_root, project)
-    request = _request(project, role, policy, harness_root, _writer_prompt(role, evidence), PROSE_SCHEMA, "medium",
-                       _session_dir(project, WRITER), read_only=True)
+    request = structured_request(project, role, policy, harness_root, _writer_prompt(role, evidence), PROSE_SCHEMA, "medium",
+                       session_dir(project, WRITER), read_only=True)
     try:
-        envelope = _launch_structured(request, lambda answer: _schema_problem(answer, PROSE_SCHEMA), "writer")
+        envelope = _launch_structured(request, lambda answer: schema_problem(answer, PROSE_SCHEMA), "writer")
     except UsageLimited as refused:
         return None, "%s, so the report is rendered without the writer's prose" % refused
     returned = envelope.structured_output
@@ -993,6 +999,12 @@ def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, of
     book.write_json(PROSE_CACHE, {"schema_version": 1, "input_sha256": key, "session_id": envelope.session_id,
                                   "model": envelope.model, "fallback_from": pacing.FABLE if fell_back else None, "prose": prose})
     return prose, None
+
+
+def finding_lines(item):
+    """One evidence item as the writer reads it, the report's prose and the paper's alike: the finding, then its tags."""
+    return ["- `%s` (ticket %s): %s" % (item["id"], item["ticket"], item["text"]),
+            "  tags: %s" % " ".join("`{%s}`" % tag for tag in item["tags"])]
 
 
 def _writer_prompt(role, evidence):
@@ -1019,18 +1031,16 @@ def _writer_prompt(role, evidence):
     for group in evidence["groups"]:
         lines.extend(["## Group `%s`" % group["group"], ""])
         for item in group["findings"]:
-            lines.append("- `%s` (ticket %s): %s" % (item["id"], item["ticket"], item["text"]))
-            lines.append("  tags: %s" % " ".join("`{%s}`" % tag for tag in item["tags"]))
+            lines.extend(finding_lines(item))
         lines.append("")
     lines.extend(["## Negative results", ""])
     if evidence["negative"]:
         for item in evidence["negative"]:
-            lines.append("- `%s` (ticket %s): %s" % (item["id"], item["ticket"], item["text"]))
-            lines.append("  tags: %s" % " ".join("`{%s}`" % tag for tag in item["tags"]))
+            lines.extend(finding_lines(item))
     else:
         lines.append("None was recorded: return the empty string for `negative_results`.")
     lines.extend(["", "Return the paragraphs through the structured output; the harness writes them into the report."])
-    return _joined("\n".join(lines), role.protocol, worker.schema_section("# The prose", PROSE_SCHEMA))
+    return joined("\n".join(lines), role.protocol, worker.schema_section("# The prose", PROSE_SCHEMA))
 
 
 # --- what the report is rendered from -------------------------------------------------------------
@@ -1048,7 +1058,7 @@ class _Context:
     notes: list
 
 
-def _context(project):
+def report_context(project):
     project = Path(project).resolve()
     book = Ledger(project)
     notes = []
@@ -1093,7 +1103,7 @@ def tagged_text(text, tags):
 
 def _finding_item(finding, manifest):
     return "- `%s` (ticket %s): %s" % (finding.get("id"), finding.get("ticket"),
-                                        tagged_text(_inline(finding.get("text")), finding_tags(finding, manifest)))
+                                        tagged_text(one_line(finding.get("text")), finding_tags(finding, manifest)))
 
 
 def _claim_groups(context):
@@ -1125,12 +1135,14 @@ def _decider_decisions(context):
             subject = "Ticket %s%s" % (ticket, ", *%s*" % title if title else "")
         elif str(payload.get("answer") or "").startswith("proposal "):
             subject = "A parked proposal"
+        elif str(payload.get("answer") or "").startswith(VENUE_PREFIX):
+            subject = "The paper's venue"  # `wayline paper` without `--venue` (ticket 53)
         else:
             subject = "The grill"
         lines.append("- %s: **%s** (confidence %s, %s)" % (
-            subject, _inline(payload.get("answer")), _number(payload.get("confidence")), _when(event)))
+            subject, one_line(payload.get("answer")), _number(payload.get("confidence")), _when(event)))
         if payload.get("rationale"):
-            lines.append("  - rationale: %s" % _inline(payload["rationale"]))
+            lines.append("  - rationale: %s" % one_line(payload["rationale"]))
     return _records(lines or ["No decision was made by the decider."])
 
 
@@ -1158,7 +1170,7 @@ def _open_questions(context):
         if fields["status"] == "needs_human":
             lines.append("- Ticket %d, *%s*, needs a human%s: %s" % (
                 number, fields["title"], ", %s" % why[number] if why.get(number) else "",
-                _inline(asked.get(number) or "no question was journaled")))
+                one_line(asked.get(number) or "no question was journaled")))
     return _records(lines or ["No decision ticket is open and no ticket needs a human."])
 
 
@@ -1244,7 +1256,7 @@ def _findings_section(context, prose):
     for key, members in groups.items():
         lines.extend(["### %s" % key, ""])
         if paragraphs.get(key, "").strip():
-            lines.extend([_inline(paragraphs[key]), ""])
+            lines.extend([one_line(paragraphs[key]), ""])
         lines.extend(_finding_item(finding, context.manifest) for finding in members)
         lines.append("")
     return lines[:-1]
@@ -1350,7 +1362,7 @@ def _fell_back(context):
             title = (context.tickets.get(ticket) or {}).get("title")
             subject = "the grill" if ticket is None else "ticket %s%s" % (ticket, ", *%s*" % title if title else "")
             lines.append("- Decision by the %s on %s: **%s** on %s in place of %s (%s)" % (
-                payload.get("decided_by"), subject, _inline(payload.get("answer")), payload.get("model") or "an unnamed model",
+                payload.get("decided_by"), subject, one_line(payload.get("answer")), payload.get("model") or "an unnamed model",
                 payload["fallback_from"], _when(event)))
     if not lines:
         return _records(["Nothing was judged by fallback: every verdict and decision ran on the model its table gives."])
@@ -1365,7 +1377,7 @@ def _negative_section(context, prose):
     lines = []
     paragraph = (prose or {}).get("negative_results") or ""
     if paragraph.strip():
-        lines.extend([_inline(paragraph), ""])
+        lines.extend([one_line(paragraph), ""])
     lines.extend(_finding_item(finding, context.manifest) for finding in negative)
     return lines
 
@@ -1525,7 +1537,7 @@ def _banner(context, result, notes):
         lines.extend(["", "The linter failed on these sentences; the report does not pass until each one ends with a tag that resolves, or is rewritten:", ""])
         # Tags are taken off the sentence and the tag is named without its braces, so that a tag
         # the linter refused is not rendered as a citation in the report that refused it.
-        lines.extend("- `%s` %s (%s%s)" % (problem["problem"], _inline(strip_tags(problem["sentence"])),
+        lines.extend("- `%s` %s (%s%s)" % (problem["problem"], one_line(strip_tags(problem["sentence"])),
                                            "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
                      for problem in result.problems)
     if context.notes or notes:
@@ -1561,7 +1573,7 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
     project = Path(project).resolve()
     book = Ledger(project)
     policy = policy_for(project, harness_root) if policy is None else policy
-    context = _context(project)
+    context = report_context(project)
     notes = []
     prose, note = draft_prose(project, report_evidence(context), harness_root=harness_root, policy=policy,
                               offline=offline or not draft)
@@ -1634,7 +1646,7 @@ def _render_outcome(outcome, asked_to_verify):
     lines = ["report    %s" % outcome["report"],
              "linter    %s: %d claim sentence(s), %d tagged" % ("pass" if outcome["linter_pass"] else "FAIL", outcome["claims"], outcome["tagged"])]
     for problem in outcome["problems"]:
-        lines.append("  %-15s %s" % (problem["problem"], _inline(problem["sentence"])))
+        lines.append("  %-15s %s" % (problem["problem"], one_line(problem["sentence"])))
         lines.append("  %-15s %s" % ("", problem["detail"]))
     for note in outcome["notes"]:
         lines.append("note      %s" % note)
@@ -1658,7 +1670,7 @@ def _records(lines):
     return [RECORDS_BEGIN] + list(lines) + [RECORDS_END]
 
 
-def _inline(text):
+def one_line(text):
     return " ".join(str(text if text is not None else "").split())
 
 
@@ -1688,11 +1700,11 @@ def _existence(project, slug):
         return None
 
 
-def _joined(*parts):
+def joined(*parts):
     return "\n\n".join(part.strip("\n") for part in parts if part and part.strip()) + "\n"
 
 
-def _session_dir(project, name):
+def session_dir(project, name):
     """`research/sessions/<name>/<n>`, the first free number: every classifier and writer session keeps its stream."""
     base = Path(project) / "research" / "sessions" / name
     number = 1
@@ -1708,7 +1720,7 @@ def _role_tier(policy, name):
     return entry["model"], entry["effort"]
 
 
-def _request(project, role, policy, harness_root, prompt, schema, budget, run_dir, read_only=False):
+def structured_request(project, role, policy, harness_root, prompt, schema, budget, run_dir, read_only=False):
     """The launch of a session that returns one structured answer and writes nothing.
 
     Launched like a verifier: without `TICKET_TOUCHES`, so the touch-set guard blocks every write
@@ -1738,18 +1750,18 @@ def _request(project, role, policy, harness_root, prompt, schema, budget, run_di
 def _launch_structured(request, problem_of, what):
     """Launch, check the answer, resume once with the reason when it is unusable, and raise when it still is."""
     envelope = worker.launch(request)
-    _raise_if_refused(envelope, what, request.model)
+    raise_if_refused(envelope, what, request.model)
     problem = problem_of(envelope)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_STRUCTURED % problem)
-        _raise_if_refused(envelope, what, request.model)
+        raise_if_refused(envelope, what, request.model)
         problem = problem_of(envelope)
     if problem is not None:
         raise ProvenanceError("the %s's answer could not be used: %s" % (what, problem))
     return envelope
 
 
-def _raise_if_refused(envelope, what, model=None):
+def raise_if_refused(envelope, what, model=None):
     """Raise `UsageLimited` for a session that returned nothing because a usage window refused it.
 
     docs/verification/m5.md: the live writer on fable came back after one turn with
@@ -1771,7 +1783,7 @@ def _raise_if_refused(envelope, what, model=None):
     raise UsageLimited("the %s was refused by the usage limit on the %s window until %s" % (what, window, until), limit)
 
 
-def _schema_problem(envelope, schema):
+def schema_problem(envelope, schema):
     if not envelope.valid:
         return "; ".join(envelope.errors) or "the session returned no structured answer"
     try:

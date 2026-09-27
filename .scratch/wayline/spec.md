@@ -678,6 +678,36 @@ Numbered so the milestones can point at them. Every decision below either restat
 - **Documentation** (R28; BRIEF 13.2): the documentarian role and the docs module build a Sphinx site in the project's own environment (the harness stays standard-library) with tutorials, how-to guides, reference, and explanation, an API reference generated from docstrings, executed examples, a figure gallery, and the Read the Docs configuration; machine checks: every public symbol (from the code dossier's `ast` inventory of the project's package) documented and present in the reference, every example runs, the build is warning-free, links resolve; one Type-B read for clarity and completeness against the package's purpose; theme and layout chosen once per project and recorded in `harness.json.docs`. The planner files the `docs` ticket after every `code` ticket that adds public API.
 - **Guidelines** (map ticket 10, adopted by map ticket 35): `guidelines/<venue>/guidelines.json`, `source.md`, and `checklist/` (cached reporting-checklist forms only; manuscript templates are linked, never stored) for Nature, Nature Methods, Nature Communications, Cell, Cell Systems, PNAS, PLOS Computational Biology, eLife, Bioinformatics, Genome Biology, NeurIPS, ICML, ICLR, bioRxiv, and arXiv, from the URLs and fields the research note recorded, with Cell and Genome Biology retried at build time and their unverified fields marked. `guidelines.json`: `schema_version, venue, display_name, guidelines_url, date_checked, length_limits: {word_count, page_count, abstract_word_count, notes, excluded_sections[]}, required_structure[], structure_flexible, figure_spec: {max_count, formats[], min_dpi, max_dpi, color_mode[], max_file_size_mb, legend_max_words, notes}, reference_style: {style, max_count, citation}, reporting_checklists: [{name, required, study_types[], url, cached_as}], submission_steps[], template: {latex_or_word_no_login, url, notes, document_class}, license_of_summary_source: {statement, url}, verification: {fully_verified_fields[], unverified_fields[]}` (ticket 52 added `length_limits.excluded_sections`, `reference_style.citation` and `template.document_class`, because a word count "with the venue's exclusions", a style check and a template check cannot run off prose; `figure_spec.notes` mirrors `length_limits.notes`; `verification` names a whole field or, where the source confirmed only part of one, its sub-path). The seven mechanical writer checks, off `guidelines.json` alone: word or page count with the venue's exclusions, section presence (a warning where `structure_flexible`), figure count, format, DPI, color mode, size, and legend length, reference style and count, reporting-checklist presence by detected study type, template or document-class conformance, and the provenance cross-check shared with the linter's sentence pass.
 - **Paper** (R26; BRIEF 13.3): `wayline paper --venue <slug>` after the report, or `wayline paper` and the decider picks the best-fitting venue from `guidelines/`; the writer role (opus, xhigh) drafts `research/paper/` from the findings and the knowledge base under C8; the linter and the seven checks run on every build; figures come from the figure role; the kill argument and one independent verdict gate the draft; the owner reads it; nothing is submitted by the harness. The guidelines repository grows through the evolve loop.
+- **As built** (ticket 53, spec decisions on what the Paper bullet leaves open):
+  - **Where the draft is written.** The writer is read-only and returns the whole manuscript through the
+    `paper_draft` schema; code writes `research/paper/paper.md`, because the ledger is the only writer of
+    `research/` (decision 2). `research/paper/build.json` records every build, the gate, and `submitted: false`.
+  - **What a build is.** The classifier and the linter on the draft, and the seven checks on `research/paper/`
+    against the venue's `guidelines.json`. A lint problem, a failing check, or a figure that could not be placed
+    goes back to the same writer session (a resume) with the list, at most three builds in all; a draft that
+    still fails is the owner's to read, and no verdict is spent on it. `wayline paper --continue` resumes that
+    session for three builds more, with the last list or, after a failed gate, with the points that stood, so
+    the figures it asked for are not asked for anew (the M7 run: a fresh writer rewords its figure claims, and
+    a reworded claim is a new figure to draw); `--continue --venue <slug>` moves the draft to another venue,
+    telling the writer its guidelines. A figure request that differs only in the venue's name, at the same
+    size, type, resolution, formats, and library, is the same figure.
+  - **Figures.** The draft asks for a figure as a line `{figure:<figure_id>}` and an entry naming its claim and
+    its manifested data. The figure role gets the venue's `target`: its formats and resolution, the house
+    library, and an 89 mm column with 6 pt type, since `guidelines.json` records no width. A request identical
+    to the one on disk is not drawn again, and one that waited is resumed. A placed figure and the figure role's
+    caption sit between the records markers, as the report's listings do, because the figure role's own
+    `provenance` check and honesty verdict trace them; a figure that waits on the owner holds the gate. So does
+    the reference list, which claims nothing.
+  - **The gate.** The kill argument, then one independent verdict, the read (`verdict_type: paper_read`), all on
+    the verifier the table gives for the writer's model; the read is not spent on a draft the kill argument sent
+    back. Each fail files a `writing` ticket with the paper as its origin, one per point while it stands open, and
+    the next `wayline paper` gives the writer the open ones; a draft passing both cancels them. At a venue taking
+    neither PDF nor PNG, a figure's format is the owner's to convert, a note rather than a build failure.
+  - **Sampling.** `wayline paper --verify` samples the draft's tagged claims after a gate that passed, as
+    `wayline report --verify` does the report's.
+  - **The venue.** `wayline paper` without `--venue` asks the decider once, with each venue's limits as evidence;
+    the pick is a `decision` with no ticket, answered `paper venue: <slug>`, which the report lists first. A
+    refusal or an answer naming no one venue stops the command before `paper_started`.
 
 ### 14. Policy defaults and the toy project
 

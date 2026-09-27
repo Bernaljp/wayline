@@ -46,7 +46,9 @@ from wayline import pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
 from wayline.project import fable_hold, policy_for, rung_named
-from wayline.tickets import DOCS, machine_acceptance, next_id, read_ticket, tickets_dir, works_in_the_harness, write_ticket
+from wayline.tickets import (
+    DOCS, SATISFIED, machine_acceptance, next_id, read_ticket, read_tickets, tickets_dir, works_in_the_harness, write_ticket,
+)
 from wayline.tickets import relative_path as ticket_relative_path
 
 __all__ = [
@@ -434,8 +436,9 @@ SPEC_COVERAGE = "spec_coverage"          # the spec: does every claim have an ex
 FIGURE_HONESTY = "figure_honesty"        # a figure: does it assert something the data does not (ticket 50)
 EQUATION_MATCH = "equation_match"        # one equation a figure typesets: does it match the code that computes it (ticket 50)
 DOCS_READ = "docs_read"                  # a docs ticket: is the site clear and complete against the package's purpose
+PAPER_READ = "paper_read"                # the paper: the one independent verdict that gates the draft beside the kill argument (ticket 53)
 VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK, SPEC_COVERAGE,
-                 FIGURE_HONESTY, EQUATION_MATCH, DOCS_READ)
+                 FIGURE_HONESTY, EQUATION_MATCH, DOCS_READ, PAPER_READ)
 
 # What an independent read of a done ticket reads, by the ticket's effective difficulty.
 DIFFICULTY_VERDICTS = {3: DIFF, 4: RESULT, 5: RESULT}
@@ -1072,8 +1075,12 @@ def _file_writing_ticket(project, ledger, adjudication, paths, memo):
     """File the `writing` ticket a failed kill argument scopes the claims down with; returns its id.
 
     The touch set is the subject itself, because scoping a claim down is an edit to the document
-    that makes it.
+    that makes it. A subject that already has an open one gets no second: the open ticket is the
+    one the next draft answers, and its id is returned.
     """
+    standing = open_writing_ticket(project, adjudication.subject)
+    if standing is not None:
+        return standing
     body = "\n".join([
         "## What the kill argument left standing",
         "",
@@ -1096,6 +1103,14 @@ def _file_writing_ticket(project, ledger, adjudication, paths, memo):
         demo="The kill argument runs again on %s and these points no longer stand." % adjudication.subject,
         body=body,
     )
+
+
+def open_writing_ticket(project, origin):
+    """The id of an open `writing` ticket filed with `origin`, or None: what keeps a gate from filing one twice."""
+    for fields in read_tickets(project):
+        if fields["kind"] == "writing" and fields.get("origin") == origin and fields["status"] not in SATISFIED + ("parked",):
+            return fields["id"]
+    return None
 
 
 def file_writing_ticket(project, ledger, *, title, touches, inputs, quality, origin, demo, body):

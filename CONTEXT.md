@@ -40,6 +40,14 @@ _Avoid_: hard check, lint
 A quality verdict; a fresh verifier session judges it, never the session that wrote the work.
 _Avoid_: review, soft check
 
+**Kill argument**:
+The two-thread Type-B gate on the report or the paper: one verifier session writes the strongest rejection memo, a second adjudicates it point by point, and a fail scopes the claims down through a `writing` ticket.
+_Avoid_: red team, devil's advocate, peer review
+
+**Venue**:
+A journal, conference, or preprint server with a `guidelines/<venue>/guidelines.json`, named by its slug; the paper is drafted and checked under one venue's guidelines and never submitted to it.
+_Avoid_: journal (for the slug), target, outlet
+
 **Done**:
 Machine checks passed on a ticket.
 _Avoid_: complete, finished

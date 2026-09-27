@@ -1,0 +1,9 @@
+{
+  "markdown": "# Interaction terms carry the gain\n\n## Abstract\n\nPairwise interaction terms raise the held-out AUROC to 0.861.{res:t3-a1/results/interactions/summary.json#auroc_mean}\n\n## Results\n\n{figure:interactions-gain}\n\n## References\n\n[1] Interaction features for tabular classification, 2021.\n",
+  "figures": [
+    {"figure_id": "interactions-gain", "claim": "Pairwise interaction terms raise the held-out AUROC to 0.861.", "claim_type": "comparison",
+     "data": ["results/interactions/summary.json", "results/baseline/summary.json"],
+     "evidence": ["{res:t3-a1/results/interactions/summary.json#auroc_mean}"]}
+  ],
+  "notes": ""
+}

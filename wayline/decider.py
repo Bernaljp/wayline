@@ -25,6 +25,12 @@ proposal becomes a human-only decision ticket asking whether it is admitted (ori
 A decision ticket the decider did answer lands in its `## Answer`, in the journal, and as a record
 appended to `DECISIONS.md`, so that file holds every decision the decider made about the design.
 
+**The paper's venue.** `wayline paper` without `--venue` asks it once for the venue that fits best
+(`decide_venue`, ticket 53): the options are the slugs of `guidelines/`, the evidence a line of each
+venue's limits, and the pick is journaled as a `decision` with no ticket, `paper venue: <slug>`. The
+owner asked for the paper and is at the command, so a refusal opens no decision ticket: it stops
+the command, which says so.
+
 **Where it is launched from.** `wayline grill --decide-rest` (`decide_rest`) resolves the design
 tree's frontier one question at a time until only the owner's questions are left; the conductor
 (`decide_ticket`, `decide_proposal`) launches it for open decision tickets in wave step 5 and for
@@ -42,13 +48,14 @@ from typing import Optional
 from wayline import HARNESS_ROOT, decisions, gates, grill, pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, Ledger
+from wayline.provenance import VENUE_PREFIX
 from wayline.project import ProjectError, human_only_classes_now, policy_for, read_harness
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets
 
 __all__ = [
     "DECIDER", "DECISION_SCHEMA", "IRREVERSIBLE", "DeciderError", "Subject", "Outcome", "decider_tier", "decides_on_fable",
     "irreversible_class", "chosen_option", "refusal", "records_text", "decider_prompt", "take_decision", "decide_question",
-    "decide_ticket", "decide_proposal", "proposal_origin", "reconsidered", "decide_rest", "render_decided",
+    "decide_ticket", "decide_proposal", "proposal_origin", "VENUE_ANSWER", "venue_of", "decide_venue", "reconsidered", "decide_rest", "render_decided",
 ]
 
 DECIDER = "decider"
@@ -56,6 +63,7 @@ DECISION_SCHEMA = "decision"
 SESSIONS = "decider"            # <project>/research/sessions/decider/<subject>/<n>
 DECIDER_BUDGET = "medium"       # policy.budget: the turns and minutes one decision may take; a read-only session needs no more
 PROPOSAL_ANSWER = "proposal %s: %s"  # the `decision` a parked proposal gets, its id leading the answer, as a grill question's id does
+VENUE_ANSWER = VENUE_PREFIX + "%s"  # the `decision` the paper's venue gets (ticket 53): the prefix the report reads, then the slug
 ADMIT, KEEP_PARKED = "admit", "keep parked"
 RESUME_DECISION = (
     "The decision you returned could not be recorded: %s. Return it again through the structured output, "
@@ -117,9 +125,9 @@ class DeciderError(ValueError):
 
 @dataclass
 class Subject:
-    """One decision the decider is asked for: a grill question, a decision ticket, or a parked proposal."""
+    """One decision the decider is asked for: a grill question, a decision ticket, a parked proposal, or the paper's venue."""
 
-    kind: str                      # question | ticket | proposal
+    kind: str                      # question | ticket | proposal | venue
     key: str                       # Q8 | 2 | the proposal's id
     question: str
     options: list = field(default_factory=list)
@@ -131,7 +139,8 @@ class Subject:
 
     @property
     def name(self):
-        return {"question": "the grill's %s", "ticket": "decision ticket %s", "proposal": "parked proposal %s"}[self.kind] % self.key
+        return {"question": "the grill's %s", "ticket": "decision ticket %s", "proposal": "parked proposal %s",
+                "venue": "the venue of the %s"}[self.kind] % self.key
 
     @classmethod
     def from_record(cls, record, records=()):
@@ -567,7 +576,7 @@ def _open_for_owner(project, subject, why, origin, title, notify):
     return opened["ticket"], why
 
 
-# --- the three subjects ---------------------------------------------------------------------------
+# --- the four subjects ----------------------------------------------------------------------------
 
 
 def decide_question(project, record, records=(), *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None):
@@ -651,6 +660,65 @@ def decide_proposal(project, proposal, *, harness_root=HARNESS_ROOT, policy=None
     if outcome.answer.strip().lower() != ADMIT:
         outcome.answer = KEEP_PARKED
     payload = {"ticket": None, "answer": PROPOSAL_ANSWER % (subject.key, outcome.answer), "decided_by": DECIDER,
+               "rationale": outcome.rationale, "confidence": outcome.confidence}
+    payload.update({key: value for key, value in (("model", outcome.model), ("fallback_from", outcome.fallback_from)) if value})
+    Ledger(project).append_event(DECISION, payload, session_id=outcome.session_id)
+    return outcome
+
+
+def venue_of(answer, venues):
+    """The slug of `venues` (`{slug: display name}`) a decider's answer names, or None when it names none or several.
+
+    The answer may be the slug, an option it points at (`option 3`), or a sentence naming one venue by its slug or
+    its display name. A name is matched as whole words, and one found only inside another venue's longer name does
+    not count, so "Nature Methods fits" names `nature-methods` and not `nature`.
+    """
+    text = " ".join(chosen_option(answer, sorted(venues)).split())  # the order `decide_venue` lists the options in
+    folded = text.strip("`'\". ").lower()
+    if folded in venues:
+        return folded
+    lowered, spans = text.lower(), {}
+    for slug, display in venues.items():
+        for name in {slug, str(display).lower()}:
+            words = [re.escape(word) for word in re.split(r"[-\s]+", name) if word]
+            if words:
+                pattern = r"(?<![a-z0-9])%s(?![a-z0-9])" % r"[-\s]+".join(words)
+                spans.setdefault(slug, []).extend(found.span() for found in re.finditer(pattern, lowered))
+
+    def inside(span, slug):
+        return any(other != span and other[0] <= span[0] and span[1] <= other[1]
+                   for elsewhere, found in spans.items() if elsewhere != slug for other in found)
+
+    named = {slug for slug, found in spans.items() if any(not inside(span, slug) for span in found)}
+    return named.pop() if len(named) == 1 else None
+
+
+def decide_venue(project, venues, evidence=(), *, subject="paper", harness_root=HARNESS_ROOT, policy=None, fall_back=None):
+    """Pick the best-fitting venue for the paper among `venues` (`{slug: display name}`); returns the `Outcome`.
+
+    `wayline paper` without `--venue` asks this (Implementation Decisions 13): one decider session, the slugs as the
+    options and a line per venue as `evidence`. A decision is journaled as a `decision` with no ticket, its answer
+    `paper venue: <slug>`, so the report lists it first with the rest of the decider's, and the outcome's `answer` is
+    the slug. The owner asked for the paper and is at the command, so a refusal opens no decision ticket: it comes
+    back as a `refused` outcome for the command to print, and so does an answer that names no venue, as `failed`.
+    """
+    project = Path(project).resolve()
+    venues = dict(venues)
+    question = ("Which venue does the paper fit best, given the run's findings, its report, and each venue's "
+                "guidelines? Answer with the venue's slug.")
+    subject = Subject(kind="venue", key=subject, question=question, options=sorted(venues), recommended=None,
+                      evidence=list(evidence), slug="paper-venue")
+    outcome, returned, envelope, model, fallback_from = _attempt(subject, project=project, harness_root=harness_root,
+                                                                 policy=policy, fall_back=fall_back)
+    if outcome is not None:
+        return outcome
+    outcome = _decided(subject, returned, envelope, model, fallback_from)
+    slug = venue_of(outcome.answer, venues)
+    if slug is None:
+        return Outcome(subject, "failed", why="its answer names no one venue of %d: %s" % (len(venues), outcome.answer),
+                       model=outcome.model, fallback_from=fallback_from, session_id=outcome.session_id)
+    outcome.answer = slug
+    payload = {"ticket": None, "answer": VENUE_ANSWER % slug, "decided_by": DECIDER,
                "rationale": outcome.rationale, "confidence": outcome.confidence}
     payload.update({key: value for key, value in (("model", outcome.model), ("fallback_from", outcome.fallback_from)) if value})
     Ledger(project).append_event(DECISION, payload, session_id=outcome.session_id)
