@@ -4,6 +4,20 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 
 ## Unreleased
 
+- The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts
+  `research/paper/paper.md` after the report, and `wayline paper` alone asks the decider for the venue that fits
+  best, journaled as a `decision` answered `paper venue: <slug>` that the report lists first. `paper_started` is
+  journaled. The writer (`opus xhigh`, read-only) returns the whole manuscript through the new `paper_draft`
+  schema from the findings with their tags, the references a `ref` tag can name, the manifested results, the
+  report, and the venue's `guidelines.json`, and code writes it. Every build runs the sentence classifier and
+  the provenance linter, and the seven checks against the venue. A failure goes back to the same writer session
+  with the list, at most three builds in all, and a draft that still fails costs no verdict. Each figure the
+  draft asks for is requested from the figure role at the venue's target, is not drawn again for the same
+  request, and is placed with the figure role's caption; one that waits on the owner holds the gate. A draft
+  that builds is gated by the kill argument and one independent review (`gates.PAPER_REVIEW`); each fail files a
+  `writing` ticket that the next draft is given. `research/paper/build.json` records the builds and the gate,
+  and nothing is ever submitted: no verb, dashboard action, or role can. Every verb of the spec's table now has
+  its handler.
 - Opus 5.5 in the roles and the verifier table (ticket 65; Implementation Decisions 11, 14, 15, and 16). The
   shipped policy runs the planner, the writer, and the evolver on `opus xhigh` and the decider on `opus max`,
   where they were on Fable at the same efforts, and reads work written on Opus in a fresh `opus max` session,

@@ -188,6 +188,18 @@ the list, and a done `docs` ticket earns one read of the site's clarity and comp
 package's purpose (`gates.DOCS_READ`) in place of the read its difficulty would give it. Its Bash
 rules are the coder's with `wayline docs *` added and no `Agent`: a site is written in one session.
 
+## The writer is launched by code twice, and takes the `writing` tickets
+
+`writer` takes every `writing` ticket as a ticket worker, and code launches it twice more, read-only
+and on `policy.roles.writer` rather than a rung: `wayline report` asks it for the report's paragraphs
+(`report_prose`), and `wayline paper` for the whole manuscript (`paper_draft`, ticket 53). In both
+the ledger writes what it returns, since nothing under `research/` is a session's to write. The
+paper's session is resumed with each failed build's list (the linter, the venue's seven checks, a
+figure the figure role could not place), and it is given the open `writing` tickets a failed kill
+argument or review filed against the paper. The prompt carries the venue's `guidelines.json`, the
+findings with their tags, and the references a `ref` tag can name; `agent.md` stays the C8 rule both
+launches share.
+
 ## Why `disallowed_tools` names tools the harness never asked for
 
 `--settings` adds to the owner's user configuration rather than replacing it, so a worker starts
