@@ -18,8 +18,9 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   fail files a `writing` ticket, unless one for the same point stands open, and the next draft is given the open
   ones, which a draft passing both cancels. `wayline paper --verify` then samples the draft's tagged claims as
   `wayline report --verify` samples the report's (`verify_claims` takes a `document`). `research/paper/build.json`
-  records the builds and the gate, and nothing is ever submitted: no verb, dashboard action, or role can. Every
-  verb of the spec's table now has its handler.
+  records the builds and the gate, and nothing is ever submitted: no verb, dashboard action, or role can.
+  `wayline paper --continue` takes up a draft the last run left failing its build by resuming the same writer
+  session with its list, so its figures are not drawn again. Every verb of the spec's table now has its handler.
 - A review pass fixed these before the ticket landed. A window's refusal or the hold on Fable met while a figure
   was drawn read as a figure waiting on the owner, so the paper said "held" and sent the owner to `wayline figure
   resume` where the command should have stopped; it now stops, and a request the figure role refuses outright is a

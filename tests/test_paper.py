@@ -96,8 +96,10 @@ class Figures:
         result = {"schema": "figure_result/1", "figure_id": request["figure_id"], "version": len(self.requests), "status": status}
         if status == "verified":
             png(self.project / "figures" / request["figure_id"] / "final.png")
+            (self.project / "figures" / request["figure_id"] / "caption.md").write_text(
+                "Figure 1. Held-out AUROC by arm. (a) Each arm's mean over three seeds.\n", encoding="utf-8")
             result["final"] = {"png": "figures/%s/final.png" % request["figure_id"], "pdf": None,
-                               "caption": "Figure 1. Held-out AUROC by arm. (a) Each arm's mean over three seeds."}
+                               "caption": "figures/%s/caption.md" % request["figure_id"]}
             return result, None
         if status == "honesty_failed":
             result["honesty_verdict"] = {"type": "B", "verdict": "fail", "findings": [{"text": "the bars hide the overlap of the intervals"}]}
@@ -248,6 +250,16 @@ class ContinueTest(PaperCase):
         with self.assertRaisesRegex(paper.PaperError, "the last draft is passed"):
             self.write(carry_on=True)
 
+    def test_continue_after_a_failed_gate_resumes_the_writer_with_the_points_that_stand(self):
+        first = self.write(draft(), verifier=(verdict(False, text="The references are fixtures, not literature."), verdict(False, text="The references are fixtures, not literature.")))
+        self.assertEqual(first.status, paper.GATE_FAILED)
+        again = self.write(draft(), verifier=PASSING_GATE, carry_on=True, venue=None)
+        self.assertEqual(again.status, paper.PASSED)
+        (call,) = self.calls_of("writer")
+        self.assertEqual((call.kind, call.session_id), ("resume", first.builds[-1]["session_id"]))
+        self.assertIn("the gate failed it", call.message)
+        self.assertIn("The references are fixtures, not literature.", call.message)
+
 
 class FigureTest(PaperCase):
     def test_a_figure_is_asked_for_at_the_venue_s_target_and_placed_with_its_caption(self):
@@ -269,6 +281,15 @@ class FigureTest(PaperCase):
         self.assertTrue((self.project / "research" / "paper" / "figures" / "gain.png").is_file())
         figures_check = [finding for finding in self.build()["builds"][0]["checks"] if finding["check"] == "figures"]
         self.assertEqual([finding["level"] for finding in figures_check], ["ok"])
+
+    def test_a_verified_figure_whose_caption_cannot_be_read_is_not_placed(self):
+        figures = Figures(self.project)
+        def no_caption(project, request, **options):
+            result, reason = figures(project, request)
+            (self.project / result["final"]["caption"]).unlink()
+            return result, reason
+        self.write(draft(WITH_FIGURE, [GAIN]), draft(), verifier=PASSING_GATE, draw_figure=no_caption)
+        self.assertIn("its caption figures/gain/caption.md cannot be read", self.calls_of("writer")[1].message)
 
     def test_the_venue_s_resolution_and_formats_reach_the_target(self):
         record = json.loads((HARNESS_ROOT / "guidelines" / "plos-compbiol" / "guidelines.json").read_text(encoding="utf-8"))
