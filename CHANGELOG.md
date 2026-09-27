@@ -2,7 +2,7 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
-## Unreleased
+## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts
   `research/paper/paper.md` after the report, and `wayline paper` alone asks the decider for the venue that fits
