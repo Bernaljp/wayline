@@ -4,13 +4,15 @@
 
 **Blocked by:** 40 (Provenance tags, the linter, and REPORT.md), 50 (The figure role pipeline end to end), 51 (The documentation site), 52 (Venue guidelines), 65 (Opus 5.5 in the roles and the verifier table)
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#54](https://github.com/Bernaljp/wayline/issues/54) (mirror; the local file is the source)
 
 **Milestone:** M7 Figures, docs, paper. **Spec:** milestone M7 as a whole; Implementation Decisions 13 (paper), 11 (kill argument, provenance); BRIEF 13.3.
 
-- [ ] `roles/writer/` (opus, xhigh) drafts `research/paper/` from `findings.jsonl`, the knowledge base, and `REPORT.md` under the venue's `guidelines.json`, every claim tagged; `wayline paper` without `--venue` asks the decider to pick the best-fitting venue from `guidelines/` and journals the decision; `paper_started` is journaled.
-- [ ] Every build runs the linter of ticket 40 and the seven checks of ticket 52; failures return the draft to the writer with the list; figures are requested from the figure role of ticket 50 with the venue's `target`.
-- [ ] The kill argument and one independent verdict through the gate of ticket 32 gate the draft; a fail scopes claims down through a `writing` ticket; the owner reads the result; no verb, action, or role can submit anything.
+- [x] `roles/writer/` (opus, xhigh) drafts `research/paper/` from `findings.jsonl`, the knowledge base, and `REPORT.md` under the venue's `guidelines.json`, every claim tagged; `wayline paper` without `--venue` asks the decider to pick the best-fitting venue from `guidelines/` and journals the decision; `paper_started` is journaled.
+- [x] Every build runs the linter of ticket 40 and the seven checks of ticket 52; failures return the draft to the writer with the list; figures are requested from the figure role of ticket 50 with the venue's `target`.
+- [x] The kill argument and one independent verdict through the gate of ticket 32 gate the draft; a fail scopes claims down through a `writing` ticket; the owner reads the result; no verb, action, or role can submit anything.
 - [ ] Live M7 demo, recorded in `docs/verification/m7.md`: the plot index is built; a toy result gets ranked candidates and a final figure that passes the checks; the toy package gets a documentation site that passes completeness checks; `wayline paper --venue` produces a draft under the guidelines with the linter and the kill argument passing; the repository is tagged `v1.0.0`.
+
+Criterion 4 is unticked: the live run of 2026-09-27 (`docs/verification/m7.md`, "The paper under a venue's guidelines") built drafts under Nature Methods and then arXiv with the linter and every check passing, but the kill argument failed all three drafts it was given, on points about the toy project's design (the effect it measures is planted) that no rewording answers. The plot index, the ranked and checked figure, and the documentation site are tickets 48, 50, and 51's records in the same file.
