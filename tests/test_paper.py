@@ -19,7 +19,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from tests.paths import FIXTURES_DIR
 from tests.projects import ProjectTestCase
 from tests.test_report import Classifier
-from wayline import HARNESS_ROOT, cli, decider, dashboard, gates, paper, provenance, tickets, worker
+from wayline import HARNESS_ROOT, cli, decider, dashboard, figure_role, gates, paper, provenance, tickets, worker
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
 
@@ -116,7 +116,7 @@ class PaperCase(ProjectTestCase):
         self.book.write_markdown("REPORT.md", "# Report: ended-run\n\nThe report as rendered.\n")
         self.calls = []
 
-    def write(self, *writer, verifier=(), deciders=(), venue="arxiv", draw_figure=None):
+    def write(self, *writer, verifier=(), deciders=(), venue="arxiv", draw_figure=None, verify=False):
         """`write_paper` with the writer's and the verifier's envelopes scripted in order."""
         with worker.use_fake() as fake:
             self.classifier = Classifier()
@@ -129,7 +129,7 @@ class PaperCase(ProjectTestCase):
             for envelope in deciders:
                 fake.script(envelope, role="decider")
             try:
-                return paper.write_paper(self.project, venue, draw_figure=draw_figure)
+                return paper.write_paper(self.project, venue, draw_figure=draw_figure, verify=verify)
             finally:
                 self.calls = list(fake.calls)
 
@@ -151,7 +151,7 @@ class PaperCase(ProjectTestCase):
         return json.loads((self.project / "research" / "paper" / "build.json").read_text(encoding="utf-8"))
 
 
-PASSING_GATE = (verdict(), verdict(), verdict())   # the memo finds no case, the adjudication and the review pass
+PASSING_GATE = (verdict(), verdict(), verdict())   # the memo finds no case, the adjudication and the read pass
 
 
 class DraftTest(PaperCase):
@@ -183,6 +183,11 @@ class DraftTest(PaperCase):
         sent = [text for batch in self.classifier.batches for text in batch]
         self.assertFalse([text for text in sent if "2021" in text and text.startswith("[1]")])
         self.assertIn("[1] Interaction features for tabular classification, 2021.", self.text())
+
+    def test_a_reference_list_under_another_name_is_fenced_too(self):
+        for heading in ("Works cited", "Reference list", "Bibliography"):
+            fenced = paper.fence_references("## Results\n\nIt holds.\n\n## %s\n\n[1] A paper, 2021.\n" % heading)
+            self.assertEqual([sentence.text for sentence in provenance.prose_sentences(fenced)], ["It holds."], heading)
 
     def test_no_report_means_no_paper_and_nothing_journaled(self):
         (self.project / "research" / "REPORT.md").unlink()
@@ -260,6 +265,30 @@ class FigureTest(PaperCase):
         self.assertIn("figure gain could not be placed: the figure role ended honesty_failed", message)
         self.assertIn("the bars hide the overlap of the intervals", message)
 
+    def test_a_request_the_figure_role_refuses_goes_back_to_the_writer(self):
+        def refuse(project, request, **options):
+            raise figure_role.FigureError("the request is not a figure_request/1: target: bad")
+        written = self.write(draft(WITH_FIGURE, [GAIN]), draft(), verifier=PASSING_GATE, draw_figure=refuse)
+        self.assertEqual(written.status, paper.PASSED)
+        self.assertIn("figure gain could not be placed: the figure role refused the request", self.calls_of("writer")[1].message)
+
+    def test_a_window_that_refuses_the_figure_role_stops_the_paper(self):
+        def refused(project, request, **options):
+            raise gates.UsageLimited("the figure critic was refused by the usage limit")
+        with self.assertRaises(gates.UsageLimited):
+            self.write(draft(WITH_FIGURE, [GAIN]), draw_figure=refused)
+        self.assertEqual(self.calls_of("verifier"), [])
+
+    def test_a_format_only_the_owner_can_convert_is_a_note_not_a_failure(self):
+        # PLOS Computational Biology takes TIFF and EPS, which the figure role does not draw.
+        record = paper.guidelines.read_guidelines(HARNESS_ROOT, "plos-compbiol")
+        finding = paper.guidelines.Finding("figures", "fail", "gain.png is PNG; PLOS Computational Biology accepts EPS, TIFF.")
+        lint = provenance.Lint(passed=True, claims=0, tagged=0, unclassified=0)
+        failures, notes = paper._failures(lint, [finding], [], record, {"figures/gain.png": None})
+        self.assertEqual(failures, [])
+        self.assertEqual(notes, ["gain.png is PNG; PLOS Computational Biology accepts EPS, TIFF.: the figure role draws PDF and PNG, "
+                                 "so converting it for the venue is the owner's"])
+
     def test_data_outside_the_manifest_is_refused_without_drawing(self):
         figures = Figures(self.project)
         asked = dict(GAIN, data=["results/nowhere.json"])
@@ -297,7 +326,7 @@ class GateTest(PaperCase):
         self.write(draft(), verifier=PASSING_GATE)
         verdicts = self.paper_verdicts()
         self.assertEqual([(payload["subject_kind"], payload["subject"], payload["verdict_type"]) for payload in verdicts],
-                         [("paper", paper.PAPER_PATH, gates.KILL_ARGUMENT), ("paper", paper.PAPER_PATH, gates.PAPER_REVIEW)])
+                         [("paper", paper.PAPER_PATH, gates.KILL_ARGUMENT), ("paper", paper.PAPER_PATH, gates.PAPER_READ)])
         calls = self.calls_of("verifier")
         self.assertEqual(len(calls), 3)
         self.assertEqual({(call.request.model, call.request.effort) for call in calls}, {("opus", "max")})
@@ -306,22 +335,43 @@ class GateTest(PaperCase):
             self.assertIn(paper.PAPER_PATH, call.request.prompt)
             self.assertIn("guidelines/arxiv/guidelines.json", call.request.prompt)
 
-    def test_a_kill_argument_that_stands_files_a_writing_ticket_and_fails_the_gate(self):
-        written = self.write(draft(), verifier=(verdict(False), verdict(False), verdict()))
+    def test_a_kill_argument_that_stands_files_a_writing_ticket_and_spends_no_read(self):
+        written = self.write(draft(), verifier=(verdict(False), verdict(False)))
         self.assertEqual(written.status, paper.GATE_FAILED)
+        self.assertEqual(len(self.calls_of("verifier")), 2)
+        self.assertIsNone(written.read)
         (ticket,) = [fields for fields in tickets.read_tickets(self.project) if fields["id"] in written.tickets]
         self.assertEqual((ticket["kind"], ticket["origin"], ticket["touches"]), ("writing", paper.PAPER_PATH, [paper.PAPER_PATH]))
         self.assertFalse(self.build()["kill_argument"]["pass"])
+        self.assertIsNone(self.build()["read"])
 
-    def test_a_review_that_fails_files_a_writing_ticket_the_next_draft_is_given(self):
+    def test_a_point_that_stands_again_files_no_second_ticket(self):
+        first = self.write(draft(), verifier=(verdict(False), verdict(False)))
+        again = self.write(draft(), verifier=(verdict(False), verdict(False)))
+        self.assertEqual(first.tickets, again.tickets)
+        self.assertEqual(len([fields for fields in tickets.read_tickets(self.project) if fields["kind"] == "writing"]), 1)
+
+    def test_a_read_that_fails_files_a_ticket_the_next_draft_is_given_and_a_pass_cancels(self):
         written = self.write(draft(), verifier=(verdict(), verdict(), verdict(False)))
         self.assertEqual(written.status, paper.GATE_FAILED)
         (ticket,) = [fields for fields in tickets.read_tickets(self.project) if fields["id"] in written.tickets]
-        self.assertEqual((ticket["title"], ticket["origin"]), (paper.REVIEW_TITLE, paper.PAPER_PATH + "#review"))
-        self.write(draft(), verifier=PASSING_GATE)
+        self.assertEqual((ticket["title"], ticket["origin"]), (paper.READ_TITLE, paper.PAPER_PATH + "#read"))
+        passed = self.write(draft(), verifier=PASSING_GATE)
         prompt = self.calls_of("writer")[0].request.prompt
         self.assertIn("# What the last gate left standing", prompt)
         self.assertIn(tickets.filename(ticket), prompt)
+        self.assertEqual((passed.status, passed.tickets), (paper.PASSED, []))
+        cancels = [event["payload"] for event in self.events("control") if event["payload"].get("command") == "cancel"]
+        self.assertEqual([payload["args"]["ticket"] for payload in cancels], [ticket["id"]])
+
+    def test_verify_samples_the_draft_s_claims_after_a_gate_that_passed(self):
+        claims = [verdict() for _ in range(4)]
+        written = self.write(draft(), verifier=PASSING_GATE + tuple(claims), verify=True)
+        self.assertEqual(written.status, paper.PASSED)
+        self.assertEqual(written.claims["sampled"], written.claims["claims"])
+        sampled = [payload for payload in (event["payload"] for event in self.events("verdict")) if payload["subject_kind"] == "claim"]
+        self.assertEqual(len(sampled), written.claims["claims"])
+        self.assertTrue(all(payload["subject"].startswith(paper.PAPER_PATH + "#claim-") for payload in sampled))
 
 
 class VenueTest(PaperCase):
@@ -355,7 +405,7 @@ class VenueTest(PaperCase):
 
     def test_the_report_lists_the_venue_among_the_decider_s_decisions(self):
         self.write(draft(), verifier=PASSING_GATE, deciders=[decision("arxiv")], venue=None)
-        section = "\n".join(provenance._decider_decisions(provenance._context(self.project)))
+        section = "\n".join(provenance._decider_decisions(provenance.report_context(self.project)))
         self.assertIn("The paper's venue: **paper venue: arxiv**", section)
 
 
@@ -401,7 +451,7 @@ class CommandTest(PaperCase):
             with redirect_stdout(out), redirect_stderr(io.StringIO()):
                 code = cli.main(["paper", "--project", str(self.project), "--venue", "arxiv"])
         self.assertEqual(code, 1)
-        self.assertIn("filed     writing ticket(s)", out.getvalue())
+        self.assertIn("open      writing ticket(s)", out.getvalue())
 
 
 if __name__ == "__main__":

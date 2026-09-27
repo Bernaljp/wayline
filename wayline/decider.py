@@ -25,6 +25,12 @@ proposal becomes a human-only decision ticket asking whether it is admitted (ori
 A decision ticket the decider did answer lands in its `## Answer`, in the journal, and as a record
 appended to `DECISIONS.md`, so that file holds every decision the decider made about the design.
 
+**The paper's venue.** `wayline paper` without `--venue` asks it once for the venue that fits best
+(`decide_venue`, ticket 53): the options are the slugs of `guidelines/`, the evidence a line of each
+venue's limits, and the pick is journaled as a `decision` with no ticket, `paper venue: <slug>`. The
+owner asked for the paper and is at the command, so a refusal opens no decision ticket: it stops
+the command, which says so.
+
 **Where it is launched from.** `wayline grill --decide-rest` (`decide_rest`) resolves the design
 tree's frontier one question at a time until only the owner's questions are left; the conductor
 (`decide_ticket`, `decide_proposal`) launches it for open decision tickets in wave step 5 and for
@@ -42,6 +48,7 @@ from typing import Optional
 from wayline import HARNESS_ROOT, decisions, gates, grill, pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, Ledger
+from wayline.provenance import VENUE_PREFIX
 from wayline.project import ProjectError, human_only_classes_now, policy_for, read_harness
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets
 
@@ -56,7 +63,7 @@ DECISION_SCHEMA = "decision"
 SESSIONS = "decider"            # <project>/research/sessions/decider/<subject>/<n>
 DECIDER_BUDGET = "medium"       # policy.budget: the turns and minutes one decision may take; a read-only session needs no more
 PROPOSAL_ANSWER = "proposal %s: %s"  # the `decision` a parked proposal gets, its id leading the answer, as a grill question's id does
-VENUE_ANSWER = "paper venue: %s"    # the `decision` the paper's venue gets (ticket 53), the slug leading nothing else
+VENUE_ANSWER = VENUE_PREFIX + "%s"  # the `decision` the paper's venue gets (ticket 53): the prefix the report reads, then the slug
 ADMIT, KEEP_PARKED = "admit", "keep parked"
 RESUME_DECISION = (
     "The decision you returned could not be recorded: %s. Return it again through the structured output, "
@@ -118,9 +125,9 @@ class DeciderError(ValueError):
 
 @dataclass
 class Subject:
-    """One decision the decider is asked for: a grill question, a decision ticket, or a parked proposal."""
+    """One decision the decider is asked for: a grill question, a decision ticket, a parked proposal, or the paper's venue."""
 
-    kind: str                      # question | ticket | proposal
+    kind: str                      # question | ticket | proposal | venue
     key: str                       # Q8 | 2 | the proposal's id
     question: str
     options: list = field(default_factory=list)
@@ -569,7 +576,7 @@ def _open_for_owner(project, subject, why, origin, title, notify):
     return opened["ticket"], why
 
 
-# --- the three subjects ---------------------------------------------------------------------------
+# --- the four subjects ----------------------------------------------------------------------------
 
 
 def decide_question(project, record, records=(), *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None):

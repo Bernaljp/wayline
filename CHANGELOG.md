@@ -14,10 +14,22 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   with the list, at most three builds in all, and a draft that still fails costs no verdict. Each figure the
   draft asks for is requested from the figure role at the venue's target, is not drawn again for the same
   request, and is placed with the figure role's caption; one that waits on the owner holds the gate. A draft
-  that builds is gated by the kill argument and one independent review (`gates.PAPER_REVIEW`); each fail files a
-  `writing` ticket that the next draft is given. `research/paper/build.json` records the builds and the gate,
-  and nothing is ever submitted: no verb, dashboard action, or role can. Every verb of the spec's table now has
-  its handler.
+  that builds is gated by the kill argument and then one independent verdict, the read (`gates.PAPER_READ`); each
+  fail files a `writing` ticket, unless one for the same point stands open, and the next draft is given the open
+  ones, which a draft passing both cancels. `wayline paper --verify` then samples the draft's tagged claims as
+  `wayline report --verify` samples the report's (`verify_claims` takes a `document`). `research/paper/build.json`
+  records the builds and the gate, and nothing is ever submitted: no verb, dashboard action, or role can. Every
+  verb of the spec's table now has its handler.
+- A review pass fixed these before the ticket landed. A window's refusal or the hold on Fable met while a figure
+  was drawn read as a figure waiting on the owner, so the paper said "held" and sent the owner to `wayline figure
+  resume` where the command should have stopped; it now stops, and a request the figure role refuses outright is a
+  failure the writer is told about. The gate filed a new `writing` ticket on every failing run, with nothing to
+  close the old ones, so the writer was handed stale and duplicate points; the kill argument now files one per
+  subject while one stands open, as the report's claim tickets already did. At a venue that takes neither PDF nor
+  PNG (PLOS Computational Biology, bioRxiv) the figure role's PNG failed the format check on every build, spending
+  three writer sessions on a conversion only the owner can make; it is a note for the owner now. The second
+  verdict was called a review, the word the glossary keeps off a Type-B gate; it is `paper_read`, beside
+  `docs_read`. The read is not spent when the kill argument has already sent the draft back.
 - Opus 5.5 in the roles and the verifier table (ticket 65; Implementation Decisions 11, 14, 15, and 16). The
   shipped policy runs the planner, the writer, and the evolver on `opus xhigh` and the decider on `opus max`,
   where they were on Fable at the same efforts, and reads work written on Opus in a fresh `opus max` session,

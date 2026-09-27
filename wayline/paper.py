@@ -22,9 +22,14 @@ that fits best from `guidelines/` (`decider.decide_venue`, journaled as a `decis
    to the same writer session with the list, up to `MAX_BUILDS` builds; a draft still failing after
    that is left for the owner with its list, and no verdict is spent on it.
 5. **The gate.** A draft that builds is gated by the two-thread kill argument (`gates.kill_argument`)
-   and one independent review (`gates.PAPER_REVIEW`), both fresh verifier sessions on the table's
-   model for the writer's. A fail files a `writing` ticket that scopes the claims down; the next
-   `wayline paper` gives the writer the open ones to answer.
+   and then one independent verdict, the read (`gates.PAPER_READ`), all fresh verifier sessions on the
+   table's model for the writer's. A fail files a `writing` ticket that scopes the claims down, unless
+   an open one for the same point stands; the next `wayline paper` gives the writer the open ones to
+   answer, and the read is not spent on a draft the kill argument already sent back. A draft that
+   passes both cancels the scope-down tickets it answered.
+6. **On request, the claims are sampled.** `wayline paper --verify` takes the verifier's sample of the
+   draft's tagged claims, as `wayline report --verify` does of the report's (decision 11: every claim
+   in the report and the paper, by sampling), after a gate that passed.
 
 It stops there: the owner reads `research/paper/`, and `research/paper/build.json` says what every
 build found and what the gate decided. Nothing here, and no verb, action, or role anywhere in the
@@ -43,12 +48,12 @@ from pathlib import Path
 from wayline import HARNESS_ROOT, decider, figure_role, gates, guidelines, provenance, tickets, worker
 from wayline.cli import parse_args
 from wayline.ledger import PAPER_STARTED, Ledger
-from wayline.project import ProjectError, find_project, policy_for
+from wayline.project import ProjectError, find_project, policy_for, steer_ticket
 
 __all__ = [
-    "PaperError", "Paper", "PAPER_PATH", "BUILD_PATH", "MAX_BUILDS", "FIGURE_TARGET", "REVIEW_QUESTION", "REVIEW_SCOPE",
+    "PaperError", "Paper", "PAPER_PATH", "BUILD_PATH", "MAX_BUILDS", "FIGURE_TARGET", "READ_QUESTION", "READ_SCOPE", "READ_TITLE",
     "venues", "venue_lines", "figure_target", "figure_request", "draw", "assemble", "fence_references", "check_build", "write_paper",
-    "paper_command",
+    "summary", "render", "paper_command",
 ]
 
 PAPER_DIR = "paper"                       # research/paper/
@@ -77,22 +82,24 @@ FIGURE_TICKET = "paper"                   # `figure_request.ticket`: no ticket a
 PLACED, WAITING, FAILED = "placed", "waiting", "failed"
 WAITS = ("candidates_ranked", "selected", "blocked")
 
-PASSED, GATE_FAILED, BUILD_FAILED, HELD = "passed", "gate_failed", "build_failed", "waiting"
+# What one `wayline paper` came to; `held` is a draft that builds but waits on a figure.
+PASSED, GATE_FAILED, BUILD_FAILED, HELD = "passed", "gate_failed", "build_failed", "held"
 
-REVIEW_QUESTION = "Would a reviewer at this venue find the draft's claims carried by the run's evidence and the draft complete as a paper?"
-REVIEW_SCOPE = (
+READ_QUESTION = "Would a reader at this venue find the draft's claims carried by the run's evidence and the draft complete as a paper?"
+READ_SCOPE = (
     "Read the draft as the venue's reviewer would, against the run's findings, the report, the manifest, and the "
     "venue's guidelines at the paths below. It fails on a claim the findings or the references do not carry, a result "
     "stated past what its artifact says, a limitation or a negative result the report records and the draft leaves "
     "out, or a section the guidelines require that says nothing. Whether the science is interesting, or the prose "
     "could be better, is not your question. Every finding is at a path and a locator you read. You are the one "
-    "independent review of this draft; a separate pair of sessions writes and adjudicates the case against it."
+    "independent verdict on this draft; a separate pair of sessions wrote and adjudicated the case against it."
 )
-REVIEW_TITLE = "Scope the paper's claims the independent review did not accept"
+READ_TITLE = "Scope the paper's claims the independent read did not accept"
+READ_ORIGIN = PAPER_PATH + "#read"
 
 _PLACEHOLDER = re.compile(r"^[ \t]*\{figure:([^{}\s]+)\}[ \t]*$", re.M)
 _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
-REFERENCE_HEADINGS = ("references", "bibliography", "literature cited")
+REFERENCE_HEADINGS = ("references", "reference list", "bibliography", "literature cited", "works cited", "cited literature")
 _CAPTION_LEAD = re.compile(r"^\s*\**\s*(?:figure|fig\.?)\s*\d+\s*[.:|]\s*\**\s*", re.IGNORECASE)
 
 RESUME_BUILD = (
@@ -114,12 +121,13 @@ class Paper:
 
     venue: str
     path: Path
-    status: str                               # passed | gate_failed | build_failed | waiting
+    status: str                               # passed | gate_failed | build_failed | held
     builds: list = field(default_factory=list)
     decided: object = None                    # the decider's `Outcome`, when it picked the venue
     kill: object = None                       # the kill argument's adjudication, a `gates.Verdict`
-    review: object = None                     # the independent review, a `gates.Verdict`
-    tickets: list = field(default_factory=list)
+    read: object = None                       # the one independent verdict, a `gates.Verdict`
+    tickets: list = field(default_factory=list)   # the scope-down tickets standing open after the gate
+    claims: object = None                     # `provenance.verify_claims`'s outcome, under --verify
     notes: list = field(default_factory=list)
 
 
@@ -249,7 +257,12 @@ def _place(project, draft, record, policy, harness_root, draw_figure, say):
             continue
         try:
             result, reason = draw_figure(project, request, harness_root=harness_root, policy=policy, say=say)
-        except (figure_role.FigureError, gates.GateError, worker.LaunchError, worker.RoleError) as failure:
+        except (gates.UsageLimited, gates.FableHeld):
+            raise  # a window or the hold on Fable stops the whole paper, as it stops the writer (the caller's to say)
+        except figure_role.FigureError as failure:
+            placed[figure_id] = {"state": FAILED, "why": "the figure role refused the request: %s" % failure}
+            continue
+        except (gates.GateError, worker.LaunchError, worker.RoleError) as failure:
             placed[figure_id] = {"state": WAITING, "why": "the figure role stopped: %s" % failure}
             continue
         status = result.get("status")
@@ -349,13 +362,27 @@ def check_build(project, record, text, *, harness_root=HARNESS_ROOT, policy=None
     return lint, findings
 
 
-def _failures(lint, findings, figure_problems):
-    listed = ["- lint `%s`: %s (%s%s)" % (problem["problem"], provenance._inline(problem["sentence"]),
+def _owners(finding, record, files):
+    """Whether a failing check is one no redraft can meet: a placed figure's format at a venue taking neither PDF nor PNG.
+
+    The figure role draws PDF and PNG only, so at a venue that takes TIFF or EPS alone the conversion is the owner's.
+    """
+    accepted = {str(name).lower() for name in record["figure_spec"]["formats"]}
+    return (finding.check == "figures" and accepted and not accepted & {"pdf", "png"}
+            and any(finding.message.startswith("%s is " % Path(name).name) for name in files))
+
+
+def _failures(lint, findings, figure_problems, record, files):
+    """The build's list for the writer, and the notes for the owner: `(failures, notes)`."""
+    listed = ["- lint `%s`: %s (%s%s)" % (problem["problem"], provenance.one_line(problem["sentence"]),
                                           "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
               for problem in lint.problems]
-    listed += ["- check `%s`: %s" % (finding.check, finding.message) for finding in findings if finding.level == "fail"]
+    failing = [finding for finding in findings if finding.level == "fail"]
+    listed += ["- check `%s`: %s" % (finding.check, finding.message) for finding in failing if not _owners(finding, record, files)]
     listed += ["- figure: %s" % problem["detail"] for problem in figure_problems]
-    return listed
+    notes = ["%s: the figure role draws PDF and PNG, so converting it for the venue is the owner's" % finding.message
+             for finding in failing if _owners(finding, record, files)]
+    return listed, notes
 
 
 # --- the writer -----------------------------------------------------------------------------------
@@ -381,15 +408,20 @@ def _references(project):
     return found
 
 
-def _open_scope_downs(project):
-    """The open `writing` tickets a previous gate filed against the paper, for the writer to answer this time."""
+def _scope_downs(project):
+    """The open `writing` tickets a gate filed against the paper (origin the paper, or its read), oldest first."""
     try:
         listed = tickets.read_tickets(project)
     except tickets.TicketError:
         return []
-    return ["- research/tickets/%s: %s" % (tickets.filename(fields), fields["title"]) for fields in listed
-            if fields["kind"] == "writing" and str(fields.get("origin") or "").startswith(PAPER_PATH)
+    return [fields for fields in listed
+            if fields["kind"] == "writing" and fields.get("origin") in (PAPER_PATH, READ_ORIGIN)
             and fields["status"] not in tickets.SATISFIED + ("parked",)]
+
+
+def _open_scope_downs(project):
+    """The scope-down tickets as the writer's prompt lists them, for it to answer this time."""
+    return ["- research/tickets/%s: %s" % (tickets.filename(fields), fields["title"]) for fields in _scope_downs(project)]
 
 
 def _guideline_summary(record):
@@ -402,7 +434,7 @@ def _guideline_summary(record):
 
 def writer_prompt(role, project, record, harness_root=HARNESS_ROOT):
     """The writer's prompt for a paper: the venue, the evidence, the references, the results, the form, the schema."""
-    context = provenance._context(project)
+    context = provenance.report_context(project)
     evidence = provenance.report_evidence(context)
     slug = record["venue"]
     lines = [
@@ -447,13 +479,11 @@ def writer_prompt(role, project, record, harness_root=HARNESS_ROOT):
     for group in evidence["groups"]:
         lines.extend(["## Group `%s`" % group["group"], ""])
         for item in group["findings"]:
-            lines.append("- `%s` (ticket %s): %s" % (item["id"], item["ticket"], item["text"]))
-            lines.append("  tags: %s" % " ".join("`{%s}`" % tag for tag in item["tags"]))
+            lines.extend(provenance.finding_lines(item))
         lines.append("")
     lines.extend(["## Negative results", ""])
     for item in evidence["negative"]:
-        lines.append("- `%s` (ticket %s): %s" % (item["id"], item["ticket"], item["text"]))
-        lines.append("  tags: %s" % " ".join("`{%s}`" % tag for tag in item["tags"]))
+        lines.extend(provenance.finding_lines(item))
     if not evidence["negative"]:
         lines.append("None was recorded.")
     lines.extend(["", "# The references a `ref` tag can name", ""])
@@ -466,21 +496,21 @@ def writer_prompt(role, project, record, harness_root=HARNESS_ROOT):
     scope_downs = _open_scope_downs(project)
     if scope_downs:
         lines.extend(["", "# What the last gate left standing", "",
-                      "The kill argument or the independent review failed an earlier draft and filed these. Read each and "
+                      "The kill argument or the independent read failed an earlier draft and filed these. Read each and "
                       "answer its points in this draft, with the evidence it asks for or a claim scoped down:", ""] + scope_downs)
     lines.extend(["", "Return the draft through the structured output; the harness writes it to `research/paper/` and builds it."])
-    return provenance._joined("\n".join(lines), role.protocol, worker.schema_section("# The draft", DRAFT_SCHEMA))
+    return provenance.joined("\n".join(lines), role.protocol, worker.schema_section("# The draft", DRAFT_SCHEMA))
 
 
 def _answer(request, session_id=None, message=None):
     """One writer turn: a launch, or a resume carrying the build's list; the schema is checked and asked for once more."""
     envelope = worker.launch(request) if session_id is None else worker.resume(request, session_id, message)
-    provenance._raise_if_refused(envelope, "writer", request.model)
-    problem = provenance._schema_problem(envelope, DRAFT_SCHEMA)
+    provenance.raise_if_refused(envelope, "writer", request.model)
+    problem = provenance.schema_problem(envelope, DRAFT_SCHEMA)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, provenance.RESUME_STRUCTURED % problem)
-        provenance._raise_if_refused(envelope, "writer", request.model)
-        problem = provenance._schema_problem(envelope, DRAFT_SCHEMA)
+        provenance.raise_if_refused(envelope, "writer", request.model)
+        problem = provenance.schema_problem(envelope, DRAFT_SCHEMA)
     if problem is not None:
         raise PaperError("the writer's draft could not be used: %s" % problem)
     return envelope
@@ -497,40 +527,52 @@ def _gate_paths(record, harness_root, placed_files):
     return paths
 
 
-def _review_ticket(project, book, review, paths):
+def _read_ticket(project, book, read, paths):
+    """The `writing` ticket a failed read scopes the claims down with, unless one stands open already."""
+    if gates.open_writing_ticket(project, READ_ORIGIN) is not None:
+        return None
     body = "\n".join([
-        "## What the independent review did not accept",
+        "## What the independent read did not accept",
         "",
         "Verifier session `%s` (%s) read the draft against the run's evidence and the venue's guidelines and found:"
-        % (review.session_id, review.model),
+        % (read.session_id, read.model),
         "",
-        gates.findings_text(review.findings),
+        gates.findings_text(read.findings),
         "",
         "Scope each claim to what the artifacts support, or add the evidence the point asks for, then run "
         "`wayline paper` again: the writer is given this ticket with the next draft.",
         "",
-        "## The paths the review read",
+        "## The paths the read opened",
         "",
     ] + ["- `%s`" % item for item in paths])
     return gates.file_writing_ticket(
-        project, book, title=REVIEW_TITLE, touches=[PAPER_PATH], inputs=list(paths),
-        quality=["Does every point the independent review raised now have the evidence it asked for or a claim scoped down?"],
-        origin=PAPER_PATH + "#review", demo="`wayline paper` drafts again and the independent review passes.", body=body,
+        project, book, title=READ_TITLE, touches=[PAPER_PATH], inputs=list(paths),
+        quality=["Does every point the independent read raised now have the evidence it asked for or a claim scoped down?"],
+        origin=READ_ORIGIN, demo="`wayline paper` drafts again and the independent read passes.", body=body,
     )
 
 
 def _gate(project, book, record, author, policy, harness_root, placed_files):
-    """The kill argument, then the independent review: both fresh verifier sessions, each failing into a `writing` ticket."""
+    """The kill argument, then the one independent verdict: `(kill, read, notes)`, `read` None when it was not spent.
+
+    Every thread is a fresh verifier session. A failed kill argument sends the draft back through its `writing`
+    ticket, and the read is not spent on a draft already going back (the owner orders by token cost). A gate that
+    passes both cancels the scope-down tickets earlier drafts left open, since this draft answered them.
+    """
     paths = _gate_paths(record, harness_root, placed_files)
-    before = {fields["id"] for fields in tickets.read_tickets(project)}
+    earlier = [fields["id"] for fields in _scope_downs(project)]
     kill = gates.kill_argument(paths, project=project, author_model=author, subject_kind="paper", subject=PAPER_PATH,
                                harness_root=harness_root, policy=policy, ledger=book)
-    review = gates.verdict("paper", PAPER_PATH, REVIEW_QUESTION, paths, REVIEW_SCOPE, project=project, author_model=author,
-                           verdict_type=gates.PAPER_REVIEW, harness_root=harness_root, policy=policy, ledger=book)
-    if not review.passed:
-        _review_ticket(project, book, review, paths)
-    filed = sorted(fields["id"] for fields in tickets.read_tickets(project) if fields["id"] not in before)
-    return kill, review, filed
+    if not kill.passed:
+        return kill, None, ["the read was not spent: the kill argument already sends this draft back"]
+    read = gates.verdict("paper", PAPER_PATH, READ_QUESTION, paths, READ_SCOPE, project=project, author_model=author,
+                         verdict_type=gates.PAPER_READ, harness_root=harness_root, policy=policy, ledger=book)
+    if not read.passed:
+        _read_ticket(project, book, read, paths)
+        return kill, read, []
+    for identifier in earlier:
+        steer_ticket(project, "cancel", identifier)
+    return kill, read, ["cancelled scope-down ticket(s) %s, which this draft answered" % ", ".join(map(str, earlier))] if earlier else []
 
 
 # --- the whole ------------------------------------------------------------------------------------
@@ -543,19 +585,23 @@ def _verdict_record(taken):
             "findings": [dict(finding) for finding in taken.findings]}
 
 
-def _write_build(book, paper, record):
-    book.write_json("%s/%s" % (PAPER_DIR, BUILD_JSON), {
-        "schema_version": 1, "venue": paper.venue, "display_name": record["display_name"], "status": paper.status,
-        "venue_decided_by": "decider" if paper.decided is not None else "owner",
-        "builds": paper.builds, "kill_argument": _verdict_record(paper.kill), "review": _verdict_record(paper.review),
-        "tickets": paper.tickets, "notes": paper.notes, "submitted": False,
-    })
+def summary(paper):
+    """What one `wayline paper` came to, as `build.json` and `--json` both give it."""
+    return {"venue": paper.venue, "path": str(paper.path), "status": paper.status,
+            "venue_decided_by": "decider" if paper.decided is not None else "owner", "builds": paper.builds,
+            "kill_argument": _verdict_record(paper.kill), "read": _verdict_record(paper.read), "tickets": paper.tickets,
+            "claims": paper.claims, "notes": paper.notes, "submitted": False}
 
 
-def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, draw_figure=None, say=None):
+def _write_build(book, paper):
+    book.write_json("%s/%s" % (PAPER_DIR, BUILD_JSON), dict(summary(paper), schema_version=1))
+
+
+def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, draw_figure=None, say=None, verify=False):
     """Draft `research/paper/` for `venue` (the decider's pick when None), build it until it passes or `MAX_BUILDS`, and gate it.
 
-    Returns a `Paper`. `draw_figure` stands in for `draw`, the figure role's door, in a test; `say` hears progress.
+    Returns a `Paper`. `draw_figure` stands in for `draw`, the figure role's door, in a test; `say` hears progress;
+    `verify` samples the draft's tagged claims after a gate that passed.
     Raises `PaperError` before anything is journaled when there is no report or the venue has no guidelines, and lets
     a usage window's refusal (`provenance.UsageLimited`, `gates.UsageLimited`) or the hold on Fable out to the caller.
     """
@@ -577,8 +623,8 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
         raise PaperError("%s; the venues with guidelines are %s" % (failure, ", ".join(sorted(venues(harness_root))) or "none")) from None
     book.append_event(PAPER_STARTED, {"venue": venue})
     role = worker.read_role(WRITER, harness_root, project)
-    request = provenance._request(project, role, policy, harness_root, writer_prompt(role, project, record, harness_root),
-                                  DRAFT_SCHEMA, WRITER_BUDGET, provenance._session_dir(project, SESSIONS), read_only=True)
+    request = provenance.structured_request(project, role, policy, harness_root, writer_prompt(role, project, record, harness_root),
+                                  DRAFT_SCHEMA, WRITER_BUDGET, provenance.session_dir(project, SESSIONS), read_only=True)
     paper = Paper(venue=venue, path=book.research / PAPER_DIR / PAPER_MD, status=BUILD_FAILED, decided=decided)
     session_id, message, files, waiting = None, None, {}, []
     for number in range(1, MAX_BUILDS + 1):
@@ -593,7 +639,7 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
             book.write_bytes("%s/%s" % (PAPER_DIR, name), source.read_bytes())
         book.write_markdown("%s/%s" % (PAPER_DIR, PAPER_MD), text)
         lint, findings = check_build(project, record, text, harness_root=harness_root, policy=policy)
-        failures = _failures(lint, findings, figure_problems)
+        failures, owners = _failures(lint, findings, figure_problems, record, files)
         waiting = sorted(figure_id for figure_id, figure in placed.items() if figure["state"] == WAITING)
         paper.builds.append({
             "build": number, "session_id": envelope.session_id, "model": envelope.model,
@@ -602,7 +648,7 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
             "checks": [finding._asdict() for finding in findings],
             "figures": {figure_id: {key: str(value) if isinstance(value, Path) else value for key, value in figure.items()}
                         for figure_id, figure in placed.items()},
-            "failures": failures, "notes": draft["notes"],
+            "failures": failures, "owners": owners, "notes": draft["notes"],
         })
         say("build %d    linter %s (%d claims, %d tagged), checks %s, %d figure(s) placed%s" % (
             number, "pass" if lint.passed else "FAIL", lint.claims, lint.tagged, guidelines.worst(findings), len(files),
@@ -612,6 +658,7 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
         message = RESUME_BUILD % "\n".join(failures)
     else:
         paper.notes.append("the draft still failed its build after %d builds; no verdict was spent on it" % MAX_BUILDS)
+    paper.notes.extend(paper.builds[-1]["owners"])
     if draft["notes"].strip():
         paper.notes.append("the writer: %s" % " ".join(draft["notes"].split()))
     if not paper.builds[-1]["failures"]:
@@ -620,10 +667,17 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
             paper.notes.append("figure(s) %s are not drawn yet; `wayline figure resume <figure_id>` once settled, then "
                                "wayline paper again. No verdict was spent on an unfinished draft" % ", ".join(waiting))
         else:
-            say("gate      the kill argument and the independent review, on the verifier for %s" % request.model)
-            paper.kill, paper.review, paper.tickets = _gate(project, book, record, request.model, policy, harness_root, files)
-            paper.status = PASSED if paper.kill.passed and paper.review.passed else GATE_FAILED
-    _write_build(book, paper, record)
+            say("gate      the kill argument and the independent read, on the verifier for %s" % request.model)
+            paper.kill, paper.read, notes = _gate(project, book, record, request.model, policy, harness_root, files)
+            paper.notes.extend(notes)
+            paper.status = PASSED if paper.kill.passed and paper.read.passed else GATE_FAILED
+            paper.tickets = [fields["id"] for fields in _scope_downs(project)] if paper.status == GATE_FAILED else []
+            if verify and paper.status == PASSED:
+                say("claims    the verifier's sample of the draft's tagged claims")
+                paper.claims = provenance.verify_claims(project, harness_root=harness_root, policy=policy,
+                                                        document=PAPER_PATH, prose_author=request.model)
+                paper.tickets = paper.claims["tickets"]
+    _write_build(book, paper)
     return paper
 
 
@@ -631,12 +685,14 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
 
 
 def paper_command(args):
-    """`wayline paper [--venue <slug>] [--project <path>] [--json]`."""
+    """`wayline paper [--venue <slug>] [--project <path>] [--verify] [--json]`."""
     parser = argparse.ArgumentParser(prog="wayline paper", description=(
         "draft research/paper/ under a venue's guidelines, build it with the linter and the seven checks, and gate it "
-        "with the kill argument and one independent review; nothing is submitted"))
+        "with the kill argument and one independent read; nothing is submitted"))
     parser.add_argument("--venue", help="the venue's slug under guidelines/ (default: the decider picks the best fit)")
     parser.add_argument("--project", help="the project (default: the active one)")
+    parser.add_argument("--verify", action="store_true",
+                        help="after a gate that passed, take a verdict on a sample of the draft's tagged claims (10 percent, at least ten)")
     parser.add_argument("--json", action="store_true", help="print the outcome as JSON")
     options, code = parse_args(parser, args)
     if options is None:
@@ -648,18 +704,16 @@ def paper_command(args):
         return 2
     say = (lambda text: None) if options.json else print
     try:
-        paper = write_paper(project, options.venue, say=say)
+        paper = write_paper(project, options.venue, say=say, verify=options.verify)
     except (PaperError, provenance.ProvenanceError, gates.GateError, guidelines.GuidelinesError, worker.LaunchError,
             worker.RoleError, tickets.TicketError, decider.DeciderError) as failure:
         print("wayline paper: %s" % failure, file=sys.stderr)
         return 1
     if options.json:
-        print(json.dumps({"venue": paper.venue, "path": str(paper.path), "status": paper.status, "builds": len(paper.builds),
-                          "kill_argument": _verdict_record(paper.kill), "review": _verdict_record(paper.review),
-                          "tickets": paper.tickets, "notes": paper.notes, "submitted": False}, ensure_ascii=False, indent=2))
+        print(json.dumps(summary(paper), ensure_ascii=False, indent=2))
     else:
         print(render(paper))
-    return 0 if paper.status == PASSED else 1
+    return 0 if paper.status == PASSED and not (paper.claims and paper.claims["failed"]) else 1
 
 
 def render(paper):
@@ -671,13 +725,17 @@ def render(paper):
             len(paper.builds), "pass" if last["lint"]["pass"] else "FAIL", last["lint"]["tagged"], last["lint"]["claims"],
             guidelines.worst(guidelines.Finding(**finding) for finding in last["checks"])))
         lines.extend("  %s" % failure for failure in last["failures"])
-    for name, taken in (("kill arg", paper.kill), ("review", paper.review)):
+    for name, taken in (("kill arg", paper.kill), ("read", paper.read)):
         if taken is not None:
             lines.append("%-9s %s, verifier session %s on %s%s" % (name, "pass" if taken.passed else "FAIL", taken.session_id, taken.model,
                                                                   " in place of %s" % taken.fallback_from if taken.fallback_from else ""))
             lines.extend("  - [%s] %s" % (finding.get("severity"), " ".join(str(finding.get("text", "")).split())) for finding in taken.findings)
+    if paper.claims is not None:
+        lines.append("claims    %d of %d tagged claims sampled: %d passed, %d failed, %d already had a verdict" % (
+            paper.claims["sampled"], paper.claims["claims"], len(paper.claims["passed"]), len(paper.claims["failed"]),
+            paper.claims["already_verdicted"]))
     if paper.tickets:
-        lines.append("filed     writing ticket(s) %s, to scope the claims down" % ", ".join(map(str, paper.tickets)))
+        lines.append("open      writing ticket(s) %s, to scope the claims down" % ", ".join(map(str, paper.tickets)))
     lines.extend("note      %s" % note for note in paper.notes)
     lines.append("status    %s; the owner reads research/paper/ and research/paper/build.json. Nothing was submitted." % paper.status)
     return "\n".join(lines)

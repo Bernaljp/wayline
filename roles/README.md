@@ -196,7 +196,7 @@ and on `policy.roles.writer` rather than a rung: `wayline report` asks it for th
 the ledger writes what it returns, since nothing under `research/` is a session's to write. The
 paper's session is resumed with each failed build's list (the linter, the venue's seven checks, a
 figure the figure role could not place), and it is given the open `writing` tickets a failed kill
-argument or review filed against the paper. The prompt carries the venue's `guidelines.json`, the
+argument or the independent read filed against the paper. The prompt carries the venue's `guidelines.json`, the
 findings with their tags, and the references a `ref` tag can name; `agent.md` stays the C8 rule both
 launches share.
 

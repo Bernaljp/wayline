@@ -693,9 +693,13 @@ Numbered so the milestones can point at them. Every decision below either restat
     caption sit between the records markers, as the report's listings do, because the figure role's own
     `provenance` check and honesty verdict trace them; a figure that waits on the owner holds the gate. So does
     the reference list, which claims nothing.
-  - **The gate.** The kill argument and one independent review (`verdict_type: paper_review`), both on the
-    verifier the table gives for the writer's model. Each fail files a `writing` ticket with the paper as its
-    origin, and the next `wayline paper` gives the writer the open ones.
+  - **The gate.** The kill argument, then one independent verdict, the read (`verdict_type: paper_read`), all on
+    the verifier the table gives for the writer's model; the read is not spent on a draft the kill argument sent
+    back. Each fail files a `writing` ticket with the paper as its origin, one per point while it stands open, and
+    the next `wayline paper` gives the writer the open ones; a draft passing both cancels them. At a venue taking
+    neither PDF nor PNG, a figure's format is the owner's to convert, a note rather than a build failure.
+  - **Sampling.** `wayline paper --verify` samples the draft's tagged claims after a gate that passed, as
+    `wayline report --verify` does the report's.
   - **The venue.** `wayline paper` without `--venue` asks the decider once, with each venue's limits as evidence;
     the pick is a `decision` with no ticket, answered `paper venue: <slug>`, which the report lists first. A
     refusal or an answer naming no one venue stops the command before `paper_started`.
