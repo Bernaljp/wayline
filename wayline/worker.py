@@ -51,7 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Union
 
-from wayline import HARNESS_ROOT, pacing, registry
+from wayline import HARNESS_ROOT, BackendTouched, pacing, real_backend, registry
 from wayline.frontmatter import FrontmatterError, load_document
 from wayline.jsonschema import SchemaError, check_schema, load_schema, validate
 from wayline.ledger import now_ts
@@ -61,8 +61,8 @@ __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
     "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "take_answered_refusals", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "launches_on", "fall_back", "stderr_tail", "stderr_of",
-    "NO_LEGACY_REMAP", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
-    "session_dir", "session_env", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
+    "NO_LEGACY_REMAP", "MAX_OUTPUT_TOKENS", "OUTPUT_TOKENS", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
+    "session_dir", "session_env", "STAGED", "staged_path", "with_staged", "place_staged", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command", "login_command", "auth_status_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
     "schema_bullets", "schema_section", "protocol_for",
@@ -89,6 +89,11 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # request, so a rung naming a dead model would exit 0 and be paid for on another one. Every launch turns the
 # remap off, and a name the subscription does not serve then fails for free with the 404 below.
 NO_LEGACY_REMAP = "CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP"
+# The CLI stops an answer at 64000 output tokens unless told otherwise, and a planner at `xhigh` cutting a graph
+# of small tickets wrote one past it (the M6 demo, ticket 47). Fable and Opus accept 128000. A session pays only
+# for what it writes, so every launch may answer up to that; an owner who set the variable keeps theirs.
+MAX_OUTPUT_TOKENS = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+OUTPUT_TOKENS = 128000
 NOT_SERVED_STATUS = 404
 _NOT_SERVED_RE = re.compile(r"There's an issue with the selected model \(([^)]*)\)")
 # A dated model id names the same version as its undated name: `claude-sonnet-4-5-20250929` is `claude-sonnet-4-5`.
@@ -141,9 +146,10 @@ class LaunchRequest:
     max_minutes: Optional[float] = None
 
     def __post_init__(self):
-        """Turn the legacy model remap off for this session (decision 16); a malformed `env` is left to `check`."""
+        """Turn the legacy model remap off (decision 16) and raise the output cap; a malformed `env` is left to `check`."""
         if isinstance(self.env, dict):
             self.env.setdefault(NO_LEGACY_REMAP, "1")
+            self.env.setdefault(MAX_OUTPUT_TOKENS, os.environ.get(MAX_OUTPUT_TOKENS) or str(OUTPUT_TOKENS))
 
     @property
     def run_dir(self):
@@ -870,6 +876,10 @@ def _contract_section(ticket, consult_max):
         "# The contract",
         "",
         "- Write only under the touch set: %s. A hook blocks every write outside it." % ", ".join("`%s`" % item for item in ticket["touches"]),
+    ] + [
+        "- Claude Code refuses every write under `.claude/`, so write `%s` at `%s` instead; `wayline accept` moves it into place, "
+        "and you commit it where it lands." % (touch, staged_path(touch)) for touch in ticket["touches"] if staged_path(touch) is not None
+    ] + [
         "- Run `wayline accept` from the worktree root before you stop; the stop is blocked until the file it writes exists.",
         "- Commit your work on the branch `ticket/%s`. The conductor integrates that branch, so anything uncommitted is lost." % ticket["id"],
         "- Never integrate, never close the ticket, never edit `research/`: the conductor does all three.",
@@ -943,6 +953,61 @@ def integrator_prompt(ticket, role, conflicts, touches=None, max_chars=None, bud
     return Prompt(text, used, cut)
 
 
+# --- the staged copy of a touch under .claude/ ---------------------------------------------------
+
+# Claude Code refuses every write under `.claude/` in a headless session, whatever the allow rules say (the M6
+# demo, ticket 47, found it: bare, relative, rooted, and absolute `Write(...)` rules, a settings file's allow list,
+# `acceptEdits`, and `--add-dir` were all refused). A local skill or role override lives there, so the worker
+# writes it at the same path under `.wayline-staged/`, which the launch admits beside it, and code moves it into
+# place: `wayline accept` in the worktree, and the conductor before its own acceptance.
+STAGED = ".wayline-staged"
+CLAUDE_DIR = ".claude/"
+
+
+def staged_path(touch):
+    """Where a worker writes a touch under `.claude/`: the same path under `.wayline-staged/`; None for any other touch."""
+    text = str(touch)
+    return STAGED + "/" + text[len(CLAUDE_DIR):] if text.startswith(CLAUDE_DIR) else None
+
+
+def with_staged(touches):
+    """A touch set with the staged path of each touch under `.claude/` added after it."""
+    touches = [str(item) for item in touches]
+    return touches + [staged_path(item) for item in touches if staged_path(item) is not None and staged_path(item) not in touches]
+
+
+def place_staged(root, touches):
+    """Move what was staged for each touch under `.claude/` into place in `root`; the touches placed.
+
+    A staged directory is merged into the one it stands for file by file, so a worker that restages one file of a
+    skill on a resume, or one override under a touch of all of `.claude/agents/`, leaves the rest as it was; a
+    staged file replaces the file. The stage is removed once it is empty.
+    """
+    root = Path(root)
+    placed = []
+    for touch in touches:
+        staged = staged_path(touch)
+        if staged is None or not (root / staged).exists():
+            continue
+        source, target = root / staged, root / str(touch)
+        if source.is_dir():
+            for item in sorted(path for path in source.rglob("*") if path.is_file()):
+                destination = target / item.relative_to(source)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(item, destination)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, target)
+        placed.append(str(touch))
+    stage = root / STAGED
+    for directory in sorted((path for path in stage.rglob("*") if path.is_dir()), reverse=True) if stage.is_dir() else []:
+        if not any(directory.iterdir()):
+            directory.rmdir()
+    if stage.is_dir() and not any(stage.iterdir()):
+        stage.rmdir()
+    return placed
+
+
 # --- the session directory ----------------------------------------------------------------------
 
 
@@ -963,7 +1028,7 @@ def session_env(project, ticket, attempt, touches, harness_root=HARNESS_ROOT, pa
     if isinstance(touches, (str, Path)):
         touches = [touches]
     return {
-        "TICKET_TOUCHES": ":".join(str(item) for item in touches),
+        "TICKET_TOUCHES": ":".join(with_staged(touches)),
         "TICKET_ACCEPTANCE_FILE": str(run / "acceptance.json"),
         "WAYLINE_PROJECT": str(project),
         "WAYLINE_TICKET": str(ticket),
@@ -1534,6 +1599,8 @@ class ClaudeCli:
             if not (os.path.isfile(override) and os.access(override, os.X_OK)):
                 raise LaunchError("WAYLINE_CLAUDE=%s is not an executable file" % override)
             return os.path.abspath(override)  # the child runs in another cwd
+        # A test's stand-in comes through the override above; the installed executable is the subscription.
+        real_backend("the %s executable" % self.executable)
         found = shutil.which(self.executable)
         if found is None:
             # The user manager's PATH, which the tick and a detached conductor start from, lacks the directory the
@@ -2303,7 +2370,7 @@ def validate_plugin(path, timeout=60):
     """
     try:
         executable = CLAUDE_CLI._executable()
-    except LaunchError as failure:
+    except (LaunchError, BackendTouched) as failure:  # under `WAYLINE_BACKENDS=none` it is as absent as on a machine without it
         return {}, "%s did not run: %s" % (PRE_CHECK_LABEL, failure)
     argv = [executable, *PRE_CHECK_ARGV, str(path), "--json"]
     try:

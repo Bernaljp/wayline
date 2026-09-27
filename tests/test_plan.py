@@ -297,6 +297,17 @@ class PlanCase(ProjectTestCase):
     def second_message(self):
         return self.calls(plan.PLANNER)[1].message
 
+    def harness_ticket(self):
+        """The harness ticket the evolve loop files for a local change record (ticket 45), next to the graph; its id."""
+        identifier = tickets.next_id(self.project)
+        write_ticket(self.ledger, fields(identifier, "Tell the planner to cut smaller tickets", kind="harness", role="coder",
+                                         touches=[".claude/agents/planner.md", "fixtures/role/planner-cuts-small/"],
+                                         acceptance={"machine": ["test -f fixtures/role/planner-cuts-small/fixture.json"], "quality": []},
+                                         context_pack=["research/changes/001-tell-the-planner-to-cut-smaller-tickets.json"],
+                                         origin="change 001-tell-the-planner-to-cut-smaller-tickets", proposed_by="evolve"),
+                     "## Demo\n\nThe planner cuts smaller tickets.\n")
+        return identifier
+
 
 class CutTest(PlanCase):
     """Criteria 1, 2, and 4: the launch, the written graph, the librarian's assignments, the decision tickets."""
@@ -578,6 +589,21 @@ class CheckpointsTest(PlanCase):
         self.assertEqual(report["state"]["state"], "pending")
         self.assertIsNone(plan.read_plan(self.project)["sent_back"])
 
+    def test_a_revise_leaves_the_evolve_loops_harness_ticket_to_its_change_record(self):
+        self.script(planned(cut()))
+        self.plan()
+        harness = self.harness_ticket()
+        code, _, err = run("answer", "10", "revise: split the network experiment by seed", "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.statuses()[harness], "open", "the change record owns its harness ticket; no cut of the graph parks it")
+        self.assertNotIn(harness, plan.read_plan(self.project)["sent_back"]["parked"])
+        self.script(planned(cut()))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        self.assertIn("- #%d [open, kept] harness" % harness, self.calls(plan.PLANNER)[1].request.prompt)
+        self.assertNotIn(harness, report["written"]["superseded"])
+        self.assertEqual(self.statuses()[harness], "open")
+
     def test_a_sent_back_graph_is_not_confirmed_by_a_later_answer(self):
         self.script(planned(cut()))
         self.plan()
@@ -771,6 +797,22 @@ class ReplanTest(PlanCase):
         self.assertEqual(self.confirmation()[-1]["blocking"], "all")
         self.assertEqual(report["state"]["state"], "pending")
         self.assertEqual(self.phases()[-1], ("P4", "P5"), "the phase does not move back")
+
+    def test_a_stall_replan_keeps_the_evolve_loops_harness_ticket(self):
+        harness = self.harness_ticket()
+        self.script(planned(self.recut()))
+        report = plan.replan(self.project, notify=self.notify, pre_check=False)
+        self.assertIsNone(report["stopped"], report)
+        self.assertIn("- #%d [open, kept] harness" % harness, self.calls(plan.PLANNER)[0].request.prompt)
+        self.assertEqual(report["written"]["superseded"], [2, 4, 5, 6, 7, 8, 9])
+        self.assertEqual(self.statuses()[harness], "open")
+
+    def test_the_planner_is_never_asked_to_split_a_change_record_s_harness_ticket(self):
+        harness = self.harness_ticket()
+        self.set_status(harness, "failed")
+        report = plan.split(self.project, harness, notify=self.notify, pre_check=False)
+        self.assertIn("change record", report["stopped"] or "")
+        self.assertEqual(self.calls(plan.PLANNER), [], "refused before a session is launched")
 
     def test_a_kept_code_ticket_that_adds_public_api_still_needs_its_docs_ticket(self):
         self.set_status(1, "failed")  # kept by the re-cut, with its docs ticket 2 taken back

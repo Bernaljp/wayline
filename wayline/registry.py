@@ -426,9 +426,11 @@ def _fixture_problems(fixtures, roots):
     for a local skill may be written into either tree, so a gate that looked in one of them would
     hold a working skill back forever.
 
-    Until ticket 44's runner exists the evidence is the baseline the recorder wrote: a fixture with
-    no baseline, or with a baseline that records no result, has never passed, and one whose recorded
-    layers are not a clean sweep did not pass.
+    The evidence is the baseline: a fixture with no baseline, or with a baseline that records no
+    result, has never passed. A baseline the runner (ticket 44) set says `passed` under the fixture's
+    own rule, the judged layer at `at_least` of its sample (the M6 demo's skill passed at 2 of 3),
+    and that is the answer; one the recorder wrote before the runner existed says no `passed`, and
+    passes only when its recorded layers are a clean sweep.
     """
     if not fixtures:
         return ["a local skill names no fixture, so nothing has shown that it works"]
@@ -449,6 +451,9 @@ def _fixture_problems(fixtures, roots):
                   if isinstance(baseline, dict) and baseline.get(layer) is not None]
         if not scores:
             problems.append("the fixture %s has no recorded baseline, so it has never passed" % identifier)
+        elif isinstance(baseline.get("passed"), bool):
+            if not baseline["passed"]:  # the runner's verdict under the fixture's own pass rule (decision 12)
+                problems.append("the fixture %s did not pass at its baseline (%s)" % (identifier, baseline))
         elif not all(_full_pass(score) for score in scores):
             problems.append("the fixture %s did not pass at its baseline (%s)" % (identifier, baseline))
     return problems

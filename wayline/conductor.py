@@ -127,6 +127,7 @@ worker's own account of its quality: `accepted` comes from a verifier on another
 """
 
 import argparse
+import functools
 import json
 import os
 import shutil
@@ -3234,8 +3235,31 @@ class Conductor:
             tickets.write_ticket(self.ledger, dict(ticket, status="open"), tickets.retire_answer(body))
             self.say("  ticket %d rerun by %s; it is open for a new attempt" % (identifier, by))
 
+    def _place_staged(self, attempt):
+        """What the worker could only stage under `.wayline-staged/` put under `.claude/` and committed on the ticket's branch.
+
+        Claude Code refuses a headless session's writes under `.claude/` (`worker.STAGED`), so a local skill or role
+        override arrives staged. `wayline accept` places it when the worker runs it; this places what is still staged
+        and commits the placement either way, before the acceptance, the proof, and the integration read the branch.
+        """
+        touches = [touch for touch in attempt.ticket["touches"] if worker.staged_path(touch) is not None]
+        if not touches:
+            return
+        worker.place_staged(attempt.worktree, touches)
+        paths = [touch for touch in touches if (attempt.worktree / touch).exists()]
+        if self._git(attempt.worktree, "ls-files", "--", worker.STAGED).stdout.strip():
+            paths.append(worker.STAGED)
+        if not paths:
+            return
+        self._git(attempt.worktree, "add", "-A", "-f", "--", *paths)  # a project may ignore .claude/; this touch is its work
+        if self._git(attempt.worktree, "diff", "--cached", "--quiet", "--", *paths, ok=None).returncode != 0:
+            self._git(attempt.worktree, "commit", "-q", "-m", "ticket %d: place the staged %s" % (attempt.id, ", ".join(touches)), "--", *paths)
+            self.say("  ticket %d: placed the staged %s" % (attempt.id, ", ".join(touches)))
+
     def _accept(self, attempt, where, cwd):
         """Run the ticket's machine acceptance in `cwd` and journal it under the label `where`."""
+        if where == "worktree" and Path(cwd) == Path(attempt.worktree):
+            self._place_staged(attempt)
         commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
@@ -4095,7 +4119,8 @@ class Conductor:
         """The first step after the resume this ticket can still take, in `_step_order` order, from `start` on.
 
         A split is taken once, and never for a decision ticket, which is answered, nor for a ticket a split cut, so
-        splits do not recurse. A tier up is taken `policy.escalation.tier_up` times at most, and never for a pinned
+        splits do not recurse, nor for the harness ticket of a change record, which the record owns as no cut of the
+        graph takes it back (`plan.superseded_by`). A tier up is taken `policy.escalation.tier_up` times at most, and never for a pinned
         ticket or one already on the ladder's top rung, which has nowhere to climb (decision 16). A step already
         taken counts as spent, so a step that could not be taken sends the ticket on to the next. `start` is where a
         failure that names its own step begins (an integration that conflicted starts at the split); `needs_human`
@@ -4112,7 +4137,8 @@ class Conductor:
             # split, and still goes on to the tier up when the split is spent, whichever order the two are in.
             order = [start] + [step for step in order if step != start]
         for step in order:
-            if step == SPLIT and not taken(SPLIT) and fields["kind"] != tickets.DECISION and not self._cut_by_split(identifier):
+            if step == SPLIT and not taken(SPLIT) and fields["kind"] != tickets.DECISION and not self._cut_by_split(identifier) \
+                    and self._change_record(identifier, fields) is None:
                 return SPLIT
             if step == TIER_UP and taken(TIER_UP) < ladder["tier_up"] and fields.get("pinned_difficulty") is None \
                     and self._next_rung(identifier) is not None:
@@ -4596,7 +4622,8 @@ class Conductor:
         proven = record.get("proof") or {}
         if proven.get("head") and proven["head"] == self._head(attempt.worktree):
             return True  # proven already, and the branch has not moved: an integration carried again is not proven again
-        prover = self.prover or changes.prove
+        # The old subject of a local override or a new skill stands in from this conductor's own harness.
+        prover = self.prover or functools.partial(changes.prove, harness_root=self.harness_root)
         holder = old = None
         try:
             if record["scope_kind"] == "global":

@@ -43,7 +43,11 @@ parks the harness ticket at once when the answer does not approve.
 
 **The proof.** A fixture born from feedback encodes the desired behaviour, so `prove` runs it twice before the
 conductor integrates a harness ticket: on the changed subject, where it must pass, and on the subject as it
-was, where it must fail (a subject that did not exist fails). Both runs happen on a copy, so a change that is
+was, where it must fail. A local role override that did not exist runs there as the harness's role it replaces,
+and a local skill that did not exist runs as no skill (`_old_stand_in`), so the old behaviour is shown failing;
+any other subject that did not exist fails without a run. Each run stops at its first sample that fails the
+structural layer, which must pass n of n, and a change that does not pass says which checks failed in which
+sample and what the session said, for the worker who is resumed with it. Both runs happen on a copy, so a change that is
 not proven leaves nothing behind; a proven one gets the passing run as its baseline, which is what makes a
 model-authored skill assignable to the registry.
 
@@ -1163,7 +1167,41 @@ def _subject_missing(directory, root):
     return any(not (Path(root) / relative).is_file() for relative in [subject["path"]] + list(subject.get("also") or []))
 
 
-def prove(fixture_id, old_root, new_root, policy=None, runner=None):
+def _old_stand_in(directory, old_root, holder, harness_root):
+    """`(root, said)`: a tree that carries the subject as it was before a local change, when the old tree lacks it.
+
+    A local role override that did not exist is the harness's `roles/<role>/agent.md`, which the role launched with
+    until the override (`worker.read_role`); a local skill that did not exist is no skill, so an empty file stands in
+    and the pinned skill text leaves the prompt. Both run, so the old behaviour is shown failing rather than presumed
+    to. `(old_root, None)` when the old tree holds every subject file, and `(None, None)` when nothing can stand in.
+    """
+    try:
+        subject = fixtures.load_fixture(directory)["subject"]
+    except fixtures.FixtureError:
+        return old_root, None
+    paths = [subject["path"]] + list(subject.get("also") or [])
+    if all((Path(old_root) / relative).is_file() for relative in paths):
+        return old_root, None
+    stand_in, said = Path(holder) / "old-subject", []
+    for relative in paths:
+        target = stand_in / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        role = fixtures.local_role_of(relative)
+        harness_role = Path(harness_root) / "roles" / role / registry.ROLE_FILE if role else None
+        if (Path(old_root) / relative).is_file():
+            shutil.copy(Path(old_root) / relative, target)
+        elif harness_role is not None and harness_role.is_file():
+            shutil.copy(harness_role, target)
+            said.append("on the harness's roles/%s/%s, which the override replaces" % (role, registry.ROLE_FILE))
+        elif fixtures.is_local_skill_file(relative):
+            target.write_text("", encoding="utf-8")
+            said.append("without the skill, which did not exist")
+        else:
+            return None, None
+    return stand_in, "; ".join(dict.fromkeys(said))
+
+
+def prove(fixture_id, old_root, new_root, policy=None, runner=None, harness_root=HARNESS_ROOT):
     """Run the fixture on the changed subject, where it must pass, and on the subject as it was, where it must fail.
 
     Both runs happen on a copy of the fixture, so a change that is not proven leaves its worktree as the worker
@@ -1172,7 +1210,9 @@ def prove(fixture_id, old_root, new_root, policy=None, runner=None):
     failure on the old subject. Any other run that could not happen shows nothing: not on the new subject, and
     not on the old one either.
     """
-    runner = runner or fixtures.run_fixture
+    if runner is None:
+        def runner(directory, root, policy):  # one failing sample decides a proof: its layers must pass n of n
+            return fixtures.run_fixture(directory, root=root, policy=policy, stop_at_failure=True)
     directory = Path(new_root) / fixtures.FIXTURES / fixture_id
     proof = Proof(fixture_id)
     if not (directory / "fixture.json").is_file():
@@ -1186,14 +1226,16 @@ def prove(fixture_id, old_root, new_root, policy=None, runner=None):
             proof.waits = True
             return proof
         if not new.passed:
-            proof.problem = "the fixture %s does not pass on the change: %s" % (fixture_id, new.skipped or proof.new)
+            proof.problem = "the fixture %s does not pass on the change: %s" % (
+                fixture_id, new.skipped or "; ".join([proof.new] + fixtures.sample_failures(new)))
             return proof
-        old = runner(_copy_of(directory, Path(holder) / "old"), root=old_root, policy=policy)
-        proof.old = fixtures.describe(old)
+        stand_in, said = _old_stand_in(fresh, old_root, holder, harness_root)
+        old = runner(_copy_of(directory, Path(holder) / "old"), root=stand_in or old_root, policy=policy)
+        proof.old = fixtures.describe(old) + (" (%s)" % said if said else "")
         if old.partial:
             proof.waits = True
             return proof
-        if old.skipped is not None and not _subject_missing(fresh, old_root):
+        if old.skipped is not None and not _subject_missing(fresh, stand_in or old_root):
             # It ran on the change, so it is runnable; here it could not run for some other reason (a launch that
             # failed, an input that did not render), and a run that did not happen shows no failure.
             proof.problem = ("the fixture %s could not be run on the subject as it was (%s), so nothing shows that it fails there"

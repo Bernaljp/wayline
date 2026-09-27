@@ -22,7 +22,8 @@ written graph can be checked again. Every check runs on every plan, so the one r
 gets carries every failure; a second failure ends the call and writes nothing.
 
 **The cuts.** A first `plan` cuts the whole graph. `wayline plan --replan` (`replan`) re-cuts every
-work ticket that is `open` or `blocked`: the planner is given the graph as it stands and the
+work ticket that is `open` or `blocked`, but a harness ticket the evolve loop filed for a change
+record, which that record owns and no cut takes back or parks: the planner is given the graph as it stands and the
 journal's failures, stalls, blocks, findings, and answers, the superseded tickets are parked and
 journaled `ticket_cancelled` by the planner, a planner's decision ticket that paused only superseded
 tickets is parked with them, and the new tickets may wait on the kept ones as `#<id>`. `wayline plan
@@ -63,7 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from wayline import HARNESS_ROOT, decider, decisions, gates, registry, specify, worker
+from wayline import HARNESS_ROOT, changes, decider, decisions, gates, registry, specify, worker
 from wayline.cli import parse_args
 from wayline.frontmatter import dump_document
 from wayline.jsonschema import ValidationError, check, load_schema
@@ -333,6 +334,11 @@ def _work(fields):
     return fields.get("kind") != DECISION_KIND
 
 
+def _cuttable(fields):
+    """A work ticket a cut may take back: any but a harness ticket the evolve loop filed, which its change record owns (decision 12)."""
+    return _work(fields) and changes.change_of(fields) is None
+
+
 def _label(fields, labels):
     return (labels or {}).get(fields.get("id")) or "ticket %s" % fields.get("id")
 
@@ -477,7 +483,7 @@ def superseded_by(cut, existing):
     """
     if cut.kind == "split":
         return [cut.of]
-    taken = {identifier for identifier, (fields, _) in existing.items() if _work(fields) and fields["status"] in RECUT}
+    taken = {identifier for identifier, (fields, _) in existing.items() if _cuttable(fields) and fields["status"] in RECUT}
     taken.update(identifier for identifier in cut.sent_back if identifier in existing)
     dependents = _dependents(existing)
     for identifier, (fields, _) in existing.items():
@@ -916,7 +922,7 @@ def park_open(project, ledger, why, only=None):
     """Park every work ticket that is `open` or `blocked` (or, with `only`, those of them named); returns the ids."""
     parked = []
     for identifier, (fields, body) in sorted(read_all(project).items()):
-        if not _work(fields) or fields["status"] not in RECUT or (only is not None and identifier not in only):
+        if not _cuttable(fields) or fields["status"] not in RECUT or (only is not None and identifier not in only):
             continue
         _park(ledger, fields, body, why)
         parked.append(identifier)
@@ -1168,6 +1174,9 @@ def cut_graph(project, cut, *, harness_root=HARNESS_ROOT, policy=None, fall_back
             raise PlanError("%s has no ticket %s to split" % (project, cut.of))
         if not _work(found[0]):
             raise PlanError("ticket %d is a decision ticket, which is answered rather than split" % cut.of)
+        if not _cuttable(found[0]):
+            raise PlanError("ticket %d is the harness ticket of change record %s, which owns it; it is not split"
+                            % (cut.of, changes.change_of(found[0])))
         if found[0]["status"] not in SPLITTABLE:
             raise PlanError("ticket %d is %s, so it is not split" % (cut.of, found[0]["status"]))
     index = registry.build(project, harness_root=harness_root, events=events, pre_check=pre_check)

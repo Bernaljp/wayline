@@ -487,6 +487,30 @@ class SelectionTest(Harness):
         second = self.run_fixtures(subject=[good()] * 3, judge=[verdict("pass")] * 3, ids=["prompt/greeting"])
         self.assertEqual((second.exit_code, second.runs[0].structural, len(self.subject_calls())), (0, 3, 3))
 
+    def test_a_subject_session_that_timed_out_fails_its_sample_and_is_not_cached(self):
+        timed_out = Envelope(is_error=True, exit_code=143, errors=["timeout: no result within 30 minute(s); SIGTERM sent",
+                                                                     "no result message in the stream (the worker did not finish)"])
+        first = self.run_fixtures(subject=[timed_out, good(), good()], judge=[], ids=["prompt/greeting"])
+        self.assertEqual((first.runs[0].structural, len(self.subject_calls())), (2, 3))
+        second = self.run_fixtures(subject=[good()], judge=[verdict("pass")] * 3, ids=["prompt/greeting"])
+        self.assertEqual((second.runs[0].structural, len(self.subject_calls())), (3, 1), "only the sample that timed out is launched again")
+
+    def test_a_subject_session_stopped_at_its_output_cap_is_not_cached_either(self):
+        capped = Envelope(subtype="success", result_text="API Error: Claude's response exceeded the 64000 output token maximum.")
+        self.run_fixtures(subject=[capped, good(), good()], judge=[], ids=["prompt/greeting"])
+        second = self.run_fixtures(subject=[good()], judge=[verdict("pass")] * 3, ids=["prompt/greeting"])
+        self.assertEqual((second.runs[0].structural, len(self.subject_calls())), (3, 1))
+
+    def test_a_subject_session_gets_its_role_s_budget_in_minutes_when_the_fixture_names_none(self):
+        self.run_fixtures(subject=[good()] * 3, judge=[verdict("pass")] * 3, ids=["prompt/greeting"])
+        self.assertEqual({call.request.max_minutes for call in self.subject_calls()}, {fixtures.SUBJECT_MAX_MINUTES},
+                         "a role the harness does not have runs on the small budget")
+        self.assertEqual(fixtures.subject_minutes({"launch": {"role": "planner"}}, {"budget": {"large": {"max_minutes": 180}}}), 180)
+        self.assertEqual(fixtures.subject_minutes({"launch": {"role": "planner", "max_minutes": 45}}, {}), 45)
+        write(self.root / "roles" / ROLE / "wayline.json", json.dumps({"cost_hint": "medium"}))
+        self.assertEqual(fixtures.subject_minutes({"launch": {"role": ROLE}}, {"budget": {"medium": {"max_minutes": 90}}}, self.root), 90,
+                         "the sidecar of the tree the fixture runs against is read first")
+
     def test_a_judge_without_a_usable_verdict_is_asked_again_next_time(self):
         broken = Envelope(subtype="error_max_structured_output_retries", is_error=True)
         self.run_fixtures(subject=[good()] * 3, judge=[verdict("pass"), broken, verdict("pass")], ids=["prompt/greeting"])

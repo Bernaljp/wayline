@@ -188,6 +188,16 @@ class AcceptVerbTest(unittest.TestCase):
         self.assertTrue(all(result["exit_code"] == 0 for result in record["results"]))
         self.assertIn(str(self.acceptance), done.stdout)
 
+    def test_what_the_worker_staged_is_placed_under_claude_before_the_commands_run(self):
+        write_project(self.project, dict(SAMPLE_TICKET, touches=[".claude/agents/planner.md"],
+                                         acceptance={"machine": ["grep -q smaller .claude/agents/planner.md"]}))
+        (self.worktree / ".wayline-staged" / "agents").mkdir(parents=True)
+        (self.worktree / ".wayline-staged" / "agents" / "planner.md").write_text("cut smaller tickets\n", encoding="utf-8")
+        done = self.run_accept()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("placed .claude/agents/planner.md from .wayline-staged/agents/planner.md", done.stdout)
+        self.assertFalse((self.worktree / ".wayline-staged").exists())
+
     def test_the_commands_run_in_the_worktree_not_the_project(self):
         (self.project / "made-by-the-worker.txt").write_text("wrong place\n", encoding="utf-8")
         self.assertEqual(self.run_accept().returncode, 1)

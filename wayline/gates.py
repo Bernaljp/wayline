@@ -367,6 +367,9 @@ def accept(args):
     timeout_s = _policy_value(project, "acceptance_timeout_s", 600)
     if not isinstance(timeout_s, (int, float)) or timeout_s <= 0:
         return _fail("policy.acceptance_timeout_s is %r; it must be a positive number of seconds" % (timeout_s,))
+    # What the worker could only stage (Claude Code refuses its writes under .claude/) is put where the criteria look.
+    for touch in worker.place_staged(Path.cwd(), ticket.get("touches") or []):
+        print("placed %s from %s" % (touch, worker.staged_path(touch)))
     results = run_machine_acceptance(commands, Path.cwd(), timeout_s)
     record = acceptance_file_record(results, where)
 

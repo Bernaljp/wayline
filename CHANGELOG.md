@@ -2,7 +2,7 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
-## Unreleased
+## v0.7.0 (2026-09-26)
 
 - The documentation site (ticket 51; Implementation Decisions 13). A package the harness implemented gets a
   Sphinx site someone else can use, built in the project's own environment while the harness stays standard
@@ -25,6 +25,25 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   closed section names the site whenever a `code` ticket added public API, with its last build and any
   public API no closed `docs` ticket documents, and the outputs index serves the site built on `main`
   inline under `site/`, in a sandbox.
+
+- The evolve loop, live (ticket 47; the M6 demo). The M6 demo carried two items of feedback, filed from the
+  dashboard, through to a tag. What the live run found is fixed here.
+  - **Staged writes under `.claude/`.** A worker writes a touch under `.claude/`, which Claude Code refuses to
+    any headless session, at `.wayline-staged/`. `wayline accept` and the conductor move it into place.
+  - **The proof runs the real old subject.** For a local role override that is the harness role it replaces;
+    for a new skill it is no skill.
+  - **The proof is cheaper and says why.** It stops at its first failing sample, and it names the checks that
+    failed and the session's last words.
+  - **Fixture sessions.** A fixture session gets its role's time budget. One cut short by its time or its
+    output cap is never cached.
+  - **Output cap.** Every launch may answer up to 128000 output tokens.
+  - **A change record owns its harness ticket.** No cut or split of the graph takes it back.
+  - **Assignable skills.** A local skill whose fixture's baseline passed by the fixture's own rule is
+    assignable.
+  - **The suite.** `python -m unittest` runs in forked children in about 20 s, and `WAYLINE_BACKENDS=none`
+    keeps it off the subscription, the network, and the GPU.
+
+- Promoted the local skill `wayline-interval-claims` from the project `toy` with its fixture `skill/wayline-interval-claims` (`wayline promote`).
 
 ## v0.6.0 (2026-09-23)
 
