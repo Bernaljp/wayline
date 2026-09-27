@@ -99,6 +99,7 @@ READ_ORIGIN = PAPER_PATH + "#read"
 
 _PLACEHOLDER = re.compile(r"^[ \t]*\{figure:([^{}\s]+)\}[ \t]*$", re.M)
 _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
+_ENTRY = re.compile(r"^\s*(?:\[\d+\]|\d+\.|[-*])\s+\S")   # a reference entry: `[1] ...`, `1. ...`, `- ...`
 REFERENCE_HEADINGS = ("references", "reference list", "bibliography", "literature cited", "works cited", "cited literature")
 _CAPTION_LEAD = re.compile(r"^\s*\**\s*(?:figure|fig\.?)\s*\d+\s*[.:|]\s*\**\s*", re.IGNORECASE)
 
@@ -356,26 +357,45 @@ def assemble(markdown, placed):
 
 
 def fence_references(text):
-    """The draft with the body of its `## References` section between the records markers.
+    """The draft with the entries of its reference list between the records markers, and nothing else of it.
 
-    A reference list names sources; it claims nothing, and its entries are what a `ref` tag's claim cites. Left in
-    the prose, each entry is a sentence the classifier has to be asked about and may call a claim, and an entry
-    cannot end with a tag. The markers are comments, so the seven checks still count the references.
+    A reference entry names a source; it claims nothing, and it is what a `ref` tag's claim cites. Left in the prose,
+    each entry is a sentence the classifier has to be asked about and may call a claim, and an entry cannot end
+    with a tag. Only the entries are fenced (a line opening `[1]`, `1.`, `-`, or `*`): the M7 run's writer moved
+    untagged sentences under `## References` when the whole section was fenced, and prose there is linted like prose
+    anywhere. The markers are comments, so the seven checks still count the references.
     """
-    lines, out, inside = text.split("\n"), [], False
-    for line in lines:
-        heading = _HEADING.match(line)
-        if heading and inside:
+    out, in_section, fenced = [], False, False
+
+    def close():
+        nonlocal fenced
+        if fenced:
+            while out and not out[-1].strip():
+                out.pop()
             out.append(provenance.RECORDS_END)
-            inside = False
-        out.append(line)
-        if heading and heading.group(1).strip().lower() in REFERENCE_HEADINGS:
-            out.append(provenance.RECORDS_BEGIN)
-            inside = True
-    if inside:
-        while out and not out[-1].strip():
-            out.pop()
-        out.append(provenance.RECORDS_END)
+            out.append("")
+            fenced = False
+
+    for line in text.split("\n"):
+        heading = _HEADING.match(line)
+        if heading:
+            close()
+            in_section = heading.group(1).strip().lower() in REFERENCE_HEADINGS
+            out.append(line)
+            continue
+        if in_section and _ENTRY.match(line):
+            if not fenced:
+                out.append(provenance.RECORDS_BEGIN)
+                fenced = True
+            out.append(line)
+        elif in_section and line.strip():
+            close()
+            out.append(line)
+        else:
+            out.append(line)
+    close()
+    while out and not out[-1].strip():
+        out.pop()
     return "\n".join(out)
 
 

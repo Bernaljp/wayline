@@ -688,7 +688,9 @@ Numbered so the milestones can point at them. Every decision below either restat
     still fails is the owner's to read, and no verdict is spent on it. `wayline paper --continue` resumes that
     session for three builds more, with the last list or, after a failed gate, with the points that stood, so
     the figures it asked for are not asked for anew (the M7 run: a fresh writer rewords its figure claims, and
-    a reworded claim is a new figure to draw).
+    a reworded claim is a new figure to draw); `--continue --venue <slug>` moves the draft to another venue,
+    telling the writer its guidelines. A figure request that differs only in the venue's name, at the same
+    size, type, resolution, formats, and library, is the same figure.
   - **Figures.** The draft asks for a figure as a line `{figure:<figure_id>}` and an entry naming its claim and
     its manifested data. The figure role gets the venue's `target`: its formats and resolution, the house
     library, and an 89 mm column with 6 pt type, since `guidelines.json` records no width. A request identical

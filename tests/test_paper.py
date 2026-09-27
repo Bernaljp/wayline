@@ -191,6 +191,12 @@ class DraftTest(PaperCase):
             fenced = paper.fence_references("## Results\n\nIt holds.\n\n## %s\n\n[1] A paper, 2021.\n" % heading)
             self.assertEqual([sentence.text for sentence in provenance.prose_sentences(fenced)], ["It holds."], heading)
 
+    def test_prose_under_the_references_heading_is_still_linted(self):
+        fenced = paper.fence_references("## References\n\nReferences for DeLong's method are to be added.\n\n[1] A paper, 2021.\n[2] Another, 2022.\n")
+        self.assertEqual([sentence.text for sentence in provenance.prose_sentences(fenced)],
+                         ["References for DeLong's method are to be added."])
+        self.assertIn("\n".join([provenance.RECORDS_BEGIN, "[1] A paper, 2021.", "[2] Another, 2022.", provenance.RECORDS_END]), fenced)
+
     def test_no_report_means_no_paper_and_nothing_journaled(self):
         (self.project / "research" / "REPORT.md").unlink()
         with self.assertRaisesRegex(paper.PaperError, "wayline report first"):

@@ -20,7 +20,9 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   `wayline report --verify` samples the report's (`verify_claims` takes a `document`). `research/paper/build.json`
   records the builds and the gate, and nothing is ever submitted: no verb, dashboard action, or role can.
   `wayline paper --continue` takes up the last draft that failed its build or the gate by resuming the same
-  writer session with the list or the points that stood, so its figures are not drawn again. Every verb of the spec's table now has its handler.
+  writer session with the list or the points that stood, so its figures are not drawn again, and
+  `--continue --venue <slug>` moves the draft to another venue; a figure asked for at the same size under
+  another venue's name is not drawn again either. Every verb of the spec's table now has its handler.
 - A review pass fixed these before the ticket landed. A window's refusal or the hold on Fable met while a figure
   was drawn read as a figure waiting on the owner, so the paper said "held" and sent the owner to `wayline figure
   resume` where the command should have stopped; it now stops, and a request the figure role refuses outright is a
@@ -32,7 +34,8 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   verdict was called a review, the word the glossary keeps off a Type-B gate; it is `paper_read`, beside
   `docs_read`. The read is not spent when the kill argument has already sent the draft back. The live M7 run
   found one more: every figure's legend was the path of its `caption.md`, since `final.caption` names the file,
-  and the kill argument's adjudication caught it; the legend is the caption's text now.
+  and the kill argument's adjudication caught it; the legend is the caption's text now, without the
+  `[[mixed-data]]` marker the figure checks read, which the next adjudication caught.
 - Opus 5.5 in the roles and the verifier table (ticket 65; Implementation Decisions 11, 14, 15, and 16). The
   shipped policy runs the planner, the writer, and the evolver on `opus xhigh` and the decider on `opus max`,
   where they were on Fable at the same efforts, and reads work written on Opus in a fresh `opus max` session,
