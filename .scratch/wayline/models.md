@@ -1,6 +1,6 @@
 # Wayline tickets: which model and effort to implement each one
 
-Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. Ticket 58, a design pass over the dashboard, was added on 2026-09-16 from the owner's verdict in the M1 demo and graded the same way. Ticket 59, worker slots, was added on 2026-09-17 from the review of ticket 38 and graded the same way. 54 was cut as opus high and regraded fable xhigh the same day, because the hold it builds has to replay. Tickets 60 to 64 were added on 2026-09-17 from the finer tiers map (wayline #129), and the same day every open ticket was regraded under the cap (spec, Implementation Decision 16): see "Regraded under the cap" below. Ticket 65, which moves the roles on Fable to Opus 5.5, was added on 2026-09-27 from research note 04 and graded the same way, and 53 was regraded to `opus high` that day: see "Regraded for Opus 5.5" below. Each issue also carries a `model:` label with its grade.
+Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. Ticket 58, a design pass over the dashboard, was added on 2026-09-16 from the owner's verdict in the M1 demo and graded the same way. Ticket 59, worker slots, was added on 2026-09-17 from the review of ticket 38 and graded the same way. 54 was cut as opus high and regraded fable xhigh the same day, because the hold it builds has to replay. Tickets 60 to 64 were added on 2026-09-17 from the finer tiers map (wayline #129), and the same day every open ticket was regraded under the cap (spec, Implementation Decision 16): see "Regraded under the cap" below. Ticket 65, which moves the roles on Fable to Opus 5.5, was added on 2026-09-27 from research note 04 and graded the same way, and 53 was regraded to `opus high` that day: see "Regraded for Opus 5.5" below. Tickets 66 to 70, the follow-ups after v1.0.0, were added the same day from the M7 and docs-site live runs and research note 04, and graded the same way: see "Follow-ups after v1.0.0" below. Each issue also carries a `model:` label with its grade.
 
 | Difficulty | Model | Effort | Tickets | Label |
 |---|---|---|---|---|
@@ -37,6 +37,17 @@ Since 2026-09-22 `opus` launches Opus 5.5 (`claude-opus-5-5`). On the matched pr
 - 53 was `fable high` for the writer's prompt. That reason now points to Opus 5.5, which also leaves Fable's weekly window alone.
 - 65 moves the harness's own roles on Fable to Opus 5.5 and blocks 53. It changes five values of `policy.json` and decision 14's table, and moves the Fable tests onto policies of their own. Note 04 and decision 15 give every value.
 
+## Follow-ups after v1.0.0 (2026-09-27)
+
+| Grade | Open tickets | Label |
+|---|---|---|
+| opus low | 67, 69 | `model:opus-low` |
+| opus high | 66, 68, 70 | `model:opus-high` |
+
+- 66 writes the figure designer's caption rule and changes what a paper's figures hand the writer, so it takes `opus high`.
+- 67 copies the redraft loop 53 built for the paper. 69 is one launch variable and one exemption in a check. Both take `opus low`, the way 64 copied 55.
+- 68 changes the prompt the escalation chain gives a tier up, which replay must rebuild. 70 migrates the shipped rung ladder that about 40 test lines read. Both take `opus high`.
+
 ## How the grade was chosen
 
 The grade is for the session that implements the ticket, not for the harness's own workers. A ticket goes up a tier when it:
@@ -61,14 +72,14 @@ Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`low`, `medium`, `
 
 ## Order from here
 
-On 2026-09-27, 63 of the 65 tickets are closed, and this schedule takes the two still open. The waves they fall into are in "What is left on 2026-09-27" of `.scratch/wayline/waves.md`; earlier schedules are in this file's history. The rules are the same as before: at most three sessions in flight, and a milestone demo runs alone, with the demos landing in milestone order so that every tag contains the code of the tags before it (`upgrade` moves a project between tags). A step starts when every ticket of the step before it has landed on `master` and is pushed.
+On 2026-09-27 all 65 tickets of the spec are closed and v1.0.0 is tagged, and this schedule takes the five follow-ups. The waves they fall into are in "What is left after v1.0.0" of `.scratch/wayline/waves.md`; earlier schedules are in this file's history. None of them is a demo, so the rules come down to two: at most three sessions in flight, and a step starts when every ticket of the step before it has landed on `master` and is pushed.
 
 | Step | Tickets, with their grade | Notes |
 |---|---|---|
-| 1 | 65 opus high | Moves the planner, the decider, the writer, the evolver, and the Opus author's verifier off Fable, so the M7 demo runs on the policy it ships. Ready now. |
-| 2 | 53 opus high | The M7 demo and the last ticket, alone. It tags v1.0.0. |
+| 1 | 70 opus high, 66 opus high, 67 opus low | Ready now. 70 goes first, since 68 waits for it. |
+| 2 | 68 opus high, 69 opus low | 68 waits for 70. 69 is ready now, and waits only for a free slot. |
 
-Neither step needs Fable, so neither waits for Fable's weekly window to reset.
+When all five have landed, tag v1.0.1 on a release commit, the way 53 released v1.0.0. None of the five needs Fable.
 
 ## Per ticket
 
@@ -139,6 +150,11 @@ Neither step needs Fable, so neither waits for Fable's weekly window to reset.
 | 63 The model that ran | #146 | 2 | 3 | opus | high | The remap switch on every launch, the `modelUsage` check, and a rung held behind a decision ticket after a 404. |
 | 64 The ladder consent | #147 | 1 | 2 | opus | low | A copy of what 55 built for `switch --fallback`: a `harness.json` key, the intake question, the switch, the class, one dashboard action. |
 | 65 Opus 5.5 in the roles and the verifier table | #160 | 1 | 3 | opus | high | Five values of `policy.json` and decision 14's table, which the tests compare, with the Fable hold and fallback tests moved onto policies of their own; note 04 and decision 15 give every value. |
+| 66 The paper's figure text and captions | #163 | 1 | 3 | opus | high | The figure designer's caption rule, a paper's figures handing their text suggestions to the writer, and a caption check routed through the guided path. |
+| 67 REPORT.md gets a second draft | #164 | 1 | 2 | opus | low | The paper's redraft loop copied to the report, with the cache keeping the linter's result. |
+| 68 A tier up carries the last failure | #165 | 2 | 3 | opus | high | The failure output a resume sends, carried into a tier-up attempt's prompt and rebuilt the same way on a restart. |
+| 69 No bytecode in a touch set | #166 | 1 | 2 | opus | low | One launch variable and one exemption in the uncommitted-work check. |
+| 70 The rung ladder without Fable | #167 | 1 | 3 | opus | high | The shipped six-rung ladder, decision 14's test-checked rows, the Fable tests moved onto their own rung ladder, and `upgrade`'s index migration. |
 
 ## Working the window
 
@@ -157,4 +173,4 @@ gh api "repos/Bernaljp/wayline/issues?state=open&labels=ready-for-agent&per_page
         | "#\(.number) \(.title)  [\([.labels[].name | select(startswith("model:")) | sub("model:"; "")] | join(","))]"'
 ```
 
-On 2026-09-27 it prints ticket 65 alone; 53 waits for it.
+After the follow-ups were cut on 2026-09-27 it prints 66, 67, 69, and 70; 68 waits for 70.
