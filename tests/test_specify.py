@@ -16,7 +16,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, fable_policy
 from wayline import cli, decider, gates, grill, project, specify, tickets, worker
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
@@ -88,9 +88,12 @@ class PlannerRoleTest(unittest.TestCase):
         self.assertEqual(specify.protocol_for("# Protocol\n\nno sections\n", "specify"), "# Protocol\n\nno sections\n")
         self.assertEqual(specify.protocol_for("## Plan\n\nplan\n\n## Specify\n\nspec\n", "specify"), "## Specify\n\nspec\n")
 
-    def test_the_tier_is_fable_xhigh_and_falls_back_to_opus_xhigh(self):
-        self.assertEqual(specify.planner_tier(self.policy), ("fable", "xhigh", None))
-        self.assertEqual(specify.planner_tier(self.policy, fall_back=True), ("opus", "xhigh", "fable"))
+    def test_the_tier_is_opus_xhigh_and_a_planner_on_fable_falls_back_to_opus_xhigh(self):
+        for fall_back in (False, True):
+            self.assertEqual(specify.planner_tier(self.policy, fall_back=fall_back), ("opus", "xhigh", None))
+        planner_on_fable = fable_policy(self.policy, "planner")
+        self.assertEqual(specify.planner_tier(planner_on_fable), ("fable", "xhigh", None))
+        self.assertEqual(specify.planner_tier(planner_on_fable, fall_back=True), ("opus", "xhigh", "fable"))
         with self.assertRaises(specify.SpecifyError):
             specify.planner_tier({"roles": {}})
 
@@ -235,7 +238,7 @@ class DraftTest(SpecifyCase):
         self.assertIsNone(report["stopped"], report)
         [call] = self.calls(specify.PLANNER)
         request = call.request
-        self.assertEqual((call.kind, request.model, request.effort), ("launch", "fable", "xhigh"))
+        self.assertEqual((call.kind, request.model, request.effort), ("launch", "opus", "xhigh"))
         self.assertEqual(request.schema_path.name, "spec.json")
         self.assertEqual(request.allowed_tools, ["Read", "Glob", "Grep"])
         self.assertEqual(request.cwd, self.project.resolve())
@@ -255,7 +258,7 @@ class DraftTest(SpecifyCase):
         self.script(planned(draft()))
         self.specify()
         [call] = self.calls(gates.VERIFIER)
-        self.assertEqual((call.request.model, call.request.effort), ("opus", "max"), "a fable author gets opus max")
+        self.assertEqual((call.request.model, call.request.effort), ("opus", "max"), "an opus author gets opus max")
         for path in specify.VERDICT_PATHS:
             self.assertIn("- `%s`" % path, call.request.prompt)
         self.assertNotIn("[wayline: this path is not there", call.request.prompt)
@@ -391,7 +394,7 @@ class CheckpointsTest(SpecifyCase):
         self.script(planned(draft()))
         code, out, err = run("specify", "--project", str(self.project))
         self.assertEqual(code, 0, err)
-        self.assertIn("drafting the spec: the planner on fable at xhigh", out)
+        self.assertIn("drafting the spec: the planner on opus at xhigh", out)
         self.assertIn('opened decision ticket', out)
         self.assertIn("the spec: pending at %s" % specify.spec_sha(self.project), out)
         self.assertIn("wayline answer", out)

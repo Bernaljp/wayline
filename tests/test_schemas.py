@@ -96,8 +96,9 @@ class PolicyTest(unittest.TestCase):
         ])
         self.assertEqual(policy["difficulty"], {"1": 2, "2": 3, "3": 5, "4": 6, "5": 7})
         self.assertEqual(policy["budget"]["large"], {"max_turns": 200, "max_minutes": 180})
-        self.assertEqual(policy["roles"]["decider"], {"model": "fable", "effort": "max"})
-        self.assertEqual(policy["verifier"]["fable"], {"model": "opus", "effort": "max"})
+        self.assertEqual(policy["roles"]["decider"], {"model": "opus", "effort": "max"})
+        self.assertEqual(policy["verifier"], {"sonnet": {"model": "opus", "effort": "high"}, "opus": {"model": "opus", "effort": "max"},
+                                              "fable": {"model": "opus", "effort": "max"}})
         self.assertEqual(policy["max_parallel_workers"], 2)
         self.assertEqual((policy["poll_seconds"], policy["heartbeat_stale_s"], policy["acceptance_timeout_s"]), (60, 300, 600))
         self.assertEqual(policy["pacing"], {"stop_at": 0.90, "cheap_at": 0.80})
@@ -131,10 +132,11 @@ class PolicyTest(unittest.TestCase):
     def test_the_cap_binds_no_role_and_no_verifier(self):
         """Decision 16: ticket work stops at high; the planner, the decider, and the verifiers stay where decision 14 puts them."""
         self.assertTrue(all(rung["effort"] in ("low", "medium", "high") for rung in self.policy["tiers"]))
-        self.assertEqual(self.policy["roles"]["planner"], {"model": "fable", "effort": "xhigh"})
-        self.assertEqual(self.policy["roles"]["decider"], {"model": "fable", "effort": "max"})
-        self.assertEqual(self.policy["roles"]["writer"], {"model": "fable", "effort": "xhigh"})
-        self.assertEqual(self.policy["roles"]["evolver"], {"model": "fable", "effort": "xhigh"})
+        self.assertEqual(self.policy["roles"]["planner"], {"model": "opus", "effort": "xhigh"})
+        self.assertEqual(self.policy["roles"]["decider"], {"model": "opus", "effort": "max"})
+        self.assertEqual(self.policy["roles"]["writer"], {"model": "opus", "effort": "xhigh"})
+        self.assertEqual(self.policy["roles"]["evolver"], {"model": "opus", "effort": "xhigh"})
+        self.assertEqual(self.policy["verifier"]["opus"], {"model": "opus", "effort": "max"})
         self.assertEqual(self.policy["verifier"]["fable"], {"model": "opus", "effort": "max"})
 
     def test_a_rung_above_the_cap_is_refused(self):

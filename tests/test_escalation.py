@@ -17,6 +17,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from tests import machine
+from tests.projects import fable_policy
 from tests.test_conductor import FIVE_TICKETS, ConductorCase, done, patch
 from tests.test_replay import event, launched
 from wayline import conductor, plan, project, replay, resources, tickets, worker
@@ -303,6 +304,7 @@ class LadderTest(EscalationCase):
     def test_a_split_that_waits_for_fable_does_not_end_the_run(self):
         self.set_fields(pinned_difficulty=1)
         self.set_harness(model_fallback="wait")
+        self.policy = fable_policy(self.policy, "planner")
 
         def hold(made):
             made.ledger.append_event("paused", {"resets_at": "2099-01-01T00:00:00Z", "window": "seven_day",
@@ -316,6 +318,7 @@ class LadderTest(EscalationCase):
     def test_a_split_falls_back_to_opus_under_consent_auto(self):
         self.set_fields(pinned_difficulty=1)
         self.set_harness(model_fallback="auto")
+        self.policy = fable_policy(self.policy, "planner")
         self.planner = Planner(park(self.project))
 
         def hold(made):
@@ -607,6 +610,7 @@ class StallTest(EscalationCase):
     def test_a_replan_held_on_fable_keeps_the_run_open(self):
         self.ledger.append_event("stall", {"waves": 2, "action": "replan"})
         self.set_harness(model_fallback="wait")
+        self.policy = fable_policy(self.policy, "planner")
         self.set_fields(status="done")
         self.ledger.append_event("paused", {"resets_at": "2099-01-01T00:00:00Z", "window": "seven_day",
                                             "utilization": 1.0, "model": "fable"})

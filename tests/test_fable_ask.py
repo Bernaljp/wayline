@@ -13,6 +13,7 @@ import time
 import unittest
 from unittest import mock
 
+from tests.projects import on_fable
 from tests.test_actions import STATIC, ActionCase
 from tests.test_fallback import FallbackCase
 from tests.test_pacing import HOUR
@@ -80,6 +81,10 @@ class AskCase(FallbackCase):
 
 class OpenAskTest(AskCase):
     """Criterion 1: one ask per spent window, when the hold first drops a launch, with its options, recommendation, and notification."""
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
 
     def test_the_first_dropped_launch_opens_one_human_only_ask_keyed_by_the_reset_that_pauses_nothing_and_notifies(self):
         self.add(1, difficulty=4)
@@ -349,6 +354,10 @@ class AskTimeoutTest(AskCase):
 
 class ReviewedAskTest(AskCase):
     """Found by the review: a hold whose reset moved, a consent set back to ask, a late answer, a failed always answer, and the tick."""
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
 
     def test_an_answer_holds_when_a_later_refusal_moves_the_hold_s_reset_and_nobody_is_asked_twice(self):
         driven, identifier = self.opened(hours=10)

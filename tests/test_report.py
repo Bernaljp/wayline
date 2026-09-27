@@ -462,7 +462,7 @@ class ReportTest(RunCase):
         writer = [call for call in self.calls if call.request.role == "writer"]
         self.assertEqual(len(writer), 1)
         request = writer[0].request
-        self.assertEqual((request.model, request.effort), ("fable", "xhigh"))
+        self.assertEqual((request.model, request.effort), ("opus", "xhigh"))
         self.assertEqual(request.schema_path.name, "report_prose.json")
         self.assertTrue(set(request.allowed_tools) <= {"Read", "Glob", "Grep"})
         for tool in ("Edit", "Write", "Bash"):
@@ -574,7 +574,7 @@ class VerifyTest(RunCase):
             self.calls = list(fake.calls)
         return outcome
 
-    def test_every_sampled_claim_gets_a_verdict_on_a_model_other_than_its_author(self):
+    def test_every_sampled_claim_gets_a_verdict_from_its_authors_table_verifier(self):
         outcome = self.verify()
         self.assertEqual((outcome["claims"], outcome["sampled"], len(outcome["passed"])), (7, 7, 7))
         verdicts = self.events("verdict")
@@ -585,9 +585,9 @@ class VerifyTest(RunCase):
         for call in self.calls:
             for marker in ("`f-0001`", "`f-0002`", "Interaction terms carry"):
                 if marker in call.request.prompt:
-                    by_sentence[marker] = call.request.model
-        self.assertEqual(by_sentence, {"`f-0001`": "opus", "`f-0002`": "fable", "Interaction terms carry": "opus"},
-                         "sonnet's finding goes to opus, opus's to fable, the writer's fable prose to opus")
+                    by_sentence[marker] = (call.request.model, call.request.effort)
+        self.assertEqual(by_sentence, {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "max"), "Interaction terms carry": ("opus", "max")},
+                         "sonnet's finding goes to opus high, opus's finding and the writer's opus prose to opus max")
 
     def test_the_verifier_is_given_the_sentence_and_the_artifacts_at_their_locators(self):
         self.verify()

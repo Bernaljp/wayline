@@ -76,7 +76,7 @@ checks what it returns, has the scout verify every citation, and renders `resear
 `decider` (ticket 31) is outside the librarian's reach too (`kinds` empty), and it is not a judge:
 `may_judge` is false, and its `output_schema` is `decision`, the record of `DECISIONS.md` and of a
 decision ticket's body. `wayline.decider` launches it, once per open decision, on
-`policy.roles.decider` (`fable`, `max`): `wayline grill --decide-rest` walks the design tree's
+`policy.roles.decider` (`opus`, `max`): `wayline grill --decide-rest` walks the design tree's
 frontier with it after the autonomy switch, and the conductor launches it in wave step 5 for every
 open decision ticket that is not human-only and at the end of the wave for every parked proposal.
 A decision ticket is therefore never picked as a worker: it has no touch set, no acceptance, and
@@ -91,18 +91,18 @@ The session hands back a decision on the irreversible list with `answer: null`, 
 it did give anyway (`decider.irreversible_class`, read on the option's words when the answer only
 points at an option): a refused decision becomes the owner's, as a human-only question in the tree
 with a human-only decision ticket beside it, as a decision ticket turned human-only, or, for a
-parked proposal, as a human-only decision ticket asking whether it is admitted. While Fable's weekly
-window is spent it falls back to Opus at the same effort under the fallback consent, and every
-decision records the model and the session it came from: a grill question in its `DECISIONS.md`
-record, a decision ticket in its `## Answer`, the journal, and a record appended to `DECISIONS.md`,
-a parked proposal in the journal alone.
+parked proposal, as a human-only decision ticket asking whether it is admitted. A project that puts
+it on Fable sees it fall back to Opus at the same effort under the fallback consent while Fable's
+weekly window is spent, and every decision records the model and the session it came from: a grill
+question in its `DECISIONS.md` record, a decision ticket in its `## Answer`, the journal, and a
+record appended to `DECISIONS.md`, a parked proposal in the journal alone.
 
 ## The planner is launched by the phase verbs, one protocol per phase
 
 `planner` (tickets 33 and 34) is launched by code too (`kinds` empty) and does not judge. Its protocol
 file, `prompts/roles/planner.md`, holds one `## <Phase>` section per phase, and the verb that launches
 it gives the session only its own (`wayline.worker.protocol_for`). `wayline specify` launches it on
-`policy.roles.planner` (`fable`, `xhigh`) with the `spec` schema and the decider's records, reading
+`policy.roles.planner` (`opus`, `xhigh`) with the `spec` schema and the decider's records, reading
 only: code writes what it returns as `research/spec.json`, renders `research/SPEC.md`, runs the
 structural checks, and asks the verifier for the `spec_coverage` verdict, returning the draft to the
 same session once per gate. `wayline plan` launches it the same way in its plan protocol, with the
@@ -118,10 +118,10 @@ launch it again over the graph as it stands, which is what the conductor calls a
 ## The evolver is launched by the evolve loop, one session over the pending feedback
 
 `evolver` (ticket 45) is launched by code too (`kinds` empty), does not judge, and writes nothing.
-`wayline.changes.evolve` launches it on `policy.roles.evolver` (`fable`, `xhigh`), Opus in Fable's
-place when the hold on Fable's weekly window says so, with the `change_list` schema: from
-`wayline evolve`, from `wayline run` once `run_ended` is journaled, and from the conductor in the wave
-that finds feedback pending. Its prompt carries the pending items (the owner's, and the retrospective
+`wayline.changes.evolve` launches it on `policy.roles.evolver` (`opus`, `xhigh`; Opus in Fable's
+place when a project puts it on Fable and the hold on Fable's weekly window says so), with the
+`change_list` schema: from `wayline evolve`, from `wayline run` once `run_ended` is journaled, and
+from the conductor in the wave that finds feedback pending. Its prompt carries the pending items (the owner's, and the retrospective
 code filed), the journal numbered by line so that evidence is cited as `research/journal.jsonl#L<n>`,
 the change records already open, the registry, and the policy with the project's overrides; the
 project and the harness repository are open to it for reading. Code gives each record it returns an

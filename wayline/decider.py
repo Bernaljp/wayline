@@ -3,7 +3,7 @@
 After the autonomy switch, a max-effort session on the `decider` role resolves what the owner left
 open: every open question of the grill's design tree, every decision ticket not marked human-only,
 and, at the end of each wave, every parked proposal. One session per decision, launched through the
-worker launcher (seam 1) on `policy.roles.decider` (`fable`, `max`), with `decision.json` as its
+worker launcher (seam 1) on `policy.roles.decider` (`opus`, `max`), with `decision.json` as its
 schema and, in its prompt, `DECISIONS.md`, `POSITION.md`, `GOAL.json`, the L0 and L1 records, and
 the query pack. Every decision it makes is written with rationale, confidence, and
 `decided-by: decider`, the model it ran on, and its session, so the owner can audit and reverse any

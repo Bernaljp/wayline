@@ -1,10 +1,11 @@
-"""What the project tests share: a temporary `~/.wayline`, a fake harness, and a tree hash.
+"""What the project tests share: a temporary `~/.wayline`, a fake harness, a policy with roles on Fable, and a tree hash.
 
 Every test that touches the per-machine pointers points `WAYLINE_HOME` at a temporary directory,
 so the suite never reads or writes the owner's own `~/.wayline/`.
 """
 
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -12,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from tests.paths import HARNESS_ROOT, LEDGER_FIXTURE, TEMPLATES_DIR
+from wayline.project import merge_policy
 
 SKILLS = ("wayline-absorb", "wayline-figure")
 WORKFLOWS = ("absorb.js", "panel.js")
@@ -57,6 +59,40 @@ class ProjectTestCase(unittest.TestCase):
         target = self.temp / name
         shutil.copytree(LEDGER_FIXTURE, target)
         return target
+
+
+# The roles and the verifier ticket 65 moved from Fable to Opus 5.5, as they shipped before it. The shipped policy
+# draws on Fable's weekly window only through rungs 6 and 7, so a test of the Fable machinery that reads one of
+# these on Fable puts it back in its project's `harness.json`, as an owner would.
+ON_FABLE = {
+    "planner": ("roles", "planner", {"model": "fable", "effort": "xhigh"}),
+    "decider": ("roles", "decider", {"model": "fable", "effort": "max"}),
+    "writer": ("roles", "writer", {"model": "fable", "effort": "xhigh"}),
+    "evolver": ("roles", "evolver", {"model": "fable", "effort": "xhigh"}),
+    "verifier.opus": ("verifier", "opus", {"model": "fable", "effort": "high"}),
+}
+
+
+def fable_overrides(*names):
+    """The policy overrides that put each of `names` (keys of `ON_FABLE`) on Fable."""
+    overrides = {}
+    for name in names:
+        section, key, entry = ON_FABLE[name]
+        overrides.setdefault(section, {})[key] = dict(entry)
+    return overrides
+
+
+def fable_policy(policy, *names):
+    """`policy` with each of `names` on Fable."""
+    return merge_policy(policy, fable_overrides(*names))
+
+
+def on_fable(project, *names):
+    """Put each of `names` on Fable in `project`'s `harness.json`, keeping whatever else the file holds."""
+    path = Path(project) / "harness.json"
+    harness = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    harness["policy"] = merge_policy(harness.get("policy") or {}, fable_overrides(*names))
+    path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
 
 
 def tree_hash(root, skip=(".git",)):

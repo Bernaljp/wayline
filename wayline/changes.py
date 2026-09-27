@@ -16,7 +16,7 @@ text is filed as one more feedback item, source `retrospective`, so the evolver 
 owner's. A run that launched only harness tickets earns none, or the loop would feed itself.
 
 **The evolver.** `evolve` launches the `evolver` role through the worker launcher (seam 1) on
-`policy.roles.evolver` (`fable`, `xhigh`), Opus in Fable's place when the hold says so, with `change_list.json`
+`policy.roles.evolver` (`opus`, `xhigh`), Opus in Fable's place when it is on Fable and the hold says so, with `change_list.json`
 as its schema and, in its prompt, the pending items, the journal numbered by line, the records already open,
 the registry, and the policy. The session writes nothing. `check_list` is its Type-A gate: every record
 answers an item it was shown, cites journal lines the journal holds, names a target its mechanism and scope
@@ -99,7 +99,7 @@ FEEDBACK_DIR = "feedback"               # research/feedback/<id>.md, and whateve
 CHANGES_DIR = "changes"                 # research/changes/<id>.json
 EVOLVE_JSON = "evolve.json"             # research/evolve.json: what the evolver has read, and what it made of each item
 SESSIONS = "sessions/evolve"            # research/sessions/evolve/<n>
-EVOLVER_BUDGET = "large"                # policy.budget: the evolver is a large-budget role (policy.roles, fable xhigh)
+EVOLVER_BUDGET = "large"                # policy.budget: the evolver is a large-budget role (policy.roles, opus xhigh)
 CLI, DASHBOARD, FILE, RETROSPECTIVE = "cli", "dashboard", "file", "retrospective"
 FIGURE = "figure"                       # the figure role's traps for the plot index (ticket 50), filed by code like the retrospective
 SOURCES = (CLI, DASHBOARD)              # the sources a person files under; `file` is what `take_dropped` finds
