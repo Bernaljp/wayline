@@ -1,22 +1,21 @@
 # Wayline tickets: what can run in parallel, and what waits
 
-Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. The same day the finer tiers map (wayline #129, cut as #141 settled it) added tickets 60 to 64 and eight edges (61, 62, and 63 after 60; 43 after 60, 61, 62, and 63; 45 after 64), for 121 edges among 64 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
+Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. The same day the finer tiers map (wayline #129, cut as #141 settled it) added tickets 60 to 64 and eight edges (61, 62, and 63 after 60; 43 after 60, 61, 62, and 63; 45 after 64), for 121 edges among 64 tickets. On 2026-09-27 research note 04 (Opus 5.5) added ticket 65, which moves the roles on Fable to Opus 5.5, and one edge (53 after 65), for 122 edges among 65 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
 
 ## The rule
 
 A ticket can start when every ticket in its **Blocked by** line is done: its commit is on `master`, `python -m unittest` passes there, its local `Status:` line is updated, and its GitHub issue is closed. Tickets in the same wave never depend on each other, so any subset of a wave can run at the same time. A ticket may also start as soon as its own blockers are done, even if the rest of its wave is not; the waves below are the earliest start, not a required batch.
 
-## What is left on 2026-09-21
+## What is left on 2026-09-27
 
-59 of the 64 tickets are closed: every one but 43, 47, 50, 51, and 53. Counting those as done, the five still open fall into three waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, step by step with each ticket's model and effort, is "Order from here" in `.scratch/wayline/models.md`.
+63 of the 65 tickets are closed: every one but 53 and 65. The two still open fall into two waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, with each ticket's model and effort, is "Order from here" in `.scratch/wayline/models.md`.
 
 | Wave left | Tickets | Notes |
 |---|---|---|
-| 1 | 43 (M5, #44) | The overnight run, ready now. It tags v0.6.0, and it has to cross a window boundary. |
-| 2 | 47 (M6, #48), 50 (M7, #51), 51 (M7, #52) | All three wait for 43. 47 is the M6 demo, and it comes after 50 and 51. |
-| 3 | 53 (M7, #54) | The last ticket and the M7 demo. |
+| 1 | 65 (M7, #160) | Ready now. It moves the harness's roles on Fable to Opus 5.5 before the M7 demo runs them. |
+| 2 | 53 (M7, #54) | The last ticket and the M7 demo. It tags v1.0.0. |
 
-What is left of the critical path is 43 -> 50 -> 53, three tickets.
+What is left of the critical path is 65 -> 53, two tickets.
 
 ## Waves (earliest start)
 
@@ -96,7 +95,7 @@ What is left of the critical path is 43 -> 50 -> 53, three tickets.
 | 50 The figure role pipeline end to end | #51 | 12 | 32, 43, 49 | 53 |
 | 51 The documentation site | #52 | 12 | 34, 43 | 53 |
 | 52 Venue guidelines | #53 | 4 | 20 | 53 |
-| 53 The paper and the M7 demo | #54 | 13 | 40, 50, 51, 52 | nothing (a milestone demo) |
+| 53 The paper and the M7 demo | #54 | 13 | 40, 50, 51, 52, 65 | nothing (a milestone demo) |
 | 54 Hold only Fable launches while Fable's weekly window is spent | #101 | 7 | 10 | 14, 43, 55 |
 | 55 Fall back to Opus under the fallback consent | #102 | 8 | 30, 54 | 43, 56, 57 |
 | 56 Verdicts on Opus and the verdict principle | #103 | 9 | 24, 55 | 43 |
@@ -108,6 +107,7 @@ What is left of the critical path is 43 -> 50 -> 53, three tickets.
 | 62 Pacing and the fallback by rung | #145 | 2 | 60 | 43 |
 | 63 The model that ran | #146 | 2 | 60 | 43 |
 | 64 The ladder consent | #147 | 1 | nothing | 45 |
+| 65 Opus 5.5 in the roles and the verifier table | #160 | 1 | nothing | 53 |
 
 ## Running tickets in parallel without corrupting git
 

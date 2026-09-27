@@ -2,7 +2,7 @@
 
 **What to build:** On request after the report, `wayline paper --venue <slug>` (or `wayline paper`, with the decider choosing the venue) drafts a paper from the findings and the knowledge base under the claim-provenance rule, runs the linter and the seven checks on every build, takes its figures from the figure role, passes the two-thread kill argument and one independent verdict, and stops at a draft the owner reads; nothing is submitted anywhere. Then the M7 demo runs end to end.
 
-**Blocked by:** 40 (Provenance tags, the linter, and REPORT.md), 50 (The figure role pipeline end to end), 51 (The documentation site), 52 (Venue guidelines)
+**Blocked by:** 40 (Provenance tags, the linter, and REPORT.md), 50 (The figure role pipeline end to end), 51 (The documentation site), 52 (Venue guidelines), 65 (Opus 5.5 in the roles and the verifier table)
 
 **Status:** ready-for-agent
 
