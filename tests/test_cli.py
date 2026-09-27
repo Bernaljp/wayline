@@ -71,25 +71,19 @@ class VerbListTest(unittest.TestCase):
 
 
 class NotYetImplementedTest(unittest.TestCase):
-    def test_unbuilt_verb_exits_2(self):
-        unbuilt = [verb for verb in cli.VERBS if verb.handler is None]
-        self.assertTrue(unbuilt, "every verb is built; drop this test")
-        done = run_cli(unbuilt[0].name, "--whatever", "arg")
-        self.assertEqual(done.returncode, 2)
-        self.assertIn("not yet implemented", done.stderr)
-        self.assertEqual(done.stdout, "")
+    def test_every_verb_of_the_table_is_built(self):
+        self.assertEqual([verb.name for verb in cli.VERBS if verb.handler is None], [])
 
     def test_unknown_verb_exits_2(self):
         done = run_cli("frobnicate")
         self.assertEqual(done.returncode, 2)
         self.assertIn("frobnicate", done.stderr)
 
-    def test_main_returns_the_exit_code_in_process(self):
-        unbuilt = [verb for verb in cli.VERBS if verb.handler is None]
-        self.assertTrue(unbuilt, "every verb is built; drop this test")
+    def test_an_unbuilt_verb_exits_2_in_process(self):
+        # Ticket 53 built the last verb of the table; a verb registered with no handler still says so.
         buffer = io.StringIO()
-        with redirect_stderr(buffer):
-            code = cli.main([unbuilt[0].name])
+        with cli.temporary_verb(cli.Verb("unbuilt", "unbuilt", "a verb with no handler", "tools")), redirect_stderr(buffer):
+            code = cli.main(["unbuilt", "--whatever", "arg"])
         self.assertEqual(code, 2)
         self.assertIn("not yet implemented", buffer.getvalue())
 

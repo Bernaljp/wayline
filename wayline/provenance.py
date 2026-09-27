@@ -1125,6 +1125,8 @@ def _decider_decisions(context):
             subject = "Ticket %s%s" % (ticket, ", *%s*" % title if title else "")
         elif str(payload.get("answer") or "").startswith("proposal "):
             subject = "A parked proposal"
+        elif str(payload.get("answer") or "").startswith("paper venue: "):
+            subject = "The paper's venue"  # `wayline paper` without `--venue` (ticket 53)
         else:
             subject = "The grill"
         lines.append("- %s: **%s** (confidence %s, %s)" % (

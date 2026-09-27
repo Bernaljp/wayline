@@ -434,8 +434,9 @@ SPEC_COVERAGE = "spec_coverage"          # the spec: does every claim have an ex
 FIGURE_HONESTY = "figure_honesty"        # a figure: does it assert something the data does not (ticket 50)
 EQUATION_MATCH = "equation_match"        # one equation a figure typesets: does it match the code that computes it (ticket 50)
 DOCS_READ = "docs_read"                  # a docs ticket: is the site clear and complete against the package's purpose
+PAPER_REVIEW = "paper_review"            # the paper: the independent review that gates the draft beside the kill argument (ticket 53)
 VERDICT_TYPES = (QUALITY, DIFF, RESULT, KILL_MEMO, KILL_ARGUMENT, CLAIM_SUPPORT, DEPTH_SPOT_CHECK, SPEC_COVERAGE,
-                 FIGURE_HONESTY, EQUATION_MATCH, DOCS_READ)
+                 FIGURE_HONESTY, EQUATION_MATCH, DOCS_READ, PAPER_REVIEW)
 
 # What an independent read of a done ticket reads, by the ticket's effective difficulty.
 DIFFICULTY_VERDICTS = {3: DIFF, 4: RESULT, 5: RESULT}
