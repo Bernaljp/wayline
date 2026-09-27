@@ -2,6 +2,24 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
+## Unreleased
+
+- The rung ladder without Fable (ticket 70; Implementation Decisions 16, 14, and 15). The shipped ladder stops at
+  Opus 5.5: its rungs 6 and 7, `fable low` and `fable high`, leave it, and `opus medium` joins between `opus low`
+  and `opus high`. Difficulty 3 now starts on rung 5, `opus medium`, and difficulties 4 and 5 on rung 6, `opus
+  high`, which takes the `large` budget the Fable rungs had, so hard tickets keep their turns and minutes. No
+  shipped ticket work draws on Fable's weekly window, and a tier up stays on Opus up to the top rung. Why: a rung
+  stays only when it sits between its neighbors on cost and quality, and Opus 5.5 dominates Fable 5.1 on both
+  (research note 04). On CursorBench 4.0 Opus 5.5 at `medium` scores 52.5% against Fable 5.1 at `max` with 51.8%,
+  for about $3 a problem against $4 at `high`, and on FrontierCode it peaks at `medium`. A project that puts Fable
+  rungs back in its own `harness.json` keeps the hold, the step down on Fable's window, and the fallback, which key
+  on a rung's family, never its index, so the seven-rung ladder behaves as it did on v1.0.0. `wayline upgrade`
+  across this change rewrites a `difficulty` override that names rungs: each index is read against the
+  `policy.json` of the tag the project was pinned to and carried by its model and effort, so old rung 5 (`opus
+  high`) becomes rung 6, and old rungs 6 and 7 (Fable) become rung 6, the top rung on a cheaper family. Each
+  rewrite is printed, and a project whose own `tiers` override defines its ladder is left as it is. An override
+  in the shape before the rung ladder that puts a level on Fable now lands on rung 6 too, where it was refused.
+
 ## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts

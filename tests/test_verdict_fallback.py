@@ -20,7 +20,7 @@ import time
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from tests.projects import fable_overrides, fable_policy, on_fable
+from tests.projects import LADDER, fable_overrides, fable_policy, on_fable
 from tests.test_absorb import SLUG, WORKFLOW, AbsorbTestCase
 from tests.test_conductor import drive
 from tests.test_fallback import FallbackCase
@@ -39,8 +39,9 @@ from wayline.provenance import verify_claims
 from wayline.worker import Envelope
 
 HELD_HOURS = 10
-# The Opus author's verifier on Fable, as it shipped before ticket 65: what a verdict that waits for Fable needs.
-HARNESS = {"harness_tag": "v0.0.0", "autonomy": "autonomous", "radius": "moderate", "policy": fable_overrides("verifier.opus")}
+# The Opus author's verifier on Fable, as it shipped before ticket 65: what a verdict that waits for Fable needs. The
+# Fable rungs, as they shipped before ticket 70, give the verifier's tier a rung for `fallback_from` to name (`r7 fable high`).
+HARNESS = {"harness_tag": "v0.0.0", "autonomy": "autonomous", "radius": "moderate", "policy": fable_overrides("verifier.opus", LADDER)}
 
 # Every kind of verdict passes the one gate: (subject_kind, verdict_type, the judging role).
 KINDS = (
@@ -91,7 +92,7 @@ class PrincipleTest(GateCase):
         self.assertLessEqual({pacing.FABLE, pacing.OPUS, pacing.HAIKU}, set(worker.MODEL_ALIASES))
 
     def test_the_tier_moves_only_a_verifier_on_fable(self):
-        policy = fable_policy(policy_for(self.project), "verifier.opus")
+        policy = fable_policy(policy_for(self.project), "verifier.opus", LADDER)
         self.assertEqual(gates.verdict_tier(policy, "opus"), ("fable", "high", None))
         # `fallback_from` names the rung the verifier came from (decision 16), `fable high` being rung 7.
         self.assertEqual(gates.verdict_tier(policy, "opus", fall_back=True), ("opus", "high", "r7 fable high"))
@@ -104,7 +105,7 @@ class GateFallbackTest(GateCase):
 
     def setUp(self):
         super().setUp()
-        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
+        on_fable(self.project, "verifier.opus", LADDER)  # work written on Opus is read on Fable, which the hold holds
 
     def held(self, consent, hours=HELD_HOURS):
         hold(self.ledger, hours)
@@ -181,7 +182,7 @@ class KillArgumentFallbackTest(GateCase):
 
     def setUp(self):
         super().setUp()
-        on_fable(self.project, "verifier.opus")  # work written on Opus is read on Fable, which the hold holds
+        on_fable(self.project, "verifier.opus", LADDER)  # work written on Opus is read on Fable, which the hold holds
 
     def run_gate(self, *scripted):
         self.calls = []
@@ -349,7 +350,7 @@ class ClaimFallbackTest(RunCase):
 
     def setUp(self):
         super().setUp()
-        on_fable(self.project, "verifier.opus", "writer")  # findings written on Opus are read on Fable; the writer drafts on Fable
+        on_fable(self.project, "verifier.opus", "writer", LADDER)  # findings written on Opus are read on Fable; the writer drafts on Fable
         self.render()
 
     def verify(self, scripted=7):

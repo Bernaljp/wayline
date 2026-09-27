@@ -20,7 +20,7 @@ from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests import machine
-from tests.projects import ProjectTestCase
+from tests.projects import LADDER, ProjectTestCase, fable_policy
 from wayline import conductor, gates, project, resources, tickets, worker
 from wayline.conductor import Conductor, ConductorError, WaveResult
 from wayline.ledger import Ledger
@@ -1040,10 +1040,23 @@ class ShellRunTest(ProjectTestCase):
 
 
 class TierTest(unittest.TestCase):
-    """The rung ladder (decision 16): a difficulty names a rung, which decides the model, the effort, and the budget."""
+    """The rung ladder (decision 16): a difficulty names a rung, which decides the model, the effort, and the budget.
+
+    `shipped` is the harness's own `policy.json`, six rungs with none on Fable since ticket 70; `policy` is the
+    seven rungs v1.0.0 shipped, with the Fable rungs a project may put back in its `harness.json`.
+    """
 
     def setUp(self):
-        self.policy = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
+        self.shipped = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
+        self.policy = fable_policy(self.shipped, LADDER)
+
+    def test_every_difficulty_resolves_through_its_rung_to_the_shipped_ladder(self):
+        expected = [(2, "sonnet", "low", 40), (3, "sonnet", "high", 40), (5, "opus", "medium", 100), (6, "opus", "high", 200), (6, "opus", "high", 200)]
+        for difficulty, (rung, model, effort, turns) in enumerate(expected, start=1):
+            with self.subTest(difficulty=difficulty):
+                tier = conductor.tier_for(self.shipped, difficulty)
+                self.assertEqual((tier.rung, tier.model, tier.effort, tier.max_turns, tier.family), (rung, model, effort, turns, model))
+                self.assertEqual(tier.label, "r%d %s %s" % (rung, model, effort))
 
     def test_every_difficulty_resolves_through_its_rung_to_the_ladder_of_decision_16(self):
         expected = [(2, "sonnet", "low", 40), (3, "sonnet", "high", 40), (5, "opus", "high", 100), (6, "fable", "low", 200), (7, "fable", "high", 200)]
@@ -1054,18 +1067,23 @@ class TierTest(unittest.TestCase):
                 self.assertEqual(tier.label, "r%d %s %s" % (rung, model, effort))
 
     def test_every_rung_of_the_shipped_ladder_resolves(self):
+        labels = [conductor.rung_tier(self.shipped, rung).label for rung in range(1, 7)]
+        self.assertEqual(labels, ["r1 haiku medium", "r2 sonnet low", "r3 sonnet high", "r4 opus low", "r5 opus medium", "r6 opus high"])
+        self.assertEqual([conductor.rung_tier(self.shipped, rung).max_turns for rung in (1, 4, 5, 6)], [40, 100, 100, 200])
+
+    def test_every_rung_of_the_seven_rung_ladder_resolves(self):
         labels = [conductor.rung_tier(self.policy, rung).label for rung in range(1, 8)]
         self.assertEqual(labels, ["r1 haiku medium", "r2 sonnet low", "r3 sonnet high", "r4 opus low", "r5 opus high",
                                   "r6 fable low", "r7 fable high"])
         self.assertEqual([conductor.rung_tier(self.policy, rung).max_turns for rung in (1, 4, 7)], [40, 100, 200])
 
     def test_a_rung_on_a_full_version_name_keeps_the_name_and_takes_its_family(self):
-        policy = json.loads(json.dumps(self.policy))
+        policy = json.loads(json.dumps(self.shipped))
         policy["tiers"][4]["model"] = "claude-opus-4-8"
         tier = conductor.tier_for(policy, 3)
-        self.assertEqual((tier.rung, tier.model, tier.family, tier.effort), (5, "claude-opus-4-8", "opus", "high"))
+        self.assertEqual((tier.rung, tier.model, tier.family, tier.effort), (5, "claude-opus-4-8", "opus", "medium"))
         self.assertEqual(tier.context_chars, 200000, "the context pack is cut at the family's cap")
-        self.assertEqual(tier.label, "r5 claude-opus-4-8 high")
+        self.assertEqual(tier.label, "r5 claude-opus-4-8 medium")
         self.assertEqual(gates.verifier_tier(policy, tier.model), ("opus", "max"), "the verifier table is keyed by the family")
 
     def test_a_fallback_tier_keeps_the_rung(self):
@@ -1075,6 +1093,7 @@ class TierTest(unittest.TestCase):
     def test_the_context_cap_follows_the_model(self):
         self.assertEqual(conductor.tier_for(self.policy, 1).context_chars, 120000)
         self.assertEqual(conductor.tier_for(self.policy, 5).context_chars, 300000)
+        self.assertEqual(conductor.tier_for(self.shipped, 5).context_chars, 200000, "the shipped top rung is on Opus")
 
     def test_a_model_outside_the_cap_table_takes_the_smallest_cap(self):
         self.assertEqual(conductor.rung_tier(self.policy, 1).context_chars, 120000, "the haiku rung")
@@ -1083,6 +1102,9 @@ class TierTest(unittest.TestCase):
         with self.assertRaises(ConductorError) as caught:
             conductor.rung_tier(self.policy, 8)
         self.assertIn("1 to 7", str(caught.exception))
+        with self.assertRaises(ConductorError) as caught:
+            conductor.rung_tier(self.shipped, 7)
+        self.assertIn("1 to 6", str(caught.exception))
 
     def test_the_old_difficulty_shape_names_upgrade(self):
         policy = dict(self.policy, difficulty={"1": {"model": "sonnet", "effort": "low", "budget": "small"}})

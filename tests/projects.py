@@ -61,9 +61,9 @@ class ProjectTestCase(unittest.TestCase):
         return target
 
 
-# The roles and the verifier ticket 65 moved from Fable to Opus 5.5, as they shipped before it. The shipped policy
-# draws on Fable's weekly window only through rungs 6 and 7, so a test of the Fable machinery that reads one of
-# these on Fable puts it back in its project's `harness.json`, as an owner would.
+# The roles and the verifier ticket 65 moved from Fable to Opus 5.5, as they shipped before it. Since ticket 70 the
+# shipped policy draws on Fable's weekly window nowhere, so a test of the Fable machinery that reads one of these on
+# Fable, or a ticket on a Fable rung, puts it back in its project's `harness.json`, as an owner would.
 ON_FABLE = {
     "planner": ("roles", "planner", {"model": "fable", "effort": "xhigh"}),
     "decider": ("roles", "decider", {"model": "fable", "effort": "max"}),
@@ -73,10 +73,28 @@ ON_FABLE = {
 }
 
 
+# The rung ladder as v1.0.0 shipped it, before ticket 70 dropped its two Fable rungs: a project that puts them back
+# in its `harness.json`, as an owner may, and the level to rung map that goes with them (decision 16).
+SEVEN_RUNGS = [
+    {"model": "haiku", "effort": "medium", "budget": "small"},
+    {"model": "sonnet", "effort": "low", "budget": "small"},
+    {"model": "sonnet", "effort": "high", "budget": "small"},
+    {"model": "opus", "effort": "low", "budget": "medium"},
+    {"model": "opus", "effort": "high", "budget": "medium"},
+    {"model": "fable", "effort": "low", "budget": "large"},
+    {"model": "fable", "effort": "high", "budget": "large"},
+]
+SEVEN_RUNG_DIFFICULTY = {"1": 2, "2": 3, "3": 5, "4": 6, "5": 7}
+LADDER = "ladder"
+
+
 def fable_overrides(*names):
-    """The policy overrides that put each of `names` (keys of `ON_FABLE`) on Fable."""
+    """The policy overrides that put each of `names` (keys of `ON_FABLE`, or `ladder` for `SEVEN_RUNGS`) on Fable."""
     overrides = {}
     for name in names:
+        if name == LADDER:
+            overrides.update(tiers=[dict(rung) for rung in SEVEN_RUNGS], difficulty=dict(SEVEN_RUNG_DIFFICULTY))
+            continue
         section, key, entry = ON_FABLE[name]
         overrides.setdefault(section, {})[key] = dict(entry)
     return overrides

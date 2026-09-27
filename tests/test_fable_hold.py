@@ -13,7 +13,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from tests.projects import ProjectTestCase, on_fable
+from tests.projects import LADDER, ProjectTestCase, on_fable
 from tests.test_conductor import done, drive, patch, run_verb
 from tests.test_pacing import HOUR, REFUSED_TEXT, PacingCase, output
 from tests.test_verdicts import passing
@@ -63,7 +63,18 @@ def refused(**fields):
 
 
 class HoldCase(PacingCase):
-    """The pacing project, with blockers, waves that settle, and the journal read as the hold."""
+    """The pacing project, with blockers, waves that settle, and the journal read as the hold.
+
+    Its `harness.json` puts the Fable rungs back (`SEVEN_RUNGS`), so difficulty 4 and 5 launch on Fable as they
+    did before ticket 70, and the hold has Fable tickets to hold.
+    """
+
+    def setUp(self):
+        super().setUp()
+        on_fable(self.project, LADDER)
+        # Committed, as an owner commits it, so `wayline run` finds nothing outside `research/` to refuse.
+        self.git("add", "harness.json")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "harness: the Fable rungs back")
 
     def add(self, identifier, difficulty=1, blocked_by=()):
         super().add(identifier, difficulty)
