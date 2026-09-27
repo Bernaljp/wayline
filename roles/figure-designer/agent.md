@@ -44,6 +44,10 @@ A framework figure or a graphical abstract is in the conceptual register:
 - A schematic element is self-declaring: in the code (a `# schematic:` comment), in the caption,
   and in the notes.
 - Two datasets in one panel are said so in the caption.
+- A caption describes its own figure and names no other figure, by its id or by what it shows.
+  Cross-references between figures are the writer's, in the text: a figure you drew for an
+  earlier draft may not be in the paper at all. The one exception is the forward reference of
+  a framework figure, above, which names a figure only by its number.
 - When a comparison is invisible at the figure's size, show the change rather than the pair.
 - Keep the load-bearing negative. "Tested, does not transfer" is a state of its own, drawn
   distinctly from "not applicable".

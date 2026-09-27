@@ -15,12 +15,17 @@ that fits best from `guidelines/` (`decider.decide_venue`, journaled as a `decis
    it is, and one that waited (the owner's pick, a window) is resumed. A verified figure is copied into
    `research/paper/figures/` and its placeholder line becomes the image and the figure role's caption,
    which sit between the records markers because the figure role's own `provenance` check and honesty
-   verdict are what trace them; everything else the writer wrote is prose the linter reads.
+   verdict are what trace them; everything else the writer wrote is prose the linter reads. A figure
+   the paper asked for files no proposal (ticket 66): what the figure role has to say about the text,
+   its `findings_for_text`, goes on the next build's list for the writer drafting that text, once.
 4. **Every build is checked.** The sentence classifier and the provenance linter of ticket 40 run on
    the draft, and the seven checks of ticket 52 on `research/paper/` against the venue's
-   `guidelines.json`. A lint problem, a failing check, or a figure that could not be placed goes back
-   to the same writer session with the list, up to `MAX_BUILDS` builds; a draft still failing after
-   that is left for the owner with its list, and no verdict is spent on it.
+   `guidelines.json`. A lint problem, a failing check, a figure that could not be placed, or a caption
+   that names another figure under `figures/` goes back to the same writer session with the list, up
+   to `MAX_BUILDS` builds; a draft still failing after that is left for the owner with its list, and
+   no verdict is spent on it. The next build sends a caption that named another figure back to the
+   figure role as a guided revision that drops the reference, and a build whose figures had new
+   points for the text is followed by one that gives them to the writer, though it failed nothing.
 5. **The gate.** A draft that builds is gated by the two-thread kill argument (`gates.kill_argument`)
    and then one independent verdict, the read (`gates.PAPER_READ`), all fresh verifier sessions on the
    table's model for the writer's. A fail files a `writing` ticket that scopes the claims down, unless
@@ -52,7 +57,7 @@ from wayline.project import ProjectError, find_project, policy_for, steer_ticket
 
 __all__ = [
     "PaperError", "Paper", "PAPER_PATH", "BUILD_PATH", "MAX_BUILDS", "FIGURE_TARGET", "READ_QUESTION", "READ_SCOPE", "READ_TITLE",
-    "venues", "venue_lines", "figure_target", "figure_request", "draw", "assemble", "fence_references", "check_build", "write_paper",
+    "venues", "venue_lines", "figure_target", "figure_request", "caption_revision", "named_figures", "draw", "assemble", "fence_references", "check_build", "write_paper",
     "summary", "render", "paper_command",
 ]
 
@@ -75,7 +80,8 @@ MAX_BUILDS = 3
 # no column width: 89 mm is the single column of the Nature and Cell families, which the M7 figure was drawn at,
 # and 6 pt the smallest type those families print. A venue's own `min_dpi` wins over 300 when it is higher.
 FIGURE_TARGET = {"width_mm": 89, "max_height_mm": 120, "min_font_pt": 6, "min_dpi": 300}
-FIGURE_TICKET = "paper"                   # `figure_request.ticket`: no ticket asked for it, the paper did
+FIGURE_TICKET = figure_role.PAPER_TICKET  # `figure_request.ticket`: no ticket asked for it, the paper did
+REVISION_FIELDS = ("mode", "revision_of", "change_requests")
 
 # What a figure result's status means for the draft. A figure that waits is the owner's or a window's, not the
 # writer's to fix, so it holds the gate rather than going back to the writer.
@@ -102,6 +108,9 @@ _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
 _ENTRY = re.compile(r"^\s*(?:\[\d+\]|\d+\.|[-*])\s+\S")   # a reference entry: `[1] ...`, `1. ...`, `- ...`
 REFERENCE_HEADINGS = ("references", "reference list", "bibliography", "literature cited", "works cited", "cited literature")
 _CAPTION_LEAD = re.compile(r"^\s*\**\s*(?:figure|fig\.?)\s*\d+\s*[.:|]\s*\**\s*", re.IGNORECASE)
+
+_ID_TOKEN = r"(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])"   # a figure id standing whole, not inside a longer name
+_COMPOUND = re.compile(r"[_\d-]")
 
 RESUME_BUILD = (
     "The draft you returned was written to research/paper/ and built. The build failed on the items below. "
@@ -228,24 +237,93 @@ def draw(project, request, *, harness_root=None, policy=None, say=None):
     in the venue's name, at the same size, type, resolution, formats, and library, is not a change.
     """
     previous = figure_role.read_result(project, request["figure_id"])
-    try:
-        asked = json.loads((Path(project) / figure_role.FIGURES / request["figure_id"] / figure_role.REQUEST_JSON).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        asked = None
-    if isinstance(previous, dict) and _drawn_alike(asked, request):
+    if isinstance(previous, dict) and _drawn_alike(_asked(project, request["figure_id"]), request):
         if previous.get("status") in WAITS:
             return figure_role.resume_figure(project, request["figure_id"], harness_root=harness_root, policy=policy, say=say)
         return previous, None
     return figure_role.make(project, request, harness_root=harness_root, policy=policy, say=say)
 
 
+def _asked(project, figure_id):
+    """The request on disk for a figure, `figures/<figure_id>/request.json`, or None."""
+    try:
+        return json.loads((Path(project) / figure_role.FIGURES / figure_id / figure_role.REQUEST_JSON).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 def _drawn_alike(asked, request):
-    """Whether two figure requests draw the same figure: equal, the target's `venue` label aside."""
+    """Whether the request on disk, `asked`, draws the figure `request` asks for: equal, the target's `venue` label aside.
+
+    Against an unguided request a guided revision on disk counts as the figure it revised: the paper sends a figure
+    back only to fix its caption, and the next build, asking for the same figure, is given the revision rather than
+    a new figure drawn from the start. A guided request is compared whole.
+    """
+    guided = isinstance(request, dict) and request.get("mode") == "guided"
+
     def unlabelled(value):
         if not isinstance(value, dict):
             return value
-        return dict(value, target={key: item for key, item in (value.get("target") or {}).items() if key != "venue"})
+        value = dict(value, target={key: item for key, item in (value.get("target") or {}).items() if key != "venue"})
+        return value if guided else {key: item for key, item in value.items() if key not in REVISION_FIELDS}
     return unlabelled(asked) == unlabelled(request)
+
+
+def _figure_ids(project):
+    """Every figure under the project's `figures/`: a directory holding a request or a result, this draft's or not."""
+    try:
+        found = sorted((Path(project) / figure_role.FIGURES).iterdir())
+    except OSError:
+        return []
+    return [path.name for path in found
+            if path.is_dir() and ((path / figure_role.REQUEST_JSON).is_file() or (path / figure_role.RESULT_JSON).is_file())]
+
+
+def named_figures(caption, figure_id, project):
+    """The other figures under the project's `figures/` that a caption names by id, in order.
+
+    An id with a `_`, a `-`, or a digit in it is no word prose writes by chance, so it names its figure wherever it
+    stands whole, in any case: the M7 run's "the ceiling_gap figure". An id that is a plain word (`depth`) names its
+    figure only when it is written as one, in backticks or beside the word figure, since a caption says "depth" of
+    its own axes all the time.
+    """
+    named = []
+    for other in _figure_ids(project):
+        if other == figure_id:
+            continue
+        word = re.escape(other)
+        if _COMPOUND.search(other):
+            pattern = _ID_TOKEN % word
+        else:
+            pattern = r"`%s`|\bfig(?:ure|\.)?\s+%s\b|\b%s\s+fig(?:ure\b|\.|\b)" % (word, word, word)
+        if re.search(pattern, caption, re.IGNORECASE):
+            named.append(other)
+    return named
+
+
+def caption_revision(request, names, version):
+    """The guided revision that sends a figure back to have its caption drop the other figures it names.
+
+    It is the figure's own request, drawn again from its `figure_result.json` with one change request, from the
+    paper; its id carries the version that named them, so a revision that still names one is asked for anew.
+    """
+    named = ", ".join("figure `%s`" % name for name in names)
+    return dict(request, mode="guided", revision_of="%s/%s/%s" % (figure_role.FIGURES, request["figure_id"], figure_role.RESULT_JSON),
+                change_requests=[{"id": "drop-figure-references-v%d" % version, "from": "paper", "text": (
+                    "Take %s out of the caption, and change nothing else: a caption describes its own figure and names no "
+                    "other, since cross-references between figures are the writer's, in the text." % named)}])
+
+
+def _revision(project, request, names):
+    """The request to send for a figure whose caption named `names`: its caption revision, or `request` itself.
+
+    Only a verified figure drawn from this same request is revised; a request that changed draws the figure anew, a
+    caption and all, and that caption is checked like any other.
+    """
+    previous = figure_role.read_result(project, request["figure_id"])
+    if not isinstance(previous, dict) or previous.get("status") != "verified" or not _drawn_alike(_asked(project, request["figure_id"]), request):
+        return request
+    return caption_revision(request, names, previous.get("version") or 1)
 
 
 def _figure_file(result, target, project):
@@ -274,16 +352,24 @@ def _caption(result, project):
     return " ".join(text.replace(figure_checks.MIXED_DATA_MARKER, " ").split()) if text else None
 
 
-def _place(project, draft, record, policy, harness_root, draw_figure, say):
-    """Every figure the draft asks for, drawn or taken as it is: `{figure_id: {state, file, caption, why}}`."""
+def _place(project, draft, record, policy, harness_root, draw_figure, say, revise=None):
+    """Every figure the draft asks for, drawn or taken as it is: `(placed, points)`.
+
+    `placed` is `{figure_id: {state, file, caption, why}}`, with `names` on a placed figure whose caption names
+    another figure under `figures/`. `points` are the figure role's `findings_for_text`, each with its figure and
+    version. `revise` maps a figure the last build found naming others to their ids, and it is sent back to have
+    its caption drop them.
+    """
     manifest = provenance.read_manifest(project)
-    placed = {}
+    placed, points = {}, []
     for asked in draft["figures"]:
         figure_id = asked["figure_id"]
         request = figure_request(asked, record, project, manifest)
         if isinstance(request, str):
             placed[figure_id] = {"state": FAILED, "why": request}
             continue
+        if (revise or {}).get(figure_id):
+            request = _revision(project, request, revise[figure_id])
         try:
             result, reason = draw_figure(project, request, harness_root=harness_root, policy=policy, say=say)
         except (gates.UsageLimited, gates.FableHeld):
@@ -294,11 +380,17 @@ def _place(project, draft, record, policy, harness_root, draw_figure, say):
         except (gates.GateError, worker.LaunchError, worker.RoleError) as failure:
             placed[figure_id] = {"state": WAITING, "why": "the figure role stopped: %s" % failure}
             continue
+        points.extend({"figure_id": figure_id, "version": result.get("version"), "text": provenance.one_line(finding["text"]),
+                       "manuscript_locator": finding.get("manuscript_locator")}
+                      for finding in result.get("findings_for_text") or [] if isinstance(finding, dict) and finding.get("text"))
         status = result.get("status")
         source = _figure_file(result, request["target"], project) if status == "verified" else None
         caption = _caption(result, project) if source is not None else None
         if source is not None and caption:
             placed[figure_id] = {"state": PLACED, "file": source, "caption": caption, "status": status, "version": result.get("version")}
+            names = named_figures(caption, figure_id, project)
+            if names:
+                placed[figure_id]["names"] = names
         elif source is not None:
             placed[figure_id] = {"state": FAILED, "status": status,
                                  "why": "verified, but its caption %s cannot be read" % (result.get("final") or {}).get("caption")}
@@ -313,7 +405,33 @@ def _place(project, draft, record, policy, harness_root, draw_figure, say):
             if findings:
                 why += "; the honesty verdict found: %s" % "; ".join(" ".join(str(item.get("text", "")).split()) for item in findings)
             placed[figure_id] = {"state": FAILED, "status": status, "why": why}
-    return placed
+    return placed, points
+
+
+def _untold(points, builds):
+    """The figure role's points for the text that no earlier build listed for the writer.
+
+    A figure not drawn again hands back the same points, and the writer is told each once.
+    """
+    told = {(item["figure_id"], item["text"]) for build in builds for item in build.get("for_writer") or []}
+    fresh = []
+    for point in points:
+        if (point["figure_id"], point["text"]) not in told:
+            told.add((point["figure_id"], point["text"]))
+            fresh.append(point)
+    return fresh
+
+
+def _point_lines(points):
+    return "\n".join("- figure `%s`%s: %s" % (point["figure_id"], ", at %s" % provenance.one_line(point["manuscript_locator"])
+                                              if point.get("manuscript_locator") else "", point["text"]) for point in points)
+
+
+def _build_message(failures, points):
+    """What the writer is resumed with after a build: its list, and the figure role's points for the text."""
+    if not failures:
+        return RESUME_TEXT % _point_lines(points)
+    return RESUME_BUILD % "\n".join(failures) + (TEXT_POINTS % _point_lines(points) if points else "")
 
 
 # --- a build --------------------------------------------------------------------------------------
@@ -342,6 +460,11 @@ def assemble(markdown, placed):
             return ""
         if figure["state"] == WAITING:
             return "\n".join([provenance.RECORDS_BEGIN, "*[Figure %s is not drawn yet: %s.]*" % (figure_id, figure["why"]), provenance.RECORDS_END])
+        if figure.get("names"):
+            problems.append({"problem": "figure", "detail": (
+                "figure %s's caption names %s, which is not its own: a caption describes its own figure, and a cross-reference "
+                "between figures is yours, in the text. The next build has the figure role drop it from the caption; keep "
+                "asking for figure %s as it is" % (figure_id, ", ".join("figure %s" % name for name in figure["names"]), figure_id))})
         number += 1
         name = "%s/%s%s" % (FIGURES_DIR, figure_id, figure["file"].suffix.lower())
         files[name] = figure["file"]
@@ -648,6 +771,19 @@ def _write_build(book, paper):
     book.write_json("%s/%s" % (PAPER_DIR, BUILD_JSON), dict(summary(paper), schema_version=1))
 
 
+RESUME_TEXT = (
+    "The draft you returned was written to research/paper/ and built, and the figure role, drawing the figures it asks "
+    "for, has points for the text they bear on. Return the whole draft again, through the structured output, with each "
+    "point below taken into the text at the place it names, its claim tagged like any other, or say in `notes` why the "
+    "text stands as it is.\n\n%s"
+)
+TEXT_POINTS = (
+    "\n\nThe figure role, drawing the figures the draft asks for, also has points for the text they bear on. Take each "
+    "into the text at the place it names, its claim tagged like any other, or say in `notes` why the text stands as it "
+    "is:\n\n%s"
+)
+
+
 RESUME_GATE = (
     "The draft built, and the gate failed it: the points below stand, each at the locator the verifier read it at. "
     "Return the whole draft again, through the structured output, with each one answered: the evidence it asks for "
@@ -679,11 +815,13 @@ def _last_build(book, venue):
     if last.get("status") not in (BUILD_FAILED, GATE_FAILED) or not builds or not builds[-1].get("session_id"):
         raise PaperError("the last draft is %s, neither failing its build nor failed by the gate; run wayline paper "
                          "without --continue" % last.get("status"))
+    points = builds[-1].get("for_writer") or []   # the last build's points, which no later build gave the writer
     if last["status"] == BUILD_FAILED:
-        message = RESUME_BUILD % "\n".join(builds[-1]["failures"])
+        message = _build_message(builds[-1]["failures"], points)
     else:
         failed = [taken for taken in (last.get("kill_argument"), last.get("read")) if taken and not taken.get("pass")]
         message = RESUME_GATE % "\n".join(gates.findings_text(taken["findings"]) for taken in failed)
+        message += TEXT_POINTS % _point_lines(points) if points else ""
     return venue or last["venue"], builds, builds[-1]["session_id"], message, last["venue"]
 
 
@@ -730,7 +868,9 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
         envelope = _answer(request, session_id, message)
         session_id = envelope.session_id or session_id
         draft = envelope.structured_output
-        placed = _place(project, draft, record, policy, harness_root, draw_figure, say)
+        revise = {figure_id: figure["names"] for figure_id, figure in (paper.builds[-1].get("figures") or {}).items()
+                  if figure.get("names")} if paper.builds else {}
+        placed, points = _place(project, draft, record, policy, harness_root, draw_figure, say, revise)
         text, figure_problems, files = assemble(draft["markdown"], placed)
         book.remove_tree("%s/%s" % (PAPER_DIR, FIGURES_DIR))
         for name, source in files.items():
@@ -739,6 +879,7 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
         lint, findings = check_build(project, record, text, harness_root=harness_root, policy=policy)
         failures, owners = _failures(lint, findings, figure_problems, record, files)
         waiting = sorted(figure_id for figure_id, figure in placed.items() if figure["state"] == WAITING)
+        for_writer = _untold(points, paper.builds)
         paper.builds.append({
             "build": number, "session_id": envelope.session_id, "model": envelope.model,
             "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
@@ -746,17 +887,23 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
             "checks": [finding._asdict() for finding in findings],
             "figures": {figure_id: {key: str(value) if isinstance(value, Path) else value for key, value in figure.items()}
                         for figure_id, figure in placed.items()},
-            "failures": failures, "owners": owners, "notes": draft["notes"],
+            "failures": failures, "for_writer": for_writer, "owners": owners, "notes": draft["notes"],
         })
-        say("build %d    linter %s (%d claims, %d tagged), checks %s, %d figure(s) placed%s" % (
+        say("build %d    linter %s (%d claims, %d tagged), checks %s, %d figure(s) placed%s%s" % (
             number, "pass" if lint.passed else "FAIL", lint.claims, lint.tagged, guidelines.worst(findings), len(files),
-            ", %d failure(s)" % len(failures) if failures else ""))
-        if not failures:
+            ", %d failure(s)" % len(failures) if failures else "",
+            ", %d point(s) for the text" % len(for_writer) if for_writer else ""))
+        if not failures and not for_writer:
             break
-        message = RESUME_BUILD % "\n".join(failures)
-    else:
+        message = _build_message(failures, for_writer)
+    if paper.builds[-1]["failures"]:
         paper.notes.append("the draft still failed its build after %d builds; no verdict was spent on it; "
                            "wayline paper --continue gives the same writer session %d more" % (MAX_BUILDS, MAX_BUILDS))
+    if paper.builds[-1]["for_writer"]:
+        late = sorted({item["figure_id"] for item in paper.builds[-1]["for_writer"]})
+        paper.notes.append("%s had points for the text after the last build, so no writer has read them: build.json keeps them "
+                           "under for_writer, and wayline paper --continue after a failed build or gate gives them to the writer"
+                           % ", ".join("figure %s" % figure_id for figure_id in late))
     paper.notes.extend(paper.builds[-1]["owners"])
     if draft["notes"].strip():
         paper.notes.append("the writer: %s" % " ".join(draft["notes"].split()))

@@ -41,8 +41,9 @@ and a human-only decision ticket asks the owner whether to override it. Only an 
 records as the owner's (`decided_by: human`) sets `overridden_by`; `resume` then has the request
 carried out and writes the override into the caption and the notes itself.
 
-**What leaves the role.** Every `findings_for_text` entry becomes a proposal (`proposals`, kind
-`writing`); the traps a result would promote into the plot index are filed as feedback for the
+**What leaves the role.** Every `findings_for_text` entry of a figure a ticket asked for becomes a
+proposal (`proposals`, kind `writing`). A figure the paper asked for (`ticket: "paper"`) files none:
+`wayline paper` hands its findings to the writer drafting that text, in the next build's list. The traps a result would promote into the plot index are filed as feedback for the
 evolve loop (`changes.file_from_figure`), whose change can fold them in with `wayline figures
 fold-traps`. Every result, whatever its status, is validated against `figure_result/1`, written to
 `figures/<figure_id>/figure_result.json`, and journaled as `figure_result` with its path and hash.
@@ -70,7 +71,7 @@ from wayline.replay import replay
 from wayline.tickets import TicketError, read_tickets
 
 __all__ = [
-    "DESIGNER", "CRITIC", "RUBRIC", "HONESTY_RULES", "FigureError", "classify_shape", "claim_families",
+    "DESIGNER", "CRITIC", "PAPER_TICKET", "RUBRIC", "HONESTY_RULES", "FigureError", "classify_shape", "claim_families",
     "take_candidates", "margin_of", "make", "resume_figure", "read_result", "figure_command",
 ]
 
@@ -93,6 +94,7 @@ RESULT_JSON = "figure_result.json"
 CHECKS_JSON = "checks.json"
 SESSIONS = "sessions/figures"         # research/sessions/figures/<figure_id>/<n>/
 BY = "figure"                         # `proposed_by` on the tickets the figure role files
+PAPER_TICKET = "paper"                # `figure_request.ticket` of a figure `wayline paper` asked for, not a ticket
 AUTONOMOUS = "autonomous"
 OVERRIDE = "override"
 KEEP = "keep the refusal"
@@ -615,7 +617,8 @@ class _Run:
                   "- the final generator: `%s`, run from the project root" % self.paths["generator"]]
         for fmt in self.request["target"]["formats"]:
             lines.append("- the %s it writes: `%s`" % (fmt.upper(), self.paths[fmt]))
-        lines += ["- the caption: `%s`" % self.paths["caption"], "- the notes: `%s`" % self.paths["notes"]]
+        lines += ["- the caption: `%s`; it describes this figure and names no other" % self.paths["caption"],
+                  "- the notes: `%s`" % self.paths["notes"]]
         if self.request["mode"] == "guided":
             lines.append("- an honest alternative to a refused request `<id>`: `%s/alternatives/<id>/draft.py` and its `draft.png`"
                          % self.directory)
@@ -1229,10 +1232,14 @@ def write_result(project, result, reason=None, notify=None, policy=None, harness
 
 
 def _hand_on(project, result, notify=None, policy=None, harness_root=None):
-    """`findings_for_text` become proposals; promotable traps go to the evolve loop as feedback."""
+    """`findings_for_text` become proposals; promotable traps go to the evolve loop as feedback.
+
+    A paper's figure proposes nothing: the M7 run filed its points as `writing` tickets 70 to 81 while the writer was
+    drafting that same text, so `wayline paper` hands them to the writer instead.
+    """
     from wayline import changes, proposals  # both import much of the harness; only a result that carries these needs them
 
-    findings = result.get("findings_for_text") or []
+    findings = [] if result.get("ticket") == PAPER_TICKET else result.get("findings_for_text") or []
     if findings:
         asked = [{"title": "Revise the text figure %s bears on: %s" % (result["figure_id"], _one_line(finding["text"])[:60]),
                   "kind": "writing", "radius": "moderate",

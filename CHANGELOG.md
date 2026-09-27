@@ -2,6 +2,25 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
+## Unreleased
+
+- A paper's figures tell the writer, not the ticket graph, what the text should say (ticket 66). A figure `wayline
+  paper` asked for (`figure_request.ticket: "paper"`) files no proposal and opens no `writing` ticket: its
+  `findings_for_text` go on the next build's list for the writer, each with the figure and the `manuscript_locator`
+  it came from, and `build.json` keeps them under each build's `for_writer`. Each point is listed once. A build whose
+  figures bring new points is followed by one that gives them to the writer, even when it failed nothing, and
+  points after the last build reach the writer on `wayline paper --continue`. A figure a ticket asked for still
+  files its proposals as before. The M7 run had filed `writing` tickets 70 to 81 this way while the writer was
+  drafting that same text.
+- A caption names no other figure (ticket 66). The figure designer's prompt says a caption describes its own figure,
+  since cross-references between figures are the writer's, in the text. Every paper build checks each placed
+  caption: one that names the id of another figure under the project's `figures/` fails the build, and the next
+  build sends that figure back to the figure role as a guided revision whose one change request, `from: "paper"`
+  (new in `figure_request/1`), drops the reference. A plain-word id such as `depth` counts only when the caption
+  writes it as a reference, in backticks or beside the word figure. A later build asking for the same figure is
+  given the revision, not a figure drawn from the start. The M7 run's build 7 had sent readers to "the ceiling_gap
+  figure", a figure from an earlier draft.
+
 ## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts

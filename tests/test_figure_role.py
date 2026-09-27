@@ -275,7 +275,8 @@ class RolesTest(unittest.TestCase):
         designer = worker.read_role("figure-designer", HARNESS_ROOT)
         for doctrine in ("Conceptual labels, real shapes", "Structure spends no color", "One ramp per quantity",
                          "Required versus optional is line style", "Verify every equation", "Select for representativeness",
-                         "Never draw a capability", "self-declaring", "Keep the load-bearing negative", "nearest honest alternative"):
+                         "Never draw a capability", "self-declaring", "Keep the load-bearing negative", "nearest honest alternative",
+                         "describes its own figure and names no other"):
             self.assertIn(doctrine, designer.system_prompt)
 
     def test_the_critic_reads_only_and_the_designer_writes_only_under_the_figure(self):
@@ -758,6 +759,14 @@ class HandOnTest(FigureRoleCase):
         self.make  # a result carried again proposes nothing twice
         figure_role.write_result(self.project, self.written())
         self.assertEqual(len(self.events("proposal_parked")) + len(self.events("proposal_admitted")), 1)
+
+    def test_a_figure_the_paper_asked_for_files_no_proposal(self):
+        self.happy_path(findings_for_text=[{"text": "The runtime advantage of X holds only on the small datasets.",
+                                            "manuscript_locator": "results.md#S3", "suggested_ticket": True}])
+        result, _ = self.make(dict(self.request, ticket=figure_role.PAPER_TICKET))
+        self.assertEqual(result["findings_for_text"][0]["manuscript_locator"], "results.md#S3")
+        self.assertEqual(self.events("proposal_parked") + self.events("proposal_admitted"), [])
+        self.assertEqual([ticket for ticket in read_tickets(self.project) if ticket["kind"] == "writing"], [])
 
     def test_promoted_traps_reach_the_evolve_loop_and_fold_into_the_index(self):
         trap = {"library": "matplotlib", "chart_type": "Barplot", "description": "Error bars vanished under the bars at zorder 2.",
