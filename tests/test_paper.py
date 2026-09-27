@@ -243,6 +243,16 @@ class ContinueTest(PaperCase):
         self.assertIn("rewording it rarely changes that", call.message)
         self.assertEqual([build["build"] for build in self.build()["builds"]], list(range(1, paper.MAX_BUILDS + 2)))
 
+    def test_continue_at_another_venue_tells_the_writer_its_guidelines(self):
+        # The draft has none of Nature Methods' fixed sections, so it fails every build there; arXiv takes it.
+        first = self.write(*[draft()] * paper.MAX_BUILDS, venue="nature-methods")
+        self.assertEqual(first.status, paper.BUILD_FAILED)
+        again = self.write(draft(), verifier=PASSING_GATE, carry_on=True, venue="arxiv")
+        self.assertEqual((again.venue, again.status), ("arxiv", paper.PASSED))
+        (call,) = self.calls_of("writer")
+        self.assertIn("The owner has moved this draft to arXiv", call.message)
+        self.assertEqual([event["payload"]["venue"] for event in self.events("paper_started")], ["nature-methods", "arxiv"])
+
     def test_continue_takes_up_only_a_draft_left_failing_its_build(self):
         with self.assertRaisesRegex(paper.PaperError, "build.json is not there"):
             self.write(carry_on=True)
@@ -290,6 +300,19 @@ class FigureTest(PaperCase):
             return result, reason
         self.write(draft(WITH_FIGURE, [GAIN]), draft(), verifier=PASSING_GATE, draw_figure=no_caption)
         self.assertIn("its caption figures/gain/caption.md cannot be read", self.calls_of("writer")[1].message)
+
+    def test_a_figure_drawn_for_one_venue_is_the_same_figure_at_another_of_the_same_size(self):
+        manifest = provenance.read_manifest(self.project)
+        nature = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "nature-methods"), self.project, manifest)
+        arxiv = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project, manifest)
+        self.assertNotEqual(nature, arxiv)
+        self.assertTrue(paper._drawn_alike(nature, arxiv))
+        self.assertFalse(paper._drawn_alike(nature, dict(arxiv, claim=dict(arxiv["claim"], text="Another claim."))))
+
+    def test_the_checks_markers_stay_out_of_the_legend(self):
+        (self.project / "figures" / "gain").mkdir(parents=True)
+        (self.project / "figures" / "gain" / "caption.md").write_text("Panel (a) draws two runs [[mixed-data]]. (b) one.\n", encoding="utf-8")
+        self.assertEqual(paper._caption({"final": {"caption": "figures/gain/caption.md"}}, self.project), "Panel (a) draws two runs . (b) one.")
 
     def test_the_venue_s_resolution_and_formats_reach_the_target(self):
         record = json.loads((HARNESS_ROOT / "guidelines" / "plos-compbiol" / "guidelines.json").read_text(encoding="utf-8"))

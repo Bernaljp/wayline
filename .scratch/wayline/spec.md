@@ -686,8 +686,9 @@ Numbered so the milestones can point at them. Every decision below either restat
     against the venue's `guidelines.json`. A lint problem, a failing check, or a figure that could not be placed
     goes back to the same writer session (a resume) with the list, at most three builds in all; a draft that
     still fails is the owner's to read, and no verdict is spent on it. `wayline paper --continue` resumes that
-    session with the last list for three builds more, so the figures it asked for are not asked for anew (the
-    M7 run: a fresh writer rewords its figure claims, and a reworded claim is a new figure to draw).
+    session for three builds more, with the last list or, after a failed gate, with the points that stood, so
+    the figures it asked for are not asked for anew (the M7 run: a fresh writer rewords its figure claims, and
+    a reworded claim is a new figure to draw).
   - **Figures.** The draft asks for a figure as a line `{figure:<figure_id>}` and an entry naming its claim and
     its manifested data. The figure role gets the venue's `target`: its formats and resolution, the house
     library, and an 89 mm column with 6 pt type, since `guidelines.json` records no width. A request identical

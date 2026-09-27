@@ -45,7 +45,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, decider, figure_role, gates, guidelines, provenance, tickets, worker
+from wayline import HARNESS_ROOT, decider, figure_checks, figure_role, gates, guidelines, provenance, tickets, worker
 from wayline.cli import parse_args
 from wayline.ledger import PAPER_STARTED, Ledger
 from wayline.project import ProjectError, find_project, policy_for, steer_ticket
@@ -223,18 +223,28 @@ def draw(project, request, *, harness_root=None, policy=None, say=None):
 
     The same request as the one on disk is not drawn again: a result that waited is resumed (the owner may have
     picked since), and any other is returned as it is, verified or failed, since drawing it again would spend the
-    same sessions on the same answer. A changed request is a new version of the figure.
+    same sessions on the same answer. A changed request is a new version of the figure; a request that differs only
+    in the venue's name, at the same size, type, resolution, formats, and library, is not a change.
     """
     previous = figure_role.read_result(project, request["figure_id"])
     try:
         asked = json.loads((Path(project) / figure_role.FIGURES / request["figure_id"] / figure_role.REQUEST_JSON).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         asked = None
-    if isinstance(previous, dict) and asked == request:
+    if isinstance(previous, dict) and _drawn_alike(asked, request):
         if previous.get("status") in WAITS:
             return figure_role.resume_figure(project, request["figure_id"], harness_root=harness_root, policy=policy, say=say)
         return previous, None
     return figure_role.make(project, request, harness_root=harness_root, policy=policy, say=say)
+
+
+def _drawn_alike(asked, request):
+    """Whether two figure requests draw the same figure: equal, the target's `venue` label aside."""
+    def unlabelled(value):
+        if not isinstance(value, dict):
+            return value
+        return dict(value, target={key: item for key, item in (value.get("target") or {}).items() if key != "venue"})
+    return unlabelled(asked) == unlabelled(request)
 
 
 def _figure_file(result, target, project):
@@ -251,13 +261,16 @@ def _figure_file(result, target, project):
 def _caption(result, project):
     """The figure role's caption as text: `final.caption` is the path of its `caption.md` (ticket 50), never the words.
 
-    The M7 run placed the path itself as every legend, and the kill argument's adjudication caught it.
+    The M7 run placed the path itself as every legend, and the kill argument's adjudication caught it; the next
+    draft left the checks' `[[mixed-data]]` markers in, and it caught those too.
     """
     path = (result.get("final") or {}).get("caption")
     try:
-        return (Path(project) / path).read_text(encoding="utf-8").strip() if path else None
+        text = (Path(project) / path).read_text(encoding="utf-8") if path else None
     except (OSError, ValueError):
         return None
+    # `[[mixed-data]]` is for `mixed_data_disclosed` to find beside the caption's own words; a reader has the words.
+    return " ".join(text.replace(figure_checks.MIXED_DATA_MARKER, " ").split()) if text else None
 
 
 def _place(project, draft, record, policy, harness_root, draw_figure, say):
@@ -623,11 +636,18 @@ RESUME_GATE = (
 )
 
 
+RESUME_VENUE = (
+    "The owner has moved this draft to %s. From this build on it is checked against that venue's guidelines, "
+    "below, in place of the last venue's; write for its readers and its limits.\n\n```json\n%s\n```\n\n"
+)
+
+
 def _last_build(book, venue):
-    """What a `--continue` takes up: `(venue, builds, session_id, message)` off `build.json`, or a `PaperError`.
+    """What a `--continue` takes up: `(venue, builds, session_id, message, last venue)` off `build.json`, or a `PaperError`.
 
     A draft left failing its build is resumed with that build's list; one the gate failed, with the points the kill
     argument or the read left standing, which is how a fail scopes the claims down with the same writer session.
+    `venue` moves the draft to another venue, which the command says to the writer with that venue's guidelines.
     """
     try:
         last = book.read_json("%s/%s" % (PAPER_DIR, BUILD_JSON))
@@ -639,14 +659,12 @@ def _last_build(book, venue):
     if last.get("status") not in (BUILD_FAILED, GATE_FAILED) or not builds or not builds[-1].get("session_id"):
         raise PaperError("the last draft is %s, neither failing its build nor failed by the gate; run wayline paper "
                          "without --continue" % last.get("status"))
-    if venue is not None and venue != last.get("venue"):
-        raise PaperError("the last draft was for %s, not %s; --continue keeps its venue" % (last.get("venue"), venue))
     if last["status"] == BUILD_FAILED:
         message = RESUME_BUILD % "\n".join(builds[-1]["failures"])
     else:
         failed = [taken for taken in (last.get("kill_argument"), last.get("read")) if taken and not taken.get("pass")]
         message = RESUME_GATE % "\n".join(gates.findings_text(taken["findings"]) for taken in failed)
-    return last["venue"], builds, builds[-1]["session_id"], message
+    return venue or last["venue"], builds, builds[-1]["session_id"], message, last["venue"]
 
 
 def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, draw_figure=None, say=None, verify=False,
@@ -656,7 +674,8 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
     Returns a `Paper`. `draw_figure` stands in for `draw`, the figure role's door, in a test; `say` hears progress;
     `verify` samples the draft's tagged claims after a gate that passed. `carry_on` (`--continue`) takes up the last
     draft that failed its build or the gate: the same writer session is resumed with that build's list or the points
-    that stood, for up to `MAX_BUILDS` more builds, so the figures it asked for, and their requests, stay as they were.
+    that stood, for up to `MAX_BUILDS` more builds, so the figures it asked for, and their requests, stay as they were;
+    with `venue` it moves the draft there.
     Raises `PaperError` before anything is journaled when there is no report or the venue has no guidelines, and lets
     a usage window's refusal (`provenance.UsageLimited`, `gates.UsageLimited`) or the hold on Fable out to the caller.
     """
@@ -669,7 +688,7 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
     policy = policy_for(project, harness_root) if policy is None else policy
     decided, earlier, session_id, message = None, [], None, None
     if carry_on:
-        venue, earlier, session_id, message = _last_build(book, venue)
+        venue, earlier, session_id, message, drafted_for = _last_build(book, venue)
     elif venue is None:
         decided = _choose_venue(project, harness_root, policy)
         venue = decided.answer
@@ -678,6 +697,8 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
         record = guidelines.read_guidelines(harness_root, venue)
     except guidelines.GuidelinesError as failure:
         raise PaperError("%s; the venues with guidelines are %s" % (failure, ", ".join(sorted(venues(harness_root))) or "none")) from None
+    if carry_on and venue != drafted_for:
+        message = RESUME_VENUE % (record["display_name"], _guideline_summary(record)) + message
     book.append_event(PAPER_STARTED, {"venue": venue})
     role = worker.read_role(WRITER, harness_root, project)
     request = provenance.structured_request(project, role, policy, harness_root, writer_prompt(role, project, record, harness_root),
