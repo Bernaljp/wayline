@@ -107,7 +107,10 @@ RESUME_BUILD = (
     "Return the whole draft again, through the structured output, with each one answered: a claim sentence ends "
     "with a tag that resolves, a check the venue's guidelines fail is met, and a figure that could not be placed "
     "is asked for again with a claim its data supports or taken out. Do not answer an item by deleting the evidence "
-    "it asks for; scope the claim down instead.\n\n%s"
+    "it asks for; scope the claim down instead. An `untagged_claim` is a sentence the classifier read as a claim, "
+    "and it reads a statement of the study's scope or limits as one too: rewording it rarely changes that. End it "
+    "with the tag of the artifact that bounds it (the result, the generator's settings, the split it was measured "
+    "on), or leave the sentence out and say in `notes` what the owner should add by hand.\n\n%s"
 )
 
 
@@ -597,11 +600,31 @@ def _write_build(book, paper):
     book.write_json("%s/%s" % (PAPER_DIR, BUILD_JSON), dict(summary(paper), schema_version=1))
 
 
-def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, draw_figure=None, say=None, verify=False):
+def _last_build(book, venue):
+    """The build a `--continue` takes up: `(venue, builds, session_id, failures)` off `build.json`, or a `PaperError`."""
+    try:
+        last = book.read_json("%s/%s" % (PAPER_DIR, BUILD_JSON))
+    except (OSError, ValueError):
+        raise PaperError("%s is not there; --continue takes up a draft `wayline paper` left failing its build" % BUILD_PATH) from None
+    if not isinstance(last, dict):
+        raise PaperError("%s is not a build record" % BUILD_PATH)
+    builds = last.get("builds") or []
+    if last.get("status") != BUILD_FAILED or not builds or not builds[-1].get("session_id"):
+        raise PaperError("the last draft is %s, not a draft left failing its build; run wayline paper without --continue"
+                         % last.get("status"))
+    if venue is not None and venue != last.get("venue"):
+        raise PaperError("the last draft was for %s, not %s; --continue keeps its venue" % (last.get("venue"), venue))
+    return last["venue"], builds, builds[-1]["session_id"], builds[-1]["failures"]
+
+
+def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, draw_figure=None, say=None, verify=False,
+                carry_on=False):
     """Draft `research/paper/` for `venue` (the decider's pick when None), build it until it passes or `MAX_BUILDS`, and gate it.
 
     Returns a `Paper`. `draw_figure` stands in for `draw`, the figure role's door, in a test; `say` hears progress;
-    `verify` samples the draft's tagged claims after a gate that passed.
+    `verify` samples the draft's tagged claims after a gate that passed. `carry_on` (`--continue`) takes up a draft
+    the last run left failing its build: the same writer session is resumed with that build's list, for up to
+    `MAX_BUILDS` more builds, so the figures it asked for, and their requests, stay as they were.
     Raises `PaperError` before anything is journaled when there is no report or the venue has no guidelines, and lets
     a usage window's refusal (`provenance.UsageLimited`, `gates.UsageLimited`) or the hold on Fable out to the caller.
     """
@@ -612,8 +635,11 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
     if not (book.research / provenance.REPORT).is_file():
         raise PaperError("%s is not there; the paper is drafted after the report: run wayline report first" % provenance.REPORT_PATH)
     policy = policy_for(project, harness_root) if policy is None else policy
-    decided = None
-    if venue is None:
+    decided, earlier, session_id, message = None, [], None, None
+    if carry_on:
+        venue, earlier, session_id, failures = _last_build(book, venue)
+        message = RESUME_BUILD % "\n".join(failures)
+    elif venue is None:
         decided = _choose_venue(project, harness_root, policy)
         venue = decided.answer
         say("venue     %s, the decider's pick (confidence %s): %s" % (venue, decided.confidence, " ".join(decided.rationale.split())))
@@ -625,9 +651,9 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
     role = worker.read_role(WRITER, harness_root, project)
     request = provenance.structured_request(project, role, policy, harness_root, writer_prompt(role, project, record, harness_root),
                                   DRAFT_SCHEMA, WRITER_BUDGET, provenance.session_dir(project, SESSIONS), read_only=True)
-    paper = Paper(venue=venue, path=book.research / PAPER_DIR / PAPER_MD, status=BUILD_FAILED, decided=decided)
-    session_id, message, files, waiting = None, None, {}, []
-    for number in range(1, MAX_BUILDS + 1):
+    paper = Paper(venue=venue, path=book.research / PAPER_DIR / PAPER_MD, status=BUILD_FAILED, decided=decided, builds=list(earlier))
+    files, waiting = {}, []
+    for number in range(len(earlier) + 1, len(earlier) + MAX_BUILDS + 1):
         say("build %d    the writer on %s %s%s" % (number, request.model, request.effort, "" if session_id is None else ", with the list"))
         envelope = _answer(request, session_id, message)
         session_id = envelope.session_id or session_id
@@ -657,7 +683,8 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
             break
         message = RESUME_BUILD % "\n".join(failures)
     else:
-        paper.notes.append("the draft still failed its build after %d builds; no verdict was spent on it" % MAX_BUILDS)
+        paper.notes.append("the draft still failed its build after %d builds; no verdict was spent on it; "
+                           "wayline paper --continue gives the same writer session %d more" % (MAX_BUILDS, MAX_BUILDS))
     paper.notes.extend(paper.builds[-1]["owners"])
     if draft["notes"].strip():
         paper.notes.append("the writer: %s" % " ".join(draft["notes"].split()))
@@ -685,12 +712,14 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
 
 
 def paper_command(args):
-    """`wayline paper [--venue <slug>] [--project <path>] [--verify] [--json]`."""
+    """`wayline paper [--venue <slug>] [--continue] [--project <path>] [--verify] [--json]`."""
     parser = argparse.ArgumentParser(prog="wayline paper", description=(
         "draft research/paper/ under a venue's guidelines, build it with the linter and the seven checks, and gate it "
         "with the kill argument and one independent read; nothing is submitted"))
     parser.add_argument("--venue", help="the venue's slug under guidelines/ (default: the decider picks the best fit)")
     parser.add_argument("--project", help="the project (default: the active one)")
+    parser.add_argument("--continue", dest="carry_on", action="store_true",
+                        help="take up a draft the last run left failing its build: resume its writer session with the list")
     parser.add_argument("--verify", action="store_true",
                         help="after a gate that passed, take a verdict on a sample of the draft's tagged claims (10 percent, at least ten)")
     parser.add_argument("--json", action="store_true", help="print the outcome as JSON")
@@ -704,7 +733,7 @@ def paper_command(args):
         return 2
     say = (lambda text: None) if options.json else print
     try:
-        paper = write_paper(project, options.venue, say=say, verify=options.verify)
+        paper = write_paper(project, options.venue, say=say, verify=options.verify, carry_on=options.carry_on)
     except (PaperError, provenance.ProvenanceError, gates.GateError, guidelines.GuidelinesError, worker.LaunchError,
             worker.RoleError, tickets.TicketError, decider.DeciderError) as failure:
         print("wayline paper: %s" % failure, file=sys.stderr)

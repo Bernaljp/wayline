@@ -77,7 +77,7 @@ VERBS = [
     Verb("guidelines", "guidelines build|check", "build the venue guidelines, or run the seven checks on a draft", "builders", lazy("wayline.guidelines", "build_command")),
     Verb("docs", "docs init|env|build [--theme t] [--offline]", "the documentation site: choose the theme once and lay out the skeleton, install Sphinx in the project's environment, build and check it", "builders",
          lazy("wayline.docs", "docs_command")),
-    Verb("paper", "paper [--venue <slug>] [--verify]", "draft research/paper/ under a venue's guidelines, build it with the linter and the seven checks, and gate it with the kill argument and one independent read; nothing is submitted", "builders",
+    Verb("paper", "paper [--venue <slug>] [--continue] [--verify]", "draft research/paper/ under a venue's guidelines, build it with the linter and the seven checks, and gate it with the kill argument and one independent read; nothing is submitted", "builders",
          lazy("wayline.paper", "paper_command")),
     Verb("report", "report [--offline] [--no-draft] [--verify]", "render REPORT.md from the ledger, lint every claim, and sample the claims for the verifier", "builders", lazy("wayline.provenance", "report_command")),
     Verb("tools", "tools install|show [--marker] [--mineru] [--grobid] [--dry-run]", "create the optional converter venv under ~/.wayline/tools/ (docling; marker, MinerU, GROBID on request)", "tools",

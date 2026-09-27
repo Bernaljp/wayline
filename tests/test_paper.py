@@ -116,7 +116,7 @@ class PaperCase(ProjectTestCase):
         self.book.write_markdown("REPORT.md", "# Report: ended-run\n\nThe report as rendered.\n")
         self.calls = []
 
-    def write(self, *writer, verifier=(), deciders=(), venue="arxiv", draw_figure=None, verify=False):
+    def write(self, *writer, verifier=(), deciders=(), venue="arxiv", draw_figure=None, verify=False, carry_on=False):
         """`write_paper` with the writer's and the verifier's envelopes scripted in order."""
         with worker.use_fake() as fake:
             self.classifier = Classifier()
@@ -129,7 +129,7 @@ class PaperCase(ProjectTestCase):
             for envelope in deciders:
                 fake.script(envelope, role="decider")
             try:
-                return paper.write_paper(self.project, venue, draw_figure=draw_figure, verify=verify)
+                return paper.write_paper(self.project, venue, draw_figure=draw_figure, verify=verify, carry_on=carry_on)
             finally:
                 self.calls = list(fake.calls)
 
@@ -227,6 +227,26 @@ class BuildTest(PaperCase):
         self.assertEqual(self.paper_verdicts(), [])
         self.assertIn("no verdict was spent", " ".join(written.notes))
         self.assertEqual(self.build()["status"], "build_failed")
+
+
+class ContinueTest(PaperCase):
+    def test_continue_resumes_the_last_writer_session_with_the_last_list(self):
+        first = self.write(*[draft(UNTAGGED)] * paper.MAX_BUILDS)
+        session = first.builds[-1]["session_id"]
+        again = self.write(draft(), verifier=PASSING_GATE, carry_on=True, venue=None)
+        self.assertEqual((again.status, again.venue), (paper.PASSED, "arxiv"))
+        (call,) = self.calls_of("writer")
+        self.assertEqual((call.kind, call.session_id), ("resume", session))
+        self.assertIn("untagged_claim", call.message)
+        self.assertIn("rewording it rarely changes that", call.message)
+        self.assertEqual([build["build"] for build in self.build()["builds"]], list(range(1, paper.MAX_BUILDS + 2)))
+
+    def test_continue_takes_up_only_a_draft_left_failing_its_build(self):
+        with self.assertRaisesRegex(paper.PaperError, "build.json is not there"):
+            self.write(carry_on=True)
+        self.write(draft(), verifier=PASSING_GATE)
+        with self.assertRaisesRegex(paper.PaperError, "the last draft is passed"):
+            self.write(carry_on=True)
 
 
 class FigureTest(PaperCase):
