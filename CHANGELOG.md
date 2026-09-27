@@ -2,6 +2,16 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
+## v1.0.1 (unreleased)
+
+- `REPORT.md` gets a second draft (ticket 67; Implementation Decisions 11). When the provenance linter fails on
+  sentences the writer wrote, `wayline report` resumes the same writer session with the list, each sentence and
+  why (an `untagged_claim` said to be the classifier's reading), and lints the new draft, at most
+  `paper.MAX_BUILDS` drafts in all; a draft that still fails is written with today's banner. The prose cache
+  (`research/.cache/report_prose.json`) records the linter's result beside the prose, so a render that may launch
+  redrafts cached prose that failed rather than reusing it; `--offline`, `--no-draft`, and the tick launch
+  nothing and render what the cache holds. An `unclassified` sentence is not sent back: a redraft cannot close it.
+
 ## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts
