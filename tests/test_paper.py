@@ -15,6 +15,7 @@ import struct
 import unittest
 import zlib
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 from tests.paths import FIXTURES_DIR
 from tests.projects import ProjectTestCase
@@ -515,6 +516,56 @@ class TextAndCaptionTest(PaperCase):
                                ("As figure depth shows.", ["depth"]), ("As `depth` shows.", ["depth"]),
                                ("The gain figure is this one.", [])):
             self.assertEqual(paper.named_figures(caption, "gain", self.project), named, caption)
+
+    def test_points_after_the_last_build_of_a_draft_the_gate_passed_reach_the_writer_on_continue(self):
+        failing = draft(UNTAGGED.replace("## References", "{figure:gain}\n\n## References"), [GAIN])
+        figures = Figures(self.project, for_text=[RUNTIME], from_call=paper.MAX_BUILDS)
+        first = self.write(*[failing] * (paper.MAX_BUILDS - 1), draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
+        self.assertEqual((first.status, len(first.builds[-1]["for_writer"])), (paper.PASSED, 1))
+        self.write(draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, carry_on=True, venue=None, draw_figure=figures)
+        (call,) = self.calls_of("writer")
+        self.assertIn("- figure `gain`, at Results, second paragraph: %s" % RUNTIME["text"], call.message)
+        self.assertIn("and built, and the figure role", call.message)
+
+    def drawn(self, request, status="verified"):
+        """`figures/gain/` as `figure_role.make` leaves it after drawing `request`."""
+        directory = self.project / "figures" / "gain"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "request.json").write_text(json.dumps(request), encoding="utf-8")
+        (directory / "figure_result.json").write_text(json.dumps({"figure_id": "gain", "version": 1, "status": status}), encoding="utf-8")
+
+    def door(self, request):
+        """`paper.draw`, the real door, with the figure role's own `make` and `resume_figure` recording what they are sent."""
+        sent = []
+        def make(project, asked, **options):
+            sent.append(("make", asked))
+            return {"figure_id": "gain", "version": 2, "status": "verified"}, None
+        def resume(project, figure_id, **options):
+            sent.append(("resume", figure_id))
+            return {"figure_id": "gain", "version": 1, "status": "verified"}, None
+        with mock.patch.object(figure_role, "make", make), mock.patch.object(figure_role, "resume_figure", resume):
+            result, _ = paper.draw(self.project, request)
+        return result, sent
+
+    def test_the_door_draws_a_caption_revision_and_then_gives_it_for_the_unguided_request(self):
+        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
+                                       provenance.read_manifest(self.project))
+        revised = paper.caption_revision(request, ["ceiling_gap"], 1)
+        self.drawn(request)
+        _, sent = self.door(revised)
+        self.assertEqual(sent, [("make", revised)])
+        self.drawn(revised)
+        result, sent = self.door(request)
+        self.assertEqual((sent, result["version"]), ([], 1))
+
+    def test_a_caption_revision_that_failed_is_drawn_again_from_the_figure_s_own_request(self):
+        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
+                                       provenance.read_manifest(self.project))
+        for status in ("honesty_failed", "refused", "failed_checks"):
+            self.drawn(paper.caption_revision(request, ["ceiling_gap"], 1), status)
+            _, sent = self.door(request)
+            self.assertEqual(sent, [("make", request)], status)
+            self.assertEqual(paper._revision(self.project, request, ["ceiling_gap"]), request, status)
 
     def test_a_guided_revision_on_disk_is_the_figure_its_unguided_request_draws(self):
         manifest = provenance.read_manifest(self.project)

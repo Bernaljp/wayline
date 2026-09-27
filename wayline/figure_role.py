@@ -43,9 +43,10 @@ carried out and writes the override into the caption and the notes itself.
 
 **What leaves the role.** Every `findings_for_text` entry of a figure a ticket asked for becomes a
 proposal (`proposals`, kind `writing`). A figure the paper asked for (`ticket: "paper"`) files none:
-`wayline paper` hands its findings to the writer drafting that text, in the next build's list. The traps a result would promote into the plot index are filed as feedback for the
-evolve loop (`changes.file_from_figure`), whose change can fold them in with `wayline figures
-fold-traps`. Every result, whatever its status, is validated against `figure_result/1`, written to
+`wayline paper` hands its findings to the writer drafting that text, in the next build's list. The
+traps a result would promote into the plot index are filed as feedback for the evolve loop
+(`changes.file_from_figure`), whose change can fold them in with `wayline figures fold-traps`. Every
+result, whatever its status, is validated against `figure_result/1`, written to
 `figures/<figure_id>/figure_result.json`, and journaled as `figure_result` with its path and hash.
 
 The designer writes only under `figures/<figure_id>/` (`TICKET_TOUCHES`); the critic writes nothing.
@@ -1234,8 +1235,8 @@ def write_result(project, result, reason=None, notify=None, policy=None, harness
 def _hand_on(project, result, notify=None, policy=None, harness_root=None):
     """`findings_for_text` become proposals; promotable traps go to the evolve loop as feedback.
 
-    A paper's figure proposes nothing: the M7 run filed its points as `writing` tickets 70 to 81 while the writer was
-    drafting that same text, so `wayline paper` hands them to the writer instead.
+    A paper's figure proposes nothing: the M7 run filed its points as the toy project's `writing` tickets 70 to 81
+    while the writer was drafting that same text, so `wayline paper` hands them to the writer instead.
     """
     from wayline import changes, proposals  # both import much of the harness; only a result that carries these needs them
 

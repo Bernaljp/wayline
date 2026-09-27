@@ -236,20 +236,31 @@ def draw(project, request, *, harness_root=None, policy=None, say=None):
     same sessions on the same answer. A changed request is a new version of the figure; a request that differs only
     in the venue's name, at the same size, type, resolution, formats, and library, is not a change.
     """
-    previous = figure_role.read_result(project, request["figure_id"])
-    if isinstance(previous, dict) and _drawn_alike(_asked(project, request["figure_id"]), request):
+    previous = _figure_on_disk(project, request)
+    if previous is not None:
         if previous.get("status") in WAITS:
             return figure_role.resume_figure(project, request["figure_id"], harness_root=harness_root, policy=policy, say=say)
         return previous, None
     return figure_role.make(project, request, harness_root=harness_root, policy=policy, say=say)
 
 
-def _asked(project, figure_id):
-    """The request on disk for a figure, `figures/<figure_id>/request.json`, or None."""
+def _figure_on_disk(project, request):
+    """The result on disk of the figure `request` draws, or None when it has to be drawn.
+
+    A caption revision that did not verify (refused, failing its checks or its honesty verdict) is not the figure its
+    own request draws: the revision replaced the verified result, so the figure is drawn again from that request, and
+    its new caption is checked like any other, rather than the paper placing it nowhere from then on.
+    """
+    previous = figure_role.read_result(project, request["figure_id"])
     try:
-        return json.loads((Path(project) / figure_role.FIGURES / figure_id / figure_role.REQUEST_JSON).read_text(encoding="utf-8"))
+        asked = json.loads((Path(project) / figure_role.FIGURES / request["figure_id"] / figure_role.REQUEST_JSON).read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        asked = None
+    if not isinstance(previous, dict) or not _drawn_alike(asked, request):
         return None
+    failed_revision = (isinstance(asked, dict) and asked.get("mode") == "guided" and request.get("mode") != "guided"
+                       and previous.get("status") not in WAITS + ("verified",))
+    return None if failed_revision else previous
 
 
 def _drawn_alike(asked, request):
@@ -320,8 +331,8 @@ def _revision(project, request, names):
     Only a verified figure drawn from this same request is revised; a request that changed draws the figure anew, a
     caption and all, and that caption is checked like any other.
     """
-    previous = figure_role.read_result(project, request["figure_id"])
-    if not isinstance(previous, dict) or previous.get("status") != "verified" or not _drawn_alike(_asked(project, request["figure_id"]), request):
+    previous = _figure_on_disk(project, request)
+    if previous is None or previous.get("status") != "verified":
         return request
     return caption_revision(request, names, previous.get("version") or 1)
 
@@ -408,7 +419,7 @@ def _place(project, draft, record, policy, harness_root, draw_figure, say, revis
     return placed, points
 
 
-def _untold(points, builds):
+def _new_points(points, builds):
     """The figure role's points for the text that no earlier build listed for the writer.
 
     A figure not drawn again hands back the same points, and the writer is told each once.
@@ -771,17 +782,14 @@ def _write_build(book, paper):
     book.write_json("%s/%s" % (PAPER_DIR, BUILD_JSON), dict(summary(paper), schema_version=1))
 
 
+_TAKE_POINTS = ("take each into the text at the place it names, its claim tagged like any other, or say in `notes` why "
+                "the text stands as it is")
 RESUME_TEXT = (
     "The draft you returned was written to research/paper/ and built, and the figure role, drawing the figures it asks "
-    "for, has points for the text they bear on. Return the whole draft again, through the structured output, with each "
-    "point below taken into the text at the place it names, its claim tagged like any other, or say in `notes` why the "
-    "text stands as it is.\n\n%s"
+    "for, has points for the text they bear on. Return the whole draft again, through the structured output; "
+    + _TAKE_POINTS + ":\n\n%s"
 )
-TEXT_POINTS = (
-    "\n\nThe figure role, drawing the figures the draft asks for, also has points for the text they bear on. Take each "
-    "into the text at the place it names, its claim tagged like any other, or say in `notes` why the text stands as it "
-    "is:\n\n%s"
-)
+TEXT_POINTS = "\n\nThe figure role, drawing the figures the draft asks for, also has points for the text they bear on; " + _TAKE_POINTS + ":\n\n%s"
 
 
 RESUME_GATE = (
@@ -803,7 +811,9 @@ def _last_build(book, venue):
 
     A draft left failing its build is resumed with that build's list; one the gate failed, with the points the kill
     argument or the read left standing, which is how a fail scopes the claims down with the same writer session.
-    `venue` moves the draft to another venue, which the command says to the writer with that venue's guidelines.
+    Whatever its status, a draft whose last build brought the figure role's points for the text, which no writer has
+    read, is resumed with them too. `venue` moves the draft to another venue, which the command says to the writer
+    with that venue's guidelines.
     """
     try:
         last = book.read_json("%s/%s" % (PAPER_DIR, BUILD_JSON))
@@ -812,16 +822,16 @@ def _last_build(book, venue):
     if not isinstance(last, dict):
         raise PaperError("%s is not a build record" % BUILD_PATH)
     builds = last.get("builds") or []
-    if last.get("status") not in (BUILD_FAILED, GATE_FAILED) or not builds or not builds[-1].get("session_id"):
-        raise PaperError("the last draft is %s, neither failing its build nor failed by the gate; run wayline paper "
-                         "without --continue" % last.get("status"))
-    points = builds[-1].get("for_writer") or []   # the last build's points, which no later build gave the writer
-    if last["status"] == BUILD_FAILED:
-        message = _build_message(builds[-1]["failures"], points)
-    else:
+    points = builds[-1].get("for_writer") or [] if builds else []   # the last build's points, which no later build gave the writer
+    if (last.get("status") not in (BUILD_FAILED, GATE_FAILED) and not points) or not builds or not builds[-1].get("session_id"):
+        raise PaperError("the last draft is %s, neither failing its build nor failed by the gate, and it leaves no point for "
+                         "the text unread; run wayline paper without --continue" % last.get("status"))
+    if last["status"] == GATE_FAILED:
         failed = [taken for taken in (last.get("kill_argument"), last.get("read")) if taken and not taken.get("pass")]
         message = RESUME_GATE % "\n".join(gates.findings_text(taken["findings"]) for taken in failed)
         message += TEXT_POINTS % _point_lines(points) if points else ""
+    else:
+        message = _build_message(builds[-1]["failures"], points)
     return venue or last["venue"], builds, builds[-1]["session_id"], message, last["venue"]
 
 
@@ -879,7 +889,7 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
         lint, findings = check_build(project, record, text, harness_root=harness_root, policy=policy)
         failures, owners = _failures(lint, findings, figure_problems, record, files)
         waiting = sorted(figure_id for figure_id, figure in placed.items() if figure["state"] == WAITING)
-        for_writer = _untold(points, paper.builds)
+        for_writer = _new_points(points, paper.builds)
         paper.builds.append({
             "build": number, "session_id": envelope.session_id, "model": envelope.model,
             "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
@@ -902,7 +912,7 @@ def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, 
     if paper.builds[-1]["for_writer"]:
         late = sorted({item["figure_id"] for item in paper.builds[-1]["for_writer"]})
         paper.notes.append("%s had points for the text after the last build, so no writer has read them: build.json keeps them "
-                           "under for_writer, and wayline paper --continue after a failed build or gate gives them to the writer"
+                           "under for_writer, and wayline paper --continue gives them to the writer"
                            % ", ".join("figure %s" % figure_id for figure_id in late))
     paper.notes.extend(paper.builds[-1]["owners"])
     if draft["notes"].strip():
