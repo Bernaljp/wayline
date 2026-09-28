@@ -2,8 +2,7 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
-
-## v1.0.1 (unreleased)
+## v1.0.1 (2026-09-28)
 
 - `REPORT.md` gets a second draft (ticket 67; Implementation Decisions 11). When the provenance linter fails on
   sentences the writer wrote, `wayline report` resumes the same writer session with the list, each sentence and
