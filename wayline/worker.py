@@ -607,7 +607,7 @@ class Prompt:
         return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
 
-def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX, notes=()):
+def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX, notes=(), failure=None):
     """The worker's prompt, assembled in the order of decision 3.
 
     One `/wayline-<skill>` line per assigned skill, the body of every skill after the first
@@ -617,6 +617,8 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
     project); `max_chars` is `policy.context_pack.max_chars` for the tier's model, None for no cap.
     `notes` is what the conductor has to tell this session about the ticket's state before it starts
     (a fresh session taking over a stopped one's partial work, decision 15), set under the ticket.
+    `failure` is the last failure output of the attempt before this one, which a tier up carries into
+    its fresh session (ticket 68), set under a heading of its own after the notes.
     """
     pack = _context_section(ticket.get("context_pack") or [], roots, max_chars)
     skills = _skill_section(ticket.get("skills") or [], roots, max_chars)
@@ -625,6 +627,7 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         skills.text,
         _ticket_section(ticket, budget),
         _notes_section(notes),
+        LAST_FAILURE_HEADING + "\n\n" + failure.strip() if failure and failure.strip() else "",
         pack.text,
         # A role with more than one job (the critic) keeps the section named after the result it returns here.
         protocol_for(role.protocol, role.output_schema or "result"),
@@ -738,6 +741,9 @@ def _ticket_section(ticket, budget):
     if budget:
         lines.append("- budget: %s turns, %s minutes" % (budget.get("max_turns", "?"), budget.get("max_minutes", "?")))
     return "\n".join(lines)
+
+
+LAST_FAILURE_HEADING = "# The last failure"
 
 
 def _notes_section(notes):
