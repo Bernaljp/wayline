@@ -15,11 +15,13 @@ import struct
 import unittest
 import zlib
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 from tests.paths import FIXTURES_DIR
 from tests.projects import ProjectTestCase
 from tests.test_report import Classifier
 from wayline import HARNESS_ROOT, cli, decider, dashboard, figure_role, gates, paper, provenance, tickets, worker
+from wayline.jsonschema import load_schema, validate
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
 
@@ -85,21 +87,37 @@ def png(path, dpi=300):
 
 
 class Figures:
-    """The figure role's door, scripted: records every request and answers each with the next result."""
+    """The figure role's door, scripted: records every request and answers each with the next result.
 
-    def __init__(self, project, *statuses):
+    Like `figure_role.make`, it leaves the request and the result under `figures/<figure_id>/` and hands the result
+    on, so what a paper's figure files, and what the next build reads back off the disk, are the role's own.
+    `captions` are the verified figures' captions in order, and `for_text` the `findings_for_text` each returns from
+    call `from_call` on.
+    """
+
+    CAPTION = "Figure 1. Held-out AUROC by arm. (a) Each arm's mean over three seeds."
+
+    def __init__(self, project, *statuses, captions=(), for_text=(), from_call=1):
         self.project, self.statuses, self.requests = project, list(statuses), []
+        self.captions, self.for_text, self.from_call = list(captions), list(for_text), from_call
 
     def __call__(self, project, request, **options):
         self.requests.append(request)
         status = self.statuses.pop(0) if self.statuses else "verified"
-        result = {"schema": "figure_result/1", "figure_id": request["figure_id"], "version": len(self.requests), "status": status}
+        directory = self.project / "figures" / request["figure_id"]
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "request.json").write_text(json.dumps(request), encoding="utf-8")
+        result = {"schema": "figure_result/1", "ticket": request["ticket"], "figure_id": request["figure_id"],
+                  "version": len(self.requests), "status": status,
+                  "findings_for_text": list(self.for_text) if len(self.requests) >= self.from_call else []}
         if status == "verified":
-            png(self.project / "figures" / request["figure_id"] / "final.png")
-            (self.project / "figures" / request["figure_id"] / "caption.md").write_text(
-                "Figure 1. Held-out AUROC by arm. (a) Each arm's mean over three seeds.\n", encoding="utf-8")
+            png(directory / "final.png")
+            (directory / "caption.md").write_text((self.captions.pop(0) if self.captions else self.CAPTION) + "\n", encoding="utf-8")
             result["final"] = {"png": "figures/%s/final.png" % request["figure_id"], "pdf": None,
                                "caption": "figures/%s/caption.md" % request["figure_id"]}
+        (directory / "figure_result.json").write_text(json.dumps(result), encoding="utf-8")
+        figure_role._hand_on(self.project, result)
+        if status == "verified":
             return result, None
         if status == "honesty_failed":
             result["honesty_verdict"] = {"type": "B", "verdict": "fail", "findings": [{"text": "the bars hide the overlap of the intervals"}]}
@@ -389,6 +407,173 @@ class FigureTest(PaperCase):
             result, reason = paper.draw(self.project, request)
             self.assertEqual(fake.calls, [])
         self.assertEqual((result["status"], reason), ("verified", None))
+
+
+RUNTIME = {"text": "The results say the gain holds on every seed; the figure shows two seeds within the interval.",
+           "manuscript_locator": "Results, second paragraph", "suggested_ticket": True}
+
+
+class TextAndCaptionTest(PaperCase):
+    """What a paper's figure has to say about the text goes to the writer, and its caption names no other figure (ticket 66)."""
+
+    def earlier_figure(self, figure_id="ceiling_gap"):
+        """A figure an earlier draft asked for and this one does not: its directory is all that is left of it."""
+        directory = self.project / "figures" / figure_id
+        directory.mkdir(parents=True)
+        (directory / "figure_result.json").write_text(json.dumps({"figure_id": figure_id, "version": 1, "status": "verified"}),
+                                                      encoding="utf-8")
+
+    def proposals(self):
+        """Every proposal the journal holds, admitted or parked: the fixture's journal holds its tickets' own already."""
+        return self.events("proposal_admitted") + self.events("proposal_parked")
+
+    def writing_tickets(self):
+        return [fields for fields in tickets.read_tickets(self.project) if fields["kind"] == "writing"]
+
+    def test_a_paper_figure_s_findings_for_the_text_go_to_the_writer_and_admit_no_ticket(self):
+        before, proposed = self.writing_tickets(), self.proposals()
+        figures = Figures(self.project, for_text=[RUNTIME])
+        written = self.write(draft(WITH_FIGURE, [GAIN]), draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
+        self.assertEqual((written.status, len(written.builds)), (paper.PASSED, 2))
+        self.assertEqual(self.proposals(), proposed)
+        self.assertEqual(self.writing_tickets(), before)
+        message = self.calls_of("writer")[1].message
+        self.assertIn("- figure `gain`, at Results, second paragraph: %s" % RUNTIME["text"], message)
+        builds = self.build()["builds"]
+        self.assertEqual(builds[0]["failures"], [])
+        self.assertEqual(builds[0]["for_writer"], [{"figure_id": "gain", "version": 1, "text": RUNTIME["text"],
+                                                    "manuscript_locator": "Results, second paragraph"}])
+        self.assertEqual(builds[1]["for_writer"], [])  # the same point from the same figure is listed once
+
+    def test_findings_for_the_text_ride_with_a_failing_build_s_list(self):
+        figures = Figures(self.project, for_text=[dict(RUNTIME, manuscript_locator=None)])
+        self.write(draft(UNTAGGED.replace("## References", "{figure:gain}\n\n## References"), [GAIN]), draft(WITH_FIGURE, [GAIN]),
+                   verifier=PASSING_GATE, draw_figure=figures)
+        message = self.calls_of("writer")[1].message
+        self.assertIn("untagged_claim", message)
+        self.assertIn("- figure `gain`: %s" % RUNTIME["text"], message)
+
+    def test_findings_after_the_last_build_reach_the_writer_on_continue(self):
+        failing = draft(UNTAGGED.replace("## References", "{figure:gain}\n\n## References"), [GAIN])
+        figures = Figures(self.project, for_text=[RUNTIME], from_call=paper.MAX_BUILDS)
+        first = self.write(*[failing] * paper.MAX_BUILDS, draw_figure=figures)
+        self.assertEqual(first.status, paper.BUILD_FAILED)
+        self.assertEqual([len(build["for_writer"]) for build in first.builds], [0] * (paper.MAX_BUILDS - 1) + [1])
+        self.assertTrue([note for note in first.notes if "figure gain" in note and "for_writer" in note], first.notes)
+        self.write(draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, carry_on=True, venue=None, draw_figure=figures)
+        (call,) = self.calls_of("writer")
+        self.assertIn("untagged_claim", call.message)
+        self.assertIn("- figure `gain`, at Results, second paragraph: %s" % RUNTIME["text"], call.message)
+        self.assertEqual(self.build()["builds"][-1]["for_writer"], [])   # told on --continue, so not listed again
+
+    def test_a_ticket_s_figure_still_admits_its_proposals(self):
+        figures = Figures(self.project, for_text=[RUNTIME])
+        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
+                                       provenance.read_manifest(self.project))
+        figures(self.project, dict(request, ticket="7"))
+        (admitted,) = [event for event in self.proposals() if event["payload"]["from"] == 7]
+        self.assertEqual(admitted["payload"]["kind"], "writing")
+
+    def test_a_caption_naming_an_earlier_draft_s_figure_fails_its_build_and_is_revised_on_the_next(self):
+        self.earlier_figure()
+        figures = Figures(self.project, captions=["Held-out AUROC by arm; the ceiling_gap figure shows the gap to the ceiling.",
+                                                  Figures.CAPTION])
+        written = self.write(draft(WITH_FIGURE, [GAIN]), draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
+        self.assertEqual((written.status, len(written.builds)), (paper.PASSED, 2))
+        first, second = self.build()["builds"]
+        self.assertEqual(first["figures"]["gain"]["names"], ["ceiling_gap"])
+        self.assertTrue([failure for failure in first["failures"] if "caption names figure ceiling_gap" in failure], first["failures"])
+        self.assertIn("caption names figure ceiling_gap", self.calls_of("writer")[1].message)
+        unguided, guided = figures.requests
+        self.assertEqual((unguided["mode"], guided["mode"]), ("unguided", "guided"))
+        self.assertEqual(guided["revision_of"], "figures/gain/figure_result.json")
+        (change,) = guided["change_requests"]
+        self.assertEqual((change["from"], change["id"]), ("paper", "drop-figure-references-v1"))
+        self.assertIn("`ceiling_gap`", change["text"])
+        self.assertEqual({key: value for key, value in guided.items() if key not in ("mode", "revision_of", "change_requests")},
+                         {key: value for key, value in unguided.items() if key != "mode"})
+        self.assertEqual(validate(guided, load_schema("figure_request")), [])
+        self.assertEqual(second["failures"], [])
+        self.assertNotIn("names", second["figures"]["gain"])
+        self.assertNotIn("ceiling_gap", self.text())
+
+    def test_a_caption_naming_no_other_figure_passes_and_is_never_sent_back(self):
+        self.earlier_figure()
+        self.earlier_figure("depth")
+        figures = Figures(self.project, captions=["Held-out AUROC by arm: the gain over the baseline at every depth of tree."])
+        written = self.write(draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
+        self.assertEqual((written.status, len(written.builds)), (paper.PASSED, 1))
+        self.assertEqual([request["mode"] for request in figures.requests], ["unguided"])
+        self.assertNotIn("names", self.build()["builds"][0]["figures"]["gain"])
+
+    def test_a_figure_is_named_by_its_id_and_a_plain_word_only_as_a_reference(self):
+        self.earlier_figure()
+        self.earlier_figure("depth")
+        self.earlier_figure("gain")
+        for caption, named in (("See the ceiling_gap figure.", ["ceiling_gap"]), ("As in Ceiling_Gap, the gap closes.", ["ceiling_gap"]),
+                               ("The ceiling gap closes.", []), ("The ceiling_gapped arm.", []),
+                               ("AUROC at every depth.", []), ("The depth figure shows it.", ["depth"]),
+                               ("As figure depth shows.", ["depth"]), ("As `depth` shows.", ["depth"]),
+                               ("The gain figure is this one.", [])):
+            self.assertEqual(paper.named_figures(caption, "gain", self.project), named, caption)
+
+    def test_points_after_the_last_build_of_a_draft_the_gate_passed_reach_the_writer_on_continue(self):
+        failing = draft(UNTAGGED.replace("## References", "{figure:gain}\n\n## References"), [GAIN])
+        figures = Figures(self.project, for_text=[RUNTIME], from_call=paper.MAX_BUILDS)
+        first = self.write(*[failing] * (paper.MAX_BUILDS - 1), draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
+        self.assertEqual((first.status, len(first.builds[-1]["for_writer"])), (paper.PASSED, 1))
+        self.write(draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, carry_on=True, venue=None, draw_figure=figures)
+        (call,) = self.calls_of("writer")
+        self.assertIn("- figure `gain`, at Results, second paragraph: %s" % RUNTIME["text"], call.message)
+        self.assertIn("and built, and the figure role", call.message)
+
+    def drawn(self, request, status="verified"):
+        """`figures/gain/` as `figure_role.make` leaves it after drawing `request`."""
+        directory = self.project / "figures" / "gain"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "request.json").write_text(json.dumps(request), encoding="utf-8")
+        (directory / "figure_result.json").write_text(json.dumps({"figure_id": "gain", "version": 1, "status": status}), encoding="utf-8")
+
+    def door(self, request):
+        """`paper.draw`, the real door, with the figure role's own `make` and `resume_figure` recording what they are sent."""
+        sent = []
+        def make(project, asked, **options):
+            sent.append(("make", asked))
+            return {"figure_id": "gain", "version": 2, "status": "verified"}, None
+        def resume(project, figure_id, **options):
+            sent.append(("resume", figure_id))
+            return {"figure_id": "gain", "version": 1, "status": "verified"}, None
+        with mock.patch.object(figure_role, "make", make), mock.patch.object(figure_role, "resume_figure", resume):
+            result, _ = paper.draw(self.project, request)
+        return result, sent
+
+    def test_the_door_draws_a_caption_revision_and_then_gives_it_for_the_unguided_request(self):
+        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
+                                       provenance.read_manifest(self.project))
+        revised = paper.caption_revision(request, ["ceiling_gap"], 1)
+        self.drawn(request)
+        _, sent = self.door(revised)
+        self.assertEqual(sent, [("make", revised)])
+        self.drawn(revised)
+        result, sent = self.door(request)
+        self.assertEqual((sent, result["version"]), ([], 1))
+
+    def test_a_caption_revision_that_failed_is_drawn_again_from_the_figure_s_own_request(self):
+        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
+                                       provenance.read_manifest(self.project))
+        for status in ("honesty_failed", "refused", "failed_checks"):
+            self.drawn(paper.caption_revision(request, ["ceiling_gap"], 1), status)
+            _, sent = self.door(request)
+            self.assertEqual(sent, [("make", request)], status)
+            self.assertEqual(paper._revision(self.project, request, ["ceiling_gap"]), request, status)
+
+    def test_a_guided_revision_on_disk_is_the_figure_its_unguided_request_draws(self):
+        manifest = provenance.read_manifest(self.project)
+        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project, manifest)
+        revised = paper.caption_revision(request, ["ceiling_gap"], 2)
+        self.assertTrue(paper._drawn_alike(revised, request))
+        self.assertFalse(paper._drawn_alike(request, revised))
+        self.assertTrue(paper._drawn_alike(revised, revised))
 
 
 class GateTest(PaperCase):
