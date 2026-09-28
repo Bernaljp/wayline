@@ -128,6 +128,10 @@ class RemapTest(unittest.TestCase):
     def test_a_caller_that_spelled_the_variable_itself_keeps_its_value(self):
         self.assertEqual(self.request(env={worker.NO_LEGACY_REMAP: "0"}).env[worker.NO_LEGACY_REMAP], "0")
 
+    def test_every_request_writes_no_bytecode_unless_the_caller_said_otherwise(self):
+        self.assertEqual(self.request().env[worker.NO_BYTECODE], "1")
+        self.assertEqual(self.request(env={worker.NO_BYTECODE: ""}).env[worker.NO_BYTECODE], "")
+
     def test_a_role_session_the_harness_builds_elsewhere_carries_it(self):
         """The smoke verb's request, built by the launcher itself, stands for every builder outside the conductor."""
         self.assertEqual(worker.smoke_request("/tmp/run").env[worker.NO_LEGACY_REMAP], "1")

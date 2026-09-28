@@ -12,6 +12,10 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   (`research/.cache/report_prose.json`) records the linter's result beside the prose, so a render that may launch
   redrafts cached prose that failed rather than reusing it; `--offline`, `--no-draft`, and the tick launch
   nothing and render what the cache holds. An `unclassified` sentence is not sent back: a redraft cannot close it.
+- No bytecode in a touch set (ticket 69; Implementation Decisions 3, 5). Every launch request carries
+  `PYTHONDONTWRITEBYTECODE=1` beside `CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP` unless its `env` names the variable,
+  and the conductor's check for work left uncommitted ignores untracked `__pycache__/` and `*.pyc` inside the touch
+  set as it does untracked files outside it.
 
 ## Unreleased
 

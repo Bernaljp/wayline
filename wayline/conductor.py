@@ -3293,9 +3293,10 @@ class Conductor:
         Tracked changes always count. An untracked file counts when it lies in the ticket's touch
         set, which is where this ticket's work belongs; untracked noise elsewhere (a `__pycache__`
         the acceptance commands just made) is not the worker's doing and is not held against it.
+        Bytecode (`__pycache__/`, `*.pyc`) never counts, inside the touch set or out.
         """
         dirty = [path for status, path in porcelain_entries(self._git(attempt.worktree, "status", "--porcelain", "-z").stdout)
-                 if status != "??" or _in_touch_set(path, attempt.ticket["touches"])]
+                 if status != "??" or (_in_touch_set(path, attempt.ticket["touches"]) and not _bytecode(path))]
         if not dirty:
             return True
         self._fail(attempt, "the worker left %d path(s) uncommitted in its worktree (%s); the conductor "
@@ -4862,6 +4863,12 @@ def _failures(results):
     failed = ["$ %s\n(exit %d)\n%s" % (result["cmd"], result["exit_code"], (result["tail"] or "").strip())
               for result in results or () if result["exit_code"] != 0]
     return "\n\n".join(failed) or "(no command reported a non-zero exit code)"
+
+
+def _bytecode(path):
+    """Whether an untracked path is Python bytecode: a `__pycache__/` directory or a `*.pyc` file."""
+    path = path.rstrip("/")
+    return "__pycache__" in path.split("/") or path.endswith(".pyc")
 
 
 def _in_touch_set(path, touches):
