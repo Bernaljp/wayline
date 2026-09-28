@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mathjax 4 probe</title>
+<!-- The same markdown pipeline with MathJax 4 in place of KaTeX, to see what MathJax fetches and how
+     long it takes. ?fonts=local points MathJax at the copied font package; without it, MathJax keeps
+     its default font path. ?doc= names the document. -->
+<script>
+  const PARAMS = new URLSearchParams(location.search);
+  window.MathJax = {
+    tex: { tags: 'ams', inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+    startup: { typeset: false },
+  };
+  if (PARAMS.get('fonts') === 'local') window.MathJax.output = { fontPath: new URL('vendor-mj/mathjax-newcm-font', location.href).href };
+  if (PARAMS.get('speech') === 'off') window.MathJax.options = { enableSpeech: false, enableBraille: false, enableEnrichment: false, enableExplorer: false, menuOptions: { settings: { enrich: false, speech: false, braille: false } } };
+</script>
+<script src="vendor/marked.umd.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script defer src="vendor-mj/mathjax/tex-chtml.js"></script>
+</head>
+<body>
+<div id="doc" class="markdown"></div>
+<script>
+  'use strict';
+  const INLINE = /^(?:\$\$((?:\\[\s\S]|[^\\$])+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$(?![\s$])((?:\\[\s\S]|[^\\$\n])+?)(?<!\s)\$(?!\d))/;
+  const BLOCK = /^ {0,3}(?:\$\$((?:\\[\s\S]|[^\\$])+?)\$\$|\\\[([\s\S]+?)\\\]|(\\begin\{(equation|align|alignat|gather|multline|flalign)\*?\}[\s\S]+?\\end\{\4\*?\}))[ \t]*(?:\n+|$)/;
+  const BLOCK_START = /^ {0,3}(?:\$\$|\\\[|\\begin\{(?:equation|align|alignat|gather|multline|flalign)\*?\})/m;
+  const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const md = new marked.Marked();
+  md.use({ extensions: [
+    { name: 'mathBlock', level: 'block', start(s) { const m = s.match(BLOCK_START); return m ? m.index : undefined; },
+      tokenizer(s) { const m = BLOCK.exec(s); if (!m) return undefined; return { type: 'mathBlock', raw: m[0], text: (m[1] ?? m[2] ?? m[3]).trim() }; },
+      renderer(t) { return `<div class="math">\\[${esc(t.text)}\\]</div>\n`; } },
+    { name: 'mathInline', level: 'inline', start(s) { const m = s.match(/\$|\\[([]/); return m ? m.index : undefined; },
+      tokenizer(s) { const m = INLINE.exec(s); if (!m) return undefined; const display = m[1] !== undefined || m[2] !== undefined; return { type: 'mathInline', raw: m[0], text: (m[1] ?? m[2] ?? m[3] ?? m[4]).trim(), display }; },
+      renderer(t) { return t.display ? `<span class="math">\\[${esc(t.text)}\\]</span>` : `<span class="math">\\(${esc(t.text)}\\)</span>`; } },
+  ] });
+  window.__run = async () => {
+    const text = await (await fetch(PARAMS.get('doc') || 'sample.md', { cache: 'no-store' })).text();
+    const doc = document.getElementById('doc');
+    doc.innerHTML = DOMPurify.sanitize(md.parse(text));
+    await MathJax.startup.promise;
+    const started = performance.now();
+    await MathJax.typesetPromise([doc]);
+    window.__typesetMs = performance.now() - started;
+    return true;
+  };
+</script>
+</body>
+</html>

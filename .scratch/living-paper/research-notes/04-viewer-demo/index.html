@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>viewer demo</title>
+<!-- A throwaway page for ticket 180: the popup viewer, its zoom, and math through marked and DOMPurify.
+     Everything is served from this directory; nothing is fetched from outside the workstation. -->
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+<main>
+  <h2>Outputs</h2>
+  <p class="note">A stand-in for the dashboard's outputs panel: each markdown file has a view button.</p>
+  <ul class="outputs" id="outputs">
+    <li><a href="sample.md">research/results/sample.md</a> <button type="button" class="action" data-view="sample.md">view</button></li>
+    <li><a href="long.md">research/results/long.md</a> <button type="button" class="action" data-view="long.md">view</button></li>
+    <li><a href="refs.md">research/results/refs.md</a> <button type="button" class="action" data-view="refs.md">view</button></li>
+  </ul>
+  <p><button type="button" id="behind" class="action">a button behind the viewer</button> <span id="behind-count">0</span></p>
+  <div class="filler" aria-hidden="true"></div>
+</main>
+
+<!-- The viewer lives outside every panel the polls redraw, so a poll never removes it while it is open. -->
+<dialog id="viewer" aria-labelledby="viewer-title">
+  <div class="viewer-bar">
+    <h2 id="viewer-title">document</h2>
+    <div class="zoom" role="group" aria-label="zoom">
+      <button type="button" class="action" data-zoom="out" aria-label="zoom out" title="zoom out (-)">&minus;</button>
+      <button type="button" class="action level" data-zoom="reset" aria-label="reset zoom" title="reset zoom (0)">100%</button>
+      <button type="button" class="action" data-zoom="in" aria-label="zoom in" title="zoom in (+)">+</button>
+    </div>
+    <a class="download" id="viewer-download" href="#">download</a>
+    <button type="button" class="action" data-close title="close (Esc)">close</button>
+  </div>
+  <div class="viewer-body" id="viewer-body" tabindex="0" autofocus>
+    <div class="markdown viewer-doc" id="viewer-doc"></div>
+  </div>
+</dialog>
+
+<script src="vendor/marked.umd.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/katex/katex.min.js"></script>
+<script src="equation-refs.js"></script>
+<script src="markdown-math.js"></script>
+<script src="viewer.js"></script>
+</body>
+</html>

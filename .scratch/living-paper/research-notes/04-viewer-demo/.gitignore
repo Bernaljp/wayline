@@ -1,0 +1,4 @@
+# Rebuilt by fetch-vendor.sh and make-long.py; never committed.
+vendor/
+vendor-mj/
+long.md
