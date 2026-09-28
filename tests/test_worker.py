@@ -56,7 +56,7 @@ STAND_IN = textwrap.dedent("""\
         "cwd": os.getcwd(),
         "stdin": os.readlink("/proc/self/fd/0") if os.path.exists("/proc/self/fd/0") else None,
         "env": {key: value for key, value in os.environ.items()
-                if key.startswith(("TICKET_", "WAYLINE_", "CLAUDE_CODE_"))},
+                if key.startswith(("TICKET_", "WAYLINE_", "CLAUDE_CODE_", "PYTHONDONTWRITEBYTECODE"))},
     }
     with open(os.environ["FAKE_CLAUDE_RECORD"], "w") as handle:
         json.dump(record, handle)
@@ -539,6 +539,7 @@ class ClaudeCliTest(StandInMixin, unittest.TestCase):
         seen = {key: value for key, value in record["env"].items() if key in request.env}
         self.assertEqual(seen, request.env)  # TICKET_* and WAYLINE_* exported
         self.assertEqual(record["env"][worker.NO_LEGACY_REMAP], "1")  # a retired name fails rather than being remapped (decision 16)
+        self.assertEqual(record["env"][worker.NO_BYTECODE], "1")  # a worker's own python runs leave no __pycache__/
         self.assertNotIn("CLAUDE_CODE_RETRY_WATCHDOG", record["env"])  # the watchdog unset although the parent has it
         for name in ["prompt.md", "agent.json", "settings.json", "env.json", "stream.jsonl", "stderr.txt", "result.json", "schema.json", "pid"]:
             self.assertTrue((self.run / name).exists(), name)

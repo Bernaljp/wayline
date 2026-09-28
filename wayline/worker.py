@@ -61,7 +61,7 @@ __all__ = [
     "LaunchRequest", "Envelope", "RateLimitEvent", "Window", "Started", "Parsed", "Patch", "LaunchError",
     "launch", "resume", "pid_alive", "terminate", "usage", "auth_status", "simulate_limit", "simulated_limit", "take_answered_refusals", "simulate_failure", "simulated_failure", "StreamTail", "backend", "build_argv", "spelled_argv", "parse_stream", "read_envelope",
     "launches_on", "fall_back", "stderr_tail", "stderr_of",
-    "NO_LEGACY_REMAP", "MAX_OUTPUT_TOKENS", "OUTPUT_TOKENS", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
+    "NO_LEGACY_REMAP", "NO_BYTECODE", "MAX_OUTPUT_TOKENS", "OUTPUT_TOKENS", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
     "session_dir", "session_env", "STAGED", "staged_path", "with_staged", "place_staged", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command", "login_command", "auth_status_command",
     "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
@@ -89,6 +89,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # request, so a rung naming a dead model would exit 0 and be paid for on another one. Every launch turns the
 # remap off, and a name the subscription does not serve then fails for free with the 404 below.
 NO_LEGACY_REMAP = "CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP"
+NO_BYTECODE = "PYTHONDONTWRITEBYTECODE"
 # The CLI stops an answer at 64000 output tokens unless told otherwise, and a planner at `xhigh` cutting a graph
 # of small tickets wrote one past it (the M6 demo, ticket 47). Fable and Opus accept 128000. A session pays only
 # for what it writes, so every launch may answer up to that; an owner who set the variable keeps theirs.
@@ -128,7 +129,8 @@ class LaunchRequest:
 
     Every request also carries `CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP=1` (decision 16), set here rather
     than by a backend or by each caller because it holds for every model call the harness makes: ticket
-    work, role sessions, and verdicts alike. A caller that spelled the variable itself keeps its value.
+    work, role sessions, and verdicts alike. It carries `PYTHONDONTWRITEBYTECODE=1` beside it, so a worker's
+    own `python` runs leave no `__pycache__/` in its worktree. A caller that spelled either variable keeps its value.
     """
 
     role: str
@@ -149,6 +151,7 @@ class LaunchRequest:
         """Turn the legacy model remap off (decision 16) and raise the output cap; a malformed `env` is left to `check`."""
         if isinstance(self.env, dict):
             self.env.setdefault(NO_LEGACY_REMAP, "1")
+            self.env.setdefault(NO_BYTECODE, "1")
             self.env.setdefault(MAX_OUTPUT_TOKENS, os.environ.get(MAX_OUTPUT_TOKENS) or str(OUTPUT_TOKENS))
 
     @property

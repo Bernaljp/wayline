@@ -410,6 +410,30 @@ class UncommittedWorkTest(ConductorCase):
         self.assertIn("ticket_done", self.sequence())
         self.assertEqual(self.ticket()["status"], "done")
 
+    def test_bytecode_left_in_the_touch_set_is_not_held_against_the_worker(self):
+        self.drop_in_pkg("pkg/__pycache__/mod.cpython-312.pyc")
+        self.conduct((done(), patch()))
+        self.assertIn("integrated", self.sequence())
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_any_other_untracked_file_in_the_touch_set_still_fails_the_ticket(self):
+        self.drop_in_pkg("pkg/new.py")
+        self.conduct((done(), patch()))
+        self.assertIn("pkg/new.py", self.first("ticket_failed")["reason"])
+        self.assertNotIn("integrated", self.sequence())
+
+    def drop_in_pkg(self, name):
+        """Put `pkg/` in the touch set and have a tracked `pkg/` gain an untracked `name` in the worktree."""
+        (self.project / "pkg").mkdir()
+        (self.project / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+        path = tickets.tickets_dir(self.project) / "01-write-the-hello-file.md"
+        fields, body = tickets.read_ticket(path)
+        fields["touches"] = list(fields["touches"]) + ["pkg/"]
+        fields["acceptance"]["machine"] = ["test -f hello.txt", "mkdir -p %s && : > %s" % (name.rsplit("/", 1)[0], name)]
+        tickets.write_ticket(self.ledger, fields, body)
+        self.git("add", "--", "research", "pkg")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger: touch pkg/")
+
     def widen_acceptance(self):
         """Give the ticket a gate that drops a build artifact, as a real test command would."""
         path = tickets.tickets_dir(self.project) / "01-write-the-hello-file.md"
