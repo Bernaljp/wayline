@@ -72,6 +72,13 @@ def prose(record):
     return Envelope(structured_output=record)
 
 
+def drafts(record):
+    """The writer's answers to script: a list as given, one record repeated for every draft a render may ask for."""
+    if record is None:
+        return []
+    return record if isinstance(record, list) else [record] * 3
+
+
 def verdict(passed=True, text="The artifact holds 0.861, not a gain over the baseline.", locator="results/interactions/summary.json#auroc_mean"):
     findings = [] if passed else [{"text": text, "locator": locator, "severity": "blocker"}]
     return Envelope(structured_output={"pass": passed, "findings": findings,
@@ -96,10 +103,10 @@ class RunCase(ProjectTestCase):
         """Render with the classifier answered, the writer scripted with `record` (None scripts none)."""
         with worker.use_fake() as fake:
             self.classifier = Classifier()
-            for _ in range(3):
+            for _ in range(6):
                 fake.script(respond=self.classifier, role="classifier")
-            if record is not None:
-                fake.script(prose(record), role="writer")
+            for each in drafts(record):
+                fake.script(prose(each), role="writer")
             rendered = render_report(self.project, offline=offline, draft=draft)
             self.calls = list(fake.calls)
         return rendered
@@ -523,6 +530,50 @@ class LinterFailureTest(RunCase):
         self.assertEqual(rendered.lint.claims, 0, "nothing was classified")
 
 
+
+class RedraftTest(RunCase):
+    """Ticket 67: prose the linter failed goes back to the same writer session, for at most `paper.MAX_BUILDS` drafts."""
+
+    def writer_calls(self):
+        return [call for call in self.calls if call.request.role == "writer"]
+
+    def cache(self):
+        return json.loads((self.project / "research" / ".cache" / "report_prose.json").read_text(encoding="utf-8"))
+
+    def test_an_untagged_claim_is_sent_back_and_the_second_draft_passes(self):
+        rendered = self.render(record=[UNTAGGED_PROSE, GOOD_PROSE])
+        self.assertTrue(rendered.lint.passed, rendered.lint.problems)
+        first, second = self.writer_calls()
+        self.assertEqual((first.kind, second.kind), ("launch", "resume"))
+        self.assertTrue(second.session_id)
+        self.assertIn("`untagged_claim` Interaction terms carry the gain over the baseline.", second.message)
+        self.assertIn("the classifier read as a claim", second.message)
+        self.assertIn("The provenance linter passed", self.text())
+        self.assertEqual(self.cache()["lint"], {"pass": True, "failures": []})
+
+    def test_three_failing_drafts_end_in_the_banner(self):
+        rendered = self.render(record=[UNTAGGED_PROSE] * 3)
+        self.assertFalse(rendered.lint.passed)
+        self.assertEqual([call.kind for call in self.writer_calls()], ["launch", "resume", "resume"])
+        self.assertIn("still failed the linter after 3 drafts", " ".join(rendered.notes))
+        self.assertIn("`untagged_claim` Interaction terms carry the gain over the baseline.", self.text().split("## 1.")[0])
+        self.assertFalse(self.cache()["lint"]["pass"])
+
+    def test_a_cached_failing_draft_is_redrafted_on_the_next_render(self):
+        self.render(record=[UNTAGGED_PROSE] * 3)
+        rendered = self.render(record=[GOOD_PROSE])
+        self.assertTrue(rendered.lint.passed, rendered.lint.problems)
+        self.assertEqual([call.kind for call in self.writer_calls()], ["resume"])
+        self.assertTrue(self.cache()["lint"]["pass"])
+
+    def test_an_offline_render_of_a_cached_failing_draft_launches_nothing(self):
+        self.render(record=[UNTAGGED_PROSE] * 3)
+        rendered = self.render(record=None, offline=True)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(rendered.lint.passed)
+        self.assertIn("Interaction terms carry the gain over the baseline.", self.text())
+
+
 REFUSED = Envelope(subtype="success", rate_limit_events=[
     {"status": "rejected", "resets_at": 1789524000, "rate_limit_type": "seven_day_overage_included"}])
 
@@ -635,9 +686,10 @@ class ReportCommandTest(RunCase):
     def run_verb(self, record, *extra):
         out, err = io.StringIO(), io.StringIO()
         with worker.use_fake() as fake:
-            for _ in range(3):
+            for _ in range(6):
                 fake.script(respond=Classifier(), role="classifier")
-            fake.script(prose(record), role="writer")
+            for each in drafts(record):
+                fake.script(prose(each), role="writer")
             with redirect_stdout(out), redirect_stderr(err):
                 code = cli.main(["report", "--project", str(self.project), *extra])
         return code, out.getvalue(), err.getvalue()

@@ -976,6 +976,7 @@ def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, of
     except (OSError, ValueError):
         cached = None
     if isinstance(cached, dict) and cached.get("input_sha256") == key and isinstance(cached.get("prose"), dict):
+        # Prose that failed the linter is served all the same; `render_report` resumes its writer when it may launch.
         return cached["prose"], None
     if offline:
         return None, ("the writer's prose is from findings that have changed since, so it is left out; "
@@ -989,6 +990,11 @@ def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, of
         envelope = _launch_structured(request, lambda answer: schema_problem(answer, PROSE_SCHEMA), "writer")
     except UsageLimited as refused:
         return None, "%s, so the report is rendered without the writer's prose" % refused
+    return _keep_prose(book, policy, request, envelope, evidence, key), None
+
+
+def _keep_prose(book, policy, request, envelope, evidence, key, session_id=None):
+    """The prose of the writer's `envelope`, cached with no linter result yet."""
     returned = envelope.structured_output
     named = {group["group"] for group in evidence["groups"]}
     prose = {
@@ -996,9 +1002,72 @@ def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, of
         "negative_results": returned["negative_results"] if evidence["negative"] else "",
     }
     fell_back = request.model != _role_tier(policy, WRITER)[0]
-    book.write_json(PROSE_CACHE, {"schema_version": 1, "input_sha256": key, "session_id": envelope.session_id,
-                                  "model": envelope.model, "fallback_from": pacing.FABLE if fell_back else None, "prose": prose})
-    return prose, None
+    book.write_json(PROSE_CACHE, {"schema_version": 1, "input_sha256": key, "session_id": envelope.session_id or session_id,
+                                  "model": envelope.model, "fallback_from": pacing.FABLE if fell_back else None,
+                                  "prose": prose, "lint": None})
+    return prose
+
+
+RESUME_PROSE = (
+    "The report was rendered from your paragraphs and the provenance linter failed on the sentences below. "
+    "Return every paragraph again, through the structured output, with each one answered: a claim sentence ends "
+    "with the tags of the findings it rests on, copied exactly from the evidence. An `untagged_claim` is a sentence "
+    "the classifier read as a claim, and it reads a statement of the study's scope or limits as one too: rewording "
+    "it rarely changes that. End it with a tag, or leave the sentence out.\n\n%s"
+)
+
+
+def writer_failures(result, prose):
+    """The linter's problems on sentences of the writer's `prose`, one line each: the sentence and why."""
+    if not prose:
+        return []
+    written = {sentence_hash(sentence.text) for text in [group["text"] for group in prose["groups"]]
+               + [prose["negative_results"]] for sentence in prose_sentences(text)}
+    return ["- `%s` %s (%s%s)" % (problem["problem"], one_line(problem["sentence"]),
+                                  "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
+            for problem in result.problems
+            # An unclassified sentence is the classifier's gap, which a redraft does not close.
+            if problem["problem"] != UNCLASSIFIED and sentence_hash(problem["sentence"]) in written]
+
+
+def _record_prose_lint(book, failures):
+    """Record beside the cached prose whether the linter passed it, and on what."""
+    try:
+        cached = book.read_json(PROSE_CACHE)
+    except (OSError, ValueError):
+        return
+    if isinstance(cached, dict):
+        cached["lint"] = {"pass": not failures, "failures": failures}
+        book.write_json(PROSE_CACHE, cached)
+
+
+def redraft_prose(project, evidence, failures, *, harness_root=HARNESS_ROOT, policy=None):
+    """The writer's session resumed with the linter's `failures`, its new prose cached; a fresh launch when none is on record."""
+    project = Path(project).resolve()
+    book = Ledger(project)
+    policy = policy_for(project, harness_root) if policy is None else policy
+    try:
+        cached = book.read_json(PROSE_CACHE)
+    except (OSError, ValueError):
+        cached = None
+    session_id = cached.get("session_id") if isinstance(cached, dict) else None
+    key = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    role = worker.read_role(WRITER, harness_root, project)
+    request = structured_request(project, role, policy, harness_root, _writer_prompt(role, evidence), PROSE_SCHEMA, "medium",
+                       session_dir(project, WRITER), read_only=True)
+    if not session_id:
+        envelope = _launch_structured(request, lambda answer: schema_problem(answer, PROSE_SCHEMA), "writer")
+        return _keep_prose(book, policy, request, envelope, evidence, key)
+    envelope = worker.resume(request, session_id, RESUME_PROSE % "\n".join(failures))
+    raise_if_refused(envelope, "writer", request.model)
+    problem = schema_problem(envelope, PROSE_SCHEMA)
+    if problem is not None and envelope.session_id:
+        envelope = worker.resume(request, envelope.session_id, RESUME_STRUCTURED % problem)
+        raise_if_refused(envelope, "writer", request.model)
+        problem = schema_problem(envelope, PROSE_SCHEMA)
+    if problem is not None:
+        raise ProvenanceError("the writer's answer could not be used: %s" % problem)
+    return _keep_prose(book, policy, request, envelope, evidence, key, session_id)
 
 
 def finding_lines(item):
@@ -1567,26 +1636,46 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
     findings), the classifier classifies every prose sentence the cache does not hold, the linter
     runs on the tagged text, and the tags are rendered as citations in the file written. A report
     that fails the linter is written all the same, with the offending sentences at its top: the
-    report is the stopping point, and one that failed says so where the owner reads it.
-    `offline` launches no session at all, which is how the tick renders.
+    report is the stopping point, and one that failed says so where the owner reads it. Before
+    that, a failure on the writer's own sentences resumes the writer's session with the list, for
+    at most `paper.MAX_BUILDS` drafts, and the cache records each draft's result, so a failing
+    draft is redrafted by the next render that may launch rather than reused. `offline` launches no session at all, which is how the tick renders.
     """
     project = Path(project).resolve()
     book = Ledger(project)
     policy = policy_for(project, harness_root) if policy is None else policy
     context = report_context(project)
+    from wayline.paper import MAX_BUILDS  # paper imports this module
     notes = []
-    prose, note = draft_prose(project, report_evidence(context), harness_root=harness_root, policy=policy,
-                              offline=offline or not draft)
+    evidence = report_evidence(context)
+    may_launch = draft and not offline
+    prose, note = draft_prose(project, evidence, harness_root=harness_root, policy=policy, offline=not may_launch)
     if note:
         notes.append(note)
-    body = _body(context, prose)
-    texts = [sentence.text for sentence in prose_sentences(body)]
-    try:
-        classes = classify(project, texts, harness_root=harness_root, policy=policy, offline=offline)
-    except UsageLimited as refused:
-        classes = read_claims_cache(book)
-        notes.append("%s; the sentences it did not reach are unclassified" % refused)
-    result = lint(project, body, classes)
+    for number in range(1, MAX_BUILDS + 1):
+        body = _body(context, prose)
+        texts = [sentence.text for sentence in prose_sentences(body)]
+        try:
+            classes = classify(project, texts, harness_root=harness_root, policy=policy, offline=offline)
+        except UsageLimited as refused:
+            classes = read_claims_cache(book)
+            notes.append("%s; the sentences it did not reach are unclassified" % refused)
+        result = lint(project, body, classes)
+        failures = writer_failures(result, prose)
+        if not may_launch:
+            break
+        if prose:
+            _record_prose_lint(book, failures)
+        if not failures:
+            break
+        if number == MAX_BUILDS:
+            notes.append("the writer's prose still failed the linter after %d drafts" % MAX_BUILDS)
+            break
+        try:
+            prose = redraft_prose(project, evidence, failures, harness_root=harness_root, policy=policy)
+        except UsageLimited as refused:
+            notes.append("%s, so the writer's failing prose was not redrafted" % refused)
+            break
     path = book.write_markdown(REPORT, render_citations(_banner(context, result, notes) + body))
     digest = sha256_of(path)
     book.append_event(ledger.REPORT_RENDERED, {"sha256": digest, "claims": result.claims, "tagged": result.tagged,

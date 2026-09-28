@@ -2,6 +2,17 @@
 
 One entry per tag. `wayline upgrade` prints the entries between two tags.
 
+
+## v1.0.1 (unreleased)
+
+- `REPORT.md` gets a second draft (ticket 67; Implementation Decisions 11). When the provenance linter fails on
+  sentences the writer wrote, `wayline report` resumes the same writer session with the list, each sentence and
+  why (an `untagged_claim` said to be the classifier's reading), and lints the new draft, at most
+  `paper.MAX_BUILDS` drafts in all; a draft that still fails is written with today's banner. The prose cache
+  (`research/.cache/report_prose.json`) records the linter's result beside the prose, so a render that may launch
+  redrafts cached prose that failed rather than reusing it; `--offline`, `--no-draft`, and the tick launch
+  nothing and render what the cache holds. An `unclassified` sentence is not sent back: a redraft cannot close it.
+
 ## Unreleased
 
 - A paper's figures tell the writer, not the ticket graph, what the text should say (ticket 66). A figure `wayline
@@ -21,7 +32,7 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   given the revision, not a figure drawn from the start, and a revision that fails (refused, failing its checks or
   its honesty verdict) is drawn again from the figure's own request. The M7 run's build 7 had sent readers to "the
   ceiling_gap figure", a figure from an earlier draft.
-=======
+
 - The rung ladder without Fable (ticket 70; Implementation Decisions 16, 14, and 15). The shipped ladder stops at
   Opus 5.5: its rungs 6 and 7, `fable low` and `fable high`, leave it, and `opus medium` joins between `opus low`
   and `opus high`. Difficulty 3 now starts on rung 5, `opus medium`, and difficulties 4 and 5 on rung 6, `opus
