@@ -4,11 +4,10 @@
     {"model": "sonnet", "effort": "low", "budget": "small"},
     {"model": "sonnet", "effort": "high", "budget": "small"},
     {"model": "opus", "effort": "low", "budget": "medium"},
-    {"model": "opus", "effort": "high", "budget": "medium"},
-    {"model": "fable", "effort": "low", "budget": "large"},
-    {"model": "fable", "effort": "high", "budget": "large"}
+    {"model": "opus", "effort": "medium", "budget": "medium"},
+    {"model": "opus", "effort": "high", "budget": "large"}
   ],
-  "difficulty": {"1": 2, "2": 3, "3": 5, "4": 6, "5": 7},
+  "difficulty": {"1": 2, "2": 3, "3": 5, "4": 6, "5": 6},
   "budget": {
     "small": {"max_turns": 40, "max_minutes": 30},
     "medium": {"max_turns": 100, "max_minutes": 90},

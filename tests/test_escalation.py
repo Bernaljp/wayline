@@ -17,7 +17,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from tests import machine
-from tests.projects import fable_policy
+from tests.projects import SEVEN_RUNG_LADDER, fable_policy
 from tests.test_conductor import FIVE_TICKETS, ConductorCase, done, patch
 from tests.test_replay import event, launched
 from wayline import conductor, plan, project, replay, resources, tickets, worker
@@ -286,6 +286,7 @@ class LadderTest(EscalationCase):
 
     def test_the_top_rung_skips_the_tier_up_and_ends_needs_human_with_its_reason(self):
         """Criterion 3: rung 7 has nowhere to climb, so the split is taken and then a person, with `reason: top_rung`."""
+        self.policy = fable_policy(self.policy, SEVEN_RUNG_LADDER)  # the seven rungs v1.0.0 shipped; `ShippedRungLadderTest` has the six
         self.set_fields(difficulty=5)
         self.conduct((failed(), None), (failed(), None))
         self.assertEqual(self.steps(), ["resume", "split", "needs_human"])
@@ -388,9 +389,14 @@ class RestartTest(EscalationCase):
 class FableRungTest(EscalationCase):
     """Criteria 2 and 4: the split comes first onto Fable, the tier up climbs inside Fable, and the hold is obeyed.
 
-    The one-ticket fixture is set to the difficulty whose rung the test needs: difficulty 3 is rung 5
-    (`opus high`), difficulty 4 rung 6 (`fable low`), difficulty 5 rung 7 (`fable high`).
+    The project puts the Fable rungs back, as v1.0.0 shipped them (ticket 70 dropped them from the shipped
+    ladder), and the one-ticket fixture is set to the difficulty whose rung the test needs: difficulty 3 is
+    rung 5 (`opus high`), difficulty 4 rung 6 (`fable low`), difficulty 5 rung 7 (`fable high`).
     """
+
+    def setUp(self):
+        super().setUp()
+        self.policy = fable_policy(self.policy, SEVEN_RUNG_LADDER)
 
     def cut_by_a_split(self):
         """Mark ticket 1 as one a split already cut, so the split is spent and the tier up is the only step left."""
@@ -719,7 +725,14 @@ class EffectiveDifficultyTest(EscalationCase):
 
 
 class EffectiveRungTest(EscalationCase):
-    """Criterion 1: the rung the next attempt launches on: the level's rung, lifted by every tier up, capped at rung 7."""
+    """Criterion 1: the rung the next attempt launches on: the level's rung, lifted by every tier up, capped at rung 7.
+
+    On the seven rungs v1.0.0 shipped, which a project may put back; `ShippedRungLadderTest` has the six that ship now.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.policy = fable_policy(self.policy, SEVEN_RUNG_LADDER)
 
     def test_the_rules(self):
         made = self.conductor()
@@ -792,6 +805,50 @@ class EffectiveRungTest(EscalationCase):
         self.set_fields(difficulty=5)
         self.assertIsNone(made._next_rung(1), "rung 7 has nowhere to climb")
         self.assertFalse(made._tier_up_reaches_fable(1))
+
+
+class ShippedRungLadderTest(EscalationCase):
+    """Ticket 70: the six rungs that ship, all off Fable, so a tier up stays on Opus up to the top rung."""
+
+    def test_the_shipped_rung_ladder_has_no_fable_rung(self):
+        rungs = conductor.ladder(self.policy)
+        self.assertEqual([(rung["model"], rung["effort"], rung["budget"]) for rung in rungs], [
+            ("haiku", "medium", "small"), ("sonnet", "low", "small"), ("sonnet", "high", "small"),
+            ("opus", "low", "medium"), ("opus", "medium", "medium"), ("opus", "high", "large")])
+        self.assertEqual({level: conductor.rung_of(self.policy, level) for level in range(1, 6)}, {1: 2, 2: 3, 3: 5, 4: 6, 5: 6})
+
+    def test_difficulty_3_launches_on_opus_medium_and_its_tier_up_goes_to_opus_high(self):
+        self.set_fields(difficulty=3)
+        self.conduct((failed(), None), (failed(), None), (done(), patch()))
+        self.assertEqual(self.steps(), ["resume", "tier_up"], "rung 5 to rung 6 stays on Opus, so the tier up comes first")
+        self.assertEqual(self.rungs(), [5, 6])
+        self.assertEqual(self.launches(), [(1, 3, "opus", "medium"), (2, 3, "opus", "high")])
+        self.assertEqual(self.planner.cuts, [], "no split: the tier up carried it")
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_the_labels_of_the_two_launches_and_the_top_rungs_large_budget(self):
+        made = self.conductor()
+        self.assertEqual(conductor.tier_for(made.policy, 3).label, "r5 opus medium")
+        tier = conductor.rung_tier(made.policy, 6)
+        self.assertEqual((tier.label, tier.max_turns, tier.max_minutes), ("r6 opus high", 200, 180))
+
+    def test_a_failure_on_the_top_rung_reaches_the_split_then_needs_human_with_top_rung(self):
+        self.set_fields(difficulty=5)
+        self.conduct((failed(), None), (failed(), None))
+        self.assertEqual(self.steps(), ["resume", "split", "needs_human"])
+        self.assertEqual(self.rungs(), [6], "difficulty 5 is rung 6, the ladder's top rung")
+        self.assertEqual(self.launches(), [(1, 5, "opus", "high")])
+        self.assertEqual(self.payload("ticket_needs_human")["reason"], "top_rung")
+        self.assertIn("rung 6, the rung ladder's top rung", self.payload("ticket_needs_human")["question"])
+
+    def test_the_step_order_keeps_the_tier_up_first_all_the_way_up(self):
+        made = self.conductor()
+        for difficulty, above in ((1, 3), (2, 4), (3, 6), (4, None), (5, None)):
+            with self.subTest(difficulty=difficulty):
+                self.set_fields(difficulty=difficulty)
+                self.assertEqual(made._next_rung(1), above)
+                self.assertFalse(made._tier_up_reaches_fable(1), "no shipped rung is on Fable")
+                self.assertEqual(made._step_order(1), ["tier_up", "split"])
 
 
 class VerbTest(EscalationCase):

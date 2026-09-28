@@ -267,15 +267,19 @@ def upgrade(project, to=None, harness_root=None):
                           % (project, ", ".join(line[3:] for line in edited.stdout.splitlines() if line)))
 
     notes = []
-    # The migration of decision 16 is resolved against the target's ladder here, before the checkout moves, so a refusal
-    # leaves the checkout and every pin where they were; `rewrite` applies the same resolution once the pin is written.
+    # The migration of decision 16 is resolved against the target's rung ladder here, before the checkout moves, so a
+    # refusal leaves the checkout and every pin where they were; `rewrite` applies the same resolution once the pin is
+    # written. The pinned tag's rung ladder is what the override's rung indices were written against (ticket 70).
     ladder_policy = _policy_at(harness_root, target)
+    pinned_policy = ladder_policy if previous == target else _policy_at(harness_root, previous) or {}
+    pinned = (pinned_policy, previous)
     if ladder_policy is None:
         migration = ([], "the harness at %s has no policy.json to read a rung ladder from; the override is left as it is" % target)
     elif not ladder_policy.get("tiers"):
         migration = ([], "the harness at %s has no rung ladder (no policy.tiers); the override is left as it is" % target)
     else:
-        migration = migrate_difficulty(projects.read_harness(project), projects.merge_policy(ladder_policy, projects.read_harness(project).get("policy")))
+        harness = projects.read_harness(project)
+        migration = migrate_difficulty(harness, projects.merge_policy(ladder_policy, harness.get("policy")), pinned)
     if target not in (tags_at_head(harness_root) or []):
         dirty = _tracked_changes(harness_root)
         if dirty:
@@ -290,7 +294,7 @@ def upgrade(project, to=None, harness_root=None):
     def rewrite(value):
         if not migrated:
             return False
-        lines, _ = migrate_difficulty(value, projects.merge_policy(ladder_policy, value.get("policy")))
+        lines, _ = migrate_difficulty(value, projects.merge_policy(ladder_policy, value.get("policy")), pinned)
         return bool(lines)
 
     changes, repinned = projects.repin(project, target, harness_root, rewrite=rewrite)
@@ -321,55 +325,109 @@ def nearest_rung(rungs, model, effort):
     """The 1-based index of the rung whose model family matches `model` and whose effort is nearest `effort` under the cap.
 
     An effort above `high` is taken as `high` first (the cap). Of two rungs at the same distance the higher
-    one is taken, so `sonnet medium` lands on `sonnet high`, where the shipped map puts level 2. None when no
-    rung is on the model's family; an effort the launcher does not know, the level's or a rung's, is refused.
+    one is taken, so `sonnet medium` lands on `sonnet high`, where the shipped map puts level 2. A family no
+    rung is on takes the top rung on a cheaper family, never a dearer one: the shipped rung ladder has no
+    Fable rung since ticket 70, and a level that was on Fable lands on its top rung, `opus high`. None when no rung
+    is on the model's family or a cheaper one, or the model is none of the families; an effort the launcher
+    does not know, the level's or a rung's, is refused.
     """
     if effort not in _EFFORT_RANK:
         raise EvolveError("the effort %r is none of %s" % (effort, ", ".join(worker.EFFORTS)))
     family = pacing.family(model)
     wanted = min(_EFFORT_RANK[effort], _EFFORT_RANK[CAP])
-    best = None
+    best, cheaper = None, None
     for index, rung in enumerate(rungs, start=1):
-        if not isinstance(rung, dict) or pacing.family(rung.get("model")) != family or family is None:
+        rung_family = pacing.family(rung.get("model")) if isinstance(rung, dict) else None
+        if family is None or rung_family is None:
+            continue
+        if rung_family != family:
+            if pacing.FAMILIES.index(rung_family) < pacing.FAMILIES.index(family):
+                cheaper = index
             continue
         if rung.get("effort") not in _EFFORT_RANK:
             raise EvolveError("policy.tiers rung %d has the effort %r, none of %s" % (index, rung.get("effort"), ", ".join(worker.EFFORTS)))
         distance = abs(_EFFORT_RANK[rung["effort"]] - wanted)
         if best is None or distance <= best[0]:
             best = (distance, index)
-    return None if best is None else best[1]
+    return cheaper if best is None else best[1]
 
 
-def migrate_difficulty(harness, policy):
-    """Rewrite `harness.json`'s `policy.difficulty` override from the old shape to the level to rung map, in place.
+def migrate_difficulty(harness, policy, pinned=None):
+    """Rewrite `harness.json`'s `policy.difficulty` override onto the rung ladder of `policy`, in place.
 
-    Returns `(lines, note)`: one line per level rewritten (its old model and effort, the rung it took), and the
-    note for a project that had nothing to rewrite (no override, or one already a level to rung map). Each level
-    takes the rung of `policy.tiers` (the harness's, under the project's own override) whose model matches and
-    whose effort is nearest without going above `high`; an old level on a model no rung carries is refused.
+    Returns `(lines, note)`: one line per level rewritten, and the note for a project that had nothing to
+    rewrite. `policy.tiers` is the harness's rung ladder under the project's own override. A level in the old
+    shape (a model and an effort, decision 16) takes the rung whose model matches and whose effort is nearest
+    without going above `high` (`nearest_rung`). A level already naming a rung was written against the rung
+    ladder of the tag the project was pinned to: `pinned` is `(that tag's policy, the tag)`, and the level takes
+    the rung of the new rung ladder its old rung's model and effort land on the same way (ticket 70), so a rung
+    that moved is carried and one whose index stays is left. A project whose own `policy.tiers` defines its rung
+    ladder has its rungs left as they are. A level on a model no rung carries, or on a rung the pinned rung
+    ladder lacks, is refused.
     """
     override = (harness.get("policy") or {}).get("difficulty") if isinstance(harness.get("policy"), dict) else None
     if not isinstance(override, dict):
         return [], "harness.json overrides no policy.difficulty; nothing to rewrite to rungs"
+    rungs = policy.get("tiers") or []
+    lines, note = _carry_rungs(harness, override, rungs, pinned)
     old = projects.old_difficulty_levels(override)
     if not old:
-        return [], "harness.json's policy.difficulty override is already a level to rung map; nothing to rewrite"
-    rungs = policy.get("tiers") or []
-    lines = []
+        return lines, note
     for level in old:
         entry = override[level]
         model, effort = entry.get("model"), entry.get("effort")
-        try:
-            rung = nearest_rung(rungs, model, effort)
-        except EvolveError as failure:
-            raise EvolveError("harness.json's policy.difficulty maps level %s to %s %s: %s; edit the override by hand, then upgrade"
-                              % (level, model, effort, failure))
-        if rung is None:
-            raise EvolveError("harness.json's policy.difficulty maps level %s to %s %s, and no rung of policy.tiers is on that model; "
-                              "edit the override by hand, then upgrade" % (level, model, effort))
+        rung = _landing(rungs, model, effort, "maps level %s to %s %s" % (level, model, effort))
         override[level] = rung
         lines.append("difficulty %s: %s %s -> rung %d (%s %s)" % (level, model, effort, rung, rungs[rung - 1]["model"], rungs[rung - 1]["effort"]))
     return lines, None
+
+
+def _landing(rungs, model, effort, what):
+    """The rung of `rungs` a level on `model` at `effort` lands on (`nearest_rung`); refused, naming `what`, when there is none."""
+    try:
+        rung = nearest_rung(rungs, model, effort)
+    except EvolveError as failure:
+        raise EvolveError("harness.json's policy.difficulty %s: %s; edit the override by hand, then upgrade" % (what, failure))
+    if rung is None:
+        raise EvolveError("harness.json's policy.difficulty %s, and no rung of policy.tiers is on that model or a cheaper one; "
+                          "edit the override by hand, then upgrade" % what)
+    return rung
+
+
+def _carry_rungs(harness, override, rungs, pinned):
+    """Carry the override's levels that name a rung from the pinned tag's rung ladder onto `rungs`, in place (ticket 70).
+
+    Returns `(lines, note)`: a line for each level whose rung moved or changed model or effort, and None, or no
+    lines and the note to give.
+    """
+    unchanged = "harness.json's policy.difficulty override is already a level to rung map; nothing to rewrite"
+    named = sorted((level for level, rung in override.items() if isinstance(rung, int) and not isinstance(rung, bool)), key=str)
+    if not named or pinned is None:
+        return [], unchanged
+    if "tiers" in harness["policy"]:
+        return [], "harness.json's own policy.tiers defines the project's rung ladder; its policy.difficulty override is left as it is"
+    old_policy, tag = pinned
+    old_rungs = old_policy.get("tiers") or []
+    if not old_rungs:
+        return [], "the harness at %s has no rung ladder to read the override's rungs against; they are left as they are" % tag
+    if old_rungs == rungs:
+        return [], unchanged
+    lines = []
+    for level in named:
+        index = override[level]
+        if not 1 <= index <= len(old_rungs) or not isinstance(old_rungs[index - 1], dict):
+            raise EvolveError("harness.json's policy.difficulty maps level %s to rung %d, which the rung ladder of %s does not have "
+                              "(it has %d rung(s)); edit the override by hand, then upgrade" % (level, index, tag, len(old_rungs)))
+        was = old_rungs[index - 1]
+        rung = _landing(rungs, was.get("model"), was.get("effort"),
+                        "maps level %s to rung %d of %s, %s %s" % (level, index, tag, was.get("model"), was.get("effort")))
+        now = rungs[rung - 1]
+        if rung == index and (now.get("model"), now.get("effort")) == (was.get("model"), was.get("effort")):
+            continue
+        override[level] = rung
+        lines.append("difficulty %s: rung %d (%s %s) -> rung %d (%s %s)"
+                     % (level, index, was.get("model"), was.get("effort"), rung, now["model"], now["effort"]))
+    return lines, None if lines else unchanged
 
 
 def render_upgrade(report):
