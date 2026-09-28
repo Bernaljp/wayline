@@ -238,6 +238,10 @@ FALLBACK_RETURNED = (
 FALLBACK_LAST_MESSAGE = "The conductor's last message to that session, which this session answers in its place:\n\n%s"
 # Where an attempt that fell back keeps the notes its prompt carries, so a restart that relaunches it says them again.
 FALLBACK_NOTES = "fallback.json"
+# The last failure a tier-up attempt carries in its prompt (ticket 68), kept in its attempt's directory so a
+# restart that relaunches the attempt says it again.
+LAST_FAILURE = "failure.json"
+LAST_FAILURE_HEADING = worker.LAST_FAILURE_HEADING
 # What `_start_wanted` returns when it started a fresh Opus session in place of one the hold kept waiting on Fable.
 FALLEN_BACK = "fallen_back"
 # What `_act_on` returns for a valid `running` result: its branch is integrated and its jobs left to the poller (ticket 19).
@@ -272,6 +276,13 @@ RESUME_FAILED = (
     "The ticket file, %s, holds the whole failure output under its `## Result` section (the end of a job's log, "
     "a verifier's findings). Fix what failed in this worktree, which is checked out on the ticket branch, run "
     "`wayline accept`, commit on the ticket branch, and return the structured result."
+)
+TIER_UP_FAILED = (
+    "The attempt before this one failed, and the escalation chain sent the ticket one rung up to this fresh "
+    "session. The failure output its resume was given:\n\n%s\n\n"
+    "The ticket file, %s, holds the whole failure output under its `## Result` section. Work already on `main` "
+    "or on the ticket branch does not make the ticket done: mend what failed, then run `wayline accept`, commit "
+    "on the ticket branch, and return the structured result."
 )
 # How much of a failed job's log the journal and the ticket's failure output carry.
 LOG_TAIL_CHARS = 4000
@@ -1729,6 +1740,7 @@ class Conductor:
             attempt.fallback_from, attempt.tier = attempt.tier.label, fallback_tier(self.policy, attempt.tier)
         self._add_worktree(attempt)
         self._write_ticket(attempt, "running")
+        self._keep_last_failure(attempt)
         attempt.prompt = self._prompt(attempt)
         attempt.request = self._request(attempt, attempt.prompt)
         own = attempt.ticket.get("pinned_difficulty") or attempt.ticket["difficulty"]
@@ -1750,7 +1762,29 @@ class Conductor:
             budget={"max_turns": attempt.tier.max_turns, "max_minutes": attempt.tier.max_minutes},
             consult_max=(self.policy.get("consultant") or {}).get("max_questions_per_ticket", worker.CONSULT_MAX),
             notes=notes,
+            failure=self._last_failure(attempt),
         )
+
+    def _keep_last_failure(self, attempt):
+        """Write `failure.json` for an attempt a tier up launches: the failure output of the attempt before it (ticket 68).
+
+        A tier up opens a fresh session, which would otherwise start from the ticket as the planner wrote it,
+        find the earlier work passing its machine criteria, and return `done` with nothing mended.
+        """
+        known = self.view.tickets.get(attempt.id)
+        if known is None or not known.steps or known.steps[-1] != TIER_UP:
+            return
+        text = TIER_UP_FAILED % (known.failure or "no reason was recorded", tickets.relative_path(attempt.ticket))
+        self.ledger.write_json(self._attempt_dir(attempt).relative_to(self.ledger.research) / LAST_FAILURE,
+                               {"failure": text})
+
+    def _last_failure(self, attempt):
+        """The failure a tier-up attempt carries in its prompt, from `failure.json`; None for any other attempt."""
+        try:
+            text = json.loads((self._attempt_dir(attempt) / LAST_FAILURE).read_text(encoding="utf-8")).get("failure")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return text if isinstance(text, str) else None
 
     def _request(self, attempt, prompt):
         """The `LaunchRequest` of decision 3: the role's tools, the rendered guards, both add-dirs.

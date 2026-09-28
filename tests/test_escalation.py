@@ -386,6 +386,74 @@ class RestartTest(EscalationCase):
         self.assertEqual(self.ticket()["status"], "done")
 
 
+FINDINGS = "- hello.txt says hullo, not hello\n- the acceptance never read the file"
+
+
+class TierUpFailureTest(EscalationCase):
+    """Ticket 68: a tier up opens a fresh session that is told what failed, and a restart tells it again."""
+
+    record_failure = RestartTest.record_failure
+
+    def record_rejected(self):
+        """A ticket integrated on `main` whose verdict failed, sent one rung up (51's live run)."""
+        self.ledger.append_event("ticket_launched", dict(LAUNCHED, ticket=1, attempt=1, worktree=str(self.worktree()),
+                                                         difficulty=1, rung=2), ticket=1)
+        self.ledger.append_event("ticket_session", {"ticket": 1, "attempt": 1, "session_id": "s-1", "model": "sonnet"},
+                                 ticket=1, session_id="s-1")
+        self.ledger.append_event("ticket_done", {"ticket": 1}, ticket=1)
+        reason = conductor.REJECTED % ("code_review", "claude-opus-5-5", FINDINGS)
+        self.ledger.append_event("ticket_failed", {"ticket": 1, "attempt": 1, "reason": reason, "next": "tier_up"}, ticket=1)
+        self.set_fields(status="failed")
+
+    def assertCarries(self, prompt):
+        self.assertIn(conductor.LAST_FAILURE_HEADING, prompt)
+        section = prompt[prompt.index(conductor.LAST_FAILURE_HEADING):]
+        for said in ("code_review", "claude-opus-5-5", "hullo, not hello", "never read the file"):
+            self.assertIn(said, section)
+
+    def test_a_tier_up_after_a_failed_verdict_carries_its_findings(self):
+        self.record_rejected()
+        self.conduct((done(), patch()))
+        self.assertEqual(self.rungs(), [2, 3])
+        self.assertCarries(self.calls[0].request.prompt)
+        self.assertEqual(self.ticket()["status"], "done")
+
+    def test_a_tier_up_after_a_machine_failure_carries_its_output(self):
+        self.record_failure("tier_up")
+        self.conduct((done(), patch()))
+        prompt = self.calls[0].request.prompt
+        self.assertIn(conductor.LAST_FAILURE_HEADING, prompt)
+        self.assertIn("it broke", prompt[prompt.index(conductor.LAST_FAILURE_HEADING):])
+
+    def test_a_restart_relaunches_the_tier_up_with_the_same_section(self):
+        self.record_rejected()
+        with worker.use_fake() as fake:
+            fake.script(done(), ticket=1, died=True)
+            first = self.conductor()
+            first.wave()
+            first.settle()
+            (self.project / "research" / "sessions" / "1" / "2" / "stream.jsonl").unlink(missing_ok=True)
+            fake.script(done(), patch=patch(), ticket=1)
+            again = self.conductor()
+            again.wave()
+            again.settle()
+            calls = list(fake.calls)
+        self.assertEqual([(call.kind, call.request.prompt == calls[0].request.prompt) for call in calls],
+                         [("launch", True), ("launch", True)], "the relaunch says the same prompt")
+        self.assertCarries(calls[1].request.prompt)
+        self.assertEqual([item["payload"]["attempt"] for item in self.events("ticket_launched")], [1, 2, 2])
+
+    def test_a_first_attempt_carries_no_failure(self):
+        self.conduct((done(), patch()))
+        self.assertNotIn(conductor.LAST_FAILURE_HEADING, self.calls[0].request.prompt)
+
+    def test_a_resume_is_told_by_its_message_not_the_section(self):
+        self.record_failure("resume")
+        self.conduct((done(), patch()))
+        self.assertEqual([call.kind for call in self.calls], ["resume"])
+        self.assertNotIn(conductor.LAST_FAILURE_HEADING, self.calls[0].request.prompt)
+
+
 class FableRungTest(EscalationCase):
     """Criteria 2 and 4: the split comes first onto Fable, the tier up climbs inside Fable, and the hold is obeyed.
 
