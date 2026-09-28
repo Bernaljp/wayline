@@ -22,16 +22,11 @@
     },
     {
       "model": "opus",
-      "effort": "high",
+      "effort": "medium",
       "budget": "medium"
     },
     {
-      "model": "fable",
-      "effort": "low",
-      "budget": "large"
-    },
-    {
-      "model": "fable",
+      "model": "opus",
       "effort": "high",
       "budget": "large"
     }
@@ -41,7 +36,7 @@
     "2": 3,
     "3": 5,
     "4": 6,
-    "5": 7
+    "5": 6
   },
   "budget": {
     "small": {

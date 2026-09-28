@@ -18,10 +18,10 @@ from pathlib import Path
 from unittest import mock
 
 from tests.paths import HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, SEVEN_RUNGS, fable_overrides
 from wayline import TAG, conductor, evolve, fixtures, registry
 from wayline.ledger import Ledger
-from wayline.project import init_project, read_harness
+from wayline.project import init_project, merge_policy, read_harness
 
 IDENTITY = ["-c", "user.name=wayline test", "-c", "user.email=test@wayline.invalid"]
 
@@ -55,6 +55,13 @@ def write_skill(directory, identifier, scope_kind="global", fixtures_ids=(), bod
 class HarnessRepositoryCase(ProjectTestCase):
     """A harness repository with the tags `v0.1.0` and `v0.2.0`, checked out at `v0.1.0`, and a project pinned there."""
 
+    # The overrides each tag's `policy.json` takes over the shipped one, `v0.1.0`'s then `v0.2.0`'s; None ships it as it is.
+    LADDERS = (None, None)
+
+    def write_ladder(self, overrides):
+        policy = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
+        (self.harness / "policy.json").write_text(json.dumps(merge_policy(policy, overrides), indent=2) + "\n", encoding="utf-8")
+
     def setUp(self):
         super().setUp()
         self.harness = self.fake_harness(skills=("wayline-absorb",), workflows=("absorb.js",))
@@ -63,7 +70,7 @@ class HarnessRepositoryCase(ProjectTestCase):
         shutil.copytree(HARNESS_ROOT / "roles" / "coder", self.harness / "roles" / "coder")
         (self.harness / ".gitignore").write_text("fixtures/*/*/runs/\n", encoding="utf-8")
         (self.harness / "CHANGELOG.md").write_text(CHANGELOG_V1, encoding="utf-8")
-        shutil.copy(HARNESS_ROOT / "policy.json", self.harness / "policy.json")  # both tags carry the rung ladder (decision 16)
+        self.write_ladder(self.LADDERS[0])  # both tags carry a rung ladder (decision 16)
         self.hgit("init", "-q", "-b", "main")
         self.commit_and_tag("v0.1.0")
 
@@ -72,6 +79,7 @@ class HarnessRepositoryCase(ProjectTestCase):
         text = (self.harness / "CHANGELOG.md").read_text(encoding="utf-8")
         (self.harness / "CHANGELOG.md").write_text(text.replace("## v0.1.0", V2_ENTRY + "## v0.1.0"), encoding="utf-8")
         (self.harness / "wayline" / "__init__.py").write_text('__version__ = "0.2.0"\nTAG = "v" + __version__\n', encoding="utf-8")
+        self.write_ladder(self.LADDERS[1])
         self.commit_and_tag("v0.2.0")
         self.hgit("checkout", "-q", "--detach", "v0.1.0")
 
@@ -232,7 +240,119 @@ class HarnessChangelogTest(unittest.TestCase):
 # --- upgrade and rollback ---------------------------------------------------------------------------
 
 
-class UpgradeTest(HarnessRepositoryCase):
+class UpgradeCase(HarnessRepositoryCase):
+    def upgrade(self, to=None):
+        return evolve.upgrade(self.project, to=to, harness_root=self.harness)
+
+    def override(self, difficulty, **policy):
+        """Commit a `policy.difficulty` override, and any other policy keys, into the project's harness.json, as an owner's edit."""
+        path = self.project / "harness.json"
+        harness = json.loads(path.read_text(encoding="utf-8"))
+        harness["policy"] = dict(policy, difficulty=difficulty)
+        path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+        self.hgit("commit", "-qam", "override the difficulty table", cwd=self.project)
+
+    def read_override(self):
+        return json.loads((self.project / "harness.json").read_text(encoding="utf-8"))["policy"]["difficulty"]
+
+
+class SevenRungOverrideTest(UpgradeCase):
+    """The old-shape rewrite onto a ladder that has Fable rungs, as v1.0.0 shipped it and as a project may keep it."""
+
+    LADDERS = (fable_overrides(SEVEN_RUNG_LADDER), fable_overrides(SEVEN_RUNG_LADDER))
+
+    def test_upgrade_rewrites_an_old_shape_difficulty_override_to_the_nearest_rungs(self):
+        self.override({"1": {"model": "sonnet", "effort": "low", "budget": "small"}, "2": {"model": "sonnet", "effort": "medium", "budget": "small"},
+                       "3": {"model": "opus", "effort": "high", "budget": "medium"}, "4": {"model": "fable", "effort": "xhigh", "budget": "large"},
+                       "5": {"model": "fable", "effort": "max", "budget": "large"}})
+        report = self.upgrade()
+        self.assertEqual(report["migrated"], [
+            "difficulty 1: sonnet low -> rung 2 (sonnet low)",
+            "difficulty 2: sonnet medium -> rung 3 (sonnet high)",
+            "difficulty 3: opus high -> rung 5 (opus high)",
+            "difficulty 4: fable xhigh -> rung 7 (fable high)",
+            "difficulty 5: fable max -> rung 7 (fable high)",
+        ])
+        self.assertEqual(self.read_override(), {"1": 2, "2": 3, "3": 5, "4": 7, "5": 7})
+        self.assertIn("  difficulty 4: fable xhigh -> rung 7 (fable high)", evolve.render_upgrade(report))
+
+    def test_upgrade_rewrites_a_partial_override(self):
+        self.override({"4": {"model": "opus", "effort": "medium", "budget": "large"}})
+        report = self.upgrade()
+        self.assertEqual(report["migrated"], ["difficulty 4: opus medium -> rung 5 (opus high)"])
+        self.assertEqual(self.read_override(), {"4": 5})
+
+
+class LadderMoveTest(UpgradeCase):
+    """Ticket 70: `v0.1.0` ships the seven rungs of v1.0.0 and `v0.2.0` the six without Fable, so the indices move."""
+
+    LADDERS = (fable_overrides(SEVEN_RUNG_LADDER), None)
+
+    def test_upgrade_carries_each_rung_of_the_override_by_its_model_and_effort(self):
+        self.override({"1": 2, "2": 4, "3": 5, "4": 6, "5": 7})
+        report = self.upgrade()
+        self.assertEqual(report["migrated"], [
+            "difficulty 3: rung 5 (opus high) -> rung 6 (opus high)",
+            "difficulty 4: rung 6 (fable low) -> rung 6 (opus high)",
+            "difficulty 5: rung 7 (fable high) -> rung 6 (opus high)",
+        ])
+        self.assertEqual(self.read_override(), {"1": 2, "2": 4, "3": 6, "4": 6, "5": 6})
+        self.assertIn("  difficulty 5: rung 7 (fable high) -> rung 6 (opus high)", evolve.render_upgrade(report))
+        self.assertEqual(conductor.dirty_outside_research(self.project), [], "the pin commit took the rewrite")
+        self.assertEqual(conductor.refuse_to_start(self.project, harness_root=self.harness), [])
+        again = self.upgrade()
+        self.assertEqual((again["direction"], again["migrated"]), ("unchanged", []), "the same ladder carries nothing again")
+
+    def test_a_rollback_carries_the_rungs_back_by_their_model_and_effort(self):
+        self.override({"3": 5})
+        self.upgrade()
+        self.assertEqual(self.read_override(), {"3": 6})
+        report = self.upgrade(to="v0.1.0")
+        self.assertEqual(report["migrated"], ["difficulty 3: rung 6 (opus high) -> rung 5 (opus high)"])
+        self.assertEqual(self.read_override(), {"3": 5})
+        self.upgrade()
+        self.override({"3": 5})  # opus medium on v0.2.0: its nearest on v0.1.0, high over low at the same distance
+        report = self.upgrade(to="v0.1.0")
+        self.assertEqual(report["migrated"], ["difficulty 3: rung 5 (opus medium) -> rung 5 (opus high)"])
+
+    def test_a_project_whose_own_tiers_define_its_ladder_is_left_as_it_is(self):
+        self.override({"4": 6, "5": 7}, tiers=[dict(rung) for rung in SEVEN_RUNGS])
+        report = self.upgrade()
+        self.assertEqual(report["migrated"], [])
+        self.assertIn("harness.json's own policy.tiers defines the project's rung ladder; its policy.difficulty override is left as it is",
+                      report["notes"])
+        self.assertEqual(self.read_override(), {"4": 6, "5": 7})
+        self.assertEqual(conductor.refuse_to_start(self.project, harness_root=self.harness), [])
+
+    def test_a_level_on_a_rung_the_pinned_ladder_lacks_is_refused_before_the_checkout_moves(self):
+        self.override({"3": 9})
+        with self.assertRaises(evolve.EvolveError) as caught:
+            self.upgrade()
+        self.assertIn("level 3 to rung 9, which the rung ladder of v0.1.0 does not have", str(caught.exception))
+        self.assertEqual((self.head_tags(), self.pin(), self.read_override()), (["v0.1.0"], "v0.1.0", {"3": 9}))
+
+
+class NearestRungTest(unittest.TestCase):
+    """A rung carried onto another ladder: its family's nearest effort, else the top rung on a cheaper family."""
+
+    def setUp(self):
+        self.rungs = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))["tiers"]
+
+    def test_a_family_the_ladder_lacks_takes_the_top_rung_on_a_cheaper_family(self):
+        self.assertEqual(evolve.nearest_rung(self.rungs, "fable", "low"), 6)
+        self.assertEqual(evolve.nearest_rung(self.rungs, "claude-fable-5-1", "max"), 6)
+        sonnets = [{"model": "haiku", "effort": "low", "budget": "small"}, {"model": "sonnet", "effort": "low", "budget": "small"},
+                   {"model": "sonnet", "effort": "high", "budget": "small"}]
+        self.assertEqual(evolve.nearest_rung(sonnets, "opus", "high"), 3)
+        self.assertIsNone(evolve.nearest_rung(sonnets[1:], "haiku", "low"), "no rung is on a family as cheap")
+        self.assertIsNone(evolve.nearest_rung(self.rungs, "gpt", "high"))
+
+    def test_the_family_s_own_rungs_win(self):
+        self.assertEqual(evolve.nearest_rung(self.rungs, "opus", "medium"), 5)
+        self.assertEqual(evolve.nearest_rung(self.rungs, "opus", "xhigh"), 6, "the cap takes xhigh as high")
+
+
+class UpgradeTest(UpgradeCase):
     def upgrade(self, to=None):
         return evolve.upgrade(self.project, to=to, harness_root=self.harness)
 
@@ -249,19 +369,11 @@ class UpgradeTest(HarnessRepositoryCase):
         self.assertEqual([tag for tag, _ in report["entries"]], ["v0.2.0"])
         self.assertIsNone(evolve.pin_problem(self.project, harness_root=self.harness, environ={}))
 
-    def override(self, difficulty):
-        """Commit a `policy.difficulty` override into the project's harness.json, as an owner's edit before the rung ladder."""
-        path = self.project / "harness.json"
-        harness = json.loads(path.read_text(encoding="utf-8"))
-        harness["policy"] = {"difficulty": difficulty}
-        path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
-        self.hgit("commit", "-qam", "override the difficulty table", cwd=self.project)
-
-    def read_override(self):
-        return json.loads((self.project / "harness.json").read_text(encoding="utf-8"))["policy"]["difficulty"]
-
     def test_upgrade_rewrites_an_old_shape_difficulty_override_to_the_nearest_rungs(self):
-        """Decision 16: each level takes the rung whose model matches and whose effort is nearest without going above high."""
+        """Decision 16: each level takes the rung whose model matches and whose effort is nearest without going above high.
+
+        The shipped ladder has no Fable rung since ticket 70, so a level on Fable takes the top rung on a cheaper family.
+        """
         self.override({"1": {"model": "sonnet", "effort": "low", "budget": "small"}, "2": {"model": "sonnet", "effort": "medium", "budget": "small"},
                        "3": {"model": "opus", "effort": "high", "budget": "medium"}, "4": {"model": "fable", "effort": "xhigh", "budget": "large"},
                        "5": {"model": "fable", "effort": "max", "budget": "large"}})
@@ -270,14 +382,14 @@ class UpgradeTest(HarnessRepositoryCase):
         self.assertEqual(report["migrated"], [
             "difficulty 1: sonnet low -> rung 2 (sonnet low)",
             "difficulty 2: sonnet medium -> rung 3 (sonnet high)",
-            "difficulty 3: opus high -> rung 5 (opus high)",
-            "difficulty 4: fable xhigh -> rung 7 (fable high)",
-            "difficulty 5: fable max -> rung 7 (fable high)",
+            "difficulty 3: opus high -> rung 6 (opus high)",
+            "difficulty 4: fable xhigh -> rung 6 (opus high)",
+            "difficulty 5: fable max -> rung 6 (opus high)",
         ])
-        self.assertEqual(self.read_override(), {"1": 2, "2": 3, "3": 5, "4": 7, "5": 7})
+        self.assertEqual(self.read_override(), {"1": 2, "2": 3, "3": 6, "4": 6, "5": 6})
         self.assertIn("harness.json", report["changes"])
         self.assertEqual(conductor.dirty_outside_research(self.project), [], "the pin commit took the rewrite")
-        self.assertIn("  difficulty 4: fable xhigh -> rung 7 (fable high)", evolve.render_upgrade(report))
+        self.assertIn("  difficulty 4: fable xhigh -> rung 6 (opus high)", evolve.render_upgrade(report))
         self.assertEqual(conductor.refuse_to_start(self.project, harness_root=self.harness), [])
         again = self.upgrade()
         self.assertEqual(again["migrated"], [])
@@ -289,7 +401,7 @@ class UpgradeTest(HarnessRepositoryCase):
         self.assertIn("harness.json overrides no policy.difficulty; nothing to rewrite to rungs", report["notes"])
         self.override({"4": {"model": "opus", "effort": "medium", "budget": "large"}})
         report = self.upgrade(to="v0.1.0")
-        self.assertEqual(report["migrated"], ["difficulty 4: opus medium -> rung 5 (opus high)"])
+        self.assertEqual(report["migrated"], ["difficulty 4: opus medium -> rung 5 (opus medium)"])
         self.assertEqual(self.read_override(), {"4": 5})
 
     def test_upgrade_refuses_an_old_level_on_a_model_no_rung_carries_before_the_checkout_moves(self):

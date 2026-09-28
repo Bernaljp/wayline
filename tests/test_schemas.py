@@ -90,11 +90,10 @@ class PolicyTest(unittest.TestCase):
             {"model": "sonnet", "effort": "low", "budget": "small"},
             {"model": "sonnet", "effort": "high", "budget": "small"},
             {"model": "opus", "effort": "low", "budget": "medium"},
-            {"model": "opus", "effort": "high", "budget": "medium"},
-            {"model": "fable", "effort": "low", "budget": "large"},
-            {"model": "fable", "effort": "high", "budget": "large"},
+            {"model": "opus", "effort": "medium", "budget": "medium"},
+            {"model": "opus", "effort": "high", "budget": "large"},
         ])
-        self.assertEqual(policy["difficulty"], {"1": 2, "2": 3, "3": 5, "4": 6, "5": 7})
+        self.assertEqual(policy["difficulty"], {"1": 2, "2": 3, "3": 5, "4": 6, "5": 6})
         self.assertEqual(policy["budget"]["large"], {"max_turns": 200, "max_minutes": 180})
         self.assertEqual(policy["roles"]["decider"], {"model": "opus", "effort": "max"})
         self.assertEqual(policy["verifier"], {"sonnet": {"model": "opus", "effort": "high"}, "opus": {"model": "opus", "effort": "max"},
@@ -141,10 +140,10 @@ class PolicyTest(unittest.TestCase):
 
     def test_a_rung_above_the_cap_is_refused(self):
         policy = json.loads(json.dumps(self.policy))
-        policy["tiers"][6]["effort"] = "xhigh"
+        policy["tiers"][5]["effort"] = "xhigh"
         with self.assertRaises(ValidationError) as caught:
             check_policy(policy)
-        self.assertIn('  $.tiers[6].effort: "xhigh" is not one of ["low", "medium", "high"]', str(caught.exception))
+        self.assertIn('  $.tiers[5].effort: "xhigh" is not one of ["low", "medium", "high"]', str(caught.exception))
         self.assertNotIn("$: $", str(caught.exception), "the schema's own path, once")
 
     def test_the_rung_model_grammar_is_the_launchers(self):
@@ -181,7 +180,7 @@ class PolicyTest(unittest.TestCase):
         policy["difficulty"]["5"] = 9
         self.assertEqual(validate(policy, load_schema("policy")), [], "the schema cannot see the ladder's length")
         self.assertEqual(policy_problems(policy), [
-            ("$.difficulty.5", "policy", "policy.difficulty maps level 5 to rung 9, which policy.tiers does not have; the rung ladder has 7 rung(s), 1 to 7")])
+            ("$.difficulty.5", "policy", "policy.difficulty maps level 5 to rung 9, which policy.tiers does not have; the rung ladder has 6 rung(s), 1 to 6")])
 
     def test_every_refused_example_is_refused_by_check_policy(self):
         """The refusals the schema cannot express have their negative examples beside the schema's, under `refused-`."""

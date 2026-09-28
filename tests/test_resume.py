@@ -284,7 +284,7 @@ class ReconcileTest(TakeOverCase):
         self.killed(session=False, stream=False)
         self.write(pinned_difficulty=3)
         self.resume((done(), patch()))
-        self.assertEqual((self.calls[0].request.model, self.calls[0].request.effort), ("opus", "high"))
+        self.assertEqual((self.calls[0].request.model, self.calls[0].request.effort), ("opus", "medium"))
         self.assertEqual(self.ticket()["pinned_difficulty"], 3)
         self.assertEqual(self.ticket()["status"], "done")
 
