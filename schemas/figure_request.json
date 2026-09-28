@@ -121,7 +121,7 @@
         "properties": {
           "id": {"type": "string", "pattern": "\\S"},
           "text": {"type": "string", "pattern": "\\S"},
-          "from": {"type": "string", "enum": ["human", "critic"]},
+          "from": {"type": "string", "enum": ["human", "critic", "paper"], "description": "paper: a build of `wayline paper` asked for it"},
           "session": {"type": ["string", "null"]}
         }
       }

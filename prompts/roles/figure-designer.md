@@ -36,7 +36,7 @@ hashes the files, and records them.
    honest alternative exists, give null paths. When every request is refused, leave the final
    figure as it was and return `drew_final: false`.
 4. Write the caption and the notes at the paths given. The caption carries a `(a)`, `(b)` entry for
-   every panel and the disclosures the honesty rules ask for; the notes record the generator, the
+   every panel and the disclosures the honesty rules ask for, and names no other figure; the notes record the generator, the
    register, the load-bearing choices with their measurements, the schematic elements, and the
    traps hit.
 5. Run the generator once more from the project root and look at the PNG before you stop.

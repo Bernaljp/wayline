@@ -12,7 +12,7 @@ import re
 import unittest
 
 from tests import machine
-from tests.projects import ProjectTestCase
+from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, fable_overrides, fable_policy, on_fable
 from tests.test_conductor import ConductorCase, done, drive, patch
 from wayline import conductor, gates, plan, project, tickets, worker
 from wayline.ledger import Ledger, make_event
@@ -21,10 +21,16 @@ from wayline.ledger import Ledger, make_event
 EXPECTED = {
     1: (2, "sonnet", "low", 40, 30),
     2: (3, "sonnet", "high", 40, 30),
+    3: (5, "opus", "medium", 100, 90),
+    4: (6, "opus", "high", 200, 180),
+    5: (6, "opus", "high", 200, 180),
+}
+# The same on the seven rungs v1.0.0 shipped, whose Fable rungs a project may put back in its `harness.json` (ticket 70).
+EXPECTED_SEVEN = {**EXPECTED, **{
     3: (5, "opus", "high", 100, 90),
     4: (6, "fable", "low", 200, 180),
     5: (7, "fable", "high", 200, 180),
-}
+}}
 
 
 def passing_verdict():
@@ -55,8 +61,13 @@ class LaunchRequestTest(ConductorCase):
             drive(self.conductor)
             self.calls = list(fake.calls)
 
-    def check_launch(self, difficulty):
-        rung, model, effort, turns, minutes = EXPECTED[difficulty]
+    def put_fable_rungs_back(self):
+        """The project's `harness.json` restores the seven rungs, committed as an owner commits it."""
+        on_fable(self.project, SEVEN_RUNG_LADDER)
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "the Fable rungs back")
+
+    def check_launch(self, difficulty, expected=EXPECTED):
+        rung, model, effort, turns, minutes = expected[difficulty]
         self.launch_at(difficulty)
         request = self.calls[0].request
         self.assertEqual(request.role, "coder")
@@ -87,12 +98,27 @@ class LaunchRequestTest(ConductorCase):
 
     def test_difficulty_3_launches_on_rung_5_and_its_verdict_carries_the_rung(self):
         self.check_launch(3)
+        self.assertIn("r5 opus medium", self.conductor.out.getvalue())
 
-    def test_difficulty_4_launches_on_fable_low(self):
+    def test_difficulty_4_launches_on_opus_high_with_the_large_budget(self):
         self.check_launch(4)
 
-    def test_difficulty_5_launches_on_fable_high_not_max(self):
+    def test_difficulty_5_launches_on_opus_high_the_top_rung(self):
         self.check_launch(5)
+        verifier = self.calls[1].request
+        self.assertEqual((verifier.model, verifier.effort), ("opus", "max"), "the verifier table's effort, which the cap does not bind")
+
+    def test_difficulty_3_launches_on_opus_high_on_the_seven_rungs(self):
+        self.put_fable_rungs_back()
+        self.check_launch(3, EXPECTED_SEVEN)
+
+    def test_difficulty_4_launches_on_fable_low(self):
+        self.put_fable_rungs_back()
+        self.check_launch(4, EXPECTED_SEVEN)
+
+    def test_difficulty_5_launches_on_fable_high_not_max(self):
+        self.put_fable_rungs_back()
+        self.check_launch(5, EXPECTED_SEVEN)
         verifier = self.calls[1].request
         self.assertEqual((verifier.model, verifier.effort), ("opus", "max"), "the verifier table's effort, which the cap does not bind")
 
@@ -110,11 +136,21 @@ class LaunchRequestTest(ConductorCase):
     def test_a_valid_override_does_not_refuse_the_run(self):
         harness_path = self.project / project.HARNESS_JSON
         harness = json.loads(harness_path.read_text(encoding="utf-8"))
-        harness["policy"] = {"difficulty": {"4": 7}}
+        harness["policy"] = dict(fable_overrides(SEVEN_RUNG_LADDER), difficulty={"4": 7})
         harness_path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "override")
         self.assertEqual(conductor.refuse_to_start(self.project), [])
         self.assertEqual(conductor.tier_for(project.policy_for(self.project), 4).label, "r7 fable high")
+
+    def test_an_override_naming_a_rung_the_shipped_ladder_lacks_refuses_the_run(self):
+        harness_path = self.project / project.HARNESS_JSON
+        harness = json.loads(harness_path.read_text(encoding="utf-8"))
+        harness["policy"] = {"difficulty": {"4": 7}}
+        harness_path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "override")
+        problems = conductor.refuse_to_start(self.project)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("1 to 6", problems[0])
 
 
 class JournalTest(unittest.TestCase):
@@ -161,8 +197,11 @@ class LabelTest(unittest.TestCase):
         policy = json.loads((conductor.HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
         text = plan.rubric_text(policy)
         self.assertIn("Rung 2, sonnet at low, a small budget.", text)
-        self.assertIn("Rung 7, fable at high, a large budget.", text)
+        self.assertIn("Rung 5, opus at medium, a medium budget.", text)
+        self.assertIn("Rung 6, opus at high, a large budget.", text)
+        self.assertNotIn("fable", text)
         self.assertIn("policy.tiers", text)
+        self.assertIn("Rung 7, fable at high, a large budget.", plan.rubric_text(fable_policy(policy, SEVEN_RUNG_LADDER)))
 
 
 class StatusLabelTest(ProjectTestCase):
