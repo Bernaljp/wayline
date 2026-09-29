@@ -156,6 +156,18 @@ _Avoid_: log, history
 A guided change request the figure role declines because the figure would then assert something false; it carries the nearest honest alternative, and only the owner can override it.
 _Avoid_: rejection, veto
 
+**Objective**:
+A question the research sets out to answer, often general and not always the project's end: it can be the question that has to be answered before the work goes on. A project holds several, and results can reframe them.
+_Avoid_: aim, target, research question (the spec's framing of what it answers)
+
+**Goal**:
+An objective with a measure: code checks it, keep-if-better optimizes toward it, and it is reached when the best kept value meets its target, if it has one. It can be the whole aim of a project or of a phase.
+_Avoid_: target (a measure's field), KPI
+
+**Measure**:
+The metric, direction, target, held-out split, and command that let code read a goal's progress; an objective has at most one.
+_Avoid_: metric alone (the spec's metric is a definition with its script)
+
 **Keep-if-better**:
 The rule that keeps a goal ticket's change only when its mean over the seeds beats the best kept value on the held-out split by more than one standard deviation; a change it does not keep is discarded.
 _Avoid_: hill climbing, accept-if-improved
