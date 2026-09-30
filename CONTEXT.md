@@ -48,6 +48,22 @@ _Avoid_: red team, devil's advocate, peer review
 A journal, conference, or preprint server with a `guidelines/<venue>/guidelines.json`, named by its slug; the paper is drafted and checked under one venue's guidelines and never submitted to it.
 _Avoid_: journal (for the slug), target, outlet
 
+**Section**:
+One of the five parts of the paper kept as its own file from the project's start: Introduction, Results, Discussion, Methods, and References. Any of them may be empty for a while.
+_Avoid_: chapter, part, paper section
+
+**Passage**:
+A piece of a section's text, from one claim to a paragraph, with its provenance and whoever contributed it; a later passage replaces it without deleting it.
+_Avoid_: contribution (a paper's claimed advance), entry, snippet
+
+**Inherited passage**:
+A passage deconstructed from a project's own documents, such as an earlier manuscript; its claim stands unchecked until this project's evidence supports, narrows, or contradicts it.
+_Avoid_: legacy text, imported text
+
+**Consolidation**:
+One writer session's rewrite of a section's current passages into fewer, cleaner passages that keep their tags and replace them, made only when the owner asks.
+_Avoid_: compilation (the paper's word), tidy, rewrite
+
 **Done**:
 Machine checks passed on a ticket.
 _Avoid_: complete, finished
