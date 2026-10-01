@@ -1,0 +1,602 @@
+[
+ {
+  "id": "basic-density-plot-with-seaborn-python-graph-gallery",
+  "title": "Basic density plot with seaborn",
+  "site": "python-graph-gallery",
+  "chart_type": "density",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "density-plot-with-shade-seaborn-python-graph-gallery",
+  "title": "Density plot with shade in seaborn",
+  "site": "python-graph-gallery",
+  "chart_type": "density",
+  "shape": "dist",
+  "note": "variant: shading"
+ },
+ {
+  "id": "horizontal-density-plot-python-graph-gallery",
+  "title": "Horizontal density plot",
+  "site": "python-graph-gallery",
+  "chart_type": "density",
+  "shape": "dist",
+  "note": "variant: orientation"
+ },
+ {
+  "id": "control-bandwidth-of-seaborn-density-plot-python-graph-gallery",
+  "title": "Control the bandwidth of a seaborn density plot",
+  "site": "python-graph-gallery",
+  "chart_type": "density",
+  "shape": "dist",
+  "note": "variant: bandwidth"
+ },
+ {
+  "id": "density-plot-of-several-variables-python-graph-gallery",
+  "title": "Density plot of several variables",
+  "site": "python-graph-gallery",
+  "chart_type": "density, several groups",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "contour-plot-with-seaborn-python-graph-gallery",
+  "title": "Contour Plot using Seaborn",
+  "site": "python-graph-gallery",
+  "chart_type": "2D density contour",
+  "shape": "xy",
+  "note": ""
+ },
+ {
+  "id": "basic-2d-histograms-with-matplotlib-python-graph-gallery",
+  "title": "Plot a Basic 2D Histogram using Matplotlib",
+  "site": "python-graph-gallery",
+  "chart_type": "2D histogram",
+  "shape": "xy",
+  "note": ""
+ },
+ {
+  "id": "animation-on-3d-plot-python-graph-gallery",
+  "title": "Animated 3D chart",
+  "site": "python-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "animation; a static report cannot carry it"
+ },
+ {
+  "id": "basic-area-chart-python-graph-gallery",
+  "title": "Basic Area Chart",
+  "site": "python-graph-gallery",
+  "chart_type": "area",
+  "shape": "series",
+  "note": ""
+ },
+ {
+  "id": "improve-area-chart-python-graph-gallery",
+  "title": "Improved Area Chart",
+  "site": "python-graph-gallery",
+  "chart_type": "area",
+  "shape": "series",
+  "note": "variant: styling"
+ },
+ {
+  "id": "area-chart-and-faceting-python-graph-gallery",
+  "title": "Area Chart and Faceting",
+  "site": "python-graph-gallery",
+  "chart_type": "area, faceted",
+  "shape": "series",
+  "note": ""
+ },
+ {
+  "id": "horizontal-barplot-python-graph-gallery",
+  "title": "Plotting a Horizontal Barplot using Matplotlib",
+  "site": "python-graph-gallery",
+  "chart_type": "bar",
+  "shape": "category",
+  "note": "variant: horizontal"
+ },
+ {
+  "id": "control-color-of-barplots-python-graph-gallery",
+  "title": "Control the color of barplots built with matplotlib",
+  "site": "python-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "styling of a bar"
+ },
+ {
+  "id": "add-title-and-axis-label-python-graph-gallery",
+  "title": "Add a title and axis labels to your charts using matplotlib",
+  "site": "python-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "styling tutorial"
+ },
+ {
+  "id": "control-width-and-space-in-barplots-python-graph-gallery",
+  "title": "Control width and space in barplots using matplotlib",
+  "site": "python-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "styling of a bar"
+ },
+ {
+  "id": "stacked-area-chart-r-graph-gallery",
+  "title": "Stacked area chart with R",
+  "site": "r-graph-gallery",
+  "chart_type": "stacked area",
+  "shape": "whole",
+  "note": ""
+ },
+ {
+  "id": "basic-area-chart-r-graph-gallery",
+  "title": "Area chart with base R",
+  "site": "r-graph-gallery",
+  "chart_type": "area",
+  "shape": "series",
+  "note": "duplicate of area"
+ },
+ {
+  "id": "basic-barplots-with-ggplot2-r-graph-gallery",
+  "title": "Basic barplot with ggplot2",
+  "site": "r-graph-gallery",
+  "chart_type": "bar",
+  "shape": "category",
+  "note": ""
+ },
+ {
+  "id": "reorder-a-variable-in-ggplot2-r-graph-gallery",
+  "title": "Reorder a variable with ggplot2",
+  "site": "r-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "ordering tutorial"
+ },
+ {
+  "id": "barplot-with-variable-width-r-graph-gallery",
+  "title": "Barplot with variable width",
+  "site": "r-graph-gallery",
+  "chart_type": "bar, variable width",
+  "shape": "category",
+  "note": "width encodes a count"
+ },
+ {
+  "id": "barplot-with-error-bar-r-graph-gallery",
+  "title": "Barplot with error bars",
+  "site": "r-graph-gallery",
+  "chart_type": "bar with error bars",
+  "shape": "category",
+  "note": ""
+ },
+ {
+  "id": "basic-barplot-r-graph-gallery",
+  "title": "Most basic barplot",
+  "site": "r-graph-gallery",
+  "chart_type": "bar",
+  "shape": "category",
+  "note": "duplicate of bar"
+ },
+ {
+  "id": "the-options-of-barplot-r-graph-gallery",
+  "title": "Basic R barplot customization",
+  "site": "r-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "styling of a bar"
+ },
+ {
+  "id": "custom-barplot-layout-r-graph-gallery",
+  "title": "Advanced R barplot customization",
+  "site": "r-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "styling of a bar"
+ },
+ {
+  "id": "barplot-with-number-of-observation-r-graph-gallery",
+  "title": "Barplot with number of observation",
+  "site": "r-graph-gallery",
+  "chart_type": "bar with n",
+  "shape": "category",
+  "note": ""
+ },
+ {
+  "id": "graph-parameters-reminder-r-graph-gallery",
+  "title": "Base R graph parameters: a cheatsheet.",
+  "site": "r-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "cheatsheet"
+ },
+ {
+  "id": "margin-and-oma-cheatsheet-r-graph-gallery",
+  "title": "Base R margins: a cheatsheet.",
+  "site": "r-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "cheatsheet"
+ },
+ {
+  "id": "box-and-scatter-plot-with-ggplot2-r-graph-gallery",
+  "title": "Boxplot with individual data points",
+  "site": "r-graph-gallery",
+  "chart_type": "box with points",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "basic-boxplot-with-ggplot2-r-graph-gallery",
+  "title": "Basic ggplot2 boxplot",
+  "site": "r-graph-gallery",
+  "chart_type": "box",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "ggplot2-boxplot-parameters-r-graph-gallery",
+  "title": "Ggplot2 boxplot parameters",
+  "site": "r-graph-gallery",
+  "chart_type": null,
+  "shape": "none",
+  "note": "styling of a box"
+ },
+ {
+  "id": "andrews-curves-altair",
+  "title": "Andrews Curves",
+  "site": "altair",
+  "chart_type": "Andrews curves",
+  "shape": "multivar",
+  "note": "rows of many variables as curves"
+ },
+ {
+  "id": "interactive-bar-select-highlight-altair",
+  "title": "Bar Chart with Highlighting on Hover and Selection on Click",
+  "site": "altair",
+  "chart_type": "bar",
+  "shape": "category",
+  "note": "interaction lost in a static report; duplicate of bar"
+ },
+ {
+  "id": "bar-chart-with-labels-measured-luminance-altair",
+  "title": "Bar Chart with Labels based on Measured Luminance",
+  "site": "altair",
+  "chart_type": "bar with value labels",
+  "shape": "category",
+  "note": ""
+ },
+ {
+  "id": "deviation-ellipses-altair",
+  "title": "Confidence Interval Ellipses",
+  "site": "altair",
+  "chart_type": "scatter with CI ellipses",
+  "shape": "xy",
+  "note": ""
+ },
+ {
+  "id": "maps-faceted-species-altair",
+  "title": "Faceted County",
+  "site": "altair",
+  "chart_type": null,
+  "shape": "none",
+  "note": "map"
+ },
+ {
+  "id": "interactive-date-input-altair",
+  "title": "Filter a Time Series with Date and Number Inputs",
+  "site": "altair",
+  "chart_type": null,
+  "shape": "none",
+  "note": "interactive time filter"
+ },
+ {
+  "id": "grouped-bar-chart-overlapping-bars-altair",
+  "title": "Grouped Bar Chart with xOffset and overlapping bars",
+  "site": "altair",
+  "chart_type": "grouped bar",
+  "shape": "category",
+  "note": ""
+ },
+ {
+  "id": "interactive-bin-size-altair",
+  "title": "Histogram with Adjustable Bin Size",
+  "site": "altair",
+  "chart_type": "histogram",
+  "shape": "dist",
+  "note": "the slider is lost in a static report"
+ },
+ {
+  "id": "interactive-aggregation-altair",
+  "title": "Interactive Chart with Aggregation",
+  "site": "altair",
+  "chart_type": null,
+  "shape": "none",
+  "note": "interactive"
+ },
+ {
+  "id": "interactive-column-selection-altair",
+  "title": "Interactive Selection of Columns",
+  "site": "altair",
+  "chart_type": null,
+  "shape": "none",
+  "note": "interactive"
+ },
+ {
+  "id": "interval-selection-map-quakes-altair",
+  "title": "Interval Selection on a Map",
+  "site": "altair",
+  "chart_type": null,
+  "shape": "none",
+  "note": "map"
+ },
+ {
+  "id": "mosaic-with-labels-altair",
+  "title": "Mosaic Chart with Labels",
+  "site": "altair",
+  "chart_type": "mosaic",
+  "shape": "whole",
+  "note": "two categorical variables"
+ },
+ {
+  "id": "polar-bar-chart-altair",
+  "title": "Polar Bar Chart",
+  "site": "altair",
+  "chart_type": "polar bar",
+  "shape": "category",
+  "note": ""
+ },
+ {
+  "id": "interactive-reorder-stacked-bars-altair",
+  "title": "Reorder stacked bar segments",
+  "site": "altair",
+  "chart_type": "stacked bar",
+  "shape": "whole",
+  "note": "duplicate of stacked bar"
+ },
+ {
+  "id": "scatter-point-paths-hover-altair",
+  "title": "Scatter plot with point paths on hover and search box",
+  "site": "altair",
+  "chart_type": "connected scatter (paths)",
+  "shape": "xy",
+  "note": "hover lost; paths drawn static"
+ },
+ {
+  "id": "anscombes-quartet-seaborn",
+  "title": "Anscombe’s quartet",
+  "site": "seaborn",
+  "chart_type": "faceted scatter with fit",
+  "shape": "xy",
+  "note": ""
+ },
+ {
+  "id": "different-scatter-variables-seaborn",
+  "title": "Scatterplot with multiple semantics",
+  "site": "seaborn",
+  "chart_type": "scatter, hue and size",
+  "shape": "xy",
+  "note": ""
+ },
+ {
+  "id": "errorband-lineplots-seaborn",
+  "title": "Timeseries plot with error bands",
+  "site": "seaborn",
+  "chart_type": "line with band",
+  "shape": "series",
+  "note": ""
+ },
+ {
+  "id": "faceted-histogram-seaborn",
+  "title": "Facetting histograms by subsets of data",
+  "site": "seaborn",
+  "chart_type": "histogram, faceted",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "faceted-lineplot-seaborn",
+  "title": "Line plots on multiple facets",
+  "site": "seaborn",
+  "chart_type": "line, faceted",
+  "shape": "series",
+  "note": ""
+ },
+ {
+  "id": "grouped-barplot-seaborn",
+  "title": "Grouped barplots",
+  "site": "seaborn",
+  "chart_type": "grouped bar",
+  "shape": "category",
+  "note": "duplicate of grouped bar"
+ },
+ {
+  "id": "grouped-boxplot-seaborn",
+  "title": "Grouped boxplots",
+  "site": "seaborn",
+  "chart_type": "grouped box",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "grouped-violinplots-seaborn",
+  "title": "Grouped violinplots with split violins",
+  "site": "seaborn",
+  "chart_type": "split violin",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "heat-scatter-seaborn",
+  "title": "Scatterplot heatmap",
+  "site": "seaborn",
+  "chart_type": "scatter heatmap",
+  "shape": "matrix",
+  "note": ""
+ },
+ {
+  "id": "hexbin-marginals-seaborn",
+  "title": "Hexbin plot with marginal distributions",
+  "site": "seaborn",
+  "chart_type": "hexbin with marginals",
+  "shape": "xy",
+  "note": ""
+ },
+ {
+  "id": "histogram-stacked-seaborn",
+  "title": "Stacked histogram on a log scale",
+  "site": "seaborn",
+  "chart_type": "stacked histogram, log scale",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "horizontal-boxplot-seaborn",
+  "title": "Horizontal boxplot with observations",
+  "site": "seaborn",
+  "chart_type": "box with points",
+  "shape": "dist",
+  "note": "duplicate of box with points"
+ },
+ {
+  "id": "jitter-stripplot-seaborn",
+  "title": "Conditional means with observations",
+  "site": "seaborn",
+  "chart_type": "means with observations",
+  "shape": "dist",
+  "note": ""
+ },
+ {
+  "id": "joint-histogram-seaborn",
+  "title": "Joint and marginal histograms",
+  "site": "seaborn",
+  "chart_type": "joint histogram",
+  "shape": "xy",
+  "note": ""
+ },
+ {
+  "id": "joint-kde-seaborn",
+  "title": "Joint kernel density estimate",
+  "site": "seaborn",
+  "chart_type": "joint density",
+  "shape": "xy",
+  "note": ""
+ },
+ {
+  "id": "weather-forecast-plotnine",
+  "title": "Weather Forecast",
+  "site": "plotnine",
+  "chart_type": "line, segments",
+  "shape": "series",
+  "note": "duplicate of line"
+ },
+ {
+  "id": "using-letters-as-shapes-plotnine",
+  "title": "Using Letters as Shapes",
+  "site": "plotnine",
+  "chart_type": "scatter, text markers",
+  "shape": "xy",
+  "note": "duplicate of scatter"
+ },
+ {
+  "id": "the-shapes-of-a-scatter-plot-plotnine",
+  "title": "The Shapes of a Scatter Plot",
+  "site": "plotnine",
+  "chart_type": "scatter, shapes",
+  "shape": "xy",
+  "note": "duplicate of scatter"
+ },
+ {
+  "id": "territories-of-westeros-plotnine",
+  "title": "The Territories of Westeros",
+  "site": "plotnine",
+  "chart_type": null,
+  "shape": "none",
+  "note": "map"
+ },
+ {
+  "id": "stage-plotnine",
+  "title": "Stacked Bar Chart",
+  "site": "plotnine",
+  "chart_type": "stacked bar",
+  "shape": "whole",
+  "note": ""
+ },
+ {
+  "id": "same-color-different-shade-plotnine",
+  "title": "Same Color, Different Shade",
+  "site": "plotnine",
+  "chart_type": "split violin",
+  "shape": "dist",
+  "note": "duplicate of violin"
+ },
+ {
+  "id": "periodic-table-plotnine",
+  "title": "Periodic Table",
+  "site": "plotnine",
+  "chart_type": "tile grid with labels",
+  "shape": "matrix",
+  "note": "geom_tile plus text: an annotated heatmap"
+ },
+ {
+  "id": "oh-my-bubbles-plotnine",
+  "title": "Oh My Bubbles",
+  "site": "plotnine",
+  "chart_type": "bubble",
+  "shape": "xy",
+  "note": "scatter with size"
+ },
+ {
+  "id": "mondrian-plotnine",
+  "title": "Mondrian",
+  "site": "plotnine",
+  "chart_type": null,
+  "shape": "none",
+  "note": "art"
+ },
+ {
+  "id": "infant-deaths-in-north-carolina-plotnine",
+  "title": "Infant Deaths in North Carolina",
+  "site": "plotnine",
+  "chart_type": null,
+  "shape": "none",
+  "note": "map"
+ },
+ {
+  "id": "horizontal-bar-chart-plotnine",
+  "title": "Horizontal Bar Chart",
+  "site": "plotnine",
+  "chart_type": "bar",
+  "shape": "category",
+  "note": "duplicate of bar"
+ },
+ {
+  "id": "density-with-some-shade-plotnine",
+  "title": "Density with Some Shade",
+  "site": "plotnine",
+  "chart_type": "density",
+  "shape": "dist",
+  "note": "duplicate of density"
+ },
+ {
+  "id": "coal-production-plotnine",
+  "title": "Coal Production",
+  "site": "plotnine",
+  "chart_type": "area",
+  "shape": "series",
+  "note": "duplicate of area"
+ },
+ {
+  "id": "bar-plot-with-2-variables-plotnine",
+  "title": "A Bar Plot With 2 Variables",
+  "site": "plotnine",
+  "chart_type": "grouped bar",
+  "shape": "category",
+  "note": "duplicate of grouped bar"
+ },
+ {
+  "id": "anscombes-quartet-plotnine",
+  "title": "Anscombe’s Quartet",
+  "site": "plotnine",
+  "chart_type": "faceted scatter with fit",
+  "shape": "xy",
+  "note": "duplicate"
+ }
+]

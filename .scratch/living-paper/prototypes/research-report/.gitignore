@@ -1,0 +1,3 @@
+__pycache__/
+# built by build_page.py; it inlines the plots, so it would only duplicate them
+page.html

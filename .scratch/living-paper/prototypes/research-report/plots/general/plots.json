@@ -1,0 +1,294 @@
+[
+ {
+  "id": "P01",
+  "file": "plots/general/P01-slope-raw-vs-x3x4.png",
+  "result": "R1",
+  "chart_type": "connected scatter (paths)",
+  "index_entries": [
+   "Scatter plot with point paths on hover and search box"
+  ],
+  "title": "Each seed's raw and raw + x3·x4 AUROC, joined"
+ },
+ {
+  "id": "P02",
+  "file": "plots/general/P02-box-gain-signal4.png",
+  "result": "R1",
+  "chart_type": "box with points",
+  "index_entries": [
+   "Boxplot with individual data points",
+   "Horizontal boxplot with observations",
+   "Basic ggplot2 boxplot"
+  ],
+  "title": "The ten per-seed paired gains at signal 4, with the mean and its interval"
+ },
+ {
+  "id": "P03",
+  "file": "plots/general/P03-bar-delong-signal4.png",
+  "result": "R1",
+  "chart_type": "bar with error bars",
+  "index_entries": [
+   "Barplot with error bars"
+  ],
+  "title": "Per-seed paired gain with each seed's DeLong interval, signal 4"
+ },
+ {
+  "id": "P04",
+  "file": "plots/general/P04-hist-bootstrap-signal4.png",
+  "result": "R1",
+  "chart_type": "histogram + density",
+  "index_entries": [
+   "Histogram with Adjustable Bin Size",
+   "Basic density plot with seaborn",
+   "Density plot with shade in seaborn",
+   "Control the bandwidth of a seaborn density plot",
+   "Density with Some Shade",
+   "Horizontal density plot"
+  ],
+  "title": "Bootstrap distribution of the mean paired gain at signal 4"
+ },
+ {
+  "id": "P05",
+  "file": "plots/general/P05-violin-scores-by-class.png",
+  "result": "R1",
+  "chart_type": "split violin",
+  "index_entries": [
+   "Grouped violinplots with split violins",
+   "Same Color, Different Shade"
+  ],
+  "title": "Held-out scores by class for the two arms, seed 1"
+ },
+ {
+  "id": "P06",
+  "file": "plots/general/P06-roc-seed1.png",
+  "result": "R1",
+  "chart_type": "ROC curve (not in the index)",
+  "index_entries": [],
+  "title": "ROC curves of both arms and the Bayes ceiling, seed 1"
+ },
+ {
+  "id": "P07",
+  "file": "plots/general/P07-hexbin-x3-x4.png",
+  "result": "R1",
+  "chart_type": "hexbin",
+  "index_entries": [
+   "Hexbin plot with marginal distributions",
+   "Plot a Basic 2D Histogram using Matplotlib"
+  ],
+  "title": "Mean change in a row's log-odds over the x3, x4 plane, seed 1"
+ },
+ {
+  "id": "P08",
+  "file": "plots/general/P08-joint-scores.png",
+  "result": "R1",
+  "chart_type": "joint histogram",
+  "index_entries": [
+   "Joint and marginal histograms"
+  ],
+  "title": "Each held-out row's score under both arms, with marginals per class"
+ },
+ {
+  "id": "P09",
+  "file": "plots/general/P09-grouped-bar-auroc.png",
+  "result": "R2",
+  "chart_type": "grouped bar with error bars and labels",
+  "index_entries": [
+   "Grouped barplots",
+   "Grouped Bar Chart with xOffset and overlapping bars",
+   "A Bar Plot With 2 Variables",
+   "Barplot with error bars",
+   "Bar Chart with Labels based on Measured Luminance"
+  ],
+  "title": "Mean AUROC of the four arms at each signal"
+ },
+ {
+  "id": "P10",
+  "file": "plots/general/P10-scatter-gain-vs-credit.png",
+  "result": "R2",
+  "chart_type": "scatter, hue and shape",
+  "index_entries": [
+   "Scatterplot with multiple semantics",
+   "The Shapes of a Scatter Plot",
+   "Using Letters as Shapes"
+  ],
+  "title": "Per-seed paired gain against credit margin, every signal"
+ },
+ {
+  "id": "P11",
+  "file": "plots/general/P11-grouped-box-wrong-pair.png",
+  "result": "R2",
+  "chart_type": "grouped box with points",
+  "index_entries": [
+   "Grouped boxplots",
+   "Boxplot with individual data points"
+  ],
+  "title": "What the wrong product column adds over raw, per seed and signal"
+ },
+ {
+  "id": "P12",
+  "file": "plots/general/P12-line-band-sweep.png",
+  "result": "R3",
+  "chart_type": "line with band",
+  "index_entries": [
+   "Timeseries plot with error bands"
+  ],
+  "title": "Mean paired gain and credit margin across signals with bootstrap bands"
+ },
+ {
+  "id": "P13",
+  "file": "plots/general/P13-faceted-lines-arms.png",
+  "result": "R3",
+  "chart_type": "line, faceted",
+  "index_entries": [
+   "Line plots on multiple facets",
+   "Weather Forecast"
+  ],
+  "title": "Each arm's AUROC across signals, one panel per arm"
+ },
+ {
+  "id": "P14",
+  "file": "plots/general/P14-faceted-hist-gain.png",
+  "result": "R3",
+  "chart_type": "histogram, faceted",
+  "index_entries": [
+   "Facetting histograms by subsets of data"
+  ],
+  "title": "Histograms of the ten per-seed gains, one per signal"
+ },
+ {
+  "id": "P15",
+  "file": "plots/general/P15-density-gain-by-signal.png",
+  "result": "R3",
+  "chart_type": "density, several groups",
+  "index_entries": [
+   "Density plot of several variables"
+  ],
+  "title": "Density of the per-seed gains per signal"
+ },
+ {
+  "id": "P16",
+  "file": "plots/general/P16-means-with-obs.png",
+  "result": "R3",
+  "chart_type": "means with observations",
+  "index_entries": [
+   "Conditional means with observations"
+  ],
+  "title": "Mean paired gain with every seed's value, per signal"
+ },
+ {
+  "id": "P17",
+  "file": "plots/general/P17-scatter-ellipses.png",
+  "result": "R3",
+  "chart_type": "scatter with CI ellipses",
+  "index_entries": [
+   "Confidence Interval Ellipses"
+  ],
+  "title": "Each seed's two AUROCs, an ellipse per signal"
+ },
+ {
+  "id": "P18",
+  "file": "plots/general/P18-faceted-scatter-fit.png",
+  "result": "R3",
+  "chart_type": "faceted scatter with fit",
+  "index_entries": [
+   "Anscombe’s quartet",
+   "Anscombe’s Quartet"
+  ],
+  "title": "Paired gain against the raw arm's AUROC per seed, one panel per signal"
+ },
+ {
+  "id": "P19",
+  "file": "plots/general/P19-area-gain.png",
+  "result": "R3",
+  "chart_type": "area",
+  "index_entries": [
+   "Basic Area Chart",
+   "Improved Area Chart",
+   "Area chart with base R",
+   "Coal Production",
+   "Area Chart and Faceting"
+  ],
+  "title": "The paired gain drawn as the area between the arms' mean AUROC"
+ },
+ {
+  "id": "P20",
+  "file": "plots/general/P20-bar-allpairs-cost.png",
+  "result": "R4",
+  "chart_type": "bar with error bars",
+  "index_entries": [
+   "Barplot with error bars"
+  ],
+  "title": "Mean all-pairs cost per signal with its interval"
+ },
+ {
+  "id": "P21",
+  "file": "plots/general/P21-stacked-area-ceiling.png",
+  "result": "R5",
+  "chart_type": "stacked area",
+  "index_entries": [
+   "Stacked area chart with R"
+  ],
+  "title": "The Bayes ceiling split into raw, the paired gain, and what is left"
+ },
+ {
+  "id": "P22",
+  "file": "plots/general/P22-stacked-bar-ceiling.png",
+  "result": "R5",
+  "chart_type": "stacked bar",
+  "index_entries": [
+   "Stacked Bar Chart",
+   "Reorder stacked bar segments"
+  ],
+  "title": "The Bayes ceiling split per signal, as stacked bars"
+ },
+ {
+  "id": "P23",
+  "file": "plots/general/P23-stacked-hist-log-gap.png",
+  "result": "R5",
+  "chart_type": "stacked histogram, log scale",
+  "index_entries": [
+   "Stacked histogram on a log scale"
+  ],
+  "title": "Each seed's distance to the ceiling, stacked by signal, log scale"
+ },
+ {
+  "id": "P24",
+  "file": "plots/general/P24-bubble-ceiling.png",
+  "result": "R5",
+  "chart_type": "bubble",
+  "index_entries": [
+   "Oh My Bubbles"
+  ],
+  "title": "Each seed's fit against its ceiling, sized by the paired gain"
+ },
+ {
+  "id": "P25",
+  "file": "plots/general/P25-scatter-heatmap-target.png",
+  "result": "R6",
+  "chart_type": "scatter heatmap",
+  "index_entries": [
+   "Scatterplot heatmap"
+  ],
+  "title": "Seeds reaching 0.82 and the mean AUROC, arm by signal"
+ },
+ {
+  "id": "P26",
+  "file": "plots/general/P26-tiles-target.png",
+  "result": "R6",
+  "chart_type": "tile grid with labels",
+  "index_entries": [
+   "Periodic Table"
+  ],
+  "title": "Seeds reaching 0.82 per arm and signal, as labelled tiles"
+ },
+ {
+  "id": "P27",
+  "file": "plots/general/P27-grouped-box-target.png",
+  "result": "R6",
+  "chart_type": "grouped box",
+  "index_entries": [
+   "Grouped boxplots",
+   "Basic ggplot2 boxplot"
+  ],
+  "title": "Every seed's AUROC per arm and signal, with the 0.82 line"
+ }
+]
