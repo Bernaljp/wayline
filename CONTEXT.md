@@ -64,6 +64,18 @@ _Avoid_: legacy text, imported text
 One writer session's rewrite of a section's current passages into fewer, cleaner passages that keep their tags and replace them, made only when the owner asks.
 _Avoid_: compilation (the paper's word), tidy, rewrite
 
+**Document**:
+One of a project's own writings handed to the harness, such as an earlier manuscript, a critique, or a cover letter, kept as given beside a converted text; published work, the project's own preprints included, is a reference.
+_Avoid_: material (intake's word for any loose argument), attachment, source
+
+**Critique**:
+A document that judges the work from outside, such as a referee report, an editor's letter, or a collaborator's list of required experiments; its points become concerns.
+_Avoid_: review (a ticket kind and the Type-B gate's word), feedback (the evolve loop's input)
+
+**Concern**:
+A point a critique raises that the work must answer, such as an objection to a claim or a required experiment, kept verbatim with every critique that raised it; it stays open until it is answered or declined with a reason.
+_Avoid_: comment (a margin note, which can carry one), issue, objection, review point
+
 **Done**:
 Machine checks passed on a ticket.
 _Avoid_: complete, finished
@@ -72,12 +84,16 @@ _Avoid_: complete, finished
 The quality verdict passed on a done ticket.
 _Avoid_: approved, merged
 
+**Reference**:
+A published work the project can cite, resolved by the scout and held in a dossier.
+_Avoid_: citation, source
+
 **Dossier**:
 The structured record of one reference at level L0, L1, or L2.
 _Avoid_: summary, notes, expert
 
 **Consultant**:
-The on-demand agent that answers one question from one dossier.
+The on-demand agent that answers one question from one dossier or one document.
 _Avoid_: expert, oracle
 
 **Promotion**:
