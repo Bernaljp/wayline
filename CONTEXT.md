@@ -41,7 +41,7 @@ A quality verdict; a fresh verifier session judges it, never the session that wr
 _Avoid_: review, soft check
 
 **Kill argument**:
-The two-thread Type-B gate on the report or the paper: one verifier session writes the strongest rejection memo, a second adjudicates it point by point, and a fail scopes the claims down through a `writing` ticket.
+The two-thread Type-B gate on the general report or the paper: one verifier session writes the strongest rejection memo, a second adjudicates it point by point, and a fail scopes the claims down through a `writing` ticket.
 _Avoid_: red team, devil's advocate, peer review
 
 **Venue**:
@@ -63,6 +63,26 @@ _Avoid_: legacy text, imported text
 **Consolidation**:
 One writer session's rewrite of a section's current passages into fewer, cleaner passages that keep their tags and replace them, made only when the owner asks.
 _Avoid_: compilation (the paper's word), tidy, rewrite
+
+**Finding**:
+A Results passage a ticket returns, stating what this project's evidence shows, negative or not, with its provenance.
+_Avoid_: observation, outcome
+
+**Result**:
+What the project found on one question: the current findings under one heading of the Results section, with their plots; the unit a report presents. A ticket's structured output is its ticket result.
+_Avoid_: line of work, topic
+
+**General report**:
+The report on all the project's results, by objective and then by result, always current.
+_Avoid_: final report, summary, REPORT (alone)
+
+**Current report**:
+One result's report at full depth, every useful plot explained; a new one starts each time that result's plots are drawn again.
+_Avoid_: line-of-work report, snapshot
+
+**Earlier report**:
+A current report that a newer one of the same result has replaced; kept and never edited.
+_Avoid_: old report, archive
 
 **Document**:
 One of a project's own writings handed to the harness, such as an earlier manuscript, a critique, or a cover letter, kept as given beside a converted text; published work, the project's own preprints included, is a reference.
