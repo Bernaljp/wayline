@@ -73,7 +73,7 @@ A document that judges the work from outside, such as a referee report, an edito
 _Avoid_: review (a ticket kind and the Type-B gate's word), feedback (the evolve loop's input)
 
 **Concern**:
-A point a critique raises that the work must answer, such as an objection to a claim or a required experiment, kept verbatim with every critique that raised it; it stays open until it is answered or declined with a reason.
+A point the work must answer, such as an objection to a claim or a required experiment: one a critique raises, kept verbatim with every critique that raised it, or an objection of the position memo's hostile review that the owner accepted at the grill, kept with the memo as its source; it stays open until it is answered or declined with a reason.
 _Avoid_: comment (a margin note, which can carry one), issue, objection, review point
 
 **Done**:
