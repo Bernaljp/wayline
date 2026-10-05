@@ -157,7 +157,7 @@ The owner's standing answer on fallback for a project: `auto`, `ask`, or `wait`.
 _Avoid_: permission, fallback policy
 
 **Rung**:
-One step a ticket can be launched at: a model, an effort, and a budget.
+One step a ticket can be launched at: a model, an effort, and a session budget.
 _Avoid_: tier (the grill's word; `tier_up` stays the name of the escalation step that climbs one rung), level (a difficulty level names a rung; it is not one)
 
 **Rung ladder**:
@@ -221,12 +221,20 @@ The metric, direction, target, held-out split, and command that let code read a 
 _Avoid_: metric alone (the spec's metric is a definition with its script)
 
 **Keep-if-better**:
-The rule that keeps a goal ticket's change only when its mean over the seeds beats the best kept value on the held-out split by more than one standard deviation; a change it does not keep is discarded.
+The rule that keeps a goal ticket's change only when its mean over the seeds beats its goal's best kept value on the held-out split by more than one standard deviation; a change it does not keep is discarded.
 _Avoid_: hill climbing, accept-if-improved
 
 **Discarded**:
 A goal ticket's change keep-if-better did not keep: done, not integrated, its branch kept, its findings negative results.
 _Avoid_: rejected, reverted
+
+**Stopping rule**:
+The condition set at setup under which a run ends for good, so the tick no longer relaunches it: no objective open, the objectives it names closed, or no work left. The owner's stop, a strict stall, and a spent budget end a run besides it.
+_Avoid_: stop condition, termination criterion
+
+**Budget**:
+A project's limit on wall-clock hours or GPU hours, set at setup and counted from its end; spending one ends the run, and only the owner raises it.
+_Avoid_: allowance, quota
 
 **Job**:
 A detached hardware process (experiment or analysis) polled by code; no session waits on it.
