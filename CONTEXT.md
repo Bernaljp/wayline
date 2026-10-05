@@ -84,6 +84,10 @@ _Avoid_: line-of-work report, snapshot
 A current report that a newer one of the same result has replaced; kept and never edited.
 _Avoid_: old report, archive
 
+**Outline**:
+The proposed shape of the paper, built by code at any point and changed by the owner: each section's headings in order, what each draws on, and what goes to the supplement or is cut. A document's own list of headings is its headings, not an outline.
+_Avoid_: table of contents, plan (the ticket graph's word), structure (a venue's required structure), skeleton
+
 **Document**:
 One of a project's own writings handed to the harness, such as an earlier manuscript, a critique, or a cover letter, kept as given beside a converted text; published work, the project's own preprints included, is a reference.
 _Avoid_: material (intake's word for any loose argument), attachment, source
