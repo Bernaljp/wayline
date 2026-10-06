@@ -193,8 +193,12 @@ What code computes from the journal after a run ended, filed as feedback for the
 _Avoid_: post-mortem, review
 
 **Dashboard**:
-The local web view of the ledger and the conductor, a client of the CLI functions, reached through a tunnel.
+The local web view of the ledger and the conductor, a client of the CLI functions, reached through a tunnel, where the owner also talks with the project.
 _Avoid_: UI, app, GUI
+
+**Conversation**:
+The owner's talk with a project, in the dashboard's chat or in a Claude Code session there, which records what the owner says through the harness's verbs and keeps nothing only in itself.
+_Avoid_: front door, console, thread
 
 **Ledger**:
 The files under a project's `research/`, written only by code from structured results.
