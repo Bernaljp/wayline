@@ -92,6 +92,14 @@ _Avoid_: line of work, topic
 The report on all the project's results, by objective and then by result, always current.
 _Avoid_: final report, summary, REPORT (alone)
 
+**Drawing**:
+One plotter session's exploration of one result: its plots and tables, each explained, and a synthesis across them; accepting it starts a new current report.
+_Avoid_: exploration run, plotting pass
+
+**Plot**:
+One view of a result's data in a current report, explained but never captioned, kept under its id across drawings until it is retired.
+_Avoid_: figure (made only at the paper order), graph
+
 **Current report**:
 One result's report at full depth, every useful plot explained; a new one starts each time that result's plots are drawn again.
 _Avoid_: line-of-work report, snapshot
@@ -235,6 +243,14 @@ _Avoid_: log, history
 **Refusal**:
 A guided change request the figure role declines because the figure would then assert something false; it carries the nearest honest alternative, and only the owner can override it.
 _Avoid_: rejection, veto
+
+**Figure**:
+A publication figure the figure role makes at the paper order, from chosen plots or from nothing, with a caption.
+_Avoid_: plot
+
+**Plotter**:
+The role that makes drawings.
+_Avoid_: figure designer (the figure role's session that drafts and finishes figures)
 
 **Objective**:
 A question the research sets out to answer, often general and not always the project's end: it can be the question that has to be answered before the work goes on. A project holds several, and results can reframe them.
