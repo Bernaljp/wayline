@@ -120,6 +120,10 @@ _Avoid_: summary, notes, expert
 The on-demand agent that answers one question from one dossier or one document.
 _Avoid_: expert, oracle
 
+**Surveyor**:
+The session a `lit` ticket runs on: it searches the literature through the scout and writes the Introduction's state of the art from the abstracts it read.
+_Avoid_: reader (the L1 skim's role), scout (the code that resolves and searches), librarian (the planner step)
+
 **Promotion**:
 Raising a paper's dossier level, or moving a local skill, role, or policy into the harness.
 _Avoid_: upgrade (reserved for moving a project to a newer harness tag)
