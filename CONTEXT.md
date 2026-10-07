@@ -237,8 +237,12 @@ The files under a project's `research/`, written only by code from structured re
 _Avoid_: state, database, memory
 
 **Journal**:
-The append-only event log the conductor replays to resume and the report is built from.
+The append-only event log the conductor replays to resume and the account is built from.
 _Avoid_: log, history
+
+**Account**:
+What wayline did in a project, rendered by code from the journal and the ledger: what was decided for the owner, what waits on the owner, and each run with its end, its gates, and what it spent; never the research.
+_Avoid_: run report, status report, log, audit trail
 
 **Refusal**:
 A guided change request the figure role declines because the figure would then assert something false; it carries the nearest honest alternative, and only the owner can override it.
