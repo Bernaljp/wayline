@@ -57,8 +57,24 @@ A piece of a section's text, from one claim to a paragraph, with its provenance 
 _Avoid_: contribution (a paper's claimed advance), entry, snippet
 
 **Inherited passage**:
-A passage deconstructed from a project's own documents, such as an earlier manuscript; its claim stands unchecked until this project's evidence supports, narrows, or contradicts it.
+A passage deconstructed from a project's own documents, such as an earlier manuscript; its claim stands unchecked until this project's evidence supports, narrows, or contradicts it, or the claim is found unverifiable.
 _Avoid_: legacy text, imported text
+
+**Unverifiable**:
+The standing of an inherited claim the project tried to check and could not, such as when its data is gone or no rebuild of its code could run; it carries the reason, and it is kept apart from a claim not yet checked.
+_Avoid_: unproven, failed, unchecked (a claim nobody has tried yet)
+
+**Reproduction**:
+Running a project's own inherited code, at the commit the project recorded and changed only so that it runs here, to check the inherited result it produced.
+_Avoid_: replication, rerun
+
+**Port**:
+The inherited code's logic carried into another language or runtime, such as MATLAB into Octave or Python, so that an inherited result can be checked when its code cannot run as written; any change to the logic makes a reproduction a port.
+_Avoid_: translation, rewrite
+
+**Reimplementation**:
+Code written from the inherited Methods to check an inherited result whose code is missing.
+_Avoid_: rebuild (the owner's reply at setup that asks for a port or a reimplementation), clone
 
 **Consolidation**:
 One writer session's rewrite of a section's current passages into fewer, cleaner passages that keep their tags and replace them, made only when the owner asks.
