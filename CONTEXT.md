@@ -76,6 +76,10 @@ _Avoid_: translation, rewrite
 Code written from the inherited Methods to check an inherited result whose code is missing.
 _Avoid_: rebuild (the owner's reply at setup that asks for a port or a reimplementation), clone
 
+**Code repository**:
+The repository cut from a project's `code/` folder that the paper's code availability statement names: a package of the method with its reproducibility scripts, or a reproducibility repository alone; private until the owner makes it public.
+_Avoid_: repo (alone), project repository (the working repository that also holds `research/`), GitHub repo
+
 **Consolidation**:
 One writer session's rewrite of a section's current passages into fewer, cleaner passages that keep their tags and replace them, made only when the owner asks.
 _Avoid_: compilation (the paper's word), tidy, rewrite
