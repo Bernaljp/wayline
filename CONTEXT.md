@@ -292,6 +292,18 @@ _Avoid_: target (a measure's field), KPI
 The metric, direction, target, held-out split, and command that let code read a goal's progress; an objective has at most one.
 _Avoid_: metric alone (the spec's metric is a definition with its script)
 
+**Objective proposal**:
+A change to an objective (adding, answering, parking, dropping, reframing, or reopening one) that a result or a verdict carries with its evidence; a verdict upholds it before the owner or the decider approves it, and whoever proposes it never makes the change.
+_Avoid_: request, suggestion, proposal alone (a proposed ticket)
+
+**Spec amendment**:
+Claims, experiments, and metrics added to a confirmed spec for an added or reframed objective, under new ids, leaving everything already there as it was.
+_Avoid_: respecify, revision (a change to a spec not yet confirmed)
+
+**Set aside**:
+The standing of a spec claim whose objectives are all closed: it is kept, no work is planned for it, and it comes back when one of them reopens.
+_Avoid_: retired, deleted, cancelled
+
 **Keep-if-better**:
 The rule that keeps a goal ticket's change only when its mean over the seeds beats its goal's best kept value on the held-out split by more than one standard deviation; a change it does not keep is discarded.
 _Avoid_: hill climbing, accept-if-improved
