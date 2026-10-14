@@ -25,7 +25,7 @@ Open tickets whose blockers are done or accepted.
 _Avoid_: ready queue, runnable set
 
 **Launchable**:
-The frontier minus the tickets that collide with running work or want resources that are not free.
+The frontier minus the tickets that collide with running work, want resources that are not free, or need tools not installed.
 _Avoid_: eligible, schedulable
 
 **Wave**:
@@ -323,3 +323,11 @@ _Avoid_: allowance, quota
 **Job**:
 A detached hardware process (experiment or analysis) polled by code; no session waits on it.
 _Avoid_: run, task, process
+
+**Tool**:
+A program the harness installed, the owner provided, or the machine already had, recorded on the machine with its absolute path, version, and environment, and called only through that record; a library a project's code imports is a package, not a tool.
+_Avoid_: dependency, software
+
+**Environment**:
+Where a project's tools and packages live and its jobs run: the shared tools on the machine, one conda prefix, a venv, or a container. The owner may move a project between them at any time, and code rebuilds the same versions there from the locks.
+_Avoid_: container (one kind of environment), setup (the start of a run)
