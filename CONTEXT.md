@@ -41,12 +41,28 @@ A quality verdict; a fresh verifier session judges it, never the session that wr
 _Avoid_: review, soft check
 
 **Kill argument**:
-The two-thread Type-B gate on the general report or the paper: one verifier session writes the strongest rejection memo, a second adjudicates it point by point, and a fail scopes the claims down through a `writing` ticket.
+The two-thread Type-B gate on the general report or the paper: one verifier session writes the strongest rejection memo, a second adjudicates it point by point, and a fail scopes the claims down: on the general report through a `writing` ticket, on the paper in the order's next build.
 _Avoid_: red team, devil's advocate, peer review
 
 **Venue**:
-A journal, conference, or preprint server with a `guidelines/<venue>/guidelines.json`, named by its slug; the paper is drafted and checked under one venue's guidelines and never submitted to it.
+A journal, conference, or preprint server with a `guidelines/<venue>/guidelines.json`, named by its slug; a compilation is typeset and checked under one venue's guidelines, and nothing is submitted to it.
 _Avoid_: journal (for the slug), target, outlet
+
+**Paper order**:
+The explicit order, the owner's or the decider's in an autonomous run, that makes the paper from the sections, the outline, and the reports; until it, the project holds only its sections and reports.
+_Avoid_: paper phase, compile request
+
+**Paper**:
+What a paper order makes, under no venue: the title, the abstract, the sections written as prose, the supplement, the figures and tables with their captions, the front matter, and a response to each critique, each part in its own file and each carrying the version it was last made in.
+_Avoid_: draft, manuscript (an inherited document's word)
+
+**Compilation**:
+The paper typeset under one venue's guidelines, as its LaTeX and PDF with a Word and a Markdown copy, fitted to the venue's limits without adding a claim; never submitted.
+_Avoid_: export, build
+
+**Build**:
+One writer pass over the paper and the gates that judge it; a paper order runs at most three.
+_Avoid_: iteration, round, compilation
 
 **Section**:
 One of the five parts of the paper kept as its own file from the project's start: Introduction, Results, Discussion, Methods, and References. Any of them may be empty for a while.
@@ -78,7 +94,7 @@ _Avoid_: rebuild (the owner's reply at setup that asks for a port or a reimpleme
 
 **Consolidation**:
 One writer session's rewrite of a section's current passages into fewer, cleaner passages that keep their tags and replace them, made only when the owner asks.
-_Avoid_: compilation (the paper's word), tidy, rewrite
+_Avoid_: compilation (a venue's typeset paper), tidy, rewrite
 
 **Finding**:
 A Results passage a ticket returns, stating what this project's evidence shows, negative or not, with its provenance.
@@ -251,6 +267,10 @@ _Avoid_: rejection, veto
 **Figure**:
 A publication figure the figure role makes at the paper order, from chosen plots or from nothing, with a caption.
 _Avoid_: plot
+
+**Figure plan**:
+Which plots go into which figures, in the main text or the supplement, built by code from the outline and the owner's marks at the paper order.
+_Avoid_: layout, figure list
 
 **Plotter**:
 The role that makes drawings.
