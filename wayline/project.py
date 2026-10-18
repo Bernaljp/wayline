@@ -72,6 +72,7 @@ BLOCK_END = "<!-- wayline:end -->"
 GITIGNORE_HEADER = "# wayline"
 # The four entries of Implementation Decisions 1, plus the e-print sources: arXiv's terms of use
 # forbid re-serving an e-print, so a pushed project never carries the ones its dossiers fetched.
+# And `absorb --code`'s clones, repositories of their own a wave commit would record as empty gitlinks.
 # And the conductor's heartbeat, which is rewritten every wave and means nothing in a commit.
 GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/refs/*/code/",
                     "research/conductor.json")
@@ -446,7 +447,7 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
     if note:
         notes.append(note)
 
-    # .gitignore: the four entries of Implementation Decisions 1, appended once.
+    # .gitignore: GITIGNORE_ENTRIES, each added once.
     if write_gitignore(project):
         mark(".gitignore")
 

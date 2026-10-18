@@ -1016,11 +1016,14 @@ rule_gh() {
     pr|release) deny "gh $group writes to GitHub; a network write is on the irreversible list. The owner opens the pull request." ;;
     api) ;;
     search|status|browse|help|version|completion) return 0 ;;
-    *)
+    issue|repo|label|gist|secret|variable|workflow|run|cache|ruleset|project|codespace|org|ssh-key|gpg-key|extension|alias|config|auth|attestation|cs)
       case "$verb" in
         ""|list|view|status|diff|checks|watch|download) return 0 ;;
       esac
       deny "gh $group $verb writes to GitHub, or may; a worker makes no change on GitHub, code does." ;;
+    *)
+      # An alias, an extension, or a global flag's value: what it runs cannot be read here.
+      deny "gh $group is not a gh command the guard can read (an alias or extension may write to GitHub); a worker makes no change on GitHub." ;;
   esac
   for ((index = 0; index < ${#args[@]}; index++)); do
     case "${args[index]}" in

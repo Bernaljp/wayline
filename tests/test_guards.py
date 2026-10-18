@@ -386,6 +386,7 @@ BLOCKED_COMMANDS = [
     ("gh api with an input", "gh api /repos/o/r/issues --input body.json", "writes to GitHub"),
     ("gh api with an attached method", "gh api --method=DELETE /repos/o/r", "writes to GitHub"),
     ("gh api graphql", "gh api graphql -f query=q", "writes to GitHub"),
+    ("a gh alias", "gh co 12", "alias"),
     ("rsync --delete outside the worktree", "rsync -a --delete build/ /usr/local/share/", "touch set"),
     ("rsync to another host", "rsync -a build/ host:/srv/", "another host"),
 ]
