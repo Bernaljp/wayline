@@ -296,7 +296,7 @@ PAYLOAD_ENUMS = {
     # Why a ticket was handed to a person when the escalation chain named it (decision 16); absent for any other hand-off.
     (TICKET_NEEDS_HUMAN, K_REASON): ("top_rung",),
     (VERDICT, K_SUBJECT_KIND): ("ticket", "claim", "figure", "spec", "dossier", "paper"),
-    (PROPOSAL_PARKED, K_REASON): ("radius", "duplicate", "cap", "blockers"),
+    (PROPOSAL_PARKED, K_REASON): ("radius", "duplicate", "cap", "blockers", "touches"),
     (DECISION, K_DECIDED_BY): ("human", "decider", "conductor"),
     (DECISION, K_FALLBACK_FROM): ("fable",),
     (JOB_RETRIED, K_OOM): ("host", "gpu"),

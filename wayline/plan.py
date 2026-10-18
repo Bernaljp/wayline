@@ -76,7 +76,7 @@ from wayline.project import ProjectError, find_project, journal_written_answers,
 from wayline.project import answer as answer_ticket
 from wayline.tickets import (
     DECISION as DECISION_KIND, SATISFIED, TicketError, answer_section, build_graph, filename, next_id, read_ticket, read_tickets,
-    refresh_graph, section, tickets_dir, write_ticket,
+    refresh_graph, section, tickets_dir, touch_problem, write_ticket,
 )
 
 __all__ = [
@@ -248,31 +248,6 @@ def retry_steps(value):
 
 
 # --- the plan-time checks ------------------------------------------------------------------------------
-
-
-def touch_problem(touch, project):
-    """Why a touch set entry is not a path under the project, or None when it is one.
-
-    Absolute paths, `..`, and the whole project are refused, and so is anything under `research/`,
-    which the ledger alone writes (decision 2): a worker whose touch set named it would be allowed
-    by the guard to write what the conductor owns.
-    """
-    text = str(touch or "").strip()
-    if not text:
-        return "is empty"
-    if text.startswith("/") or text.startswith("~"):
-        return "is not a path under the project"
-    parts = [part for part in text.replace("\\", "/").split("/") if part not in ("", ".")]
-    if ".." in parts:
-        return "leaves the project"
-    if not parts:
-        return "names the whole project"
-    root = Path(project).resolve()
-    if not (root / text).resolve().is_relative_to(root):
-        return "resolves outside the project"
-    if parts[0] == "research":
-        return "is under research/, which the ledger alone writes"
-    return None
 
 
 def _git(cwd, *args):
