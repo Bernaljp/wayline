@@ -60,6 +60,23 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   rewrite is printed, and a project whose own `tiers` override defines its ladder is left as it is. An override
   in the shape before the rung ladder that puts a level on Fable now lands on rung 6 too, where it was refused.
 
+- Objectives (ticket 76; Implementation Decision 17). A project holds objectives, questions the research answers,
+  in `research/objectives.json`, written only by code through the ledger (schema `objectives`) and rendered as
+  `research/OBJECTIVES.md` in id order with each one's status, measure, answer, and evidence. Ids run O1 onward and
+  are never reused: an objective is never deleted, only parked, answered, dropped, or reframed (`reframed_as` names
+  its successor). An objective with a measure (`metric`, `direction`, `target`, `held_out_split`, `eval_command`,
+  `baseline`, `dataset_or_split`, `min_seeds`) is a goal, and it has at most one measure; a `target` of null means
+  keep improving, never reached. `wayline objective add "<question>"` records an open objective; with `--measure
+  <file> --sample <artifact>` it records a goal only once the measure's `eval_command` printed the metric on the
+  sample, the check intake ran on `GOAL.json`, moved to `wayline/objectives.py`. A measure whose command is not
+  ready leaves an objective without a measure, and the verb says why. Each change journals the new `objective`
+  event, with `by` `owner`, `decider`, or `code`. `wayline switch --autonomy autonomous` (and the dashboard's
+  autonomy action) refuses while no objective is open and names `wayline objective add`, so setup cannot end without
+  one. `wayline status` and the dashboard's overview show each objective's status in place of the goal's latest
+  reading; a project with no objectives still shows its `GOAL.json` goal. This is the expand step: every reader of
+  `GOAL.json` (keep-if-better, position, specify, plan, the decider, the report) still reads it, and tickets 80, 81,
+  and 87 move them to objectives.
+
 ## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts

@@ -103,6 +103,7 @@ PINNED = "pinned"
 REPORT_RENDERED = "report_rendered"
 PAPER_STARTED = "paper_started"
 FIGURE_RESULT = "figure_result"
+OBJECTIVE = "objective"  # one change to research/objectives.json (decision 17)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -222,6 +223,7 @@ K_LINTER_PASS = "linter_pass"
 K_VENUE = "venue"
 K_FIGURE_ID = "figure_id"
 K_VERSION = "version"
+K_MEASURE = "measure"  # `objective`: the goal's metric, or null for an objective without a measure
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -279,6 +281,7 @@ EVENTS = {
     REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS),
     PAPER_STARTED: (K_VENUE,),
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
+    OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -307,6 +310,9 @@ PAYLOAD_ENUMS = {
     # `figure` is the figure role's, carrying the traps a figure result would promote into the plot index (ticket 50).
     (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective", "figure"),
     (CHANGE_RECORD, K_SCOPE_KIND): ("local", "global"),
+    (OBJECTIVE, K_STATUS): ("open", "parked", "answered", "dropped", "reframed"),
+    # Who made the change: the owner's word, the decider's answer, or code (a goal reached from its measured values).
+    (OBJECTIVE, K_BY): ("owner", "decider", "code"),
     (FIGURE_RESULT, K_STATUS): ("candidates_ranked", "selected", "verified", "failed_checks", "honesty_failed", "refused", "blocked"),
 }
 

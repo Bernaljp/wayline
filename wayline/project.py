@@ -835,7 +835,9 @@ def status_view(project, refresh=True):
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
         "window": window_status(events, harness, view, policy),
         "hold": hold_status(project, events, harness, graph, tickets, view),
+        # `GOAL.json` is still read for the conductor's goal, but status shows the objectives' statuses (decision 17).
         "goal": goal_progress(project, events),
+        "objectives": objectives_view(project, problems),
         "resources": resources,
         "events": events[-10:],
         "offset": offset,
@@ -1129,6 +1131,28 @@ def goal_progress(project, events):
     }
 
 
+def objectives_view(project, problems=None):
+    """Each objective's id, question, status, and its goal's metric and target (None for an objective without a measure).
+
+    What `status` shows in place of the latest reading (decision 17): an objective's status is the record's,
+    which code alone writes. An unreadable record is a problem, never a crash.
+    """
+    from wayline.objectives import read_objectives  # the objectives module imports this one
+    try:
+        objectives = read_objectives(project)
+    except (OSError, ValueError) as failure:
+        if problems is not None:
+            problems.append("objectives.json: %s" % failure)
+        return []
+    view = []
+    for objective in objectives:
+        measure = objective.get("measure") if isinstance(objective.get("measure"), dict) else None
+        view.append({"id": objective.get("id"), "text": objective.get("text"), "status": objective.get("status"),
+                     "metric": measure.get("metric") if measure else None, "direction": measure.get("direction") if measure else None,
+                     "target": measure.get("target") if measure else None, "answer": objective.get("answer")})
+    return view
+
+
 # --- rendering --------------------------------------------------------------------------------------
 
 
@@ -1152,7 +1176,12 @@ def render_status(view):
     lines.append(_render_window(view["window"]))
     if view.get("hold"):
         lines.append(view["hold"]["line"])
-    lines.append(_render_goal(view["goal"]))
+    if view.get("objectives"):
+        lines.extend(_render_objectives(view["objectives"]))
+    elif view.get("goal") is not None:
+        lines.append(_render_goal(view["goal"]))  # a project from before objectives, whose GOAL.json is all it has
+    else:
+        lines.append("objectives  none recorded (wayline objective add)")
     if view.get("resources") is not None:
         lines.extend(render_resources(view["resources"]))
     lines.append("")
@@ -1273,6 +1302,19 @@ def render_hold(hold):
         hold["resets_at"] or "unknown", hold["consent"] if hold["stated"] else UNSET_CONSENT, hold["waiting"], hold["fallen_back"])
 
 
+def _render_objectives(objectives):
+    opened = sum(1 for objective in objectives if objective["status"] == "open")
+    lines = ["objectives  %d open of %d" % (opened, len(objectives))]
+    width = max(len(str(objective["status"])) for objective in objectives)
+    for objective in objectives:
+        line = "  %s  %-*s  %s" % (objective["id"], width, objective["status"], _one_line(objective["text"]))
+        if objective["metric"] is not None:
+            target = "with no target" if objective["target"] is None else "to %s" % _number(objective["target"])
+            line += "  (goal: `%s` %s %s)" % (objective["metric"], "down" if objective["direction"] == "down" else "up", target)
+        lines.append(line)
+    return lines
+
+
 def _render_goal(goal):
     if goal is None:
         return "goal     none set"
@@ -1371,7 +1413,9 @@ def set_autonomy(project, autonomy, by="cli"):
     is not to be lowered by a passing remark in the middle of it (BRIEF 6.2); with one running it is
     refused and nothing is written. `harness.json` is written before the event is journaled, so a
     crash between the two leaves a run that starts from the new setting rather than a journal the
-    next `run_started` contradicts. `by` is `cli`, or `dashboard` for its autonomy action.
+    next `run_started` contradicts. `by` is `cli`, or `dashboard` for its autonomy action. A raise to
+    `autonomous` is refused while no objective is open (decision 17), because an autonomous run asks the
+    owner nothing after its setup, and setup cannot end without something to answer.
 
     While a conductor runs, the autonomy it holds is the journal's (`run_started` and the `control`
     events after it), which a hand edit of `harness.json` does not change. A change is measured
@@ -1398,6 +1442,13 @@ def set_autonomy(project, autonomy, by="cli"):
         report = {"from": held[-1], "to": autonomy, "changed": any(level != autonomy for level in held), "conductor": holder}
         if not report["changed"]:
             return report
+        if autonomy == "autonomous":
+            from wayline.objectives import open_objectives  # the objectives module imports this one
+            if not open_objectives(project):
+                # Setup cannot end without an objective (decision 17): an autonomous run asks nothing after it.
+                raise ProjectError(
+                    "autonomy is raised to autonomous only once an objective is open, and no objective is open on %s; "
+                    "record what the project should answer first with wayline objective add \"<question>\"" % project)
         if holder is not None and any(levels.index(autonomy) < levels.index(level) for level in held):
             raise ProjectError(
                 "autonomy is lowered only while no conductor is running, and the conductor (pid %s) is running on %s at %s; "

@@ -19,6 +19,12 @@ SKILLS = ("wayline-absorb", "wayline-figure")
 WORKFLOWS = ("absorb.js", "panel.js")
 
 
+def open_objective(project, question="Does the method answer the project's question?"):
+    """Record one open objective, which a raise to `autonomous` needs since decision 17 (ticket 76)."""
+    from wayline.objectives import add_objective
+    return add_objective(project, question)[0]
+
+
 class ProjectTestCase(unittest.TestCase):
     """A test with its own `WAYLINE_HOME`, a temporary directory, and a fake harness checkout."""
 

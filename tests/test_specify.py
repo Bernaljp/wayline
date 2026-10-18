@@ -16,7 +16,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase, fable_policy
+from tests.projects import ProjectTestCase, fable_policy, open_objective
 from wayline import cli, decider, gates, grill, project, specify, tickets, worker
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
@@ -195,6 +195,7 @@ class SpecifyCase(ProjectTestCase):
         self.ledger = Ledger(self.project)
         self.ledger.write_json("GOAL.json", GOAL, schema="goal")
         self.ledger.write_markdown("kb/query_pack.md", "# Query pack\n\n- paper-a extends paper-b\n")
+        open_objective(self.project)
         project.set_autonomy(self.project, self.autonomy)
         self.notified = []
         self.fake = self.enterContext(worker.use_fake())

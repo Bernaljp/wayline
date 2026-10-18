@@ -25,7 +25,6 @@ import json
 import math
 import os
 import re
-import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -33,9 +32,9 @@ from pathlib import Path
 from typing import Optional
 
 from wayline.cli import parse_args
-from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import DECISION, Ledger, atomic_write
+from wayline.objectives import run_on_sample
 from wayline.pacing import ASK, CONSENTS
 from wayline.project import (
     AUTONOMY, HARNESS_JSON, LADDER_CHANGES, LADDER_CONSENTS, MODEL_FALLBACK, UNSET_CONSENT, ProjectError, find_project, policy_for,
@@ -74,7 +73,6 @@ LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_
 BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
 GOAL_OPTIONAL = {"dataset_or_split": None, "held_out_split": None, "baseline": None, "budget": None, "stop_when": "goal_reached"}
 
-ARTIFACT = "{artifact}"
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ""}
 TEXT_MAX_BYTES = 1_000_000
 PDF_HEAD_BYTES = 4_000_000
@@ -86,7 +84,6 @@ DROP_MAX_BYTES = 64 * 1024 * 1024
 _DROP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+ -]{0,127}\Z")
 
 _DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>,;)\]]+)", re.IGNORECASE)  # as the scout reads one
-_NUMBER = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(\S.*)$")
 _IDENTIFIER = re.compile(r"\b10\.\d{4,9}/|arxiv|https?://", re.IGNORECASE)
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s")
@@ -125,10 +122,9 @@ class GoalCheck:
 def check_goal(goal, project, sample=None, timeout_s=None):
     """Normalize a stated goal and run its `eval_command` on `sample`; returns a `GoalCheck`.
 
-    The command runs from the project root with `{artifact}` replaced by the sample's quoted path,
-    which is also exported as `WAYLINE_ARTIFACT`. It measures the goal when it exits 0 and prints
-    the metric: a JSON object carrying the metric's key, a `<metric>: <value>` line, or a bare
-    number on the last line. Any other number in the output is not taken for the metric.
+    The run on the sample is the objectives module's `run_on_sample`, where the check moved with
+    decision 17 (a measure stands only when its `eval_command` printed the metric on a sample); intake
+    keeps calling it for `intake --goal` until ticket 80 takes the goal out of intake.
     """
     project = Path(project)
     stated = goal if isinstance(goal, dict) else None
@@ -140,39 +136,10 @@ def check_goal(goal, project, sample=None, timeout_s=None):
     normalized, problems = normalize_goal(stated)
     if problems:
         return GoalCheck("invalid", "invalid: the goal is not in the GOAL.json shape: %s" % "; ".join(problems), None, stated=stated)
-    shown = "`%s`" % command
-    if sample is not None:
-        sample = Path(sample).expanduser().resolve()
-        if not sample.exists():
-            return GoalCheck("missing", "missing: the sample artifact %s does not exist" % sample, None, stated=stated)
-    if sample is None:
-        return GoalCheck("missing", "missing: no sample artifact was given (--sample), so eval_command %s was not run on one "
-                         "and nothing shows it can measure an artifact a ticket produces" % shown, None, stated=stated)
-    runnable = command.replace(ARTIFACT, shlex.quote(str(sample)))
-    environment = dict(os.environ, WAYLINE_PROJECT=str(project.resolve()), WAYLINE_ARTIFACT=str(sample))
-    if timeout_s is None:
-        timeout_s = policy_for(project).get("acceptance_timeout_s", 600)
-    result = run_shell(runnable, project, timeout_s, env=environment, label="wayline intake")
-    tail = _last_lines(result["tail"])
-    exit_code = result["exit_code"]
-    on = " on the sample artifact %s" % sample
-    if exit_code == 127:
-        return GoalCheck("missing", "missing: eval_command %s exited 127, which is how the shell reports a command it cannot find: %s" % (shown, tail),
-                         None, stated=stated)
-    if exit_code == TIMEOUT_EXIT_CODE:
-        return GoalCheck("fails", "fails: eval_command %s was killed after %s seconds%s" % (shown, timeout_s, on), None, stated=stated)
-    if exit_code != 0:
-        return GoalCheck("fails", "fails: eval_command %s exited with exit %d%s: %s" % (shown, exit_code, on, tail or "no output"),
-                         None, stated=stated)
-    value = metric_value(result["tail"], normalized["metric"])
-    if value is None:
-        metric = normalized["metric"]
-        return GoalCheck(
-            "no_number",
-            "no number: eval_command %s exited 0 and printed no number for `%s`; print a JSON object with a \"%s\" key, "
-            "a line `%s: <value>`, or the number alone on the last line" % (shown, metric, metric, metric),
-            None, stated=stated)
-    return GoalCheck("accepted", None, normalized, value=value, sample=str(sample) if sample is not None else None, stated=stated)
+    kind, reason, value = run_on_sample(command, normalized["metric"], project, sample, timeout_s=timeout_s, label="wayline intake")
+    if kind != "accepted":
+        return GoalCheck(kind, reason, None, stated=stated)
+    return GoalCheck("accepted", None, normalized, value=value, sample=str(Path(sample).expanduser().resolve()), stated=stated)
 
 
 def normalize_goal(goal):
@@ -193,37 +160,6 @@ def normalize_goal(goal):
     return value, ["%s: %s" % (error.path, error.message) for error in errors]
 
 
-def metric_value(output, metric):
-    """The metric's value in a command's output, or None; see `check_goal` for the three spellings."""
-    lines = [line.strip() for line in str(output or "").splitlines() if line.strip()]
-    for candidate in [str(output or "").strip()] + lines[::-1]:
-        if not candidate.startswith("{"):
-            continue
-        try:
-            parsed = json.loads(candidate)
-        except ValueError:
-            continue
-        if isinstance(parsed, dict) and _finite(parsed.get(metric)):
-            return float(parsed[metric])
-    labelled = re.compile(r"^%s\s*[:=]\s*(%s)\s*$" % (re.escape(metric), _NUMBER), re.IGNORECASE)
-    for line in lines[::-1]:
-        found = labelled.match(line)
-        if found and _finite(float(found.group(1))):
-            return float(found.group(1))
-    if lines and re.fullmatch(_NUMBER, lines[-1]) and _finite(float(lines[-1])):
-        return float(lines[-1])
-    return None
-
-
-def _finite(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
-def _last_lines(text, count=3):
-    lines = [line.rstrip() for line in str(text or "").splitlines() if line.strip()]
-    return " | ".join(lines[-count:])
-
-
 def describe_goal(goal):
     """One line a person reads: the metric, the direction, the target, the split, and the command."""
     if not isinstance(goal, dict):
@@ -242,6 +178,10 @@ def describe_goal(goal):
 
 def _number(value):
     return ("%g" % value) if _finite(value) else str(value)
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _read_goal(ledger):

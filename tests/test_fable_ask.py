@@ -13,7 +13,7 @@ import time
 import unittest
 from unittest import mock
 
-from tests.projects import on_fable
+from tests.projects import on_fable, open_objective
 from tests.test_actions import STATIC, ActionCase
 from tests.test_fallback import FallbackCase
 from tests.test_pacing import HOUR
@@ -69,6 +69,7 @@ class AskCase(FallbackCase):
         """Ticket 1 on Fable held under `consent` (None: no key) for `hours`, and the wave that opened the ask; the conductor and its id."""
         self.add(1, difficulty=4)
         if autonomy is not None:
+            open_objective(self.project)
             set_autonomy(self.project, autonomy)
         self.hold_journaled(hours)
         if consent is not None:
@@ -398,6 +399,7 @@ class ReviewedAskTest(AskCase):
         self.assertEqual((self.decisions(), tickets.answer_section(self.body(identifier))), ([], None))
 
     def test_the_tick_relaunches_a_conductor_for_verdicts_on_fable_once_the_ask_timed_out(self):
+        open_objective(self.project)
         set_autonomy(self.project, "autonomous")
         self.add(1, difficulty=3)
         driven = self.conductor()

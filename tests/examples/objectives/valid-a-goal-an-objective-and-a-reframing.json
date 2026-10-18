@@ -1,0 +1,49 @@
+{
+  "objectives": [
+    {
+      "id": "O1",
+      "text": "Do interaction terms raise the AUROC on the held-out split?",
+      "measure": {
+        "metric": "auroc",
+        "direction": "up",
+        "target": 0.9,
+        "held_out_split": "split_b",
+        "eval_command": "python eval.py {artifact}",
+        "baseline": {"value": 0.81, "source": "res:results/baseline.json#auroc"},
+        "dataset_or_split": "synthetic",
+        "min_seeds": null
+      },
+      "status": "open",
+      "answer": null,
+      "evidence": [],
+      "reframed_as": null
+    },
+    {
+      "id": "O2",
+      "text": "Which features carry the signal?",
+      "measure": null,
+      "status": "reframed",
+      "answer": null,
+      "evidence": ["res:results/importance.json#top"],
+      "reframed_as": "O3"
+    },
+    {
+      "id": "O3",
+      "text": "Do the top three features carry the signal on their own?",
+      "measure": {
+        "metric": "loss",
+        "direction": "down",
+        "target": null,
+        "held_out_split": null,
+        "eval_command": "python loss.py {artifact}",
+        "baseline": {"value": null, "source": null},
+        "dataset_or_split": null,
+        "min_seeds": 1
+      },
+      "status": "answered",
+      "answer": "partly: two of the three do",
+      "evidence": ["res:results/ablation.json#loss", "ref:smith2020"],
+      "reframed_as": null
+    }
+  ]
+}

@@ -18,7 +18,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase, fable_policy, on_fable
+from tests.projects import ProjectTestCase, fable_policy, on_fable, open_objective
 from tests.test_conductor import drive
 from tests.test_decisions import ConductedCase
 from wayline import cli, decider, decisions, grill, pacing, project, provenance, tickets, worker
@@ -196,6 +196,7 @@ class RecordedGrillCase(ProjectTestCase):
             "budget": {"gpu_hours": None, "wallclock": 4, "usage_windows": None}, "stop_when": "goal_reached",
         }, schema="goal")
         self.ledger.write_markdown("kb/query_pack.md", "# Query pack\n\n- paper-a extends paper-b\n")
+        open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
         self.notified = []
         self.fake = self.enterContext(worker.use_fake())
@@ -466,6 +467,7 @@ class ConductorDecidesTest(ConductedCase):
 
     def setUp(self):
         super().setUp()
+        open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
 
     def decider_calls(self):
@@ -622,6 +624,7 @@ class ParkedProposalsTest(ConductedCase):
 
     def setUp(self):
         super().setUp()
+        open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
         parked = self.project / "research" / "proposals"
         parked.mkdir()
