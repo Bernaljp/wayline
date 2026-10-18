@@ -314,3 +314,32 @@ class CheckPickTest(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class ClonesAreIgnoredTest(ProjectTestCase):
+    """Ticket 73: the clone is gitignored beside `source/`, so a wave commit records no gitlink for it."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.temp / "project"
+        init_project(self.project, harness_root=self.fake_harness(), hermes_python=None)
+        # A project laid out before ticket 73 has no entry for the clone: absorb must add it.
+        gitignore = self.project / ".gitignore"
+        gitignore.write_text(gitignore.read_text(encoding="utf-8").replace("research/refs/*/code/\n", ""), encoding="utf-8")
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.project), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                              capture_output=True, text=True, check=True).stdout
+
+    def test_an_absorb_then_a_wave_commit_records_no_gitlink(self):
+        absorb_code(self.project, "vaswani-2017-attention", REPO_URL, SHA)
+        lines = (self.project / ".gitignore").read_text(encoding="utf-8").splitlines()
+        self.assertIn("research/refs/*/code/", lines)
+        self.assertEqual(lines.index("research/refs/*/code/"), lines.index("research/refs/*/source/") + 1)
+        # What the conductor's ledger commit runs at the end of a wave.
+        self.git("add", "--", "research")
+        self.git("commit", "-q", "-m", "wave 1: ledger", "--", "research")
+        tree = self.git("ls-tree", "-r", "HEAD")
+        self.assertNotIn("160000", tree, "the clone was committed as a gitlink")
+        self.assertIn("research/refs/vaswani-2017-attention/code_dossier.json", tree)
+        self.assertNotIn("refs/vaswani-2017-attention/code/", tree)

@@ -1001,26 +1001,46 @@ rule_packager() {
 }
 
 rule_gh() {
-  local item index sub="" method
+  # A worker never creates, pushes to, edits, or deletes anything on GitHub; code does
+  # that (ticket 73). `pr` and `release` are denied whole; every other group allows only
+  # its read verbs; `gh api` allows only a GET (a body without a method makes it a POST).
+  local item index group="" verb="" method="" body=""
   for item in ${args[@]+"${args[@]}"}; do
     case "$item" in
       -*) continue ;;
-      pr|release) deny "gh $item writes to GitHub; a network write is on the irreversible list. The owner opens the pull request." ;;
-      *) sub="$item"; break ;;
     esac
+    if [ -z "$group" ]; then group="$item"; else verb="$item"; break; fi
   done
-  [ "$sub" = "api" ] || return 0
+  case "$group" in
+    "") return 0 ;;
+    pr|release) deny "gh $group writes to GitHub; a network write is on the irreversible list. The owner opens the pull request." ;;
+    api) ;;
+    search|status|browse|help|version|completion) return 0 ;;
+    issue|repo|label|gist|secret|variable|workflow|run|cache|ruleset|project|codespace|org|ssh-key|gpg-key|extension|alias|config|auth|attestation|cs)
+      case "$verb" in
+        ""|list|view|status|diff|checks|watch|download) return 0 ;;
+      esac
+      deny "gh $group $verb writes to GitHub, or may; a worker makes no change on GitHub, code does." ;;
+    *)
+      # An alias, an extension, or a global flag's value: what it runs cannot be read here.
+      deny "gh $group is not a gh command the guard can read (an alias or extension may write to GitHub); a worker makes no change on GitHub." ;;
+  esac
   for ((index = 0; index < ${#args[@]}; index++)); do
     case "${args[index]}" in
       -X|--method) method="${args[index+1]:-}" ;;
       --method=*) method="${args[index]#--method=}" ;;
-      *) continue ;;
-    esac
-    case "$method" in
-      POST|PUT|DELETE|PATCH|post|put|delete|patch)
-        deny "gh api with $method writes to GitHub; a network write is on the irreversible list." ;;
+      -X*) method="${args[index]#-X}" ;;
+      -f|-F|--field|--raw-field|--input|--field=*|--raw-field=*|--input=*|-f*|-F*) body="${args[index]}" ;;
     esac
   done
+  case "$method" in
+    ""|GET|get|HEAD|head) ;;
+    *) deny "gh api with $method writes to GitHub; a network write is on the irreversible list." ;;
+  esac
+  if [ -n "$body" ] && [ -z "$method" ]; then
+    deny "gh api with $body sends a body, which makes it a POST that writes to GitHub; a network write is on the irreversible list."
+  fi
+  return 0
 }
 
 rule_cd() {
