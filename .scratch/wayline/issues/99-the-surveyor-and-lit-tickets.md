@@ -17,7 +17,7 @@ Not part of this ticket:
 - `wayline scout <identifier>` and the check at acceptance, which are "98 - References during a ticket";
 - References' rendering, which is "105 - References rendered and important ones raised".
 
-**Blocked by:** 81 - Specify and the plan name objectives; 92 - Spec amendments; 98 - References during a ticket. It blocks 122.
+**Blocked by:** 81 - Specify and the plan name objectives; 92 - Spec amendments; 98 - References during a ticket. It blocks 122 and 124.
 
 **Status:** ready-for-agent
 
@@ -31,5 +31,5 @@ Not part of this ticket:
 - [ ] Position's `missing_prior_work` is scouted at setup and handed to the first `lit` tickets.
 - [ ] Tests through the fetch seam's recordings for `scout search` (each service, the OpenAlex day count, the per-ticket cap, citing works); the fake launcher scripting a surveyor result; journal replay for `lit` tickets cut at specify and after an amendment.
 - [ ] Decision 1's verb table gains `scout search`, and decision 14's policy table the surveyor role and the caps, in the same commit as their code.
-- [ ] The CHANGELOG's `## Unreleased` entry and the documentation site describe the surveyor.
+- [ ] The CHANGELOG's `## Unreleased` entry describes the surveyor.
 - [ ] `python -m unittest` passes.

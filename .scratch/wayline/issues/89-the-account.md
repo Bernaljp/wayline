@@ -66,5 +66,5 @@ Not part of this ticket:
   - the notifier fake under each autonomy;
   - `status` rendered from a fixture journal.
 - [ ] The verb table of decision 1 and the event table of decision 2 gain these rows in the same commit as the code.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe the account and the end notice.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes the account and the end notice.
 - [ ] `python -m unittest` passes.

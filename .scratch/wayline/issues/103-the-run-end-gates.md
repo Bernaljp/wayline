@@ -36,5 +36,5 @@ Not part of this ticket:
 - [ ] At `objectives_closed`, `goal_reached`, and `frontier_empty`, scope-downs continue the run until an end holds with no gate owed. After `budget_spent` and `stall_strict` the gates run once, scope-downs wait for the next run, and failed claims are marked. After `stopped` and `switched` no gate runs.
 - [ ] The tick does not relaunch a run that ended with gates done, and it relaunches one that continues for scope-downs as the conductor's own run.
 - [ ] Tests by journal replay with the fake launcher scripting the plotter, the verifier, and the kill argument: each end kind, the sample cache across two runs, the difficulty-5 rule, an unchanged report skipping the kill argument, and idempotence of the replayed wave.
-- [ ] The CHANGELOG's `## Unreleased` entry and the documentation site describe the run-end gates.
+- [ ] The CHANGELOG's `## Unreleased` entry describes the run-end gates.
 - [ ] `python -m unittest` passes.

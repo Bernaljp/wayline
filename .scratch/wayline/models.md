@@ -55,11 +55,12 @@ Graded under the cap with Opus 5.5 as the top build model, as the follow-ups wer
 | Grade | Open tickets | Label |
 |---|---|---|
 | sonnet medium | 94 | `model:sonnet-medium` |
-| opus low | 72, 73, 78, 101, 102, 106, 113 | `model:opus-low` |
+| opus low | 72, 73, 78, 101, 102, 106, 113, 124 | `model:opus-low` |
 | opus high | 71, 74, 75, 76, 77, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 95, 96, 97, 98, 99, 100, 103, 104, 105, 107, 108, 109, 110, 111, 112, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123 | `model:opus-high` |
 
 - `opus high` is the default: most of these tickets add a record the later ones read, change what replay rebuilds, or write a role or skill prompt (the plotter, the surveyor, the critique splitter, the `wayline` skill, the writer at the order).
 - `opus low` takes the tickets whose design the spec gives exactly and whose code copies a pattern already built: 72, 73, 78, 101, 102, 106, and 113.
+- `opus low` also takes 124, the user guide added on 2026-10-18: pages written from the finished code and the changelog, with no design of their own.
 - `sonnet medium` takes 94, which reuses the consultant's L2 chunking for one document.
 - The two live demos, 122 and 123, take `opus high`, as every demo since 15 has.
 
@@ -87,7 +88,7 @@ Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`low`, `medium`, `
 
 ## Order from here
 
-On 2026-10-18 every ticket before 71 is closed and v1.0.1 is tagged; this schedule takes milestone M8. Its steps are the waves of "What is left on 2026-10-18" in `.scratch/wayline/waves.md`, critical-path ticket first in each; earlier schedules are in this file's history. The rules: at most three sessions in flight, keep one on the next critical-path ticket at all times (76, 81, 86, 89, 90, 104, 105, 109, 115, 116, 120, 122, 123), a ticket starts as soon as its own blockers have landed on `master` and are pushed, and the two demos run alone on `master`.
+On 2026-10-18 every ticket before 71 is closed and v1.0.1 is tagged; this schedule takes milestone M8. Its steps are the waves of "What is left on 2026-10-18" in `.scratch/wayline/waves.md`, critical-path ticket first in each; earlier schedules are in this file's history. The rules: at most three sessions in flight, keep one on the next critical-path ticket at all times (76, 81, 86, 89, 90, 104, 105, 109, 115, 116, 120, 124, 122, 123), a ticket starts as soon as its own blockers have landed on `master` and are pushed, and the two demos run alone on `master`.
 
 | Step | Tickets, with their grade | Notes |
 |---|---|---|
@@ -102,8 +103,9 @@ On 2026-10-18 every ticket before 71 is closed and v1.0.1 is tagged; this schedu
 | 9 | 115 opus high, 111 opus high, 112 opus high, 114 opus high | 115, the paper order, is on the critical path. 111, 112, and 114 all edit the dashboard's front end: one at a time or expect merges in `app.js`. |
 | 10 | 116 opus high, 113 opus low, 117 opus high, 118 opus high, 119 opus high | Four order tickets on top of 115, and the section editor. |
 | 11 | 120 opus high, 121 opus high | 120 waits for every order ticket; 121 adds the last dashboard actions. |
-| 12 | 122 opus high | 122 is the overnight demo: alone on `master`, a real night. |
-| 13 | 123 opus high | 123 is the PINF sitting with the owner, then the v1.1.0 release. |
+| 12 | 124 opus low | 124 is the user guide, written once from the finished features, so the demo runs on a documented release. |
+| 13 | 122 opus high | 122 is the overnight demo: alone on `master`, a real night. |
+| 14 | 123 opus high | 123 is the PINF sitting with the owner, then the v1.1.0 release. |
 
 123 tags v1.1.0 on a release commit, the way 53 released v1.0.0. None of the 53 needs Fable.
 
@@ -232,8 +234,9 @@ On 2026-10-18 every ticket before 71 is closed and v1.0.1 is tagged; this schedu
 | 119 Code at the order | #266 | 10 | 3 | opus | high | Tag, rerun what is stale, copy scripts, and check all of `code/` at the order. |
 | 120 The decider orders the paper under autonomous | #267 | 11 | 3 | opus | high | The decider's `opus max` judgment of the order, gated by code's checks first. |
 | 121 Dashboard: cards and new actions | #268 | 11 | 3 | opus | high | Cards and actions over verbs that exist, in the designed style. |
-| 122 M8 live demo: the toy overnight | #269 | 12 | 3 | opus | high | A live overnight run across every module, where diagnosing what broke is the work. |
-| 123 M8 live demo: PINF restarted from its own materials, and v1.1.0 | #270 | 13 | 3 | opus | high | A live sitting with the owner on a real start midway, then the release. |
+| 122 M8 live demo: the toy overnight | #269 | 13 | 3 | opus | high | A live overnight run across every module, where diagnosing what broke is the work. |
+| 123 M8 live demo: PINF restarted from its own materials, and v1.1.0 | #270 | 14 | 3 | opus | high | A live sitting with the owner on a real start midway, then the release. |
+| 124 The harness's user guide | #282 | 12 | 2 | opus | low | Pages written from the finished code and the changelog, with a test that keeps every quoted verb real. |
 
 ## Working the window
 

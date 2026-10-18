@@ -35,7 +35,7 @@ Setup is one conversation, and it is the only time an automated run asks the own
 9. the front matter, which may be left for later;
 10. every important unresolved reference, including those still retrying.
 
-Under `autonomous`, nothing about any of these is asked after setup. The documentation site says how to start `claude remote-control`, and no unit is installed for it.
+Under `autonomous`, nothing about any of these is asked after setup. The user guide (124) says how to start `claude remote-control`, and no unit is installed for it.
 
 Not part of this ticket:
 
@@ -75,7 +75,7 @@ It blocks 114 and 115.
 - [ ] The setup reference asks the ten items above in order, each as one question where the spec says one. Under `autonomous`, the setup ends only when every item is answered or explicitly left for later where the spec allows it (the front matter).
 - [ ] Under `autonomous`, the skill opens a conversation with "Decided for you" as one numbered item when any decision is not yet reviewed, and a yes journals `reviewed` for each one.
 - [ ] A batch of more than five items is shown as one line with its count and a link to the marks view.
-- [ ] The documentation site says how to start `claude remote-control` in a project, and nothing installs a unit for it.
+- [ ] Nothing installs a unit for `claude remote-control`; how to start it in a project is the user guide's (124).
 - [ ] Tests:
   - the skill tree's shape and routing table against the verb table;
   - the CLAUDE.md block;
@@ -83,5 +83,5 @@ It blocks 114 and 115.
   - the `human_only` classes;
   - the recorded setup conversation fixture (decision 12's fixtures) updated to the new setup order, run on demand.
 - [ ] The verb table of decision 1 gains the drafted-ticket verb in the same commit as the code.
-- [ ] The documentation site and the changelog's `## Unreleased` section describe the `wayline` skill and the phase skills' retirement.
+- [ ] The changelog's `## Unreleased` section describes the `wayline` skill and the phase skills' retirement.
 - [ ] `python -m unittest` passes.

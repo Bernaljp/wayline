@@ -59,5 +59,5 @@ Not part of this ticket:
   - replayed journals for a proposal upheld and batched, one not upheld, a decline resuming paused tickets, the decider's batch under each radius, a reopen, and a set-aside claim restored, idempotence included;
   - the fake launcher for the verdict's judgment, the decider's batch, and the answering verifier.
 - [ ] The event table of decision 2 and the schemas list gain these rows in the same commit as the code.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe how objectives change.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes how objectives change.
 - [ ] `python -m unittest` passes.

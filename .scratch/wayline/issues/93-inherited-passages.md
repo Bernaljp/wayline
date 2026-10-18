@@ -36,5 +36,5 @@ Not part of this ticket:
 - [ ] With no pandoc recorded in `tools.json`, a `.docx` is kept and nothing is deconstructed from it, and the reason is listed.
 - [ ] A newer version of an inherited document is taken in like a section edit: new text becomes passages, changed text replacements, removed text withdrawals.
 - [ ] Tests over the synthetic start-midway project of ticket 78, on the ledger seam over a temporary project, with the classifier scripted through the fake launcher and the conversion through the tool runner's recordings: the heading table, claim splitting, tags, kept parts, rendering, placement, the no-pandoc case, and a newer version. Nothing of PINF enters the repository.
-- [ ] The CHANGELOG's `## Unreleased` entry and the documentation site describe inherited passages.
+- [ ] The CHANGELOG's `## Unreleased` entry describes inherited passages.
 - [ ] `python -m unittest` passes.

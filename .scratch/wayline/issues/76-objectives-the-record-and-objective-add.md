@@ -32,5 +32,5 @@ Not part of this ticket:
 - [x] `GOAL.json` is still read by every current reader, and a project with both a `GOAL.json` and objectives behaves as today on its goal.
 - [x] The verb table of decision 1 gains `objective add`, the event table of decision 2 gains `objective`, and the schemas list gains `objectives`, all in the same commit.
 - [x] Tests as plain functions over a temporary project through the ledger seam: an objective recorded and rendered, a goal recorded after its command printed the metric on a sample, a goal refused into an objective without a measure, a null target, the autonomy switch refused and then allowed, `status` reading objective statuses, ids never reused after a drop.
-- [ ] The changelog and the documentation site describe objectives under `## Unreleased`.
+- [x] The changelog describes objectives under `## Unreleased`.
 - [x] `python -m unittest` passes.

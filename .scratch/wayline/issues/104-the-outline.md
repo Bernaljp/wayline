@@ -66,5 +66,5 @@ It blocks 105, 108, 111, 112, 113, and 115.
   - placements surviving a new result, a merge, and a reframe;
   - the embedding model through the tool runner's recordings.
 - [ ] The verb table of decision 1 gains the outline verb, the event table of decision 2 gains `outline`, and the schemas list gains `outline`, all in the same commit as the code.
-- [ ] The documentation site and the changelog's `## Unreleased` section describe the outline and how the owner changes it.
+- [ ] The changelog's `## Unreleased` section describes the outline and how the owner changes it.
 - [ ] `python -m unittest` passes.

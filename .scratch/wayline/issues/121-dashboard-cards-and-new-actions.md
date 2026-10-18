@@ -12,7 +12,7 @@ Not part of this ticket:
 - the marks view, which is 112's;
 - the editor, which is 113's.
 
-**Blocked by:** 85 - The code repository; 88 - The owner's passages, consolidation, and the linter's new tags; 102 - The plotting library switch; 105 - References rendered and important ones raised; 112 - Dashboard: the marks view; 115 - The paper order and the paper's parts; 118 - Compilations. It blocks 122.
+**Blocked by:** 85 - The code repository; 88 - The owner's passages, consolidation, and the linter's new tags; 102 - The plotting library switch; 105 - References rendered and important ones raised; 112 - Dashboard: the marks view; 115 - The paper order and the paper's parts; 118 - Compilations. It blocks 122 and 124.
 
 **Status:** ready-for-agent
 

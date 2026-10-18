@@ -41,5 +41,5 @@ Not part of this ticket:
 - [x] The owner's hand-over verb takes a DOI, an exact title, a PDF, or "leave it", recorded without asking; a PDF becomes the reference's gitignored source, its title tried by the scout, else the dossier is found with `resolved_by: owner` from the PDF's details. The verb is a function the dashboard can call in-process, and its row lands in decision 1's verb table in the same commit.
 - [x] The dossier schema gains `retry`, `resolved_by: owner`, notes, and joined names, in the schemas list in the same commit.
 - [x] Tests through the fetch seam with synthetic recorded fixtures: the three outcomes, a cache that never writes a failure, the abs-page fallback with a recorded 503, the daily retry and the seven-day give-up under a fake clock, a found dossier never downgraded, two references to one work joined, a nested remark and a path-only PDF never looked up, the hand-over verb's four forms.
-- [ ] The changelog names the change under `## Unreleased`, and the documentation site's scout page describes the outcomes and the retry.
+- [x] The changelog names the change under `## Unreleased`.
 - [x] `python -m unittest` passes.

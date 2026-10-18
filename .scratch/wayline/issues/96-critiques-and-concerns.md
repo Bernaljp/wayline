@@ -43,5 +43,5 @@ Not part of this ticket:
 - [ ] The critic, the grill, specify, the planner, and the writer read `DOCUMENTS.md` and the concerns, and a worker's context pack carries the concerns of its ticket's objectives.
 - [ ] Tests on the ledger seam over a temporary project with the synthetic critique of ticket 78, with the splitter, critic, and decider scripted through the fake launcher, plus journal replay for the after-setup decision ticket under each autonomy and the drop re-sort.
 - [ ] Decision 2's event table gains `concern`, the schemas list `concern`, and decision 10's human-only classes `concern`, each in the same commit as its code.
-- [ ] The CHANGELOG's `## Unreleased` entry and the documentation site describe critiques and concerns.
+- [ ] The CHANGELOG's `## Unreleased` entry describes critiques and concerns.
 - [ ] `python -m unittest` passes.

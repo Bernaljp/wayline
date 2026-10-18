@@ -1,6 +1,6 @@
 # Wayline tickets: what can run in parallel, and what waits
 
-Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. The same day the finer tiers map (wayline #129, cut as #141 settled it) added tickets 60 to 64 and eight edges (61, 62, and 63 after 60; 43 after 60, 61, 62, and 63; 45 after 64), for 121 edges among 64 tickets. On 2026-09-27 research note 04 (Opus 5.5) added ticket 65, which moves the roles on Fable to Opus 5.5, and one edge (53 after 65), for 122 edges among 65 tickets. The same day the follow-ups after v1.0.0 added tickets 66 to 70 and one edge (68 after 70), for 123 edges among 70 tickets. On 2026-10-18 the living paper map (wayline #173, decision 17, milestone M8) added tickets 71 to 123 and 151 edges among them, for 274 edges among 123 tickets; 122, the toy's overnight demo, waits for every ticket from 71 to 121 through the five of them nothing else waits for (99, 113, 114, 120, 121). Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
+Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. The same day the finer tiers map (wayline #129, cut as #141 settled it) added tickets 60 to 64 and eight edges (61, 62, and 63 after 60; 43 after 60, 61, 62, and 63; 45 after 64), for 121 edges among 64 tickets. On 2026-09-27 research note 04 (Opus 5.5) added ticket 65, which moves the roles on Fable to Opus 5.5, and one edge (53 after 65), for 122 edges among 65 tickets. The same day the follow-ups after v1.0.0 added tickets 66 to 70 and one edge (68 after 70), for 123 edges among 70 tickets. On 2026-10-18 the living paper map (wayline #173, decision 17, milestone M8) added tickets 71 to 123 and 151 edges among them, for 274 edges among 123 tickets; 122, the toy's overnight demo, waits for every ticket from 71 to 121 through the five of them nothing else waits for (99, 113, 114, 120, 121). The same day the owner chose one user guide for wayline, written once its features exist, over the documentation site 32 of those tickets named and the harness never had (ticket 51's site documents a project's own package): ticket 124 and six edges (124 after 99, 113, 114, 120, and 121; 122 after 124), for 280 edges among 124 tickets, and those criteria keep only their changelog half. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
 
 ## The rule
 
@@ -8,7 +8,7 @@ A ticket can start when every ticket in its **Blocked by** line is done: its com
 
 ## What is left on 2026-10-18: milestone M8
 
-The 70 tickets before it are closed and v1.0.1 is tagged. Milestone M8 (Implementation Decision 17, v1.1.0) is tickets 71 to 123, sub-issues of #217, which is a sub-issue of #1. They fall into 13 waves; the first is exactly what the query under "What is ready right now" prints today. The schedule, with each ticket's grade, is "Order from here" in `.scratch/wayline/models.md`.
+The 70 tickets before it are closed and v1.0.1 is tagged. Milestone M8 (Implementation Decision 17, v1.1.0) is tickets 71 to 124, sub-issues of #217, which is a sub-issue of #1. They fall into 14 waves; the first is exactly what the query under "What is ready right now" prints today. The schedule, with each ticket's grade, is "Order from here" in `.scratch/wayline/models.md`.
 
 | Wave left | Tickets | Notes |
 |---|---|---|
@@ -23,10 +23,11 @@ The 70 tickets before it are closed and v1.0.1 is tagged. Milestone M8 (Implemen
 | 9 | 111 (#258), 112 (#259), 114 (#261), 115 (#262) | 115, the paper order, is on the critical path. 111, 112, and 114 all edit the dashboard's front end: one at a time or expect merges in `app.js`. |
 | 10 | 113 (#260), 116 (#263), 117 (#264), 118 (#265), 119 (#266) | Four order tickets on top of 115, and the section editor. |
 | 11 | 120 (#267), 121 (#268) | 120 waits for every order ticket; 121 adds the last dashboard actions. |
-| 12 | 122 (#269) | 122 is the overnight demo: alone on `master`, a real night. |
-| 13 | 123 (#270) | 123 is the PINF sitting with the owner, then the v1.1.0 release. |
+| 12 | 124 (#282) | 124 is the user guide, written once from the finished features, so the demo runs on a documented release. |
+| 13 | 122 (#269) | 122 is the overnight demo: alone on `master`, a real night. |
+| 14 | 123 (#270) | 123 is the PINF sitting with the owner, then the v1.1.0 release. |
 
-The critical path of M8 is 76 -> 81 -> 86 -> 89 -> 90 -> 104 -> 105 -> 109 -> 115 -> 116 -> 120 -> 122 -> 123, 13 tickets in a row.
+The critical path of M8 is 76 -> 81 -> 86 -> 89 -> 90 -> 104 -> 105 -> 109 -> 115 -> 116 -> 120 -> 124 -> 122 -> 123, 14 tickets in a row.
 
 Before M8, the five follow-ups after v1.0.0 (66 to 70) ran in two waves and are closed.
 
@@ -154,7 +155,7 @@ Before M8, the five follow-ups after v1.0.0 (66 to 70) ran in two waves and are 
 | 96 Critiques and concerns | #243 | 5 | 79, 80, 84, and 93 | 97, 104, 109, 111, 112, and 117 |
 | 97 Verifying inherited results | #244 | 6 | 81, 85, 93, 94, and 96 | 108, 109, 111, 115, and 117 |
 | 98 References during a ticket | #245 | 4 | 71 and 86 | 99 and 105 |
-| 99 The surveyor and lit tickets | #246 | 7 | 81, 92, and 98 | 122 |
+| 99 The surveyor and lit tickets | #246 | 7 | 81, 92, and 98 | 122 and 124 |
 | 100 Drawings on the plotter | #247 | 6 | 75, 77, 79, and 90 | 101, 102, 103, 112, and 116 |
 | 101 Current and earlier reports | #248 | 7 | 100 | 110 |
 | 102 The plotting library switch | #249 | 7 | 82 and 100 | 121 |
@@ -168,17 +169,18 @@ Before M8, the five follow-ups after v1.0.0 (66 to 70) ran in two waves and are 
 | 110 Dashboard: routes, the projects page, and the Research and Run views | #257 | 8 | 72, 74, 82, 83, 89, 90, and 101 | 111, 112, and 114 |
 | 111 Dashboard: the Paper and Inherited views | #258 | 9 | 85, 95, 96, 97, 104, 105, 108, and 110 | 113 |
 | 112 Dashboard: the marks view | #259 | 9 | 79, 82, 89, 91, 95, 96, 100, 104, and 110 | 121 |
-| 113 Dashboard: editing sections and the outline | #260 | 10 | 88, 104, 108, and 111 | 122 |
-| 114 The dashboard's chat | #261 | 9 | 109 and 110 | 122 |
+| 113 Dashboard: editing sections and the outline | #260 | 10 | 88, 104, 108, and 111 | 122 and 124 |
+| 114 The dashboard's chat | #261 | 9 | 109 and 110 | 122 and 124 |
 | 115 The paper order and the paper's parts | #262 | 9 | 89, 90, 97, 104, 105, 108, and 109 | 116, 117, 118, 119, and 121 |
 | 116 Figures at the order | #263 | 10 | 100 and 115 | 120 |
 | 117 Builds at the order | #264 | 10 | 96, 97, and 115 | 120 |
 | 118 Compilations | #265 | 10 | 71, 75, and 115 | 120 and 121 |
 | 119 Code at the order | #266 | 10 | 106, 107, and 115 | 120 |
-| 120 The decider orders the paper under autonomous | #267 | 11 | 103, 116, 117, 118, and 119 | 122 |
-| 121 Dashboard: cards and new actions | #268 | 11 | 85, 88, 102, 105, 112, 115, and 118 | 122 |
-| 122 M8 live demo: the toy overnight | #269 | 12 | every ticket from 71 to 121 | 123 |
-| 123 M8 live demo: PINF restarted from its own materials, and v1.1.0 | #270 | 13 | 122 | nothing |
+| 120 The decider orders the paper under autonomous | #267 | 11 | 103, 116, 117, 118, and 119 | 122 and 124 |
+| 121 Dashboard: cards and new actions | #268 | 11 | 85, 88, 102, 105, 112, 115, and 118 | 122 and 124 |
+| 122 M8 live demo: the toy overnight | #269 | 13 | every ticket from 71 to 121, and 124 | 123 |
+| 123 M8 live demo: PINF restarted from its own materials, and v1.1.0 | #270 | 14 | 122 | nothing |
+| 124 The harness's user guide | #282 | 12 | 99, 113, 114, 120, and 121 | 122 |
 
 ## Running tickets in parallel without corrupting git
 

@@ -58,5 +58,5 @@ Not part of this ticket:
   - replayed journals for keep-if-better on two goals, a measure with `min_seeds` 1, each `run_ended` reason, a spent wall-clock budget and a spent GPU budget, a relaunch the tick refuses, and the empty-frontier ticket under each autonomy, idempotence included;
   - the schema and the switches as plain functions over a temporary project.
 - [ ] The verb table of decision 1, the event table of decision 2, the policy table of decision 14, and the schemas list gain these rows in the same commit as the code.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe the stopping rule, the budgets, and GOAL.json's retirement.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes the stopping rule, the budgets, and GOAL.json's retirement.
 - [ ] `python -m unittest` passes.

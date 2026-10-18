@@ -21,7 +21,7 @@ The same sitting records the live halves that the suite cannot fake:
 
 What the run finds wrong is filed as follow-up tickets rather than fixed here.
 
-**Blocked by:** every ticket from 71 to 121. It blocks 123.
+**Blocked by:** every ticket from 71 to 121, and 124 - The harness's user guide. It blocks 123.
 
 **Status:** ready-for-agent
 

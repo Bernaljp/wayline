@@ -40,5 +40,5 @@ Not part of this ticket:
   - replayed journals for an amendment under each autonomy, the checkpoints ticket pausing only the new tickets, and both kinds of reopen, idempotence included;
   - the append-only check as a Type-A function over two spec versions.
 - [ ] The verb table of decision 1 gains `specify --amend` in the same commit as the code.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe spec amendments.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes spec amendments.
 - [ ] `python -m unittest` passes.

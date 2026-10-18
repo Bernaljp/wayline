@@ -49,5 +49,5 @@ Not part of this ticket:
   - an edited report tested by editing the rendered file and rendering again;
   - replayed journals for clustering by heading and by `replaces`.
 - [ ] The verb table of decision 1 and the event table of decision 2 gain these rows in the same commit as the code.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe results and the general report.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes results and the general report.
 - [ ] `python -m unittest` passes.

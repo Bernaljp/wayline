@@ -50,5 +50,5 @@ Not part of this ticket:
 - [ ] An earlier figure from an inherited document is handed to the drawing of the result that replaces its claim, which says whether it agrees.
 - [ ] Tests: the fake launcher scripting the plotter, sample generators for the clean-room rerun and the checks, the ledger seam over a temporary project for plots and drawings, and journal replay for the rest points under each autonomy, the repair resume, and a left-out plot.
 - [ ] Decision 14's policy table gains the plotter role, the drawing's limits, and the checks' thresholds; decision 2's event table gains the drawing's acceptance and `marked` as this ticket uses it; and the schemas list gains `plots`, `drawing`, and the kind `drawing`, each in the same commit as its code.
-- [ ] The CHANGELOG's `## Unreleased` entry and the documentation site describe drawings and plots.
+- [ ] The CHANGELOG's `## Unreleased` entry describes drawings and plots.
 - [ ] `python -m unittest` passes.
