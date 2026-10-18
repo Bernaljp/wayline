@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "batch",
+  "description": "One batch of items put before the owner, or the decider, in the marks view and the conversation (Implementation Decision 17; ticket 79): research/batches/<id>.json, written only by wayline.batches through the ledger. A producer opens it with its items; each item is settled by the first mark given for it, journaled as `marked`; a batch whose items are all settled is closed, and its producer reads the marks back. The mark options of each kind are the marks view's: the kind names which marks an item may take, and wayline.batches checks that every item's `marks` are its kind's and its `default` one of them.",
+  "type": "object",
+  "required": ["id", "kind", "title", "decision", "status", "items"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^B[1-9][0-9]*$", "description": "B1 onward, never reused"},
+    "kind": {"type": "string", "enum": ["plots", "objective_changes", "software_ask", "account_review", "merges", "contradictions", "concern_placements", "outline_proposals"]},
+    "title": {"type": "string", "pattern": "\\S"},
+    "decision": {"type": ["integer", "null"], "minimum": 1, "description": "the decision ticket this batch answers, or null when it answers none"},
+    "status": {"type": "string", "enum": ["open", "closed"], "description": "closed once every item is settled"},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "ref", "text", "marks", "default", "note", "mark", "by", "at"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "integer", "minimum": 1, "description": "1 onward within the batch"},
+          "ref": {"type": "string", "pattern": "\\S", "description": "what the item is about: a plot id, an objective proposal, a merge, and so on, as its producer names it"},
+          "text": {"type": "string", "pattern": "\\S", "description": "the item as the conversation shows it whole"},
+          "marks": {"type": "array", "minItems": 2, "items": {"type": "string", "pattern": "\\S"}, "description": "the marks the item's kind allows, in the marks view's order"},
+          "default": {"type": ["string", "null"], "description": "code's default mark, one of `marks`, or null where the kind has none for this item"},
+          "note": {"type": ["string", "null"], "description": "the owner's note, kept with or without a mark"},
+          "mark": {"type": ["string", "null"], "description": "the settled mark, null while the item is open"},
+          "by": {"type": ["string", "null"], "enum": ["owner", "decider", null], "description": "who settled the item"},
+          "at": {"type": ["string", "null"], "description": "when the item was settled, as the journal spells a timestamp"}
+        }
+      }
+    }
+  }
+}

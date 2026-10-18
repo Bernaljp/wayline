@@ -103,6 +103,7 @@ PINNED = "pinned"
 REPORT_RENDERED = "report_rendered"
 PAPER_STARTED = "paper_started"
 FIGURE_RESULT = "figure_result"
+MARKED = "marked"  # one mark or note on one item of a batch (decision 17; ticket 79)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -222,6 +223,10 @@ K_LINTER_PASS = "linter_pass"
 K_VENUE = "venue"
 K_FIGURE_ID = "figure_id"
 K_VERSION = "version"
+K_BATCH = "batch"
+K_ITEM = "item"
+K_MARK = "mark"
+K_NOTE = "note"
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -279,6 +284,7 @@ EVENTS = {
     REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS),
     PAPER_STARTED: (K_VENUE,),
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
+    MARKED: (K_BATCH, K_ITEM, K_MARK, K_NOTE, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -308,6 +314,7 @@ PAYLOAD_ENUMS = {
     (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective", "figure"),
     (CHANGE_RECORD, K_SCOPE_KIND): ("local", "global"),
     (FIGURE_RESULT, K_STATUS): ("candidates_ranked", "selected", "verified", "failed_checks", "honesty_failed", "refused", "blocked"),
+    (MARKED, K_BY): ("owner", "decider"),
 }
 
 
