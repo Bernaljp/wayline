@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "document",
+  "description": "research/documents.json (Implementation Decision 17): the project's own writing handed to the harness, written only by code through the ledger and rendered as research/DOCUMENTS.md. Ids run D1 onward and are never reused. Each document lives under research/documents/<id>/ (source/ and media/ gitignored, text.md with block anchors, comments.json, citations.json as CSL-JSON, tables/ as CSV); one version per text is current, the newest in its source format, and the earlier ones are in its history.",
+  "type": "object",
+  "required": ["documents"],
+  "additionalProperties": false,
+  "properties": {
+    "documents": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/document"}
+    }
+  },
+  "$defs": {
+    "document": {
+      "type": "object",
+      "required": ["id", "title", "kind", "version", "key", "origin", "dated", "sorted_by", "added", "converted", "converters",
+                   "files", "losses", "counts", "damage", "abstract", "headings", "history"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^D[1-9][0-9]*$"},
+        "title": {"type": "string", "pattern": "\\S"},
+        "kind": {"type": "string", "enum": ["inherited", "critique", "other"]},
+        "version": {"type": "integer", "minimum": 1},
+        "key": {"type": "string", "pattern": "\\S", "description": "the name two versions of one text share: the file's stem with its version marks taken off"},
+        "origin": {"type": "string", "pattern": "\\S", "description": "the current version's file name, as handed over"},
+        "dated": {"type": "string", "description": "when the current version was last written: an Office package's newest entry, else the file's time"},
+        "sorted_by": {"type": "string", "enum": ["session", "code"], "description": "the session's sort, or code's cautious guess"},
+        "added": {"type": "string"},
+        "converted": {"type": "boolean", "description": "false for a document kept as given: no route reads it, or its converter is not recorded in tools.json"},
+        "converters": {"type": "array", "items": {"$ref": "#/$defs/converter"}},
+        "files": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/file"}},
+        "losses": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "what the conversion lost, or why there is none"},
+        "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}, "description": "what the source holds: paragraphs, headings, equations, comments, citations, tables, sheets"},
+        "damage": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}, "description": "how many of each the conversion lost: headings, equations, comments not anchored, citations not placed"},
+        "abstract": {"type": ["string", "null"]},
+        "headings": {"type": "array", "items": {"$ref": "#/$defs/heading"}},
+        "history": {"type": "array", "items": {"$ref": "#/$defs/earlier"}}
+      }
+    },
+    "converter": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {"name": {"type": "string", "pattern": "\\S"}, "version": {"type": "string", "pattern": "\\S"}}
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "pattern": "^[^/]", "description": "relative to research/documents/<id>/"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size": {"type": "integer", "minimum": 0},
+        "copy": {"type": "boolean", "description": "a copy of the same text kept and not converted, such as the PDF of a .docx"}
+      }
+    },
+    "heading": {
+      "type": "object",
+      "required": ["level", "text", "locator", "first_sentence"],
+      "additionalProperties": false,
+      "properties": {
+        "level": {"type": "integer", "minimum": 1, "maximum": 6},
+        "text": {"type": "string"},
+        "locator": {"type": "string", "pattern": "^p[1-9][0-9]*$", "description": "the block anchor in text.md"},
+        "first_sentence": {"type": "string"}
+      }
+    },
+    "earlier": {
+      "type": "object",
+      "required": ["version", "origin", "dated", "added", "files"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {"type": "integer", "minimum": 0, "description": "0 for a version older than the first one kept, handed over late"},
+        "origin": {"type": "string"},
+        "dated": {"type": ["string", "null"]},
+        "added": {"type": ["string", "null"]},
+        "files": {"type": "array", "items": {"$ref": "#/$defs/file"}}
+      }
+    }
+  }
+}

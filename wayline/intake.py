@@ -14,9 +14,11 @@ A goal is a human decision (decision 4 puts goal changes on the irreversible lis
 this module writes is journaled as a `decision` with `decided_by: human`, and a goal that cannot be
 measured is rejected with the reason rather than written: missing, fails, no number, or invalid.
 
-The dashboard's intake drop zone (ticket 35) hands a file over one at a time: `drop_material` keeps
-it under `research/intake/` and adds it to `INTAKE.md` the way this verb reads a material, and every
-later `wayline intake` takes the files kept there along with what it is given.
+The dashboard's intake drop zone (ticket 35) hands a file over one at a time: since ticket 84 code's
+cautious guess sorts it first (`wayline.documents.drop_document`), and a file it takes for a
+reference comes here, where `drop_material` keeps it under `research/intake/` and adds it to
+`INTAKE.md` the way this verb reads a material, and every later `wayline intake` takes the files
+kept there along with what it is given.
 """
 
 import argparse
@@ -44,7 +46,7 @@ from wayline.tickets import section
 
 __all__ = [
     "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "GoalCheck", "take_intake", "check_goal", "set_goal",
-    "describe_goal", "intake_command", "DROP_DIR", "DROP_MAX_BYTES", "dropped_materials", "drop_material",
+    "describe_goal", "intake_command", "DROP_DIR", "DROP_MAX_BYTES", "dropped_materials", "check_drop", "plain_name", "drop_material",
 ]
 
 INTAKE_MD = "INTAKE.md"
@@ -732,6 +734,29 @@ def _with_dropped(spec, project, base):
     return dict(spec, materials=list(spec.get("materials", [])) + extra) if extra else spec
 
 
+def check_drop(name, data, verb="wayline intake <path>"):
+    """`(name, bytes)` of a file dropped on the dashboard, or `IntakeError` saying why the drop takes nothing.
+
+    A name that is not a plain file name is refused, and so is an empty file or one over
+    `DROP_MAX_BYTES`, which `verb` takes on the workstation instead.
+    """
+    name = str(name or "").strip()
+    if not _DROP_NAME.match(name) or Path(name).name != name:
+        raise IntakeError("a dropped file needs a plain file name (letters, digits, and . _ + - or spaces, not starting with a dot), got %r" % name)
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        raise IntakeError("%s is empty, so nothing was kept" % name)
+    if len(data) > DROP_MAX_BYTES:
+        raise IntakeError("%s is %s, over the %s the drop takes; run %s on the workstation for a file this large"
+                          % (name, _size(len(data)), _size(DROP_MAX_BYTES), verb))
+    return name, bytes(data)
+
+
+def plain_name(name):
+    """A file name the drop takes, made from any: each character it refuses becomes `-`."""
+    plain = re.sub(r"[^A-Za-z0-9._+ -]+", "-", Path(str(name)).name).lstrip(".- ")[:128]
+    return plain if _DROP_NAME.match(plain) else "file" + Path(str(name)).suffix[:16]
+
+
 def drop_material(project, name, data):
     """Keep one file the owner dropped on the dashboard under `research/intake/`, and take it into `INTAKE.md`.
 
@@ -748,15 +773,7 @@ def drop_material(project, name, data):
     None when there is no `INTAKE.md` yet.
     """
     project = Path(project).resolve()
-    name = str(name or "").strip()
-    if not _DROP_NAME.match(name) or Path(name).name != name:
-        raise IntakeError("a dropped file needs a plain file name (letters, digits, and . _ + - or spaces, not starting with a dot), got %r" % name)
-    if not isinstance(data, (bytes, bytearray)) or not data:
-        raise IntakeError("%s is empty, so nothing was kept" % name)
-    if len(data) > DROP_MAX_BYTES:
-        raise IntakeError("%s is %s, over the %s the drop takes; run wayline intake <path> on the workstation for a file this large"
-                          % (name, _size(len(data)), _size(DROP_MAX_BYTES)))
-    data = bytes(data)
+    name, data = check_drop(name, data)
     ledger = Ledger(project)
     with ledger.lock():
         relative, already = _drop_path(ledger, name, data)

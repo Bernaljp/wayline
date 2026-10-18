@@ -1,0 +1,45 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 755 >>
+stream
+BT /F1 10 Tf 40 720 Td (1) Tj ET
+BT /F1 12 Tf 90 720 Td (Wingbeat synchrony: a draft for the lab meeting) Tj ET
+BT /F1 10 Tf 40 684 Td (2) Tj ET
+BT /F1 12 Tf 90 684 Td (Introduction) Tj ET
+BT /F1 10 Tf 40 666 Td (3) Tj ET
+BT /F1 12 Tf 90 666 Td (Lantern moths gather in dusk swarms whose wingbeats lock together.) Tj ET
+BT /F1 10 Tf 40 648 Td (4) Tj ET
+BT /F1 12 Tf 90 648 Td (We ask whether the lock depends on colony size.) Tj ET
+BT /F1 10 Tf 40 612 Td (5) Tj ET
+BT /F1 12 Tf 90 612 Td (Results) Tj ET
+BT /F1 10 Tf 40 594 Td (6) Tj ET
+BT /F1 12 Tf 90 594 Td (Larger colonies beat more nearly in phase than small ones.) Tj ET
+BT /F1 10 Tf 40 576 Td (7) Tj ET
+BT /F1 12 Tf 90 576 Td (The order parameter rose from 0.41 to 0.77 across four colonies.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001047 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1117
+%%EOF

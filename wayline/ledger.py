@@ -105,6 +105,7 @@ PAPER_STARTED = "paper_started"
 FIGURE_RESULT = "figure_result"
 OBJECTIVE = "objective"  # one change to research/objectives.json (decision 17)
 MARKED = "marked"  # one mark or note on one item of a batch (decision 17; ticket 79)
+DOCUMENT = "document"  # one document kept, or a newer version of it, in research/documents.json (decision 17; ticket 84)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -229,6 +230,8 @@ K_BATCH = "batch"
 K_ITEM = "item"
 K_MARK = "mark"
 K_NOTE = "note"
+K_TITLE = "title"  # `document`: the document's title
+K_CONVERTER = "converter"  # `document`: the converters and their versions, null for a document kept but not converted
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -288,6 +291,7 @@ EVENTS = {
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
     OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY),
     MARKED: (K_BATCH, K_ITEM, K_MARK, K_NOTE, K_BY),
+    DOCUMENT: (K_ID, K_TITLE, K_KIND, K_VERSION, K_CONVERTER, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -321,6 +325,9 @@ PAYLOAD_ENUMS = {
     (OBJECTIVE, K_BY): ("owner", "decider", "code"),
     (FIGURE_RESULT, K_STATUS): ("candidates_ranked", "selected", "verified", "failed_checks", "honesty_failed", "refused", "blocked"),
     (MARKED, K_BY): ("owner", "decider"),
+    (DOCUMENT, K_KIND): ("inherited", "critique", "other"),
+    # The session's sort (`wayline document add --kind`), or code's cautious guess at a file dropped with no session.
+    (DOCUMENT, K_BY): ("session", "code"),
 }
 
 

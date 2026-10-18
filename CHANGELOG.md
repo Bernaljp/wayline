@@ -168,6 +168,33 @@ lists it read-only, marked with its tag.
   `GOAL.json` (keep-if-better, position, specify, plan, the decider, the report) still reads it, and tickets 80, 81,
   and 87 move them to objectives.
 
+- Handing over documents (ticket 84; Implementation Decision 17). The owner hands over their own writing in any
+  form, and `wayline document add <file|folder|file.zip> --kind inherited|critique|other` keeps it as a
+  **document**: converted by code at every autonomy, sorted, recorded, and indexed. A `.docx` goes through pandoc
+  (`--track-changes=accept`: headings, every equation as LaTeX), beside a standard-library reader
+  (`wayline/office.py`) that decodes Mendeley Cite citations into CSL-JSON and reads comment threads (replies and
+  done) with their anchors; a `.tex` goes through pandoc; a PDF with no source beside it through `pdftotext
+  -layout` with the margin line numbers stripped, docling marking its headings where it is installed; an `.xlsx`
+  by the standard library, one CSV per sheet; a `.doc` through LibreOffice into a `.docx` first. Without pandoc a
+  `.docx` is kept and flagged as not converted, its comments and citations still read. Each document lives under
+  `research/documents/<id>/` (`source/` and `media/` gitignored, `text.md` with LaTeX math and a block anchor
+  `<a id="pN"></a>` before every block, `comments.json`, `citations.json`, `tables/*.csv`), is recorded in
+  `research/documents.json` (schema `document`: id, title, kind, version, each file's sha256, the converters and
+  their versions, what the conversion lost, and the damage counted), journaled as the new `document` event with
+  `by` `session` or `code`, and indexed in `research/DOCUMENTS.md`, rendered by code at or under 20,000 characters
+  with each document's kind, version, losses, counts, an inherited one's abstract, and its headings with locators
+  (`D1#p3`) and first sentences. One version per text is current, the newest in its source format: a folder's
+  versions are kept oldest first, a PDF beside a source of the same text is kept as a copy, and a newer version
+  handed over later becomes the next version, the earlier one's source moving under `source/v<n>/`. A folder is
+  sorted file by file and a `.zip` unpacked first. A file dropped on the dashboard with no session gets code's
+  cautious guess: an identifier makes it a reference (added to `INTAKE.md` as before), review markers a critique,
+  anything else `other`, never `inherited`. A PDF sorted as a reference joins the intake's references, and the
+  project's `.gitignore` gains `research/intake/*.pdf` so the owner's copy is never committed. The intake skill and
+  the drop zone tell the owner to hand over anything in any form: references as bare identifiers, the owner's plan
+  as the plan, and a collaborator's list of experiments as a critique. The tests replay the tool runner's
+  recordings of pandoc, `pdftotext`, LibreOffice, and docling on the synthetic documents of `fixtures/midway/` and
+  `fixtures/documents/` (`fixtures/documents/record.py` makes them).
+
 ## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts

@@ -15,6 +15,35 @@ a pointer at a dataset, a half-written plan, or an existing repository. Ask only
 missing and cannot be inferred, and ask it once, in one batch. When nobody is there to answer,
 take the defaults and say what you assumed.
 
+## What the owner hands over
+
+Tell the owner to hand over anything, in any form: a manuscript as `.docx`, `.tex`, or PDF, a
+separate Methods or a supplement, a spreadsheet, a referee report or an editor's letter, a folder,
+or a `.zip`. Nothing needs tidying first. Take references as bare identifiers (a DOI, an arXiv id,
+an exact title), the owner's plan as the plan, and a collaborator's list of experiments as a
+critique.
+
+The project's own writing is a document; published work, the owner's own preprints included, is a
+reference. Sort each document with the verb, as a command of its own:
+
+```bash
+wayline document add <file> --kind inherited|critique|other
+```
+
+- `inherited`: an earlier manuscript, a separate Methods, a supplement, a thesis chapter;
+- `critique`: a referee report, an editor's letter with points, a collaborator's list of required
+  experiments;
+- `other`: anything else, kept and read only.
+
+Ask the owner in one line only when the kind is unclear. A folder is sorted file by file and a
+`.zip` is unpacked first: give `--kind` to a folder only when every file in it is of that kind, and
+otherwise add the files one by one. A PDF of published work goes `--kind reference`: it joins the
+references, and the absorb keeps it as that reference's source. Conversion is code: the verb
+converts each file, keeps it under `research/documents/<id>/`, and lists it in
+`research/DOCUMENTS.md` with what the conversion lost; read that index back and tell the owner. One
+version per text is current, the newest in its source format: hand an older or a newer version over
+the same way, and the verb records it as such.
+
 ## What the intake holds
 
 `research/INTAKE.md` gets these sections, in this order, every one present even when it is short:

@@ -1,0 +1,35 @@
+{
+  "documents": [
+    {
+      "id": "doc-2",
+      "kind": "manuscript",
+      "version": 1,
+      "key": "referee-2",
+      "origin": "referee-2.md",
+      "dated": "2026-10-18T09:00:00",
+      "sorted_by": "session",
+      "added": "2026-10-18T12:00:00.000Z",
+      "title": "Referee report 2",
+      "converted": true,
+      "converters": [],
+      "losses": [],
+      "counts": {
+        "blocks": 2,
+        "headings": 1,
+        "equations": 0
+      },
+      "damage": {},
+      "abstract": null,
+      "headings": [
+        {
+          "level": 1,
+          "text": "Referee report 2",
+          "locator": "p1",
+          "first_sentence": "1."
+        }
+      ],
+      "files": [],
+      "history": []
+    }
+  ]
+}

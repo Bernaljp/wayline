@@ -43,23 +43,23 @@ Not part of this ticket:
 
 **Blocked by:** 75 - The harness's tools; 78 - The synthetic start-midway project. It blocks 93, 94, and 96.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#231](https://github.com/Bernaljp/wayline/issues/231) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Documents, critiques, and concerns": documents and their sort; "Converting documents"; "Vocabulary the build adds": the `document` schema and event, the conversation's verb for documents); decisions 1 (the verb table: `document add`), 2 (the event table: `document`), 10 (intake's wording), the schemas list (`document`); M8 criterion 9; user stories 101, 136, 175.
 
-- [ ] A `.docx` from the synthetic start-midway project converts through pandoc with its headings, every equation as LaTeX, and tracked changes accepted. The standard-library reader writes its Mendeley citations as CSL-JSON in `citations.json` and its comment threads with anchors in `comments.json`.
-- [ ] A `.tex` converts through pandoc. A PDF with no source converts through `pdftotext -layout` with margin line numbers stripped, with docling's structure where installed. An `.xlsx` becomes one CSV per sheet. A `.doc` becomes a `.docx` through LibreOffice first.
-- [ ] Each document is kept under `research/documents/<id>/` with `source/` and `media/` gitignored. It is recorded in `research/documents.json` with its id, title, kind, version, each file's sha256, its converter and version, its losses, and its damage counts, and is journaled as `document`.
-- [ ] `research/DOCUMENTS.md` renders from the record with each document's kind, version, losses, counts, abstract (inherited only), and headings with locators and first sentences, and stays at or under 20,000 characters on a project with many documents.
-- [ ] `wayline document add <file> --kind inherited|critique|other` records the session's sort. A dashboard drop with no session gets code's cautious guess (identifier: reference; review markers: critique; otherwise `other`), and never `inherited`.
-- [ ] One version per text is inherited, the newest in its source format. A folder is sorted file by file, and a `.zip` is unpacked first. A PDF sorted as a reference becomes the reference's source, gitignored.
-- [ ] Intake's wording tells the owner to hand over anything in any form.
-- [ ] Tests, over the synthetic documents in `fixtures/` (nothing of PINF):
+- [x] A `.docx` from the synthetic start-midway project converts through pandoc with its headings, every equation as LaTeX, and tracked changes accepted. The standard-library reader writes its Mendeley citations as CSL-JSON in `citations.json` and its comment threads with anchors in `comments.json`.
+- [x] A `.tex` converts through pandoc. A PDF with no source converts through `pdftotext -layout` with margin line numbers stripped, with docling's structure where installed. An `.xlsx` becomes one CSV per sheet. A `.doc` becomes a `.docx` through LibreOffice first.
+- [x] Each document is kept under `research/documents/<id>/` with `source/` and `media/` gitignored. It is recorded in `research/documents.json` with its id, title, kind, version, each file's sha256, its converter and version, its losses, and its damage counts, and is journaled as `document`.
+- [x] `research/DOCUMENTS.md` renders from the record with each document's kind, version, losses, counts, abstract (inherited only), and headings with locators and first sentences, and stays at or under 20,000 characters on a project with many documents.
+- [x] `wayline document add <file> --kind inherited|critique|other` records the session's sort. A dashboard drop with no session gets code's cautious guess (identifier: reference; review markers: critique; otherwise `other`), and never `inherited`.
+- [x] One version per text is inherited, the newest in its source format. A folder is sorted file by file, and a `.zip` is unpacked first. A PDF sorted as a reference becomes the reference's source, gitignored.
+- [x] Intake's wording tells the owner to hand over anything in any form.
+- [x] Tests, over the synthetic documents in `fixtures/` (nothing of PINF):
   - the tool runner's recordings of pandoc, `pdftotext`, LibreOffice, and docling;
   - the ledger seam over a temporary project for the record, the event, and the render cap;
   - the dashboard drop's guess over HTTP.
-- [ ] The verb table of decision 1, the event table of decision 2, and the schemas list gain these rows in the same commit as the code that writes them.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes handing over documents.
-- [ ] `python -m unittest` passes.
+- [x] The verb table of decision 1, the event table of decision 2, and the schemas list gain these rows in the same commit as the code that writes them.
+- [x] `CHANGELOG.md` under `## Unreleased` describes handing over documents.
+- [x] `python -m unittest` passes.
