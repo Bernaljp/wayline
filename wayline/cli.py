@@ -100,6 +100,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
+    "objective", "mark", "reference",
 ))
 
 
