@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "properties": {
     "harness_tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "research_version": {"type": "integer", "minimum": 1, "description": "how research/ is kept (Implementation Decision 17): init writes the release's RESEARCH_VERSION; a project without the key is at 1"},
     "autonomy": {"type": "string", "enum": ["interactive", "checkpoints", "autonomous"]},
     "radius": {"type": "string", "enum": ["strict", "moderate", "exploratory"]},
     "model_fallback": {

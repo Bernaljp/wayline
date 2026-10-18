@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from string import Template
 
-from wayline import HARNESS_ROOT, POLICY_PATH, TAG, replay
+from wayline import HARNESS_ROOT, POLICY_PATH, RESEARCH_VERSION, TAG, replay
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import (
@@ -42,6 +42,7 @@ from wayline.tickets import (
 )
 
 __all__ = [
+    "research_version", "old_project_message", "old_project_problem",
     "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
     "home", "projects_path", "active_path", "read_active", "set_active", "read_projects",
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
@@ -341,6 +342,7 @@ def default_harness(harness_tag=TAG, policy=None, hermes_python=_DETECT, owner_e
     dashboard = policy.get("dashboard", {})
     value = {
         "harness_tag": harness_tag,
+        "research_version": RESEARCH_VERSION,
         "autonomy": "checkpoints",
         "radius": "moderate",
         "human_only": ["goal", "data"],  # decision 4: goal and data changes wait for the owner
@@ -383,6 +385,34 @@ def read_harness(project):
 
 def is_project(path):
     return (Path(path) / HARNESS_JSON).is_file()
+
+
+def research_version(harness):
+    """How a project's `research/` is kept: `harness.json.research_version`, 1 when the key is absent (v1.0.x)."""
+    return harness.get("research_version", 1)
+
+
+def old_project_message(tag, version, current=RESEARCH_VERSION, release=TAG):
+    """The one message a big upgrade and every writing verb give for a project at another `research_version`."""
+    tag = tag or "an older tag"
+    release = "this release" if release == TAG else release  # between tags the package's TAG names the last release
+    return ("this project was made with %s, which keeps research/ at research_version %s; %s keeps it at %s and does not "
+            "migrate a project. Two ways on: keep the old tag with wayline upgrade --to %s (it holds every project on the "
+            "shared checkout), or start a new project on %s from this one's materials (wayline init <new path>, then hand "
+            "it the old project's materials)" % (tag, version, release, current, tag, release))
+
+
+def old_project_problem(project):
+    """The refusal for a project whose `research_version` is not this release's, or None for a current one.
+
+    Nothing of an old project is migrated (Implementation Decision 17): every verb that writes to it
+    refuses with this message, and reading it (`status`, the dashboard's views) still works.
+    """
+    harness = read_harness(project)
+    version = research_version(harness)
+    if version == RESEARCH_VERSION:
+        return None
+    return old_project_message(harness.get("harness_tag"), version)
 
 
 def find_project(explicit=None):

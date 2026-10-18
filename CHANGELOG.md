@@ -1,6 +1,8 @@
 # Changelog
 
-One entry per tag. `wayline upgrade` prints the entries between two tags.
+One entry per tag. `wayline upgrade` prints the entries between two tags. A release that raises `research_version`
+(`wayline.RESEARCH_VERSION`, how `research/` is kept) opens its entry with a **Breaking** line: `wayline upgrade` to it
+refuses a project made before it, which keeps its old tag or starts again on the new release.
 
 ## v1.0.1 (2026-09-28)
 
@@ -25,6 +27,14 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   with no diff.
 
 ## Unreleased
+
+**Breaking:** `research_version` 2 (Implementation Decision 17). A project made on v1.0.x is refused, never migrated:
+`wayline upgrade` to this release changes nothing and names the two ways on (`wayline upgrade --to v1.0.1`, or a new
+project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
+lists it read-only, marked with its tag.
+
+- `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
+  (2). A small upgrade, within one `research_version`, works as before, both ways.
 
 - A paper's figures tell the writer, not the ticket graph, what the text should say (ticket 66). A figure `wayline
   paper` asked for (`figure_request.ticket: "paper"`) files no proposal and opens no `writing` ticket: its

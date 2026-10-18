@@ -413,7 +413,8 @@ class CommandTest(DocsCase):
         self.assertIn("wayline docs env", out.getvalue())
 
     def test_docs_with_no_action_is_a_usage_error(self):
-        with contextlib.redirect_stderr(io.StringIO()):
+        # A home of its own, so no active project of the machine's (an old one is refused, decision 17) stands behind the verb.
+        with unittest.mock.patch.dict(os.environ, {"WAYLINE_HOME": str(self.root / "home")}), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(cli.main(["docs"]), 2)
 
 

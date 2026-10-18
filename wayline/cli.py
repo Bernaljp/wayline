@@ -86,6 +86,43 @@ VERBS = [
          handler=lazy("wayline.worker", "launch_verb"), hidden=True),
 ]
 
+# The verbs that write to a project, so refuse an old one (another `research_version`, decision 17) before their
+# function runs (`refuse_old_project`). The others read it (`status`, the dashboard that lists it read-only), take the
+# way back (`upgrade`, which refuses a big move itself), lay out a new project (`init`), write only to the harness or
+# `~/.wayline/`, or run inside a worktree the conductor launched, which `run` already refuses on an old project.
+WRITING_VERBS = frozenset((
+    "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
+    "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
+))
+
+
+def _named_project(args):
+    """The `--project` a verb's arguments name, or None for the active project."""
+    for index, arg in enumerate(args):
+        if arg == "--project" and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith("--project="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def refuse_old_project(name, args):
+    """The refusal of a writing verb on a project of another `research_version`, or None to let the verb run.
+
+    `switch <path>` only moves the active pointer, and a verb's `--help` reads nothing, so both pass. A project
+    that cannot be found is left to the verb, which says so in its own words.
+    """
+    if name not in WRITING_VERBS or "-h" in args or "--help" in args:
+        return None
+    if name == "switch" and args and not args[0].startswith("-"):
+        return None
+    from wayline import project as projects  # the project module imports this one
+    try:
+        return projects.old_project_problem(projects.find_project(_named_project(args)))
+    except (ValueError, OSError):
+        return None
+
+
 GROUP_TITLES = {
     "project": "Project",
     "phases": "Phases P0 to P4",
@@ -163,6 +200,10 @@ def main(argv=None):
     if verb.handler is None:
         print("wayline %s: not yet implemented" % verb.name, file=sys.stderr)
         return 2
+    refusal = refuse_old_project(verb.name, args[1:])
+    if refusal is not None:
+        print("wayline %s: %s" % (verb.name, refusal), file=sys.stderr)
+        return 1
     return exit_code(verb.name, verb.handler(args[1:]))
 
 
