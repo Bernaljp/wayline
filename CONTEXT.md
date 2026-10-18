@@ -252,6 +252,10 @@ _Avoid_: UI, app, GUI
 The owner's talk with a project, in the dashboard's chat or in a Claude Code session there, which records what the owner says through the harness's verbs and keeps nothing only in itself.
 _Avoid_: front door, console, thread
 
+**Marks view**:
+The dashboard's place for every batch of items put before the owner, each item shown whole with its marks and an optional note; the first answer, there or in the conversation, settles an item.
+_Avoid_: review page, triage, inbox
+
 **Ledger**:
 The files under a project's `research/`, written only by code from structured results.
 _Avoid_: state, database, memory
