@@ -749,8 +749,6 @@ class Conductor:
         self.software = software.Settled()
         self.tools = None
         self._said_software = ()
-        # The tool runner the software step's dry runs go through (seam 6); a test stands in its recordings.
-        self.tool_runner = None
         # The job runner of decision 6, made when a wave first has a job to poll or launch, and the machine readings the
         # free-slot rule places pending jobs by (`resources.read_readings`), which a test replaces with a recorded one.
         self.jobs_runner = None
@@ -1027,17 +1025,18 @@ class Conductor:
     def _software(self, result):
         """Wave step 2's software part (decision 17; ticket 82): marks and answers kept in step, installs as jobs, asks opened.
 
-        Installs and the licensed check are jobs, so they run whatever the pacing says, and the
-        conductor never waits on a download: `software.settle` launches them through the job runner,
-        and the job poll of the next waves concludes them like any job.
+        The dry runs that size an ask, the installs, and the licensed check are jobs, so they run
+        whatever the pacing says, and the conductor never waits on the network: `software.settle`
+        launches them through the job runner, and the job poll of the next waves concludes them like
+        any job. A refused launch or a tools error is said, and fails no wave.
         """
         from wayline.tools import Tools
 
         self.tools = Tools()
         try:
             self.software = software.settle(self.project, self._runner, tools=self.tools, notify=self.notify, say=self.say,
-                                            harness_root=self.harness_root, **({"run": self.tool_runner} if self.tool_runner else {}))
-        except (ValueError, OSError) as failure:
+                                            harness_root=self.harness_root)
+        except (ValueError, OSError, RuntimeError) as failure:  # a refused job launch (`resources.JobError`) or a tools error fails no wave
             self.say("  the software step could not run: %s" % failure)
             self.software = software.Settled()
         self._tail()
@@ -2827,7 +2826,7 @@ class Conductor:
             # An installed tool lacks what the code needs (ticket 82): code opens the decision, which only the owner answers.
             try:
                 report = software.open_gap(self.project, attempt.id, gap[0], gap[1], notify=self.notify)
-            except (ValueError, OSError) as failure:
+            except (ValueError, OSError, RuntimeError) as failure:
                 self.say("  ticket %d is blocked on a gap in %s, and its decision could not be opened: %s" % (attempt.id, gap[0], failure))
                 return "failed"
             self.say("  ticket %d is blocked: the installed %s lacks what its code needs (%s); decision ticket %d asks the owner"

@@ -1514,9 +1514,11 @@ def _tools_record(tools):
 def _with_tool(project, fields, tools):
     """A member's fields with the tool it names resolved, and the tools it calls listed (ticket 82).
 
-    A named tool must be recorded: its executable stands in for a first argument that names the tool
-    (`["octave", "--eval", ...]`) or goes before the arguments otherwise, and its environment, with
-    where the project keeps its packages, goes under the spec's own `env`. A command whose first
+    A named tool must be recorded, and its command is an argv: the executable stands in for a first
+    argument that names the tool (its name, its executable, or that file's name, as in `["octave",
+    "--eval", ...]`) or goes before the arguments otherwise, and a first argument that is another
+    recorded tool is refused. The tool's environment, with where the project keeps its packages, goes
+    under the spec's own `env`, which wins on a name both set. A command whose first
     argument is a recorded tool's executable lists that tool too, so a job calls nothing unlisted.
     """
     from wayline import software  # the project's tools and packages, late: they import the job runner's callers
@@ -1530,14 +1532,27 @@ def _with_tool(project, fields, tools):
         if not entry or not entry.get("executable"):
             raise JobError("the job names the tool %s, which %s does not record; a ticket that needs it waits for its software decision"
                            % (name, tools.root / "tools.json"))
-        arguments = list(command) if isinstance(command, (list, tuple)) else []
-        if arguments and arguments[0] in (name, Path(entry["executable"]).name):
+        if command is not None and (isinstance(command, (str, bytes)) or not isinstance(command, (list, tuple))):
+            raise JobError("a job's command is a list of strings, its arguments when it names a tool, got %s" % type(command).__name__)
+        arguments = [str(argument) for argument in command or ()]
+        executable = str(entry["executable"])
+        if arguments and arguments[0] in (name, executable, Path(executable).name):
             arguments = arguments[1:]
-        fields["command"] = [entry["executable"]] + [str(argument) for argument in arguments]
+        elif arguments:
+            # A first argument that is another recorded tool would run as an argument of this one (`R Rscript x.R`).
+            other = [found for found in tools.names() if found != name and arguments[0] in (
+                found, str((tools.entry(found) or {}).get("executable")), Path(str((tools.entry(found) or {}).get("executable"))).name)]
+            if other:
+                raise JobError("the job names the tool %s and its command starts with %s, which is the tool %s; name that tool instead"
+                               % (name, arguments[0], other[0]))
+        fields["command"] = [executable] + arguments
         environment = fields.get("env") or {}
         if not isinstance(environment, dict):
             raise JobError("env is an object of name to value, got %s" % type(environment).__name__)
-        fields["env"] = dict(entry.get("env") or {}, **software.project_env(project, name), **environment)
+        merged = dict(entry.get("env") or {})
+        merged.update(software.project_env(project, name))
+        merged.update(environment)  # the spec's own env wins over the tool's and the project's
+        fields["env"] = merged
         fields["tools"] = [software.tool_called(name, entry)]
     elif isinstance(command, (list, tuple)) and command:
         called = [found for found in tools.names() if (tools.entry(found) or {}).get("executable") == str(command[0])]

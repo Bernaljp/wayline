@@ -23,6 +23,7 @@ import tarfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from tests import machine as test_machine
 from tests import test_conductor, test_plan
@@ -331,11 +332,33 @@ class ProjectPackagesTest(ProjectTestCase):
         project.init_project(other)
         agreeing = software.install_packages(other, "octave", ["signal=1.4.5"], root=self.root, run=self.machine)
         self.assertEqual(agreeing["environment"], str(self.root / "envs" / "octave"))
+        self.machine.octave_list = self.machine.octave_list.replace(b"1.4.5", b"1.3.0")  # what its own prefix holds
         disagreeing = software.install_packages(other, "octave", ["signal=1.3.0"], root=self.root, run=self.machine)
         self.assertEqual(disagreeing["environment"], str(other / ".wayline" / "packages" / "octave"))
         argv, env = self.machine.ran("octave")[-2]
         self.assertNotIn("-global", argv[-1])
         self.assertEqual(env["WAYLINE_OCTAVE_PKG"], str(other / ".wayline" / "packages" / "octave"))
+
+    def test_an_unpinned_package_the_shared_prefix_holds_is_not_upgraded_for_everyone(self):
+        software.install_project_tool("octave", root=self.root, run=self.machine)
+        self.packages("octave", ["signal"])
+        installs = len([argv for argv, _ in self.machine.ran("octave") if "'install'" in argv[-1]])
+        other = self.temp / "other"
+        other.mkdir()
+        project.init_project(other)
+        software.install_packages(other, "octave", ["signal"], root=self.root, run=self.machine)
+        self.assertEqual(len([argv for argv, _ in self.machine.ran("octave") if "'install'" in argv[-1]]), installs)
+        self.assertIn("signal", (other / "code" / "octave-packages.lock").read_text(encoding="utf-8"))
+
+    def test_a_pin_octave_forge_does_not_serve_is_refused(self):
+        software.install_project_tool("octave", root=self.root, run=self.machine)
+        self.packages("octave", ["signal"])
+        other = self.temp / "other"
+        other.mkdir()
+        project.init_project(other)
+        with self.assertRaises(ToolsError) as caught:
+            software.install_packages(other, "octave", ["signal=1.3.0"], root=self.root, run=self.machine)
+        self.assertIn("Octave Forge serves signal 1.4.5, not 1.3.0", str(caught.exception))
 
     def test_packages_of_a_tool_not_recorded_wait_for_its_software_decision(self):
         for language in ("r", "julia", "octave"):
@@ -382,6 +405,26 @@ class JobToolTest(ProjectTestCase):
         check(record, load_schema("job"))
         [arguments_only] = resources.add_jobs(self.project, {"tool": "octave", "command": ["--version"]}, ticket=1)
         self.assertEqual(arguments_only["command"], ["/opt/tools/envs/octave/bin/octave", "--version"])
+
+    def test_the_specs_own_env_wins_over_the_tools_and_the_projects(self):
+        record_entry(self.root, "julia", tool_entry("/opt/tools/julia-1.12.7/bin/julia", "1.12.7", "tarball",
+                                                    env={"JULIA_DEPOT_PATH": "/opt/tools/julia/depot"}))
+        [record] = resources.add_jobs(self.project, {"tool": "julia", "command": ["run.jl"], "env": {"JULIA_PROJECT": "/elsewhere"}},
+                                      ticket=1)
+        self.assertEqual(record["env"], {"JULIA_DEPOT_PATH": "/opt/tools/julia/depot", "JULIA_PROJECT": "/elsewhere"})
+
+    def test_the_command_is_an_argv_that_names_the_tool_or_only_its_arguments(self):
+        [absolute] = resources.add_jobs(self.project, {"tool": "octave", "command": ["/opt/tools/envs/octave/bin/octave", "--version"]},
+                                        ticket=1)
+        self.assertEqual(absolute["command"], ["/opt/tools/envs/octave/bin/octave", "--version"])
+        record_entry(self.root, "r", tool_entry("/opt/tools/envs/r/bin/R", "4.4.3", "micromamba"))
+        record_entry(self.root, "rscript", tool_entry("/opt/tools/envs/r/bin/Rscript", "4.4.3", "micromamba"))
+        with self.assertRaises(resources.JobError) as caught:
+            resources.add_jobs(self.project, {"tool": "r", "command": ["Rscript", "scripts/run.R"]}, ticket=1)
+        self.assertIn("rscript", str(caught.exception))
+        with self.assertRaises(resources.JobError):
+            resources.add_jobs(self.project, {"tool": "octave", "command": "octave --eval 1"}, ticket=1)
+        self.assertEqual(len(list((self.project / "research" / "jobs").glob("*.json"))), 1)
 
     def test_a_job_naming_a_tool_not_recorded_is_refused_and_nothing_is_written(self):
         with self.assertRaises(resources.JobError) as caught:
@@ -505,8 +548,9 @@ def wrote(ticket_id, name):
 class SoftwareCase(test_conductor.ConductorCase):
     """The one-ticket fixture with tickets that need a project's tools, run wave by wave with the fake worker and the fake job runner.
 
-    Ticket 1 needs no tool. Ticket 2 needs Octave, and ticket 3 Julia, unless a test says otherwise. The dry runs answer from
-    `ProjectMachine`, and each install job is played by the verb it runs, called in this process on the same recordings.
+    Ticket 1 needs no tool. Ticket 2 needs Octave, and ticket 3 Julia, unless a test says otherwise. Each dry-run job's log is
+    what its verb prints on `ProjectMachine`, and each install job is played by the verb it runs, called in this process on
+    the same recordings.
     """
 
     needs = {2: ["octave"], 3: ["julia"]}
@@ -531,7 +575,6 @@ class SoftwareCase(test_conductor.ConductorCase):
     def conductor_for(self):
         driven = Conductor(self.project, out=io.StringIO())
         driven.readings = test_machine.recorded
-        driven.tool_runner = self.machine
         driven.notify = lambda event, text, path, ticket: self.notified.append((event, ticket, text))
         driven.plan_pre_check = False
         return driven
@@ -562,6 +605,24 @@ class SoftwareCase(test_conductor.ConductorCase):
         fields = self.ticket(identifier)
         return tickets.read_ticket(tickets.tickets_dir(self.project) / tickets.filename(fields))[1]
 
+    def dry_job(self, name):
+        """The dry-run job of a tool: it belongs to the first ticket that waits on it."""
+        waiting = min(identifier for identifier, tools in self.needs.items() if name in {software.provider(tool) for tool in tools})
+        return "t%d-dryrun-%s-1" % (waiting, name)
+
+    def script_dry_runs(self):
+        """Each dry-run job's log: what `wayline tools install <name> --dry-run --json` prints, on the recordings."""
+        names = sorted({software.provider(tool) for tools in self.needs.values() for tool in tools} - {None} - set(software.LICENSED))
+        for name in names:
+            dry = software.dry_run(name, root=self.temp / "dry-tools", run=self.machine)
+            self.jobs.script(["exited"], log="micromamba: solving\n" + json.dumps(dry) + "\n", job_id=self.dry_job(name))
+
+    def open_asks(self, *scripted):
+        """Wave 1 launches ticket 1 and the dry-run jobs; wave 2 reads them and opens the asks."""
+        self.script_dry_runs()
+        self.wave(wrote(1, "hello"), *scripted)
+        return self.wave()
+
     def play_install(self, identifier, name, attempt, machine=None, change=False):
         """What the install job does: `wayline tools install <name> --decision <id> --attempt <n>`, on the recordings."""
         options = argparse.Namespace(dry_run=False, project=str(self.project), decision=identifier, attempt=attempt, yes=False,
@@ -572,7 +633,15 @@ class SoftwareCase(test_conductor.ConductorCase):
 
 class SoftwareAskTest(SoftwareCase):
     def test_a_ticket_whose_tool_is_missing_is_not_launched_and_opens_one_decision_per_tool(self):
-        self.wave(wrote(1, "hello"))
+        self.script_dry_runs()
+        result = self.wave(wrote(1, "hello"))
+        self.assertFalse(result.ended, "the run goes on while the dry runs run")
+        self.assertEqual([fields for fields in tickets.read_tickets(self.project) if software.asked(fields)], [],
+                         "the dry run runs as a job, so no wave waits on it, and the ask opens once it ended")
+        dry = json.loads((self.project / "research" / "jobs" / ("%s.json" % self.dry_job("octave"))).read_text(encoding="utf-8"))
+        self.assertEqual((dry["ticket"], dry["command"][1:]), (2, ["tools", "install", "octave", "--dry-run", "--json"]))
+        self.assertIn("ticket 2 waits: octave is not installed; its dry run runs as job %s" % self.dry_job("octave"), self.said())
+        self.wave()
         self.assertEqual(self.launched(), [1], "only the ticket that needs no tool launches")
         octave, julia = self.decision("octave"), self.decision("julia")
         self.assertEqual((octave["kind"], octave["blocking"], octave["human_only"]), ("decision", "subgraph", False))
@@ -583,7 +652,7 @@ class SoftwareAskTest(SoftwareCase):
         self.assertIn("ticket 2 needs octave: decision ticket %d asks whether to install it" % octave["id"], self.said())
 
     def test_the_ask_states_the_route_the_sizes_the_tickets_waiting_and_the_cost(self):
-        self.wave(wrote(1, "hello"))
+        self.open_asks()
         record = self.record(self.decision("octave")["id"])
         recorded = json.loads((RECORDED / "micromamba-dry-run-octave.json").read_text(encoding="utf-8"))
         download = sum(item["size"] for item in recorded["actions"]["FETCH"])
@@ -597,7 +666,7 @@ class SoftwareAskTest(SoftwareCase):
         self.assertIn("route: Julia %s's release tarball" % software.JULIA_VERSION, "\n".join(self.record(self.decision("julia")["id"])["evidence"]))
 
     def test_each_ask_is_an_item_of_a_software_ask_batch(self):
-        self.wave(wrote(1, "hello"))
+        self.open_asks()
         found = {batch["decision"]: batch for batch in batches.read_batches(self.project)}
         octave = self.decision("octave")["id"]
         self.assertEqual(found[octave]["kind"], "software_ask")
@@ -605,18 +674,18 @@ class SoftwareAskTest(SoftwareCase):
         self.assertEqual((item["ref"], item["marks"], item["default"]), ("software octave", ["approve", "decline"], "approve"))
 
     def test_a_second_wave_and_a_restarted_conductor_ask_nothing_twice(self):
-        self.wave(wrote(1, "hello"))
+        self.open_asks()
         before = (len(tickets.read_tickets(self.project)), len(batches.read_batches(self.project)), len(self.events("decision_opened")))
         self.wave()
         self.driven = self.conductor_for()
         self.wave()
         after = (len(tickets.read_tickets(self.project)), len(batches.read_batches(self.project)), len(self.events("decision_opened")))
         self.assertEqual(before, after)
-        dry_runs = [argv for argv, _ in self.machine.ran("micromamba") if "--dry-run" in argv]
-        self.assertEqual(len(dry_runs), 1, "the dry run is made once, when the ask is opened")
+        dry_runs = sorted(path.name for path in (self.project / "research" / "jobs").glob("*-dryrun-*.json"))
+        self.assertEqual(dry_runs, [self.dry_job("octave") + ".json", self.dry_job("julia") + ".json"], "each dry run runs once")
 
     def test_the_run_ends_when_only_tickets_waiting_on_an_unanswered_ask_are_left(self):
-        results = [self.wave(wrote(1, "hello"))]
+        results = [self.open_asks()]
         for _ in range(4):
             if results[-1].ended:
                 break
@@ -630,8 +699,11 @@ class AnsweredInstallTest(SoftwareCase):
 
     def setUp(self):
         super().setUp()
-        self.wave(wrote(1, "hello"))
+        self.open_asks()
         self.ask = self.decision("octave")["id"]
+
+    def jobs_written(self):
+        return sorted(path.name for path in (self.project / "research" / "jobs").glob("*-install-*.json"))
 
     def job(self, attempt):
         return "t%d-install-octave-%d" % (self.ask, attempt)
@@ -652,7 +724,7 @@ class AnsweredInstallTest(SoftwareCase):
         self.wave(wrote(2, "octave"))  # octave is recorded, so ticket 2 launches, whatever the job's own poll reads yet
         self.assertEqual(self.launched(), [1, 2])
         self.wave()
-        self.assertEqual([event["payload"]["exit_code"] for event in self.events("job_finished")], [0])
+        self.assertEqual([event["payload"]["exit_code"] for event in self.events("job_finished") if event["job"] == self.job(1)], [0])
         installed = self.events("tool_installed")
         self.assertEqual([(event["payload"]["outcome"], event["payload"]["attempt"], event["ticket"]) for event in installed],
                          [("installed", 1, self.ask)])
@@ -691,7 +763,7 @@ class AnsweredInstallTest(SoftwareCase):
     def test_not_now_leaves_the_ticket_waiting_and_go_without_lets_it_launch(self):
         project.answer(self.project, self.ask, "Not now")
         result = self.wave()
-        self.assertEqual(list((self.project / "research" / "jobs").glob("*.json")), [])
+        self.assertEqual(self.jobs_written(), [])
         self.assertEqual(self.launched(), [1])
         self.assertIn("decision ticket %d was answered Not now" % self.ask, self.said())
         self.assertTrue(result.ended, "a ticket waiting on Not now keeps no run going")
@@ -720,9 +792,24 @@ class AnsweredInstallTest(SoftwareCase):
         project.answer(self.project, self.ask, "Install")  # given after the mark, before any wave read it
         self.wave()
         self.wave()
-        self.assertEqual(list((self.project / "research" / "jobs").glob("*.json")), [], "the mark came first: Not now")
+        self.assertEqual(self.jobs_written(), [], "the mark came first: Not now")
         [batch] = [batch for batch in batches.read_batches(self.project) if batch["decision"] == self.ask]
         self.assertEqual(batch["items"][0]["mark"], "decline")
+        self.assertEqual(self.launched(), [1])
+
+    def test_an_earlier_mark_is_the_answer_the_install_job_reads_too(self):
+        [batch] = [batch for batch in batches.read_batches(self.project) if batch["decision"] == self.ask]
+        batches.mark(self.project, batch["id"], 1, "approve")
+        project.answer(self.project, self.ask, "Not now")  # given after the mark, before any wave read it
+        self.jobs.script(["running"], job_id=self.job(1))
+        self.wave()
+        self.assertEqual(self.jobs_written(), [self.job(1) + ".json"], "the mark came first: Install")
+        self.assertEqual(self.play_install(self.ask, "octave", 1), 0, "the install job reads the same answer")
+
+    def test_a_launch_the_job_runner_refuses_is_said_and_fails_no_wave(self):
+        project.answer(self.project, self.ask, "Install")  # nothing is scripted for the install job, so the fake refuses it
+        self.wave()  # the refusal is said, and the wave goes on to its end
+        self.assertIn("decision ticket %d: the install job %s could not be launched" % (self.ask, self.job(1)), self.said())
         self.assertEqual(self.launched(), [1])
 
     def test_an_answer_given_first_settles_the_item(self):
@@ -750,7 +837,7 @@ class AutonomousSoftwareTest(SoftwareCase):
     autonomy = "autonomous"
 
     def test_the_decider_takes_a_free_tool_and_never_licensed_software(self):
-        self.wave(wrote(1, "hello"))
+        self.open_asks()
         octave, matlab = self.decision("octave"), self.decision("matlab")
         self.assertFalse(octave["human_only"])
         self.assertTrue(matlab["human_only"], "licensed software is the owner's alone")
@@ -770,7 +857,7 @@ class AutonomousSoftwareTest(SoftwareCase):
         harness = json.loads(path.read_text(encoding="utf-8"))
         harness["human_only"] = ["goal", "data", software.SOFTWARE]
         path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
-        self.wave(wrote(1, "hello"))
+        self.open_asks()
         self.assertTrue(self.decision("octave")["human_only"])
 
     def test_the_setup_question_lists_every_tool_the_planned_work_needs(self):
@@ -781,6 +868,13 @@ class AutonomousSoftwareTest(SoftwareCase):
         software.install_project_tool("octave", root=self.root, run=self.machine)
         self.assertEqual([tool["name"] for tool in software.setup_question(self.project, tools=Tools(self.root), run=self.machine)["tools"]],
                          ["matlab"])
+
+    def test_the_setup_question_is_the_tools_needs_verb(self):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = software.needs_command(["--project", str(self.project), "--json"], root=self.root, run=self.machine)
+        self.assertEqual(code, 0)
+        self.assertEqual([tool["name"] for tool in json.loads(out.getvalue())["tools"]], ["matlab", "octave"])
 
 
 class LicensedAskTest(SoftwareCase):
@@ -833,6 +927,12 @@ class LicensedAskTest(SoftwareCase):
         self.assertEqual(self.ticket(self.ask)["status"], "open")
         self.assertIn("names no absolute path", "\n".join(self.record(self.ask)["evidence"]))
 
+    def test_the_asks_own_first_option_asks_again_for_the_path(self):
+        project.answer(self.project, self.ask, software.WHERE % "matlab")
+        self.wave()
+        self.assertEqual(self.ticket(self.ask)["status"], "open")
+        self.assertIn("names no absolute path", "\n".join(self.record(self.ask)["evidence"]))
+
 
 class GapTest(SoftwareCase):
     needs = {2: ["octave"]}
@@ -880,6 +980,86 @@ class GapTest(SoftwareCase):
         self.wave(wrote(2, "octave"))
         self.assertEqual(self.launched().count(2), 2)
 
+    def test_go_without_opens_the_ticket_once_and_only_from_that_gap(self):
+        project.answer(self.project, self.gap["id"], "Go without")
+        envelope, applied = wrote(2, "octave")
+        envelope.structured_output.update(status="blocked", blocked_on="software octave: it lacks the signal package's fir1")
+        self.wave((envelope, applied))  # opened again, launched, and blocked on the same gap again
+        self.wave()
+        self.wave()
+        self.assertEqual(self.ticket(2)["status"], "blocked", "the same gap after Go without is not opened again by itself")
+        self.assertEqual(self.launched().count(2), 2)
+        self.assertEqual(len([event for event in self.events("ticket_rerun") if event["ticket"] == 2]), 1)
+
+    def test_a_ticket_blocked_for_another_reason_is_left_to_the_planner(self):
+        envelope, applied = wrote(2, "octave")
+        envelope.structured_output.update(status="blocked", blocked_on="software octave: it lacks the signal package's fir1")
+        project.answer(self.project, self.gap["id"], "Go without")
+        outside, applied = wrote(2, "octave")
+        outside.structured_output.update(touched_outside_declared=["elsewhere.txt"])
+        self.wave((outside, applied))  # opened from the gap, launched, and blocked on its touch set
+        self.wave()
+        self.assertEqual(self.ticket(2)["status"], "blocked")
+        self.assertEqual(self.launched().count(2), 2, "a touch-set block is the planner's to re-cut, not the gap's to open")
+
+
+class LicensedGapTest(SoftwareCase):
+    needs = {2: ["matlab"]}
+
+    def test_a_gap_in_licensed_software_is_answered_with_where_the_owner_changed_it(self):
+        matlab = self.temp / "MATLAB" / "bin" / "matlab"
+        matlab.parent.mkdir(parents=True)
+        matlab.write_text("#!/bin/sh\n", encoding="utf-8")
+        software.record_licensed("matlab", matlab, root=self.root, run=self.machine)
+        envelope, applied = wrote(2, "matlab")
+        envelope.structured_output.update(status="blocked", blocked_on="software matlab: it lacks the Wavelet Toolbox")
+        self.wave(wrote(1, "hello"), (envelope, applied))
+        self.wave()
+        [gap] = [fields for fields in tickets.read_tickets(self.project) if (software.asked(fields) or (None, False))[1]]
+        self.assertEqual(self.record(gap["id"])["options"][0], software.WHERE % "matlab")
+        project.answer(self.project, gap["id"], "Added the toolbox; it is still at %s" % matlab)
+        job = "t%d-check-matlab-1" % gap["id"]
+        self.jobs.script(["exited"], log=(WRITTEN / "matlab-batch-ver.txt").read_text(encoding="utf-8"), job_id=job)
+        self.wave()
+        self.assertTrue((self.project / "research" / "jobs" / ("%s.json" % job)).is_file(), "a licensed gap is checked, not installed")
+        self.wave(wrote(2, "matlab"))
+        self.assertEqual([event["payload"]["outcome"] for event in self.events("tool_installed")], ["recorded"])
+        self.assertEqual(self.launched().count(2), 2)
+
+
+class NoRouteTest(SoftwareCase):
+    """A name with no project route (a harness tool) opens no ask, and `rscript` is asked about as R, which installs it."""
+
+    needs = {2: ["git"], 3: ["rscript"]}
+
+    def test_a_harness_tool_opens_no_ask_and_rscript_asks_about_r(self):
+        self.open_asks()
+        origins = sorted(fields["origin"] for fields in tickets.read_tickets(self.project) if software.asked(fields))
+        self.assertEqual(origins, ["software r"])
+        self.assertIn(self.decision("r")["id"], self.ticket(3)["blocked_by"])
+        self.assertIn("ticket 2 waits: git is a harness tool that tools.json does not record", self.said())
+        self.assertEqual(self.launched(), [1])
+
+    def test_a_gap_in_a_harness_tool_opens_no_ask(self):
+        envelope, applied = wrote(1, "hello")
+        envelope.structured_output.update(status="blocked", blocked_on="software git: it lacks git-lfs")
+        self.script_dry_runs()
+        self.wave((envelope, applied))
+        self.wave()
+        self.assertEqual(self.ticket(1)["status"], "blocked")
+        self.assertIn("ticket 1 is blocked on software git: it lacks git-lfs; the planner re-cuts it", self.said())
+        self.assertEqual([fields for fields in tickets.read_tickets(self.project) if (software.asked(fields) or (None, False))[1]], [])
+
+
+class QuietSettleTest(ProjectTestCase):
+    def test_a_project_where_nothing_names_software_reads_no_journal(self):
+        toy = self.temp / "toy"
+        toy.mkdir()
+        project.init_project(toy)
+        with mock.patch.object(Ledger, "read_events", side_effect=AssertionError("the journal was read")):
+            settled = software.settle(toy, lambda: self.fail("no job runner is made"), tools=Tools(self.temp / "tools"))
+        self.assertEqual((settled.in_flight, settled.waiting, settled.waived), ([], {}, set()))
+
 
 class InstallVerbTest(SoftwareCase):
     needs = {2: ["octave"]}
@@ -900,7 +1080,7 @@ class InstallVerbTest(SoftwareCase):
         self.assertEqual(code, 2)
         self.assertIn("only after a yes", err)
         self.assertIsNone(Tools(self.root).entry("octave"))
-        self.wave(wrote(1, "hello"))
+        self.open_asks()
         ask = self.decision("octave")["id"]
         code, err = self.run_verb("octave", decision=ask)
         self.assertEqual(code, 1)
@@ -911,7 +1091,7 @@ class InstallVerbTest(SoftwareCase):
         self.assertEqual(Tools(self.root).entry("octave")["version"], "10.3.0")
 
     def test_a_change_needs_the_owners_word(self):
-        self.wave(wrote(1, "hello"))
+        self.open_asks()
         ask = self.decision("octave")["id"]
         decisions.decide(self.project, ask, "Install", "free software through conda-forge")
         self.assertEqual(self.run_verb("octave", decision=ask)[0], 0, "the decider's Install installs a free tool")

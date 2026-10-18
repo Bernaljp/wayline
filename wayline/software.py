@@ -61,7 +61,8 @@ __all__ = [
     "INSTALL", "NOT_NOW", "GO_WITHOUT", "OPTIONS", "known_tools", "known_tool", "is_harness_tool", "julia_url", "julia_checksums_url",
     "dry_run", "install_project_tool", "record_licensed", "parse_ver", "install_packages", "tool_called", "project_env",
     "ask_origin", "gap_origin", "asked", "gap_of", "choice", "where", "ask_text", "open_ask", "reopen", "Settled", "settle",
-    "open_gap", "setup_question", "yes_from_decision", "journal_install", "install_command", "package_command",
+    "open_gap", "setup_question", "yes_from_decision", "journal_install", "install_command", "package_command", "needs_command",
+    "provider",
 ]
 
 SOFTWARE = "software"  # the decision class (decision 17)
@@ -448,21 +449,21 @@ def _octave_packages(project, names, lock, root, tools, run):
     local = project / PACKAGES / OCTAVE
     # Two projects disagree when one asks a version of a package that the shared prefix holds at another version.
     disagree = any(version and (held.get(name) or {}).get("version") not in (None, version) for name, version in wanted)
-    quoted = ", ".join("'%s'" % name for name, _ in wanted)
     env = dict(octave.get("env") or {})
     if disagree:
         local.mkdir(parents=True, exist_ok=True)
         env["WAYLINE_OCTAVE_PKG"] = str(local)
-        expression = _OCTAVE_LOCAL % quoted
+        installing, expression = [name for name, _ in wanted], _OCTAVE_LOCAL
     else:
-        expression = _OCTAVE_SHARED % quoted
-    toolbox._ok(run([octave["executable"], "--no-gui", "--eval", expression], timeout=INSTALL_TIMEOUT_S, env=env or None),
-                "pkg install -forge %s" % " ".join(name for name, _ in wanted))
+        # What the shared prefix already holds stays as it is: one project's unpinned ask never upgrades it for every project.
+        installing, expression = [name for name, _ in wanted if name not in held], _OCTAVE_SHARED
+    if installing:
+        toolbox._ok(run([octave["executable"], "--no-gui", "--eval", expression % ", ".join("'%s'" % name for name in installing)],
+                        timeout=INSTALL_TIMEOUT_S, env=env or None), "pkg install -forge %s" % " ".join(installing))
     listed = toolbox._ok(run([octave["executable"], "--no-gui", "--eval", _OCTAVE_LIST], timeout=TOOL_TIMEOUT_S, env=env or None),
                          "pkg list").stdout
-    lock.write_bytes(b"% pkg list of the Octave Forge packages this project uses (wayline tools package octave)\n" + listed)
+    versions = dict(_OCTAVE_ROW.findall(listed.decode("utf-8", errors="replace")))
     if not disagree:
-        versions = dict(_OCTAVE_ROW.findall(listed.decode("utf-8", errors="replace")))
 
         def merge(record):
             for name, _ in wanted:
@@ -475,6 +476,12 @@ def _octave_packages(project, names, lock, root, tools, run):
             merge(record)
             path.parent.mkdir(parents=True, exist_ok=True)
             toolbox._write_record(path, record)
+    # `pkg install -forge` installs a package's current release, so a pin is checked against what it served.
+    wrong = ["Octave Forge serves %s %s, not %s" % (name, versions.get(name) or "nothing", version)
+             for name, version in wanted if version and versions.get(name) != version]
+    if wrong:
+        raise ToolsError("%s; a pin `pkg install -forge` cannot serve is refused, and the lock is not written" % "; ".join(wrong))
+    lock.write_bytes(b"% pkg list of the Octave Forge packages this project uses (wayline tools package octave)\n" + listed)
     return local if disagree else shared
 
 
@@ -505,11 +512,24 @@ WHERE = "the absolute path of the owner's %s executable"  # the first option of 
 BATCH_KIND = "software_ask"
 APPROVE, DECLINE = "approve", "decline"
 ATTEMPTS = 2  # an install and its one retry
-INSTALL_JOB, CHECK_JOB = "install", "check"
+INSTALL_JOB, CHECK_JOB, DRY_RUN_JOB = "install", "check", "dryrun"
 JOB_WALLCLOCK_MINUTES = 90
+DRY_RUN_WALLCLOCK_MINUTES = 30
 _ORIGIN = re.compile(r"^software ([a-z][a-z0-9-]*)(?: gap ([0-9a-f]{12}))?$")
 _GAP = re.compile(r"^\s*software\s+([a-z][a-z0-9-]*)\s*[:,]\s*(\S.*)$", re.IGNORECASE | re.DOTALL)
 _PATH = re.compile(r"(/[^\s'\"`]+)")
+# A name another tool's install brings: `Rscript` comes in R's prefix, so a ticket naming it is asked about R.
+PROVIDED_BY = {"rscript": R}
+
+
+def provider(name):
+    """What a `software` decision about this name asks to install: a project's tool or licensed software.
+
+    None for a harness tool, a system tool, or a name with no route: those come with `wayline tools
+    install` or the machine, never through a decision, so no ask is opened for them.
+    """
+    name = PROVIDED_BY.get(name, name)
+    return name if name in PROJECT_TOOLS or name in LICENSED else None
 
 
 def ask_origin(name):
@@ -531,27 +551,32 @@ def asked(fields):
 
 
 def gap_of(blocked_on):
-    """`(tool, gap)` when a worker's `blocked_on` reads `software <tool>: <what it lacks>`, else None."""
+    """`(tool, gap)` when a worker's `blocked_on` reads `software <tool>: <what it lacks>` about a tool a decision can change.
+
+    None otherwise, including a gap in a harness or system tool: the planner re-cuts that ticket as any
+    other blocked one, because no `software` decision changes what the harness or the machine provides.
+    """
     found = _GAP.match(str(blocked_on or ""))
-    if found is None or not known_tool(found.group(1).lower()):
+    name = provider(found.group(1).lower()) if found else None
+    if name is None:
         return None
-    return found.group(1).lower(), " ".join(found.group(2).split())
+    return name, " ".join(found.group(2).split())
 
 
 def choice(answer, licensed=False):
     """What an answer to a `software` decision chooses: `Install`, `Not now`, or `Go without`, read off its first words.
 
-    A mark reads the same way (`approve` is Install, `decline` is Not now). For licensed software an
-    answer that names an absolute path is the owner saying where it is, which is its Install, and an
-    Install that names none is asked again for the path. An answer that matches nothing is Not now:
+    A mark reads the same way (`approve` is Install, `decline` is Not now). For licensed software any
+    other answer is the owner saying where it is, which is its Install, and one that names no
+    absolute path is asked again for the path. Otherwise an answer that matches nothing is Not now:
     nothing is installed on a word the harness cannot read.
     """
     text = " ".join(str(answer or "").split()).lower()
     if text.startswith("go without"):
         return GO_WITHOUT
-    if text.startswith("not now") or text.startswith(DECLINE):
+    if text.startswith("not now") or text.startswith(DECLINE) or text in ("no", "n") or text.startswith("no "):
         return NOT_NOW
-    if licensed and _PATH.search(str(answer or "")):
+    if licensed:
         return INSTALL
     if text.startswith("install") or text.startswith(APPROVE) or text in ("yes", "y"):
         return INSTALL
@@ -568,22 +593,24 @@ def _mib(size):
     return "%d MB" % round(size / 1e6) if size else "an unknown size"
 
 
-def _route_line(name, dry):
+def _route_line(name):
     if name in LICENSED:
         return "route: none; %s is licensed software, which the owner installs and code only records (installer: owner) " \
                "after one `%s -batch \"ver\"` check" % (name, name)
     if name == JULIA:
         return "route: Julia %s's release tarball (%s) into ~/.wayline/tools/julia-%s, checked against the SHA-256 Julia publishes, no root" \
                % (JULIA_VERSION, julia_url(), JULIA_VERSION)
-    return "route: conda-forge through the harness's micromamba (%s) into ~/.wayline/tools/envs/%s, each package checked against " \
-           "its published digest, no root" % (" ".join(_conda_specs(name)), name)
+    if name in CONDA_PROJECT_TOOLS:
+        return "route: conda-forge through the harness's micromamba (%s) into ~/.wayline/tools/envs/%s, each package checked against " \
+               "its published digest, no root" % (" ".join(_conda_specs(name)), name)
+    return "route: none; %s comes with `wayline tools install` or the machine, never through a decision" % name
 
 
 def _size_lines(name, dry, problem):
     if name in LICENSED:
         return []
-    if problem:
-        return ["sizes: the dry run failed (%s), so the sizes are unknown" % problem]
+    if problem or not dry:
+        return ["sizes: the dry run failed (%s), so the sizes are unknown" % (problem or "it printed no plan")]
     return ["sizes from a dry run: %s to download, about %s on disk once unpacked (an estimate: %d times what it links)"
             % (_mib(dry.get("download_bytes")), _mib(dry.get("disk_bytes")), UNPACKED)]
 
@@ -603,6 +630,9 @@ def _named(identifiers):
 
 def ask_text(name, waiting, gap=None):
     """The question a `software` decision asks."""
+    if gap is not None and name in LICENSED:
+        return ("%s found that the installed %s lacks what its code needs (%s): once you have changed it, where is it?"
+                % (_named(waiting).capitalize(), name, gap))
     if gap is not None:
         return ("%s found that the installed %s lacks what its code needs (%s): change the installed %s?"
                 % (_named(waiting).capitalize(), name, gap, name))
@@ -613,44 +643,41 @@ def ask_text(name, waiting, gap=None):
             % (_named(waiting).capitalize(), "needs" if len(waiting) == 1 else "need", name))
 
 
-def open_ask(project, name, waiting, root=None, run=run_tool, notify=None, gap=None, error=None):
+def open_ask(project, name, waiting, notify=None, gap=None, dry=None, problem=None):
     """Open the `software` decision about one tool, pausing only `waiting`; returns the `open_decision` report.
 
-    The ticket states the route, the sizes from a dry run, the tickets waiting, and the cost, and offers
-    Install (recommended), Not now, and Go without; a licensed tool's first option is where the owner
-    installed it, and a gap's is changing the installed tool, both `human_only`. An ask about a tool
-    that already has one only adds the new pause edges. Each new ask is also an item of a
-    `software_ask` batch, so a mark settles it.
+    `name` is what the decision installs (`provider`): a project's tool or licensed software. The ticket
+    states the route, the sizes of `dry` (the dry-run job's plan; `problem` when it failed), the tickets
+    waiting, and the cost, and offers Install (recommended), Not now, and Go without; a licensed tool's
+    first option is where the owner installed it, and a gap's Install changes the installed tool, both
+    `human_only`. An ask about a tool that already has one only adds the new pause edges. Each new ask
+    is also an item of a `software_ask` batch, so a mark settles it. The dry run is never made here: the
+    conductor runs it as a job and opens the ask once it ended, so no wave waits on the network.
     """
     from wayline import decisions  # the decision tickets import the project module, which imports the tools record
 
+    if provider(name) != name:
+        raise ToolsError("%s is no project's tool and no licensed software, so no software decision installs it" % name)
     project = Path(project).resolve()
     waiting = sorted(set(waiting))
     licensed = name in LICENSED
     origin = gap_origin(name, gap) if gap is not None else ask_origin(name)
-    exists = any(fields.get("origin") == origin for fields in _read_tickets(project) if fields.get("kind") == "decision")
-    dry, problem = {}, None
-    if not exists and not licensed and gap is None:
-        try:
-            dry = dry_run(name, root=root, run=run)
-        except ToolsError as failure:
-            problem = str(failure)
-    evidence = [_route_line(name, dry)] + _size_lines(name, dry, problem) + [
+    evidence = [_route_line(name)] + (_size_lines(name, dry, problem) if gap is None else []) + [
         "waiting: %s, and only %s; every other ticket goes on" % (_named(waiting), "it" if len(waiting) == 1 else "they"),
         _cost_line(name, gap is not None),
     ]
     if gap is not None:
         evidence.append("the gap, as the worker reported it: %s" % gap)
-    if error:
-        evidence.append("the last install failed: %s" % error)
     if licensed:
-        options = [WHERE % name, NOT_NOW, GO_WITHOUT]
-        recommended = None
+        options, recommended = [WHERE % name, NOT_NOW, GO_WITHOUT], None
     elif gap is not None:
         options, recommended = [INSTALL, NOT_NOW, GO_WITHOUT], None
     else:
         options, recommended = list(OPTIONS), INSTALL
-    title = ("Where is %s installed?" % name) if licensed else ("Change the installed %s?" % name) if gap is not None else ("Install %s?" % name)
+    if gap is not None:
+        title = "Change the installed %s?" % name
+    else:
+        title = ("Where is %s installed?" % name) if licensed else ("Install %s?" % name)
     report = decisions.open_decision(
         project, ask_text(name, waiting, gap), options=options, recommended=recommended, evidence=evidence, blocking="subgraph",
         human_only=licensed or gap is not None, pauses=waiting, proposed_by="conductor", origin=origin, title=title,
@@ -733,17 +760,17 @@ def reopen(project, identifier, why, notify=None):
 
 
 class Settled:
-    """What one wave's `settle` leaves the conductor: the tools gone without, whether a job is under way, and why each ticket waits."""
+    """What one wave's `settle` leaves the conductor: the tools gone without, the jobs under way, and why each ticket waits."""
 
     def __init__(self):
         self.waived = set()
         self.in_flight = []
         self.waiting = {}
-        self.said = []
 
     def missing(self, entry, tools):
         """The tools a ticket needs that are neither recorded nor gone without: it is launchable only when this is empty."""
-        return [name for name in (entry.get("software") or []) if name not in self.waived and not _installed(tools.entry(name))]
+        return [name for name in (entry.get("software") or [])
+                if (provider(name) or name) not in self.waived and not _installed(tools.entry(name))]
 
 
 class _Lazy:
@@ -759,17 +786,32 @@ class _Lazy:
 
 
 class _Ask:
-    """One `software` decision ticket read back from its file and the journal."""
+    """One `software` decision ticket read back from its file, its batch, and the journal."""
 
     def __init__(self, fields, name, gap):
         self.fields, self.name, self.gap = fields, name, gap
         self.id = fields["id"]
         self.licensed = name in LICENSED
         self.since = -1            # the index of the latest `ticket_rerun`: what came before it was another asking
-        self.answer = None         # (index, answer, decided_by) of the answer since then
+        self.answer = None         # (index, answer, decided_by) of the answer journaled since then
+        self.batch = None          # the ask's latest `software_ask` batch
+        self.marked = None         # (index, item) of the mark settling that batch's item since the asking
         self.jobs = []             # [(index, job id)] launched since the answer
         self.ended = {}            # job id: (exit code or None, reason)
         self.outcomes = {}         # attempt: (outcome, version, reason) of `tool_installed`
+
+    def effective(self):
+        """The answer that stands, `(index, answer, decided_by)`: the earlier of the journaled answer and the mark; the first wins.
+
+        The conductor's step and the install job both read it here, so neither acts on an answer the other passed over.
+        """
+        mark = None
+        if self.marked is not None:
+            index, item = self.marked
+            mark = (index, _answer_from_mark(self, item), "decider" if item["by"] == "decider" else "human")
+        if self.answer is not None and mark is not None and mark[0] < self.answer[0]:
+            return mark
+        return self.answer
 
 
 def _job_prefix(identifier, kind, name):
@@ -777,22 +819,37 @@ def _job_prefix(identifier, kind, name):
 
 
 def _read_asks(project, events, fields_by_id):
-    from wayline.ledger import DECISION, JOB_CANCELLED, JOB_FAILED, JOB_FINISHED, JOB_LAUNCHED, TICKET_RERUN, TOOL_INSTALLED
+    """Every `software` decision as `{ticket: _Ask}`, and the last `ticket_blocked` of each ticket as `{ticket: (index, path)}`."""
+    from wayline import batches
+    from wayline.ledger import (DECISION, JOB_CANCELLED, JOB_FAILED, JOB_FINISHED, JOB_LAUNCHED, MARKED, TICKET_BLOCKED, TICKET_RERUN,
+                                TOOL_INSTALLED)
 
     asks = {}
     for fields in fields_by_id.values():
         found = asked(fields)
         if found is not None:
             asks[fields["id"]] = _Ask(fields, *found)
-    by_job = {}
+    by_batch = {}
+    if asks:
+        for batch in batches.read_batches(project):
+            if batch["kind"] == BATCH_KIND and batch["decision"] in asks:
+                asks[batch["decision"]].batch = batch  # in id order, so the latest batch stands
+        by_batch = {ask.batch["id"]: ask for ask in asks.values() if ask.batch is not None}
+    by_job, blocked = {}, {}
     for index, event in enumerate(events):
         name, payload = event.get("event"), event.get("payload") or {}
         ticket = event.get("ticket") if event.get("ticket") is not None else payload.get("ticket")
         ask = asks.get(ticket)
-        if name == TICKET_RERUN and ask is not None:
-            ask.since, ask.answer, ask.jobs, ask.outcomes = index, None, [], {}
+        if name == TICKET_BLOCKED and ticket is not None:
+            blocked[ticket] = (index, payload.get("path"))
+        elif name == TICKET_RERUN and ask is not None:
+            ask.since, ask.answer, ask.marked, ask.jobs, ask.outcomes = index, None, None, [], {}
         elif name == DECISION and ask is not None:
             ask.answer, ask.jobs, ask.outcomes = (index, payload.get("answer"), payload.get("decided_by")), [], {}
+        elif name == MARKED and payload.get("batch") in by_batch and payload.get("mark") is not None:
+            marked = by_batch[payload["batch"]]
+            if marked.marked is None and marked.batch["items"][0]["mark"] is not None:
+                marked.marked = (index, marked.batch["items"][0])
         elif name == JOB_LAUNCHED and ask is not None and ask.answer is not None:
             job = event.get("job") or payload.get("job")
             if job and (job.startswith(_job_prefix(ask.id, INSTALL_JOB, ask.name)) or job.startswith(_job_prefix(ask.id, CHECK_JOB, ask.name))):
@@ -805,170 +862,204 @@ def _read_asks(project, events, fields_by_id):
                                           None if name == JOB_FINISHED else (payload.get("reason") or name))
         elif name == TOOL_INSTALLED and ask is not None and ask.answer is not None and payload.get("name") == ask.name:
             ask.outcomes[payload.get("attempt")] = (payload.get("outcome"), payload.get("version"), payload.get("reason"))
-    return asks
+    for ask in asks.values():
+        if ask.marked is not None and ask.marked[0] < ask.since:
+            ask.marked = None  # a mark on the batch of an earlier asking
+    return asks, blocked
 
 
-def _marked_first(project, ask, events):
-    """The settled mark of the ask's latest batch, when it was given before any answer since the asking: `(mark, note, by)`."""
-    from wayline import batches
-    from wayline.ledger import MARKED
-
-    found = [batch for batch in batches.read_batches(project) if batch["decision"] == ask.id and batch["kind"] == BATCH_KIND]
-    if not found:
-        return None, None
-    batch = found[-1]
-    item = batch["items"][0]
-    at = None
-    for index, event in enumerate(events):
-        payload = event.get("payload") or {}
-        if event.get("event") == MARKED and payload.get("batch") == batch["id"] and payload.get("mark") is not None:
-            at = index
-            break
-    return batch, (at, item) if item["mark"] is not None and at is not None and at > ask.since else None
-
-
-def settle(project, runner, tools=None, run=run_tool, notify=None, say=None, harness_root=None):
+def settle(project, runner, tools=None, notify=None, say=None, harness_root=None):
     """The conductor's `software` step of one wave: marks and answers kept in step, answers acted on, missing tools asked for.
 
     1. A mark on an ask's batch item answers its decision when nothing has (the owner's as the owner's,
-       the decider's as the decider's), and an answer settles the item it left open: the first wins.
+       the decider's as the decider's), and an answer settles the item it left open. When both were
+       given before a wave read them, the first stands (`_Ask.effective`), here and in the install job.
     2. An Install answer launches the install as a job through `runner`; an install that ended without
        the tool recorded is retried once, and then the decision is asked again with the error
        (`reopen`). A licensed tool's answer names where it is, and one `matlab -batch "ver"` check job
        runs: a pass records it, a failure asks again. Go without lets the tickets that need the tool
        launch without it; Not now leaves them waiting. A gap's Install changes the installed tool (on
-       the owner's word only) and its Install or Go without opens the blocked ticket again.
+       the owner's word only: a project's tool through its route with `--change`, licensed software by
+       a new check where the owner says it is), and its Install or Go without opens the ticket that gap
+       blocked again, once.
     3. Every open or failed ticket naming a tool that is neither recorded nor gone without is paused by
-       that tool's ask, which is opened when there is none.
+       the ask about what installs it (`provider`). A project's tool is first sized by a dry-run job, and
+       its ask opens once that job ended; licensed software is asked about at once. A harness tool, or a
+       name with no route, opens no ask: the ticket waits and the conductor says why.
 
     Returns a `Settled`. Idempotent: everything it does is read back from the journal, the job files,
-    the batches, and `tools.json`, so a second call, or a restarted conductor, starts nothing twice.
+    the batches, and `tools.json`, so a second call, or a restarted conductor, starts nothing twice. A
+    project where no ticket names software and no ask exists is left after one read of its tickets.
     """
-    from wayline import batches, decisions, replay
+    from wayline import batches, decisions
     from wayline.ledger import Ledger
     from wayline.project import ProjectError, answer as answer_ticket
 
     project = Path(project).resolve()
+    settled = Settled()
+    fields_by_id = {fields["id"]: fields for fields in _read_tickets(project)}
+    if not any(fields.get("software") or asked(fields) for fields in fields_by_id.values()):
+        return settled
     tools = tools if tools is not None else Tools()
     say = say or (lambda line: None)
     runner = runner if hasattr(runner, "launch") else _Lazy(runner)
-    settled = Settled()
     ledger = Ledger(project)
-
-    def said(line):
-        settled.said.append(line)
-        say(line)
 
     def current():
         events, _ = ledger.read_events()
-        fields_by_id = {fields["id"]: fields for fields in _read_tickets(project)}
-        return events, fields_by_id, _read_asks(project, events, fields_by_id)
+        fields = {item["id"]: item for item in _read_tickets(project)}
+        return (events, fields) + _read_asks(project, events, fields)
 
-    events, fields_by_id, asks = current()
+    events, fields_by_id, asks, blocked = current()
     # 1. marks and answers in step
     changed = False
     for ask in asks.values():
-        batch, marked = _marked_first(project, ask, events)
-        if batch is None:
+        if ask.batch is None:
             continue
-        item = batch["items"][0]
-        if marked is not None and ask.answer is None:
+        item = ask.batch["items"][0]
+        if ask.marked is not None and ask.answer is None:
             text = _answer_from_mark(ask, item)
-            if text is None:
-                said("  decision ticket %d: the mark approves %s but its note names no path; answer it with where %s is"
-                     % (ask.id, ask.name, ask.name))
-                continue
             try:
                 if item["by"] == batches.DECIDER:
-                    decisions.decide(project, ask.id, text, "the decider's mark on item 1 of %s" % batch["id"])
+                    decisions.decide(project, ask.id, text, "the decider's mark on item 1 of %s" % ask.batch["id"])
                 else:
-                    answer_ticket(project, ask.id, text, rationale="the owner's mark on item 1 of %s" % batch["id"])
+                    answer_ticket(project, ask.id, text, rationale="the owner's mark on item 1 of %s" % ask.batch["id"])
                 changed = True
-                said("  decision ticket %d answered by the %s's mark in %s: %s" % (ask.id, item["by"], batch["id"], text))
+                say("  decision ticket %d answered by the %s's mark in %s: %s" % (ask.id, item["by"], ask.batch["id"], text))
             except ProjectError as failure:
-                said("  decision ticket %d: the mark in %s is not taken (%s)" % (ask.id, batch["id"], failure))
-        elif ask.answer is not None and item["mark"] is None:
+                say("  decision ticket %d: the mark in %s is not taken (%s)" % (ask.id, ask.batch["id"], failure))
+        elif ask.answer is not None and item["mark"] is None and ask.batch["status"] == "open":
             picked = choice(ask.answer[1], ask.licensed)
             try:
-                batches.mark(project, batch["id"], 1, APPROVE if picked == INSTALL else DECLINE,
-                             note=GO_WITHOUT if picked == GO_WITHOUT else None,
+                batches.mark(project, ask.batch["id"], 1, APPROVE if picked == INSTALL else DECLINE,
+                             note=GO_WITHOUT if picked == GO_WITHOUT else (where(ask.answer[1]) if ask.licensed else None),
                              by=batches.DECIDER if ask.answer[2] == "decider" else batches.OWNER)
                 changed = True
             except batches.BatchError:
                 pass
     if changed:
-        events, fields_by_id, asks = current()
+        events, fields_by_id, asks, blocked = current()
 
     # 2. answers acted on
+    acted = False
     for ask in asks.values():
-        if ask.answer is None:
+        standing = ask.effective()
+        if standing is None:
             continue
-        at, answer, decided_by = ask.answer
-        _, marked = _marked_first(project, ask, events)
-        if marked is not None and marked[0] < at and _answer_from_mark(ask, marked[1]) is not None:
-            # A mark given before the answer journaled since: the first answer wins.
-            answer = _answer_from_mark(ask, marked[1])
-            decided_by = "decider" if marked[1]["by"] == batches.DECIDER else "human"
+        acted = True
+        at, answer, decided_by = standing
         picked = choice(answer, ask.licensed)
         if picked == GO_WITHOUT and not ask.gap:
             settled.waived.add(ask.name)
         if ask.gap:
-            _act_on_gap(project, ask, picked, decided_by, runner, settled, said, notify, harness_root, fields_by_id)
+            _act_on_gap(project, ask, standing, picked, runner, tools, settled, say, notify, harness_root, fields_by_id, blocked)
         elif picked == INSTALL and ask.licensed:
-            _act_on_licensed(project, ask, answer, runner, tools, settled, said, notify)
+            _act_on_licensed(project, ask, answer, runner, tools, settled, say, notify)
         elif picked == INSTALL:
-            _act_on_install(project, ask, runner, tools, settled, said, notify, harness_root)
+            _act_on_install(project, ask, runner, tools, settled, say, notify, harness_root)
 
     # 3. missing tools asked for
-    events, fields_by_id, asks = current()
+    if acted:
+        events, fields_by_id, asks, blocked = current()
     by_tool = {}
     for fields in sorted(fields_by_id.values(), key=lambda item: item["id"]):
         if fields["kind"] == "decision" or fields["status"] not in ("open", "failed"):
             continue
         for name in settled.missing(fields, tools):
-            if is_harness_tool(name):
-                settled.waiting.setdefault(fields["id"], []).append(
-                    "%s is a harness tool that tools.json does not record; `wayline tools install` records it" % name)
-            elif not known_tool(name):
-                settled.waiting.setdefault(fields["id"], []).append("%s is no tool the harness knows" % name)
-            else:
-                by_tool.setdefault(name, []).append(fields["id"])
+            installs = provider(name)
+            if installs is None:
+                why = ("%s is a harness tool that tools.json does not record; `wayline tools install` records it" % name
+                       if is_harness_tool(name) else "%s is no tool the harness has a route for" % name)
+                settled.waiting.setdefault(fields["id"], []).append(why)
+            elif fields["id"] not in by_tool.setdefault(installs, []):
+                by_tool[installs].append(fields["id"])
     for name, waiting in sorted(by_tool.items()):
         found = [ask for ask in asks.values() if ask.name == name and not ask.gap]
         ask = found[0] if found else None
-        if ask is None or any(ask.id not in fields_by_id[identifier]["blocked_by"] for identifier in waiting):
+        if ask is not None and all(ask.id in fields_by_id[identifier]["blocked_by"] for identifier in waiting):
+            identifier = ask.id
+        else:
+            dry, problem = {}, None
+            if ask is None and name not in LICENSED:
+                sized = _dry_run_job(project, name, waiting, runner, settled, harness_root)
+                if isinstance(sized, str):
+                    for ticket in waiting:
+                        settled.waiting.setdefault(ticket, []).append(sized)
+                    continue
+                dry, problem = sized
             try:
-                report = open_ask(project, name, waiting, root=tools.root, run=run, notify=notify)
-            except (ValueError, OSError) as failure:
-                said("  %s wait for %s, and its software decision could not be opened: %s" % (_named(waiting), name, failure))
+                report = open_ask(project, name, waiting, notify=notify, dry=dry, problem=problem)
+            except (ValueError, OSError, RuntimeError) as failure:
+                say("  %s wait for %s, and its software decision could not be opened: %s" % (_named(waiting), name, failure))
                 continue
             if report["opened"]:
-                said("  %s %s %s: decision ticket %d asks whether to install it" % (
+                say("  %s %s %s: decision ticket %d asks whether to install it" % (
                     _named(waiting), "needs" if len(waiting) == 1 else "need", name, report["ticket"]))
             identifier = report["ticket"]
-        else:
-            identifier = ask.id
         for ticket in waiting:
-            settled.waiting.setdefault(ticket, []).append(_waiting_line(name, identifier, asks.get(identifier), tools))
+            settled.waiting.setdefault(ticket, []).append(_waiting_line(name, identifier, asks.get(identifier)))
     for ask in asks.values():
-        if ask.answer is None and ask.fields["status"] == "open":
+        if ask.effective() is None and ask.fields["status"] == "open":
             _ensure_batch(project, ask.id)
     return settled
+
+
+def _dry_run_job(project, name, waiting, runner, settled, harness_root):
+    """The dry run of a project's tool, as a job of the first ticket waiting on it: `(dry, problem)` once it ended, else why it waits.
+
+    The job runs `wayline tools install <name> --dry-run --json`, which may install the harness's
+    micromamba and asks conda-forge to solve, so the wave launches it and goes on; a later wave reads
+    the plan from the job's log. A job that failed opens the ask with the sizes unknown.
+    """
+    from wayline import HARNESS_ROOT, resources
+
+    folder = Path(project) / "research" / "jobs"
+    records = [toolbox.read_json_file(path) or {} for path in sorted(folder.glob("t*-%s-%s-*.json" % (DRY_RUN_JOB, name)))]
+    live = [record for record in records if record.get("status") in resources.LIVE_JOB_STATUSES]
+    for record in live:
+        if record.get("status") == "pending":
+            try:
+                runner.launch(resources.spec_from_record(record))
+            except (ValueError, OSError, RuntimeError) as failure:
+                return "%s is not installed; its dry-run job %s could not be launched: %s" % (name, record["id"], failure)
+        settled.in_flight.append(record["id"])
+        return "%s is not installed; its dry run runs as job %s, and its decision opens once it ends" % (name, record["id"])
+    if records:
+        record = records[-1]
+        attempts = record.get("attempts") or [{}]
+        if record.get("status") == "exited" and attempts[-1].get("exit_code") in (0, None):
+            for line in reversed(resources.log_tail(record.get("log") or "").splitlines()):
+                if line.strip().startswith("{"):
+                    try:
+                        return json.loads(line), None
+                    except ValueError:
+                        break
+            return {}, "the dry-run job %s printed no plan" % record["id"]
+        return {}, "the dry-run job %s ended %s" % (record["id"], record.get("status"))
+    job = "%s1" % _job_prefix(min(waiting), DRY_RUN_JOB, name)
+    command = [str(Path(harness_root or HARNESS_ROOT) / "bin" / "wayline"), "tools", "install", name, "--dry-run", "--json"]
+    try:
+        _launch(project, runner, {"id": job, "ticket": min(waiting), "command": command, "cwd": str(project), "env": _job_env(),
+                                  "wallclock_minutes": DRY_RUN_WALLCLOCK_MINUTES})
+    except (ValueError, OSError, RuntimeError) as failure:
+        return "%s is not installed; its dry-run job %s could not be launched: %s" % (name, job, failure)
+    settled.in_flight.append(job)
+    return "%s is not installed; its dry run runs as job %s, and its decision opens once it ends" % (name, job)
 
 
 def _answer_from_mark(ask, item):
     if item["mark"] == DECLINE:
         return GO_WITHOUT if (item.get("note") or "").strip().lower().startswith("go without") else NOT_NOW
     if ask.licensed:
-        return where(item.get("note"))
+        return where(item.get("note")) or INSTALL  # an approve with no path in its note is asked again for the path
     return INSTALL
 
 
-def _waiting_line(name, identifier, ask, tools):
-    if ask is None or ask.answer is None:
+def _waiting_line(name, identifier, ask):
+    standing = ask.effective() if ask is not None else None
+    if standing is None:
         return "%s is not installed; decision ticket %d asks about it" % (name, identifier)
-    picked = choice(ask.answer[1], ask.licensed)
-    if picked == NOT_NOW:
+    if choice(standing[1], ask.licensed) == NOT_NOW:
         return "%s is not installed; decision ticket %d was answered %s" % (name, identifier, NOT_NOW)
     return "%s is being installed (decision ticket %d)" % (name, identifier)
 
@@ -1017,85 +1108,94 @@ def _failure(ask, attempt, ended):
     return "the install job exited %s and %s is still not recorded" % (ended[0], ask.name)
 
 
-def _run_install(project, ask, runner, settled, said, harness_root, change=False):
-    """Launch the next install job of an Install answer, or the pending one; the decision's own job, never a worker's."""
-    from wayline import HARNESS_ROOT
+def _launch_ask_job(project, ask, runner, kind, command, wallclock, settled, say):
+    """Launch this ask's pending job of `kind`, or write and launch the next one; the job's id, or None when the runner refused it."""
     from wayline import resources
 
-    pending = _pending(project, ask, INSTALL_JOB)
-    if pending is not None:
-        try:
+    pending = _pending(project, ask, kind)
+    job = pending["id"] if pending is not None else _next_job_id(project, ask, kind)
+    try:
+        if pending is not None:
             runner.launch(resources.spec_from_record(pending))
-        except (resources.JobError, OSError, ValueError) as failure:
-            said("  decision ticket %d: the install job %s could not be launched: %s" % (ask.id, pending["id"], failure))
-            return
-        settled.in_flight.append(pending["id"])
-        return
+        else:
+            _launch(project, runner, {"id": job, "ticket": ask.id, "command": command, "cwd": str(project), "env": _job_env(),
+                                      "wallclock_minutes": wallclock})
+    except (ValueError, OSError, RuntimeError) as failure:  # a refused launch (`resources.JobError`) fails no wave
+        say("  decision ticket %d: the %s job %s could not be launched: %s" % (ask.id, kind, job, failure))
+        return None
+    settled.in_flight.append(job)
+    return job
+
+
+def _run_install(project, ask, runner, settled, say, harness_root, change=False):
+    """Launch the next install job of an Install answer; the decision's own job, never a worker's."""
+    from wayline import HARNESS_ROOT
+
     attempt = len(_attempts(ask, INSTALL_JOB)) + 1
-    job = _next_job_id(project, ask, INSTALL_JOB)
     command = [str(Path(harness_root or HARNESS_ROOT) / "bin" / "wayline"), "tools", "install", ask.name, "--project", str(project),
                "--decision", str(ask.id), "--attempt", str(attempt)] + (["--change"] if change else [])
-    try:
-        _launch(project, runner, {"id": job, "ticket": ask.id, "command": command, "cwd": str(project), "env": _job_env(),
-                                  "wallclock_minutes": JOB_WALLCLOCK_MINUTES})
-    except (ValueError, OSError) as failure:
-        said("  decision ticket %d: the install job %s could not be launched: %s" % (ask.id, job, failure))
-        return
-    settled.in_flight.append(job)
-    said("  decision ticket %d: installing %s, attempt %d of %d, as job %s" % (ask.id, ask.name, attempt, ATTEMPTS, job))
+    job = _launch_ask_job(project, ask, runner, INSTALL_JOB, command, JOB_WALLCLOCK_MINUTES, settled, say)
+    if job is not None:
+        say("  decision ticket %d: %s %s, attempt %d of %d, as job %s" % (
+            ask.id, "changing" if change else "installing", ask.name, attempt, ATTEMPTS, job))
 
 
-def _act_on_install(project, ask, runner, tools, settled, said, notify, harness_root):
-    if _installed(tools.entry(ask.name)):
-        return
+def _install_settled(project, ask, runner, settled, say, notify, harness_root, change=False):
+    """Run an install (or a change) to its end: True once it succeeded, else False while it runs, retries, or was asked again."""
     attempts = _attempts(ask, INSTALL_JOB)
+    if change and any(outcome[0] == "installed" for outcome in ask.outcomes.values()):
+        return True
     running = [job for job, ended in attempts if ended is None]
     if running:
         settled.in_flight.extend(running)
-        return
+        return False
     if len(attempts) < ATTEMPTS:
-        _run_install(project, ask, runner, settled, said, harness_root)
-        return
-    why = "installing %s failed %d times; the last: %s" % (ask.name, len(attempts), _failure(ask, len(attempts), attempts[-1][1]))
+        _run_install(project, ask, runner, settled, say, harness_root, change=change)
+        return False
+    why = "%s %s failed %d times; the last: %s" % ("changing" if change else "installing", ask.name, len(attempts),
+                                                  _failure(ask, len(attempts), attempts[-1][1]))
     if reopen(project, ask.id, why, notify=notify):
-        said("  decision ticket %d is asked again: %s" % (ask.id, why))
+        say("  decision ticket %d is asked again: %s" % (ask.id, why))
+    return False
 
 
-def _act_on_licensed(project, ask, answer, runner, tools, settled, said, notify):
+def _act_on_install(project, ask, runner, tools, settled, say, notify, harness_root):
+    if not _installed(tools.entry(ask.name)):
+        _install_settled(project, ask, runner, settled, say, notify, harness_root)
+
+
+def _act_on_licensed(project, ask, answer, runner, tools, settled, say, notify, recheck=False):
+    """Record licensed software where the answer says it is, after one check job: True once it is recorded.
+
+    `recheck` is a gap's: the software is recorded already, and the owner changed it, so it is checked
+    and recorded again rather than taken as it stands.
+    """
     from wayline import resources
     from wayline.ledger import Ledger, TOOL_INSTALLED
 
     path = where(answer)
     entry = tools.entry(ask.name)
-    if entry and entry.get("executable") == path and _installed(entry):
-        return
+    if recheck and any(outcome[0] == "recorded" for outcome in ask.outcomes.values()):
+        return True
+    if not recheck and entry and entry.get("executable") == path and _installed(entry):
+        return True
     if path is None or not os.path.isfile(path):
         why = "%s is not at %s; say where the owner installed it by the absolute path of its executable" % (ask.name, path) if path \
-            else "the answer names no absolute path to %s" % ask.name
+            else "the answer names no absolute path to %s; say where the owner installed it" % ask.name
         if reopen(project, ask.id, why, notify=notify):
-            said("  decision ticket %d is asked again: %s" % (ask.id, why))
-        return
+            say("  decision ticket %d is asked again: %s" % (ask.id, why))
+        return False
     checks = _attempts(ask, CHECK_JOB)
     if not checks:
-        pending = _pending(project, ask, CHECK_JOB)
-        try:
-            if pending is not None:
-                runner.launch(resources.spec_from_record(pending))
-                job = pending["id"]
-            else:
-                job = _next_job_id(project, ask, CHECK_JOB)
-                _launch(project, runner, {"id": job, "ticket": ask.id, "command": [path] + list(LICENSED[ask.name]), "cwd": str(project),
-                                          "wallclock_minutes": LICENSED_CHECK_TIMEOUT_S // 60})
-        except (ValueError, OSError) as failure:
-            said("  decision ticket %d: the check of %s could not be launched: %s" % (ask.id, ask.name, failure))
-            return
-        settled.in_flight.append(job)
-        said("  decision ticket %d: checking %s at %s with `%s -batch \"ver\"`, as job %s" % (ask.id, ask.name, path, ask.name, job))
-        return
+        job = _launch_ask_job(project, ask, runner, CHECK_JOB, [path] + list(LICENSED[ask.name]), LICENSED_CHECK_TIMEOUT_S // 60,
+                              settled, say)
+        if job is not None:
+            say("  decision ticket %d: checking %s at %s with `%s -batch \"ver\"`, as job %s" % (ask.id, ask.name, path, ask.name, job))
+        return False
     job, ended = checks[-1]
     if ended is None:
         settled.in_flight.append(job)
-        return
+        return False
     record = runner.read(job) or {}
     text = resources.log_tail(record.get("log") or "")
     ledger = Ledger(project)
@@ -1108,41 +1208,40 @@ def _act_on_licensed(project, ask, answer, runner, tools, settled, said, notify)
         ledger.append_event(TOOL_INSTALLED, {"ticket": ask.id, "name": ask.name, "outcome": "failed", "version": None, "attempt": len(checks),
                                              "reason": str(failure)}, ticket=ask.id)
         if reopen(project, ask.id, str(failure), notify=notify):
-            said("  decision ticket %d is asked again: %s" % (ask.id, failure))
-        return
+            say("  decision ticket %d is asked again: %s" % (ask.id, failure))
+        return False
     ledger.append_event(TOOL_INSTALLED, {"ticket": ask.id, "name": ask.name, "outcome": "recorded", "version": entry["version"],
                                          "attempt": len(checks), "reason": None}, ticket=ask.id)
     tools.record = toolbox.read_json_file(tools.root / toolbox.TOOLS_JSON) or {}
-    said("  decision ticket %d: %s %s recorded at %s (installer: owner, %d toolboxes)" % (
+    say("  decision ticket %d: %s %s recorded at %s (installer: owner, %d toolboxes)" % (
         ask.id, ask.name, entry["version"], path, len(entry.get("toolboxes") or {})))
+    return True
 
 
-def _act_on_gap(project, ask, picked, decided_by, runner, settled, said, notify, harness_root, fields_by_id):
+def _act_on_gap(project, ask, standing, picked, runner, tools, settled, say, notify, harness_root, fields_by_id, blocked):
+    at, answer, decided_by = standing
     if picked == NOT_NOW:
         return
     if picked == INSTALL:
         if decided_by != "human":
-            said("  decision ticket %d: changing the installed %s is the owner's word alone; the %s's answer is not acted on"
-                 % (ask.id, ask.name, decided_by))
+            say("  decision ticket %d: changing the installed %s is the owner's word alone; the %s's answer is not acted on"
+                % (ask.id, ask.name, decided_by))
             return
-        if not any(outcome[0] == "installed" for outcome in ask.outcomes.values()):
-            attempts = _attempts(ask, INSTALL_JOB)
-            running = [job for job, ended in attempts if ended is None]
-            if running:
-                settled.in_flight.extend(running)
-                return
-            if len(attempts) < ATTEMPTS:
-                _run_install(project, ask, runner, settled, said, harness_root, change=True)
-                return
-            why = "changing %s failed %d times; the last: %s" % (ask.name, len(attempts), _failure(ask, len(attempts), attempts[-1][1]))
-            if reopen(project, ask.id, why, notify=notify):
-                said("  decision ticket %d is asked again: %s" % (ask.id, why))
+        if ask.licensed:
+            done = _act_on_licensed(project, ask, answer, runner, tools, settled, say, notify, recheck=True)
+        else:
+            done = _install_settled(project, ask, runner, settled, say, notify, harness_root, change=True)
+        if not done:
             return
-    _reopen_blocked(project, ask, fields_by_id, said)
+    _reopen_blocked(project, ask, at, fields_by_id, blocked, say)
 
 
-def _reopen_blocked(project, ask, fields_by_id, said):
-    """The tickets a gap blocked go back to open once the owner changed the tool or said to go without it."""
+def _reopen_blocked(project, ask, at, fields_by_id, blocked, say):
+    """The ticket this gap blocked goes back to open, once: only while its last block is this very gap, reported before the answer.
+
+    A ticket blocked again afterwards (the same gap again, or its touch set) is left as it is: the
+    planner re-cuts it, or the owner asks again, and no wave opens it over and over.
+    """
     from wayline.ledger import TICKET_RERUN, Ledger
     from wayline.tickets import filename, read_ticket, tickets_dir, write_ticket
 
@@ -1150,13 +1249,17 @@ def _reopen_blocked(project, ask, fields_by_id, said):
     for fields in sorted(fields_by_id.values(), key=lambda item: item["id"]):
         if fields["status"] != "blocked" or ask.id not in fields["blocked_by"]:
             continue
+        last = blocked.get(fields["id"])
+        gap = gap_of(last[1]) if last else None
+        if last is None or last[0] > at or gap is None or gap_origin(*gap) != ask.fields.get("origin"):
+            continue
         with ledger.lock():
             current, body = read_ticket(tickets_dir(project) / filename(fields))
             if current["status"] != "blocked":
                 continue
             ledger.append_event(TICKET_RERUN, {"ticket": current["id"], "by": "code"}, ticket=current["id"])
             write_ticket(ledger, dict(current, status="open"), body)
-        said("  ticket %d is open again: decision ticket %d answered its gap in %s" % (fields["id"], ask.id, ask.name))
+        say("  ticket %d is open again: decision ticket %d answered its gap in %s" % (fields["id"], ask.id, ask.name))
 
 
 def open_gap(project, ticket, name, gap, notify=None):
@@ -1170,8 +1273,8 @@ def setup_question(project, tools=None, root=None, run=run_tool):
     """The one setup question under `autonomous`: every tool the planned work needs and does not have, with its route and sizes.
 
     Returns `{question, tools: [{name, tickets, route, download_bytes, disk_bytes, licensed}]}`, or None when the
-    planned work needs nothing this machine lacks. The setup conversation asks it once; after setup the decider
-    answers each tool's `software` decision.
+    planned work needs nothing this machine lacks. The setup conversation asks it once (`wayline tools needs`),
+    synchronously, since nothing waits on it then; after setup the decider answers each tool's `software` decision.
     """
     tools = tools if tools is not None else Tools(root)
     needed = {}
@@ -1179,8 +1282,9 @@ def setup_question(project, tools=None, root=None, run=run_tool):
         if fields["kind"] == "decision" or fields["status"] not in ("open", "failed"):
             continue
         for name in fields.get("software") or []:
-            if not _installed(tools.entry(name)) and not is_harness_tool(name) and known_tool(name):
-                needed.setdefault(name, []).append(fields["id"])
+            installs = provider(name)
+            if installs is not None and not _installed(tools.entry(name)) and fields["id"] not in needed.get(installs, []):
+                needed.setdefault(installs, []).append(fields["id"])
     if not needed:
         return None
     listed, lines = [], []
@@ -1219,26 +1323,26 @@ def _project_for(explicit, required):
 def yes_from_decision(project, identifier, name, change=False):
     """The yes a `--decision` names: a `software` decision about this tool whose answer is Install; raises `ToolsError` otherwise.
 
-    A change to an installed tool also needs the answer to be the owner's.
+    The answer is the one that stands (`_Ask.effective`), so the job never reads another answer than
+    the conductor that launched it. A change to an installed tool also needs the answer to be the owner's.
     """
-    from wayline import replay
     from wayline.ledger import Ledger
 
-    fields = {ticket["id"]: ticket for ticket in _read_tickets(project)}.get(identifier)
-    found = asked(fields) if fields else None
+    fields_by_id = {ticket["id"]: ticket for ticket in _read_tickets(project)}
+    found = asked(fields_by_id.get(identifier)) if identifier in fields_by_id else None
     if found is None or found[0] != name:
         raise ToolsError("ticket %s of %s is no software decision about %s" % (identifier, project, name))
     if change and not found[1]:
         raise ToolsError("decision ticket %d asks whether to install %s, not to change it; changing an installed tool is the owner's "
                          "word alone" % (identifier, name))
     events, _ = Ledger(project).read_events()
-    answered = replay.replay(events).answers.get(identifier)
-    if answered is None or choice(answered.get("answer"), name in LICENSED) != INSTALL:
+    standing = _read_asks(project, events, fields_by_id)[0][identifier].effective()  # the answer the conductor acts on, too
+    if standing is None or choice(standing[1], name in LICENSED) != INSTALL:
         raise ToolsError("decision ticket %d is not answered %s" % (identifier, INSTALL))
-    if change and answered.get("decided_by") != "human":
+    if change and standing[2] != "human":
         raise ToolsError("decision ticket %d was answered by the %s; changing an installed tool is the owner's word alone"
-                         % (identifier, answered.get("decided_by")))
-    return answered
+                         % (identifier, standing[2]))
+    return {"answer": standing[1], "decided_by": standing[2]}
 
 
 def journal_install(project, identifier, name, outcome, version=None, attempt=None, reason=None):
@@ -1268,7 +1372,10 @@ def install_command(name, options, root=None, run=run_tool, say=None):
         except ToolsError as failure:
             print("wayline tools install: %s" % failure, file=sys.stderr)
             return 1
-        print("%s  %s" % (name, _route_line(name, dry)))
+        if getattr(options, "json", False):
+            print(json.dumps(dry))  # the last line a dry-run job's log holds, which the conductor reads
+            return 0
+        print("%s  %s" % (name, _route_line(name)))
         for line in _size_lines(name, dry, None):
             print("  " + line)
         return 0
@@ -1348,3 +1455,29 @@ def package_command(args, root=None, run=run_tool):
     print("%s packages %s into %s, locked in %s" % (done["language"], " ".join(done["packages"]), done["environment"], done["lock"]))
     return 0
 
+
+def needs_command(args, root=None, run=run_tool):
+    """`wayline tools needs [--project <path>] [--json]`: the setup question, every tool the planned work needs and lacks."""
+    import argparse
+
+    from wayline.cli import parse_args
+    from wayline.project import ProjectError
+
+    parser = argparse.ArgumentParser(prog="wayline tools needs",
+                                     description="the setup question: every tool the planned work needs and this machine lacks, sized")
+    parser.add_argument("--project", help="the project; WAYLINE_PROJECT or the active one by default")
+    parser.add_argument("--json", action="store_true", help="print the question and the tools as JSON")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    try:
+        project = _project_for(options.project, required=True)
+    except ProjectError as failure:
+        print("wayline tools needs: %s" % failure, file=sys.stderr)
+        return 2
+    asked_now = setup_question(project, tools=Tools(Path(root)) if root is not None else None, run=run)
+    if options.json:
+        print(json.dumps(asked_now or {"question": None, "tools": []}, indent=2))
+    else:
+        print(asked_now["question"] if asked_now else "the planned work needs no software this machine lacks")
+    return 0

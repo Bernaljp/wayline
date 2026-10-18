@@ -984,6 +984,8 @@ def tools_command(args):
         return _tools_run(args[1:])
     if args[:1] == ["package"]:
         return software.package_command(args[1:])
+    if args[:1] == ["needs"]:
+        return software.needs_command(args[1:])
     parser = argparse.ArgumentParser(
         prog="wayline tools", description="the harness's tools under ~/.wayline/tools/, each recorded in tools.json",
         epilog="wayline tools run <name> -- <args> runs a recorded tool by its absolute path and environment; "
