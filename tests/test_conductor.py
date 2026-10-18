@@ -756,6 +756,18 @@ class ObjectiveClassTest(FiveTicketsCase):
         self.lay_out()
         self.assertEqual(self.first_launch(), [1])
 
+    def test_an_objectives_json_that_cannot_be_read_orders_every_ticket_class_2_and_says_so(self):
+        self.lay_out()
+        open_objective(self.project)
+        self.serve(2, "O1")
+        self.ledger.write_json("objectives.json", {"objectives": "O1"})
+        out = io.StringIO()
+        with worker.use_fake() as fake:
+            fake.load(FIVE_TICKETS / "fake-worker.json")
+            wave = Conductor(self.project, policy=self.one_slot(), out=out).wave()
+        self.assertEqual(wave.launched, [1], "no objective can be read as open, and the wave goes on")
+        self.assertIn("research/objectives.json cannot be read", out.getvalue())
+
 
 class ParallelOutcomeTest(FiveTicketsCase):
     """What one worker's trouble does to the other worker of the same wave."""

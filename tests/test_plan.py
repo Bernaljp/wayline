@@ -549,6 +549,17 @@ class ObjectivesTest(PlanCase):
         self.assertEqual((measure["metric"], measure["direction"]), ("auroc", "up"), "the metric and direction come from the goal")
         self.assertIsNone(objectives.ticket_goal(self.ticket(1), records))
 
+    def test_objectives_changed_after_the_confirmation_leave_the_spec_cuttable(self):
+        """An objective opened or parked after the spec was confirmed is no dead end: the tickets are held to what is open."""
+        objectives.add_objective(self.project, "A question asked after the confirmation")
+        objectives.change_objective(self.project, "O1", "parked", by="owner", answer="later")
+        value = cut()
+        value["tickets"][4]["objectives"] = []  # T5 named O1, which is parked now
+        self.script(planned(value))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual(self.ticket(4)["goal"], "O2")
+
     def test_the_planner_reads_the_objectives(self):
         self.script(planned(cut()))
         self.plan()

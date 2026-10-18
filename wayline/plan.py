@@ -106,7 +106,6 @@ RECUT = ("open", "blocked")
 # The statuses a ticket can be split from: not started, or stopped short of a person.
 SPLITTABLE = ("open", "failed", "blocked", "needs_human")
 CLOSED = SATISFIED + ("parked",)
-OPEN = specify.OPEN                     # the status of an objective a ticket may name
 EXISTING = "#"                          # a reference to a ticket the project holds: #<id>
 BY_PLANNER = "planner"                  # `ticket_cancelled` by the planner: a superseded ticket
 MAIN = "main"                           # the base commit's branch, the one worktrees branch from (decision 3)
@@ -495,7 +494,10 @@ def prepare(record, project, existing, index, cut, start=None):
     project = Path(project).resolve()
     prepared = Prepared()
     failures = prepared.failures
-    recorded = {item.get("id"): item for item in objectives.read_objectives(project)}
+    try:
+        recorded = objectives.read_objectives(project)
+    except objectives.ObjectivesUnreadable as failure:
+        raise PlanError("%s, so no ticket can be held to the objectives; nothing was written" % failure) from None
     start = next_id(project) if start is None else start
     tickets = record.get("tickets") or []
     ids, seen = {}, set()
@@ -622,24 +624,11 @@ def _objective_failures(label, item, recorded):
 
     Every objective named must be open; a goal must also carry a measure, since its metric and direction are read from it.
     """
-    failures = []
-    for identifier in item["objectives"]:
-        found = recorded.get(identifier)
-        if found is None:
-            failures.append("%s names the objective %s, which the project does not hold" % (label, identifier))
-        elif found.get("status") != OPEN:
-            failures.append("%s names the objective %s, which is %s; a ticket names only open objectives"
-                            % (label, identifier, found.get("status")))
-    goal = item.get("goal")
-    if goal is not None:
-        found = recorded.get(goal)
-        if found is None:
-            failures.append("%s's goal %s is no objective the project holds" % (label, goal))
-        elif found.get("status") != OPEN:
-            failures.append("%s's goal %s is %s; a ticket's goal is an open objective" % (label, goal, found.get("status")))
-        elif not found.get("measure"):
-            failures.append("%s's goal %s has no measure, so it is an objective and not a goal: name it among `objectives` and "
-                            "leave `goal` null" % (label, goal))
+    failures = objectives.check_named(label, item["objectives"], recorded, "ticket")
+    if item.get("goal") is not None:
+        refused = objectives.check_goal(label, item["goal"], recorded)
+        if refused is not None:
+            failures.append(refused)
     return failures
 
 
@@ -1172,7 +1161,9 @@ def cut_graph(project, cut, *, harness_root=HARNESS_ROOT, policy=None, fall_back
         state = specify.spec_state(project, events)
         if state["state"] != "confirmed":
             raise PlanError("the spec is %s, and the graph is cut from a confirmed spec; run wayline specify first" % state["state"])
-        problems = specify.check_spec(project)
+        # The claims were held to the objectives when the spec was drafted; what changed since is the amendment's
+        # (ticket 92), and the tickets are held to the objectives open now in `prepare`.
+        problems = specify.check_spec(project, against_objectives=False)
         if problems:
             raise PlanError("research/SPEC.md fails its checks, so it cannot be cut: %s" % "; ".join(problems), problems)
     if cut.kind == "split":

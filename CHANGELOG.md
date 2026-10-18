@@ -180,11 +180,16 @@ lists it read-only, marked with its tag.
   `objectives` (the planner states them, empty for a ticket that serves none) and `goal: "O2"` in place of
   `goal_metric`: the metric and direction are read from that goal's measure (`objectives.ticket_goal`). The plan
   returns a ticket naming a closed or unknown objective, or a `goal` with no measure, to the planner, and its prompt
-  inlines `OBJECTIVES.md`. Keep-if-better runs on a ticket whose goal's measure reports `GOAL.json`'s metric, with
-  `GOAL.json`'s command until ticket 87. The pick order's second key is the objective class: 0 for a ticket serving
-  an objective the stopping rule waits on, 1 for another open objective, 2 for none; until ticket 87 lands
-  `stop_when` the rule is its default, `objectives`, every open objective. Which objectives are open is folded from
-  the journal's `objective` events (`View.objectives`). The fixtures that carried `goal_metric` carry `goal`.
+  inlines `OBJECTIVES.md`. A confirmed spec is not checked against the objectives again when the plan cuts it: what
+  changed since is the amendment's (ticket 92), and the tickets are held to the objectives open then. Keep-if-better
+  runs on a ticket whose goal is open and whose measure has `GOAL.json`'s metric and direction, with `GOAL.json`'s
+  command until ticket 87; a closed goal, or a measure that disagrees, is integrated unjudged with the reason said.
+  The pick order's second key is the objective class: 0 for a ticket serving an objective the stopping rule waits
+  on, 1 for another open objective, 2 for none; until ticket 87 lands `stop_when` the rule is its default,
+  `objectives`, every open objective. Which are open is `objectives.json`'s, the one record specify, the plan, and
+  keep-if-better read. An `objectives.json` that cannot be read stops `wayline specify` and `wayline plan` with its
+  reason, and the conductor says it and judges and orders as if no objective were open, never ending a wave on it.
+  The fixtures that carried `goal_metric` carry `goal`.
 
 ## v1.0.0 (2026-09-27)
 

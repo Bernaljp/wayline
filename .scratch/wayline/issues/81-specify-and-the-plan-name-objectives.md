@@ -28,7 +28,7 @@ Not part of this ticket:
 - [x] A Type-A check at specify fails when an open objective has no claim, or a goal's metric is not among the spec's metrics, naming which.
 - [x] Ticket and plan schemas have `objectives` and `goal` in place of `goal_metric`; the planner fills them; `goal` names an objective with a measure, and its metric and direction are read from the measure; a ticket naming a closed objective is refused.
 - [x] Scheduling orders the frontier by the class key (0, 1, 2) after its first key, and the conductor's existing scheduling tests are updated to it.
-- [x] Projects and fixtures that carry `goal_metric` are moved to `goal` in the same commit, so nothing reads `goal_metric` afterward.
+- [ ] Projects and fixtures that carry `goal_metric` are moved to `goal` in the same commit, so nothing reads `goal_metric` afterward.
 - [x] The schemas list in the spec matches the new fields in the same commit.
 - [x] Tests: specify and the planner with the fake launcher over a temporary project with objectives (one with a measure); the Type-A check's three outcomes; the schema refusals; the scheduling class over replayed journals.
 - [x] Prompts and role files for specify and the planner name objectives.

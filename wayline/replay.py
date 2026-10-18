@@ -21,7 +21,7 @@ from wayline.ledger import (
     JOB_LAUNCHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, STALL, SWITCHED,
     TICKET_ACCEPTED, TICKET_BLOCKED, TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED,
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
-    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED, DIFFICULTY_RAISED, OBJECTIVE,
+    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED, DIFFICULTY_RAISED,
 )
 # The model a `paused` and an `unpaused` name for the hold on Fable's weekly window, the fallback consents a `control` may set,
 # and the window a ticket's origin names when it is the ask of decision 15.
@@ -338,13 +338,6 @@ class View:
     # When the last `stall` that asked for a replan was journaled: the replan it owes, until a re-cut is written after it
     # or its run ends (a later run starts its own count).
     replan_at: Optional[str] = None
-    # Every objective's status by id, from its last `objective` event (decision 17): what the pick order's objective class
-    # reads (ticket 81), so a restarted conductor orders the frontier as the journal says, objectives.json aside.
-    objectives: dict = field(default_factory=dict)
-
-    def open_objectives(self):
-        """The ids of the objectives open now."""
-        return {identifier for identifier, status in self.objectives.items() if status == "open"}
 
     def apply(self, event):
         """Fold one journal record into the view; returns the view."""
@@ -364,8 +357,6 @@ class View:
             self.asks[identifier] = {"resets_at": ask_window(payload["origin"]), "opened": event.get("ts")}
         if name == TICKET_CREATED and identifier is not None and origin_rung(payload.get("origin")) is not None:
             self.rung_asks[identifier] = {"rung": origin_rung(payload["origin"]), "opened": event.get("ts")}
-        if name == OBJECTIVE and payload.get("id"):
-            self.objectives[payload["id"]] = payload.get("status")
         if name == RUN_STARTED:
             self.autonomy = payload.get("autonomy") or self.autonomy
             self.run = {"pid": payload.get("pid"), "resume": bool(payload.get("resume")),

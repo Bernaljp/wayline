@@ -407,6 +407,30 @@ class DraftTest(SpecifyCase):
         self.assertEqual(code, 1)
         self.assertIn("what should the project answer first?", out)
 
+    def test_an_objectives_json_that_cannot_be_read_stops_the_draft_without_a_traceback(self):
+        self.ledger.write_json("objectives.json", {"objectives": 3})
+        report = self.specify()
+        self.assertIn("research/objectives.json cannot be read", report["stopped"])
+        self.assertEqual(self.fake.calls, [])
+        code, out, err = run("specify", "--project", str(self.project))
+        self.assertEqual(code, 1)
+        self.assertNotIn("Traceback", err)
+
+    def test_check_spec_names_an_objectives_json_it_cannot_read(self):
+        self.script(planned(draft()))
+        self.specify()
+        self.ledger.write_json("objectives.json", {"objectives": 3})
+        self.assertTrue(specify.check_spec(self.project)[0].startswith("research/objectives.json cannot be read"))
+
+    def test_a_confirmed_spec_is_not_held_to_objectives_that_changed_after_it(self):
+        """What changes after the confirmation is an amendment's (ticket 92) and the tickets' own check, not a dead end."""
+        self.script(planned(draft()))
+        self.specify()
+        objectives.add_objective(self.project, "A question asked after the confirmation")
+        self.assertEqual(specify.check_spec(self.project, against_objectives=False), [])
+        self.assertIn("the open objective O2 is answered by no claim: name it in the objectives of the claim that answers it",
+                      specify.check_spec(self.project))
+
     def test_one_open_objective_is_enough_and_no_goal_json_is_needed(self):
         """The objective may be the question to answer first, not the project's end; it need carry no measure."""
         (self.project / "research" / "GOAL.json").unlink()

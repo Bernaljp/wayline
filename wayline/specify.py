@@ -89,7 +89,6 @@ CONFIRMING = frozenset(("confirm", "confirmed", "confirms", "yes", "ok", "okay",
                         "lgtm", "good", "fine"))
 FILLERS = frozenset(("i", "it", "the", "this", "spec", "go", "ahead", "looks", "as", "is", "please", "all"))
 INTERACTIVE, CHECKPOINTS, AUTONOMOUS = "interactive", "checkpoints", "autonomous"
-OPEN = "open"                      # the status of an objective pursued now (wayline.objectives)
 
 # The sections of SPEC.md, in order: (the key in spec.json, the heading). The summary leads, then the
 # question, because a spec a reader cannot place is not read.
@@ -268,22 +267,14 @@ def check_draft(draft, objectives=None):
     return failures
 
 
-def _objective_failures(draft, objectives, metrics):
+def _objective_failures(draft, records, metrics):
     """Ticket 81's half of the Type-A checks: the claims against the objectives, and the goals against the metrics."""
-    failures = []
-    status = {item.get("id"): item.get("status") for item in objectives if isinstance(item, dict)}
-    answered = set()
+    failures, answered = [], set()
     for claim in draft["claims"]:
-        for identifier in claim["objectives"]:
-            if identifier not in status:
-                failures.append("claim %s names the objective %s, which the project does not hold" % (claim["id"], identifier))
-            elif status[identifier] != OPEN:
-                failures.append("claim %s names the objective %s, which is %s; a claim names only open objectives"
-                                % (claim["id"], identifier, status[identifier]))
-            else:
-                answered.add(identifier)
-    for item in objectives:
-        if item.get("status") != OPEN:
+        failures += objectives.check_named("claim %s" % claim["id"], claim["objectives"], records, "claim")
+        answered.update(identifier for identifier in claim["objectives"] if objectives.is_open(objectives.named(records, identifier)))
+    for item in records:
+        if not objectives.is_open(item):
             continue
         if item["id"] not in answered:
             failures.append("the open objective %s is answered by no claim: name it in the objectives of the claim that answers it"
@@ -362,11 +353,14 @@ def _read_json(ledger, relative):
         return None
 
 
-def check_spec(project):
+def check_spec(project, against_objectives=True):
     """The Type-A checks on the spec as written: `spec.json`'s structure, and `SPEC.md` being what it renders to.
 
     Returns the failures, empty when both pass. This is what a later phase (the planner cutting tickets)
-    runs before it trusts the spec.
+    runs before it trusts the spec, with `against_objectives` False: the claims were held to the objectives
+    when the spec was drafted and confirmed, and an objective opened, answered, or parked since is the spec
+    amendment's (ticket 92) and the tickets' own check (`plan`), never a spec that cannot be cut. An
+    `objectives.json` that cannot be read is a failure, named.
     """
     ledger = Ledger(project)
     try:
@@ -375,7 +369,13 @@ def check_spec(project):
         return ["research/%s is not JSON: %s" % (SPEC_JSON, failure)]
     if draft is None:
         return ["there is no research/%s; run wayline specify" % SPEC_JSON]
-    failures = check_draft(draft, _objectives(project))
+    records = None
+    if against_objectives:
+        try:
+            records = objectives.read_objectives(project)
+        except objectives.ObjectivesUnreadable as failure:
+            return [str(failure)]
+    failures = check_draft(draft, records)
     try:
         text = ledger.path(SPEC_MD).read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -389,9 +389,6 @@ def check_spec(project):
     return failures
 
 
-def _objectives(project):
-    """The project's objectives, which the claims are checked against; empty when it records none."""
-    return objectives.read_objectives(project)
 
 
 def spec_sha(project):
@@ -674,6 +671,8 @@ class PlannerSession:
 class _Session(PlannerSession):
     """The specify session and its one allowance of each return: invalid output, failed checks, failed verdict."""
 
+    objectives = None  # the project's objectives, read once by `draft_spec`, which every draft of the session is checked against
+
     def draft(self, prompt):
         """A draft that passed the schema and the Type-A checks, with each gate's one return spent as needed."""
         envelope = self.start(prompt)
@@ -689,7 +688,7 @@ class _Session(PlannerSession):
     def checked(self, draft, returned=False):
         """`draft` once it passes the Type-A checks; a failing one goes back once, a second failure raises."""
         self.keep(draft, "draft")
-        failures = check_draft(draft, _objectives(self.project))
+        failures = check_draft(draft, self.objectives)
         if failures and not returned:
             self.say("  the draft failed %d structural check(s); returned to the planner once" % len(failures))
             envelope = self.continue_with(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
@@ -708,7 +707,7 @@ class _Session(PlannerSession):
         if problem is not None:
             raise SpecifyError("the planner's redraft after the verdict could not be read: %s" % problem)
         self.keep(envelope.structured_output, "draft")
-        failures = check_draft(envelope.structured_output, _objectives(self.project))
+        failures = check_draft(envelope.structured_output, self.objectives)
         if failures:
             raise SpecifyError("the redraft after the verdict failed its structural checks; the spec as written stands "
                                "unverified", failures)
@@ -753,11 +752,16 @@ def draft_spec(project, *, change=None, unchanged_from=None, harness_root=HARNES
     project = Path(project).resolve()
     ledger = Ledger(project)
     policy = policy_for(project, harness_root) if policy is None else policy
-    pursued = objectives.open_objectives(project)
+    try:
+        records = objectives.read_objectives(project)
+    except objectives.ObjectivesUnreadable as failure:
+        raise SpecifyError("%s; nothing was drafted" % failure) from None
+    pursued = [item for item in records if objectives.is_open(item)]
     if not pursued:
         raise SpecifyError(NO_OBJECTIVE)
     events, _ = ledger.read_events()
     session = _Session(project, harness_root, policy, fall_back, say)
+    session.objectives = records  # read once: the draft and its redrafts are held to the objectives it was asked for
     records, cut = decider.records_text(project, context_cap(policy, session.model))
     harness = read_harness(project)
     open_questions = [record for record in grill.read_records(project)
