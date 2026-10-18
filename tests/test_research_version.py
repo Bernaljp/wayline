@@ -71,7 +71,7 @@ class ResearchVersionTest(UpgradeCase):
         make_old(self.project)
         before = snapshot(self.project)
         messages = set()
-        for verb in ("run", "tick", "pause", "answer"):
+        for verb in ("run", "tick", "pause", "answer", "objective", "mark", "reference"):
             with self.subTest(verb=verb):
                 code, _, err = self.quietly(cli.main, [verb, "--project", str(self.project)])
                 self.assertEqual(code, 1)
@@ -81,6 +81,19 @@ class ResearchVersionTest(UpgradeCase):
         self.assertEqual(snapshot(self.project), before)
         code, _, err = self.quietly(cli.main, ["status", "--project", str(self.project)])
         self.assertNotIn("wayline upgrade --to", err)
+
+    def test_every_verb_is_either_refused_on_an_old_project_or_known_not_to_write_to_one(self):
+        # A verb added later has to be put on one side: a verb that writes to a project and is missing from
+        # `cli.WRITING_VERBS` would write into a project of another `research_version` unrefused.
+        not_writing = {
+            "init", "status", "serve", "upgrade",  # lay out a new project, read, list read-only, or take the way back
+            "accept", "consult", "job", "launch",  # run inside a worktree the conductor launched, which `run` refuses
+            "figures", "guidelines", "registry", "tools",  # write only to the harness or ~/.wayline/
+        }
+        verbs = {verb.name for verb in cli.VERBS}
+        self.assertEqual(verbs - cli.WRITING_VERBS - not_writing, set(), "verbs on neither side")
+        self.assertEqual(cli.WRITING_VERBS & not_writing, set())
+        self.assertEqual(cli.WRITING_VERBS - verbs, set(), "refused names that are not verbs")
 
 
 class OldProjectDashboardTest(ActionCase):

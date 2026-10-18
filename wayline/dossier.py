@@ -39,19 +39,20 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from collections import namedtuple
 from html.parser import HTMLParser
 from pathlib import Path
 
 from wayline import HARNESS_ROOT
-from wayline import worker
+from wayline import pacing, worker
 from wayline.cli import parse_args
-from wayline.fetch import FetchError, Fetcher, UrllibBackend, caching_fetcher, recording_fetcher
+from wayline.fetch import AnswerCache, FetchError, Fetcher, UrllibBackend, recording_fetcher
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.kb import ID_MAX, NODES_DIR, make_node, rebuild_query_pack, slugify, write_node
 from wayline.ledger import ledger_for, now_ts
 from wayline.project import HARNESS_JSON, ProjectError, find_project, policy_for, read_harness
-from wayline.scout import Reference, Scout, UNRESOLVED, parse_reference
+from wayline.scout import Reference, Scout, UNRESOLVED, VERIFIED, normalize_title, parse_reference, timestamp
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets, write_ticket
 
 __all__ = [
@@ -64,6 +65,8 @@ __all__ = [
     "arxiv_source_url", "fetch_arxiv_source", "extract_source", "main_tex", "flatten",
     "strip_comments", "environments", "latex_inventory", "aux_numbers", "apply_aux_numbers",
     "html_inventory", "build_inventory", "source_fetcher",
+    "LOOKUP_FIELDS", "work_keys", "same_work", "merge_lookup", "file_lookup", "retry_state", "give_up", "retry_flagged",
+    "filed_index", "join_duplicates", "keep_source_pdf", "hand_over", "pdf_details", "reference_command",
 ]
 
 REFS = "refs"
@@ -107,6 +110,8 @@ _SENTENCE_END = ".:;,!?"
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 _REFERENCES_HEADING = re.compile(r"^references?\b", re.IGNORECASE)
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+_TOP_ITEM = re.compile(r"^ ?(?:[-*+]|\d+[.)])\s+\S")  # a list item at the margin; anything indented further is nested
+_PDF_ITEM = re.compile(r"^PDF:\s*`([^`]+)`\s*$")
 _LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _EMPTY_ANSWER = frozenset(["none", "n/a", "na", "nothing", "tbd", "todo", "-", "none."])
 _ALNUM = re.compile(r"[a-z0-9]", re.IGNORECASE)
@@ -139,7 +144,9 @@ def slug_for(record, taken=()):
     parts.extend(words[:5])
     stem = "-".join(part for part in parts if part).strip("-")
     if not stem:
-        stem = slugify(identifiers.get("arxiv_id") or identifiers.get("doi") or (record.get("query") or {}).get("value") or "")
+        query = record.get("query") or {}
+        asked = Path(query["value"]).stem if query.get("kind") == "file" else query.get("value")
+        stem = slugify(identifiers.get("arxiv_id") or identifiers.get("doi") or asked or "")
     stem = slugify(stem, STEM_MAX) or "reference"
     candidate, suffix = stem, 1
     while candidate in taken:
@@ -167,7 +174,7 @@ def _family_name(author):
 
 
 def l0_dossier(scout_record, slug, created=None):
-    """The scout's answer as a validated level 0 dossier."""
+    """The scout's answer as a validated level 0 dossier: the first name it was known by, and its `retry` flag when one is set."""
     dossier = {
         "schema_version": 1,
         "slug": slug,
@@ -180,10 +187,170 @@ def l0_dossier(scout_record, slug, created=None):
         "abstract": scout_record.get("abstract"),
         "open_access": dict(scout_record.get("open_access") or {}),
         "attempts": list(scout_record.get("attempts") or []),
+        "names": [dict(scout_record["query"])],
         "created": created or now_ts(),
     }
+    if scout_record.get("retry"):
+        dossier["retry"] = dict(scout_record["retry"], since=scout_record["retry"]["date"])
     check(dossier, load_schema("dossier"), name="refs/%s/dossier.json" % slug)
     return dossier
+
+
+# --- what a lookup may change ---------------------------------------------------------------------
+
+# The fields a lookup owns (decision 17). Everything else a dossier holds, its level, the L1 fields,
+# the `l2` record, `created`, its names and notes, was learned some other way and a lookup never
+# takes it back.
+LOOKUP_FIELDS = ("existence", "resolved_by", "identifiers", "metadata", "abstract", "open_access", "attempts")
+
+NEW, CHANGED, SAME, KEPT, DISAGREES = "new", "existence changed", "same work", "kept", "another work"
+WAITING, GAVE_UP = "waiting to retry", "gave up"
+# Where a `retry` flag stands (`retry_state`): asked again now, asked within the day, or past the give-up.
+DUE, NOT_YET, GIVE_UP_NOW = "due", "waiting", "give up"
+DAY_S = 86400
+GIVE_UP_DAYS = 7  # the fallback when a policy carries no `scout.give_up_days`
+_VERSION = re.compile(r"v\d+$")
+_ARXIV_DOI_PREFIX = "10.48550/arxiv."
+
+
+def work_keys(record):
+    """What identifies the work a record is about: its DOIs (the published one too) and its arXiv id without the version."""
+    identifiers = record.get("identifiers") or {}
+    keys = set()
+    for doi in (identifiers.get("doi"), identifiers.get("published_doi")):
+        if doi:
+            doi = str(doi).lower()
+            if doi.startswith(_ARXIV_DOI_PREFIX):
+                keys.add("arxiv:" + _VERSION.sub("", doi[len(_ARXIV_DOI_PREFIX):]))
+            else:
+                keys.add("doi:" + doi)
+    if identifiers.get("arxiv_id"):
+        keys.add("arxiv:" + _VERSION.sub("", str(identifiers["arxiv_id"]).lower()))
+    return keys
+
+
+def same_work(one, other):
+    """Whether two records are about one work: a DOI or an arXiv id in common, or, with no identifier on a side, one title."""
+    left, right = work_keys(one), work_keys(other)
+    if left and right:
+        return bool(left & right)
+    first, second = (normalize_title((record.get("metadata") or {}).get("title")) for record in (one, other))
+    return bool(first) and first == second
+
+
+def merge_lookup(existing, record, now):
+    """What a dossier becomes after a lookup, and what changed: `(dossier, change)`.
+
+    A lookup replaces `LOOKUP_FIELDS` only when it finds the same work, or when the dossier had
+    found nothing yet; a failure or a no match leaves a found dossier as it was (its `retry`
+    flag's date moves, so the daily rule holds), and a found dossier that now resolves to another
+    work is left as it was with the change `another work`, for absorb's report. `now` is the
+    ledger's timestamp, written as `updated` on every change.
+    """
+    found = record.get("existence") == VERIFIED
+    if existing.get("existence") == VERIFIED:
+        if not found:
+            if not existing.get("retry") or existing["retry"].get("gave_up"):
+                return existing, KEPT
+            return dict(existing, retry=_retry_after(existing, record, now), updated=now), KEPT
+        if not same_work(existing, record):
+            return existing, DISAGREES
+    dossier = dict(existing)
+    for name in LOOKUP_FIELDS:
+        dossier[name] = record.get(name) if name in ("resolved_by", "abstract") else _copy(record.get(name))
+    retry = _retry_after(existing, record, now) if record.get("retry") else None
+    if retry is None:
+        dossier.pop("retry", None)
+    else:
+        dossier["retry"] = retry
+    dossier["updated"] = now
+    return dossier, (CHANGED if dossier["existence"] != existing.get("existence") else SAME)
+
+
+def retry_state(dossier, now, give_up_days=GIVE_UP_DAYS):
+    """Where a dossier's `retry` flag stands at epoch `now`: None (no flag), `due`, `waiting`, `give up`, or `gave up`.
+
+    A flagged reference is asked at most once a day, counted from its last failed lookup, and the
+    flag gives up `give_up_days` after its first.
+    """
+    flag = dossier.get("retry") if isinstance(dossier, dict) else None
+    if not flag:
+        return None
+    if flag.get("gave_up"):
+        return GAVE_UP
+    first = pacing.epoch(flag.get("since") or flag.get("date"))
+    if first is not None and now - first >= give_up_days * DAY_S:
+        return GIVE_UP_NOW
+    last = pacing.epoch(flag.get("date"))
+    if last is not None and now - last < DAY_S:
+        return NOT_YET
+    return DUE
+
+
+def give_up(ledger, dossier, now):
+    """Record on the dossier that its flag gave up: nothing retries it after, and it is raised as final."""
+    dossier = dict(dossier, retry=dict(dossier["retry"], gave_up=now), updated=now)
+    _write_dossier(ledger, dossier)
+    return dossier
+
+
+def _retry_after(existing, record, now):
+    """The `retry` flag after a lookup that failed: the new failure and date, counted from the first."""
+    before = existing.get("retry") or {}
+    latest = record.get("retry") or {"service": before.get("service", "unknown"), "failure": before.get("failure", "failed"), "date": now}
+    return dict(latest, since=before.get("since") or before.get("date") or latest["date"])
+
+
+def _copy(value):
+    return json.loads(json.dumps(value)) if isinstance(value, (dict, list)) else value
+
+
+def file_lookup(ledger, slug, existing, record, now=None):
+    """File one lookup's answer under `slug`: a new dossier, or `existing` merged. Returns `(dossier, change)`.
+
+    The dossier is written only when it changed, and a level 0 `absorbed` is journaled only for a
+    new dossier or a changed existence (decision 17); the node follows the dossier's identity and
+    keeps its level.
+    """
+    now = now or now_ts()
+    if existing is None:
+        dossier = l0_dossier(record, slug, created=now)
+        write_l0(ledger, dossier)
+        return dossier, NEW
+    dossier, change = merge_lookup(existing, record, now)
+    if dossier is existing:
+        return dossier, change
+    _write_dossier(ledger, dossier)
+    _refresh_node(ledger, dossier)
+    if change == CHANGED:
+        ledger.append_event("absorbed", {"slug": dossier["slug"], "level": LEVEL_0})
+    return dossier, change
+
+
+def _node_for(dossier, created=None):
+    return make_node(
+        dossier["slug"],
+        "paper",
+        (dossier["metadata"].get("title") or dossier["query"].get("raw") or dossier["query"]["value"]),
+        identifiers=dossier["identifiers"] or None,
+        year=dossier["metadata"].get("year"),
+        level=dossier["level"],
+        existence=dossier["existence"],
+        source=dossier.get("resolved_by"),
+        created=created or dossier["created"],
+    )
+
+
+def _refresh_node(ledger, dossier):
+    """The dossier's node rewritten to its identity now, keeping the node's own level and creation."""
+    try:
+        node = ledger.read_json("%s/%s.json" % (NODES_DIR, dossier["slug"]))
+    except (OSError, ValueError):
+        node = None
+    fresh = _node_for(dossier, created=(node or {}).get("created"))
+    if isinstance(node, dict) and node.get("level") is not None:
+        fresh["level"] = node["level"]
+    write_node(ledger, fresh)
 
 
 def write_l0(project_or_ledger, dossier):
@@ -194,18 +361,7 @@ def write_l0(project_or_ledger, dossier):
     """
     ledger = ledger_for(project_or_ledger)
     path = ledger.write_json("%s/%s/dossier.json" % (REFS, dossier["slug"]), dossier, schema="dossier")
-    node = make_node(
-        dossier["slug"],
-        "paper",
-        (dossier["metadata"].get("title") or dossier["query"].get("raw") or dossier["query"]["value"]),
-        identifiers=dossier["identifiers"] or None,
-        year=dossier["metadata"].get("year"),
-        level=dossier["level"],
-        existence=dossier["existence"],
-        source=dossier.get("resolved_by"),
-        created=dossier["created"],
-    )
-    write_node(ledger, node)
+    write_node(ledger, _node_for(dossier))
     ledger.append_event("absorbed", {"slug": dossier["slug"], "level": LEVEL_0})
     return path
 
@@ -214,11 +370,14 @@ def write_l0(project_or_ledger, dossier):
 
 
 def intake_references(text):
-    """The reference lines of an `INTAKE.md`, parsed.
+    """The references of an `INTAKE.md`, parsed, each with its note and its PDF.
 
-    The references live under a `## References` heading. When anything under it is a list item,
-    the list items are the references and the prose around them is prose, which is what keeps a
-    sentence introducing the list from being looked up as a paper. When nothing is a list item,
+    The references live under a `## References` heading. When anything under it is a list item at
+    the margin, those items are the references and the prose around them is prose, which is what
+    keeps a sentence introducing the list from being looked up as a paper. An item nested under
+    one is never looked up (decision 17): `PDF: <path>` names the reference's source and any other
+    nested line is its note, kept on the dossier. An item that is only `PDF: <path>` is a PDF with
+    no identifier, a `file` reference nothing is ever asked about. When nothing is a list item,
     every line is taken, because a bare list of DOIs is a list too. A line that only says the
     owner has none is never looked up: resolving the word "None" is a request spent on nothing.
     """
@@ -233,17 +392,19 @@ def intake_references(text):
         stripped = line.strip()
         if not stripped or not _ALNUM.search(stripped):
             continue
-        if _says_none(stripped):
+        if _TOP_ITEM.match(line):
+            listed.append([stripped, []])
+        elif _LIST_ITEM.match(line) and line[:1].isspace():
+            if listed:
+                listed[-1][1].append(_LIST_MARKER.sub("", stripped))
             continue
-        found.append(stripped)
-        if _LIST_ITEM.match(stripped):
-            listed.append(stripped)
-    found = listed or found
+        if not _says_none(stripped):
+            found.append([stripped, []])
+    items = [item for item in listed if not _says_none(item[0])] if listed else found
     references, seen = [], set()
-    for line in found:
-        try:
-            reference = parse_reference(line)
-        except ValueError:
+    for line, nested in items:
+        reference = _intake_reference(line, nested)
+        if reference is None:
             continue
         key = (reference.kind, reference.value.lower())
         if key in seen:
@@ -251,6 +412,28 @@ def intake_references(text):
         seen.add(key)
         references.append(reference)
     return references
+
+
+def _intake_reference(line, nested):
+    """One top-level item and the lines nested under it, as a `Reference` carrying its note and PDF; None when unreadable."""
+    pdf, notes = None, []
+    for text in nested:
+        source = _PDF_ITEM.match(text)
+        if source is not None and pdf is None:
+            pdf = source.group(1)
+        else:
+            notes.append(text)
+    alone = _PDF_ITEM.match(_LIST_MARKER.sub("", line).strip())
+    bare = _LIST_MARKER.sub("", line).strip().strip("`").strip()
+    if alone is not None or (bare.lower().endswith(".pdf") and " " not in bare and "://" not in bare):
+        path = alone.group(1) if alone is not None else bare
+        return Reference("file", path, line, note=" ".join(notes) or None, pdf=path)  # a path is never a title query
+    try:
+        reference = parse_reference(line)
+    except ValueError:
+        return None
+    reference.note, reference.pdf = " ".join(notes) or None, pdf
+    return reference
 
 
 def _says_none(line):
@@ -1703,18 +1886,21 @@ def _read_json(ledger, relpath):
 
 
 def scout_fetcher(project, email=None, fixtures=None):
-    """The fetcher the scout runs on: the project's cache, or a directory of recorded responses."""
+    """The fetcher the scout runs on: the project's `AnswerCache`, or a directory of recorded responses."""
     if fixtures is not None:
         return recording_fetcher(fixtures, email=email)
-    return caching_fetcher(Path(project) / "research" / CACHE, email=email)
+    return Fetcher(AnswerCache(Path(project) / "research" / CACHE), email=email)
 
 
-def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=None):
-    """Resolve every reference and write its L0 dossier, node, and the query pack. Returns a report.
+def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=None, clock=None):
+    """Resolve every reference and file its L0 dossier, node, and the query pack. Returns a report.
 
-    A reference already on disk is resolved again and its dossier replaced, because the cache
-    makes that free and a reference that was unresolved last week may resolve today. The slug of
-    a dossier that already exists is kept, so a re-run never leaves two directories for one work.
+    A reference already on disk is looked up again: a found work out of the scout's cache, which
+    makes that free, and one not yet found on the network, because a reference that was unresolved
+    last week may resolve today. What the lookup may change is `merge_lookup`'s: never what the
+    dossier already knows. The slug of a dossier that already exists is kept, so a re-run never
+    leaves two directories for one work. `clock` (epoch seconds) is the time the retry flag and
+    `updated` are written at.
     """
     project = Path(project)
     ledger = ledger_for(ledger if ledger is not None else project)
@@ -1722,11 +1908,16 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
         email = _email(project)
     fetcher = fetcher if fetcher is not None else scout_fetcher(project, email=email)
     references = references if references is not None else read_intake(project)
-    scout = Scout(fetcher, email)
+    clock = clock or time.time
+    scout = Scout(fetcher, email, clock=clock)
 
     known = _known_slugs(ledger)
     taken = set(known.values())
-    report = {"project": str(project), "references": len(references), "written": [], "verified": 0, "unresolved": 0, "problems": [], "notes": []}
+    looked_up = set()
+    days = _give_up_days(project)
+    index = filed_index(ledger)
+    report = {"project": str(project), "references": len(references), "written": [], "verified": 0, "unresolved": 0, "problems": [], "notes": [],
+              "disagreements": [], "joined": []}
     if not email:
         report["notes"].append(
             "no owner address in %s; the requests carry no mailto, which is what the polite pools ask for "
@@ -1737,19 +1928,393 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
             reference = parse_reference(reference)
         key = (reference.kind, reference.value.lower())
         try:
-            resolved = scout.resolve(reference)
-            slug = known.get(key) or slug_for(resolved, taken)
-            dossier = l0_dossier(resolved, slug)
-            write_l0(ledger, dossier)
+            existing = _existing(ledger, known.get(key))
+            dossier, change = _look_up(ledger, scout, reference, existing, taken, clock, days, report, index)
         except (ValidationError, ValueError, OSError) as failure:
             report["problems"].append({"reference": reference.raw, "problem": str(failure)})
             continue
-        known[key] = slug
-        taken.add(slug)
-        report["written"].append({"slug": slug, "existence": dossier["existence"], "resolved_by": dossier["resolved_by"], "reference": reference.raw})
-        report["verified" if dossier["existence"] != UNRESOLVED else "unresolved"] += 1
+        known[key] = dossier["slug"]
+        taken.add(dossier["slug"])
+        looked_up.add(dossier["slug"])
+        try:
+            dossier = _keep_note_and_pdf(ledger, project, dossier, reference, timestamp(clock()))
+        except (ValidationError, ValueError, OSError) as failure:
+            report["problems"].append({"reference": reference.raw, "problem": str(failure)})
+        report["written"].append(_written(dossier, change, reference.raw))
+    others = retry_flagged(project, fetcher=fetcher, email=email, ledger=ledger, clock=clock, skip=looked_up, rebuild=False)
+    for name in ("written", "problems", "disagreements"):
+        report[name].extend(others[name])
+    for item in report["written"]:
+        report["verified" if item["existence"] != UNRESOLVED else "unresolved"] += 1
+    report["joined"] = join_duplicates(ledger, timestamp(clock()))
     rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
     return report
+
+
+def retry_flagged(project, fetcher=None, email=None, ledger=None, clock=None, skip=(), rebuild=True):
+    """Retry every flagged reference that is due (decision 17): what the next absorb and the tick during a live run do.
+
+    A flag is asked at most once a day and gives up after `policy.scout.give_up_days`; a reference
+    filed under one of `skip` was just looked up by the caller and is left alone. Returns a report
+    with absorb's `written`, `problems`, and `disagreements`.
+    """
+    project = Path(project)
+    ledger = ledger_for(ledger if ledger is not None else project)
+    clock = clock or time.time
+    if email is None:
+        email = _email(project)
+    days = _give_up_days(project)
+    report = {"written": [], "problems": [], "disagreements": []}
+    flagged = []
+    for slug in all_slugs(ledger):
+        if slug in skip:
+            continue
+        dossier = _existing(ledger, slug)
+        if dossier is not None and retry_state(dossier, clock(), days) in (DUE, GIVE_UP_NOW):
+            flagged.append(dossier)
+    if not flagged:
+        return report
+    fetcher = fetcher if fetcher is not None else scout_fetcher(project, email=email)
+    scout = Scout(fetcher, email, clock=clock)
+    index = filed_index(ledger)
+    for existing in flagged:
+        query = existing["query"]
+        reference = Reference(query["kind"], query["value"], query.get("raw"))
+        try:
+            dossier, change = _look_up(ledger, scout, reference, existing, set(), clock, days, report, index)
+        except (ValidationError, ValueError, OSError) as failure:
+            report["problems"].append({"reference": reference.raw, "problem": str(failure)})
+            continue
+        report["written"].append(_written(dossier, change, reference.raw))
+    if rebuild:
+        rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
+    return report
+
+
+def _look_up(ledger, scout, reference, existing, taken, clock, days, report, index=None):
+    """One reference looked up and filed, unless its flag says to wait or to give up. Returns `(dossier, change)`.
+
+    A reference no dossier holds yet that resolves to a work `index` already files (by DOI, arXiv
+    id, or published DOI) joins that dossier instead of starting another, which records it among
+    its names.
+    """
+    now = clock()
+    state = retry_state(existing, now, days) if existing else None
+    if state == NOT_YET:
+        return existing, WAITING
+    if state == GIVE_UP_NOW:
+        return give_up(ledger, existing, timestamp(now)), GAVE_UP
+    if state == GAVE_UP:
+        return existing, GAVE_UP
+    found = bool(existing and existing["existence"] == VERIFIED and state is None)
+    resolved = scout.resolve(reference, found=found)
+    if existing is None and resolved["existence"] == VERIFIED and index:
+        filed = next((index[key] for key in sorted(work_keys(resolved)) if key in index), None)
+        existing = _existing(ledger, filed)
+    slug = existing["slug"] if existing else slug_for(resolved, taken)
+    dossier, change = file_lookup(ledger, slug, existing, resolved, timestamp(now))
+    if change in (NEW, SAME, CHANGED):  # a dossier a lookup left as it was keeps its names as they were too
+        dossier = _with_name(ledger, dossier, reference)
+    if change == DISAGREES:
+        report["disagreements"].append(_disagreement(dossier, resolved))
+    if index is not None and dossier["existence"] == VERIFIED:
+        for key in work_keys(dossier):
+            index.setdefault(key, dossier["slug"])
+    return dossier, change
+
+
+def _same_name(one, other):
+    return (one.get("kind"), str(one.get("value", "")).lower()) == (other.get("kind"), str(other.get("value", "")).lower())
+
+
+def _with_name(ledger, dossier, reference):
+    """The dossier with `reference` among its names, written when that changed its names.
+
+    A dossier from before names were recorded starts them from the query it was filed under.
+    """
+    names = list(dossier.get("names") or [dict(dossier["query"])])
+    name = reference.as_dict()
+    if not any(_same_name(known, name) for known in names):
+        names.append(name)
+    if names == dossier.get("names"):
+        return dossier
+    dossier = dict(dossier, names=names)
+    _write_dossier(ledger, dossier)
+    return dossier
+
+
+def filed_index(ledger):
+    """`{work key: slug}` over every found dossier that is not a pointer: what a new name is matched against."""
+    index = {}
+    for slug in all_slugs(ledger):
+        dossier = _existing(ledger, slug)
+        if dossier is not None and dossier.get("existence") == VERIFIED:
+            for key in work_keys(dossier):
+                index.setdefault(key, slug)
+    return index
+
+
+def join_duplicates(ledger, now=None):
+    """Where two found dossiers hold one work, keep one and make the others pointers to it. Returns `[{slug, into}]`.
+
+    The higher level stays, the older on a tie (decision 17). A pointer keeps its file, with
+    `joined_into` naming the dossier that stays, which takes its names and its notes; its
+    knowledge-base node is removed, so the query pack lists the work once. A `ref` tag that named
+    the pointer still finds a verified dossier there.
+    """
+    now = now or now_ts()
+    dossiers = [dossier for dossier in (_existing(ledger, slug) for slug in all_slugs(ledger))
+                if dossier is not None and dossier.get("existence") == VERIFIED]
+    groups, owner = [], {}
+    for dossier in dossiers:
+        keys = work_keys(dossier)
+        joined = {owner[key] for key in keys if key in owner}
+        group = [dossier]
+        for number in sorted(joined, reverse=True):
+            group.extend(groups[number])
+            groups[number] = []
+        groups.append(group)
+        for member in group:
+            for key in work_keys(member):
+                owner[key] = len(groups) - 1
+    joins = []
+    for group in groups:
+        if len(group) < 2:
+            continue
+        keeper = sorted(group, key=lambda item: (-int(item.get("level", LEVEL_0)), item.get("created", ""), item["slug"]))[0]
+        names, notes = list(keeper.get("names") or [dict(keeper["query"])]), list(keeper.get("notes") or [])
+        for other in group:
+            if other is keeper:
+                continue
+            for name in other.get("names") or [dict(other["query"])]:
+                if not any(_same_name(known, name) for known in names):
+                    names.append(dict(name))
+            notes.extend(other.get("notes") or [])
+            pointer = dict(other, joined_into=keeper["slug"], updated=now)
+            pointer.pop("notes", None)
+            _write_dossier(ledger, pointer)
+            ledger.remove_file("%s/%s.json" % (NODES_DIR, other["slug"]))
+            joins.append({"slug": other["slug"], "into": keeper["slug"]})
+        keeper = dict(keeper, names=names, updated=now)
+        if notes:
+            keeper["notes"] = notes
+        _write_dossier(ledger, keeper)
+    return joins
+
+
+def _keep_note_and_pdf(ledger, project, dossier, reference, now, by="intake"):
+    """What the owner wrote with a reference, kept on its dossier: the note (never read by the scout) and the PDF as its source.
+
+    The PDF is copied under `refs/<slug>/source/`, which `init` gitignores, so the owner's copy of
+    a paper is never committed; a PDF already kept there is left as it is.
+    """
+    changed = False
+    if getattr(reference, "note", None):
+        notes = list(dossier.get("notes") or [])
+        if not any(note["text"] == reference.note for note in notes):
+            notes.append({"text": reference.note, "by": by, "ts": now})
+            dossier, changed = dict(dossier, notes=notes), True
+    if changed:
+        _write_dossier(ledger, dossier)
+    if getattr(reference, "pdf", None):
+        keep_source_pdf(ledger, project, dossier["slug"], reference.pdf)
+    return dossier
+
+
+def keep_source_pdf(ledger, project, slug, pdf):
+    """Copy a PDF the owner gave into `refs/<slug>/source/`; returns the path kept, or None when it cannot be read."""
+    path = Path(pdf)
+    if not path.is_absolute():
+        path = Path(project) / path
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    relpath = "%s/%s/%s/%s" % (REFS, slug, SOURCE, path.name)
+    target = ledger.path(relpath)
+    if target.is_file() and target.read_bytes() == data:
+        return target
+    return ledger.write_bytes(relpath, data)
+
+
+# --- the owner's hand-over ------------------------------------------------------------------------
+
+LEAVE = "leave"
+_LEAVE_WORDS = frozenset(["leave", "leave it", "leave it."])
+_PDFINFO_TIMEOUT_S = 30
+
+
+def hand_over(project, slug, answer, fetcher=None, email=None, clock=None, read_pdf=None, ledger=None):
+    """The owner's answer to an unresolved reference, recorded without asking (decision 17). Returns `{slug, answer, change, dossier}`.
+
+    `answer` is a DOI or an arXiv id or an exact title, which goes back to the scout on the
+    network; a PDF, which becomes the reference's source (gitignored) and whose title the scout
+    tries, the dossier being found with `resolved_by: owner` and the details read from the PDF
+    when no service knows it; or "leave it", which settles the item until the paper order and
+    asks nothing. A URL is refused: no keyless service looks one up. The verb is this function,
+    which the dashboard calls in-process; `read_pdf(path) -> {title, authors, year}` is
+    `pdf_details` unless a test passes its own.
+    """
+    project = Path(project)
+    ledger = ledger_for(ledger if ledger is not None else project)
+    clock = clock or time.time
+    now = timestamp(clock())
+    existing = read_dossier(ledger, slug)
+    if existing.get("joined_into"):
+        raise DossierError("refs/%s is joined into refs/%s; hand the answer over to that one" % (slug, existing["joined_into"]))
+    text = str(answer or "").strip()
+    if not text:
+        raise DossierError("hand over a DOI, an exact title, a PDF, or leave it")
+    if text.lower() in _LEAVE_WORDS:
+        dossier = _handed(ledger, existing, LEAVE, None, now)
+        return {"slug": slug, "answer": LEAVE, "change": KEPT, "dossier": dossier}
+    if email is None:
+        email = _email(project)
+    fetcher = fetcher if fetcher is not None else scout_fetcher(project, email=email)
+    scout = Scout(fetcher, email, clock=clock)
+    pdf = _as_pdf(project, text)
+    if pdf is not None:
+        keep_source_pdf(ledger, project, slug, str(pdf))
+        form, value = "pdf", pdf.name
+        if existing.get("existence") == VERIFIED:
+            dossier, change = existing, KEPT  # a found work gains its source; a lookup never takes back what it knows
+        else:
+            details = (read_pdf or pdf_details)(pdf) or {}
+            record = scout.resolve(Reference("title", details["title"])) if details.get("title") else None
+            if record is None or record["existence"] != VERIFIED:
+                record = _owners_record(existing, details, record)
+            dossier, change = file_lookup(ledger, slug, existing, record, now)
+    else:
+        reference = parse_reference(text)
+        if reference.kind not in ("doi", "arxiv", "title"):
+            raise DossierError("%s is a URL, which no service looks up; hand over its DOI, its exact title, or the PDF" % text)
+        record = scout.resolve(reference)
+        dossier, change = file_lookup(ledger, slug, existing, record, now)
+        if change in (NEW, SAME, CHANGED):
+            dossier = _with_name(ledger, dossier, reference)
+        form, value = reference.kind, reference.value
+    dossier = _handed(ledger, dossier, form, value, now)
+    if dossier["existence"] == VERIFIED:
+        join_duplicates(ledger, now)
+        rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
+    return {"slug": slug, "answer": form, "change": change, "dossier": read_dossier(ledger, slug)}
+
+
+def _handed(ledger, dossier, form, value, now):
+    handed = list(dossier.get("handed_over") or []) + [{"answer": form, "value": value, "ts": now}]
+    dossier = dict(dossier, handed_over=handed, updated=now)
+    _write_dossier(ledger, dossier)
+    return dossier
+
+
+def _as_pdf(project, text):
+    """The PDF `text` names, relative to the working directory or the project, or None when it names no PDF on disk."""
+    for path in (Path(text).expanduser(), Path(project) / text):
+        if path.suffix.lower() == ".pdf" and path.is_file():
+            return path.resolve()
+    return None
+
+
+def _owners_record(existing, details, tried):
+    """The lookup a PDF no service knows comes to: found by the owner, with what the PDF itself says.
+
+    When the title lookup failed rather than matched nothing, its `retry` flag stays, so the
+    services fill the record in once they answer.
+    """
+    metadata = {key: details[key] for key in ("title", "authors", "year") if details.get(key)}
+    owners = {
+        "query": dict(existing["query"]),
+        "existence": VERIFIED,
+        "resolved_by": "owner",
+        "identifiers": dict(existing.get("identifiers") or {}),
+        "metadata": metadata,
+        "abstract": None,
+        "open_access": {},
+        "attempts": list((tried or {}).get("attempts") or []),
+    }
+    if (tried or {}).get("retry"):
+        owners["retry"] = dict(tried["retry"])
+    return owners
+
+
+def pdf_details(path):
+    """The title, authors, and year a PDF's own metadata gives, through poppler's `pdfinfo`; `{}` without it."""
+    try:
+        done = subprocess.run(["pdfinfo", str(path)], capture_output=True, text=True, errors="replace", timeout=_PDFINFO_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if done.returncode != 0:
+        return {}
+    fields = {}
+    for line in done.stdout.splitlines():
+        name, colon, value = line.partition(":")
+        if colon:
+            fields[name.strip().lower()] = value.strip()
+    details = {}
+    if fields.get("title"):
+        details["title"] = fields["title"]
+    if fields.get("author"):
+        details["authors"] = [part.strip() for part in re.split(r";|,| and ", fields["author"]) if part.strip()]
+    year = re.search(r"\b(1[5-9]\d\d|2[01]\d\d)\b", fields.get("creationdate", ""))
+    if year:
+        details["year"] = int(year.group(1))
+    return details
+
+
+def reference_command(args):
+    """`wayline reference <slug> <DOI | "exact title" | file.pdf | "leave it">`: the owner's hand-over."""
+    parser = argparse.ArgumentParser(prog="wayline reference", description="hand over an unresolved reference: a DOI, an exact title, a PDF, or leave it")
+    parser.add_argument("slug", help="the reference's dossier, research/refs/<slug>/")
+    parser.add_argument("answer", help='a DOI or an arXiv id, an exact title, a PDF, or "leave it"')
+    parser.add_argument("--project", help="the project; the active one by default")
+    parser.add_argument("--json", action="store_true", help="print the result as JSON")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    try:
+        project = find_project(options.project)
+        result = hand_over(project, options.slug, options.answer)
+    except (DossierError, ProjectError, ValidationError, ValueError, OSError) as failure:
+        print("wayline reference: %s" % failure, file=sys.stderr)
+        return 1
+    dossier = result["dossier"]
+    if options.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print("%s  %s, %s%s" % (result["slug"], "left until the paper order" if result["answer"] == LEAVE else "handed over as a %s" % result["answer"],
+                                dossier["existence"], " by %s" % dossier["resolved_by"] if dossier.get("resolved_by") else ""))
+    return 0
+
+
+def _written(dossier, change, raw):
+    """One row of a report's `written`: the dossier a reference is filed under, and what the lookup did to it."""
+    return {"slug": dossier["slug"], "existence": dossier["existence"], "resolved_by": dossier["resolved_by"], "reference": raw, "change": change}
+
+
+def _give_up_days(project):
+    try:
+        return int((policy_for(project).get("scout") or {}).get("give_up_days", GIVE_UP_DAYS))
+    except (TypeError, ValueError):
+        return GIVE_UP_DAYS
+
+
+def _existing(ledger, slug):
+    """The dossier filed under `slug`, or None when there is no slug or nothing readable under it."""
+    if slug is None:
+        return None
+    try:
+        dossier = read_dossier(ledger, slug)
+    except DossierError:
+        return None
+    return dossier if isinstance(dossier, dict) else None
+
+
+def _disagreement(dossier, record):
+    """One line of absorb's report: a found dossier left as it was though its reference now resolves to another work."""
+    metadata = record.get("metadata") or {}
+    return {"slug": dossier["slug"], "level": dossier.get("level", LEVEL_0), "filed": (dossier.get("metadata") or {}).get("title"),
+            "now_resolves_to": {"title": metadata.get("title"), "year": metadata.get("year"), "identifiers": dict(record.get("identifiers") or {}),
+                                "resolved_by": record.get("resolved_by")}}
 
 
 def _known_slugs(ledger):
@@ -1761,19 +2326,28 @@ def _known_slugs(ledger):
     for path in sorted(directory.glob("*/dossier.json")):
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
-            query = existing["query"]
-            known[(query["kind"], str(query["value"]).lower())] = existing["slug"]
-        except (OSError, ValueError, KeyError, TypeError):
+            slug = existing.get("joined_into") or existing["slug"]
+            for query in [existing["query"]] + list(existing.get("names") or []):
+                known[(query["kind"], str(query["value"]).lower())] = slug
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             continue
     return known
 
 
 def all_slugs(ledger):
-    """Every slug with a dossier on disk, in file order."""
+    """Every slug with a dossier on disk, in file order, leaving out the pointers a join left (`joined_into`)."""
     directory = ledger.research / REFS
     if not directory.is_dir():
         return []
-    return sorted(path.parent.name for path in directory.glob("*/dossier.json"))
+    slugs = []
+    for path in sorted(directory.glob("*/dossier.json")):
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("joined_into"):
+                continue
+        except (OSError, ValueError, AttributeError):
+            pass
+        slugs.append(path.parent.name)
+    return slugs
 
 
 def read_dossier(project_or_ledger, slug):

@@ -25,21 +25,21 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. Every module it edits is built. It blocks 98 and 118.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#218](https://github.com/Bernaljp/wayline/issues/218) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the scout's outcomes, cache, and joins; a reference found during a ticket, for the intake shape; build order), 9 (the scout, the dossier), 1 (the verb table: the hand-over verb), 2 (the event table: `absorbed` at level 0), the schemas list (`dossier` gains `retry`, `resolved_by: owner`, notes, joined names); M8 criterion 12, and criterion 20's reference items for the live run; user stories 146, 147.
 
-- [ ] Each lookup attempt records `found`, `no match`, or `failed`; "no such work" is returned only when every service asked answered no match; a failed attempt on a work not found sets `retry` with service, failure, and date.
-- [ ] The cache replays an answer only for a work already found, at every caller; a lookup about a work not yet found goes to the network; only successful answers are written to the cache; the plot-gallery crawl keeps only successful answers.
-- [ ] When arXiv's API fails, the abs page's meta tags are read and the arXiv DOI is recorded as its own attempt; a work found that way keeps the `retry` flag; a recorded 503 beside the abs page is covered.
-- [ ] A flagged reference is retried at most once a day by the next absorb or by the tick while a run is live, and the flag gives up after 7 days (the give-up recorded on the dossier); the 7 days land in the policy table of decision 14 in the same commit.
-- [ ] A lookup replaces only the lookup's own fields and only when it finds the same work; the level, L1 fields, `l2`, `created`, and node level survive; `updated` is set; `absorbed` at level 0 is journaled only for a new dossier or a changed existence; a failure or no match leaves a found dossier untouched; an L1+ dossier resolving to another work is left as it was and reported by absorb.
-- [ ] Two references to one work (by DOI, arXiv id, or published DOI) give one dossier recording every name; two existing dossiers for one work collapse to the higher level (older on a tie) with the other a pointer carrying its notes.
-- [ ] Intake records references as `{identifier, note}` with no lookup; `INTAKE.md` nests the note under its top-level item; absorb reads only top-level items; a nested remark and a path-only PDF are never looked up.
-- [ ] The owner's hand-over verb takes a DOI, an exact title, a PDF, or "leave it", recorded without asking; a PDF becomes the reference's gitignored source, its title tried by the scout, else the dossier is found with `resolved_by: owner` from the PDF's details. The verb is a function the dashboard can call in-process, and its row lands in decision 1's verb table in the same commit.
-- [ ] The dossier schema gains `retry`, `resolved_by: owner`, notes, and joined names, in the schemas list in the same commit.
-- [ ] Tests through the fetch seam with synthetic recorded fixtures: the three outcomes, a cache that never writes a failure, the abs-page fallback with a recorded 503, the daily retry and the seven-day give-up under a fake clock, a found dossier never downgraded, two references to one work joined, a nested remark and a path-only PDF never looked up, the hand-over verb's four forms.
+- [x] Each lookup attempt records `found`, `no match`, or `failed`; "no such work" is returned only when every service asked answered no match; a failed attempt on a work not found sets `retry` with service, failure, and date.
+- [x] The cache replays an answer only for a work already found, at every caller; a lookup about a work not yet found goes to the network; only successful answers are written to the cache; the plot-gallery crawl keeps only successful answers.
+- [x] When arXiv's API fails, the abs page's meta tags are read and the arXiv DOI is recorded as its own attempt; a work found that way keeps the `retry` flag; a recorded 503 beside the abs page is covered.
+- [x] A flagged reference is retried at most once a day by the next absorb or by the tick while a run is live, and the flag gives up after 7 days (the give-up recorded on the dossier); the 7 days land in the policy table of decision 14 in the same commit.
+- [x] A lookup replaces only the lookup's own fields and only when it finds the same work; the level, L1 fields, `l2`, `created`, and node level survive; `updated` is set; `absorbed` at level 0 is journaled only for a new dossier or a changed existence; a failure or no match leaves a found dossier untouched; an L1+ dossier resolving to another work is left as it was and reported by absorb.
+- [x] Two references to one work (by DOI, arXiv id, or published DOI) give one dossier recording every name; two existing dossiers for one work collapse to the higher level (older on a tie) with the other a pointer carrying its notes.
+- [x] Intake records references as `{identifier, note}` with no lookup; `INTAKE.md` nests the note under its top-level item; absorb reads only top-level items; a nested remark and a path-only PDF are never looked up.
+- [x] The owner's hand-over verb takes a DOI, an exact title, a PDF, or "leave it", recorded without asking; a PDF becomes the reference's gitignored source, its title tried by the scout, else the dossier is found with `resolved_by: owner` from the PDF's details. The verb is a function the dashboard can call in-process, and its row lands in decision 1's verb table in the same commit.
+- [x] The dossier schema gains `retry`, `resolved_by: owner`, notes, and joined names, in the schemas list in the same commit.
+- [x] Tests through the fetch seam with synthetic recorded fixtures: the three outcomes, a cache that never writes a failure, the abs-page fallback with a recorded 503, the daily retry and the seven-day give-up under a fake clock, a found dossier never downgraded, two references to one work joined, a nested remark and a path-only PDF never looked up, the hand-over verb's four forms.
 - [ ] The changelog names the change under `## Unreleased`, and the documentation site's scout page describes the outcomes and the retry.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.

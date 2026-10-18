@@ -45,6 +45,36 @@ lists it read-only, marked with its tag.
   `watch`, `download`; `gh api` with a write method or a body), and still allows the reads. `absorb --code` writes
   `research/refs/*/code/` into the project's `.gitignore` beside `source/`, so a wave commit records no gitlink.
 
+- A passing outage no longer leaves a project's references broken (ticket 71; Implementation Decision 17). Every
+  lookup attempt the scout makes records `found`, `no match` (the service answered and nothing matched), or
+  `failed` (an error status, a timeout, or an unreadable answer), in place of v1.0's `hit`, `miss`, and `error`;
+  `scout.outcome` says `no such work` only when every service asked answered no match (`not looked up` when nothing
+  could be asked, a bare URL or a PDF with no identifier). A failed attempt on a work
+  not found sets the dossier's `retry` flag (service, failure, date, and the date it was first set). When arXiv's
+  API fails, the scout reads the `arxiv.org/abs` page's meta tags as an attempt of its own and records the arXiv
+  DOI `10.48550/arXiv.<id>`; a work found that way keeps the flag, so the API fills in the rest later. The scout's
+  cache under `research/.cache/scout/` is now `fetch.AnswerCache`: it writes only successful answers and replays
+  one only for a work already found, so every lookup about a work not yet found goes to the network and a failure
+  an older cache kept is never replayed; the plot-gallery crawl keeps only successful answers too, and the
+  suite's recordings still replay failures. A flagged reference is retried at most once a day by the next
+  `absorb` or by the tick while a run is live (`dossier.retry_flagged`), and the flag gives up after
+  `policy.scout.give_up_days` (7), the give-up recorded on the dossier.
+
+  A lookup never takes back what a dossier knows: it replaces the lookup's own fields only when it finds the same
+  work, keeps the level, the L1 fields, `l2`, `created`, and the node's level, sets `updated`, and journals a level
+  0 `absorbed` only for a new dossier or a changed existence; a failure or a no match leaves a found dossier as it
+  was, and a found dossier that now resolves to another work is left and listed under `disagreements` in absorb's
+  report. One work has one dossier: a second reference to a filed work (by DOI, arXiv id, or published DOI) joins
+  it under `names`, and two dossiers of one work collapse to the higher level (the older on a tie), the other a
+  pointer (`joined_into`) whose notes move. Intake records references as `{identifier, note}` and never looks them
+  up; `INTAKE.md` nests the note (and a PDF as `PDF: <path>`) under each top-level item, and absorb reads only
+  top-level items, so a nested remark is never a query and a PDF with no identifier becomes the reference's source
+  with nothing sent to any service. The owner's hand-over is the new verb `wayline reference <slug> <doi|title|file.pdf|"leave
+  it">` (`dossier.hand_over`, callable in-process): a DOI or an exact title goes back to the scout, a PDF becomes the
+  gitignored source and its title is tried, failing which the dossier is found with `resolved_by: owner` from the
+  PDF's details, and "leave it" settles the item until the paper order. The `dossier` schema gains `retry`,
+  `resolved_by: owner`, `notes`, `names`, `joined_into`, and `handed_over`; no model tokens are spent.
+
 - A paper's figures tell the writer, not the ticket graph, what the text should say (ticket 66). A figure `wayline
   paper` asked for (`figure_request.ticket: "paper"`) files no proposal and opens no `writing` ticket: its
   `findings_for_text` go on the next build's list for the writer, each with the figure and the `manuscript_locator`
