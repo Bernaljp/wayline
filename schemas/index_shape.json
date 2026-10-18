@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "index_shape",
+  "description": "The shape classifier's answer for one plot index entry (Implementation Decision 17; ticket 77): the data shape the chart type draws, one of eight, and its canonical chart type, null for a page that is not a chart type for research data (data_shape none).",
+  "type": "object",
+  "required": ["data_shape", "canonical_chart_type", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "data_shape": {
+      "type": "string",
+      "enum": ["dist", "xy", "series", "category", "whole", "matrix", "multivar", "none"],
+      "description": "dist: one numeric variable over groups; xy: two numeric variables per observation; series: a value along an ordered x; category: one value per category; whole: parts of a whole; matrix: a value per pair of categories; multivar: rows of many variables; none: not a chart type for research data"
+    },
+    "canonical_chart_type": {"type": ["string", "null"], "description": "the chart type in a few plain words, shared by every page that draws it (density, box with points, grouped bar)"},
+    "reason": {"type": "string", "description": "one sentence on what in the page decided it"}
+  }
+}

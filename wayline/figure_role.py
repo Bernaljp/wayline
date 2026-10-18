@@ -311,6 +311,11 @@ def _paired(columns):
                for a, b in (("before", "after"), ("pre", "post"), ("baseline", "treated")))
 
 
+def failed_checks(checks):
+    """The machine checks that ran and failed; a check listed as not run (`not_run`) neither passes nor fails."""
+    return [check for check in checks if check.get("pass") is False]
+
+
 def classify_shape(project, data):
     """The data shape of a request's `data`, classified in code (research-notes 11 Section 4.1, step 1).
 
@@ -964,18 +969,18 @@ class _Run:
 
     def run_checks(self, request, envelope):
         checks = self._checks()
-        if not all(check["pass"] for check in checks):
-            failed = "\n".join("- %s: %s" % (check["id"], check["detail"]) for check in checks if not check["pass"])
-            self.say("  figure %s: %d machine check(s) failed; back to the designer once" % (self.figure_id, sum(1 for c in checks if not c["pass"])))
+        if failed_checks(checks):
+            failed = "\n".join("- %s: %s" % (check["id"], check["detail"]) for check in failed_checks(checks))
+            self.say("  figure %s: %d machine check(s) failed; back to the designer once" % (self.figure_id, len(failed_checks(checks))))
             _, value = self._converse(request, "the designer's repair", self._finish_check, envelope=envelope, message=REPAIR_CHECKS % failed)
             if not value["drew_final"]:
                 raise _Stop("failed_checks", "the repair drew no figure, and the machine checks still fail: %s"
-                            % ", ".join(check["id"] for check in checks if not check["pass"]))
+                            % ", ".join(check["id"] for check in failed_checks(checks)))
             self._take_finish(value)
             checks = self._checks()
-        if not all(check["pass"] for check in checks):
+        if failed_checks(checks):
             raise _Stop("failed_checks", "%d machine check(s) failed after one repair: %s" % (
-                sum(1 for check in checks if not check["pass"]), ", ".join(check["id"] for check in checks if not check["pass"])))
+                len(failed_checks(checks)), ", ".join(check["id"] for check in failed_checks(checks))))
 
     def _checks(self):
         """The machine checks on the final figure, with its crops made fresh: none left from an earlier drawing is read."""
@@ -1375,7 +1380,7 @@ def resume_figure(project, figure_id, *, harness_root=None, policy=None, autonom
         return result, "every change request was refused and no refusal is overridden by the owner"
     if status != "blocked":
         return result, "figure %s is %s; a change to it is a guided revision (a new request with revision_of)" % (figure_id, status)
-    if result.get("final") and result.get("checks") and all(check["pass"] for check in result["checks"]):
+    if result.get("final") and result.get("checks") and not failed_checks(result["checks"]):
         return go(lambda run: _verdict_again(run, figure_id))
     if request["mode"] == "guided":
         return go(lambda run: run.guided())
@@ -1477,7 +1482,7 @@ def _render(result, reason):
     selected = result.get("selected")
     if selected:
         lines.append("  picked rank %d by the %s%s" % (selected["rank"], selected["by"], ", margin low" if selected["margin_low"] else ""))
-    failed = [check["id"] for check in result.get("checks") or [] if not check["pass"]]
+    failed = [check["id"] for check in failed_checks(result.get("checks") or [])]
     if result.get("checks"):
         lines.append("  checks: %d of %d pass%s" % (len(result["checks"]) - len(failed), len(result["checks"]),
                                                     " (failed: %s)" % ", ".join(failed) if failed else ""))
