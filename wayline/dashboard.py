@@ -294,7 +294,7 @@ def _version_fields(path):
     except (ValueError, OSError):
         return {"research_version": None, "read_only": True}
     version = research_version(harness)
-    return {"research_version": version, "read_only": version != RESEARCH_VERSION}
+    return {"research_version": version, "read_only": version < RESEARCH_VERSION}
 
 
 def projects_view(active=None, entries=None, settings=None):

@@ -213,9 +213,9 @@ async function loadProjects() {
       type: 'button',
       'data-id': project.id,
       // A project of another research_version is read-only (decision 17): marked with its tag, its files still open.
-      text: project.name + (project.active ? ' *' : '') + (project.readable && project.read_only ? ' (' + project.harness_tag + ', read-only)' : ''),
+      text: project.name + (project.active ? ' *' : '') + (project.readable && project.read_only ? ' (' + (project.harness_tag || 'an older tag') + ', read-only)' : ''),
       title: project.path + (project.readable ? '' : ' (the path is gone)')
-        + (project.readable && project.read_only ? ' (made with ' + project.harness_tag + ', read-only: wayline upgrade --to ' + project.harness_tag + ' or a new project)' : ''),
+        + (project.readable && project.read_only ? ' (made with ' + (project.harness_tag || 'an older tag') + ', read-only: wayline upgrade --to that tag, or a new project)' : ''),
       'aria-current': String(project.id === state.project),
     });
     if (!project.readable) tab.disabled = true;

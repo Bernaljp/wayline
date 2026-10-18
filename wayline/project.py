@@ -403,14 +403,14 @@ def old_project_message(tag, version, current=RESEARCH_VERSION, release=TAG):
 
 
 def old_project_problem(project):
-    """The refusal for a project whose `research_version` is not this release's, or None for a current one.
+    """The refusal for a project whose `research_version` is lower than this release's, or None for a current one.
 
     Nothing of an old project is migrated (Implementation Decision 17): every verb that writes to it
     refuses with this message, and reading it (`status`, the dashboard's views) still works.
     """
     harness = read_harness(project)
     version = research_version(harness)
-    if version == RESEARCH_VERSION:
+    if version >= RESEARCH_VERSION:  # a newer project is the pin check's to refuse (`evolve.pin_problem`)
         return None
     return old_project_message(harness.get("harness_tag"), version)
 
