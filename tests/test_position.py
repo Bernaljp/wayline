@@ -448,7 +448,7 @@ class ShownTest(PositionCase):
         body = script[start:script.index("\n}\n", start)]
         self.assertIn("view.position && view.position.first", body)
         self.assertLess(body.index("view.position"), body.index("fields(["))
-        self.assertIn("renderMarkdown(view.position.text)", body)
+        self.assertIn("renderMarkdown(view.position.text, ", body)
 
 
 class AutonomousTest(PositionCase):

@@ -173,13 +173,16 @@ const MATH_INLINE = /^(?:\$\$((?:\\[\s\S]|[^\\$])+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(
 const MATH_INLINE_START = /\$|\\[([]/;
 const MATH_ENVIRONMENTS = 'equation|align|alignat|gather|multline|flalign';
 const MATH_BLOCK = new RegExp(
-  '^ {0,3}(?:\\$\\$((?:\\\\[\\s\\S]|[^\\\\$])+?)\\$\\$(?:[ \\t]*\\{#(eq:[^}\\s]+)\\})?|\\\\\\[([\\s\\S]+?)\\\\\\]|(\\\\begin\\{(' + MATH_ENVIRONMENTS + ')\\*?\\}[\\s\\S]+?\\\\end\\{\\5\\*?\\}))[ \\t]*(?:\\n+|$)'
+  // A display ends at its first closing delimiter, which must end the line: `\[a\] and \[b\]` on one
+  // line is a paragraph with two displays in it, never one display running from the first to the last.
+  '^ {0,3}(?:\\$\\$((?:\\\\[\\s\\S]|[^\\\\$])+?)\\$\\$(?:[ \\t]*\\{#(eq:[^}\\s]+)\\})?|\\\\\\[((?:(?!\\\\\\])[\\s\\S])+?)\\\\\\]|(\\\\begin\\{(' + MATH_ENVIRONMENTS + ')(\\*?)\\}[\\s\\S]+?\\\\end\\{\\5\\6\\}))[ \\t]*(?:\\n+|$)'
 );
 const MATH_BLOCK_START = new RegExp('^ {0,3}(?:\\$\\$|\\\\\\[|\\\\begin\\{(?:' + MATH_ENVIRONMENTS + ')\\*?\\})', 'm');
 const MATH_BLANK_LINE = /\n[ \t]*\n/;
 // The same inline spans, for marked's emStrongMask hook: a `*` or `_` inside math never pairs with
-// one outside it (without the mask, `*see $a*b$ here*` emphasizes the wrong words).
-const MATH_MASK = /\$\$(?:\\[\s\S]|[^\\$])+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$(?![\s$])(?:\\[\s\S]|[^\\$])+?(?<!\s)\$(?!\d)/g;
+// one outside it (without the mask, `*see $a*b$ here*` emphasizes the wrong words). It is
+// MATH_INLINE itself, unanchored and global, so the two can never disagree about where math is.
+const MATH_MASK = new RegExp(MATH_INLINE.source.slice(1), 'g');
 
 // Commands a paper's LaTeX has that KaTeX lacks, as KaTeX macros: \label is read and dropped (the
 // equation keeps its number; `numberEquations` turns it into one), and \DeclareMathOperator defines
@@ -207,7 +210,9 @@ function katexRenderer(macros) {
       } catch (error) {
         const name = /\\newcommand\{(\\[A-Za-z]+)\} attempting to redefine/.exec(String(error && error.message));
         if (!name) break;
-        source = source.split(`\\newcommand{${name[1]}}`).join(`\\renewcommand{${name[1]}}`);
+        // Braced or not: `\newcommand{\R}` and `\newcommand\R` are the same definition.
+        const bare = name[1].slice(1);
+        source = source.replace(new RegExp(`\\\\newcommand(\\{\\\\${bare}\\}|\\\\${bare}(?![A-Za-z]))`, 'g'), '\\renewcommand$1');
       }
     }
     return katex.renderToString(source, Object.assign({}, options, { throwOnError: false }));
@@ -221,7 +226,7 @@ function katexRenderer(macros) {
 // \notag, \nonumber, and \tag honored) and writes each number as that row's \tag, recording its
 // \label; the second puts the numbers where \eqref{key}, \ref{key}, and @eq:key stand, in math or in
 // text. Both passes see the whole document, so a reference before its equation works.
-const REF_NUMBERED = /^\\begin\{(equation|align|gather|alignat|flalign|multline)\}([\s\S]*)\\end\{\1\}$/;
+const REF_NUMBERED = new RegExp('^\\\\begin\\{(' + MATH_ENVIRONMENTS + ')\\}([\\s\\S]*)\\\\end\\{\\1\\}$');
 const REF_ROWS = new Set(['align', 'gather', 'alignat', 'flalign']);
 const REF_LABEL = /\\label\{([^}]*)\}/;
 const REF_USE = /\\(eqref|ref)\{([^}]*)\}|@(eq:[\w:.-]*\w)/g;
@@ -285,7 +290,7 @@ function numberEquations(tokens, walk) {
   return tokens;
 }
 
-// A new marked instance per document, since the macros a document defines are that document's.
+// A new marked instance per file rendered, since the macros a file defines are that file's alone.
 function markdownWithMath() {
   const draw = katexRenderer(Object.assign({}, MATH_MACROS));
   const instance = new marked.Marked();
@@ -298,7 +303,7 @@ function markdownWithMath() {
         tokenizer(src) {
           const m = MATH_BLOCK.exec(src);
           if (!m) return undefined;
-          const text = m[1] !== undefined ? m[1] : m[3] !== undefined ? m[3] : m[4];
+          const text = m[1] ?? m[3] ?? m[4];
           if (MATH_BLANK_LINE.test(text)) return undefined;
           return { type: 'mathBlock', raw: m[0], text: text.trim(), label: m[2] };
         },
@@ -312,7 +317,7 @@ function markdownWithMath() {
           const m = MATH_INLINE.exec(src);
           if (!m) return undefined;
           const display = m[1] !== undefined || m[2] !== undefined;
-          const text = m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4];
+          const text = m[1] ?? m[2] ?? m[3] ?? m[4];
           return { type: 'mathInline', raw: m[0], text: text.trim(), display };
         },
         renderer(token) { return draw(token.text, token.display); },
@@ -328,17 +333,36 @@ function markdownWithMath() {
 
 // DOMPurify's defaults drop MathML's <semantics> and <annotation>, which KaTeX wraps every formula's
 // MathML in; kept, the accessible MathML is whole. `annotation-xml`, the integration point where
-// mXSS lives, stays forbidden. <style> is refused: a document's stylesheet would restyle the whole
+// mXSS lives, stays forbidden. <style> is refused: a rendered file's stylesheet would restyle the whole
 // dashboard (the v1.0.1 hole), and KaTeX never writes one; its `style` attributes stay.
 const MATH_PURIFY = { ADD_TAGS: ['semantics', 'annotation'], FORBID_TAGS: ['style'] };
 
 // Markdown from the ledger is written by workers (models), so it is sanitized before it is shown:
 // an unsanitized <script> in a findings file would be a prompt-injection path into the actions the
 // dashboard grows in M4. This is the one place any markdown becomes HTML; the ticket pages, the
-// position memo, and the document viewer all render through it.
-function renderMarkdown(text) {
+// position memo, and the document viewer all render through it. `fileAt` is the rendered file's path
+// in the project (a directory ends in `/`), which its relative images and links are read against.
+function renderMarkdown(text, fileAt) {
   const node = el('div', { class: 'markdown' });
   node.innerHTML = DOMPurify.sanitize(markdownWithMath().parse(text || ''), MATH_PURIFY);
+  return pointIntoProject(keepOnTheWorkstation(node), fileAt || '');
+}
+
+// What a sanitized page may still fetch by itself, beside an image's `src` and a link's `href`, which
+// `pointIntoProject` points at the project: DOMPurify keeps these, and each one is a request a
+// model-written file could aim off the workstation, with what it read in the URL.
+const FETCHING_ATTRIBUTES = ['srcset', 'poster', 'background', 'lowsrc', 'dynsrc', 'xlink:href', 'ping'];
+const FETCHING_STYLE = /url\s*\(|image-set\s*\(|@\s*import/i;
+
+function keepOnTheWorkstation(node) {
+  for (const element of node.querySelectorAll('*')) {
+    for (const name of FETCHING_ATTRIBUTES) element.removeAttribute(name);
+    // KaTeX writes `style` attributes, never one that fetches.
+    if (FETCHING_STYLE.test(element.getAttribute('style') || '')) element.removeAttribute('style');
+    const tag = element.localName;
+    if (tag !== 'img') element.removeAttribute('src'); // video, audio, source, input, and the rest
+    if (tag !== 'a') element.removeAttribute('href'); // SVG's <image> and <use> among them
+  }
   return node;
 }
 
@@ -485,7 +509,7 @@ function renderOverview(view, project) {
     parts.push(
       subhead('position memo'),
       el('p', { class: 'memo-line', text: `feasibility ${memo.feasibility}, goal ${memo.goal}${revised}; ${memo.cited} prior work cited, ${memo.dropped} dropped. Read ${memo.path} before the grill.` }),
-      el('details', { class: 'memo', open: '' }, [el('summary', { text: 'the memo' }), renderMarkdown(view.position.text)]),
+      el('details', { class: 'memo', open: '' }, [el('summary', { text: 'the memo' }), renderMarkdown(view.position.text, 'research/POSITION.md')]),
       el('hr', { class: 'rule' }),
     );
   }
@@ -1109,7 +1133,7 @@ function renderTicket(view) {
     el('div', { id: 'ticket-decision' }),
     el('hr', { class: 'rule' }),
     subhead('body'),
-    renderMarkdown(view.body),
+    renderMarkdown(view.body, 'research/tickets/'),
     subhead('context pack', (view.context_pack || []).length),
     listOrNone(view.context_pack, (path) => el('li', { text: path }), 'no file was packed for this ticket'),
     subhead('latest result'),
@@ -1311,9 +1335,10 @@ function outputRow(entry) {
 // to the browser, whose own zoom still works on the whole page.
 
 const ZOOM_STEPS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const ZOOM_RESET = ZOOM_STEPS.indexOf(1);
 const viewer = {
-  zoom: ZOOM_STEPS.indexOf(1),
-  opening: 0, // which open the last read belongs to, so a slow read never replaces a newer one
+  zoom: ZOOM_RESET,
+  reads: 0, // counts every open and close, so a slow read that a newer one replaced is dropped
 };
 
 function setZoom(index) {
@@ -1324,18 +1349,18 @@ function setZoom(index) {
   remember(STORE.zoom, String(value));
 }
 
-// A reference a document makes (an image's `src`, a link's `href`) as a path inside the project,
-// relative to the document's own directory, or null for one that leaves the project. `/x` is the
+// A reference a rendered file makes (an image's `src`, a link's `href`) as a path inside the
+// project, relative to that file's own directory, or null for one that leaves the project. `/x` is the
 // project's own root. Nothing is normalized away: a `..` above the root refuses the reference
 // rather than landing on some other file of the project.
-function documentPath(documentAt, reference) {
+function projectPathOf(fileAt, reference) {
   let path;
   try {
     path = decodeURIComponent(reference.split(/[?#]/)[0]);
   } catch (failure) {
     return null;
   }
-  const parts = path.startsWith('/') ? [] : documentAt.split('/').slice(0, -1);
+  const parts = path.startsWith('/') ? [] : fileAt.split('/').slice(0, -1);
   for (const part of path.split('/')) {
     if (part === '' || part === '.') continue;
     if (part !== '..') parts.push(part);
@@ -1347,15 +1372,15 @@ function documentPath(documentAt, reference) {
 
 const URL_SCHEME = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 
-// A rendered document's images and links, pointed at the project: a relative image is served from
+// A rendered file's images and links, pointed at the project: a relative image is served from
 // the project through the download route, so a report's plots show; an image from anywhere else is
 // never fetched, since the page makes no request off the workstation and a model-written URL could
 // carry what it read; a relative link to another Markdown file opens it here.
-function pointIntoProject(node, documentAt) {
+function pointIntoProject(node, fileAt) {
   for (const image of node.querySelectorAll('img[src]')) {
     const source = image.getAttribute('src');
     if (source.startsWith('data:')) continue;
-    const path = URL_SCHEME.test(source) ? null : documentPath(documentAt, source);
+    const path = URL_SCHEME.test(source) ? null : projectPathOf(fileAt, source);
     if (path) {
       image.setAttribute('src', downloadUrl(path));
     } else {
@@ -1372,7 +1397,7 @@ function pointIntoProject(node, documentAt) {
       link.rel = 'noopener noreferrer';
       continue;
     }
-    const path = documentPath(documentAt, target);
+    const path = projectPathOf(fileAt, target);
     if (!path) {
       link.removeAttribute('href');
       link.title = `${target} is outside the project`;
@@ -1394,14 +1419,14 @@ function pointIntoProject(node, documentAt) {
 async function openViewer(path) {
   const dialog = document.getElementById('viewer');
   const body = document.getElementById('viewer-body');
-  const doc = document.getElementById('viewer-doc');
-  const mine = ++viewer.opening;
+  const shown = document.getElementById('viewer-doc');
+  const read = ++viewer.reads;
   document.getElementById('viewer-title').textContent = path;
   document.getElementById('viewer-download').href = downloadUrl(path);
-  replace(doc, [loadingState(`reading ${path}`)]);
+  replace(shown, [loadingState(`reading ${path}`)]);
   if (!dialog.open) dialog.showModal();
   if (PREVIEWABLE_IMAGE.test(path)) {
-    replace(doc, [el('img', { src: downloadUrl(path), alt: path })]);
+    replace(shown, [el('img', { src: downloadUrl(path), alt: path })]);
     return;
   }
   try {
@@ -1409,11 +1434,11 @@ async function openViewer(path) {
     const response = await fetch(downloadUrl(path), { cache: 'no-store', headers });
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
     const text = await response.text();
-    if (mine !== viewer.opening) return;
-    replace(doc, [pointIntoProject(renderMarkdown(text), path)]);
+    if (read !== viewer.reads) return;
+    replace(shown, [renderMarkdown(text, path)]);
     body.scrollTop = 0;
   } catch (failure) {
-    if (mine === viewer.opening) replace(doc, [errorState(failure)]);
+    if (read === viewer.reads) replace(shown, [errorState(failure)]);
   }
 }
 
@@ -1422,13 +1447,13 @@ function wireViewer() {
   dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
   dialog.querySelector('[data-zoom="in"]').addEventListener('click', () => setZoom(viewer.zoom + 1));
   dialog.querySelector('[data-zoom="out"]').addEventListener('click', () => setZoom(viewer.zoom - 1));
-  dialog.querySelector('[data-zoom="reset"]').addEventListener('click', () => setZoom(ZOOM_STEPS.indexOf(1)));
+  dialog.querySelector('[data-zoom="reset"]').addEventListener('click', () => setZoom(ZOOM_RESET));
   dialog.addEventListener('keydown', (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.target.closest('input, textarea, select')) return;
     if (event.key === '+' || event.key === '=') setZoom(viewer.zoom + 1);
     else if (event.key === '-' || event.key === '_') setZoom(viewer.zoom - 1);
-    else if (event.key === '0') setZoom(ZOOM_STEPS.indexOf(1));
+    else if (event.key === '0') setZoom(ZOOM_RESET);
     else return;
     event.preventDefault();
   });
@@ -1438,11 +1463,11 @@ function wireViewer() {
     if (event.target === dialog) dialog.close();
   });
   dialog.addEventListener('close', () => {
-    viewer.opening += 1;
+    viewer.reads += 1;
     replace(document.getElementById('viewer-doc'), []);
   });
   const saved = ZOOM_STEPS.indexOf(Number(remembered(STORE.zoom)));
-  setZoom(saved >= 0 ? saved : ZOOM_STEPS.indexOf(1));
+  setZoom(saved >= 0 ? saved : ZOOM_RESET);
 }
 
 // --- the journal tail ---------------------------------------------------------------------------

@@ -71,7 +71,8 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   never pairs into emphasis, and `\label`, `\eqref`, `\ref`, `\DeclareMathOperator`, `multline`, a `\newcommand`
   of a name KaTeX predefines, and `$$...$$ {#eq:label}` render, equations numbered as amsmath numbers them. A
   rendered document's relative images and links point into the project, relative to the document, so a report's
-  plots show; one that climbs out of the project, or an image from the network, is not fetched. The position memo
+  plots show; one that climbs out of the project is not fetched, and neither is anything a rendered file aims at
+  the network (an image, a `srcset`, a style's `url()`, a video or its poster, an SVG `<image>`). The position memo
   and a ticket's body render math too, through the same path.
 - **Security:** a rendered document can no longer restyle the dashboard (ticket 74). The sanitizer kept a
   document's `<style>`, whose rules applied to the whole page, and a model-written stylesheet can exfiltrate what

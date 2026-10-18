@@ -66,6 +66,8 @@
   --accent-soft: #dcefec;
   /* What is legible on top of --accent: 4.5:1 against it in either theme. */
   --on-accent: #ffffff;
+  /* What covers the page behind the open viewer. */
+  --backdrop: rgb(0 0 0 / 0.45);
 
   --done: #116b3d;
   --running: #8a5a00;
@@ -105,6 +107,7 @@
     --accent-ink: #5fd3c0;
     --accent-soft: #10241f;
     --on-accent: #05100e;
+    --backdrop: rgb(0 0 0 / 0.6);
 
     --done: #57c98c;
     --running: #d8a944;
@@ -136,6 +139,7 @@
   --accent-ink: #5fd3c0;
   --accent-soft: #10241f;
   --on-accent: #05100e;
+  --backdrop: rgb(0 0 0 / 0.6);
 
   --done: #57c98c;
   --running: #d8a944;
@@ -755,7 +759,6 @@ ul.outputs li:last-child { border-bottom: 0; }
 ul.outputs a { overflow-wrap: anywhere; }
 ul.outputs .note { margin: 0; font-size: var(--text-xs); }
 
-
 .drop {
   border: 1px dashed var(--line-strong);
   background: var(--surface-2);
@@ -823,7 +826,7 @@ dialog#viewer {
   border-radius: var(--radius-2);
 }
 dialog#viewer[open] { display: flex; flex-direction: column; }
-dialog#viewer::backdrop { background: rgb(0 0 0 / 0.45); }
+dialog#viewer::backdrop { background: var(--backdrop); }
 
 .viewer-bar {
   flex: none;

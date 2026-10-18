@@ -15,18 +15,18 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. Every module it edits is built. It blocks 110.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#221](https://github.com/Bernaljp/wayline/issues/221) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the document viewer; defects found while charting: relative image paths), 8 (the dashboard); M8 criterion 16 (the viewer, KaTeX, zoom, the sanitizer); user story 170; research note 04 (`research/viewer-math-and-zoom`).
 
-- [ ] Opening a Markdown file shows it in a native `<dialog>` via `showModal()`, outside the redrawn panels; a poll cycle while it is open leaves it open and scrolled where it was.
-- [ ] `+`, `-`, and `0` change and reset CSS `zoom` on the document; at phone width the document fits and zooms.
-- [ ] KaTeX 0.18.9 and its woff2 fonts are vendored and served by relative URL; the page makes no request outside the machine.
-- [ ] The marked extension takes all four delimiters before Markdown; a `*` inside math never pairs; `\label`, `\eqref`, `\ref`, `\DeclareMathOperator`, `multline`, and a redefined macro render; `{#eq:label}` numbers an equation.
-- [ ] Rendering runs KaTeX with `trust: false` and then DOMPurify with `semantics` and `annotation` added and `style` forbidden; a document carrying `<style>` and a `<script>` renders with neither taking effect.
-- [ ] A relative image path in a rendered file is served from inside the project; a path escaping the project is refused.
-- [ ] Tests: the math rendering against recorded constructs from the research note (each shim, each delimiter, the `*` case); the sanitizer's output on a document with `<style>`, `<script>`, and event attributes; image paths over HTTP against a fixture ledger, in and out of the project.
-- [ ] The changelog names the viewer and the security fix under `## Unreleased`.
-- [ ] `python -m unittest` passes.
+- [x] Opening a Markdown file shows it in a native `<dialog>` via `showModal()`, outside the redrawn panels; a poll cycle while it is open leaves it open and scrolled where it was.
+- [x] `+`, `-`, and `0` change and reset CSS `zoom` on the document; at phone width the document fits and zooms.
+- [x] KaTeX 0.18.9 and its woff2 fonts are vendored and served by relative URL; the page makes no request outside the machine.
+- [x] The marked extension takes all four delimiters before Markdown; a `*` inside math never pairs; `\label`, `\eqref`, `\ref`, `\DeclareMathOperator`, `multline`, and a redefined macro render; `{#eq:label}` numbers an equation.
+- [x] Rendering runs KaTeX with `trust: false` and then DOMPurify with `semantics` and `annotation` added and `style` forbidden; a document carrying `<style>` and a `<script>` renders with neither taking effect.
+- [x] A relative image path in a rendered file is served from inside the project; a path escaping the project is refused.
+- [x] Tests: the math rendering against recorded constructs from the research note (each shim, each delimiter, the `*` case); the sanitizer's output on a document with `<style>`, `<script>`, and event attributes; image paths over HTTP against a fixture ledger, in and out of the project.
+- [x] The changelog names the viewer and the security fix under `## Unreleased`.
+- [x] `python -m unittest` passes.

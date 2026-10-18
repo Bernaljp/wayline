@@ -17,7 +17,7 @@ import struct
 import unittest
 import zlib
 
-from tests.browser import Browser, BrowserError, find_chromium
+from tests.browser import Browser, find_chromium
 from tests.paths import HARNESS_ROOT
 from tests.test_dashboard import DashboardTestCase
 
@@ -105,6 +105,7 @@ class MathRenderingTest(BrowserTestCase):
             "parenthesis": ("Parenthesis \\(\\mathbf{W}^\\top \\boldsymbol{\\mu} \\in \\mathbb{R}^{d}\\) and a thin space \\(a\\,b\\;c\\!d\\).", 2, 0),
             "bracket": ("\\[\n\\sum_{i=1}^n \\{x_i\\}\n\\]", 1, 1),
             "double dollar inside a paragraph": ("The bound $$a \\le b$$ holds.", 1, 1),
+            "two brackets on one line": ("\\[a = b\\] and \\[c = d\\]", 2, 2),
         }
         for name, (source, formulas, displays) in cases.items():
             with self.subTest(delimiter=name):
@@ -148,6 +149,7 @@ class MathShimsTest(BrowserTestCase):
         cases = {
             "label": "$$\\begin{equation} a = b \\label{eq:ab} \\end{equation}$$",
             "a redefined macro": "$$\\newcommand{\\R}{\\mathcal{R}}\\newcommand{\\E}{\\mathbb{E}} \\R(\\theta) = \\E[\\ell]$$",
+            "a redefined macro without braces": "$$\\newcommand\\N{\\mathcal{N}} \\N(0, 1)$$",
             "DeclareMathOperator": "$$\\DeclareMathOperator{\\Tr}{Tr} \\Tr(A)$$",
             "DeclareMathOperator*": "$$\\DeclareMathOperator*{\\argmin}{arg\\,min} \\argmin_x f(x)$$",
             "multline": "\\begin{multline}\na + b + c \\\\\n+ d + e\n\\end{multline}",
@@ -185,17 +187,21 @@ class MathShimsTest(BrowserTestCase):
         self.assertIn("See (2) and (1).", out["text"])
 
 
-
-# A document long enough to scroll inside the viewer, with math in it.
+# A Markdown file long enough to scroll inside the viewer, with math in it.
 LONG = "# Notes\n\n" + "\n\n".join(
     "Paragraph %d says $x_{%d}^2 + y^2 = r^2$ and goes on long enough to wrap on a narrow screen, "
     "as a report's paragraphs do." % (n, n) for n in range(120))
 
 
 class ViewerTestCase(BrowserTestCase):
-    """The page with documents under `research/paper/`, which the outputs index lists."""
+    """The page with Markdown files under `research/paper/`, which the outputs index lists."""
 
-    DOCUMENT = "research/paper/notes.md"
+    NOTES = "research/paper/notes.md"
+
+    @staticmethod
+    def output_link(relpath):
+        """The expression for the outputs list's link to `relpath`, or undefined until it is drawn."""
+        return "[...document.querySelectorAll('#outputs-body li a')].find((a) => a.textContent === %s)" % json.dumps(relpath)
 
     def write(self, relpath, data):
         path = self.project / relpath
@@ -207,28 +213,17 @@ class ViewerTestCase(BrowserTestCase):
         return path
 
     def open_viewer(self, relpath=None):
-        """Click the output's `view` button, as the owner does, and wait for the document to render."""
-        relpath = relpath or self.DOCUMENT
-        self.page.wait_for("[...document.querySelectorAll('#outputs-body li a')].some((a) => a.textContent === %s)" % json.dumps(relpath))
-        button = ("[...document.querySelectorAll('#outputs-body li a')].find((a) => a.textContent === %s)"
-                  ".parentNode.querySelector('button')" % json.dumps(relpath))
-        # The first polls can redraw the outputs panel between finding the button and the click
-        # landing on it, so a click that opened nothing is tried again on the button drawn since.
-        for attempt in range(5):
-            self.page.click(button)
-            try:
-                self.page.wait_for("document.getElementById('viewer').open", timeout=2)
-                break
-            except BrowserError:
-                if attempt == 4:
-                    raise
+        """Click the output's `view` button, as the owner does, and wait for the file to render."""
+        link = self.output_link(relpath or self.NOTES)
+        self.page.wait_for(link)
+        self.page.click(link + ".parentNode.querySelector('button')")
         self.page.wait_for("document.getElementById('viewer').open && document.querySelector('#viewer-doc .markdown, #viewer-doc img')")
 
 
 class ViewerDialogTest(ViewerTestCase):
     def setUp(self):
         super().setUp()
-        self.write(self.DOCUMENT, LONG)
+        self.write(self.NOTES, LONG)
         self.open_dashboard()
 
     def test_a_markdown_output_opens_in_a_modal_dialog_outside_the_redrawn_panels(self):
@@ -245,7 +240,7 @@ class ViewerDialogTest(ViewerTestCase):
         self.assertTrue(state["modal"], "opened with showModal(), so the page behind is inert")
         self.assertFalse(state["inPanel"], "a poll redraws the panels; the viewer is not in one")
         self.assertEqual(state["formulas"], 120)
-        self.assertEqual(state["title"], self.DOCUMENT)
+        self.assertEqual(state["title"], self.NOTES)
 
     def test_a_poll_while_the_viewer_is_open_leaves_it_open_and_scrolled_where_it_was(self):
         self.open_viewer()
@@ -256,10 +251,10 @@ class ViewerDialogTest(ViewerTestCase):
           return body.scrollTop;
         })()""")
         self.assertGreater(before, 0, "the document is long enough to scroll")
-        # A new output moves the index's tag, so the next poll redraws the outputs panel whole.
+        # A new output moves the index's tag, so the page's own next poll (every `poll_views_s`, 5 s in
+        # the fixture) redraws the outputs panel whole.
         self.write("research/paper/another.md", "# Another\n")
-        self.page.evaluate("loadOutputs()")
-        self.page.wait_for("[...document.querySelectorAll('#outputs-body li a')].some((a) => a.textContent === 'research/paper/another.md')")
+        self.page.wait_for(self.output_link("research/paper/another.md"), timeout=15)
         after = self.page.evaluate("""(() => ({
           redrawn: !document.querySelector('#outputs-body ul.outputs[data-before]'),
           open: document.getElementById('viewer').open,
@@ -305,7 +300,7 @@ FIT = """(() => {
 class ViewerZoomTest(ViewerTestCase):
     def setUp(self):
         super().setUp()
-        self.write(self.DOCUMENT, LONG)
+        self.write(self.NOTES, LONG)
 
     def test_plus_minus_and_zero_step_and_reset_the_documents_zoom_alone(self):
         self.open_dashboard()
@@ -319,7 +314,7 @@ class ViewerZoomTest(ViewerTestCase):
         self.assertEqual({state["bar"] for state in seen}, {"1"}, "the bar keeps its size")
 
     def test_at_phone_width_the_viewer_fills_the_screen_and_zoom_rewraps_the_text(self):
-        self.page.width(390, 844, mobile=True)
+        self.page.screen(390, 844, mobile=True)
         self.open_dashboard()
         # A page wider than the phone widens the layout viewport, and the viewer's 100vw with it.
         self.page.wait_for("document.querySelector('#overview-body .grid')")
@@ -379,7 +374,7 @@ AUDIT = """(() => {
 class SanitizerTest(ViewerTestCase):
     def setUp(self):
         super().setUp()
-        self.write(self.DOCUMENT, HOSTILE)
+        self.write(self.NOTES, HOSTILE)
         self.open_dashboard()
 
     def test_a_documents_style_script_and_event_attributes_never_take_effect(self):
@@ -420,6 +415,19 @@ REPORT = """# A report
 ![one from the network](https://example.com/plot.png)
 
 [the notes beside it](other.md) and [a file above the project](../../../outside.png).
+
+The other ways a page fetches by itself, each aimed off the workstation:
+
+<img alt="a srcset" src="figures/plot.png" srcset="https://example.com/srcset.png 2x">
+
+<p style="background-image: url(https://example.com/style.png)">A styled paragraph.</p>
+
+<video poster="https://example.com/poster.png" src="https://example.com/video.mp4"></video>
+
+<table background="https://example.com/table.png"><tr><td>a cell</td></tr></table>
+
+<svg width="10" height="10"><image href="https://example.com/svg.png" width="10" height="10"></image></svg>
+
 """
 
 IMAGES = """(() => [...document.querySelectorAll('#viewer-doc img')].map((image) => ({
@@ -491,10 +499,11 @@ class ImagePathEndpointTest(DashboardTestCase):
                 self.assertEqual(response.status, 404)
                 self.assertNotEqual(response.body, png(7, 7))
 
+
 class RelativeImageTest(ViewerTestCase):
     def setUp(self):
         super().setUp()
-        self.write(self.DOCUMENT, REPORT)
+        self.write(self.NOTES, REPORT)
         self.write("research/paper/other.md", "# Other notes\n\n$e^{i\\pi} + 1 = 0$\n")
         self.write("research/paper/figures/plot.png", png())
         self.write("results/baseline/curve.png", png(5, 2))
@@ -537,7 +546,7 @@ class RelativeImageTest(ViewerTestCase):
 class NoRequestLeavesTheMachineTest(ViewerTestCase):
     def setUp(self):
         super().setUp()
-        self.write(self.DOCUMENT, LONG + "\n\n$$\\mathcal{L} = \\sum_i \\mathbb{E}\\left[\\log p(x_i)\\right]$$\n")
+        self.write(self.NOTES, LONG + "\n\n$$\\mathcal{L} = \\sum_i \\mathbb{E}\\left[\\log p(x_i)\\right]$$\n")
         self.open_dashboard()
 
     def test_the_fonts_come_from_the_dashboard_by_relative_url_and_nothing_from_anywhere_else(self):

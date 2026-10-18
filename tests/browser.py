@@ -186,20 +186,28 @@ class Page:
         return result["result"].get("value")
 
     def wait_for(self, condition, timeout=DEADLINE_S):
-        """Evaluate `condition` until it is truthy; waiting on the page, not on a fixed sleep."""
-        deadline = time.monotonic() + timeout
-        while True:
-            value = self.evaluate("Boolean(%s)" % condition)
-            if value:
-                return
-            if time.monotonic() > deadline:
-                raise BrowserError("still false after %ss: %s" % (timeout, condition))
-            time.sleep(0.05)
+        """Wait inside the page until `condition` holds, checking it each time the page's event loop turns.
+
+        The test waits on the page under test, never on a sleep of its own: one evaluation, whose promise
+        the page settles as soon as the condition is true, or once `timeout` seconds have passed.
+        """
+        held = self.evaluate("""new Promise((settle) => {
+          const until = performance.now() + %d;
+          const check = () => {
+            let value = false;
+            try { value = Boolean(%s); } catch (failure) { /* not drawn yet */ }
+            if (value || performance.now() > until) settle(value);
+            else setTimeout(check, 10);
+          };
+          check();
+        })""" % (timeout * 1000, condition))
+        if not held:
+            raise BrowserError("still false after %ss: %s" % (timeout, condition))
 
     def press(self, key, code=None):
         """A real key press, as the keyboard sends it, on whatever has focus."""
-        known = KEYS.get(key, (code or key, ord(key.upper()) if len(key) == 1 else 0))
-        base = {"key": key, "code": known[0], "windowsVirtualKeyCode": known[1], "nativeVirtualKeyCode": known[1]}
+        physical, virtual = KEYS.get(key, (code or key, ord(key.upper()) if len(key) == 1 else 0))
+        base = {"key": key, "code": physical, "windowsVirtualKeyCode": virtual, "nativeVirtualKeyCode": virtual}
         if len(key) == 1:
             self.send("Input.dispatchKeyEvent", dict(base, type="keyDown", text=key, unmodifiedText=key))
         else:
@@ -220,7 +228,8 @@ class Page:
         for kind in ("mousePressed", "mouseReleased"):
             self.send("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1})
 
-    def width(self, width, height, mobile=False):
+    def screen(self, width, height, mobile=False):
+        """Lay the page out on a screen of this size; `mobile` makes it a phone's, viewport meta and all."""
         self.send("Emulation.setDeviceMetricsOverride", {
             "width": width, "height": height, "deviceScaleFactor": 2 if mobile else 1, "mobile": mobile,
         })
