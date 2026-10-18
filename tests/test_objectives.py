@@ -132,10 +132,16 @@ class AGoalTest(ObjectivesTestCase):
     def test_two_measures_given_for_one_objective_are_refused(self):
         measure, sample = self.measure()
         stated = json.loads(measure.read_text())
-        objective, result = add_objective(self.project, "Q?", measure=[stated, dict(stated, metric="loss")], sample=sample)
-        self.assertEqual(result.kind, "invalid")
-        self.assertIn("at most one measure", result.reason)
-        self.assertIsNone(objective["measure"])
+        with self.assertRaisesRegex(ObjectiveError, "at most one measure"):
+            add_objective(self.project, "Q?", measure=[stated, dict(stated, metric="loss")], sample=sample)
+        self.assertEqual(read_objectives(self.project), [], "a refused measure records nothing")
+
+    def test_a_measure_not_in_the_shape_is_refused_by_the_verb_and_nothing_is_recorded(self):
+        measure, sample = self.measure(direction="sideways")
+        code, _, err = run("objective", "add", "Q?", "--measure", str(measure), "--sample", str(sample), "--project", str(self.project))
+        self.assertEqual(code, 2)
+        self.assertIn("direction", err)
+        self.assertFalse((self.project / "research" / "objectives.json").exists())
 
     def test_a_second_measure_on_a_goal_is_refused(self):
         measure, sample = self.measure()
@@ -198,6 +204,8 @@ class ChangesTest(ObjectivesTestCase):
         with self.assertRaisesRegex(ObjectiveError, "replaced it"):
             change_objective(self.project, "O1", "reframed", by="owner")
         add_objective(self.project, "Do the top three features carry the signal?")
+        with self.assertRaisesRegex(ObjectiveError, "itself"):
+            change_objective(self.project, "O1", "reframed", by="owner", reframed_as="O1")
         change_objective(self.project, "O1", "reframed", by="owner", reframed_as="O2")
         self.assertIn("- Reframed as: O2", self.rendered())
 
@@ -241,6 +249,12 @@ class StatusTest(ObjectivesTestCase):
         self.assertIn("  O1  open    Do interaction terms raise the AUROC?  (goal: `auroc` up to 0.9)", lines)
         self.assertIn("  O2  parked  Is the effect linear?", lines)
         self.assertFalse([line for line in lines if line.startswith("goal ")], "the objectives' statuses take the goal line's place")
+
+    def test_an_unreadable_record_is_a_problem_not_a_crash(self):
+        (self.project / "research" / "objectives.json").write_text("[]\n", encoding="utf-8")
+        view = status_view(self.project)
+        self.assertEqual(view["objectives"], [])
+        self.assertTrue([problem for problem in view["problems"] if problem.startswith("objectives.json")], view["problems"])
 
     def test_status_says_when_no_objective_is_recorded(self):
         self.assertEqual(status_view(self.project)["objectives"], [])

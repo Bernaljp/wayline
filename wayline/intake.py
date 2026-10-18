@@ -37,7 +37,7 @@ from wayline.ledger import DECISION, Ledger, atomic_write
 from wayline.objectives import run_on_sample
 from wayline.pacing import ASK, CONSENTS
 from wayline.project import (
-    AUTONOMY, HARNESS_JSON, LADDER_CHANGES, LADDER_CONSENTS, MODEL_FALLBACK, UNSET_CONSENT, ProjectError, find_project, policy_for,
+    AUTONOMY, HARNESS_JSON, LADDER_CHANGES, LADDER_CONSENTS, MODEL_FALLBACK, UNSET_CONSENT, ProjectError, find_project,
     read_harness, set_ladder_changes, set_model_fallback,
 )
 from wayline.tickets import section

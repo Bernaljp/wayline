@@ -69,7 +69,8 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   keep improving, never reached. `wayline objective add "<question>"` records an open objective; with `--measure
   <file> --sample <artifact>` it records a goal only once the measure's `eval_command` printed the metric on the
   sample, the check intake ran on `GOAL.json`, moved to `wayline/objectives.py`. A measure whose command is not
-  ready leaves an objective without a measure, and the verb says why. Each change journals the new `objective`
+  ready leaves an objective without a measure, and the verb says why; a measure not in the shape, or two given for
+  one objective, is refused and nothing is recorded. Each change journals the new `objective`
   event, with `by` `owner`, `decider`, or `code`. `wayline switch --autonomy autonomous` (and the dashboard's
   autonomy action) refuses while no objective is open and names `wayline objective add`, so setup cannot end without
   one. `wayline status` and the dashboard's overview show each objective's status in place of the goal's latest

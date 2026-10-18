@@ -13,7 +13,9 @@ without it, and `wayline objective add` says why.
 
 Every change is journaled as an `objective` event with `by` (`owner`, `decider`, or `code`), and
 `OBJECTIVES.md` is rendered again in the same lock. This is the expand step over `GOAL.json`: every reader
-of `GOAL.json` keeps reading it, and a project with both goes on behaving as it did on its goal.
+of `GOAL.json` keeps reading it, and a project with both goes on behaving as it did on its goal. One thing
+changes for a project that holds a `GOAL.json` alone: `wayline switch --autonomy autonomous` refuses until an
+objective is open (`project.set_autonomy`), since setup cannot end without one.
 """
 
 import argparse
@@ -208,11 +210,13 @@ def _number(value):
 
 def read_objectives(project):
     """The objectives of `research/objectives.json` in id order; empty when the project has none yet."""
-    path = Ledger(project).path(OBJECTIVES_JSON)
-    if not path.is_file():
+    ledger = Ledger(project)
+    if not ledger.path(OBJECTIVES_JSON).is_file():
         return []
-    record = json.loads(path.read_text(encoding="utf-8"))
-    return list(record.get("objectives") or [])
+    record = ledger.read_json(OBJECTIVES_JSON)
+    if not isinstance(record, dict) or not isinstance(record.get("objectives"), list):
+        raise ValueError("research/%s is not an object holding an `objectives` list" % OBJECTIVES_JSON)
+    return list(record["objectives"])
 
 
 def open_objectives(project):
@@ -239,14 +243,18 @@ def _write(ledger, objectives, objective, by):
 def add_objective(project, text, measure=None, sample=None, by="owner", timeout_s=None):
     """`wayline objective add`: record an open objective, a goal when its measure printed the metric on the sample.
 
-    Returns `(objective, check)`: `check` is None without a measure, else the `MeasureCheck`; a measure it did
-    not accept leaves the objective recorded without one, and `check.reason` says why. The command runs before
+    Returns `(objective, check)`: `check` is None without a measure, else the `MeasureCheck`. A measure whose
+    command is not ready (missing, failing, or printing no number) leaves the objective recorded without one,
+    and `check.reason` says why; a measure not in the shape (two of them, a bad direction) is refused with
+    `ObjectiveError` and nothing is recorded. The command runs before
     the lock is taken, since it may take as long as the acceptance timeout.
     """
     text = " ".join(str(text or "").split())
     if not text:
         raise ObjectiveError("an objective is a question, and none was given")
     check = check_measure(measure, project, sample=sample, timeout_s=timeout_s) if measure is not None else None
+    if check is not None and check.kind == "invalid":
+        raise ObjectiveError("the measure is refused and nothing was recorded: %s" % check.reason)
     ledger = Ledger(project)
     with ledger.lock():
         objectives = read_objectives(project)
@@ -275,6 +283,8 @@ def add_measure(project, identifier, measure, sample=None, by="owner", timeout_s
         raise ObjectiveError("%s already has a measure, and an objective has at most one; a second metric makes a second "
                              "objective (wayline objective add)" % identifier)
     check = check_measure(measure, project, sample=sample, timeout_s=timeout_s)
+    if check.kind == "invalid":
+        raise ObjectiveError("the measure is refused: %s" % check.reason)
     ledger = Ledger(project)
     with ledger.lock():
         objectives = read_objectives(project)
@@ -302,6 +312,8 @@ def change_objective(project, identifier, status, by, answer=None, evidence=None
         if status == "reframed":
             if reframed_as is None:
                 raise ObjectiveError("a reframed objective names the objective that replaced it")
+            if reframed_as == identifier:
+                raise ObjectiveError("%s cannot be reframed as itself" % identifier)
             _find(objectives, reframed_as)
         objective.update(status=status, answer=None if status == "open" else answer, reframed_as=reframed_as if status == "reframed" else None)
         if evidence is not None:
@@ -364,14 +376,12 @@ def objective_command(args):
     except (ProjectError, OSError, ValidationError) as failure:
         print("wayline objective: %s" % failure, file=sys.stderr)
         return 1
+    print("%s  open  %s" % (objective["id"], objective["text"]))
     if check is None:
-        print("%s  open  %s" % (objective["id"], objective["text"]))
         print("  recorded as an objective without a measure")
     elif check.accepted:
-        print("%s  open  %s" % (objective["id"], objective["text"]))
         print("  a goal: %s (printed %s on %s)" % (describe_measure(objective["measure"]), _number(check.value), check.sample))
     else:
-        print("%s  open  %s" % (objective["id"], objective["text"]))
         print("  recorded as an objective without a measure, because the measure's command is not ready: %s" % check.reason)
     return 0
 
