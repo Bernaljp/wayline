@@ -57,6 +57,8 @@ VERBS = [
     Verb("status", "status [--project <path>] [--json]", "print the frontier, running tickets and jobs, open decisions, the window, the goal, the last events", "views", lazy("wayline.project", "status_command")),
     Verb("answer", "answer <id> \"<text>\" [--rationale \"<why>\"]", "answer a decision ticket from the command line or a session", "views", lazy("wayline.project", "answer_command")),
     Verb("switch", "switch <path> | --autonomy <level> | --fallback auto|ask|wait | --stop-at f --cheap-at f", "make another project the active one, or set its autonomy, its fallback consent, or its pacing thresholds", "views", lazy("wayline.project", "switch_command")),
+    Verb("objective", "objective add \"<question>\" [--measure <file> --sample <artifact>]", "record an objective, a question the research answers; a goal when its measure's eval_command printed the metric on the sample artifact", "views",
+         lazy("wayline.objectives", "objective_command")),
     Verb("feedback", "feedback \"<text>\"", "file feedback for the evolve loop", "views", lazy("wayline.changes", "feedback_command")),
     Verb("mark", "mark <batch> [<item> [<mark>] [--note \"<text>\"] | --defaults] [--by owner|decider]",
          "show a batch of the marks view, settle one of its items with a mark, keep a note on one, or take all defaults", "views",

@@ -13,7 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, open_objective
 from tests.test_conductor import ConductorCase, done, patch
 from tests.test_intake import structural
 from wayline import cli, replay, worker
@@ -398,6 +398,10 @@ class BatchTest(GrillCase):
 class SwitchAutonomyTest(GrillCase):
     """Criterion 2, and criterion 4's switch mid-grill, on the journal and harness.json."""
 
+    def setUp(self):
+        super().setUp()
+        open_objective(self.project)  # a raise to autonomous needs one open (decision 17)
+
     def switch(self, *args):
         return run("switch", *args, "--project", str(self.project))
 
@@ -523,6 +527,7 @@ class StartingConductorTest(ConductorCase):
     """A lowering journaled while a conductor starts is the autonomy the run announces, not the one it first read."""
 
     def test_a_lowering_written_between_the_conductors_read_and_its_heartbeat_holds(self):
+        open_objective(self.project)
         set_autonomy(self.project, "autonomous")
         original = Heartbeat.acquire
 

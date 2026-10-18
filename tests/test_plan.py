@@ -20,7 +20,7 @@ import unittest
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, open_objective
 from tests.test_specify import DRAFT, GOAL, INPUT, RECORDED, run
 from wayline import cli, decider, plan, project, registry, specify, tickets, worker
 from wayline.ledger import Ledger
@@ -247,6 +247,7 @@ class PlanCase(ProjectTestCase):
         self.ledger.write_json("GOAL.json", GOAL, schema="goal")
         self.ledger.write_markdown("kb/query_pack.md", "# Query pack\n\n- paper-a extends paper-b\n")
         self.confirm_spec()
+        open_objective(self.project)
         project.set_autonomy(self.project, self.autonomy)
         self.notified = []
         self.fake = self.enterContext(worker.use_fake())

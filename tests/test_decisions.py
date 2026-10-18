@@ -22,7 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.paths import HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, open_objective
 from tests.test_conductor import HELLO, WRONG, ConductorCase, done as worker_done, patch as worker_patch
 from wayline import cli, decisions, grill, notify, project, replay, schedule, tick, tickets, worker
 from wayline.conductor import Conductor
@@ -260,6 +260,7 @@ class NoDeciderTest(ConductedCase):
     """Found by the review: under `autonomous` a decision ticket was launched on the decider role, which ticket 31 has not installed."""
 
     def test_under_autonomous_without_a_decider_the_decision_ticket_waits_for_the_owner_and_is_not_failed(self):
+        open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
         self.script()
         with mock.patch.object(decisions, "decider_ready", return_value=False):
@@ -535,6 +536,7 @@ class DecisionsViewTest(BranchCase):
         self.assertEqual(view["problems"], [])
 
     def test_under_autonomous_the_decider_takes_it_and_a_human_only_one_stays_the_owner_s(self):
+        open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
         decisions.open_decision(self.project, "May the data leave the machine?", human_only=True, notify=self.notify)
         with mock.patch.object(decisions, "decider_ready", return_value=True):

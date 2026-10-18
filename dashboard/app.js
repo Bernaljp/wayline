@@ -297,6 +297,7 @@ async function loadOverview() {
 function renderOverview(view, project) {
   const window_ = view.window || {};
   const goal = view.goal;
+  const objectives = view.objectives || [];
   const resources = view.resources || {};
   const cpu = resources.cpu;
   const ram = resources.ram;
@@ -329,7 +330,11 @@ function renderOverview(view, project) {
       // What `cheap_at` costs each launch (decision 16), beside the hold line of decision 15.
       ['stepping down', window_.stepping_down],
       ['hold', view.hold ? view.hold.line : null],
-      ['goal', goal ? `${goal.metric} ${goal.value === null ? 'no reading yet' : goal.value} of ${goal.target} (${goal.direction})${goal.reached ? ' reached' : ''}` : 'none set'],
+      // The objectives' statuses take the goal's latest reading's place (decision 17); a project from before
+      // objectives still shows the goal its GOAL.json holds.
+      objectives.length
+        ? ['objectives', objectives.map((objective) => `${objective.id} ${objective.status}${objective.metric === null ? '' : ` (goal ${objective.metric})`}`).join(', ')]
+        : ['goal', goal ? `${goal.metric} ${goal.value === null ? 'no reading yet' : goal.value} of ${goal.target} (${goal.direction})${goal.reached ? ' reached' : ''}` : 'none set'],
       ['cpu slot', cpu ? `loadavg1 ${cpu.loadavg1} of ${cpu.nproc}, ${cpu.free_cores.length} cores free, ${cpu.free ? 'free' : 'full'}` : null],
       ['ram slot', ram ? `${gib(ram.free_bytes)} free, ${gib(ram.committed_bytes)} committed` : null],
       ['gpu slots', gpus ? (gpus.length ? `${gpus.filter((gpu) => gpu.free).length} free of ${gpus.length}` : 'none detected (CPU-only)') : null],

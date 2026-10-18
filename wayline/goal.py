@@ -31,8 +31,9 @@ from pathlib import Path
 from typing import Optional
 
 from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
-from wayline.intake import ARTIFACT, GOAL_JSON, metric_value
+from wayline.intake import GOAL_JSON
 from wayline.ledger import PROGRESS
+from wayline.objectives import ARTIFACT, metric_value
 
 __all__ = [
     "SPLIT", "ARTIFACT_ENV", "SPLIT_ENV", "Judgment", "read_goal", "applies", "seed_artifacts",

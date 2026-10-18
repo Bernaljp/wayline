@@ -9,4 +9,4 @@ One command that turns a research intent into `REPORT.md` under a Claude Code su
 
 Layout (Implementation Decisions 1): `wayline/` is the package, `schemas/` the JSON Schema documents, `policy.json` the global defaults, `templates/project/` what `wayline init` lays down, `fixtures/` the recorded inputs the tests read, and `tests/` the unit suite with the schema examples under `tests/examples/`.
 
-A project: `wayline init <path>` lays one out and makes it active, `wayline status` prints the frontier and the last events, `wayline switch <path>` moves the machine's pointer. The per-machine pointers live in `~/.wayline/`, which `WAYLINE_HOME` moves.
+A project: `wayline init <path>` lays one out and makes it active, `wayline objective add "<question>"` records an objective (a goal with `--measure <file> --sample <artifact>`) in `research/objectives.json`, `wayline status` prints the objectives' statuses, the frontier, and the last events, `wayline switch <path>` moves the machine's pointer. The per-machine pointers live in `~/.wayline/`, which `WAYLINE_HOME` moves.
