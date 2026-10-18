@@ -22,6 +22,7 @@ TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 <Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>
 <Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>
 </Types>"""
@@ -35,7 +36,15 @@ DOC_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>
 <Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/>
+<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>"""
+
+STYLE_NAMES = {"Normal": "Normal", "Title": "Title", "Abstract": "Abstract",
+               "Heading1": "heading 1", "Caption": "caption", "Bibliography": "Bibliography"}
+STYLES = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:styles {NS}>' + "".join(
+    f'<w:style w:type="paragraph" w:styleId="{i}"><w:name w:val="{n}"/>'
+    + ('<w:pPr><w:outlineLvl w:val="0"/></w:pPr>' if i == "Heading1" else "") + "</w:style>"
+    for i, n in STYLE_NAMES.items()) + "</w:styles>")
 
 AUTHOR = 'w:author="Ines Varga" w:date="2023-04-02T10:00:00Z"'
 
@@ -148,7 +157,7 @@ def write_zip(path, parts, when):
 def docx(path, newer, when):
     write_zip(path, [("[Content_Types].xml", TYPES), ("_rels/.rels", ROOT_RELS),
                      ("word/_rels/document.xml.rels", DOC_RELS),
-                     ("word/document.xml", body(newer)), ("word/comments.xml", COMMENTS),
+                     ("word/document.xml", body(newer)), ("word/styles.xml", STYLES), ("word/comments.xml", COMMENTS),
                      ("word/commentsExtended.xml", EXTENDED)], when)
 
 

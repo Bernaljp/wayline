@@ -7,7 +7,7 @@ documents and code (84, 85, 93, 96) test against these materials.
 
 | File | What it is | What it exercises |
 |---|---|---|
-| `manuscript-v2.docx` | the earlier manuscript, newest version | tracked insertions and deletions (`w:ins`, `w:del`); a resolved comment thread with a reply and two open comments (`comments.xml`, `commentsExtended.xml` `w15:done`); two Mendeley Cite citation fields (`ADDIN MENDELEY_CITATION_V3`); an equation (`m:oMath`); a title, an abstract, a caption, a reference list; headings Introduction, Results, Discussion, Methods, plus Acknowledgements and References that map to none of them |
+| `manuscript-v2.docx` | the earlier manuscript, newest version | tracked insertions and deletions (`w:ins`, `w:del`); a resolved comment thread with a reply and two open comments (`comments.xml`, `commentsExtended.xml` `w15:done`); two Mendeley Cite citation fields (`ADDIN MENDELEY_CITATION_V3`); an equation (`m:oMath`); a `styles.xml` defining `heading 1`; a title, an abstract, a caption, a reference list; headings Introduction, Results, Discussion, Methods, plus Acknowledgements and References that map to none of them |
 | `manuscript-v1.docx` | the same manuscript's older version (earlier zip timestamps, no dusk edits) | choosing the newest version in its source format |
 | `methods.tex` | a separate Methods in LaTeX | a stated parameter that disagrees with the code: a window of 256 samples, where the code uses 512 |
 | `supplement.pdf` | a supplement with no source beside it | a document known only as PDF |

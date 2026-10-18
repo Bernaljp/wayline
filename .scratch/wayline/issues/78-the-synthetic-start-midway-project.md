@@ -20,16 +20,16 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. It blocks 84 and 85.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#225](https://github.com/Bernaljp/wayline/issues/225) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (documents, critiques, and concerns; inherited passages and repeated claims; Methods and the code), Testing Decisions (decision 17's document fixtures: "an earlier manuscript as `.docx` with tracked changes, comments, and Mendeley citations, a `.tex` Methods, a critique, a small code repository with a MATLAB and a Python file"); M8 criteria 9 and 10 (the synthetic materials they are covered with); user stories 101, 175.
 
-- [ ] The fixture holds every item listed above, all invented; no file, name, or sentence comes from PINF_Project.
-- [ ] The `.docx` carries tracked insertions and deletions, at least one open and one resolved comment thread, Mendeley Cite citation fields, an equation, and the headings listed; an older version is beside it.
-- [ ] The `.tex` Methods, the source-less PDF, the two-sheet `.xlsx`, the two critiques, the repeated claim, and the contradicting pair are present as described.
-- [ ] The code repository builds from a bundle or a script into a temporary directory with at least two commits, one MATLAB file and one Python file, and no nested `.git` is tracked.
-- [ ] The fixture's README maps each file to what it exercises.
-- [ ] A test opens every file with the standard library and `git` and checks the markers above are present (tracked-change elements, comment parts, citation fields, sheets, commits).
-- [ ] `python -m unittest` passes.
+- [x] The fixture holds every item listed above, all invented; no file, name, or sentence comes from PINF_Project.
+- [x] The `.docx` carries tracked insertions and deletions, at least one open and one resolved comment thread, Mendeley Cite citation fields, an equation, and the headings listed; an older version is beside it.
+- [x] The `.tex` Methods, the source-less PDF, the two-sheet `.xlsx`, the two critiques, the repeated claim, and the contradicting pair are present as described.
+- [x] The code repository builds from a bundle or a script into a temporary directory with at least two commits, one MATLAB file and one Python file, and no nested `.git` is tracked.
+- [x] The fixture's README maps each file to what it exercises.
+- [x] A test opens every file with the standard library and `git` and checks the markers above are present (tracked-change elements, comment parts, citation fields, sheets, commits).
+- [x] `python -m unittest` passes.

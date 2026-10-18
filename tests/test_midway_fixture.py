@@ -1,6 +1,6 @@
 """The synthetic start-midway project: every file opens with the standard library and `git`.
 
-A broken fixture fails here, before ticket 84 or 85 trips over it.
+A broken fixture fails here, before tickets 84, 85, 93, or 96 trip over it.
 """
 
 import re
@@ -52,6 +52,7 @@ class TheManuscript(unittest.TestCase):
         for h in ("Introduction", "Results", "Discussion", "Methods"):
             self.assertIn(h, heads)
         self.assertTrue(set(heads) - {"Introduction", "Results", "Discussion", "Methods"})
+        self.assertIn('w:styleId="Heading1"><w:name w:val="heading 1"/>', part(self.docx, "word/styles.xml"))
 
     def test_repeated_claim_contradiction_and_missing_data(self):
         text = re.sub(r"<[^>]+>", "", self.doc)
@@ -111,7 +112,7 @@ class TheCode(unittest.TestCase):
         subprocess.run([sys.executable, str(MIDWAY / "build_code.py"), str(repo)], check=True)
         log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
                              capture_output=True, text=True, check=True).stdout
-        self.assertGreaterEqual(len(log.splitlines()), 2)
+        self.assertEqual(len(log.splitlines()), 3)
         py = (repo / "phaselock.py").read_text()
         self.assertIn("hilbert", py)
         self.assertIn("window=512", py)
