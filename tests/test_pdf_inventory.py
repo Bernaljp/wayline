@@ -695,7 +695,7 @@ class ToolsInstallTest(ProjectTestCase):
         calls = []
         probe = probe or {"packages": {"docling": "2.126.0", "pdfplumber": "0.11.10", "torch": "2.14.0+cu126"}, "device": "cuda"}
 
-        def run(argv, cwd=None, timeout=None):
+        def run(argv, cwd=None, timeout=None, env=None):
             argv = [str(part) for part in argv]
             calls.append(argv)
             if argv[0] == "nvidia-smi":
@@ -723,9 +723,10 @@ class ToolsInstallTest(ProjectTestCase):
         self.assertIn("https://download.pytorch.org/whl/cu126", steps[1][1])
         self.assertEqual(steps[2][1][-2:], ["docling", "pdfplumber"])
         with_extras = install_steps(self.temp / "tools", extras=("marker", "mineru"), cuda=None, uv=None)
-        self.assertEqual([name for name, _ in with_extras], ["venv", "pip", "torch", "converters"])
-        self.assertIn("https://download.pytorch.org/whl/cpu", with_extras[2][1])
-        self.assertEqual(with_extras[3][1][-4:], ["docling", "pdfplumber", "marker-pdf", "mineru[pipeline]"])
+        self.assertEqual([name for name, _ in with_extras], ["venv", "torch", "converters"], "no python -m venv, no pip")
+        self.assertEqual(with_extras[0][1][0], str(self.temp / "tools" / "bin" / "uv"), "the harness's own uv")
+        self.assertIn("https://download.pytorch.org/whl/cpu", with_extras[1][1])
+        self.assertEqual(with_extras[2][1][-4:], ["docling", "pdfplumber", "marker-pdf", "mineru[pipeline]"])
 
     def test_the_install_records_what_the_venv_holds(self):
         run, calls = self.runner()

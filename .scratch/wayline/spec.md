@@ -485,7 +485,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `accept`, `consult <slug> "<question>"` | called by workers from inside a worktree |
   | `evolve ["<text>"]`, `promote skill|role|policy <name>`, `upgrade [--to <tag>]`, `fixture record|run` | the evolve loop |
   | `registry build`, `figures build-index|refresh|fold-traps`, `figure make <request>|resume <id>`, `guidelines build|check`, `docs build`, `paper [--venue <slug>]`, `report` | builders |
-  | `tools install` | creates the optional converter venv under `~/.wayline/tools/` (docling; marker and MinerU on request) |
+  | `tools install`, `tools install <name>`, `tools show`, `tools run <name> -- <args>` | installs the harness's tools under `~/.wayline/tools/` without root (micromamba, uv, pandoc with pandoc-crossref, matplotlib, seaborn, tree-sitter-matlab, the embedding model, and the converter venv: docling; marker and MinerU on request) and records LaTeX, poppler, LibreOffice, and git as `system`, or one of them by name; prints `tools.json`; runs a recorded tool by its absolute executable and environment, for a session's short calls (decision 17) |
 
   Every verb is a function in the package that the dashboard calls in-process; the CLI is a thin argument parser over the same functions (BRIEF 9.9: the dashboard is a client of the same functions).
 

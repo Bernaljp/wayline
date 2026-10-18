@@ -80,7 +80,7 @@ VERBS = [
     Verb("paper", "paper [--venue <slug>] [--continue] [--verify]", "draft research/paper/ under a venue's guidelines, build it with the linter and the seven checks, and gate it with the kill argument and one independent read; nothing is submitted", "builders",
          lazy("wayline.paper", "paper_command")),
     Verb("report", "report [--offline] [--no-draft] [--verify]", "render REPORT.md from the ledger, lint every claim, and sample the claims for the verifier", "builders", lazy("wayline.provenance", "report_command")),
-    Verb("tools", "tools install|show [--marker] [--mineru] [--grobid] [--dry-run]", "create the optional converter venv under ~/.wayline/tools/ (docling; marker, MinerU, GROBID on request)", "tools",
+    Verb("tools", "tools install [<name>] [--marker] [--mineru] [--grobid] [--dry-run] | show [--json] | run <name> -- <args>", "install the harness's tools under ~/.wayline/tools/ and record each in tools.json; show the record; run a recorded tool by its absolute path and environment", "tools",
          lazy("wayline.tools", "tools_command")),
     Verb("launch", "launch --smoke [--dir <path>] [--model <alias>] [--effort <effort>]", "one real cheap session through the launcher; prints the envelope and the usage windows", "tools",
          handler=lazy("wayline.worker", "launch_verb"), hidden=True),
