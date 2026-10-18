@@ -19,7 +19,10 @@
    ```
 
    Name the interpreter by its absolute path. Paths are relative to the project root. Leave out
-   `devices`, `retry`, and `wallclock_minutes`: the ticket supplies them.
+   `devices`, `retry`, and `wallclock_minutes`: the ticket supplies them. A job that runs one of
+   the ticket's tools names it instead, `"tool": "octave"` with the arguments as its `command`
+   (`["--eval", "run('scripts/model.m')"]`): `wayline job add` writes the tool's absolute path and
+   environment in, and the job record keeps the tool's version and lock.
 5. Run `wayline accept` from the worktree root and fix what failed, then `git add` and `git commit`
    the script and the spec. Leave nothing uncommitted in the touch set: the conductor integrates
    the branch, and a stray file there fails the ticket.
@@ -34,4 +37,6 @@ set, never for a remark: it stops the ticket and cancels its jobs.
 
 If a job cannot be written as the ticket asks (the script needs a GPU the ticket's resources do not
 give it, an output the ticket does not name), say so in `blocked_on` or `status: failed` rather than
-returning jobs that cannot succeed.
+returning jobs that cannot succeed. When an installed tool lacks what the script needs, stop with
+`blocked_on: "software <tool>: <what it lacks>"`, and the harness asks the owner; a package the
+script imports goes in with `wayline tools package <python|r|julia|octave> <name>`, with no ask.

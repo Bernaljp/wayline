@@ -150,6 +150,46 @@ lists it read-only, marked with its tag.
   environment for a session's short calls, refusing one not recorded. A record of the first version reads as one
   with no entries.
 
+- Project tools, packages, licensed software, and the `software` decision (ticket 82; Implementation Decisions 17,
+  1, 2, 6, and 10). The new module `wayline/software.py` builds on ticket 75's record.
+  - **A project's tools** install only after a yes, never as root: Octave and R (with renv) from conda-forge
+    through the harness's micromamba into `~/.wayline/tools/envs/<tool>`, each package checked against its
+    repodata digest and the prefix's explicit export kept as its lock, and Julia 1.12.7 from its release tarball
+    into `~/.wayline/tools/julia-<version>`, checked against the SHA-256 Julia publishes. Each is one `tools.json`
+    entry with `installer: harness`. `wayline tools install <octave|r|julia>` takes the yes as `--yes` (the
+    owner's, in a setup conversation) or `--decision <id>` (its `software` decision answered Install), journals
+    `tool_installed`, and refuses otherwise; an installed tool is left as it is, and `--change` changes one on
+    the owner's word alone. `--dry-run` prints the route and the sizes micromamba's dry run (or Julia's server)
+    states, the disk an estimate of three times what it links.
+  - **A project's packages** go into its own environment with no ask: `wayline tools package <python|r|julia|octave>
+    <name>...` installs Python packages through the harness's uv into `<project>/.venv` (`code/requirements.lock`),
+    R packages from conda-forge into `<project>/.wayline/packages/r`, read by the shared R through `R_LIBS`
+    (`code/renv.lock`, by renv), Julia packages into the project environment `code/` (`Project.toml` and
+    `Manifest.toml`), and Octave Forge packages into the shared prefix unless two projects disagree on a
+    version, when the project gets `<project>/.wayline/packages/octave` (`code/octave-packages.lock`). `init`
+    gitignores `.venv/` and `.wayline/packages/`; the locks are tracked.
+  - **Licensed software** (MATLAB) is never installed by code. `wayline tools install matlab --at <path>`, or the
+    answer to its decision naming the path, records it with `installer: owner` and the version, release, and
+    toolboxes `matlab -batch "ver"` printed (never the license number), after that one check; mid-run the check
+    is a job, and a failing check keeps the decision open.
+  - **The `software` decision.** `ticket` and `plan` gain `software` (the planner sets it; the plan check refuses a
+    name no route or record knows), and the graph carries it. A ticket is not launchable until every tool it
+    names is recorded or its decision said Go without. The conductor opens one decision ticket of the new class
+    `software` per missing tool, pausing only the tickets that need it, stating the route, the sizes from a dry
+    run, the tickets waiting, and the cost, with Install (recommended), Not now, and Go without, and each ask is an
+    item of a `software_ask` batch (ticket 79), so a mark settles it; the first answer wins. The owner answers it
+    under `interactive` and `checkpoints`, the decider under `autonomous` (its prompt says so); a licensed tool's
+    ask and a gap's are `human_only`. An Install answer runs the install as a job, so no wave waits on a download;
+    a failed install is retried once, and then the decision is asked again carrying the error. A worker that
+    finds an installed tool lacking what its code needs ends `blocked` with `blocked_on: "software <tool>: <what
+    it lacks>"`, and code opens the owner's decision; its Install or Go without opens the ticket again.
+    `software.setup_question` lists every tool the planned work needs, for the setup conversation under
+    `autonomous`.
+  - A job spec may name `"tool"`: `wayline job add` writes the tool's absolute executable and environment into
+    `command` and `env`, and the job file (schema `job`, widened) and `job_launched` carry `tools`, the name,
+    version, and lock digest of every tool the job calls. The journal gains `tool_installed`. Installing free
+    software is on neither the irreversible list nor the global harness changes.
+
 - Objectives (ticket 76; Implementation Decision 17). A project holds objectives, questions the research answers,
   in `research/objectives.json`, written only by code through the ledger (schema `objectives`) and rendered as
   `research/OBJECTIVES.md` in id order with each one's status, measure, answer, and evidence. Ids run O1 onward and

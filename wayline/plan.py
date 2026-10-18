@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from wayline import HARNESS_ROOT, changes, decider, decisions, gates, registry, specify, worker
+from wayline import HARNESS_ROOT, changes, decider, decisions, gates, registry, software, specify, worker
 from wayline.cli import parse_args
 from wayline.frontmatter import dump_document
 from wayline.jsonschema import ValidationError, check, load_schema
@@ -393,6 +393,10 @@ def check_tickets(new, graph, project, *, base=True, timeout_s=None, declared=fr
                             % (label, fields.get("kind")))
         if not isinstance(fields.get("skills"), list):
             failures.append("%s has no skills list (the librarian assigns it, empty when no skill matches)" % label)
+        for name in fields.get("software") or []:
+            if not software.known_tool(name):
+                failures.append("%s needs the tool %s, which the harness has no route for and the owner records only as licensed "
+                                "software; a ticket's software is one of %s" % (label, name, ", ".join(software.known_tools())))
     # A parked docs ticket documents nothing, so it does not satisfy the rule for the code ticket it waited on.
     docs = [fields for fields in graph if fields.get("kind") == "docs" and fields.get("status") != "parked"]
     for fields in graph:
@@ -571,6 +575,8 @@ def prepare(record, project, existing, index, cut, start=None):
         fields["demo"] = _one_line(item["demo"])
         if item.get("retry") and item["kind"] == "experiment":
             fields["retry"] = retry_steps(item["retry"])
+        if item.get("software"):
+            fields["software"] = sorted({str(name).strip() for name in item["software"]})  # the tools it needs (ticket 82)
         if item.get("adds_public_api") and item["kind"] == "code":
             prepared.declared.add(identifier)
         prepared.tickets.append((key, fields, ticket_body(item, cut.of), item.get("tags")))

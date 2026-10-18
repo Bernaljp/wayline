@@ -76,7 +76,9 @@ GITIGNORE_HEADER = "# wayline"
 # And `absorb --code`'s clones, repositories of their own a wave commit would record as empty gitlinks.
 # And the conductor's heartbeat, which is rewritten every wave and means nothing in a commit.
 GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/refs/*/code/",
-                    "research/conductor.json")
+                    "research/conductor.json",
+                    # A project's packages (decision 17; ticket 82): the venv, the R library, and its own Octave Forge prefix.
+                    ".venv/", ".wayline/packages/")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")

@@ -427,6 +427,11 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "`human_only: true`), and put what you would have answered in the rationale. The harness checks every answer "
         "against the list as well." % _classes(harness),
         "",
+        "A `software` decision (a project's tool a ticket needs, decision 17) is yours to answer with Install, Not now, or "
+        "Go without: installing free software through the harness's routes is neither irreversible nor a global harness "
+        "change. Changing a tool already installed, the tools venv, and licensed software (MATLAB) are the owner's alone, "
+        "and their decisions never reach you.",
+        "",
     ]
     parts = ["\n".join(lines), records]
     if cut:

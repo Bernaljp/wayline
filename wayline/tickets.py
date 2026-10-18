@@ -353,7 +353,7 @@ def attempts_from_events(events):
 
 def _entry(ticket, attempt):
     pinned = ticket.get("pinned_difficulty")
-    return {
+    entry = {
         "id": ticket["id"],
         "kind": ticket["kind"],
         "status": ticket["status"],
@@ -367,6 +367,9 @@ def _entry(ticket, attempt):
         "skills": list(ticket.get("skills") or []),
         "attempt": attempt,
     }
+    if ticket.get("software"):
+        entry["software"] = list(ticket["software"])  # the tools it needs before it is launchable (decision 17; ticket 82)
+    return entry
 
 
 def empty_graph():

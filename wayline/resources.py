@@ -597,6 +597,7 @@ class JobSpec:
     expected_outputs: tuple = ()
     retry: dict = field(default_factory=lambda: {"host_oom": [], "gpu_oom": []})
     wallclock_minutes: int = DEFAULT_WALLCLOCK_MINUTES
+    tools: tuple = ()  # `{name, version, lock}` of every tool the job calls (decision 17; ticket 82)
 
     def check(self):
         """Refuse a spec no backend could honor, before anything is launched or written."""
@@ -1209,6 +1210,7 @@ def job_record(spec, backend=None, unit=None, gpu_indices=(), status="pending", 
         "attempts": [dict(attempt) for attempt in attempts],
         "status": status,
         "wallclock_minutes": int(spec.wallclock_minutes),
+        "tools": [dict(tool) for tool in spec.tools],
     }
 
 
@@ -1221,6 +1223,7 @@ def spec_from_record(record):
         gpu_uuids=tuple(devices.get("gpu_uuids", [])), cores=tuple(devices.get("cores", [])),
         ram_gb=devices.get("ram_gb", 0.0), expected_outputs=tuple(record.get("expected_outputs", [])),
         retry=dict(record.get("retry", {})), wallclock_minutes=record.get("wallclock_minutes", DEFAULT_WALLCLOCK_MINUTES),
+        tools=tuple(dict(tool) for tool in record.get("tools") or ()),
     )
 
 
@@ -1384,7 +1387,7 @@ class JobRunner:
         self._ledger.append_event("job_launched", {
             "unit": handle.unit, "gpu_uuids": list(spec.gpu_uuids),
             "cores": [int(core) for core in spec.cores], "ram_gb": spec.ram_gb,
-            "attempt": len(record["attempts"]),
+            "attempt": len(record["attempts"]), "tools": [dict(tool) for tool in spec.tools],
         }, ticket=int(spec.ticket), job=spec.id)
         return record
 
@@ -1433,13 +1436,13 @@ class JobRunner:
 # What a job spec on stdin may carry: the job file's own fields, plus the two an array needs.
 SPEC_FIELDS = (
     "id", "ticket", "array_id", "members", "command", "cwd", "env", "log", "devices",
-    "expected_outputs", "retry", "wallclock_minutes",
+    "expected_outputs", "retry", "wallclock_minutes", "tool",
 )
 MEMBER_FIELDS = tuple(name for name in SPEC_FIELDS if name not in ("array_id", "members"))
 LOGS_DIR = "results/logs"
 
 
-def add_jobs(project, spec, ticket=None, backend=None):
+def add_jobs(project, spec, ticket=None, backend=None, tools=None):
     """Write one job file per job the spec describes, validated; returns the records written.
 
     One object is one job. With `members` it is a job array: every member inherits the base fields
@@ -1449,6 +1452,11 @@ def add_jobs(project, spec, ticket=None, backend=None):
 
     The record names the backend this machine would use, because a `pending` job file is still a
     job file and the schema asks which runner it is for; the launch records the one that ran.
+
+    A spec may name a recorded tool (`"tool": "octave"`, decision 17; ticket 82): its absolute
+    executable and environment are written into `command` and `env`, and the job record lists every
+    tool it calls by name, version, and lock digest. `tools` is the record to read them from,
+    `~/.wayline/tools/tools.json` by default.
     """
     project = Path(project).resolve()
     if not isinstance(spec, dict):
@@ -1463,6 +1471,7 @@ def add_jobs(project, spec, ticket=None, backend=None):
     array_id = _array_id(spec, base, ticket) if members is not None else None
     taken = {path.stem for path in (project / "research" / "jobs").glob("*.json")}
     backend = backend or jobs_backend().name
+    tools = _tools_record(tools)
     schema = load_schema("job")
     records = []
     for index, member in enumerate([None] if members is None else members, start=1):
@@ -1473,6 +1482,7 @@ def add_jobs(project, spec, ticket=None, backend=None):
             if stray:
                 raise JobError("member %d has no field(s) %s" % (index, ", ".join(stray)))
         fields = _with_ticket_defaults(project, dict(base, **(member or {})), ticket)
+        fields = _with_tool(project, fields, tools)
         # A spec's own `id` names the array, not its members: an array whose members inherited it
         # would write every one of them to the same job file, and the last would be the only one.
         named = (member or {}).get("id") if members is not None else fields.get("id")
@@ -1492,6 +1502,48 @@ def add_jobs(project, spec, ticket=None, backend=None):
     for record in records:
         ledger.write_json("jobs/%s.json" % record["id"], record, schema="job")
     return records
+
+
+def _tools_record(tools):
+    if tools is not None:
+        return tools
+    from wayline.tools import Tools  # the tools record is not needed by the runner itself
+    return Tools()
+
+
+def _with_tool(project, fields, tools):
+    """A member's fields with the tool it names resolved, and the tools it calls listed (ticket 82).
+
+    A named tool must be recorded: its executable stands in for a first argument that names the tool
+    (`["octave", "--eval", ...]`) or goes before the arguments otherwise, and its environment, with
+    where the project keeps its packages, goes under the spec's own `env`. A command whose first
+    argument is a recorded tool's executable lists that tool too, so a job calls nothing unlisted.
+    """
+    from wayline import software  # the project's tools and packages, late: they import the job runner's callers
+    fields = dict(fields)
+    name = fields.pop("tool", None)
+    command = fields.get("command")
+    if name is not None:
+        if not isinstance(name, str) or not name.strip():
+            raise JobError("a job's tool is the name of a recorded tool, got %r" % (name,))
+        entry = tools.entry(name)
+        if not entry or not entry.get("executable"):
+            raise JobError("the job names the tool %s, which %s does not record; a ticket that needs it waits for its software decision"
+                           % (name, tools.root / "tools.json"))
+        arguments = list(command) if isinstance(command, (list, tuple)) else []
+        if arguments and arguments[0] in (name, Path(entry["executable"]).name):
+            arguments = arguments[1:]
+        fields["command"] = [entry["executable"]] + [str(argument) for argument in arguments]
+        environment = fields.get("env") or {}
+        if not isinstance(environment, dict):
+            raise JobError("env is an object of name to value, got %s" % type(environment).__name__)
+        fields["env"] = dict(entry.get("env") or {}, **software.project_env(project, name), **environment)
+        fields["tools"] = [software.tool_called(name, entry)]
+    elif isinstance(command, (list, tuple)) and command:
+        called = [found for found in tools.names() if (tools.entry(found) or {}).get("executable") == str(command[0])]
+        # The tools venv's Python is the executable of every package in it; only an executable one tool owns names a tool.
+        fields["tools"] = [software.tool_called(called[0], tools.entry(called[0]))] if len(called) == 1 else []
+    return fields
 
 
 def _with_ticket_defaults(project, fields, ticket):
@@ -1590,7 +1642,7 @@ def _spec_from_input(project, fields, job_id, ticket, array_id):
             cores=_core_list(devices.get("cores"), job_id),
             ram_gb=_amount(devices.get("ram_gb", 0.0), "devices.ram_gb", job_id),
             expected_outputs=_string_list(fields.get("expected_outputs"), "expected_outputs", job_id),
-            retry=_retry(fields.get("retry"), job_id),
+            retry=_retry(fields.get("retry"), job_id), tools=tuple(fields.get("tools") or ()),
             wallclock_minutes=DEFAULT_WALLCLOCK_MINUTES if wallclock is None else _whole(wallclock, "wallclock_minutes", job_id),
         )
     except (TypeError, ValueError) as failure:

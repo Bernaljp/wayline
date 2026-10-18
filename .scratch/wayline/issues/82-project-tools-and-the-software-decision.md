@@ -34,25 +34,25 @@ Not part of this ticket:
 
 **Blocked by:** 75 - The harness's tools; 79 - Batches and marks. It blocks 83, 102, 106, 109, 110, and 112.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#229](https://github.com/Bernaljp/wayline/issues/229) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Tools, packages, and environments"; "Vocabulary the build adds": the decision class `software`, `ticket` and `plan` gaining `software`, the tools each job called); decisions 1 (the verb table: `tools install <name>` for a project's tool, `tools run`), 2 (the event table: the tools on each job record), 6 (jobs: the job spec's `tool`), 10 (the decider's classes), the schemas list (`ticket`, `plan`, the job record); M8 criterion 14; user stories 153, 154, 155.
 
-- [ ] A project's tool (Octave, R, Julia) installs through `wayline tools install <name>` only after a yes, through micromamba from conda-forge (Julia from its tarball), into one prefix per tool under `~/.wayline/tools/`, its download checked against its published digest, and recorded in `tools.json` with its absolute executable, version, required environment, route, lock or digest, install time, and `installer: harness`.
-- [ ] A project's packages install into its own environment with no ask: Python through uv into `<project>/.venv`, R into a project library with `renv.lock`, Julia into a project environment, and Octave Forge into the shared prefix unless two projects disagree. Each is gitignored and locked under `code/`.
+- [x] A project's tool (Octave, R, Julia) installs through `wayline tools install <name>` only after a yes, through micromamba from conda-forge (Julia from its tarball), into one prefix per tool under `~/.wayline/tools/`, its download checked against its published digest, and recorded in `tools.json` with its absolute executable, version, required environment, route, lock or digest, install time, and `installer: harness`.
+- [x] A project's packages install into its own environment with no ask: Python through uv into `<project>/.venv`, R into a project library with `renv.lock`, Julia into a project environment, and Octave Forge into the shared prefix unless two projects disagree. Each is gitignored and locked under `code/`.
 - [ ] Licensed software is never installed by code. The owner says where MATLAB is, code records it with `installer: owner` and the version and toolboxes `ver` reports, and one `matlab -batch "ver"` check job runs. A failing check keeps the decision open.
-- [ ] `ticket` and `plan` gain `software`. A ticket whose tools are not all recorded is not launchable and opens one `software` decision ticket per missing tool, which pauses only the tickets that need that tool.
-- [ ] A job spec may name `"tool"`. `wayline job add` writes the tool's absolute executable and environment into `command` and `env`, and each job record carries the name, version, and lock digest of every tool it called.
-- [ ] The `software` decision states the route, the download and disk sizes from a dry run, the tickets waiting, and the cost, with Install (recommended), Not now, and Go without. It is also an item in the batch record of ticket 79, so a mark settles it.
-- [ ] Under `interactive` and `checkpoints` the owner answers it. Under `autonomous` the decider answers it after setup: it installs free software through these routes and never changes an installed tool, the tools venv, or licensed software.
-- [ ] A failed install is retried once, then the decision reopens with the error. A worker that finds an installed tool lacking what its code needs ends `blocked` with the gap in `blocked_on`, and code opens the decision.
-- [ ] Installing free software is on neither the irreversible list nor the global harness changes, and changing an installed tool is refused to everyone but the owner's word.
+- [x] `ticket` and `plan` gain `software`. A ticket whose tools are not all recorded is not launchable and opens one `software` decision ticket per missing tool, which pauses only the tickets that need that tool.
+- [x] A job spec may name `"tool"`. `wayline job add` writes the tool's absolute executable and environment into `command` and `env`, and each job record carries the name, version, and lock digest of every tool it called.
+- [x] The `software` decision states the route, the download and disk sizes from a dry run, the tickets waiting, and the cost, with Install (recommended), Not now, and Go without. It is also an item in the batch record of ticket 79, so a mark settles it.
+- [x] Under `interactive` and `checkpoints` the owner answers it. Under `autonomous` the decider answers it after setup: it installs free software through these routes and never changes an installed tool, the tools venv, or licensed software.
+- [x] A failed install is retried once, then the decision reopens with the error. A worker that finds an installed tool lacking what its code needs ends `blocked` with the gap in `blocked_on`, and code opens the decision.
+- [x] Installing free software is on neither the irreversible list nor the global harness changes, and changing an installed tool is refused to everyone but the owner's word.
 - [ ] Tests:
   - the tool runner's recordings for micromamba and uv installs and for `matlab -batch "ver"`;
   - a temporary project for `software` launchability, the job spec's `tool`, and the job record's tools;
   - replayed journals for a `software` decision holding only its tickets under each autonomy, a retried install, and a `blocked_on` gap, idempotence included.
-- [ ] The verb table of decision 1, the event table of decision 2, the decider's classes, and the schemas list gain these rows in the same commit as the code that writes them.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes project tools, packages, licensed software, and the `software` decision.
-- [ ] `python -m unittest` passes.
+- [x] The verb table of decision 1, the event table of decision 2, the decider's classes, and the schemas list gain these rows in the same commit as the code that writes them.
+- [x] `CHANGELOG.md` under `## Unreleased` describes project tools, packages, licensed software, and the `software` decision.
+- [x] `python -m unittest` passes.

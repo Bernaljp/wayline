@@ -1,0 +1,20 @@
+HTTP/2 200 
+x-amz-id-2: Gd+F3EzlzHjkX575lHc8y9JEi0kU2RdgC5xGHjkHCEq4aEbxj/elu9PM6U5F+9B9ZTWSZ24rChsbUsfyF04K2RBccTBND/Yd
+x-amz-request-id: P87F3Y3MA2ARCWND
+server: AmazonS3
+last-modified: Sat, 15 Aug 2026 17:03:59 GMT
+etag: "af50ed9a5e87ce8a7d2ea91a312108ee"
+x-amz-server-side-encryption: AES256
+x-amz-meta-build-commit: 6d172b025e4befc4d274d9fbc9339917a8a86b65
+content-type: binary/octet-stream
+access-control-allow-origin: *
+accept-ranges: bytes
+age: 333
+date: Sun, 18 Oct 2026 14:06:30 GMT
+via: 1.1 varnish
+x-served-by: cache-fra-etou8220020-FRA
+x-cache: HIT
+x-cache-hits: 0
+x-timer: S1792332390.244268,VS0,VE2
+content-length: 289971949
+
