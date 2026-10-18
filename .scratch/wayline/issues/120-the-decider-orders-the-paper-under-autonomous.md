@@ -19,7 +19,7 @@ Not part of this ticket:
 - the order itself, which is 115's (with its figures, builds, compilations, and code steps in 116 to 119);
 - the run-end gates, which are 103's.
 
-**Blocked by:** 103 - The run-end gates; 116 - Figures at the order; 117 - Builds at the order; 118 - Compilations; 119 - Code at the order. It blocks 122.
+**Blocked by:** 103 - The run-end gates; 116 - Figures at the order; 117 - Builds at the order; 118 - Compilations; 119 - Code at the order. It blocks 122 and 124.
 
 **Status:** ready-for-agent
 

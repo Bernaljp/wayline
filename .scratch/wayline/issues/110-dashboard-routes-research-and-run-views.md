@@ -62,5 +62,5 @@ It blocks 111, 112, and 114.
   - the projects page with an old project;
   - `#/<project>/<id>` resolution for each kind;
   - ETag 304s on the new reads.
-- [ ] The documentation site and the changelog's `## Unreleased` section describe the five views and item links.
+- [ ] The changelog's `## Unreleased` section describes the five views and item links.
 - [ ] `python -m unittest` passes.

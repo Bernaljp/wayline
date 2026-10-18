@@ -35,5 +35,5 @@ Not part of this ticket:
 - [x] The verb table of decision 1 gains `tools install <name>`, `tools run`, and `tools show` in the same commit.
 - [x] Tests through the tool runner's recordings (seam 6, after `tests/test_pdf_inventory.py`'s recorded runner): each route's install, a digest mismatch, a merge of two entries, `system` records, `tools run` by absolute path and environment, `tools show`.
 - [x] Live: the install on this workstation, with each entry's version and the disk used, recorded in `docs/verification/m8.md`.
-- [ ] The changelog and the documentation site's tools page describe the new tools and verbs under `## Unreleased`.
+- [x] The changelog describes the new tools and verbs under `## Unreleased`.
 - [x] `python -m unittest` passes.

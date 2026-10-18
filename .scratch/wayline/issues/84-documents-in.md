@@ -61,5 +61,5 @@ Not part of this ticket:
   - the ledger seam over a temporary project for the record, the event, and the render cap;
   - the dashboard drop's guess over HTTP.
 - [ ] The verb table of decision 1, the event table of decision 2, and the schemas list gain these rows in the same commit as the code that writes them.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe handing over documents.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes handing over documents.
 - [ ] `python -m unittest` passes.

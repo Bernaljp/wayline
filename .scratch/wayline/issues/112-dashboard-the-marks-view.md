@@ -58,5 +58,5 @@ It blocks 121.
   - a mark refused without the token;
   - an item settled first in the conversation;
   - "take all defaults".
-- [ ] The documentation site and the changelog's `## Unreleased` section describe the marks view.
+- [ ] The changelog's `## Unreleased` section describes the marks view.
 - [ ] `python -m unittest` passes.

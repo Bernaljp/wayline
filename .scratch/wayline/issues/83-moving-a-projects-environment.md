@@ -43,5 +43,5 @@ Not part of this ticket:
   - a temporary project for a refused move and a switch;
   - a replayed journal for a job launched across the switch.
 - [ ] The verb table of decision 1, the `control` enumeration of the event table, and the `harness.json` schema gain these rows in the same commit as the code.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe the four environments and how a move is checked.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes the four environments and how a move is checked.
 - [ ] `python -m unittest` passes.

@@ -52,5 +52,5 @@ It blocks 109, 111, 115, and 121.
   - the render over a temporary project with fixture dossiers at L0, L1, and L2 and unresolved ones in each state, asserted on both files;
   - the raise rule under each autonomy by replaying journals that hold a retrying reference, its final failure, and a "leave it", asserted on the notices and events the next wave appends;
   - the linter's listing.
-- [ ] The documentation site and the changelog's `## Unreleased` section describe References and when the owner is asked about a reference.
+- [ ] The changelog's `## Unreleased` section describes References and when the owner is asked about a reference.
 - [ ] `python -m unittest` passes.

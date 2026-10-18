@@ -31,5 +31,5 @@ Not part of this ticket:
 - [ ] Projects and fixtures that carry `goal_metric` are moved to `goal` in the same commit, so nothing reads `goal_metric` afterward.
 - [ ] The schemas list in the spec matches the new fields in the same commit.
 - [ ] Tests: specify and the planner with the fake launcher over a temporary project with objectives (one with a measure); the Type-A check's three outcomes; the schema refusals; the scheduling class over replayed journals.
-- [ ] Prompts and role files for specify and the planner name objectives, and the documentation site follows.
+- [ ] Prompts and role files for specify and the planner name objectives.
 - [ ] `python -m unittest` passes.

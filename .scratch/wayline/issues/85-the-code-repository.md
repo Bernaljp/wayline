@@ -48,5 +48,5 @@ Not part of this ticket:
   - a temporary project absorbing the synthetic repository;
   - a replayed journal with a wave that changed `code/` and one that did not.
 - [ ] The event table of decision 2 and the `harness.json` schema gain these rows in the same commit as the code that writes them.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe `code/` and the code repository.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes `code/` and the code repository.
 - [ ] `python -m unittest` passes.

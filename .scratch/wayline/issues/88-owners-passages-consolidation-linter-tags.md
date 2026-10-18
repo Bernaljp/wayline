@@ -45,5 +45,5 @@ Not part of this ticket:
   - an owner's edit tested by editing the rendered file and rendering again, including a passage that arrived after the stamp;
   - the consolidation with the fake launcher.
 - [ ] The verb table of decision 1 and the event table of decision 2 gain these rows in the same commit as the code.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe the new tags, editing a section, and consolidation.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes the new tags, editing a section, and consolidation.
 - [ ] `python -m unittest` passes.

@@ -35,5 +35,5 @@ It blocks 108 and 119.
   - the rendered files;
   - an owner's part surviving a re-render;
   - a finding replaced by another, which changes the runs listed.
-- [ ] The documentation site and the changelog's `## Unreleased` section describe `REPRODUCE.md` and the locks.
+- [ ] The changelog's `## Unreleased` section describes `REPRODUCE.md` and the locks.
 - [ ] `python -m unittest` passes.

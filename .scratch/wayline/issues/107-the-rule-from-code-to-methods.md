@@ -53,5 +53,5 @@ It blocks 108 and 119.
   - the Sonnet reading through the fake launcher;
   - the parsers through the tool runner's recordings.
 - [ ] The schemas list gains the `result` fields in the same commit as the code.
-- [ ] The documentation site and the changelog's `## Unreleased` section describe the rule from code to Methods.
+- [ ] The changelog's `## Unreleased` section describes the rule from code to Methods.
 - [ ] `python -m unittest` passes.

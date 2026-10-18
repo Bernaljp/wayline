@@ -30,5 +30,4 @@ Not part of this ticket:
 - [ ] A `dossier` ticket is run by the conductor as an `absorb` promotion with no worker session, and `KIND_ROLE` has no `dossier` or `lit` route.
 - [ ] Tests through the fetch seam's recordings (found, no match, a 503 failure, the cap) and the ledger seam over a temporary project for the acceptance check; journal replay for a `dossier` ticket run as a promotion.
 - [ ] Decision 1's verb table gains `scout <identifier>`, decision 14's policy table the per-ticket cap, and the schemas list `result.references`, each in the same commit as its code.
-- [ ] The documentation site describes `wayline scout` for workers.
 - [ ] `python -m unittest` passes.

@@ -63,5 +63,5 @@ Not part of this ticket:
   - the declared-sections check as a Type-A function over a worktree and a result;
   - the context pack asserted on the rendered prompt.
 - [ ] The event table of decision 2 and the schemas list gain these rows in the same commit as the code that writes them.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe the sections and passages.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes the sections and passages.
 - [ ] `python -m unittest` passes.

@@ -23,5 +23,4 @@ Not part of this ticket:
 - [ ] The decider has no path to change `plotting` under any autonomy.
 - [ ] Tests as plain functions over a temporary project: the schema with each value and without the key; `switch --plotting` writing and journaling in that order; an install through the tool runner's recordings; a drawing prompt naming the library; the decider refused.
 - [ ] Decision 1's verb table gains `switch --plotting` and `harness.json`'s `plotting` key, and decision 2's `control` enumeration the command, in the same commit.
-- [ ] The documentation site describes switching the plotting library.
 - [ ] `python -m unittest` passes.

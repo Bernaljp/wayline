@@ -1180,7 +1180,8 @@
     "113",
     "114",
     "120",
-    "121"
+    "121",
+    "124"
    ],
    "milestone": "M8"
   },
@@ -1190,6 +1191,19 @@
    "title": "M8 live demo: PINF restarted from its own materials, and v1.1.0",
    "blockers": [
     "122"
+   ],
+   "milestone": "M8"
+  },
+  "124": {
+   "number": 282,
+   "id": 5909927509,
+   "title": "The harness's user guide",
+   "blockers": [
+    "99",
+    "113",
+    "114",
+    "120",
+    "121"
    ],
    "milestone": "M8"
   }

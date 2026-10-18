@@ -54,5 +54,5 @@ Not part of this ticket:
   - a temporary project for `software` launchability, the job spec's `tool`, and the job record's tools;
   - replayed journals for a `software` decision holding only its tickets under each autonomy, a retried install, and a `blocked_on` gap, idempotence included.
 - [ ] The verb table of decision 1, the event table of decision 2, the decider's classes, and the schemas list gain these rows in the same commit as the code that writes them.
-- [ ] The documentation site and `CHANGELOG.md` under `## Unreleased` describe project tools, packages, licensed software, and the `software` decision.
+- [ ] `CHANGELOG.md` under `## Unreleased` describes project tools, packages, licensed software, and the `software` decision.
 - [ ] `python -m unittest` passes.

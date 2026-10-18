@@ -31,5 +31,5 @@ Not part of this ticket:
 - [ ] The decider's prompt reads `OBJECTIVES.md` and the radius, not `GOAL.json`; the human-only class `objective` replaces `goal`, and an old `goal` entry in `harness.json` is read as `objective`.
 - [ ] The conductor's goal check and keep-if-better still read `GOAL.json` where present, unchanged.
 - [ ] Tests: position with the fake launcher on a project with objectives and none with a measure; the memo schema's `objectives` rows; the grill's first tier from a recorded fixture; the decider's prompt assembly asserted on the rendered prompt (objectives and radius present, `GOAL.json` absent); the `goal` to `objective` class reading.
-- [ ] Prompts and role files that mention `GOAL.json` or `goal_feasibility` for these phases are updated, and the documentation site's front-door pages follow.
+- [ ] Prompts and role files that mention `GOAL.json` or `goal_feasibility` for these phases are updated.
 - [ ] `python -m unittest` passes.
