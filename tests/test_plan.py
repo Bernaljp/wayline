@@ -12,9 +12,12 @@ ticket. The plan-time checks are also run on hand-written graphs, good and bad, 
 import copy
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
+import tempfile
 import unittest
+from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase, open_objective
@@ -918,6 +921,14 @@ class SplitTest(PlanCase):
 
 
 class VerbTest(unittest.TestCase):
+    def setUp(self):
+        # A home of its own, so no active project of the machine's (an old one is refused, decision 17) stands behind the verb.
+        home = tempfile.mkdtemp(prefix="wayline-test-")
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        patched = mock.patch.dict(os.environ, {"WAYLINE_HOME": home})
+        patched.start()
+        self.addCleanup(patched.stop)
+
     def test_the_verb_is_wired_and_its_flags_are_exclusive(self):
         self.assertIsNotNone(cli.lookup("plan").handler)
         code, out, _ = run("plan", "--help")

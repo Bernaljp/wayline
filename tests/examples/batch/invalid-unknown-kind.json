@@ -1,0 +1,10 @@
+{
+  "id": "B2",
+  "kind": "figures",
+  "title": "Figures",
+  "decision": null,
+  "status": "open",
+  "items": [
+    {"id": 1, "ref": "F1", "text": "figure 1", "marks": ["keep", "drop"], "default": null, "note": null, "mark": null, "by": null, "at": null}
+  ]
+}
