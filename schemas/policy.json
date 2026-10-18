@@ -6,7 +6,7 @@
   "required": [
     "tiers", "difficulty", "budget", "roles", "verifier", "max_parallel_workers", "poll_seconds", "heartbeat_stale_s",
     "acceptance_timeout_s", "pacing", "model_fallback", "context_pack", "escalation", "stall", "proposals", "goal", "absorb",
-    "consultant", "kb", "provenance", "artifacts", "reservations", "jobs", "tick", "dashboard", "fixtures",
+    "consultant", "kb", "scout", "provenance", "artifacts", "reservations", "jobs", "tick", "dashboard", "fixtures",
     "figures", "plot_index", "quiet_hours", "per_window_worker_budget"
   ],
   "additionalProperties": false,
@@ -143,6 +143,15 @@
         "chunk_max_chars": {"type": "integer", "minimum": 1},
         "fanout": {"type": "string", "enum": ["workflow", "conductor"]},
         "workflow_concurrency": {"type": "integer", "minimum": 1}
+      }
+    },
+    "scout": {
+      "type": "object",
+      "description": "the scout (Implementation Decision 17): a reference whose lookup failed is retried at most once a day and given up after give_up_days",
+      "required": ["give_up_days"],
+      "additionalProperties": false,
+      "properties": {
+        "give_up_days": {"type": "integer", "minimum": 1}
       }
     },
     "consultant": {

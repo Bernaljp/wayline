@@ -1,6 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "dossier",
+  "$defs": {
+    "name": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "enum": ["doi", "arxiv", "title", "url", "file"], "description": "file: a PDF the owner gave with no identifier, never sent to a service"},
+        "value": {"type": "string"},
+        "raw": {"type": "string", "description": "the reference line as the owner wrote it"}
+      }
+    }
+  },
   "description": "One reference's record (Implementation Decisions 9). Level 0 is what the scout can verify at near-zero cost: the question that was asked, the identifiers and metadata a keyless service answered with, an abstract, and whether the reference resolved at all. Levels 1 and 2 are added by the tickets that build the skim and the full absorb; a reference that resolves nowhere is existence: unresolved, and nothing here ever says fabricated.",
   "type": "object",
   "required": ["schema_version", "slug", "level", "existence", "query", "identifiers", "metadata", "created"],
@@ -12,19 +24,57 @@
     "existence": {"type": "string", "enum": ["verified", "unresolved"]},
     "resolved_by": {
       "type": ["string", "null"],
-      "enum": ["crossref", "openalex", "unpaywall", "europepmc", "arxiv", "biorxiv", "medrxiv", null],
-      "description": "the service whose answer established that the work exists; null when none did"
+      "enum": ["crossref", "openalex", "unpaywall", "europepmc", "arxiv", "biorxiv", "medrxiv", "owner", null],
+      "description": "the service whose answer established that the work exists; owner when the owner handed over its PDF and no service knew it; null when none did"
     },
-    "query": {
-      "type": "object",
-      "required": ["kind", "value"],
-      "additionalProperties": false,
-      "properties": {
-        "kind": {"type": "string", "enum": ["doi", "arxiv", "title", "url"]},
-        "value": {"type": "string"},
-        "raw": {"type": "string", "description": "the reference line as the owner wrote it"}
+    "query": {"$ref": "#/$defs/name"},
+    "names": {
+      "type": "array",
+      "description": "every way this work was named, the first query included: a second reference to a filed work joins it here (decision 17)",
+      "items": {"$ref": "#/$defs/name"}
+    },
+    "notes": {
+      "type": "array",
+      "description": "what was said about the reference where it was named (an intake's nested remark, a ticket's note), kept on the dossier and never read by the scout",
+      "items": {
+        "type": "object",
+        "required": ["text", "by", "ts"],
+        "additionalProperties": false,
+        "properties": {
+          "text": {"type": "string"},
+          "by": {"type": "string", "description": "intake, owner, or ticket <id>"},
+          "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"}
+        }
       }
     },
+    "retry": {
+      "type": "object",
+      "description": "set when a lookup failed on a work not found (or found only by the arXiv abs page): retried at most once a day, given up after policy.scout.give_up_days",
+      "required": ["service", "failure", "date"],
+      "additionalProperties": false,
+      "properties": {
+        "service": {"type": "string"},
+        "failure": {"type": "string"},
+        "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$", "description": "the last failed lookup"},
+        "since": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$", "description": "the first failed lookup, which the give-up counts from"},
+        "gave_up": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$", "description": "when the flag gave up; nothing retries it after"}
+      }
+    },
+    "handed_over": {
+      "type": "array",
+      "description": "the owner's answers to an unresolved reference, oldest first, recorded without asking",
+      "items": {
+        "type": "object",
+        "required": ["answer", "ts"],
+        "additionalProperties": false,
+        "properties": {
+          "answer": {"type": "string", "enum": ["doi", "title", "pdf", "leave"]},
+          "value": {"type": ["string", "null"]},
+          "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"}
+        }
+      }
+    },
+    "joined_into": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$", "description": "a pointer: this dossier's work is the one filed under that slug, which holds its names and notes"},
     "identifiers": {
       "type": "object",
       "additionalProperties": false,
@@ -150,7 +200,7 @@
           "source": {"type": "string", "enum": ["crossref", "openalex", "unpaywall", "europepmc", "arxiv", "biorxiv", "medrxiv", "none"]},
           "url": {"type": "string"},
           "status": {"type": ["integer", "null"]},
-          "outcome": {"type": "string", "enum": ["hit", "miss", "error", "skipped"]},
+          "outcome": {"type": "string", "enum": ["found", "no match", "failed", "skipped"], "description": "found: the service knew the work; no match: it answered and nothing matched; failed: an error status, a timeout, or an unreadable answer; skipped: nothing was asked"},
           "note": {"type": ["string", "null"]}
         }
       }

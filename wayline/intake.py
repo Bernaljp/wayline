@@ -310,11 +310,12 @@ def gather(spec, project, base):
     for material in spec.get("materials", []):
         _take_material(gathered, material, project, base)
     for reference in spec.get("references", []):
-        path = _as_path(reference, base)
+        identifier, note = reference["identifier"].strip(), reference.get("note")
+        path = _as_path(identifier, base)
         if path is not None and path.is_file() and path.suffix.lower() == ".pdf":
-            _take_pdf(gathered, path, project)
-        elif reference.strip():
-            gathered.references.append(reference.strip())
+            _take_pdf(gathered, path, project, note=note)
+        elif identifier:
+            gathered.references.append(_item(identifier, note))
     for pointer in spec.get("data", []):
         gathered.data.append(_data_line(pointer, project, base))
     for repository in spec.get("code", []):
@@ -328,7 +329,7 @@ def _take_material(gathered, material, project, base):
     path = _as_path(material, base)
     if path is None or not path.exists():
         if _IDENTIFIER.match(material.strip()) and " " not in material.strip():
-            gathered.references.append(material.strip())
+            gathered.references.append(_item(material.strip()))
         elif _looks_like_path(material):
             raise IntakeError("%s does not exist; an intake does not read a path that is not there as the intent" % material)
         else:
@@ -352,7 +353,7 @@ def _take_material(gathered, material, project, base):
         text = path.read_text(encoding="utf-8", errors="replace")
         listed = reference_list(text)
         if listed is not None:
-            gathered.references.extend(listed)
+            gathered.references.extend(_item(line) for line in listed)
             gathered.reference_notes.append("Read from `%s` as a reference list." % _shown(path, project))
         else:
             _take_plan(gathered, path, project)
@@ -386,39 +387,50 @@ def _take_plan(gathered, path, project):
     gathered.plans.append((_shown(path, project), text))
 
 
-def _take_pdf(gathered, path, project):
-    """A PDF reference: its DOI or arXiv id when one can be read, its path when not, and a note either way."""
+def _item(identifier, note=None, pdf=None):
+    """One reference as intake records it (decision 17): what names it, the owner's note, and the PDF that is its source."""
+    return {"identifier": identifier, "note": note, "pdf": pdf}
+
+
+def _take_pdf(gathered, path, project, note=None):
+    """A PDF reference: its DOI or arXiv id when one can be read, else the PDF alone; the PDF is the reference's source either way.
+
+    A PDF with no identifier is listed as `PDF: <path>`, which absorb never sends to a service: a
+    path is not a title, and the owner hands over a DOI or a title for it later.
+    """
     shown = _shown(path, project)
+    notes = [note] if note else []
     try:
         with open(path, "rb") as handle:
             head = handle.read(PDF_HEAD_BYTES)
     except OSError as failure:
-        gathered.references.append(shown)
-        gathered.reference_notes.append("`%s` could not be read (%s), so it is listed by its path." % (shown, failure.strerror))
+        gathered.references.append(_item(None, _joined(notes + ["`%s` could not be read (%s)." % (shown, failure.strerror)]), shown))
         return
     if not head.startswith(b"%PDF-"):
-        gathered.references.append(shown)
-        gathered.reference_notes.append("`%s` does not start with `%%PDF-`, so it was not read as a PDF and is listed by its path." % shown)
+        gathered.references.append(_item(None, _joined(notes + ["`%s` does not start with `%%PDF-`, so it was not read as a PDF." % shown]), shown))
         return
     raw = head.decode("latin-1")
     found = _PDF_DOI.search(raw)
     if found is not None:
-        gathered.references.append("%s (`%s`)" % (found.group(1).rstrip(".,;"), shown))
+        gathered.references.append(_item(found.group(1).rstrip(".,;"), note, shown))
         return
     found = _PDF_ARXIV.search(raw)
     text = None if found else _first_pages(path)
     if found is None and text:
         doi = _DOI.search(text)
         if doi is not None:
-            gathered.references.append("%s (`%s`)" % (doi.group(1).rstrip(".,;"), shown))
-            gathered.reference_notes.append("The DOI of `%s` was read off its first page; a paper cites DOIs too, so check it." % shown)
+            gathered.references.append(_item(doi.group(1).rstrip(".,;"), _joined(notes + [
+                "The DOI was read off the PDF's first page; a paper cites DOIs too, so check it."]), shown))
             return
         found = _PDF_ARXIV.search(text)
     if found is not None:
-        gathered.references.append("arXiv:%s (`%s`)" % (found.group(1), shown))
+        gathered.references.append(_item("arXiv:%s" % found.group(1), note, shown))
         return
-    gathered.references.append(shown)
-    gathered.reference_notes.append("No DOI or arXiv id could be read from `%s`, so it is listed by its path." % shown)
+    gathered.references.append(_item(None, _joined(notes + ["No DOI or arXiv id could be read from it; hand over its DOI or its title."]), shown))
+
+
+def _joined(notes):
+    return " ".join(note for note in notes if note) or None
 
 
 def _first_pages(path):
@@ -510,7 +522,9 @@ def normalize_spec(raw):
     for key, value in raw.items():
         if value is None:
             continue
-        if key in LIST_FIELDS:
+        if key == "references":
+            value = _reference_specs(value)
+        elif key in LIST_FIELDS:
             if isinstance(value, str):
                 value = [value]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -531,6 +545,23 @@ def normalize_spec(raw):
     if spec.get("ladder_changes") is not None and spec["ladder_changes"] not in LADDER_CONSENTS:
         raise IntakeError("ladder_changes is one of %s, got %r" % (", ".join(LADDER_CONSENTS), spec["ladder_changes"]))
     return spec
+
+
+def _reference_specs(value):
+    """The spec's references, each a string or `{identifier, note}` (decision 17), as `{identifier, note}` objects."""
+    if isinstance(value, (str, dict)):
+        value = [value]
+    if not isinstance(value, list):
+        raise IntakeError("references is a list of strings or {identifier, note} objects")
+    specs = []
+    for item in value:
+        if isinstance(item, str):
+            item = {"identifier": item}
+        if (not isinstance(item, dict) or set(item) - {"identifier", "note"} or not isinstance(item.get("identifier"), str)
+                or not isinstance(item.get("note"), (str, type(None)))):
+            raise IntakeError("a reference is a string or {identifier, note} with both strings, got %r" % (item,))
+        specs.append({"identifier": item["identifier"], "note": (item.get("note") or "").strip() or None})
+    return specs
 
 
 def human_only_classes(entries):
@@ -630,7 +661,7 @@ def render(gathered, harness, classes, goal, standing):
         intent.append(_plan_text(shown, text))
     sections = {
         "Intent": "\n\n".join(intent),
-        "References": _bullets(gathered.references, "None.") + _prose(gathered.reference_notes),
+        "References": _bullets(_reference_lines(gathered.references), "None.") + _prose(gathered.reference_notes),
         "Data": _bullets(gathered.data, "Not stated."),
         "Code": _bullets(gathered.code, "None."),
         "Constraints": _bullets(gathered.constraints, "None stated."),
@@ -666,6 +697,26 @@ def _ladder(harness):
     if consent in LADDER_CHANGES:
         return "Ladder consent `%s`: %s" % (consent, LADDER_CHANGES[consent])
     return "Ladder consent not stated, so the project behaves as under `%s`: %s" % (ASK, LADDER_CHANGES[ASK])
+
+
+def _reference_lines(items):
+    """Each reference as a top-level item, its PDF and its note nested under it, so absorb looks up only the item.
+
+    The item text is what `- ` opens; the nested lines follow it on lines of their own.
+    """
+    lines = []
+    for item in items:
+        nested = []
+        if item.get("identifier"):
+            head = item["identifier"]
+            if item.get("pdf"):
+                nested.append("PDF: `%s`" % item["pdf"])
+        else:
+            head = "PDF: `%s`" % item["pdf"]
+        if item.get("note"):
+            nested.append(item["note"])
+        lines.append("\n".join([head] + ["  - " + line for line in nested]))
+    return lines
 
 
 def _bullets(lines, empty):
@@ -796,7 +847,7 @@ def _take_dropped(ledger, gathered):
     except FileNotFoundError:
         return None
     updated, taken = text, []
-    for heading, lines, notes, empty in (("References", gathered.references, gathered.reference_notes, "None."),
+    for heading, lines, notes, empty in (("References", _reference_lines(gathered.references), gathered.reference_notes, "None."),
                                          ("Data", gathered.data, [], "Not stated."), ("Code", gathered.code, [], "None.")):
         if lines:
             changed = _with_bullets(updated, heading, lines, notes, empty)
@@ -821,7 +872,7 @@ def _with_bullets(text, heading, lines, notes, empty):
     while end < len(rows) and (rows[end].startswith("- ") or (end and rows[end].startswith("  ") and rows[end].strip())):
         end += 1
     listed = {row[2:].strip() for row in rows[:end] if row.startswith("- ")}
-    new = ["- " + line for line in lines if line not in listed]
+    new = ["- " + line for line in lines if line.split("\n", 1)[0] not in listed]
     if not new:
         return text
     rest = "\n".join(rows[end:]).strip()

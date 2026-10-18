@@ -467,6 +467,19 @@ class Ledger:
             shutil.rmtree(target)
             return True
 
+    def remove_file(self, relpath):
+        """Remove one file under `research/`; returns whether it was there.
+
+        What needs it: the knowledge-base node of a dossier that became a pointer when two dossiers
+        of one work were joined (decision 17), which would otherwise list the work twice.
+        """
+        target = self.path(relpath, replacing=True)
+        with self.lock():
+            if not target.is_file():
+                return False
+            target.unlink()
+            return True
+
     def write_markdown(self, relpath, text):
         """Write a markdown (or any text) file atomically."""
         target = self.path(relpath, replacing=True)

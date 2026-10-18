@@ -121,7 +121,7 @@ class ChainTest(unittest.TestCase):
         self.assertEqual(record["resolved_by"], "openalex")
         self.assertEqual(normalize_title(record["metadata"]["title"]), normalize_title(TITLE))
         crossref = [attempt for attempt in record["attempts"] if attempt["source"] == "crossref"][0]
-        self.assertEqual(crossref["outcome"], "miss")
+        self.assertEqual(crossref["outcome"], "no match")
         self.assertIn("below", crossref["note"])
 
     def test_a_resolved_reference_is_not_asked_of_a_source_that_would_add_nothing(self):
@@ -174,7 +174,7 @@ class ChainTest(unittest.TestCase):
     def test_an_unresolved_reference_records_every_door_it_knocked_on(self):
         record = scout().resolve(parse_reference(NOWHERE))
         self.assertEqual([attempt["source"] for attempt in record["attempts"]], ["crossref", "openalex", "europepmc"])
-        self.assertTrue(all(attempt["outcome"] == "miss" for attempt in record["attempts"]))
+        self.assertTrue(all(attempt["outcome"] == "no match" for attempt in record["attempts"]))
         self.assertTrue(all(attempt["status"] == 200 for attempt in record["attempts"]))
 
     def test_the_whole_chain_asks_semantic_scholar_nothing(self):

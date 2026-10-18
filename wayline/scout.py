@@ -32,20 +32,43 @@ suite's recorded responses are both just a backend.
 """
 
 import difflib
+import html
 import re
+import time
 import unicodedata
 import urllib.parse
 import xml.etree.ElementTree as ElementTree
+
+from datetime import datetime, timezone
+from html.parser import HTMLParser
 
 from wayline.fetch import FetchError, canonical_url
 
 __all__ = [
     "Reference", "ScoutError", "Scout", "parse_reference", "parse_references", "resolve",
     "VERIFIED", "UNRESOLVED", "SOURCES", "TITLE_SIMILARITY", "normalize_title", "title_similarity",
+    "FOUND", "NO_MATCH", "FAILED", "SKIPPED", "OUTCOMES", "NO_SUCH_WORK", "outcome", "timestamp",
 ]
 
 VERIFIED = "verified"
 UNRESOLVED = "unresolved"
+
+# What one lookup attempt came to (decision 17). `found`: the service knew the work. `no match`: the
+# service answered and nothing it had matched. `failed`: an error status, a timeout, or an answer
+# nobody can read, which says nothing about the work and is why a failure is asked again and a no
+# match is not. `skipped`: nothing was asked (a bare URL, Unpaywall without an address).
+FOUND = "found"
+NO_MATCH = "no match"
+FAILED = "failed"
+SKIPPED = "skipped"
+OUTCOMES = (FOUND, NO_MATCH, FAILED, SKIPPED)
+
+# What a whole lookup came to when the work was not found and every service asked answered no match:
+# the one case where the scout may say the work is not there, rather than that it could not tell.
+NO_SUCH_WORK = "no such work"
+
+# Statuses that are a service's answer that it has no such record, rather than a failure to answer.
+_NO_RECORD = (404, 410)
 
 # Every source the scout may name as the one that resolved a reference.
 SOURCES = ("crossref", "openalex", "unpaywall", "europepmc", "arxiv", "biorxiv", "medrxiv")
@@ -61,6 +84,8 @@ OPENALEX_SEARCH = "https://api.openalex.org/works"
 UNPAYWALL_WORK = "https://api.unpaywall.org/v2/%s"
 EUROPEPMC_SEARCH = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 ARXIV_QUERY = "https://export.arxiv.org/api/query"
+ARXIV_ABS = "https://arxiv.org/abs/%s"
+ARXIV_DOI = "10.48550/arXiv.%s"
 BIORXIV_DETAILS = "https://api.biorxiv.org/details/%s/%s/na/json"
 
 # The preprint servers behind the 10.1101 prefix; which of the two a DOI belongs to is not in the
@@ -87,12 +112,16 @@ class ScoutError(ValueError):
 class Reference:
     """What the owner wrote down, read as a question one of the services can answer."""
 
-    __slots__ = ("kind", "value", "raw")
+    __slots__ = ("kind", "value", "raw", "note", "pdf")
 
-    def __init__(self, kind, value, raw=None):
-        self.kind = kind  # doi | arxiv | title | url
+    def __init__(self, kind, value, raw=None, note=None, pdf=None):
+        self.kind = kind  # doi | arxiv | title | url | file (a PDF given with no identifier, never asked of a service)
         self.value = value
         self.raw = raw if raw is not None else value
+        # What the owner wrote beside the reference, and the PDF that is its source: kept on the
+        # dossier by the caller, and never read by the scout.
+        self.note = note
+        self.pdf = pdf
 
     def __repr__(self):  # pragma: no cover - debugging
         return "Reference(%r, %r)" % (self.kind, self.value)
@@ -185,27 +214,39 @@ def title_similarity(asked, returned):
 class Scout:
     """The resolution chain over one fetcher. One instance per project run."""
 
-    def __init__(self, fetcher, email=None):
+    def __init__(self, fetcher, email=None, clock=None):
         self.fetcher = fetcher
         self.email = email if email is not None else getattr(fetcher, "email", None)
+        self.clock = clock or time.time
 
     # --- the entry point ---
 
-    def resolve(self, reference):
-        """An L0 record for one reference: `existence`, `resolved_by`, identifiers, metadata, abstract."""
+    def resolve(self, reference, found=False):
+        """An L0 record for one reference: `existence`, `resolved_by`, identifiers, metadata, abstract.
+
+        `found` says the work is already found (a dossier says `existence: verified`), which is the
+        one case the scout's cache may answer from disk (decision 17); otherwise every request goes
+        to the network.
+        """
         if not isinstance(reference, Reference):
             reference = parse_reference(reference)
+        self._replay = bool(found)
         record = _blank(reference)
         chain = {
             "doi": self._resolve_doi,
             "arxiv": self._resolve_arxiv,
             "title": self._resolve_title,
             "url": self._resolve_url,
+            "file": self._resolve_file,
         }[reference.kind]
         chain(reference, record)
         if record["resolved_by"] is not None:
             record["existence"] = VERIFIED
         self._enrich(record)
+        failed = [attempt for attempt in record["attempts"] if attempt["outcome"] == FAILED]
+        if failed and record["existence"] != VERIFIED:
+            record["retry"] = {"service": failed[0]["source"], "failure": failed[0]["note"] or FAILED,
+                               "date": timestamp(self.clock())}
         return record
 
     # --- the chains ---
@@ -227,7 +268,10 @@ class Scout:
 
     def _resolve_arxiv(self, reference, record):
         record["identifiers"]["arxiv_id"] = reference.value
-        self._arxiv(reference.value, record)
+        if self._arxiv(reference.value, record):
+            return
+        if record["attempts"] and record["attempts"][-1]["outcome"] == FAILED:
+            self._arxiv_abs(reference.value, record)
 
     def _resolve_title(self, reference, record):
         title = reference.value
@@ -245,7 +289,12 @@ class Scout:
         module may not do; the reference stays `unresolved` until someone gives it an identifier.
         """
         record["identifiers"]["url"] = reference.value
-        record["attempts"].append(_attempt("none", reference.value, None, "skipped", "no keyless service resolves a bare URL; give it a DOI or an arXiv id"))
+        record["attempts"].append(_attempt("none", reference.value, None, SKIPPED, "no keyless service resolves a bare URL; give it a DOI or an arXiv id"))
+
+    def _resolve_file(self, reference, record):
+        """A PDF given with no identifier: a path is never a title query, so nothing is asked (decision 17)."""
+        record["attempts"].append(_attempt("none", "file:" + reference.value, None, SKIPPED,
+                                           "a local file is never sent to a service; hand over its DOI or its exact title, or the PDF itself"))
 
     def _enrich(self, record):
         """Fill what the resolving source left empty, and never more than that.
@@ -257,8 +306,8 @@ class Scout:
         rather than a rate (note 06), read sparingly.
         """
         doi = record["identifiers"].get("doi")
-        if record["existence"] != VERIFIED or not doi:
-            return
+        if record["existence"] != VERIFIED or not doi or record.get("retry"):
+            return  # a work found by its abs page waits for the API to fill in the rest
         if not record["abstract"] and record["resolved_by"] != "openalex":
             self._openalex_doi(doi, record, enriching=True)
         if not record["abstract"] and record["resolved_by"] != "europepmc":
@@ -270,8 +319,7 @@ class Scout:
 
     def _crossref_doi(self, doi, record):
         url = _with(CROSSREF_WORK % urllib.parse.quote(doi, safe=""), mailto=self.email)
-        answer = self._get(url, "crossref", record)
-        message = _message(answer)
+        message = _message(self._read(self._get(url, "crossref", record), record))
         if message is None:
             return False
         _take_crossref(message, record)
@@ -282,9 +330,10 @@ class Scout:
             CROSSREF_QUERY,
             **{"query.bibliographic": title, "rows": "3", "select": "DOI,title,author,issued,score,type,container-title,abstract", "mailto": self.email},
         )
-        answer = self._get(url, "crossref", record)
-        message = _message(answer)
-        items = (message or {}).get("items") or []
+        payload = self._read(self._get(url, "crossref", record), record)
+        if payload is None:
+            return False
+        items = (_message(payload) or {}).get("items") or []
         best, score = _best_title_match(title, items, lambda item: _first(item.get("title")))
         if best is None:
             return _too_far(record, score, len(items))
@@ -293,17 +342,17 @@ class Scout:
         return _resolved(record, "crossref")
 
     def _openalex_doi(self, doi, record, enriching=False):
-        answer = self._get(OPENALEX_WORK % urllib.parse.quote(doi, safe=""), "openalex", record)
-        work = answer.json() if answer is not None and answer.ok else None
-        if not isinstance(work, dict) or work.get("id") is None:
+        work = self._read(self._get(OPENALEX_WORK % urllib.parse.quote(doi, safe=""), "openalex", record), record)
+        if work is None or work.get("id") is None:
             return False
         _take_openalex(work, record)
-        return True if enriching else _resolved(record, "openalex")
+        return _found(record, "openalex", enriching)
 
     def _openalex_title(self, title, record):
-        answer = self._get(_with(OPENALEX_SEARCH, search=title, **{"per-page": "3"}), "openalex", record)
-        payload = answer.json() if answer is not None and answer.ok else None
-        items = (payload or {}).get("results") or []
+        payload = self._read(self._get(_with(OPENALEX_SEARCH, search=title, **{"per-page": "3"}), "openalex", record), record)
+        if payload is None:
+            return False
+        items = payload.get("results") or []
         best, score = _best_title_match(title, items, lambda item: item.get("display_name"))
         if best is None:
             return _too_far(record, score, len(items))
@@ -313,21 +362,21 @@ class Scout:
 
     def _unpaywall(self, doi, record, enriching=False):
         if not self.email:
-            record["attempts"].append(_attempt("unpaywall", UNPAYWALL_WORK % doi, None, "skipped", "Unpaywall requires an address; harness.json has no owner_email"))
+            record["attempts"].append(_attempt("unpaywall", UNPAYWALL_WORK % doi, None, SKIPPED, "Unpaywall requires an address; harness.json has no owner_email"))
             return False
         url = _with(UNPAYWALL_WORK % urllib.parse.quote(doi, safe=""), email=self.email)
-        answer = self._get(url, "unpaywall", record)
-        work = answer.json() if answer is not None and answer.ok else None
-        if not isinstance(work, dict) or work.get("doi") is None:
+        work = self._read(self._get(url, "unpaywall", record), record)
+        if work is None or work.get("doi") is None:
             return False
         _take_unpaywall(work, record)
-        return True if enriching else _resolved(record, "unpaywall")
+        return _found(record, "unpaywall", enriching)
 
     def _europepmc(self, query, record, asked_title=None, source_doi=None, enriching=False):
         url = _with(EUROPEPMC_SEARCH, query=query, format="json", resultType="core", pageSize="3")
-        answer = self._get(url, "europepmc", record)
-        payload = answer.json() if answer is not None and answer.ok else None
-        results = ((payload or {}).get("resultList") or {}).get("result") or []
+        payload = self._read(self._get(url, "europepmc", record), record)
+        if payload is None:
+            return False
+        results = (payload.get("resultList") or {}).get("result") or []
         if asked_title is not None:
             best, score = _best_title_match(asked_title, results, lambda item: item.get("title"))
             if best is None:
@@ -336,23 +385,47 @@ class Scout:
         else:
             best = _first_matching(results, source_doi)
             if best is None:
-                _note(record, None, outcome="miss")
                 return False
         _take_europepmc(best, record)
-        return True if enriching else _resolved(record, "europepmc")
+        return _found(record, "europepmc", enriching)
 
     def _arxiv(self, identifier, record):
         answer = self._get(_with(ARXIV_QUERY, id_list=identifier, max_results="1"), "arxiv", record)
+        if answer is None:
+            return False
         entry = _arxiv_entry(answer)
+        if entry is False:
+            _note(record, "an unreadable answer (not an Atom feed)", outcome=FAILED)
+            return False
         if entry is None:
             return False
         _take_arxiv(entry, record)
         return _resolved(record, "arxiv")
 
+    def _arxiv_abs(self, identifier, record):
+        """The `arxiv.org/abs` page's meta tags, asked when the arXiv API failed: an attempt of its own.
+
+        A work found this way is recorded with its arXiv DOI and keeps the `retry` flag that the
+        API's failure set, so the next retry asks the API again and its answer replaces this one.
+        """
+        failed = record["attempts"][-1]
+        answer = self._get(ARXIV_ABS % identifier, "arxiv", record)
+        if answer is None:
+            return False
+        tags = _meta_tags(answer.text())
+        if not tags.get("citation_title"):
+            _note(record, "an unreadable answer (no citation_title meta tag)", outcome=FAILED)
+            return False
+        _take_abs_page(tags, identifier, record)
+        _note(record, "the abs page's meta tags, after the arXiv API failed; arXiv DOI " + ARXIV_DOI % identifier)
+        record["retry"] = {"service": failed["source"], "failure": failed["note"] or FAILED, "date": timestamp(self.clock())}
+        return _resolved(record, "arxiv")
+
     def _biorxiv(self, doi, server, record):
-        answer = self._get(BIORXIV_DETAILS % (server, urllib.parse.quote(doi, safe="/")), server, record)
-        payload = answer.json() if answer is not None and answer.ok else None
-        collection = (payload or {}).get("collection") or []
+        payload = self._read(self._get(BIORXIV_DETAILS % (server, urllib.parse.quote(doi, safe="/")), server, record), record)
+        if payload is None:
+            return False
+        collection = payload.get("collection") or []
         # The API returns one entry per version, oldest first; the newest is the one to record,
         # and it is the one that has to carry a title before this counts as knowing the work.
         latest = collection[-1] if collection else None
@@ -364,15 +437,54 @@ class Scout:
     # --- the one place a request is made ---
 
     def _get(self, url, source, record):
-        """One request, recorded in the record's `attempts` whatever it answers."""
+        """One request, recorded in the record's `attempts` whatever it answers; None unless it answered 2xx.
+
+        The attempt starts as `no match`; the reader that takes the work out of the answer marks it
+        `found`, and one that cannot read the answer marks it `failed`. A 404 is the service saying
+        it has no such record, and any other status outside 2xx, like a refused request or a
+        timeout, is a failure that says nothing about the work.
+        """
         try:
-            answer = self.fetcher.fetch(url)
+            answer = self.fetcher.fetch(url, replay=getattr(self, "_replay", False))
         except FetchError as failure:
-            record["attempts"].append(_attempt(source, url, None, "error", str(failure)))
+            record["attempts"].append(_attempt(source, url, None, FAILED, str(failure)))
             return None
-        outcome = "hit" if answer.ok else "miss"
-        record["attempts"].append(_attempt(source, url, answer.status, outcome, None))
-        return answer
+        if answer.ok:
+            record["attempts"].append(_attempt(source, url, answer.status, NO_MATCH, None))
+            return answer
+        if answer.status in _NO_RECORD:
+            record["attempts"].append(_attempt(source, url, answer.status, NO_MATCH, None))
+        else:
+            record["attempts"].append(_attempt(source, url, answer.status, FAILED, "status %d" % answer.status))
+        return None
+
+    def _read(self, answer, record):
+        """The JSON object of a 2xx answer, or None; an answer that is not one marks its attempt `failed`."""
+        if answer is None:
+            return None
+        payload = answer.json()
+        if not isinstance(payload, dict):
+            _note(record, "an unreadable answer (not a JSON object)", outcome=FAILED)
+            return None
+        return payload
+
+
+def outcome(record):
+    """What a whole lookup came to: `found`, `no such work` (every service asked answered no match), or `failed`.
+
+    A lookup that found nothing and asked nobody (a bare URL) is `no such work` too: there was no
+    service to fail, and nothing will answer it later.
+    """
+    if record.get("existence") == VERIFIED:
+        return FOUND
+    if any(attempt.get("outcome") == FAILED for attempt in record.get("attempts") or []):
+        return FAILED
+    return NO_SUCH_WORK
+
+
+def timestamp(seconds):
+    """An epoch second as the ledger spells a moment: `2026-09-21T14:13:20.000Z`."""
+    return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def resolve(reference, fetcher, email=None):
@@ -412,12 +524,24 @@ def _note(record, note, outcome=None):
 
 def _too_far(record, score, candidates):
     """Mark the last attempt a miss because no candidate's title was close enough. Always False."""
-    _note(record, "%d candidate(s), best title similarity %.2f, below %.2f" % (candidates, score, TITLE_SIMILARITY), outcome="miss")
+    _note(record, "%d candidate(s), best title similarity %.2f, below %.2f" % (candidates, score, TITLE_SIMILARITY), outcome=NO_MATCH)
     return False
 
 
 def _resolved(record, source):
+    """The last attempt found the work, and its source is the one that resolved it unless one already had."""
+    if record["attempts"]:
+        record["attempts"][-1]["outcome"] = FOUND
     record["resolved_by"] = record["resolved_by"] or source
+    return True
+
+
+def _found(record, source, enriching):
+    """The last attempt found the work: as its resolver, or while filling in a work another source found."""
+    if not enriching:
+        return _resolved(record, source)
+    if record["attempts"]:
+        record["attempts"][-1]["outcome"] = FOUND
     return True
 
 
@@ -445,9 +569,8 @@ def _with(url, **parameters):
     return url + joiner + urllib.parse.urlencode(pairs)
 
 
-def _message(answer):
-    payload = answer.json() if answer is not None and answer.ok else None
-    message = (payload or {}).get("message") if isinstance(payload, dict) else None
+def _message(payload):
+    message = payload.get("message") if isinstance(payload, dict) else None
     return message if isinstance(message, dict) else None
 
 
@@ -626,13 +749,11 @@ def _take_biorxiv(detail, server, record):
 
 
 def _arxiv_entry(answer):
-    """The one entry of an `id_list` feed, or None when arXiv answered with its error entry."""
-    if answer is None or not answer.ok:
-        return None
+    """The one entry of an `id_list` feed; None when arXiv answered with its error entry or none, False when the feed is unreadable."""
     try:
         feed = ElementTree.fromstring(answer.body)
     except ElementTree.ParseError:
-        return None
+        return False
     atom = "{http://www.w3.org/2005/Atom}"
     for entry in feed.findall(atom + "entry"):
         identifier = _text(entry.find(atom + "id")) or ""
@@ -640,6 +761,57 @@ def _arxiv_entry(answer):
             return None
         return entry
     return None
+
+
+class _MetaTags(HTMLParser):
+    """Every `<meta name=... content=...>` of a page, the repeated ones (`citation_author`) in order."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tags = {}
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "meta":
+            return
+        values = dict(attrs)
+        name, content = values.get("name"), values.get("content")
+        if name and content is not None:
+            self.tags.setdefault(name.lower(), []).append(html.unescape(content).strip())
+
+
+def _meta_tags(text):
+    """The page's meta tags as `{name: content}`, with `citation_author` kept as the list of every author."""
+    reader = _MetaTags()
+    try:
+        reader.feed(text)
+        reader.close()
+    except Exception:  # a page that is not HTML has no tags, which the caller reads as unreadable
+        return {}
+    tags = {name: values[0] for name, values in reader.tags.items()}
+    tags["citation_author"] = reader.tags.get("citation_author", [])
+    return tags
+
+
+def _take_abs_page(tags, identifier, record):
+    identifiers, metadata = record["identifiers"], record["metadata"]
+    _set(identifiers, "arxiv_id", tags.get("citation_arxiv_id") or identifier)
+    _set(identifiers, "doi", ARXIV_DOI % identifier)
+    _set(identifiers, "url", ARXIV_ABS % identifier)
+    _set(metadata, "title", _clean(tags.get("citation_title")))
+    _set(metadata, "authors", [_unflip(author) for author in tags.get("citation_author") or []])
+    _set(metadata, "year", _int((tags.get("citation_date") or tags.get("citation_online_date") or "")[:4]))
+    _set(metadata, "container", "arXiv")
+    _set(metadata, "type", "preprint")
+    if not record["abstract"]:
+        record["abstract"] = _clean(tags.get("citation_abstract"))
+    _set(record["open_access"], "pdf_url", tags.get("citation_pdf_url"))
+    _set_open_access(record, True)
+
+
+def _unflip(name):
+    """`Noether, Emmy` as `Emmy Noether`, the order the other sources write a name in."""
+    family, comma, given = str(name).partition(",")
+    return ("%s %s" % (given.strip(), family.strip())).strip() if comma else str(name).strip()
 
 
 def _text(node):
