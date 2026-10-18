@@ -522,7 +522,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `finding` | `id`, `ticket`, `text`, `provenance`, `negative` |
   | `progress` | `metric`, `value`, `ticket`, `run_id`, `kept` |
   | `discarded` | `ticket`, `metric`, `best`, `sd`, `seeds` |
-  | `proposal_admitted`, `proposal_parked` | `id`, `from`, `kind`, `ticket` or `reason`: `radius`, `duplicate`, `cap`, `blockers` |
+  | `proposal_admitted`, `proposal_parked` | `id`, `from`, `kind`, `ticket` or `reason`: `radius`, `duplicate`, `cap`, `blockers`, `touches` |
   | `decision_opened` | `ticket`, `blocking`, `human_only` |
   | `decision` | `ticket`, `answer`, `decided_by`: `human`, `decider`, `conductor` (the conductor closing the ask of decision 15: `answer: superseded`, or `fall back` at its timeout); `rationale`, `confidence`; `model` (the model the decider ran on, decision 15; absent on an answer no model gave); `fallback_from`: `fable` (the decider ran by fallback; absent otherwise) |
   | `job_launched` | `job`, `ticket`, `unit`, `gpu_uuids`, `cores`, `ram_gb`, `attempt` |

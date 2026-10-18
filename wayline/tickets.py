@@ -29,6 +29,7 @@ __all__ = [
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
     "with_result", "with_result_note", "result_notes", "ANSWER_HEADING", "SUPERSEDED_ANSWER_HEADING", "section", "answer_section", "with_answer", "retire_answer",
+    "touch_problem", "touches_problems",
 ]
 
 RESEARCH = "research"
@@ -145,6 +146,38 @@ def machine_acceptance(ticket):
     if (ticket or {}).get("kind") == DOCS and not any(_RUNS_DOCS_BUILD.search(str(command)) for command in commands):
         commands.append(DOCS_BUILD)
     return commands
+
+
+def touch_problem(touch, project):
+    """Why a touch set entry is not a path under the project, or None when it is one.
+
+    Absolute paths, `..`, and the whole project are refused, and so is anything under `research/`,
+    which only code writes (decision 1): the touch-set hook denies it whatever the touch set says, so
+    a ticket naming it could never be done. The planner's tickets, a gate's scope-downs, and the
+    tickets admitted from proposals are all checked by this one rule.
+    """
+    text = str(touch or "").strip()
+    if not text:
+        return "is empty"
+    if text.startswith("/") or text.startswith("~"):
+        return "is not a path under the project"
+    parts = [part for part in text.replace("\\", "/").split("/") if part not in ("", ".")]
+    if ".." in parts:
+        return "leaves the project"
+    if not parts:
+        return "names the whole project"
+    root = Path(project).resolve()
+    if not (root / text).resolve().is_relative_to(root):
+        return "resolves outside the project"
+    if parts[0] == RESEARCH:
+        return "is under research/, which the ledger alone writes"
+    return None
+
+
+def touches_problems(touches, project):
+    """`["the touch set entry `x` <why>", ...]` for every entry of `touches` that `touch_problem` refuses."""
+    return ["the touch set entry `%s` %s" % (touch, problem)
+            for touch in touches or () for problem in [touch_problem(touch, project)] if problem]
 
 
 def relative_path(ticket):

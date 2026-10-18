@@ -14,16 +14,16 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. Every module it edits is built. It blocks 85.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#220](https://github.com/Bernaljp/wayline/issues/220) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (defects found while charting; sections and passages, "sections never enter a touch set"; Methods and the code, the worker guard), 1 (the layout, the touch-set rule), 4 (guards and permissions); M8 criteria 4 (the hook clause) and 13 (the worker guard clause); user stories 116, 148.
 
-- [ ] The touch-set hook denies a write to any path under `research/`, including when the ticket's touch set names it.
-- [ ] Tickets filed by gates (scope-downs) and admitted from proposals are checked by the same rule as the planner's, and one naming `research/` is refused with the reason.
-- [ ] The command guard denies `gh repo create` and every `gh` subcommand that writes (repo, pr, issue, release, api with a write method, and the like), and still allows the read-only forms used today.
-- [ ] `absorb --code` writes the clone's path into the project's `.gitignore` beside `source/`, and a wave commit after an absorb records no gitlink.
-- [ ] Tests as piped-stdin hook cases with expected exit codes, following the pattern of the existing guard tests: a `research/` write inside and outside the touch set, `gh repo create`, a `gh` write, a `gh` read; a gate-filed and a proposal-admitted ticket naming `research/`; an absorb followed by a wave commit over a temporary project.
-- [ ] The changelog names the fixes under `## Unreleased`.
-- [ ] `python -m unittest` passes.
+- [x] The touch-set hook denies a write to any path under `research/`, including when the ticket's touch set names it.
+- [x] Tickets filed by gates (scope-downs) and admitted from proposals are checked by the same rule as the planner's, and one naming `research/` is refused with the reason.
+- [x] The command guard denies `gh repo create` and every `gh` subcommand that writes (repo, pr, issue, release, api with a write method, and the like), and still allows the read-only forms used today.
+- [x] `absorb --code` writes the clone's path into the project's `.gitignore` beside `source/`, and a wave commit after an absorb records no gitlink.
+- [x] Tests as piped-stdin hook cases with expected exit codes, following the pattern of the existing guard tests: a `research/` write inside and outside the touch set, `gh repo create`, a `gh` write, a `gh` read; a gate-filed and a proposal-admitted ticket naming `research/`; an absorb followed by a wave commit over a temporary project.
+- [x] The changelog names the fixes under `## Unreleased`.
+- [x] `python -m unittest` passes.

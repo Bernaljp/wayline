@@ -47,7 +47,8 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_SUBJECT_KIND, PAYLOAD_ENUMS, TICKET_CREATED, VERDICT, ledger_for, now_ts
 from wayline.project import fable_hold, policy_for, rung_named
 from wayline.tickets import (
-    DOCS, SATISFIED, machine_acceptance, next_id, read_ticket, read_tickets, tickets_dir, works_in_the_harness, write_ticket,
+    DOCS, SATISFIED, machine_acceptance, next_id, read_ticket, read_tickets, tickets_dir, touches_problems, works_in_the_harness,
+    write_ticket,
 )
 from wayline.tickets import relative_path as ticket_relative_path
 
@@ -1096,7 +1097,10 @@ def _file_writing_ticket(project, ledger, adjudication, paths, memo):
         "",
     ] + ["- `%s`" % item for item in paths])
     return file_writing_ticket(
-        project, ledger, title=WRITING_TITLE, touches=[adjudication.subject], inputs=list(paths),
+        # A subject under research/ (the paper, a report) is written by code, so the scope-down
+        # carries no touch of it; the correction travels in the result the writer is given.
+        project, ledger, title=WRITING_TITLE, touches=[] if touches_problems([adjudication.subject], project) else [adjudication.subject],
+        inputs=list(paths),
         quality=["Does every point the kill argument left standing now have either the "
                  "evidence it asked for or a claim scoped down to what the artifacts support?"],
         origin=adjudication.subject,
@@ -1122,6 +1126,11 @@ def file_writing_ticket(project, ledger, *, title, touches, inputs, quality, ori
     the markdown after the `## Demo` section, which this writes from `demo`.
     """
     project = Path(project).resolve()
+    problems = touches_problems(touches, project)
+    if problems:
+        # The planner's own rule (decision 1): a touch under `research/` is one the hook denies,
+        # so the ticket could never be done. Nothing is written.
+        raise GateError("a scope-down titled %r cannot be filed: %s" % (title, "; ".join(problems)))
     ledger = ledger_for(ledger or project)
     identifier = next_id(project)
     fields = {

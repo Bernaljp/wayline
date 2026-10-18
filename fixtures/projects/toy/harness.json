@@ -1,5 +1,6 @@
 {
   "harness_tag": "v0.0.0",
+  "research_version": 2,
   "autonomy": "autonomous",
   "radius": "moderate",
   "reservations": {
