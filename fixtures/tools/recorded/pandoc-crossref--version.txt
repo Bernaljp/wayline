@@ -1,0 +1,1 @@
+pandoc-crossref v0.3.25 git commit UNKNOWN (UNKNOWN) built with Pandoc v3.11, pandoc-types v1.23.1.2 and GHC 9.8.4

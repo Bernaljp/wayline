@@ -79,6 +79,25 @@ lists it read-only, marked with its tag.
   rewrite is printed, and a project whose own `tiers` override defines its ladder is left as it is. An override
   in the shape before the rung ladder that puts a level on Fable now lands on rung 6 too, where it was refused.
 
+- The harness's tools (ticket 75; Implementation Decisions 17 and 1). `wayline tools install` installs, beside the
+  converter venv and with no ask at any autonomy, never as root: micromamba's static binary at
+  `~/.wayline/tools/bin/` (its environments and package cache under `~/.wayline/tools/mamba`, one prefix per tool
+  under `envs/`); uv into the same `bin/`, its cache under `uv/`; pandoc 3.11 with pandoc-crossref from conda-forge
+  into `envs/pandoc` (pandoc-crossref is added without its declared dependency, which would pull pandoc 3.9 under
+  a filter built for 3.11); matplotlib, seaborn, and tree-sitter-matlab in the tools venv; and the embedding
+  model, BAAI/bge-base-en-v1.5 at a pinned revision, into `models/`. Every download is checked against the digest
+  published beside it (a release's `.sha256`, the Hub's listing for each model file), and a mismatch fails that
+  tool alone. Every Python package installs through the harness's uv: the `python -m venv` fallback is gone, since
+  it fails on a machine without `ensurepip`. LaTeX, poppler, LibreOffice, and git are recorded as `system` by
+  absolute path and never changed. `~/.wayline/tools/tools.json` (now `schema_version` 2) gains one entry per tool
+  under `tools`: the absolute executable, the version, the environment it needs, the route, the lock or digest or
+  revision, when it was installed, and the installer (`harness`, `owner`, or `system`). It is merged one entry at
+  a time under a lock, so two installs keep each other's entries; the converter venv's install keeps every entry
+  too, and docling and pdfplumber get entries of their own. New verbs: `wayline tools install <name>` installs one tool, `wayline tools show` prints the record
+  (`--json` the file), and `wayline tools run <name> -- <args>` runs a recorded tool by its absolute path and
+  environment for a session's short calls, refusing one not recorded. A record of the first version reads as one
+  with no entries.
+
 - Objectives (ticket 76; Implementation Decision 17). A project holds objectives, questions the research answers,
   in `research/objectives.json`, written only by code through the ledger (schema `objectives`) and rendered as
   `research/OBJECTIVES.md` in id order with each one's status, measure, answer, and evidence. Ids run O1 onward and
