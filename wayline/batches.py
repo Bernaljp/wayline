@@ -22,19 +22,20 @@ redrawing a plot, approving a proposal), is the producer's; this module never ac
 import argparse
 import re
 import sys
-from pathlib import Path
+from collections import namedtuple
 
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_BATCH, K_BY, K_ITEM, K_MARK, K_NOTE, MARKED, LedgerError, ledger_for, now_ts
 from wayline.project import ProjectError, find_project
 
-__all__ = ["KINDS", "BatchError", "open_batch", "read_batch", "read_batches", "mark", "marks"]
+__all__ = ["KINDS", "WHOLE_AT", "BatchError", "open_batch", "read_batch", "read_batches", "mark", "take_defaults", "marks", "link", "render",
+           "mark_command"]
 
 SCHEMA = "batch"
 DIRECTORY = "batches"
 
-# The marks view's marks by batch, in its order (decision 17, the dashboard).
+# The marks view's marks by batch, in its order (decision 17, the dashboard); the schema's `kind` enum names the same kinds.
 KINDS = {
     "plots": ("keep", "maybe", "drop"),
     "objective_changes": ("approve", "decline"),
@@ -59,6 +60,9 @@ WHO = (OWNER, DECIDER)
 
 _ID_RE = re.compile(r"^B([1-9][0-9]*)$")
 
+# One `marked` event to journal: a mark, a note, or both, given on one item.
+_Marked = namedtuple("_Marked", "item given note by ts")
+
 
 class BatchError(ValueError):
     """A batch the module refuses to open, or a mark it refuses to record."""
@@ -80,6 +84,19 @@ def _next_id(ledger):
     return "B%d" % (max(_numbers(ledger), default=0) + 1)
 
 
+def _blank(text):
+    return not isinstance(text, str) or not text.strip()
+
+
+def _check_by(by):
+    if by not in WHO:
+        raise BatchError("a mark is given by %s, got %r" % (" or ".join(WHO), by))
+
+
+def _open_count(batch):
+    return sum(1 for item in batch["items"] if item["mark"] is None)
+
+
 def open_batch(project, kind, title, items, decision=None):
     """Open a batch of `items` (each `{ref, text, default?}`) of one `kind`; returns the record written.
 
@@ -87,15 +104,19 @@ def open_batch(project, kind, title, items, decision=None):
     """
     if kind not in KINDS:
         raise BatchError("a batch's kind is one of %s, got %r" % (", ".join(KINDS), kind))
-    marks = list(KINDS[kind])
+    if _blank(title):
+        raise BatchError("a batch has a title, got %r" % (title,))
     if not items:
         raise BatchError("a batch of %s with no items puts nothing before the owner" % kind)
+    allowed = list(KINDS[kind])
     built = []
     for number, item in enumerate(items, start=1):
+        if _blank(item.get("ref")) or _blank(item.get("text")):
+            raise BatchError("item %d: an item names what it is about (`ref`) and says it (`text`)" % number)
         default = item.get("default")
-        if default is not None and default not in marks:
-            raise BatchError("item %d (%s): a %s item's default is one of %s, got %r" % (number, item.get("ref"), kind, ", ".join(marks), default))
-        built.append({"id": number, "ref": item["ref"], "text": item["text"], "marks": marks, "default": default,
+        if default is not None and default not in allowed:
+            raise BatchError("item %d (%s): a %s item's default is one of %s, got %r" % (number, item["ref"], kind, ", ".join(allowed), default))
+        built.append({"id": number, "ref": item["ref"], "text": item["text"], "marks": allowed, "default": default,
                       "note": None, "mark": None, "by": None, "at": None})
     ledger = ledger_for(project)
     with ledger.lock():
@@ -105,7 +126,7 @@ def open_batch(project, kind, title, items, decision=None):
 
 
 def read_batch(project, identifier):
-    """One batch as its file holds it, checked against its schema; a batch that is not there is a BatchError."""
+    """One batch as its file holds it, checked against its schema and its kind's marks; a batch that is not there is a BatchError."""
     ledger = ledger_for(project)
     if not _ID_RE.match(str(identifier)):
         raise BatchError("a batch id is B1 onward, got %r" % (identifier,))
@@ -114,18 +135,21 @@ def read_batch(project, identifier):
     except FileNotFoundError:
         raise BatchError("%s holds no batch %s" % (ledger.project, identifier)) from None
     check(record, load_schema(SCHEMA), name="batch %s" % identifier)
-    marks_of_kind = list(KINDS[record["kind"]])
+    allowed = list(KINDS[record["kind"]])
     for item in record["items"]:
-        if item["marks"] != marks_of_kind or (item["default"] is not None and item["default"] not in marks_of_kind) \
-                or (item["mark"] is not None and item["mark"] not in marks_of_kind):
+        if item["marks"] != allowed or any(value is not None and value not in allowed for value in (item["default"], item["mark"])):
             raise BatchError("batch %s, item %d: a %s item's marks are %s, and its default and mark are among them; the file says otherwise"
-                             % (identifier, item["id"], record["kind"], ", ".join(marks_of_kind)))
+                             % (identifier, item["id"], record["kind"], ", ".join(allowed)))
     return record
 
 
 def _item(batch, item_id):
+    try:
+        number = int(item_id)
+    except (TypeError, ValueError):
+        raise BatchError("an item is named by its number, 1 onward, got %r" % (item_id,)) from None
     for item in batch["items"]:
-        if item["id"] == item_id:
+        if item["id"] == number:
             return item
     raise BatchError("batch %s has no item %s; its items are 1 to %d" % (batch["id"], item_id, len(batch["items"])))
 
@@ -135,63 +159,64 @@ def _settled_by(batch, item):
 
 
 def _close_if_settled(batch):
-    if all(item["mark"] is not None for item in batch["items"]):
+    if _open_count(batch) == 0:
         batch["status"] = CLOSED
 
 
 def _save(ledger, batch, journaled):
-    """Check the batch, journal one `marked` per (item, mark, note, by, ts) in `journaled`, then write it.
+    """Write the batch, then journal one `marked` per `_Marked` in `journaled`, under the lock the caller holds.
 
-    The batch is checked before anything is journaled, so a journaled mark is one the file can hold.
+    The file first, as the ledger's other records are written before the event that tells of them,
+    so a journaled mark is always one the file holds.
     """
-    check(batch, load_schema(SCHEMA), name="batch %s" % batch["id"])
-    for item_id, given, note, by, ts in journaled:
-        payload = {K_BATCH: batch["id"], K_ITEM: item_id}
-        if given is not None:
-            payload[K_MARK] = given
-        if note is not None:
-            payload[K_NOTE] = note
-        payload[K_BY] = by
-        ledger.append_event(MARKED, payload, ts=ts)
     ledger.write_json(_path(batch["id"]), batch, schema=SCHEMA)
+    for entry in journaled:
+        payload = {K_BATCH: batch["id"], K_ITEM: entry.item}
+        if entry.given is not None:
+            payload[K_MARK] = entry.given
+        if entry.note is not None:
+            payload[K_NOTE] = entry.note
+        payload[K_BY] = entry.by
+        ledger.append_event(MARKED, payload, ts=entry.ts)
 
 
-def mark(project, batch_id, item_id, mark, note=None, by=OWNER):
-    """Record `mark` on one item of a batch, with an optional `note`; returns the batch as written.
+def mark(project, batch_id, item_id, given, note=None, by=OWNER):
+    """Record the mark `given` on one item of a batch, with an optional `note`; returns the batch as written.
 
     The function the `mark` verb and the dashboard's marks view call. A mark saves when given: the
-    first one settles the item, and a later one is refused with what settled it. `mark` None with a
-    `note` keeps the note on the item and leaves it open. The last item settled closes the batch.
+    first one settles the item, and a later one is refused with what settled it. `given` None with
+    a `note` keeps the note on the item and leaves it open. A blank note is no note. The last item
+    settled closes the batch.
     """
-    if by not in WHO:
-        raise BatchError("a mark is given by %s, got %r" % (" or ".join(WHO), by))
-    if mark is None and not (note or "").strip():
+    _check_by(by)
+    note = None if _blank(note) else note
+    if given is None and note is None:
         raise BatchError("nothing to record: give a mark or a note")
     ledger = ledger_for(project)
     with ledger.lock():
         batch = read_batch(ledger, batch_id)
-        item = _item(batch, _item_number(item_id))
+        item = _item(batch, item_id)
         if item["mark"] is not None:
             raise BatchError("%s; a later mark or note is refused" % _settled_by(batch, item))
-        if mark is not None and mark not in item["marks"]:
-            raise BatchError("item %d of %s (%s) takes %s, got %r" % (item["id"], batch["id"], batch["kind"], ", ".join(item["marks"]), mark))
+        if given is not None and given not in item["marks"]:
+            raise BatchError("item %d of %s (%s) takes %s, got %r" % (item["id"], batch["id"], batch["kind"], ", ".join(item["marks"]), given))
         ts = now_ts()
         if note is not None:
             item["note"] = note
-        if mark is not None:
-            item.update(mark=mark, by=by, at=ts)
+        if given is not None:
+            item.update(mark=given, by=by, at=ts)
             _close_if_settled(batch)
-        _save(ledger, batch, [(item["id"], mark, note, by, ts)])
+        _save(ledger, batch, [_Marked(item["id"], given, note, by, ts)])
     return batch
 
 
 def take_defaults(project, batch_id, by=OWNER):
-    """"Take all defaults": settle every open item that has a default with it, in one call; returns the batch.
+    """"Take all defaults": settle every open item that has a default with it, in one call.
 
+    Returns `(batch, settled)`: the batch as written and the numbers of the items this call settled.
     An item with no default stays open, and a batch with nothing left to default is left as it was.
     """
-    if by not in WHO:
-        raise BatchError("a mark is given by %s, got %r" % (" or ".join(WHO), by))
+    _check_by(by)
     ledger = ledger_for(project)
     with ledger.lock():
         batch = read_batch(ledger, batch_id)
@@ -200,20 +225,34 @@ def take_defaults(project, batch_id, by=OWNER):
         for item in batch["items"]:
             if item["mark"] is None and item["default"] is not None:
                 item.update(mark=item["default"], by=by, at=ts)
-                journaled.append((item["id"], item["mark"], None, by, ts))
+                journaled.append(_Marked(item["id"], item["mark"], None, by, ts))
         if journaled:
             _close_if_settled(batch)
             _save(ledger, batch, journaled)
-    return batch
+    return batch, [entry.item for entry in journaled]
+
+
+def marks(project, batch_id):
+    """What a producer reads back: each item's ref, mark, note, and who settled it, in item order."""
+    batch = read_batch(project, batch_id)
+    return [{"item": item["id"], "ref": item["ref"], "mark": item["mark"], "note": item["note"], "by": item["by"]} for item in batch["items"]]
+
+
+def read_batches(project, status=None):
+    """Every batch the project holds in id order, or only those of one `status` (`open`, `closed`)."""
+    ledger = ledger_for(project)
+    found = [read_batch(ledger, "B%d" % number) for number in _numbers(ledger)]
+    return [batch for batch in found if status is None or batch["status"] == status]
+
+
+# --- the conversation's rendering -----------------------------------------------------------------
 
 
 def link(project, batch_id):
     """The batch's item link in the dashboard, `#/<project>/<id>`, naming the project as the dashboard's tabs do."""
-    from wayline import dashboard  # the dashboard will read batches; importing it here, late, keeps the two apart
+    from wayline import dashboard  # late: the dashboard's marks view will read this module
 
-    path = str(ledger_for(project).project)
-    ids = dashboard.project_ids()
-    return "#/%s/%s" % (ids.get(path) or dashboard._url_safe(Path(path).name) or "project", batch_id)
+    return "#/%s/%s" % (dashboard.project_id(ledger_for(project).project), batch_id)
 
 
 def render(project, batch_id):
@@ -223,10 +262,9 @@ def render(project, batch_id):
     """
     batch = read_batch(project, batch_id)
     items = batch["items"]
-    still_open = sum(1 for item in items if item["mark"] is None)
     head = "%s %s: %s%s, %d item%s, %s" % (
         batch["id"], batch["kind"], batch["title"], " (decision %d)" % batch["decision"] if batch["decision"] else "",
-        len(items), "" if len(items) == 1 else "s", "%d open" % still_open if batch["status"] == OPEN else "closed")
+        len(items), "" if len(items) == 1 else "s", "%d open" % _open_count(batch) if batch["status"] == OPEN else "closed")
     where = link(project, batch["id"])
     if len(items) > WHOLE_AT:
         return "%s, in the marks view: %s" % (head, where)
@@ -242,6 +280,13 @@ def render(project, batch_id):
         lines.append(line)
     lines.append("Also in the marks view: %s" % where)
     return "\n".join(lines)
+
+
+# --- the verb --------------------------------------------------------------------------------------
+
+
+def _standing(batch):
+    return "%s is closed" % batch["id"] if batch["status"] == CLOSED else "%d open" % _open_count(batch)
 
 
 def mark_command(args):
@@ -265,18 +310,16 @@ def mark_command(args):
     if options.defaults and (options.item is not None or given is not None or options.note is not None):
         print("wayline mark: --defaults takes the batch alone, not an item, a mark, or a note", file=sys.stderr)
         return 2
+    if options.item is None and options.note is not None:
+        print("wayline mark: a note is kept on an item; name the item", file=sys.stderr)
+        return 2
     try:
         project = find_project(options.project)
         if options.defaults:
-            before = {item["id"] for item in read_batch(project, options.batch)["items"] if item["mark"] is None}
-            batch = take_defaults(project, options.batch, by=options.by)
-            settled = [item for item in batch["items"] if item["id"] in before and item["mark"] is not None]
+            batch, settled = take_defaults(project, options.batch, by=options.by)
             print("%d item(s) of %s settled by their defaults; %s" % (len(settled), batch["id"], _standing(batch)))
             return 0
         if options.item is None:
-            if options.note is not None:
-                print("wayline mark: a note is kept on an item; name the item", file=sys.stderr)
-                return 2
             print(render(project, options.batch))
             return 0
         batch = mark(project, options.batch, options.item, given, note=options.note, by=options.by)
@@ -286,32 +329,6 @@ def mark_command(args):
     except (ProjectError, LedgerError, ValidationError, OSError) as failure:
         print("wayline mark: %s" % failure, file=sys.stderr)
         return 1
-    item = _item(batch, _item_number(options.item))
-    what = "marked %s" % given if given is not None else "noted"
-    print("item %d of %s (%s) %s; %s" % (item["id"], batch["id"], item["ref"], what, _standing(batch)))
+    item = _item(batch, options.item)
+    print("item %d of %s (%s) %s; %s" % (item["id"], batch["id"], item["ref"], "marked %s" % given if given is not None else "noted", _standing(batch)))
     return 0
-
-
-def _standing(batch):
-    still_open = sum(1 for item in batch["items"] if item["mark"] is None)
-    return "%s is closed" % batch["id"] if batch["status"] == CLOSED else "%d open" % still_open
-
-
-def _item_number(item_id):
-    try:
-        return int(item_id)
-    except (TypeError, ValueError):
-        raise BatchError("an item is named by its number, 1 onward, got %r" % (item_id,)) from None
-
-
-def marks(project, batch_id):
-    """What a producer reads back: each item's ref, mark, note, and who settled it, in item order."""
-    batch = read_batch(project, batch_id)
-    return [{"item": item["id"], "ref": item["ref"], "mark": item["mark"], "note": item["note"], "by": item["by"]} for item in batch["items"]]
-
-
-def read_batches(project, status=None):
-    """Every batch the project holds in id order, or only those of one `status` (`open`, `closed`)."""
-    ledger = ledger_for(project)
-    found = [read_batch(ledger, "B%d" % number) for number in _numbers(ledger)]
-    return [batch for batch in found if status is None or batch["status"] == status]

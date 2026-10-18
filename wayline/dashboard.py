@@ -287,6 +287,15 @@ def _url_safe(name):
     return re.sub(r"[^A-Za-z0-9._-]", "-", name).strip("-")
 
 
+def project_id(path, entries=None):
+    """The id one project's item links name it by (`#/<project>/<id>`): its tab's id, by the same rule when it has no tab yet."""
+    path = str(Path(path).resolve())
+    entries = read_projects() if entries is None else entries
+    if not any(isinstance(entry, dict) and entry.get("path") == path for entry in entries):
+        entries = list(entries) + [{"path": path}]
+    return project_ids(entries)[path]
+
+
 def projects_view(active=None, entries=None, settings=None):
     """Every registered project with its id, the active one marked: what the tabs are drawn from.
 

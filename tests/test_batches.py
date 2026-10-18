@@ -15,7 +15,7 @@ from pathlib import Path
 
 from tests.paths import SPEC_PATH
 from tests.spec_table import spec_verbs
-from wayline import batches, cli
+from wayline import batches, cli, dashboard
 from wayline.jsonschema import check, load_schema
 from wayline.ledger import Ledger
 
@@ -192,7 +192,8 @@ class TakeDefaultsTest(BatchTestCase):
     def test_every_open_item_with_a_default_is_settled_and_the_rest_left_open(self):
         self.plots(count=4, defaults=("keep", None, "drop", "maybe"))
         batches.mark(self.project, "B1", 4, "keep", note="the headline")
-        batch = batches.take_defaults(self.project, "B1")
+        batch, settled = batches.take_defaults(self.project, "B1")
+        self.assertEqual(settled, [1, 3])
         self.assertEqual([(item["id"], item["mark"], item["by"]) for item in batch["items"]],
                          [(1, "keep", "owner"), (2, None, None), (3, "drop", "owner"), (4, "keep", "owner")])
         self.assertEqual(self.on_disk("B1")["status"], "open", "item 2 has no default and stays open")
@@ -203,13 +204,13 @@ class TakeDefaultsTest(BatchTestCase):
             {"ref": "O3 park", "text": "park O3: its question waits on R2", "default": "approve"},
             {"ref": "O5 add", "text": "add: does the effect hold at scale?", "default": "decline"},
         ])
-        batch = batches.take_defaults(self.project, "B1", by="decider")
-        self.assertEqual(batch["status"], "closed")
+        batch, settled = batches.take_defaults(self.project, "B1", by="decider")
+        self.assertEqual((batch["status"], settled), ("closed", [1, 2]))
         self.assertEqual([(entry["mark"], entry["by"]) for entry in batches.marks(self.project, "B1")], [("approve", "decider"), ("decline", "decider")])
 
     def test_nothing_left_to_default_journals_nothing(self):
         self.plots(count=1, defaults=(None,))
-        batches.take_defaults(self.project, "B1")
+        self.assertEqual(batches.take_defaults(self.project, "B1")[1], [])
         self.assertEqual(self.marked_events(), [])
 
 
@@ -239,7 +240,22 @@ class RenderTest(BatchTestCase):
         renamed.mkdir()
         (renamed / "harness.json").write_text("{}\n", encoding="utf-8")
         batches.open_batch(renamed, "merges", "Merges", [{"ref": "M1", "text": "R2 and R5"}] * 6)
-        self.assertTrue(batches.render(renamed, "B1").endswith("#/two-words/B1"))
+        # A directory name that is no URL segment gets the dashboard's eight-hex suffix, tab or no tab yet.
+        self.assertRegex(batches.render(renamed, "B1"), r"#/two-words-[0-9a-f]{8}/B1$")
+        (self.project / "home" / "projects.json").write_text(json.dumps([{"path": str(renamed.resolve())}]), encoding="utf-8")
+        self.assertEqual(batches.link(renamed, "B1"), "#/%s/B1" % dashboard.project_ids()[str(renamed.resolve())])
+
+    def test_a_blank_note_with_a_mark_is_no_note(self):
+        self.plots(count=1)
+        batches.mark(self.project, "B1", 1, "keep", note="  ")
+        self.assertIsNone(self.on_disk("B1")["items"][0]["note"])
+        self.assertNotIn("note", self.marked_events()[0]["payload"])
+
+    def test_an_item_without_its_ref_or_text_or_a_blank_title_is_refused(self):
+        with self.assertRaisesRegex(batches.BatchError, "title"):
+            batches.open_batch(self.project, "plots", " ", [{"ref": "P1", "text": "a plot"}])
+        with self.assertRaisesRegex(batches.BatchError, "`ref`"):
+            batches.open_batch(self.project, "plots", "Plots", [{"text": "a plot"}])
 
     def test_a_closed_batch_says_so(self):
         batches.open_batch(self.project, "contradictions", "Contradictions", [{"ref": "C1", "text": "P3 says up, P9 says down", "default": "real"}])
