@@ -17,7 +17,7 @@ import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, open_objective
 from wayline import cli, dashboard, decider, gates, grill, position, project, worker
 from wayline.fetch import recording_fetcher
 from wayline.ledger import Ledger
@@ -155,6 +155,7 @@ class PositionCase(ProjectTestCase):
         harness = project.read_harness(self.project)
         harness["radius"] = self.radius
         (self.project / project.HARNESS_JSON).write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+        open_objective(self.project)
         project.set_autonomy(self.project, self.autonomy)
         self.scout = Scout(recording_fetcher(RECORDINGS, email=EMAIL), EMAIL)
         self.notified = []

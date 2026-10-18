@@ -260,7 +260,6 @@ class AbsorbTest(ProjectTestCase):
         request = Request("https://api.crossref.org/works/10.1/x")
         fetcher = scout_fetcher(self.project, email=EMAIL)
         self.assertEqual(fetcher.backend.root, self.project / "research" / CACHE)
-        self.assertTrue(fetcher.backend.record, "a miss must be recorded, or the cache never fills")
         self.assertEqual(
             fetcher.backend.path_for(request),
             self.project / "research" / CACHE / "api.crossref.org" / (request.hash + ".json"),

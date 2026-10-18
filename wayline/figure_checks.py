@@ -128,6 +128,12 @@ def check_outcome(check_id, passed, detail, tool=None):
     return {"id": check_id, "type": "A", "pass": bool(passed), "tool": tool or TOOL[check_id], "detail": detail}
 
 
+def check_not_run(check_id, reason, tool=None):
+    """The entry of a check that cannot run on what it was given: listed as not run, never passed or
+    failed (Implementation Decision 17), with `pass` null and the reason as its detail."""
+    return {"id": check_id, "type": "A", "pass": None, "not_run": True, "tool": tool or TOOL.get(check_id), "detail": reason}
+
+
 # --- the outside world ----------------------------------------------------------------------------
 
 
@@ -1176,6 +1182,9 @@ def check_generator_clean(context):
     source = context.final_file("generator")
     if source is None:
         return check_outcome("generator_clean", False, "the generator %r is not on disk" % context.final.get("generator"))
+    if source.suffix != ".py":
+        return check_not_run("generator_clean", "generator_clean lints Python only; the generator %s is not a Python script"
+                             % context.final["generator"])
     run = context.tools.run("ruff", ["check", "--isolated", "--no-cache", "--select", "F401,F841", "--output-format", "concise", source])
     problems = []
     if run.returncode != 0:

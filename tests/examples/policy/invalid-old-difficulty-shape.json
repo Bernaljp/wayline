@@ -217,6 +217,7 @@
   "consultant": {
     "max_questions_per_ticket": 5
   },
+  "scout": {"give_up_days": 7},
   "kb": {
     "query_pack_max_chars": 20000
   },
@@ -273,6 +274,10 @@
     "crawl_rate_per_s": 1,
     "liveness": "monthly",
     "recrawl": "quarterly"
+  },
+  "plot_checks": {
+    "axis_label_max_chars": 40,
+    "heatmap_label_max_cells": 36
   },
   "quiet_hours": null,
   "per_window_worker_budget": null

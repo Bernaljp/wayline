@@ -1,0 +1,18 @@
+{
+  "objectives": [
+    {
+      "id": "O1",
+      "text": "Do interaction terms help?",
+      "measure": [
+        {"metric": "auroc", "direction": "up", "target": 0.9, "held_out_split": null, "eval_command": "python eval.py {artifact}",
+         "baseline": {"value": null, "source": null}, "dataset_or_split": null, "min_seeds": null},
+        {"metric": "loss", "direction": "down", "target": null, "held_out_split": null, "eval_command": "python loss.py {artifact}",
+         "baseline": {"value": null, "source": null}, "dataset_or_split": null, "min_seeds": null}
+      ],
+      "status": "open",
+      "answer": null,
+      "evidence": [],
+      "reframed_as": null
+    }
+  ]
+}

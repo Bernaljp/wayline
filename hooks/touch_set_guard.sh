@@ -52,6 +52,15 @@ case "$TARGET" in
   *)  ABS=$(realpath -m "$ROOT/$TARGET") ;;
 esac
 
+# Nothing under research/ is a worker's to write, whatever the touch set names
+# (Implementation Decision 1): sections, reports, and the ledger are written only
+# by code. This is checked before the touch set, so no entry can widen it.
+case "$ABS" in
+  "$ROOT/research"|"$ROOT/research"/*)
+    echo "touch_set_guard: $TOOL_NAME to $ABS is under research/, which only code writes; no touch set opens it. Report what should change there instead." >&2
+    exit 2 ;;
+esac
+
 IFS=':' read -r -a ENTRIES <<< "$TICKET_TOUCHES"
 for entry in "${ENTRIES[@]}"; do
   [ -z "$entry" ] && continue

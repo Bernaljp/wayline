@@ -25,7 +25,6 @@ import json
 import math
 import os
 import re
-import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -33,12 +32,12 @@ from pathlib import Path
 from typing import Optional
 
 from wayline.cli import parse_args
-from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import DECISION, Ledger, atomic_write
+from wayline.objectives import run_on_sample
 from wayline.pacing import ASK, CONSENTS
 from wayline.project import (
-    AUTONOMY, HARNESS_JSON, LADDER_CHANGES, LADDER_CONSENTS, MODEL_FALLBACK, UNSET_CONSENT, ProjectError, find_project, policy_for,
+    AUTONOMY, HARNESS_JSON, LADDER_CHANGES, LADDER_CONSENTS, MODEL_FALLBACK, UNSET_CONSENT, ProjectError, find_project,
     read_harness, set_ladder_changes, set_model_fallback,
 )
 from wayline.tickets import section
@@ -74,7 +73,6 @@ LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_
 BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
 GOAL_OPTIONAL = {"dataset_or_split": None, "held_out_split": None, "baseline": None, "budget": None, "stop_when": "goal_reached"}
 
-ARTIFACT = "{artifact}"
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ""}
 TEXT_MAX_BYTES = 1_000_000
 PDF_HEAD_BYTES = 4_000_000
@@ -86,7 +84,6 @@ DROP_MAX_BYTES = 64 * 1024 * 1024
 _DROP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+ -]{0,127}\Z")
 
 _DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>,;)\]]+)", re.IGNORECASE)  # as the scout reads one
-_NUMBER = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(\S.*)$")
 _IDENTIFIER = re.compile(r"\b10\.\d{4,9}/|arxiv|https?://", re.IGNORECASE)
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s")
@@ -125,10 +122,9 @@ class GoalCheck:
 def check_goal(goal, project, sample=None, timeout_s=None):
     """Normalize a stated goal and run its `eval_command` on `sample`; returns a `GoalCheck`.
 
-    The command runs from the project root with `{artifact}` replaced by the sample's quoted path,
-    which is also exported as `WAYLINE_ARTIFACT`. It measures the goal when it exits 0 and prints
-    the metric: a JSON object carrying the metric's key, a `<metric>: <value>` line, or a bare
-    number on the last line. Any other number in the output is not taken for the metric.
+    The run on the sample is the objectives module's `run_on_sample`, where the check moved with
+    decision 17 (a measure stands only when its `eval_command` printed the metric on a sample); intake
+    keeps calling it for `intake --goal` until ticket 80 takes the goal out of intake.
     """
     project = Path(project)
     stated = goal if isinstance(goal, dict) else None
@@ -140,39 +136,10 @@ def check_goal(goal, project, sample=None, timeout_s=None):
     normalized, problems = normalize_goal(stated)
     if problems:
         return GoalCheck("invalid", "invalid: the goal is not in the GOAL.json shape: %s" % "; ".join(problems), None, stated=stated)
-    shown = "`%s`" % command
-    if sample is not None:
-        sample = Path(sample).expanduser().resolve()
-        if not sample.exists():
-            return GoalCheck("missing", "missing: the sample artifact %s does not exist" % sample, None, stated=stated)
-    if sample is None:
-        return GoalCheck("missing", "missing: no sample artifact was given (--sample), so eval_command %s was not run on one "
-                         "and nothing shows it can measure an artifact a ticket produces" % shown, None, stated=stated)
-    runnable = command.replace(ARTIFACT, shlex.quote(str(sample)))
-    environment = dict(os.environ, WAYLINE_PROJECT=str(project.resolve()), WAYLINE_ARTIFACT=str(sample))
-    if timeout_s is None:
-        timeout_s = policy_for(project).get("acceptance_timeout_s", 600)
-    result = run_shell(runnable, project, timeout_s, env=environment, label="wayline intake")
-    tail = _last_lines(result["tail"])
-    exit_code = result["exit_code"]
-    on = " on the sample artifact %s" % sample
-    if exit_code == 127:
-        return GoalCheck("missing", "missing: eval_command %s exited 127, which is how the shell reports a command it cannot find: %s" % (shown, tail),
-                         None, stated=stated)
-    if exit_code == TIMEOUT_EXIT_CODE:
-        return GoalCheck("fails", "fails: eval_command %s was killed after %s seconds%s" % (shown, timeout_s, on), None, stated=stated)
-    if exit_code != 0:
-        return GoalCheck("fails", "fails: eval_command %s exited with exit %d%s: %s" % (shown, exit_code, on, tail or "no output"),
-                         None, stated=stated)
-    value = metric_value(result["tail"], normalized["metric"])
-    if value is None:
-        metric = normalized["metric"]
-        return GoalCheck(
-            "no_number",
-            "no number: eval_command %s exited 0 and printed no number for `%s`; print a JSON object with a \"%s\" key, "
-            "a line `%s: <value>`, or the number alone on the last line" % (shown, metric, metric, metric),
-            None, stated=stated)
-    return GoalCheck("accepted", None, normalized, value=value, sample=str(sample) if sample is not None else None, stated=stated)
+    kind, reason, value = run_on_sample(command, normalized["metric"], project, sample, timeout_s=timeout_s, label="wayline intake")
+    if kind != "accepted":
+        return GoalCheck(kind, reason, None, stated=stated)
+    return GoalCheck("accepted", None, normalized, value=value, sample=str(Path(sample).expanduser().resolve()), stated=stated)
 
 
 def normalize_goal(goal):
@@ -193,37 +160,6 @@ def normalize_goal(goal):
     return value, ["%s: %s" % (error.path, error.message) for error in errors]
 
 
-def metric_value(output, metric):
-    """The metric's value in a command's output, or None; see `check_goal` for the three spellings."""
-    lines = [line.strip() for line in str(output or "").splitlines() if line.strip()]
-    for candidate in [str(output or "").strip()] + lines[::-1]:
-        if not candidate.startswith("{"):
-            continue
-        try:
-            parsed = json.loads(candidate)
-        except ValueError:
-            continue
-        if isinstance(parsed, dict) and _finite(parsed.get(metric)):
-            return float(parsed[metric])
-    labelled = re.compile(r"^%s\s*[:=]\s*(%s)\s*$" % (re.escape(metric), _NUMBER), re.IGNORECASE)
-    for line in lines[::-1]:
-        found = labelled.match(line)
-        if found and _finite(float(found.group(1))):
-            return float(found.group(1))
-    if lines and re.fullmatch(_NUMBER, lines[-1]) and _finite(float(lines[-1])):
-        return float(lines[-1])
-    return None
-
-
-def _finite(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
-def _last_lines(text, count=3):
-    lines = [line.rstrip() for line in str(text or "").splitlines() if line.strip()]
-    return " | ".join(lines[-count:])
-
-
 def describe_goal(goal):
     """One line a person reads: the metric, the direction, the target, the split, and the command."""
     if not isinstance(goal, dict):
@@ -242,6 +178,10 @@ def describe_goal(goal):
 
 def _number(value):
     return ("%g" % value) if _finite(value) else str(value)
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _read_goal(ledger):
@@ -310,11 +250,16 @@ def gather(spec, project, base):
     for material in spec.get("materials", []):
         _take_material(gathered, material, project, base)
     for reference in spec.get("references", []):
-        path = _as_path(reference, base)
+        identifier, note = reference["identifier"].strip(), reference.get("note")
+        path = _as_path(identifier, base)
         if path is not None and path.is_file() and path.suffix.lower() == ".pdf":
-            _take_pdf(gathered, path, project)
-        elif reference.strip():
-            gathered.references.append(reference.strip())
+            _take_pdf(gathered, path, project, note=note)
+        elif path is not None and path.exists():
+            raise IntakeError("%s is a file, not a reference: give it as a material, or give the reference's DOI or title" % identifier)
+        elif identifier.lower().endswith(".pdf") and _looks_like_path(identifier):
+            raise IntakeError("%s does not exist; a path is never looked up as a title" % identifier)
+        elif identifier:
+            gathered.references.append(_item(identifier, note))
     for pointer in spec.get("data", []):
         gathered.data.append(_data_line(pointer, project, base))
     for repository in spec.get("code", []):
@@ -328,7 +273,7 @@ def _take_material(gathered, material, project, base):
     path = _as_path(material, base)
     if path is None or not path.exists():
         if _IDENTIFIER.match(material.strip()) and " " not in material.strip():
-            gathered.references.append(material.strip())
+            gathered.references.append(_item(material.strip()))
         elif _looks_like_path(material):
             raise IntakeError("%s does not exist; an intake does not read a path that is not there as the intent" % material)
         else:
@@ -352,7 +297,7 @@ def _take_material(gathered, material, project, base):
         text = path.read_text(encoding="utf-8", errors="replace")
         listed = reference_list(text)
         if listed is not None:
-            gathered.references.extend(listed)
+            gathered.references.extend(_item(line) for line in listed)
             gathered.reference_notes.append("Read from `%s` as a reference list." % _shown(path, project))
         else:
             _take_plan(gathered, path, project)
@@ -386,39 +331,50 @@ def _take_plan(gathered, path, project):
     gathered.plans.append((_shown(path, project), text))
 
 
-def _take_pdf(gathered, path, project):
-    """A PDF reference: its DOI or arXiv id when one can be read, its path when not, and a note either way."""
+def _item(identifier, note=None, pdf=None):
+    """One reference as intake records it (decision 17): what names it, the owner's note, and the PDF that is its source."""
+    return {"identifier": identifier, "note": note, "pdf": pdf}
+
+
+def _take_pdf(gathered, path, project, note=None):
+    """A PDF reference: its DOI or arXiv id when one can be read, else the PDF alone; the PDF is the reference's source either way.
+
+    A PDF with no identifier is listed as `PDF: <path>`, which absorb never sends to a service: a
+    path is not a title, and the owner hands over a DOI or a title for it later.
+    """
     shown = _shown(path, project)
+    notes = [note] if note else []
     try:
         with open(path, "rb") as handle:
             head = handle.read(PDF_HEAD_BYTES)
     except OSError as failure:
-        gathered.references.append(shown)
-        gathered.reference_notes.append("`%s` could not be read (%s), so it is listed by its path." % (shown, failure.strerror))
+        gathered.references.append(_item(None, _joined(notes + ["`%s` could not be read (%s)." % (shown, failure.strerror)]), shown))
         return
     if not head.startswith(b"%PDF-"):
-        gathered.references.append(shown)
-        gathered.reference_notes.append("`%s` does not start with `%%PDF-`, so it was not read as a PDF and is listed by its path." % shown)
+        gathered.references.append(_item(None, _joined(notes + ["`%s` does not start with `%%PDF-`, so it was not read as a PDF." % shown]), shown))
         return
     raw = head.decode("latin-1")
     found = _PDF_DOI.search(raw)
     if found is not None:
-        gathered.references.append("%s (`%s`)" % (found.group(1).rstrip(".,;"), shown))
+        gathered.references.append(_item(found.group(1).rstrip(".,;"), note, shown))
         return
     found = _PDF_ARXIV.search(raw)
     text = None if found else _first_pages(path)
     if found is None and text:
         doi = _DOI.search(text)
         if doi is not None:
-            gathered.references.append("%s (`%s`)" % (doi.group(1).rstrip(".,;"), shown))
-            gathered.reference_notes.append("The DOI of `%s` was read off its first page; a paper cites DOIs too, so check it." % shown)
+            gathered.references.append(_item(doi.group(1).rstrip(".,;"), _joined(notes + [
+                "The DOI was read off the PDF's first page; a paper cites DOIs too, so check it."]), shown))
             return
         found = _PDF_ARXIV.search(text)
     if found is not None:
-        gathered.references.append("arXiv:%s (`%s`)" % (found.group(1), shown))
+        gathered.references.append(_item("arXiv:%s" % found.group(1), note, shown))
         return
-    gathered.references.append(shown)
-    gathered.reference_notes.append("No DOI or arXiv id could be read from `%s`, so it is listed by its path." % shown)
+    gathered.references.append(_item(None, _joined(notes + ["No DOI or arXiv id could be read from it; hand over its DOI or its title."]), shown))
+
+
+def _joined(notes):
+    return " ".join(note for note in notes if note) or None
 
 
 def _first_pages(path):
@@ -510,7 +466,9 @@ def normalize_spec(raw):
     for key, value in raw.items():
         if value is None:
             continue
-        if key in LIST_FIELDS:
+        if key == "references":
+            value = _reference_specs(value)
+        elif key in LIST_FIELDS:
             if isinstance(value, str):
                 value = [value]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -531,6 +489,23 @@ def normalize_spec(raw):
     if spec.get("ladder_changes") is not None and spec["ladder_changes"] not in LADDER_CONSENTS:
         raise IntakeError("ladder_changes is one of %s, got %r" % (", ".join(LADDER_CONSENTS), spec["ladder_changes"]))
     return spec
+
+
+def _reference_specs(value):
+    """The spec's references, each a string or `{identifier, note}` (decision 17), as `{identifier, note}` objects."""
+    if isinstance(value, (str, dict)):
+        value = [value]
+    if not isinstance(value, list):
+        raise IntakeError("references is a list of strings or {identifier, note} objects")
+    specs = []
+    for item in value:
+        if isinstance(item, str):
+            item = {"identifier": item}
+        if (not isinstance(item, dict) or set(item) - {"identifier", "note"} or not isinstance(item.get("identifier"), str)
+                or not isinstance(item.get("note"), (str, type(None)))):
+            raise IntakeError("a reference is a string or {identifier, note} with both strings, got %r" % (item,))
+        specs.append({"identifier": item["identifier"], "note": (item.get("note") or "").strip() or None})
+    return specs
 
 
 def human_only_classes(entries):
@@ -630,7 +605,7 @@ def render(gathered, harness, classes, goal, standing):
         intent.append(_plan_text(shown, text))
     sections = {
         "Intent": "\n\n".join(intent),
-        "References": _bullets(gathered.references, "None.") + _prose(gathered.reference_notes),
+        "References": _bullets(_reference_lines(gathered.references), "None.") + _prose(gathered.reference_notes),
         "Data": _bullets(gathered.data, "Not stated."),
         "Code": _bullets(gathered.code, "None."),
         "Constraints": _bullets(gathered.constraints, "None stated."),
@@ -666,6 +641,26 @@ def _ladder(harness):
     if consent in LADDER_CHANGES:
         return "Ladder consent `%s`: %s" % (consent, LADDER_CHANGES[consent])
     return "Ladder consent not stated, so the project behaves as under `%s`: %s" % (ASK, LADDER_CHANGES[ASK])
+
+
+def _reference_lines(items):
+    """Each reference as a top-level item, its PDF and its note nested under it, so absorb looks up only the item.
+
+    The item text is what `- ` opens; the nested lines follow it on lines of their own.
+    """
+    lines = []
+    for item in items:
+        nested = []
+        if item.get("identifier"):
+            head = item["identifier"]
+            if item.get("pdf"):
+                nested.append("PDF: `%s`" % item["pdf"])
+        else:
+            head = "PDF: `%s`" % item["pdf"]
+        if item.get("note"):
+            nested.append(item["note"])
+        lines.append("\n".join([head] + ["  - " + line for line in nested]))
+    return lines
 
 
 def _bullets(lines, empty):
@@ -796,7 +791,7 @@ def _take_dropped(ledger, gathered):
     except FileNotFoundError:
         return None
     updated, taken = text, []
-    for heading, lines, notes, empty in (("References", gathered.references, gathered.reference_notes, "None."),
+    for heading, lines, notes, empty in (("References", _reference_lines(gathered.references), gathered.reference_notes, "None."),
                                          ("Data", gathered.data, [], "Not stated."), ("Code", gathered.code, [], "None.")):
         if lines:
             changed = _with_bullets(updated, heading, lines, notes, empty)
@@ -821,7 +816,7 @@ def _with_bullets(text, heading, lines, notes, empty):
     while end < len(rows) and (rows[end].startswith("- ") or (end and rows[end].startswith("  ") and rows[end].strip())):
         end += 1
     listed = {row[2:].strip() for row in rows[:end] if row.startswith("- ")}
-    new = ["- " + line for line in lines if line not in listed]
+    new = ["- " + line for line in lines if line.split("\n", 1)[0] not in listed]
     if not new:
         return text
     rest = "\n".join(rows[end:]).strip()

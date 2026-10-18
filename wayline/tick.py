@@ -6,7 +6,8 @@ tick itself, `wayline tick`, which relaunches the conductor through `launch_deta
 - **The tick.** What `wayline-tick.service` runs every fifteen minutes, doing what the owner would
   otherwise do by hand. Under `flock -n ~/.wayline/tick.lock` it reads the active project, checks the
   login (a `human_only` decision ticket when it nears its end), reads `/usage` with its Fable line and
-  journals `pacing` on a change, and stops there while a conductor is alive and waving. Otherwise,
+  journals `pacing` on a change, retries the flagged references while a run is live (decision 17),
+  and stops there while a conductor is alive and waving. Otherwise,
   whatever the window says, it polls the jobs, runs the output check due on the ones that exited,
   renders `REPORT.md` offline when the journal moved, and sends the notifications the owner is owed;
   then it journals an answer written into a decision ticket's file, and relaunches the conductor when
@@ -572,6 +573,7 @@ class Machine:
     when none does; `credentials` is `~/.claude/.credentials.json` and `environ` is where a setup token
     would show; `poll_jobs`, `checks`, and `render` take the project; `notify(event, text, project,
     ticket)` reaches the owner; and `relaunch(project)` starts the conductor as `wayline-conductor`.
+    `references(project, clock)` retries the project's flagged references (`wayline.dossier.retry_flagged`).
     `/usage` and `auth status` are not here: they go through the launcher seam (`wayline.worker`),
     whose fake the tests script.
     """
@@ -585,6 +587,7 @@ class Machine:
     render: Optional[Callable] = None
     notify: Optional[Callable] = None
     relaunch: Optional[Callable] = None
+    references: Optional[Callable] = None
 
     def __post_init__(self):
         self.conductor = self.conductor or conductor_holder
@@ -595,6 +598,7 @@ class Machine:
         self.render = self.render or render_report
         self.notify = self.notify or send_notification
         self.relaunch = self.relaunch or relaunch
+        self.references = self.references or retry_references
 
 
 @dataclass
@@ -606,6 +610,7 @@ class TickResult:
     why: Optional[str] = None
     login: Optional[dict] = None
     pacing: Optional[dict] = None
+    references: Optional[dict] = None
     jobs: list = field(default_factory=list)
     checks: list = field(default_factory=list)
     report: Optional[str] = None
@@ -668,6 +673,9 @@ def tick(project=None, machine=None, harness_root=None, out=None):
         return end(LAPSED, "the login lapsed: the jobs were polled, and nothing that needs the subscription runs until it is renewed")
 
     result.pacing = step("usage", lambda: read_usage(project, ledger, policy, now, say))
+    if step("references", lambda: run_live(ledger.read_events()[0])):
+        result.references = step("references", lambda: machine.references(project, machine.clock))
+        _say_references(result.references, say)
     record = step("heartbeat", lambda: machine.conductor(project))
     alive = isinstance(record, dict)
     pid = record.get("pid") if alive else None
@@ -714,6 +722,29 @@ def tick(project=None, machine=None, harness_root=None, out=None):
         return end(NOT_RELAUNCHED, "not relaunched although %s: %s" % (reason, failure))
     result.relaunched = True
     return end(RELAUNCHED, "relaunched %s: %s%s" % (CONDUCTOR_UNIT, reason, "  (%s)" % said if said else ""))
+
+
+def run_live(events):
+    """Whether a run is live: a `run_started` the journal has not yet followed with a `run_ended`."""
+    live = False
+    for event in events:
+        if event.get("event") == RUN_STARTED:
+            live = True
+        elif event.get("event") == RUN_ENDED:
+            live = False
+    return live
+
+
+def retry_references(project, clock=time.time):
+    """The flagged references that are due, retried through the scout (decision 17); the dossier module's report."""
+    from wayline.dossier import retry_flagged  # the dossier module imports the launcher and the fetcher
+
+    return retry_flagged(project, clock=clock)
+
+
+def _say_references(report, say):
+    for item in (report or {}).get("written") or []:
+        say("  reference %s: %s" % (item["slug"], item["change"]))
 
 
 def _say_jobs(result, say):

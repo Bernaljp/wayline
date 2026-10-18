@@ -20,6 +20,7 @@ from pathlib import Path
 
 from tests.paths import FIXTURES_DIR
 from wayline import figure_checks as fc
+from wayline import figure_role
 from wayline.jsonschema import load_schema, validate
 
 FIGURES = FIXTURES_DIR / "figures"
@@ -325,6 +326,25 @@ class CaptionLintTest(FigureCase):
 
 
 # --- 9 and 10: the generator ------------------------------------------------------------------
+
+
+class GeneratorCleanNotRunTest(FigureCase):
+    """`generator_clean` lints Python only (Implementation Decision 17): on any other generator it is not run."""
+
+    def test_an_r_script_is_listed_as_not_run_with_the_reason_and_nothing_is_launched(self):
+        self.final["generator"] = self.put("figures/f/f.R", FIXTURES_DIR / "plots" / "make_ggplot2.R")
+        context = self.context(tools=fc.Tools(which=lambda name: None))  # a lint or a run would raise ToolMissing
+        outcome = fc.check_generator_clean(context)
+        self.assertIsNone(outcome["pass"])
+        self.assertIs(outcome["not_run"], True)
+        self.assertIn("Python only", outcome["detail"])
+        self.assertIn("figures/f/f.R", outcome["detail"])
+        self.assertIsNone(context._clean_room)
+        report = fc.run_checks(self.project, request(), {"final": self.final}, style={}, policy=POLICY, artists=False,
+                               tools=fc.Tools(which=lambda name: None), only={"generator_clean"})
+        self.assertEqual(report, [outcome])
+        self.assertEqual(figure_role.failed_checks(report + [fc.check_outcome("caption_lint", True, "clean")]), [],
+                         "a check not run neither passes nor fails: the figure role does not send it back for repair")
 
 
 @RUFF
