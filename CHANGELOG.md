@@ -183,8 +183,9 @@ lists it read-only, marked with its tag.
   their versions, what the conversion lost, and the damage counted), journaled as the new `document` event with
   `by` `session` or `code`, and indexed in `research/DOCUMENTS.md`, rendered by code at or under 20,000 characters
   with each document's kind, version, losses, counts, an inherited one's abstract, and its headings with locators
-  (`D1#p3`) and first sentences. One version per text is current, the newest in its source format: a folder's
-  versions are kept oldest first, a PDF beside a source of the same text is kept as a copy, and a newer version
+  (`D1#p3`) and first sentences. One version per text is current, the newest in its source format (an Office
+  file's save time read from `docProps/core.xml`, since Word stamps every entry 1980-01-01; a file in a subfolder
+  is a text of its own, and a critique has no versions): a folder's versions are kept oldest first, a PDF beside a source of the same text is kept as a copy, and a newer version
   handed over later becomes the next version, the earlier one's source moving under `source/v<n>/`. A folder is
   sorted file by file and a `.zip` unpacked first. A file dropped on the dashboard with no session gets code's
   cautious guess: an identifier makes it a reference (added to `INTAKE.md` as before), review markers a critique,

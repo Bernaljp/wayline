@@ -5,7 +5,8 @@ this directory with the tools `~/.wayline/tools/tools.json` records on this mach
 `pdftotext`, LibreOffice, docling), through `wayline.documents.recording_runner`, and keeps what
 each tool printed and wrote under `recorded/<tool>/<input>/`. Nothing is written under a project:
 `convert` returns what it read and the script prints one line per file. Rerun it after
-`fixtures/midway/make.py` or `make.py` here changes a document.
+`fixtures/midway/make.py` or `make.py` here changes a document; `record.py <name>...` records only
+the files named, leaving the other recordings as they are.
 """
 
 import shutil
@@ -21,14 +22,15 @@ from wayline.tools import Tools  # noqa: E402
 MIDWAY = HERE.parent / "midway"
 FILES = [MIDWAY / "manuscript-v2.docx", MIDWAY / "manuscript-v1.docx", MIDWAY / "methods.tex", MIDWAY / "supplement.pdf",
          MIDWAY / "measurements.xlsx", HERE / "numbered-draft.pdf", HERE / "required-experiments.doc",
-         HERE.parent / "pdf" / "tiny-paper.pdf"]
+         HERE.parent / "pdf" / "tiny-paper.pdf", HERE / "line-breaks.tex"]
 
 
-def main():
+def main(names):
     target = HERE / "recorded"
-    shutil.rmtree(target, ignore_errors=True)
+    if not names:
+        shutil.rmtree(target, ignore_errors=True)
     tools, run = Tools(), recording_runner(target)
-    for path in FILES:
+    for path in [path for path in FILES if not names or path.name in names]:
         if path.suffix == ".pdf":
             guess_kind(path, tools=tools, run=run)
         done = convert(path, tools=tools, run=run)
@@ -37,4 +39,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

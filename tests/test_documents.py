@@ -348,6 +348,141 @@ class SortTest(DocumentsCase):
             add_documents(self.project, MIDWAY / "methods.tex", kind="manuscript", tools=self.tools, run=self.run)
 
 
+def word_saved(source, target, modified):
+    """`source` rewritten as Word saves a `.docx`: every entry stamped 1980-01-01, the save time only in docProps/core.xml."""
+    core = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<cp:coreProperties xmlns:cp="http://schemas.'
+            'openxmlformats.org/package/2006/metadata/core-properties" xmlns:dcterms="http://purl.org/dc/terms/" '
+            'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dcterms:modified xsi:type="dcterms:W3CDTF">%s'
+            '</dcterms:modified></cp:coreProperties>' % modified)
+    with zipfile.ZipFile(source) as old, zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as new:
+        for info in old.infolist():
+            new.writestr(zipfile.ZipInfo(info.filename, date_time=(1980, 1, 1, 0, 0, 0)), old.read(info.filename))
+        new.writestr(zipfile.ZipInfo("docProps/core.xml", date_time=(1980, 1, 1, 0, 0, 0)), core)
+    return target
+
+
+def minimal_docx(target, paragraphs):
+    """A `.docx` holding only `document.xml`, each paragraph `(outline level or None, text)`."""
+    body = "".join('<w:p>%s<w:r><w:t>%s</w:t></w:r></w:p>' % (
+        '<w:pPr><w:outlineLvl w:val="%d"/></w:pPr>' % level if level is not None else "", text) for level, text in paragraphs)
+    with zipfile.ZipFile(target, "w") as package:
+        package.writestr("word/document.xml", '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/'
+                                              'wordprocessingml/2006/main"><w:body>%s</w:body></w:document>' % body)
+    return target
+
+
+class ReviewFixesTest(DocumentsCase):
+    """The review of pull request #286: each test pins one defect it found."""
+
+    def test_word_s_1980_entry_times_leave_the_newest_version_to_docprops_core_xml(self):
+        folder = self.temp / "from-word"
+        folder.mkdir()
+        word_saved(MIDWAY / "manuscript-v2.docx", folder / "manuscript-v2.docx", "2023-04-02T10:00:00Z")
+        word_saved(MIDWAY / "manuscript-v1.docx", folder / "manuscript-v1.docx", "2022-11-20T09:00:00Z")
+        self.add(folder, tools=self.tools_without("pandoc"))
+        record = self.record()
+        self.assertEqual((record["version"], record["origin"], record["dated"]), (2, "manuscript-v2.docx", "2023-04-02T10:00:00"))
+        self.assertEqual([earlier["origin"] for earlier in record["history"]], ["manuscript-v1.docx"])
+        self.add(word_saved(MIDWAY / "manuscript-v1.docx", self.temp / "manuscript-v1.docx", "2022-11-21T09:00:00Z"),
+                 tools=self.tools_without("pandoc"))
+        self.assertEqual((self.record()["version"], self.record()["origin"]), (2, "manuscript-v2.docx"), "an older save stays earlier")
+
+    def test_files_of_one_name_in_different_folders_are_different_texts(self):
+        folder = self.temp / "thesis"
+        for chapter, text in (("chapter1", "Wingbeats"), ("chapter2", "Lamps")):
+            (folder / chapter).mkdir(parents=True)
+            (folder / chapter / "main.md").write_text("# %s\n\nThe %s chapter.\n" % (text, text.lower()), encoding="utf-8")
+        self.add(folder)
+        self.assertEqual([(document["title"], document["version"]) for document in read_documents(self.project)],
+                         [("Wingbeats", 1), ("Lamps", 1)])
+
+    def test_a_critique_handed_over_later_under_the_same_name_is_a_new_critique(self):
+        round_one, round_two = self.temp / "round-1", self.temp / "round-2"
+        for folder, point in ((round_one, "Rule out lamp flicker."), (round_two, "Report the band-pass order.")):
+            folder.mkdir()
+            (folder / "referee-report.md").write_text("# Referee report\n\n1. %s\n" % point, encoding="utf-8")
+            self.add(folder / "referee-report.md", kind="critique")
+        self.assertEqual([(document["id"], document["version"]) for document in read_documents(self.project)], [("D1", 1), ("D2", 1)])
+
+    def test_a_pdf_kept_as_a_copy_under_codes_guess_is_journaled_as_codes(self):
+        folder = self.temp / "hand-over"
+        folder.mkdir()
+        shutil.copy(MIDWAY / "methods.tex", folder / "methods.tex")
+        shutil.copy(OWN / "numbered-draft.pdf", folder / "methods.pdf")
+        results = add_documents(self.project, folder, tools=self.tools, run=self.run)
+        self.assertEqual([(result["name"], result["by"]) for result in results], [("methods.tex", "code"), ("methods.pdf", "code")])
+        self.assertEqual([event["payload"]["by"] for event in self.events()], ["code", "code"])
+
+    def test_review_markers_win_over_an_identifier_a_critique_cites(self):
+        report = self.temp / "referee-3.md"
+        report.write_text("# Referee report 3\n\n1. Compare with 10.1234/wayline.prior.work.\n2. Give the filter's order.\n", encoding="utf-8")
+        results = add_documents(self.project, report, tools=self.tools, run=self.run)
+        self.assertEqual(results[0]["sorted"], "critique")
+
+    def test_a_reference_pdf_is_gitignored_on_a_project_whose_gitignore_predates_the_entry(self):
+        init_project(self.project, harness_root=HARNESS_ROOT, git=True, hermes_python=None, owner_email=None)
+        gitignore = self.project / ".gitignore"
+        gitignore.write_text("".join(line + "\n" for line in gitignore.read_text(encoding="utf-8").splitlines()
+                                     if line != "research/intake/*.pdf"), encoding="utf-8")
+        add_document(self.project, MIDWAY / "supplement.pdf", kind="reference", tools=self.tools, run=self.run)
+        ignored = subprocess.run(["git", "-C", str(self.project), "check-ignore", "-q", "research/intake/supplement.pdf"])
+        self.assertEqual(ignored.returncode, 0)
+
+    def test_a_corrupt_docx_is_kept_and_not_converted(self):
+        good = minimal_docx(self.temp / "good.docx", [(None, "Lantern moths gather at dusk. " * 40)])
+        data = bytearray(good.read_bytes())
+        start = data.index(b"word/document.xml") + len(b"word/document.xml")
+        data[start + 10:start + 30] = b"\x00" * 20  # the member's compressed bytes, past its local header
+        broken = self.temp / "broken.docx"
+        broken.write_bytes(bytes(data))
+        results = self.add(broken, kind=None)
+        self.assertEqual(results[0]["sorted"], "other")
+        record = self.record()
+        self.assertFalse(record["converted"])
+        self.assertTrue(record["losses"][0].startswith("not converted:"), record["losses"])
+
+    def test_no_conversion_runs_for_a_version_that_is_not_kept_or_under_the_lock(self):
+        self.add(MIDWAY / "manuscript-v2.docx")
+        calls = []
+
+        def counting(argv, **kwargs):
+            calls.append((Ledger(self.project).lock_path.exists(), argv))
+            return self.run(argv, **kwargs)
+
+        older = self.temp / "manuscript-v0.docx"
+        shutil.copy(MIDWAY / "manuscript-v1.docx", older)
+        add_documents(self.project, older, kind="inherited", tools=self.tools, run=counting)
+        self.assertEqual(calls, [], "an older version is kept as given, not converted")
+        self.assertEqual(self.record()["history"][0]["version"], 0)
+        original = documents_module.convert
+        held = []
+
+        def watching(*args, **kwargs):
+            from wayline.ledger import _process_lock
+            held.append(_process_lock(Ledger(self.project).lock_path).depth)
+            return original(*args, **kwargs)
+
+        documents_module.convert = watching
+        self.addCleanup(setattr, documents_module, "convert", original)
+        lone = self.temp / "lone"
+        lone.mkdir()
+        shutil.copy(OWN / "numbered-draft.pdf", lone / "notes.pdf")
+        (lone / "notes.md").unlink(missing_ok=True)
+        add_document(self.project, lone / "notes.pdf", kind="other", tools=self.tools, run=self.run, as_copy=True)
+        self.assertEqual(held, [0], "a copy with no document to sit beside is converted outside the lock")
+
+    def test_an_outline_level_of_9_is_body_text_not_a_heading(self):
+        docx = minimal_docx(self.temp / "levels.docx", [(0, "Introduction"), (9, "Plain body text."), (None, "More body.")])
+        self.add(docx, tools=self.tools_without("pandoc"))
+        self.assertEqual(self.record()["counts"]["headings"], 1)
+
+    def test_a_tex_line_break_with_a_length_is_not_an_equation(self):
+        self.add(OWN / "line-breaks.tex")
+        record = self.record()
+        self.assertEqual(record["damage"], {"headings": 0, "equations": 0})
+        self.assertIn("whose flicker was measured at dusk", self.text())
+
+
 class IntakeWordingTest(DocumentsCase):
     def test_the_intake_tells_the_owner_to_hand_over_anything_in_any_form(self):
         skill = " ".join((HARNESS_ROOT / "skills" / "wayline-intake" / "SKILL.md").read_text(encoding="utf-8").split())

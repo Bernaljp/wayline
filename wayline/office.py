@@ -24,6 +24,7 @@ import binascii
 import json
 import re
 import zipfile
+import zlib
 from dataclasses import dataclass, field
 from xml.etree import ElementTree
 
@@ -41,6 +42,8 @@ MENDELEY = "MENDELEY_CITATION"
 _MENDELEY_TAG = re.compile(r"^MENDELEY_CITATION_v3_(.+)$", re.IGNORECASE)
 _HEADING_NAME = re.compile(r"^heading\s*([1-9])$", re.IGNORECASE)
 _CELL = re.compile(r"^([A-Z]+)(\d+)$")
+# What reading one member of a damaged, encrypted, or oddly compressed package raises.
+UNREADABLE = (zipfile.BadZipFile, zlib.error, RuntimeError, NotImplementedError, EOFError, OSError, ValueError)
 # The largest part of a package this reader decompresses: a `.docx` body is a few megabytes at most.
 PART_MAX_BYTES = 64 * 1024 * 1024
 
@@ -64,7 +67,10 @@ def _part(package, name):
         return None
     if info.file_size > PART_MAX_BYTES:
         raise OfficeError("%s is %d bytes, over the %d this reader opens" % (name, info.file_size, PART_MAX_BYTES))
-    return package.read(name)
+    try:
+        return package.read(name)
+    except UNREADABLE as failure:  # a damaged member, a compression zipfile lacks, an encrypted one
+        raise OfficeError("%s cannot be read: %s" % (name, failure)) from None
 
 
 def _xml(package, name):
@@ -80,7 +86,7 @@ def _xml(package, name):
 def _open(path):
     try:
         return zipfile.ZipFile(path)
-    except (zipfile.BadZipFile, OSError) as failure:
+    except UNREADABLE as failure:
         raise OfficeError("%s is not an Office package (a zip): %s" % (path, failure)) from None
 
 
@@ -128,7 +134,7 @@ def _heading_level(style_id, paragraph_outline, styles):
         if match:
             return int(match.group(1))
     if paragraph_outline is not None:
-        return paragraph_outline
+        return paragraph_outline if paragraph_outline <= 9 else None  # outline level 9 (written 10 here) is body text
     if level is not None and level <= 9:
         return level
     return None

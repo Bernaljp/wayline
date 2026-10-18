@@ -55,7 +55,7 @@ from pathlib import Path
 from wayline import __version__
 from wayline.cli import parse_args
 from wayline.ledger import DOCUMENT, K_BY, K_CONVERTER, K_ID, K_KIND, K_TITLE, K_VERSION, PAYLOAD_ENUMS, Ledger, now_ts
-from wayline.office import OfficeError, docx_text, read_docx, read_xlsx
+from wayline.office import UNREADABLE, OfficeError, docx_text, read_docx, read_xlsx
 from wayline.project import ProjectError, find_project, write_gitignore
 from wayline.tools import ToolOutput, Tools, ToolsError, failure_line, run_recorded, run_tool
 
@@ -83,6 +83,9 @@ ZIP_MAX_BYTES = 512 * 1024 * 1024
 CONVERTERS_DIR = Path(__file__).resolve().parent.parent / "converters"
 
 _ID = re.compile(r"^D([1-9][0-9]*)\Z")
+CORE_XML = "docProps/core.xml"
+STAMP = "%Y-%m-%dT%H:%M:%S"
+_MODIFIED = re.compile(r"<dcterms:modified[^>]*>([^<]+)<")
 _EARLIER = re.compile(r"^source/(?:v[0-9]+|earlier)/")
 _VERSION_MARK = re.compile(
     r"(?:[\s._-]+(?:v|ver|version|rev|r)\s*\d+[a-z]?|[\s._-]+(?:final|draft|clean|tracked|revised|copy|new|old)"
@@ -92,7 +95,8 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*?)(?:\s+\{[^}]*\})?\s*#*\s*$")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
 _DISPLAY_MATH = re.compile(r"\$\$.+?\$\$", re.DOTALL)
 _INLINE_MATH = re.compile(r"(?<![\\$])\$(?=\S)[^$\n]+?(?<![\s\\])\$(?!\d)")
-_BRACKET_MATH = re.compile(r"\\\(.+?\\\)|\\\[.+?\\\]", re.DOTALL)
+# `\\[2pt]` is a line break with a length, not a display: an opening or closing backslash after another is no math.
+_BRACKET_MATH = re.compile(r"(?<!\\)\\\(.+?(?<!\\)\\\)|(?<!\\)\\\[.+?(?<!\\)\\\]", re.DOTALL)
 _TEX_HEADING = re.compile(r"\\(?:part|chapter|section|subsection|subsubsection)\*?\s*[\[{]")
 _TEX_MATH_ENV = re.compile(r"\\begin\{(?:equation|align|gather|multline|eqnarray|displaymath|math)\*?\}")
 _TEX_COMMENT = re.compile(r"(?<!\\)%.*$", re.MULTILINE)
@@ -397,8 +401,7 @@ def _tex(path, work, tools, run, conversion):
     source = path.read_text(encoding="utf-8", errors="replace")
     plain = _TEX_COMMENT.sub("", source)
     source_headings = len(_TEX_HEADING.findall(plain))
-    source_equations = (len(_TEX_MATH_ENV.findall(plain)) + len(re.findall(r"\\\[", plain)) + len(re.findall(r"\\\(", plain))
-                        + _equations(re.sub(r"\\\[.*?\\\]|\\\(.*?\\\)", " ", plain, flags=re.DOTALL)))
+    source_equations = len(_TEX_MATH_ENV.findall(plain)) + _equations(plain)
     output, entry = _run(tools, "pandoc", ["-s", "-f", "latex", "-t", "markdown", "--wrap=none", str(path)], run)
     if output is None:
         conversion.losses.append("not converted: pandoc is not recorded in tools.json (wayline tools install pandoc)")
@@ -638,11 +641,11 @@ def _opening(path, tools=None, run=None):
 def guess_kind(path, tools=None, run=None):
     """Code's cautious guess at a file handed over with no session: `reference`, `critique`, or `other`, never `inherited`."""
     path = Path(path)
-    if _has_identifier(path):
-        return REFERENCE
     opening = _opening(path, tools, run)
     if any(marker.search(opening) for marker in REVIEW_MARKERS):
-        return "critique"
+        return "critique"  # before the identifiers: a referee report cites published work too
+    if _has_identifier(path):
+        return REFERENCE
     return "other"
 
 
@@ -658,16 +661,36 @@ def text_key(name):
 
 
 def _dated(path):
-    """When a file was last written: an Office package's newest entry timestamp, else its modification time."""
+    """When a file was last saved, in UTC: an Office package's `dcterms:modified`, else its newest entry, else the file's time.
+
+    Word stamps every entry of a `.docx` 1980-01-01, so only `docProps/core.xml` says when it was
+    saved; an entry time from 1980 is no time at all. A package's entry times carry no zone and are
+    read as UTC.
+    """
     if path.suffix.lower() in (".docx", ".xlsx"):
         try:
             with zipfile.ZipFile(path) as package:
-                stamps = [info.date_time for info in package.infolist()]
-            if stamps:
-                return datetime(*max(stamps)).strftime("%Y-%m-%dT%H:%M:%S")
-        except (zipfile.BadZipFile, OSError, ValueError):
-            pass
-    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                core = package.read(CORE_XML) if CORE_XML in package.namelist() else b""
+                stamps = [info.date_time for info in package.infolist() if info.date_time[0] > 1980]
+        except UNREADABLE:
+            core, stamps = b"", []
+        modified = _core_modified(core)
+        if modified is not None:
+            return modified
+        if stamps:
+            return datetime(*max(stamps)).strftime(STAMP)
+    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).strftime(STAMP)
+
+
+def _core_modified(core):
+    found = _MODIFIED.search(core.decode("utf-8", errors="replace")) if core else None
+    if found is None:
+        return None
+    try:
+        when = datetime.fromisoformat(found.group(1).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (when.astimezone(timezone.utc) if when.tzinfo else when).strftime(STAMP)
 
 
 # --- the record ---------------------------------------------------------------------------------------
@@ -713,9 +736,12 @@ def _write(ledger, documents, document, by):
     ledger.write_markdown(DOCUMENTS_MD, render_documents(documents))
 
 
-def _match(documents, key):
+def _match(documents, key, kind):
+    """The document a file of `key` is a version of, or None. A critique has no versions: a second one is another critique."""
+    if kind == "critique":
+        return None
     for document in documents:
-        if document.get("key") == key:
+        if document.get("key") == key and document.get("kind") != "critique":
             return document
     return None
 
@@ -726,7 +752,22 @@ def _known(document, digest):
     return any(entry.get("sha256") == digest for entry in files)
 
 
-def add_document(project, path, kind=None, by=None, tools=None, run=None, name=None, as_copy=False):
+def _plan(documents, key, kind, digest, dated, as_copy):
+    """`(what, document)`: what keeping these bytes comes to, `already`, `copy`, `earlier`, `next` (version), or `new`."""
+    for document in documents:
+        if document.get("key") == key and _known(document, digest):
+            return "already", document
+    found = _match(documents, key, kind)
+    if found is None:
+        return "new", None
+    if as_copy:
+        return "copy", found
+    if dated < (found.get("dated") or ""):
+        return "earlier", found
+    return "next", found
+
+
+def add_document(project, path, kind=None, by=None, tools=None, run=None, name=None, as_copy=False, key=None):
     """Keep one file as a document (or hand a reference to the intake); returns what was done.
 
     `kind` is the session's sort (`inherited`, `critique`, `other`, or `reference`), recorded with
@@ -734,7 +775,12 @@ def add_document(project, path, kind=None, by=None, tools=None, run=None, name=N
     `{name, sorted, by, said, ...}`: for a document also `id`, `version`, `title`, `already` (these
     bytes were kept before) and `earlier` (recorded as an earlier version, not the current one); for
     a reference, what `intake.drop_material` returned. With `as_copy` the file is kept beside the
-    document of the same text (a PDF of a `.docx`) and not converted.
+    document of the same text (a PDF of a `.docx`) and not converted. `key` is the text the file is
+    a version of (`text_key` of its name unless a folder's hand-over names its subfolder too).
+
+    The conversion runs outside the ledger's lock, since a converter may take minutes, and only for
+    a version that becomes the current one; the record is planned again under the lock, and a
+    change in between plans it once more.
     """
     project, path = Path(project).resolve(), Path(path)
     name = name or path.name
@@ -746,44 +792,37 @@ def add_document(project, path, kind=None, by=None, tools=None, run=None, name=N
     if by not in BY:
         raise DocumentError("a document is sorted by one of %s, got %r" % (", ".join(BY), by))
     kind = kind or guess_kind(path, tools, run)
+    write_gitignore(project)
     if kind == REFERENCE:
         return _to_intake(project, path, name, by)
     data = path.read_bytes()
-    digest, key, dated = _sha(data), text_key(name), _dated(path)
-    documents = read_documents(project)
-    found = _match(documents, key)
-    if found is not None and _known(found, digest):
-        return _said({"name": name, "sorted": found["kind"], "by": by, "id": found["id"], "version": found["version"],
-                      "title": found["title"], "already": True, "earlier": False})
-    conversion = None if as_copy else convert(path, tools=tools, run=run)
-    ledger = Ledger(project)
-    write_gitignore(project)
-    with ledger.lock():
-        documents = read_documents(project)
-        found = _match(documents, key)
-        if found is not None and _known(found, digest):
-            return _said({"name": name, "sorted": found["kind"], "by": by, "id": found["id"], "version": found["version"],
-                          "title": found["title"], "already": True, "earlier": False})
-        if as_copy and found is not None:
-            document = _keep_copy(ledger, found, name, data)
-            _write(ledger, documents, document, by)
-            return _said({"name": name, "sorted": document["kind"], "by": by, "id": document["id"], "version": document["version"],
-                          "title": document["title"], "already": False, "earlier": False, "copy": True})
-        if conversion is None:
+    digest, key, dated = _sha(data), key or text_key(name), _dated(path)
+    ledger, conversion = Ledger(project), None
+    for _ in range(3):
+        what, _found = _plan(read_documents(project), key, kind, digest, dated, as_copy)
+        if what in ("new", "next") and conversion is None:
             conversion = convert(path, tools=tools, run=run)
-        if found is not None and dated < (found.get("dated") or ""):
-            document = _keep_earlier(ledger, found, name, data, dated)
+        with ledger.lock():
+            documents = read_documents(project)
+            what, found = _plan(documents, key, kind, digest, dated, as_copy)
+            if what in ("new", "next") and conversion is None:
+                continue  # the record changed while nothing was converted: plan again, outside the lock
+            result = {"name": name, "by": by, "already": what == "already", "earlier": what == "earlier"}
+            if what == "already":
+                return _said(dict(result, sorted=found["kind"], id=found["id"], version=found["version"], title=found["title"]))
+            if what == "copy":
+                document = _keep_copy(ledger, found, name, data)
+                result["copy"] = True
+            elif what == "earlier":
+                document = _keep_earlier(ledger, found, name, data, dated)
+            elif what == "next":
+                document = _next_version(ledger, found, kind if by == "session" else found["kind"], by, name, data, dated, conversion)
+            else:
+                document = _new_document(ledger, _next_id(documents), kind, by, key, name, data, dated, conversion)
+                documents.append(document)
             _write(ledger, documents, document, by)
-            return _said({"name": name, "sorted": document["kind"], "by": by, "id": document["id"], "version": document["version"],
-                          "title": document["title"], "already": False, "earlier": True})
-        if found is not None:
-            document = _next_version(ledger, found, kind if by == "session" else found["kind"], by, name, data, dated, conversion)
-        else:
-            document = _new_document(ledger, _next_id(documents), kind, by, key, name, data, dated, conversion)
-            documents.append(document)
-        _write(ledger, documents, document, by)
-    return _said({"name": name, "sorted": document["kind"], "by": by, "id": document["id"], "version": document["version"],
-                  "title": document["title"], "already": False, "earlier": False})
+        return _said(dict(result, sorted=document["kind"], id=document["id"], version=document["version"], title=document["title"]))
+    raise DocumentError("research/%s kept changing while %s was handed over; hand it over again" % (DOCUMENTS_JSON, name))
 
 
 def _said(result):
@@ -914,9 +953,23 @@ def _unpack(archive, target):
             if root not in destination.parents:
                 continue
             destination.parent.mkdir(parents=True, exist_ok=True)
-            with package.open(info) as source, open(destination, "wb") as out:
-                shutil.copyfileobj(source, out)
+            try:
+                with package.open(info) as source, open(destination, "wb") as out:
+                    shutil.copyfileobj(source, out)
+            except UNREADABLE as failure:
+                raise DocumentError("%s: %s cannot be unpacked (%s), so nothing in it was kept" % (archive, info.filename, failure)) from None
     return root
+
+
+def _folder_key(folder, path):
+    """The text a file in a hand-over folder is a version of: its name's `text_key`, under its subfolder when it has one.
+
+    `chapter1/main.tex` and `chapter2/main.tex` are two texts, and so are `round-1/report.pdf` and
+    `round-2/report.pdf`.
+    """
+    parent = path.relative_to(folder).parent
+    stem = text_key(path.name)
+    return stem if parent == Path(".") else "%s/%s" % (re.sub(r"[^0-9a-z/]+", "-", parent.as_posix().lower()).strip("-"), stem)
 
 
 def _files_in(folder):
@@ -940,7 +993,7 @@ def add_documents(project, path, kind=None, by=None, tools=None, run=None):
         folder = _unpack(path, scratch) if path.is_file() else path
         groups = {}
         for found in _files_in(folder):
-            groups.setdefault(text_key(found.name), []).append(found)
+            groups.setdefault(_folder_key(folder, found), []).append(found)
         results = []
         for key in sorted(groups):
             members = groups[key]
@@ -948,15 +1001,16 @@ def add_documents(project, path, kind=None, by=None, tools=None, run=None):
             pdfs = sorted((member for member in members if member.suffix.lower() == ".pdf"), key=lambda member: (_dated(member), member.name))
             if sources:
                 for member in sources:
-                    results.append(add_document(project, member, kind=kind, by=by, tools=tools, run=run))
+                    results.append(add_document(project, member, kind=kind, by=by, tools=tools, run=run, key=key))
                 for member in pdfs:
                     if kind == REFERENCE or (kind is None and _has_identifier(member)):
                         results.append(add_document(project, member, kind=REFERENCE, by=by, tools=tools, run=run))
-                    else:
-                        results.append(add_document(project, member, kind=kind or results[-1].get("sorted"), by=by, tools=tools, run=run, as_copy=True))
+                    else:  # beside its source, a PDF takes the source's sort, and whoever sorted it
+                        results.append(add_document(project, member, kind=kind or results[-1].get("sorted"), by=by or results[-1].get("by"),
+                                                    tools=tools, run=run, as_copy=True, key=key))
             else:
                 for member in pdfs:
-                    results.append(add_document(project, member, kind=kind, by=by, tools=tools, run=run))
+                    results.append(add_document(project, member, kind=kind, by=by, tools=tools, run=run, key=key))
         return results
 
 

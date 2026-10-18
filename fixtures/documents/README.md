@@ -7,6 +7,7 @@ project):
 |---|---|---|
 | `numbered-draft.pdf` | a one-page draft whose every line carries a margin number | stripping the margin line numbers off `pdftotext -layout` |
 | `required-experiments.doc` | a collaborator's list of required experiments, as a legacy Word file | LibreOffice turning a `.doc` into a `.docx` before pandoc |
+| `line-breaks.tex` | a LaTeX section whose lines break with `\\[2pt]`, beside one display equation `\[...\]` | counting a `.tex`'s equations without taking a line break for one |
 | `make.py` | rebuilds both (the `.doc` through `soffice` on the PATH) | |
 | `record.py` | converts every synthetic document with the tools `~/.wayline/tools/tools.json` records, keeping each run under `recorded/` | |
 | `recorded/<tool>/<input>/` | what pandoc, `pdftotext`, LibreOffice (`soffice`), and docling printed (`stdout`, `stderr`, `returncode`) and wrote (`files/`) for one input | the tests' replay, `wayline.documents.recorded_runner` |
