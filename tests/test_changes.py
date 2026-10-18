@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 from tests.paths import HARNESS_ROOT
-from tests.projects import ProjectTestCase, fable_policy
+from tests.projects import ProjectTestCase, fable_policy, open_objective
 from tests.test_specify import run
 from wayline import changes, gates, project, provenance, tickets, worker
 from wayline.ledger import Ledger
@@ -122,6 +122,7 @@ class EvolveCase(ProjectTestCase):
         super().setUp()
         self.project = (self.temp / "study").resolve()
         project.init_project(self.project, harness_root=HARNESS_ROOT, git=False, hermes_python=None, owner_email=None)
+        open_objective(self.project)
         project.set_autonomy(self.project, self.autonomy)
         self.ledger = Ledger(self.project)
         changes.file_feedback(self.project, "captions overclaim", source="dashboard")

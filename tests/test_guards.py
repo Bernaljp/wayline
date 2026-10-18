@@ -92,7 +92,8 @@ class GuardScriptTest(unittest.TestCase):
 
     def test_the_validated_guards_are_carried_over_unchanged(self):
         notes = HARNESS_ROOT / "research-notes" / "03-hooks"
-        for guard in ("touch_set_guard.sh", "stop_guard.sh"):
+        # touch_set_guard.sh left the validated copy at ticket 73, which made it deny `research/` outright.
+        for guard in ("stop_guard.sh",):
             with self.subTest(guard=guard):
                 self.assertEqual(
                     (HOOKS / guard).read_text(encoding="utf-8"),
@@ -167,6 +168,24 @@ class TouchSetGuardTest(unittest.TestCase):
         done = self.guard("Write", {"file_path": str(self.root / "src/main.py"), "content": "x"}, touches=str(self.root / "src") + "/")
         self.assertEqual(done.returncode, ALLOW, done.stderr)
 
+    def test_a_research_write_outside_the_touch_set_is_blocked(self):
+        done = self.guard("Write", {"file_path": str(self.root / "research/REPORT.md"), "content": "x"})
+        self.assertEqual(done.returncode, BLOCK)
+        self.assertIn("research/", done.stderr)
+
+    def test_a_research_write_is_blocked_even_when_the_touch_set_names_it(self):
+        for touches in ("research/", "research/sections/", "research/REPORT.md", str(self.root / "research") + "/"):
+            with self.subTest(touches=touches):
+                done = self.guard("Write", {"file_path": str(self.root / "research/sections/results.md"), "content": "x"},
+                                  touches=touches + ":research/REPORT.md")
+                self.assertEqual(done.returncode, BLOCK)
+                self.assertIn("only code writes", done.stderr)
+
+    def test_a_research_spelled_with_dot_dot_is_blocked(self):
+        done = self.guard("Edit", {"file_path": str(self.root / "experiments/ablation_b/../../research/ledger.json"),
+                                   "old_string": "a", "new_string": "b"}, touches="experiments/ablation_b/:research/")
+        self.assertEqual(done.returncode, BLOCK)
+
     def test_an_empty_tool_input_is_blocked(self):
         done = self.guard("Write", {})
         self.assertEqual(done.returncode, BLOCK)
@@ -235,6 +254,12 @@ ALLOWED_COMMANDS = [
     ("pip install", "pip install -r requirements.txt"),
     ("python -m pip install", "python3 -m pip install -e ."),
     ("gh issue list", "gh issue list"),
+    ("gh issue view", "gh issue view 7 --json body"),
+    ("gh repo view", "gh repo view Bernaljp/wayline"),
+    ("gh api read", "gh api /repos/o/r/issues"),
+    ("gh api explicit GET", "gh api -X GET /repos/o/r"),
+    ("gh search", "gh search issues tracker"),
+    ("gh auth status", "gh auth status"),
     ("redirection inside the worktree", "echo hello > build/out.txt"),
     ("tee inside the worktree", "python3 -m unittest -v 2>&1 | tee build/test.log"),
     ("reading outside the worktree", "cat /etc/hostname"),
@@ -347,6 +372,21 @@ BLOCKED_COMMANDS = [
     ("uv pip upload", "uv pip upload dist/*", "publishes a package"),
     ("poetry publish", "poetry publish", "uploads a package"),
     ("gh api with a write method", "gh api -X POST /repos/o/r/issues", "writes to GitHub"),
+    ("gh repo create", "gh repo create me/new --private", "gh repo create"),
+    ("gh repo delete", "gh repo delete me/old --yes", "gh repo delete"),
+    ("gh repo edit", "gh repo edit --visibility public", "gh repo edit"),
+    ("gh issue create", "gh issue create --title t --body b", "gh issue create"),
+    ("gh issue comment", "gh issue comment 3 --body b", "gh issue comment"),
+    ("gh issue close", "gh issue close 3", "gh issue close"),
+    ("gh label create", "gh label create bug", "gh label create"),
+    ("gh secret set", "gh secret set TOKEN", "gh secret set"),
+    ("gh workflow run", "gh workflow run ci.yml", "gh workflow run"),
+    ("gh gist create", "gh gist create notes.md", "gh gist create"),
+    ("gh api with a field", "gh api /repos/o/r/issues -f title=t", "writes to GitHub"),
+    ("gh api with an input", "gh api /repos/o/r/issues --input body.json", "writes to GitHub"),
+    ("gh api with an attached method", "gh api --method=DELETE /repos/o/r", "writes to GitHub"),
+    ("gh api graphql", "gh api graphql -f query=q", "writes to GitHub"),
+    ("a gh alias", "gh co 12", "alias"),
     ("rsync --delete outside the worktree", "rsync -a --delete build/ /usr/local/share/", "touch set"),
     ("rsync to another host", "rsync -a build/ host:/srv/", "another host"),
 ]

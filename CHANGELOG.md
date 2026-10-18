@@ -1,6 +1,8 @@
 # Changelog
 
-One entry per tag. `wayline upgrade` prints the entries between two tags.
+One entry per tag. `wayline upgrade` prints the entries between two tags. A release that raises `research_version`
+(`wayline.RESEARCH_VERSION`, how `research/` is kept) opens its entry with a **Breaking** line: `wayline upgrade` to it
+refuses a project made before it, which keeps its old tag or starts again on the new release.
 
 ## v1.0.1 (2026-09-28)
 
@@ -25,6 +27,53 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   with no diff.
 
 ## Unreleased
+
+**Breaking:** `research_version` 2 (Implementation Decision 17). A project made on v1.0.x is refused, never migrated:
+`wayline upgrade` to this release changes nothing and names the two ways on (`wayline upgrade --to v1.0.1`, or a new
+project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
+lists it read-only, marked with its tag.
+
+- `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
+  (2). A small upgrade, within one `research_version`, works as before, both ways.
+
+- The guard and gitignore defects found while charting (ticket 73; Implementation Decisions 1, 4, 17). The
+  touch-set hook denies every write under `research/`, whatever the touch set names. A gate's scope-down and a
+  ticket admitted from a proposal are checked by the planner's touch-set rule (`tickets.touch_problem`): a
+  scope-down naming `research/` raises `GateError` with the reason, and the kill argument and the paper's read now
+  file theirs with no touch set; a proposal naming it is parked with reason `touches`. The command guard denies
+  `gh repo create` and every other `gh` write (any group's verb but `list`, `view`, `status`, `diff`, `checks`,
+  `watch`, `download`; `gh api` with a write method or a body), and still allows the reads. `absorb --code` writes
+  `research/refs/*/code/` into the project's `.gitignore` beside `source/`, so a wave commit records no gitlink.
+
+- A passing outage no longer leaves a project's references broken (ticket 71; Implementation Decision 17). Every
+  lookup attempt the scout makes records `found`, `no match` (the service answered and nothing matched), or
+  `failed` (an error status, a timeout, or an unreadable answer), in place of v1.0's `hit`, `miss`, and `error`;
+  `scout.outcome` says `no such work` only when every service asked answered no match (`not looked up` when nothing
+  could be asked, a bare URL or a PDF with no identifier). A failed attempt on a work
+  not found sets the dossier's `retry` flag (service, failure, date, and the date it was first set). When arXiv's
+  API fails, the scout reads the `arxiv.org/abs` page's meta tags as an attempt of its own and records the arXiv
+  DOI `10.48550/arXiv.<id>`; a work found that way keeps the flag, so the API fills in the rest later. The scout's
+  cache under `research/.cache/scout/` is now `fetch.AnswerCache`: it writes only successful answers and replays
+  one only for a work already found, so every lookup about a work not yet found goes to the network and a failure
+  an older cache kept is never replayed; the plot-gallery crawl keeps only successful answers too, and the
+  suite's recordings still replay failures. A flagged reference is retried at most once a day by the next
+  `absorb` or by the tick while a run is live (`dossier.retry_flagged`), and the flag gives up after
+  `policy.scout.give_up_days` (7), the give-up recorded on the dossier.
+
+  A lookup never takes back what a dossier knows: it replaces the lookup's own fields only when it finds the same
+  work, keeps the level, the L1 fields, `l2`, `created`, and the node's level, sets `updated`, and journals a level
+  0 `absorbed` only for a new dossier or a changed existence; a failure or a no match leaves a found dossier as it
+  was, and a found dossier that now resolves to another work is left and listed under `disagreements` in absorb's
+  report. One work has one dossier: a second reference to a filed work (by DOI, arXiv id, or published DOI) joins
+  it under `names`, and two dossiers of one work collapse to the higher level (the older on a tie), the other a
+  pointer (`joined_into`) whose notes move. Intake records references as `{identifier, note}` and never looks them
+  up; `INTAKE.md` nests the note (and a PDF as `PDF: <path>`) under each top-level item, and absorb reads only
+  top-level items, so a nested remark is never a query and a PDF with no identifier becomes the reference's source
+  with nothing sent to any service. The owner's hand-over is the new verb `wayline reference <slug> <doi|title|file.pdf|"leave
+  it">` (`dossier.hand_over`, callable in-process): a DOI or an exact title goes back to the scout, a PDF becomes the
+  gitignored source and its title is tried, failing which the dossier is found with `resolved_by: owner` from the
+  PDF's details, and "leave it" settles the item until the paper order. The `dossier` schema gains `retry`,
+  `resolved_by: owner`, `notes`, `names`, `joined_into`, and `handed_over`; no model tokens are spent.
 
 - A paper's figures tell the writer, not the ticket graph, what the text should say (ticket 66). A figure `wayline
   paper` asked for (`figure_request.ticket: "paper"`) files no proposal and opens no `writing` ticket: its
@@ -59,6 +108,43 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   high`) becomes rung 6, and old rungs 6 and 7 (Fable) become rung 6, the top rung on a cheaper family. Each
   rewrite is printed, and a project whose own `tiers` override defines its ladder is left as it is. An override
   in the shape before the rung ladder that puts a level on Fable now lands on rung 6 too, where it was refused.
+
+- The harness's tools (ticket 75; Implementation Decisions 17 and 1). `wayline tools install` installs, beside the
+  converter venv and with no ask at any autonomy, never as root: micromamba's static binary at
+  `~/.wayline/tools/bin/` (its environments and package cache under `~/.wayline/tools/mamba`, one prefix per tool
+  under `envs/`); uv into the same `bin/`, its cache under `uv/`; pandoc 3.11 with pandoc-crossref from conda-forge
+  into `envs/pandoc` (pandoc-crossref is added without its declared dependency, which would pull pandoc 3.9 under
+  a filter built for 3.11); matplotlib, seaborn, and tree-sitter-matlab in the tools venv; and the embedding
+  model, BAAI/bge-base-en-v1.5 at a pinned revision, into `models/`. Every download is checked against the digest
+  published beside it (a release's `.sha256`, the Hub's listing for each model file), and a mismatch fails that
+  tool alone. Every Python package installs through the harness's uv: the `python -m venv` fallback is gone, since
+  it fails on a machine without `ensurepip`. LaTeX, poppler, LibreOffice, and git are recorded as `system` by
+  absolute path and never changed. `~/.wayline/tools/tools.json` (now `schema_version` 2) gains one entry per tool
+  under `tools`: the absolute executable, the version, the environment it needs, the route, the lock or digest or
+  revision, when it was installed, and the installer (`harness`, `owner`, or `system`). It is merged one entry at
+  a time under a lock, so two installs keep each other's entries; the converter venv's install keeps every entry
+  too, and docling and pdfplumber get entries of their own. New verbs: `wayline tools install <name>` installs one tool, `wayline tools show` prints the record
+  (`--json` the file), and `wayline tools run <name> -- <args>` runs a recorded tool by its absolute path and
+  environment for a session's short calls, refusing one not recorded. A record of the first version reads as one
+  with no entries.
+
+- Objectives (ticket 76; Implementation Decision 17). A project holds objectives, questions the research answers,
+  in `research/objectives.json`, written only by code through the ledger (schema `objectives`) and rendered as
+  `research/OBJECTIVES.md` in id order with each one's status, measure, answer, and evidence. Ids run O1 onward and
+  are never reused: an objective is never deleted, only parked, answered, dropped, or reframed (`reframed_as` names
+  its successor). An objective with a measure (`metric`, `direction`, `target`, `held_out_split`, `eval_command`,
+  `baseline`, `dataset_or_split`, `min_seeds`) is a goal, and it has at most one measure; a `target` of null means
+  keep improving, never reached. `wayline objective add "<question>"` records an open objective; with `--measure
+  <file> --sample <artifact>` it records a goal only once the measure's `eval_command` printed the metric on the
+  sample, the check intake ran on `GOAL.json`, moved to `wayline/objectives.py`. A measure whose command is not
+  ready leaves an objective without a measure, and the verb says why; a measure not in the shape, or two given for
+  one objective, is refused and nothing is recorded. Each change journals the new `objective`
+  event, with `by` `owner`, `decider`, or `code`. `wayline switch --autonomy autonomous` (and the dashboard's
+  autonomy action) refuses while no objective is open and names `wayline objective add`, so setup cannot end without
+  one. `wayline status` and the dashboard's overview show each objective's status in place of the goal's latest
+  reading; a project with no objectives still shows its `GOAL.json` goal. This is the expand step: every reader of
+  `GOAL.json` (keep-if-better, position, specify, plan, the decider, the report) still reads it, and tickets 80, 81,
+  and 87 move them to objectives.
 
 ## v1.0.0 (2026-09-27)
 

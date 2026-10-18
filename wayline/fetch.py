@@ -9,9 +9,13 @@ pool, and the per-host rate limit.
 
 A backend answers one question, `send(request) -> Response`. `UrllibBackend` asks the network.
 `DirectoryBackend` answers from a directory of recorded responses keyed by request hash, and
-either falls through to an inner backend and records what comes back (the scout's cache under
-`research/.cache/scout/`) or refuses (the suite's `fixtures/fetch/`, where a request nobody
-recorded is a test that would otherwise have reached the network).
+either falls through to an inner backend and records what comes back (the plot-gallery crawl's
+cache, which keeps only successful answers) or refuses (the suite's `fixtures/fetch/`, where a
+request nobody recorded is a test that would otherwise have reached the network, and where a
+recorded failure replays like any answer, because a recording is not a cache). `AnswerCache` is
+the scout's cache under `research/.cache/scout/` (decision 17): it writes only successful answers
+and replays one only when the caller says the work is already found, so a passing outage is
+never kept and every lookup about a work not yet found goes to the network.
 
 The request hash leaves out what varies between owners: the `User-Agent` header, and the
 `mailto` and `email` query parameters that Crossref and Unpaywall want the owner's address in.
@@ -22,6 +26,7 @@ responses recorded against the live services.
 import base64
 import hashlib
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -35,7 +40,7 @@ from wayline import TAG, real_backend
 __all__ = [
     "FetchError", "Response", "Request", "request_hash", "user_agent", "canonical_url",
     "RateLimiter", "Backend", "UrllibBackend", "DirectoryBackend", "Fetcher",
-    "RATE_LIMITS", "DEFAULT_RATE", "FIXTURES", "recording_fetcher", "caching_fetcher",
+    "RATE_LIMITS", "DEFAULT_RATE", "FIXTURES", "recording_fetcher", "caching_fetcher", "AnswerCache",
 ]
 
 # The minimum seconds between two requests to one host, from the providers' own documented
@@ -89,6 +94,9 @@ class Request:
     url: str
     headers: dict = field(default_factory=dict)
     method: str = "GET"
+    # Whether a cache may answer this request from disk. Only the scout's `AnswerCache` reads it, and
+    # only a lookup about a work already found sets it; it is not part of the request's identity.
+    replay: bool = field(default=False, compare=False)
 
     @property
     def host(self):
@@ -251,10 +259,12 @@ class DirectoryBackend(Backend):
     test that quietly reaches the network.
     """
 
-    def __init__(self, root, inner=None, record=None):
+    def __init__(self, root, inner=None, record=None, keep_failures=True):
         self.root = Path(root)
         self.inner = inner
         self.record = (inner is not None) if record is None else record
+        # A cache keeps only successful answers and replays nothing else; a recording keeps everything.
+        self.keep_failures = keep_failures
         self.misses = []  # every request this backend could not answer from disk, in order
 
     def path_for(self, request):
@@ -263,7 +273,7 @@ class DirectoryBackend(Backend):
     def send(self, request):
         path = self.path_for(request)
         recorded = _read_recording(path)
-        if recorded is not None:
+        if recorded is not None and (self.keep_failures or recorded.ok):
             recorded.from_cache = True
             return recorded
         self.misses.append(request)
@@ -272,7 +282,41 @@ class DirectoryBackend(Backend):
                 "no recorded response for %s; expected %s (record it with a live backend)" % (request.url, path)
             )
         response = self.inner.send(request)
-        if self.record:
+        if self.record and (self.keep_failures or response.ok):
+            _write_recording(path, request, response)
+        return response
+
+
+class AnswerCache(Backend):
+    """The scout's cache, `research/.cache/scout/<host>/<request hash>.json` (decision 17).
+
+    Two rules, both because a passing outage must not outlive itself. Only a successful (2xx)
+    answer is written: an error status, a timeout, and a 404 all go to the network next time. And
+    an answer is replayed only for a request marked `replay`, which the scout sets for a work
+    already found; every lookup about a work not yet found asks the service, whatever is on disk.
+    A failure an older cache kept (v1.0 wrote every answer) is never replayed either.
+    """
+
+    def __init__(self, root, inner=None):
+        self.root = Path(root)
+        self.inner = inner if inner is not None else UrllibBackend()
+        self.misses = []  # every request asked of the network, in order
+        self.replayed = []  # every request answered from disk, in order
+
+    def path_for(self, request):
+        return self.root / request.host / (request.hash + ".json")
+
+    def send(self, request):
+        path = self.path_for(request)
+        if request.replay:
+            recorded = _read_recording(path)
+            if recorded is not None and recorded.ok:
+                recorded.from_cache = True
+                self.replayed.append(request)
+                return recorded
+        self.misses.append(request)
+        response = self.inner.send(request)
+        if response.ok:
             _write_recording(path, request, response)
         return response
 
@@ -311,7 +355,7 @@ def _write_recording(path, request, response):
         },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
+    temporary = path.with_name("%s.%d.%d.tmp" % (path.name, os.getpid(), threading.get_ident()))  # the tick and absorb may write one hash at once
     temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
     return path
@@ -330,10 +374,11 @@ class Fetcher:
     def user_agent(self):
         return user_agent(self.tag, self.email)
 
-    def fetch(self, url, headers=None, method="GET"):
+    def fetch(self, url, headers=None, method="GET", replay=False):
+        """One request; `replay` lets the scout's cache answer it from disk (a lookup about a work already found)."""
         outbound = {"User-Agent": self.user_agent, "Accept": "*/*"}
         outbound.update(headers or {})
-        request = Request(url, outbound, method)
+        request = Request(url, outbound, method, replay)
         self.requests.append(request)
         return self.backend.send(request)
 
@@ -351,6 +396,9 @@ def recording_fetcher(root, email=None, tag=None, live=False, limiter=None):
 def caching_fetcher(cache_dir, email=None, tag=None, limiter=None):
     """A fetcher that answers from `cache_dir` and asks the network for what is not there yet.
 
-    This is what the scout runs on: `research/.cache/scout/`, one file per request hash.
+    What the plot-gallery crawl runs on (`research/.cache/figures/`): only successful answers are
+    kept, so a gallery page that failed is asked again on the next build. The scout runs on
+    `AnswerCache` instead, which also refuses to replay an answer about a work not yet found.
     """
-    return Fetcher(DirectoryBackend(cache_dir, inner=UrllibBackend(limiter=limiter), record=True), tag=tag, email=email)
+    backend = DirectoryBackend(cache_dir, inner=UrllibBackend(limiter=limiter), record=True, keep_failures=False)
+    return Fetcher(backend, tag=tag, email=email)

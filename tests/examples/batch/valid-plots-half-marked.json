@@ -1,0 +1,13 @@
+{
+  "id": "B3",
+  "kind": "plots",
+  "title": "Plots of R4",
+  "decision": null,
+  "status": "open",
+  "items": [
+    {"id": 1, "ref": "P12", "text": "AUROC against the number of interaction terms, one line per seed", "marks": ["keep", "maybe", "drop"], "default": "keep",
+     "note": "the headline plot", "mark": "keep", "by": "owner", "at": "2026-10-18T09:12:44.120Z"},
+    {"id": 2, "ref": "P13", "text": "the same AUROC as a box per term count", "marks": ["keep", "maybe", "drop"], "default": null,
+     "note": null, "mark": null, "by": null, "at": null}
+  ]
+}

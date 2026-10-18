@@ -487,7 +487,7 @@ class KillArgumentTest(GateCase):
         self.assertEqual(filed["kind"], "writing")
         self.assertEqual(filed["status"], "open")
         self.assertEqual(filed["proposed_by"], "verifier")
-        self.assertEqual(filed["touches"], ["research/REPORT.md"])
+        self.assertEqual(filed["touches"], [], "REPORT.md is written by code; the correction travels in the result")
         self.assertTrue(filed["acceptance"]["quality"])
         payload = self.events("ticket_created")[0]["payload"]
         self.assertEqual(payload, {"ticket": 2, "kind": "writing", "proposed_by": "verifier",

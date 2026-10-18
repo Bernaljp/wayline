@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "objectives",
+  "description": "research/objectives.json (Implementation Decision 17): the questions the research answers, written only by code through the ledger and rendered as research/OBJECTIVES.md. Ids run O1 onward and are never reused; an objective is never deleted, only parked, answered, dropped, or reframed. An objective with a measure is a goal, and it has at most one.",
+  "type": "object",
+  "required": ["objectives"],
+  "additionalProperties": false,
+  "properties": {
+    "objectives": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/objective"}
+    }
+  },
+  "$defs": {
+    "objective": {
+      "type": "object",
+      "required": ["id", "text", "measure", "status", "answer", "evidence", "reframed_as"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^O[1-9][0-9]*$"},
+        "text": {"type": "string", "pattern": "\\S", "description": "the question, in the owner's words"},
+        "measure": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/measure"}]},
+        "status": {"type": "string", "enum": ["open", "parked", "answered", "dropped", "reframed"]},
+        "answer": {"type": ["string", "null"], "description": "null while open; how it was answered, or why it was parked or dropped"},
+        "evidence": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^(res|ref):\\S", "description": "a locator in the provenance linter's res: or ref: form"}
+        },
+        "reframed_as": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "the objective that replaced this one, when reframed"}
+      }
+    },
+    "measure": {
+      "type": "object",
+      "required": ["metric", "direction", "target", "held_out_split", "eval_command", "baseline", "dataset_or_split", "min_seeds"],
+      "additionalProperties": false,
+      "description": "what lets code read a goal's progress; it stands only when its eval_command printed the metric on a sample artifact",
+      "properties": {
+        "metric": {"type": "string", "pattern": "\\S", "description": "the name the eval command prints the value under"},
+        "direction": {"type": "string", "enum": ["up", "down"], "description": "up when a larger value is better"},
+        "target": {"type": ["number", "null"], "description": "null: keep improving, never reached"},
+        "held_out_split": {"type": ["string", "null"], "description": "the split a kept change must improve on"},
+        "eval_command": {"type": "string", "pattern": "\\S", "description": "a shell command run from the project root; {artifact} is replaced by the artifact's quoted path, also exported as WAYLINE_ARTIFACT"},
+        "baseline": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["value", "source"],
+              "additionalProperties": false,
+              "properties": {"value": {"type": "null"}, "source": {"type": "null"}}
+            },
+            {
+              "type": "object",
+              "required": ["value", "source"],
+              "additionalProperties": false,
+              "properties": {
+                "value": {"type": "number"},
+                "source": {"type": "string", "pattern": "\\S", "description": "where the number comes from: a paper, a result file, a run"}
+              }
+            }
+          ]
+        },
+        "dataset_or_split": {"type": ["string", "null"], "description": "the data the metric is computed on (descriptive)"},
+        "min_seeds": {"type": ["integer", "null"], "minimum": 1, "description": "the seeds keep-if-better needs for this goal, down to 1 for a deterministic computation; null takes policy.goal.min_seeds"}
+      }
+    }
+  }
+}

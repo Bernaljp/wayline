@@ -29,7 +29,7 @@ from pathlib import Path
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import ledger_for, now_ts
-from wayline.project import ProjectError, find_project
+from wayline.project import ProjectError, find_project, write_gitignore
 
 __all__ = [
     "CodeDossierError", "REFS", "CODE_DIR", "LOG_MAX",
@@ -583,6 +583,9 @@ def absorb_code(project, slug, url, sha, ledger=None):
     project = Path(project)
     ledger = ledger_for(ledger if ledger is not None else project)
     dest = ledger.research / REFS / slug / CODE_DIR
+    # The clone is a repository of its own: unignored, a wave commit would record it as an empty
+    # gitlink. A project laid out before the entry existed gets it here, beside `source/`.
+    write_gitignore(ledger.research.parent)
     clone_at_sha(url, sha, dest)
     dossier = code_dossier(slug, url, sha, dest)
     path = write_code_dossier(ledger, dossier)

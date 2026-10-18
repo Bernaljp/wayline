@@ -26,18 +26,18 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. It blocks 82, 89, 91, 95, 96, 100, 104, 109, and 112.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#226](https://github.com/Bernaljp/wayline/issues/226) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the marks view's batches and marks; talking with the project: every batch goes to the marks view, the first answer settles an item, five items or fewer as text; vocabulary the build adds: `marked`), 1 (the verb table: the conversation's marks verb), 2 (the event table: `marked`), the schemas list (the batch record, a reading this cut makes where the spec is silent); M8 criterion 16 (the marks the view saves); user story 168.
 
-- [ ] A batch record with the fields above is written through the ledger and has a schema in the schemas list; its kinds and their mark options are the table above.
-- [ ] `wayline mark` records a mark and an optional note, journaled as `marked` with batch, item, mark, note, and who; a mark not allowed for the item's kind is refused.
-- [ ] The first mark settles an item; a second is refused naming the first; a note alone is kept without settling.
-- [ ] "Take all defaults" settles every open item with a default and leaves the rest open.
-- [ ] A batch with every item settled is closed, and a producer can read each item's mark and note back.
-- [ ] The text rendering shows whole items at five or fewer and one line with the count and a link otherwise.
-- [ ] The verb table of decision 1 gains the marks verb and the event table of decision 2 gains `marked`, in the same commit.
-- [ ] Tests over a temporary project through the ledger seam: a batch of each kind created and marked, a refused mark, first answer settling, take all defaults, closing, the text rendering at five and six items.
-- [ ] `python -m unittest` passes.
+- [x] A batch record with the fields above is written through the ledger and has a schema in the schemas list; its kinds and their mark options are the table above.
+- [x] `wayline mark` records a mark and an optional note, journaled as `marked` with batch, item, mark, note, and who; a mark not allowed for the item's kind is refused.
+- [x] The first mark settles an item; a second is refused naming the first; a note alone is kept without settling.
+- [x] "Take all defaults" settles every open item with a default and leaves the rest open.
+- [x] A batch with every item settled is closed, and a producer can read each item's mark and note back.
+- [x] The text rendering shows whole items at five or fewer and one line with the count and a link otherwise.
+- [x] The verb table of decision 1 gains the marks verb and the event table of decision 2 gains `marked`, in the same commit.
+- [x] Tests over a temporary project through the ledger seam: a batch of each kind created and marked, a refused mark, first answer settling, take all defaults, closing, the text rendering at five and six items.
+- [x] `python -m unittest` passes.

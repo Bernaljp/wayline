@@ -17,20 +17,20 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. Every module it edits is built. It blocks 80 and 81.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#223](https://github.com/Bernaljp/wayline/issues/223) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (objectives, goals, and measures; defects found while charting: `View.progress` and `status`; vocabulary the build adds), 1 (the verb table: `objective add`; `switch --autonomy`), 2 (the event table: `objective`), the schemas list (`objectives`); M8 criterion 1; user stories 2, 102, 103, 104, 105.
 
-- [ ] `research/objectives.json` has a schema in the schemas list with every field above; ids run O1 onward and are never reused; only code writes it, through the ledger.
-- [ ] `wayline objective add "<question>"` records an open objective without a measure; with `--measure <file> --sample <artifact>` it records a goal only when the eval command printed the metric on the sample, and otherwise records an objective without a measure and says why.
-- [ ] A measure with `target: null` is accepted; a second measure on one objective is refused.
-- [ ] Each change journals an `objective` event with `by`, and `OBJECTIVES.md` renders the objectives in id order with status, measure, answer, and evidence.
-- [ ] `wayline switch --autonomy autonomous` refuses with no objective open and names `objective add`.
-- [ ] `View.progress` is replaced by the objectives' statuses, and `wayline status` shows each objective's status.
-- [ ] `GOAL.json` is still read by every current reader, and a project with both a `GOAL.json` and objectives behaves as today on its goal.
-- [ ] The verb table of decision 1 gains `objective add`, the event table of decision 2 gains `objective`, and the schemas list gains `objectives`, all in the same commit.
-- [ ] Tests as plain functions over a temporary project through the ledger seam: an objective recorded and rendered, a goal recorded after its command printed the metric on a sample, a goal refused into an objective without a measure, a null target, the autonomy switch refused and then allowed, `status` reading objective statuses, ids never reused after a drop.
+- [x] `research/objectives.json` has a schema in the schemas list with every field above; ids run O1 onward and are never reused; only code writes it, through the ledger.
+- [x] `wayline objective add "<question>"` records an open objective without a measure; with `--measure <file> --sample <artifact>` it records a goal only when the eval command printed the metric on the sample, and otherwise records an objective without a measure and says why.
+- [x] A measure with `target: null` is accepted; a second measure on one objective is refused.
+- [x] Each change journals an `objective` event with `by`, and `OBJECTIVES.md` renders the objectives in id order with status, measure, answer, and evidence.
+- [x] `wayline switch --autonomy autonomous` refuses with no objective open and names `objective add`.
+- [x] `View.progress` is replaced by the objectives' statuses, and `wayline status` shows each objective's status.
+- [x] `GOAL.json` is still read by every current reader, and a project with both a `GOAL.json` and objectives behaves as today on its goal.
+- [x] The verb table of decision 1 gains `objective add`, the event table of decision 2 gains `objective`, and the schemas list gains `objectives`, all in the same commit.
+- [x] Tests as plain functions over a temporary project through the ledger seam: an objective recorded and rendered, a goal recorded after its command printed the metric on a sample, a goal refused into an objective without a measure, a null target, the autonomy switch refused and then allowed, `status` reading objective statuses, ids never reused after a drop.
 - [ ] The changelog and the documentation site describe objectives under `## Unreleased`.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.

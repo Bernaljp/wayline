@@ -196,6 +196,16 @@ def _changelog_at(harness_root, tag):
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
+_RESEARCH_VERSION_RE = re.compile(r"^RESEARCH_VERSION = (\d+)\s*$", re.MULTILINE)
+
+
+def _research_version_at(harness_root, tag):
+    """The `research_version` the release at `tag` keeps: its `RESEARCH_VERSION`, 1 for a tag that names none (v1.0.x)."""
+    shown = _git(harness_root, "show", "%s:%s" % (tag, VERSION_FILE), ok=None)
+    match = _RESEARCH_VERSION_RE.search(shown.stdout) if shown.returncode == 0 else None
+    return int(match.group(1)) if match else 1
+
+
 def _policy_at(harness_root, tag):
     """`policy.json` as the tag has it, or None when the tag carries none or it does not parse."""
     shown = _git(harness_root, "show", "%s:policy.json" % tag, ok=None)
@@ -250,6 +260,12 @@ def upgrade(project, to=None, harness_root=None):
     if target not in tags:
         spelled = "" if parse_tag(target) else " (tags are spelled vMAJOR.MINOR.PATCH)"
         raise EvolveError("the harness repository %s has no tag %s%s; it has %s" % (harness_root, target, spelled, ", ".join(tags)))
+    # A big upgrade (decision 17): the target keeps research/ at another research_version, and nothing of research/ is
+    # migrated, so it refuses here, before any file moves or the journal hears of it.
+    held = projects.research_version(projects.read_harness(project))
+    wanted = _research_version_at(harness_root, target)
+    if held != wanted:
+        raise EvolveError(projects.old_project_message(previous, held, current=wanted, release=target))
     # Every project runs from this one checkout, so a conductor on any of them holds it, not only on this one.
     registered = [Path(entry["path"]) for entry in projects.read_projects() if isinstance(entry, dict) and isinstance(entry.get("path"), str)]
     for candidate in dict.fromkeys([project] + registered):

@@ -15,17 +15,17 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. Every module it edits is built. It blocks 110.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#219](https://github.com/Bernaljp/wayline/issues/219) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (upgrades: small and big), 12 (the evolve loop: tags, pins, `upgrade`), 1 (`harness.json`, the verb table's `upgrade` row); M8 criterion 18 (and 21's live half in 122); user story 173.
 
-- [ ] `harness.json` has `research_version` in its schema; absent reads as 1; `wayline init` writes 2; the release's constant is the one place the current version is named.
-- [ ] `wayline upgrade` within one `research_version` behaves as today, both ways.
-- [ ] `wayline upgrade` to a release with a higher `research_version` refuses, changes no file, journals nothing, and prints the project's tag and the two ways on (`wayline upgrade --to <old tag>`, or a fresh project from the old one's materials).
-- [ ] `run`, `tick`, and every other verb that writes to a project refuse a project whose `research_version` is lower than the release's, with the same message; read-only verbs (`status`, reading files) still work.
-- [ ] The dashboard lists an old project read-only, marked with its tag, its actions refused and its files open in the viewer.
-- [ ] The changelog convention gains the **Breaking** line for a release that raises `research_version`, and this release's `## Unreleased` entry opens with it.
-- [ ] Tests over temporary projects: a project from `init` at version 2; a hand-made version 1 project refused by `upgrade`, `run`, and `tick` with nothing changed and nothing journaled; a small upgrade still applied; the dashboard's read-only listing over HTTP with an action refused.
-- [ ] `python -m unittest` passes.
+- [x] `harness.json` has `research_version` in its schema; absent reads as 1; `wayline init` writes 2; the release's constant is the one place the current version is named.
+- [x] `wayline upgrade` within one `research_version` behaves as today, both ways.
+- [x] `wayline upgrade` to a release with a higher `research_version` refuses, changes no file, journals nothing, and prints the project's tag and the two ways on (`wayline upgrade --to <old tag>`, or a fresh project from the old one's materials).
+- [x] `run`, `tick`, and every other verb that writes to a project refuse a project whose `research_version` is lower than the release's, with the same message; read-only verbs (`status`, reading files) still work.
+- [x] The dashboard lists an old project read-only, marked with its tag, its actions refused and its files open in the viewer.
+- [x] The changelog convention gains the **Breaking** line for a release that raises `research_version`, and this release's `## Unreleased` entry opens with it.
+- [x] Tests over temporary projects: a project from `init` at version 2; a hand-made version 1 project refused by `upgrade`, `run`, and `tick` with nothing changed and nothing journaled; a small upgrade still applied; the dashboard's read-only listing over HTTP with an action refused.
+- [x] `python -m unittest` passes.
