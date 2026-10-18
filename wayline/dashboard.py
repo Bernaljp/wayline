@@ -65,12 +65,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from wayline import HARNESS_ROOT, TAG, dag, decisions
+from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, decisions
 from wayline.ledger import TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, Ledger, atomic_write, conductor_holder
 from wayline.project import (
     FINDINGS, HARNESS_JSON, NEEDS_HUMAN_NOTES, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for, rung_label,
     read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing,
-    status_view, steer_ticket, switch_project,
+    old_project_problem, research_version, status_view, steer_ticket, switch_project,
 )
 from wayline.provenance import FINDINGS_MD, MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
 from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
@@ -287,6 +287,25 @@ def _url_safe(name):
     return re.sub(r"[^A-Za-z0-9._-]", "-", name).strip("-")
 
 
+def project_id(path, entries=None):
+    """The id one project's item links name it by (`#/<project>/<id>`): its tab's id, by the same rule when it has no tab yet."""
+    path = str(Path(path).resolve())
+    entries = read_projects() if entries is None else entries
+    if not any(isinstance(entry, dict) and entry.get("path") == path for entry in entries):
+        entries = list(entries) + [{"path": path}]
+    return project_ids(entries)[path]
+
+
+def _version_fields(path):
+    """`research_version` and `read_only` for one listed project: a project of another version is listed read-only (decision 17)."""
+    try:
+        harness = read_harness(path)
+    except (ValueError, OSError):
+        return {"research_version": None, "read_only": True}
+    version = research_version(harness)
+    return {"research_version": version, "read_only": version < RESEARCH_VERSION}
+
+
 def projects_view(active=None, entries=None, settings=None):
     """Every registered project with its id, the active one marked: what the tabs are drawn from.
 
@@ -310,6 +329,7 @@ def projects_view(active=None, entries=None, settings=None):
             "created": entry.get("created"),
             "active": active is not None and _same(path, active),
             "readable": is_project(path),
+            **_version_fields(path),
         })
     view = {
         "harness_tag": TAG,
@@ -1665,6 +1685,9 @@ def run_action(name, project, body, headers=None, server=None):
     way, and lets a verb's own refusal (a `ValueError`) through, which the handler answers with 400.
     """
     project = Path(project).resolve()
+    refusal = old_project_problem(project) if name != "switch" else None
+    if refusal is not None:  # an old project is read-only: its files open, its actions are refused (decision 17)
+        raise DashboardError(refusal)
     if name == "intake":
         from wayline.intake import IntakeError, drop_material  # the intake imports the gates, which no view needs
         named = (headers or {}).get(FILENAME_HEADER)

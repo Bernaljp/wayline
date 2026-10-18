@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from string import Template
 
-from wayline import HARNESS_ROOT, POLICY_PATH, TAG, replay
+from wayline import HARNESS_ROOT, POLICY_PATH, RESEARCH_VERSION, TAG, replay
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import (
@@ -42,7 +42,8 @@ from wayline.tickets import (
 )
 
 __all__ = [
-    "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
+    "research_version", "old_project_message", "old_project_problem",
+    "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "write_gitignore", "RESEARCH_DIRS",
     "home", "projects_path", "active_path", "read_active", "set_active", "read_projects",
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
     "check_policy", "policy_problems", "old_difficulty_levels", "rung_label", "rung_named", "launch_label", "merge_policy",
@@ -72,8 +73,10 @@ BLOCK_END = "<!-- wayline:end -->"
 GITIGNORE_HEADER = "# wayline"
 # The four entries of Implementation Decisions 1, plus the e-print sources: arXiv's terms of use
 # forbid re-serving an e-print, so a pushed project never carries the ones its dossiers fetched.
+# And `absorb --code`'s clones, repositories of their own a wave commit would record as empty gitlinks.
 # And the conductor's heartbeat, which is rewritten every wave and means nothing in a commit.
-GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/conductor.json")
+GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/refs/*/code/",
+                    "research/conductor.json")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")
@@ -341,6 +344,7 @@ def default_harness(harness_tag=TAG, policy=None, hermes_python=_DETECT, owner_e
     dashboard = policy.get("dashboard", {})
     value = {
         "harness_tag": harness_tag,
+        "research_version": RESEARCH_VERSION,
         "autonomy": "checkpoints",
         "radius": "moderate",
         "human_only": ["goal", "data"],  # decision 4: goal and data changes wait for the owner
@@ -383,6 +387,34 @@ def read_harness(project):
 
 def is_project(path):
     return (Path(path) / HARNESS_JSON).is_file()
+
+
+def research_version(harness):
+    """How a project's `research/` is kept: `harness.json.research_version`, 1 when the key is absent (v1.0.x)."""
+    return harness.get("research_version", 1)
+
+
+def old_project_message(tag, version, current=RESEARCH_VERSION, release=TAG):
+    """The one message a big upgrade and every writing verb give for a project at another `research_version`."""
+    tag = tag or "an older tag"
+    release = "this release" if release == TAG else release  # between tags the package's TAG names the last release
+    return ("this project was made with %s, which keeps research/ at research_version %s; %s keeps it at %s and does not "
+            "migrate a project. Two ways on: keep the old tag with wayline upgrade --to %s (it holds every project on the "
+            "shared checkout), or start a new project on %s from this one's materials (wayline init <new path>, then hand "
+            "it the old project's materials)" % (tag, version, release, current, tag, release))
+
+
+def old_project_problem(project):
+    """The refusal for a project whose `research_version` is lower than this release's, or None for a current one.
+
+    Nothing of an old project is migrated (Implementation Decision 17): every verb that writes to it
+    refuses with this message, and reading it (`status`, the dashboard's views) still works.
+    """
+    harness = read_harness(project)
+    version = research_version(harness)
+    if version >= RESEARCH_VERSION:  # a newer project is the pin check's to refuse (`evolve.pin_problem`)
+        return None
+    return old_project_message(harness.get("harness_tag"), version)
 
 
 def find_project(explicit=None):
@@ -445,8 +477,8 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
     if note:
         notes.append(note)
 
-    # .gitignore: the four entries of Implementation Decisions 1, appended once.
-    if _write_gitignore(project):
+    # .gitignore: GITIGNORE_ENTRIES, each added once.
+    if write_gitignore(project):
         mark(".gitignore")
 
     # The project directories that live outside the ledger.
@@ -528,7 +560,7 @@ def _write_claude_block(project, harness_root, harness_tag):
     return True, note
 
 
-def _write_gitignore(project):
+def write_gitignore(project):
     """Add the missing entries of Implementation Decisions 1 under the `# wayline` header.
 
     An entry an owner deleted comes back under the header it belongs to, not at the end of the
@@ -542,8 +574,13 @@ def _write_gitignore(project):
     if not missing:
         return False
     if GITIGNORE_HEADER in present:
-        where = [line.strip() for line in lines].index(GITIGNORE_HEADER) + 1
-        lines[where:where] = missing
+        # Each missing entry goes back beside the one it follows in GITIGNORE_ENTRIES, else under the header.
+        for entry in missing:
+            stripped = [line.strip() for line in lines]
+            earlier = GITIGNORE_ENTRIES[:GITIGNORE_ENTRIES.index(entry)]
+            anchors = [stripped.index(item) for item in earlier if item in stripped]
+            where = (max(anchors) if anchors else stripped.index(GITIGNORE_HEADER)) + 1
+            lines.insert(where, entry)
         text = "".join(line + "\n" for line in lines)
     else:
         text = existing
@@ -835,7 +872,9 @@ def status_view(project, refresh=True):
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
         "window": window_status(events, harness, view, policy),
         "hold": hold_status(project, events, harness, graph, tickets, view),
+        # `GOAL.json` is still read for the conductor's goal, but status shows the objectives' statuses (decision 17).
         "goal": goal_progress(project, events),
+        "objectives": objectives_view(project, problems),
         "resources": resources,
         "events": events[-10:],
         "offset": offset,
@@ -1129,6 +1168,28 @@ def goal_progress(project, events):
     }
 
 
+def objectives_view(project, problems=None):
+    """Each objective's id, question, status, and its goal's metric and target (None for an objective without a measure).
+
+    What `status` shows in place of the latest reading (decision 17): an objective's status is the record's,
+    which code alone writes. An unreadable record is a problem, never a crash.
+    """
+    from wayline.objectives import read_objectives  # the objectives module imports this one
+    try:
+        objectives = read_objectives(project)
+    except (OSError, ValueError) as failure:
+        if problems is not None:
+            problems.append("objectives.json: %s" % failure)
+        return []
+    view = []
+    for objective in objectives:
+        measure = objective.get("measure") if isinstance(objective.get("measure"), dict) else None
+        view.append({"id": objective.get("id"), "text": objective.get("text"), "status": objective.get("status"),
+                     "metric": measure.get("metric") if measure else None, "direction": measure.get("direction") if measure else None,
+                     "target": measure.get("target") if measure else None, "answer": objective.get("answer")})
+    return view
+
+
 # --- rendering --------------------------------------------------------------------------------------
 
 
@@ -1152,7 +1213,12 @@ def render_status(view):
     lines.append(_render_window(view["window"]))
     if view.get("hold"):
         lines.append(view["hold"]["line"])
-    lines.append(_render_goal(view["goal"]))
+    if view.get("objectives"):
+        lines.extend(_render_objectives(view["objectives"]))
+    elif view.get("goal") is not None:
+        lines.append(_render_goal(view["goal"]))  # a project from before objectives, whose GOAL.json is all it has
+    else:
+        lines.append("objectives  none recorded (wayline objective add)")
     if view.get("resources") is not None:
         lines.extend(render_resources(view["resources"]))
     lines.append("")
@@ -1273,6 +1339,19 @@ def render_hold(hold):
         hold["resets_at"] or "unknown", hold["consent"] if hold["stated"] else UNSET_CONSENT, hold["waiting"], hold["fallen_back"])
 
 
+def _render_objectives(objectives):
+    opened = sum(1 for objective in objectives if objective["status"] == "open")
+    lines = ["objectives  %d open of %d" % (opened, len(objectives))]
+    width = max(len(str(objective["status"])) for objective in objectives)
+    for objective in objectives:
+        line = "  %s  %-*s  %s" % (objective["id"], width, objective["status"], _one_line(objective["text"]))
+        if objective["metric"] is not None:
+            target = "with no target" if objective["target"] is None else "to %s" % _number(objective["target"])
+            line += "  (goal: `%s` %s %s)" % (objective["metric"], "down" if objective["direction"] == "down" else "up", target)
+        lines.append(line)
+    return lines
+
+
 def _render_goal(goal):
     if goal is None:
         return "goal     none set"
@@ -1371,7 +1450,9 @@ def set_autonomy(project, autonomy, by="cli"):
     is not to be lowered by a passing remark in the middle of it (BRIEF 6.2); with one running it is
     refused and nothing is written. `harness.json` is written before the event is journaled, so a
     crash between the two leaves a run that starts from the new setting rather than a journal the
-    next `run_started` contradicts. `by` is `cli`, or `dashboard` for its autonomy action.
+    next `run_started` contradicts. `by` is `cli`, or `dashboard` for its autonomy action. A raise to
+    `autonomous` is refused while no objective is open (decision 17), because an autonomous run asks the
+    owner nothing after its setup, and setup cannot end without something to answer.
 
     While a conductor runs, the autonomy it holds is the journal's (`run_started` and the `control`
     events after it), which a hand edit of `harness.json` does not change. A change is measured
@@ -1398,6 +1479,13 @@ def set_autonomy(project, autonomy, by="cli"):
         report = {"from": held[-1], "to": autonomy, "changed": any(level != autonomy for level in held), "conductor": holder}
         if not report["changed"]:
             return report
+        if autonomy == "autonomous":
+            from wayline.objectives import open_objectives  # the objectives module imports this one
+            if not open_objectives(project):
+                # Setup cannot end without an objective (decision 17): an autonomous run asks nothing after it.
+                raise ProjectError(
+                    "autonomy is raised to autonomous only once an objective is open, and no objective is open on %s; "
+                    "record what the project should answer first with wayline objective add \"<question>\"" % project)
         if holder is not None and any(levels.index(autonomy) < levels.index(level) for level in held):
             raise ProjectError(
                 "autonomy is lowered only while no conductor is running, and the conductor (pid %s) is running on %s at %s; "

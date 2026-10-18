@@ -1,6 +1,8 @@
 # Changelog
 
-One entry per tag. `wayline upgrade` prints the entries between two tags.
+One entry per tag. `wayline upgrade` prints the entries between two tags. A release that raises `research_version`
+(`wayline.RESEARCH_VERSION`, how `research/` is kept) opens its entry with a **Breaking** line: `wayline upgrade` to it
+refuses a project made before it, which keeps its old tag or starts again on the new release.
 
 ## v1.0.1 (2026-09-28)
 
@@ -25,6 +27,23 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   with no diff.
 
 ## Unreleased
+
+**Breaking:** `research_version` 2 (Implementation Decision 17). A project made on v1.0.x is refused, never migrated:
+`wayline upgrade` to this release changes nothing and names the two ways on (`wayline upgrade --to v1.0.1`, or a new
+project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
+lists it read-only, marked with its tag.
+
+- `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
+  (2). A small upgrade, within one `research_version`, works as before, both ways.
+
+- The guard and gitignore defects found while charting (ticket 73; Implementation Decisions 1, 4, 17). The
+  touch-set hook denies every write under `research/`, whatever the touch set names. A gate's scope-down and a
+  ticket admitted from a proposal are checked by the planner's touch-set rule (`tickets.touch_problem`): a
+  scope-down naming `research/` raises `GateError` with the reason, and the kill argument and the paper's read now
+  file theirs with no touch set; a proposal naming it is parked with reason `touches`. The command guard denies
+  `gh repo create` and every other `gh` write (any group's verb but `list`, `view`, `status`, `diff`, `checks`,
+  `watch`, `download`; `gh api` with a write method or a body), and still allows the reads. `absorb --code` writes
+  `research/refs/*/code/` into the project's `.gitignore` beside `source/`, so a wave commit records no gitlink.
 
 - A paper's figures tell the writer, not the ticket graph, what the text should say (ticket 66). A figure `wayline
   paper` asked for (`figure_request.ticket: "paper"`) files no proposal and opens no `writing` ticket: its
@@ -78,6 +97,24 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   (`--json` the file), and `wayline tools run <name> -- <args>` runs a recorded tool by its absolute path and
   environment for a session's short calls, refusing one not recorded. A record of the first version reads as one
   with no entries.
+
+- Objectives (ticket 76; Implementation Decision 17). A project holds objectives, questions the research answers,
+  in `research/objectives.json`, written only by code through the ledger (schema `objectives`) and rendered as
+  `research/OBJECTIVES.md` in id order with each one's status, measure, answer, and evidence. Ids run O1 onward and
+  are never reused: an objective is never deleted, only parked, answered, dropped, or reframed (`reframed_as` names
+  its successor). An objective with a measure (`metric`, `direction`, `target`, `held_out_split`, `eval_command`,
+  `baseline`, `dataset_or_split`, `min_seeds`) is a goal, and it has at most one measure; a `target` of null means
+  keep improving, never reached. `wayline objective add "<question>"` records an open objective; with `--measure
+  <file> --sample <artifact>` it records a goal only once the measure's `eval_command` printed the metric on the
+  sample, the check intake ran on `GOAL.json`, moved to `wayline/objectives.py`. A measure whose command is not
+  ready leaves an objective without a measure, and the verb says why; a measure not in the shape, or two given for
+  one objective, is refused and nothing is recorded. Each change journals the new `objective`
+  event, with `by` `owner`, `decider`, or `code`. `wayline switch --autonomy autonomous` (and the dashboard's
+  autonomy action) refuses while no objective is open and names `wayline objective add`, so setup cannot end without
+  one. `wayline status` and the dashboard's overview show each objective's status in place of the goal's latest
+  reading; a project with no objectives still shows its `GOAL.json` goal. This is the expand step: every reader of
+  `GOAL.json` (keep-if-better, position, specify, plan, the decider, the report) still reads it, and tickets 80, 81,
+  and 87 move them to objectives.
 
 ## v1.0.0 (2026-09-27)
 

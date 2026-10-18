@@ -731,7 +731,8 @@ def _read_ticket(project, book, read, paths):
         "",
     ] + ["- `%s`" % item for item in paths])
     return gates.file_writing_ticket(
-        project, book, title=READ_TITLE, touches=[PAPER_PATH], inputs=list(paths),
+        # No touch set: the paper lives under research/, which only code writes (ticket 73).
+        project, book, title=READ_TITLE, touches=[], inputs=list(paths),
         quality=["Does every point the independent read raised now have the evidence it asked for or a claim scoped down?"],
         origin=READ_ORIGIN, demo="`wayline paper` drafts again and the independent read passes.", body=body,
     )
