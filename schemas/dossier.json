@@ -68,7 +68,7 @@
         "required": ["answer", "ts"],
         "additionalProperties": false,
         "properties": {
-          "answer": {"type": "string", "enum": ["doi", "title", "pdf", "leave"]},
+          "answer": {"type": "string", "enum": ["doi", "arxiv", "title", "pdf", "leave"]},
           "value": {"type": ["string", "null"]},
           "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"}
         }

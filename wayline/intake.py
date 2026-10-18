@@ -314,6 +314,10 @@ def gather(spec, project, base):
         path = _as_path(identifier, base)
         if path is not None and path.is_file() and path.suffix.lower() == ".pdf":
             _take_pdf(gathered, path, project, note=note)
+        elif path is not None and path.exists():
+            raise IntakeError("%s is a file, not a reference: give it as a material, or give the reference's DOI or title" % identifier)
+        elif identifier.lower().endswith(".pdf") and _looks_like_path(identifier):
+            raise IntakeError("%s does not exist; a path is never looked up as a title" % identifier)
         elif identifier:
             gathered.references.append(_item(identifier, note))
     for pointer in spec.get("data", []):

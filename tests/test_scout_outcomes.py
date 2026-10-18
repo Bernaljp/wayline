@@ -12,7 +12,7 @@ from pathlib import Path
 
 from tests.scout_net import DOI, EMAIL, EMPTY_EUROPEPMC, NOT_FOUND, NOW, Net, crossref_work, recorded
 from wayline.fetch import AnswerCache, DirectoryBackend, FetchError, Fetcher, recording_fetcher
-from wayline.scout import FAILED, FOUND, NO_MATCH, NO_SUCH_WORK, Scout, outcome, parse_reference
+from wayline.scout import FAILED, FOUND, NO_MATCH, NO_SUCH_WORK, NOT_LOOKED_UP, Scout, outcome, parse_reference
 
 CROSSREF_WORK = crossref_work()[1]
 EMPTY_EUROPEPMC = EMPTY_EUROPEPMC[1]
@@ -117,6 +117,16 @@ class AbsPageTest(unittest.TestCase):
     def test_a_work_found_by_its_abs_page_keeps_the_flag_so_the_api_fills_in_the_rest(self):
         self.assertEqual(self.record["retry"]["service"], "arxiv")
         self.assertIn("503", self.record["retry"]["failure"])
+
+    def test_the_arxiv_doi_names_the_work_not_the_version(self):
+        scout, _ = scout_over({"export.arxiv.org": (503, "down"), "arxiv.org/abs/": (200, ABS_PAGE)})
+        record = scout.resolve(parse_reference("arXiv:%sv3" % ARXIV_ID))
+        self.assertEqual(record["identifiers"]["doi"], "10.48550/arXiv." + ARXIV_ID)
+
+    def test_a_url_nothing_can_look_up_is_not_looked_up_rather_than_no_such_work(self):
+        scout, net = scout_over({})
+        record = scout.resolve(parse_reference("https://openreview.net/forum?id=abc"))
+        self.assertEqual((outcome(record), net.asked), (NOT_LOOKED_UP, []))
 
     def test_an_api_that_answers_no_match_sends_nobody_to_the_abs_page(self):
         scout, net = scout_over({"export.arxiv.org": (200, EMPTY_FEED)})

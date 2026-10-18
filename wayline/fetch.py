@@ -26,6 +26,7 @@ responses recorded against the live services.
 import base64
 import hashlib
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -354,7 +355,7 @@ def _write_recording(path, request, response):
         },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
+    temporary = path.with_name("%s.%d.%d.tmp" % (path.name, os.getpid(), threading.get_ident()))  # the tick and absorb may write one hash at once
     temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
     return path

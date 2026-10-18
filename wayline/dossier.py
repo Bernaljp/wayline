@@ -205,6 +205,8 @@ LOOKUP_FIELDS = ("existence", "resolved_by", "identifiers", "metadata", "abstrac
 
 NEW, CHANGED, SAME, KEPT, DISAGREES = "new", "existence changed", "same work", "kept", "another work"
 WAITING, GAVE_UP = "waiting to retry", "gave up"
+# Where a `retry` flag stands (`retry_state`): asked again now, asked within the day, or past the give-up.
+DUE, NOT_YET, GIVE_UP_NOW = "due", "waiting", "give up"
 DAY_S = 86400
 GIVE_UP_DAYS = 7  # the fallback when a policy carries no `scout.give_up_days`
 _VERSION = re.compile(r"v\d+$")
@@ -278,11 +280,11 @@ def retry_state(dossier, now, give_up_days=GIVE_UP_DAYS):
         return GAVE_UP
     first = pacing.epoch(flag.get("since") or flag.get("date"))
     if first is not None and now - first >= give_up_days * DAY_S:
-        return "give up"
+        return GIVE_UP_NOW
     last = pacing.epoch(flag.get("date"))
     if last is not None and now - last < DAY_S:
-        return "waiting"
-    return "due"
+        return NOT_YET
+    return DUE
 
 
 def give_up(ledger, dossier, now):
@@ -422,9 +424,10 @@ def _intake_reference(line, nested):
         else:
             notes.append(text)
     alone = _PDF_ITEM.match(_LIST_MARKER.sub("", line).strip())
-    if alone is not None:
-        path = alone.group(1)
-        return Reference("file", path, line, note=" ".join(notes) or None, pdf=path)
+    bare = _LIST_MARKER.sub("", line).strip().strip("`").strip()
+    if alone is not None or (bare.lower().endswith(".pdf") and " " not in bare and "://" not in bare):
+        path = alone.group(1) if alone is not None else bare
+        return Reference("file", path, line, note=" ".join(notes) or None, pdf=path)  # a path is never a title query
     try:
         reference = parse_reference(line)
     except ValueError:
@@ -1910,6 +1913,7 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
 
     known = _known_slugs(ledger)
     taken = set(known.values())
+    looked_up = set()
     days = _give_up_days(project)
     index = filed_index(ledger)
     report = {"project": str(project), "references": len(references), "written": [], "verified": 0, "unresolved": 0, "problems": [], "notes": [],
@@ -1931,15 +1935,16 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
             continue
         known[key] = dossier["slug"]
         taken.add(dossier["slug"])
+        looked_up.add(dossier["slug"])
         try:
-            dossier = _keep_owners(ledger, project, dossier, reference, timestamp(clock()))
+            dossier = _keep_note_and_pdf(ledger, project, dossier, reference, timestamp(clock()))
         except (ValidationError, ValueError, OSError) as failure:
             report["problems"].append({"reference": reference.raw, "problem": str(failure)})
-        _tally(report, dossier, change, reference.raw)
-    others = retry_flagged(project, fetcher=fetcher, email=email, ledger=ledger, clock=clock, skip=set(known.values()), rebuild=False)
+        report["written"].append(_written(dossier, change, reference.raw))
+    others = retry_flagged(project, fetcher=fetcher, email=email, ledger=ledger, clock=clock, skip=looked_up, rebuild=False)
     for name in ("written", "problems", "disagreements"):
         report[name].extend(others[name])
-    for item in others["written"]:
+    for item in report["written"]:
         report["verified" if item["existence"] != UNRESOLVED else "unresolved"] += 1
     report["joined"] = join_duplicates(ledger, timestamp(clock()))
     rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
@@ -1965,22 +1970,22 @@ def retry_flagged(project, fetcher=None, email=None, ledger=None, clock=None, sk
         if slug in skip:
             continue
         dossier = _existing(ledger, slug)
-        if dossier is not None and retry_state(dossier, clock(), days) in ("due", "give up"):
+        if dossier is not None and retry_state(dossier, clock(), days) in (DUE, GIVE_UP_NOW):
             flagged.append(dossier)
     if not flagged:
         return report
     fetcher = fetcher if fetcher is not None else scout_fetcher(project, email=email)
     scout = Scout(fetcher, email, clock=clock)
+    index = filed_index(ledger)
     for existing in flagged:
         query = existing["query"]
         reference = Reference(query["kind"], query["value"], query.get("raw"))
         try:
-            dossier, change = _look_up(ledger, scout, reference, existing, set(), clock, days, report, filed_index(ledger))
+            dossier, change = _look_up(ledger, scout, reference, existing, set(), clock, days, report, index)
         except (ValidationError, ValueError, OSError) as failure:
             report["problems"].append({"reference": reference.raw, "problem": str(failure)})
             continue
-        report["written"].append({"slug": dossier["slug"], "existence": dossier["existence"], "resolved_by": dossier["resolved_by"],
-                                  "reference": reference.raw, "change": change})
+        report["written"].append(_written(dossier, change, reference.raw))
     if rebuild:
         rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
     return report
@@ -1995,9 +2000,9 @@ def _look_up(ledger, scout, reference, existing, taken, clock, days, report, ind
     """
     now = clock()
     state = retry_state(existing, now, days) if existing else None
-    if state == "waiting":
+    if state == NOT_YET:
         return existing, WAITING
-    if state == "give up":
+    if state == GIVE_UP_NOW:
         return give_up(ledger, existing, timestamp(now)), GAVE_UP
     if state == GAVE_UP:
         return existing, GAVE_UP
@@ -2008,7 +2013,8 @@ def _look_up(ledger, scout, reference, existing, taken, clock, days, report, ind
         existing = _existing(ledger, filed)
     slug = existing["slug"] if existing else slug_for(resolved, taken)
     dossier, change = file_lookup(ledger, slug, existing, resolved, timestamp(now))
-    dossier = _named(ledger, dossier, reference)
+    if change in (NEW, SAME, CHANGED):  # a dossier a lookup left as it was keeps its names as they were too
+        dossier = _with_name(ledger, dossier, reference)
     if change == DISAGREES:
         report["disagreements"].append(_disagreement(dossier, resolved))
     if index is not None and dossier["existence"] == VERIFIED:
@@ -2021,14 +2027,17 @@ def _same_name(one, other):
     return (one.get("kind"), str(one.get("value", "")).lower()) == (other.get("kind"), str(other.get("value", "")).lower())
 
 
-def _named(ledger, dossier, reference):
-    """The dossier with `reference` among its names (the query it was filed under always is), written when that is new."""
+def _with_name(ledger, dossier, reference):
+    """The dossier with `reference` among its names, written when that changed its names.
+
+    A dossier from before names were recorded starts them from the query it was filed under.
+    """
     names = list(dossier.get("names") or [dict(dossier["query"])])
     name = reference.as_dict()
-    if any(_same_name(known, name) for known in names) and dossier.get("names"):
-        return dossier
     if not any(_same_name(known, name) for known in names):
         names.append(name)
+    if names == dossier.get("names"):
+        return dossier
     dossier = dict(dossier, names=names)
     _write_dossier(ledger, dossier)
     return dossier
@@ -2093,7 +2102,7 @@ def join_duplicates(ledger, now=None):
     return joins
 
 
-def _keep_owners(ledger, project, dossier, reference, now, by="intake"):
+def _keep_note_and_pdf(ledger, project, dossier, reference, now, by="intake"):
     """What the owner wrote with a reference, kept on its dossier: the note (never read by the scout) and the PDF as its source.
 
     The PDF is copied under `refs/<slug>/source/`, which `init` gitignores, so the owner's copy of
@@ -2166,20 +2175,24 @@ def hand_over(project, slug, answer, fetcher=None, email=None, clock=None, read_
     pdf = _as_pdf(project, text)
     if pdf is not None:
         keep_source_pdf(ledger, project, slug, str(pdf))
-        details = (read_pdf or pdf_details)(pdf) or {}
-        record = scout.resolve(Reference("title", details["title"])) if details.get("title") else None
-        if record is None or record["existence"] != VERIFIED:
-            record = _owners_record(existing, details, record)
-        dossier, change = file_lookup(ledger, slug, existing, record, now)
         form, value = "pdf", pdf.name
+        if existing.get("existence") == VERIFIED:
+            dossier, change = existing, KEPT  # a found work gains its source; a lookup never takes back what it knows
+        else:
+            details = (read_pdf or pdf_details)(pdf) or {}
+            record = scout.resolve(Reference("title", details["title"])) if details.get("title") else None
+            if record is None or record["existence"] != VERIFIED:
+                record = _owners_record(existing, details, record)
+            dossier, change = file_lookup(ledger, slug, existing, record, now)
     else:
         reference = parse_reference(text)
         if reference.kind not in ("doi", "arxiv", "title"):
             raise DossierError("%s is a URL, which no service looks up; hand over its DOI, its exact title, or the PDF" % text)
         record = scout.resolve(reference)
         dossier, change = file_lookup(ledger, slug, existing, record, now)
-        dossier = _named(ledger, dossier, reference)
-        form, value = ("title" if reference.kind == "title" else "doi"), reference.value
+        if change in (NEW, SAME, CHANGED):
+            dossier = _with_name(ledger, dossier, reference)
+        form, value = reference.kind, reference.value
     dossier = _handed(ledger, dossier, form, value, now)
     if dossier["existence"] == VERIFIED:
         join_duplicates(ledger, now)
@@ -2203,9 +2216,13 @@ def _as_pdf(project, text):
 
 
 def _owners_record(existing, details, tried):
-    """The lookup a PDF no service knows comes to: found by the owner, with what the PDF itself says."""
+    """The lookup a PDF no service knows comes to: found by the owner, with what the PDF itself says.
+
+    When the title lookup failed rather than matched nothing, its `retry` flag stays, so the
+    services fill the record in once they answer.
+    """
     metadata = {key: details[key] for key in ("title", "authors", "year") if details.get(key)}
-    return {
+    owners = {
         "query": dict(existing["query"]),
         "existence": VERIFIED,
         "resolved_by": "owner",
@@ -2215,6 +2232,9 @@ def _owners_record(existing, details, tried):
         "open_access": {},
         "attempts": list((tried or {}).get("attempts") or []),
     }
+    if (tried or {}).get("retry"):
+        owners["retry"] = dict(tried["retry"])
+    return owners
 
 
 def pdf_details(path):
@@ -2266,10 +2286,9 @@ def reference_command(args):
     return 0
 
 
-def _tally(report, dossier, change, raw):
-    report["written"].append({"slug": dossier["slug"], "existence": dossier["existence"], "resolved_by": dossier["resolved_by"],
-                              "reference": raw, "change": change})
-    report["verified" if dossier["existence"] != UNRESOLVED else "unresolved"] += 1
+def _written(dossier, change, raw):
+    """One row of a report's `written`: the dossier a reference is filed under, and what the lookup did to it."""
+    return {"slug": dossier["slug"], "existence": dossier["existence"], "resolved_by": dossier["resolved_by"], "reference": raw, "change": change}
 
 
 def _give_up_days(project):

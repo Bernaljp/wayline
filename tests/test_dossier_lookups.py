@@ -308,6 +308,35 @@ class HandOverTest(LookupTestCase):
         self.assertEqual(read_dossier(self.ledger, self.slug)["handed_over"][0]["answer"], "leave")
 
 
+class ReviewRegressionTest(LookupTestCase):
+    def test_the_next_absorb_retries_a_flagged_reference_intake_no_longer_names(self):
+        self.absorb(doi_answers(DOWN, rest=DOWN))
+        self.intake("None.\n")
+        _, net = self.absorb(doi_answers(crossref_work()), now=NOW + DAY)
+        self.assertTrue(net.asked)
+        self.assertEqual(read_dossier(self.ledger, self.only_slug())["existence"], VERIFIED)
+
+    def test_a_pdf_handed_over_for_a_found_work_becomes_its_source_and_takes_nothing_back(self):
+        self.absorb(doi_answers(crossref_work()))
+        slug = self.only_slug()
+        before = read_dossier(self.ledger, slug)
+        pdf = self.temp / "copy.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+        fetcher, _ = net_fetcher({})
+        hand_over(self.project, slug, str(pdf), fetcher=fetcher, email=EMAIL, clock=lambda: NOW, read_pdf=lambda path: {})
+        dossier = read_dossier(self.ledger, slug)
+        for name in ("metadata", "abstract", "resolved_by", "identifiers"):
+            self.assertEqual(dossier[name], before[name], name)
+        self.assertTrue((self.project / "research" / "refs" / slug / "source" / "copy.pdf").is_file())
+
+    def test_an_arxiv_id_handed_over_is_recorded_as_one(self):
+        self.intake("- The lost paper\n")
+        self.absorb({"api.crossref.org": DOWN, "api.openalex.org": DOWN, "www.ebi.ac.uk": DOWN})
+        fetcher, _ = net_fetcher({"export.arxiv.org": (200, '<feed xmlns="http://www.w3.org/2005/Atom"></feed>')})
+        result = hand_over(self.project, self.only_slug(), "arXiv:2304.02443", fetcher=fetcher, email=EMAIL, clock=lambda: NOW)
+        self.assertEqual(result["dossier"]["handed_over"][0]["answer"], "arxiv")
+
+
 class TickRetryTest(TickCase):
     """The tick retries the flagged references while a run is live, before it defers to a conductor that is waving."""
 

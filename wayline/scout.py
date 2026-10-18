@@ -47,7 +47,7 @@ from wayline.fetch import FetchError, canonical_url
 __all__ = [
     "Reference", "ScoutError", "Scout", "parse_reference", "parse_references", "resolve",
     "VERIFIED", "UNRESOLVED", "SOURCES", "TITLE_SIMILARITY", "normalize_title", "title_similarity",
-    "FOUND", "NO_MATCH", "FAILED", "SKIPPED", "OUTCOMES", "NO_SUCH_WORK", "outcome", "timestamp",
+    "FOUND", "NO_MATCH", "FAILED", "SKIPPED", "OUTCOMES", "NO_SUCH_WORK", "NOT_LOOKED_UP", "outcome", "timestamp",
 ]
 
 VERIFIED = "verified"
@@ -66,6 +66,7 @@ OUTCOMES = (FOUND, NO_MATCH, FAILED, SKIPPED)
 # What a whole lookup came to when the work was not found and every service asked answered no match:
 # the one case where the scout may say the work is not there, rather than that it could not tell.
 NO_SUCH_WORK = "no such work"
+NOT_LOOKED_UP = "not looked up"
 
 # Statuses that are a service's answer that it has no such record, rather than a failure to answer.
 _NO_RECORD = (404, 410)
@@ -218,6 +219,7 @@ class Scout:
         self.fetcher = fetcher
         self.email = email if email is not None else getattr(fetcher, "email", None)
         self.clock = clock or time.time
+        self._replay = False  # per lookup: whether the scout's cache may answer (a work already found)
 
     # --- the entry point ---
 
@@ -445,7 +447,7 @@ class Scout:
         timeout, is a failure that says nothing about the work.
         """
         try:
-            answer = self.fetcher.fetch(url, replay=getattr(self, "_replay", False))
+            answer = self.fetcher.fetch(url, replay=self._replay)
         except FetchError as failure:
             record["attempts"].append(_attempt(source, url, None, FAILED, str(failure)))
             return None
@@ -470,15 +472,18 @@ class Scout:
 
 
 def outcome(record):
-    """What a whole lookup came to: `found`, `no such work` (every service asked answered no match), or `failed`.
+    """What a whole lookup came to: `found`, `no such work` (every service asked answered no match), `failed`, or `not looked up`.
 
-    A lookup that found nothing and asked nobody (a bare URL) is `no such work` too: there was no
-    service to fail, and nothing will answer it later.
+    `not looked up` is a reference no service was asked about at all (a bare URL, a PDF with no
+    identifier): it is not that the work is not there, it is that nothing can look it up.
     """
+    attempts = record.get("attempts") or []
     if record.get("existence") == VERIFIED:
         return FOUND
-    if any(attempt.get("outcome") == FAILED for attempt in record.get("attempts") or []):
+    if any(attempt.get("outcome") == FAILED for attempt in attempts):
         return FAILED
+    if not any(attempt.get("outcome") in (FOUND, NO_MATCH) for attempt in attempts):
+        return NOT_LOOKED_UP
     return NO_SUCH_WORK
 
 
@@ -795,7 +800,7 @@ def _meta_tags(text):
 def _take_abs_page(tags, identifier, record):
     identifiers, metadata = record["identifiers"], record["metadata"]
     _set(identifiers, "arxiv_id", tags.get("citation_arxiv_id") or identifier)
-    _set(identifiers, "doi", ARXIV_DOI % identifier)
+    _set(identifiers, "doi", ARXIV_DOI % re.sub(r"v\d+$", "", identifier))  # an arXiv DOI names the work, never a version
     _set(identifiers, "url", ARXIV_ABS % identifier)
     _set(metadata, "title", _clean(tags.get("citation_title")))
     _set(metadata, "authors", [_unflip(author) for author in tags.get("citation_author") or []])

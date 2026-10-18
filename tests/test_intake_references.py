@@ -79,6 +79,19 @@ class IntakeReferencesTest(ProjectTestCase):
         self.assertIn("research/refs/*/source/", (self.project / ".gitignore").read_text(encoding="utf-8"))
         self.assertEqual(report["problems"], [])
 
+    def test_a_path_is_never_taken_as_a_reference_to_look_up(self):
+        from wayline.intake import IntakeError
+
+        other = self.temp / "related.txt"
+        other.write_text("notes\n", encoding="utf-8")
+        for given in (str(other), "missing/paper.pdf"):
+            with self.subTest(given=given):
+                with self.assertRaises(IntakeError):
+                    self.take([given])
+        references = intake_references("## References\n\n- papers/model.pdf\n- `drafts/old.pdf`\n")
+        self.assertEqual([(reference.kind, reference.value) for reference in references],
+                         [("file", "papers/model.pdf"), ("file", "drafts/old.pdf")])
+
     def test_a_pdf_whose_doi_intake_read_is_looked_up_by_the_doi_and_kept_as_its_source(self):
         pdf = self.temp / "paper.pdf"
         pdf.write_bytes(DOI_PDF)

@@ -29,7 +29,8 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
 - A passing outage no longer leaves a project's references broken (ticket 71; Implementation Decision 17). Every
   lookup attempt the scout makes records `found`, `no match` (the service answered and nothing matched), or
   `failed` (an error status, a timeout, or an unreadable answer), in place of v1.0's `hit`, `miss`, and `error`;
-  `scout.outcome` says `no such work` only when every service asked answered no match. A failed attempt on a work
+  `scout.outcome` says `no such work` only when every service asked answered no match (`not looked up` when nothing
+  could be asked, a bare URL or a PDF with no identifier). A failed attempt on a work
   not found sets the dossier's `retry` flag (service, failure, date, and the date it was first set). When arXiv's
   API fails, the scout reads the `arxiv.org/abs` page's meta tags as an attempt of its own and records the arXiv
   DOI `10.48550/arXiv.<id>`; a work found that way keeps the flag, so the API fills in the rest later. The scout's
@@ -49,7 +50,7 @@ One entry per tag. `wayline upgrade` prints the entries between two tags.
   pointer (`joined_into`) whose notes move. Intake records references as `{identifier, note}` and never looks them
   up; `INTAKE.md` nests the note (and a PDF as `PDF: <path>`) under each top-level item, and absorb reads only
   top-level items, so a nested remark is never a query and a PDF with no identifier becomes the reference's source
-  with nothing sent to any service. The owner's hand-over is the new verb `wayline reference <slug> <doi|title|pdf|"leave
+  with nothing sent to any service. The owner's hand-over is the new verb `wayline reference <slug> <doi|title|file.pdf|"leave
   it">` (`dossier.hand_over`, callable in-process): a DOI or an exact title goes back to the scout, a PDF becomes the
   gitignored source and its title is tried, failing which the dossier is found with `resolved_by: owner` from the
   PDF's details, and "leave it" settles the item until the paper order. The `dossier` schema gains `retry`,

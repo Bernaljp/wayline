@@ -481,7 +481,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | `run [--resume] [--detach] [--simulate-limit [cheap:][fable:]s] [--simulate-failure id]` | the conductor; `--detach` launches it as the transient unit `wayline-conductor` |
   | `pause`, `resume`, `stop [--drain]`, `cancel <id>`, `rerun <id>` | journal `control` events the conductor applies at its next wave |
   | `status`, `answer <id> "<text>"`, `switch <path>`, `switch --fallback auto|ask|wait`, `switch --ladder auto|ask`, `feedback "<text>"` | views and answers that work without the dashboard |
-| `reference <slug> <doi|title|pdf|"leave it">` | the owner's hand-over of an unresolved reference (decision 17, ticket 71): a DOI or an exact title back to the scout, a PDF as its gitignored source (the scout tries its title, else the dossier is found with `resolved_by: owner`), or "leave it" until the paper order; recorded without asking |
+  | `reference <slug> <doi|title|file.pdf|"leave it">` | the owner's hand-over of an unresolved reference (decision 17, ticket 71): a DOI or an exact title back to the scout, a PDF as its gitignored source (the scout tries its title, else the dossier is found with `resolved_by: owner`), or "leave it" until the paper order; recorded without asking |
   | `serve [--bind 0.0.0.0] [--port n]`, `tick` | the dashboard server; the recurrent job |
   | `accept`, `consult <slug> "<question>"` | called by workers from inside a worktree |
   | `evolve ["<text>"]`, `promote skill|role|policy <name>`, `upgrade [--to <tag>]`, `fixture record|run` | the evolve loop |
