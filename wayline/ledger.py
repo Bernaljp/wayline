@@ -231,6 +231,7 @@ K_ITEM = "item"
 K_MARK = "mark"
 K_NOTE = "note"
 K_REMOTE = "remote"  # `code_pushed`: the code repository's `owner/name` on GitHub
+K_MAIN = "main"  # `code_pushed`: the commit of `main` the split was cut from, where the next split's walk starts
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -290,7 +291,7 @@ EVENTS = {
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
     OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY),
     MARKED: (K_BATCH, K_ITEM, K_MARK, K_NOTE, K_BY),
-    CODE_PUSHED: (K_COMMIT, K_REMOTE),
+    CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.

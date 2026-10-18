@@ -22,7 +22,7 @@ class VocabularyTest(unittest.TestCase):
         self.assertEqual(self.enums[("pacing", "fable_action")], ("normal", "cheap_only", "stop"))
         self.assertEqual(self.events["ticket_launched"][-2:], ("fallback_from", "commit"))
         self.assertEqual(self.events["job_launched"][-1], "commit")
-        self.assertEqual(self.events["code_pushed"], ("commit", "remote"))
+        self.assertEqual(self.events["code_pushed"], ("commit", "remote", "main"))
         self.assertEqual(self.events["verdict"][-2:], ("fallback_from", "model_ran"))
         self.assertEqual(self.events["ticket_result"][-1], "model_ran")
         # A launch and a verdict name the rung they fell back from (`r7 fable high`, decision 16), so neither enumerates a value.

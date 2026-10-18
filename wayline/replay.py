@@ -338,9 +338,10 @@ class View:
     # When the last `stall` that asked for a replan was journaled: the replan it owes, until a re-cut is written after it
     # or its run ends (a later run starts its own count).
     replan_at: Optional[str] = None
-    # The commit of the last `code_pushed`: the code repository's split as code last pushed it (decision 17, ticket 85),
-    # which the next wave's push is measured against, so a restart pushes nothing a run before it pushed.
-    code_pushed: Optional[str] = None
+    # The last `code_pushed` as `{commit, main}`: the code repository's split as code last pushed it and the commit of
+    # `main` it was cut from (decision 17, ticket 85), which the next wave's push is measured against and its split
+    # walks on from, so a restart pushes nothing a run before it pushed.
+    code_pushed: Optional[dict] = None
 
     def apply(self, event):
         """Fold one journal record into the view; returns the view."""
@@ -436,7 +437,7 @@ class View:
         elif name in JOB_STATUS_AFTER:
             self._job(name, payload, event)
         elif name == CODE_PUSHED and payload.get("commit"):
-            self.code_pushed = payload["commit"]
+            self.code_pushed = {"commit": payload["commit"], "main": payload.get("main")}
         return self
 
     @staticmethod

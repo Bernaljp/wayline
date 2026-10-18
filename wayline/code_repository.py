@@ -39,6 +39,7 @@ from wayline.tools import ToolsError, failure_line, run_recorded, run_tool
 __all__ = [
     "CODE", "CLONES", "SHAPES", "VISIBILITIES", "HOWS", "CodeRepositoryError", "record", "absorb_clone", "inherited_license",
     "split", "check_answer", "ANSWER_FIELDS", "settle", "push", "push_if_changed", "make_public", "main_commit",
+    "head_commit", "absorbed_clone", "CodePushRejected", "last_push",
 ]
 
 CODE = "code"
@@ -95,14 +96,30 @@ def _identity(run, project):
 
 
 def main_commit(project, run=run_tool):
-    """The commit `main` is at, or None when the project has no repository or no `main`: what a launch records.
+    """The commit `main` is at, or None when the project has no repository or no `main`.
 
     A project that only lies inside another repository has none of its own, and is not given that one's `main`.
     """
     if not (Path(project) / ".git").exists():
         return None
-    done =_git(run, project, "rev-parse", "--verify", "--quiet", "refs/heads/" + MAIN, ok=None)
-    return _out(done) or None if done.returncode == 0 else None
+    done = _git(run, project, "rev-parse", "--verify", "--quiet", "refs/heads/" + MAIN, ok=None)
+    return (_out(done) or None) if done.returncode == 0 else None
+
+
+def head_commit(path, within=None, run=run_tool):
+    """The commit checked out where `path` lies, which is what a launch records (decision 17); None outside a repository.
+
+    A ticket's worktree may be on a `ticket/<id>` an earlier attempt left on an older `main`, so the commit it
+    runs at is its own HEAD, not `main`'s tip. With `within`, a repository whose root is not under it (one the
+    path merely lies inside) gives None.
+    """
+    done = _git(run, path, "rev-parse", "--show-toplevel", "HEAD", ok=None)
+    lines = _out(done).splitlines()
+    if done.returncode != 0 or len(lines) != 2:
+        return None
+    if within is not None and not Path(lines[0]).resolve().is_relative_to(Path(within).resolve()):
+        return None
+    return lines[1]
 
 
 # --- the record in harness.json ---------------------------------------------------------------------------
@@ -115,23 +132,38 @@ def record(project):
     return dict(read_harness(project).get(KEY) or {})
 
 
+def _merged(project, value):
+    """`harness.json` with `value` merged into `code_repository`, checked against its schema; nothing is written."""
+    from wayline.project import HARNESS_JSON, read_harness
+
+    harness = read_harness(project)
+    harness[KEY] = dict(harness.get(KEY) or {}, **value)
+    try:
+        check(harness, load_schema("harness"), name=HARNESS_JSON)
+    except ValidationError as failure:
+        raise CodeRepositoryError(str(failure)) from None
+    return harness
+
+
 def _write_record(project, value):
     """Merge `value` into `code_repository` and write `harness.json` checked against its schema, under the ledger's lock."""
-    from wayline.project import HARNESS_JSON, read_harness
+    from wayline.project import HARNESS_JSON
 
     project = Path(project)
     with Ledger(project).lock():
-        harness = read_harness(project)
-        harness[KEY] = dict(harness.get(KEY) or {}, **value)
-        try:
-            check(harness, load_schema("harness"), name=HARNESS_JSON)
-        except ValidationError as failure:
-            raise CodeRepositoryError(str(failure)) from None
+        harness = _merged(project, value)
         atomic_write(project / HARNESS_JSON, json.dumps(harness, ensure_ascii=False, indent=2) + "\n")
     return harness[KEY]
 
 
 # --- intake's absorption ------------------------------------------------------------------------------------
+
+
+def absorbed_clone(project, clone):
+    """The `upstream` record when `clone` is the clone intake already absorbed, where it is or where the owner put it; else None."""
+    upstream = record(project).get("upstream") or {}
+    clone = str(Path(clone).expanduser().resolve())
+    return upstream if upstream and clone in (upstream.get("clone"), upstream.get("moved_from")) else None
 
 
 def absorb_clone(project, clone, run=run_tool):
@@ -143,9 +175,20 @@ def absorb_clone(project, clone, run=run_tool):
     `.gitignore` does not ignore) follow as the next commit, named as such. A clone that lay inside the
     project is moved under `.clones/` first, which is gitignored, and the empty gitlink a wave commit
     recorded for it is removed in a commit of its own. The upstream remote, the commit, and the inherited
-    license are recorded in `harness.json`. Absorbing the same clone at the same commit again changes nothing.
+    license are recorded in `harness.json`, checked before `main` moves.
+
+    The clone already absorbed, named where it is or where the owner put it, is not absorbed again,
+    whatever it has done since: `code/` is where the work goes on, and its record is handed back.
+    The project itself, and a repository that encloses it, are refused.
     """
     project, clone = Path(project).resolve(), Path(clone).expanduser().resolve()
+    done = absorbed_clone(project, clone)
+    if done is not None:
+        return done
+    if clone == project:
+        raise CodeRepositoryError("%s is the project itself; intake absorbs the project's own clone, a repository of its own" % clone)
+    if project.is_relative_to(clone):
+        raise CodeRepositoryError("%s encloses the project %s; absorbing it would pour the project into its own code/" % (clone, project))
     if not (clone / ".git").exists():
         raise CodeRepositoryError("%s is not a git repository, so it has no history to absorb into code/" % clone)
     commit = _out(_git(run, clone, "rev-parse", "--verify", "--quiet", "HEAD^{commit}", ok=None))
@@ -153,9 +196,6 @@ def absorb_clone(project, clone, run=run_tool):
         raise CodeRepositoryError("%s has no commit yet, so no commit pins what code/ would absorb" % clone)
     if main_commit(project, run) is None:
         raise CodeRepositoryError("%s has no git repository on main to absorb into; run wayline init %s" % (project, project))
-    upstream = record(project).get("upstream") or {}
-    if upstream.get("commit") == commit and upstream.get("clone") in (str(clone), _moved(project, clone)):
-        return upstream
     nested = clone.is_relative_to(project)
     own_gitlink = clone.relative_to(project).as_posix() if nested else None
     tracked = [line.split("\t", 1)[-1] for line in _out(_git(run, project, "ls-files", "--stage", "--", CODE)).splitlines()
@@ -165,31 +205,26 @@ def absorb_clone(project, clone, run=run_tool):
                                   "give a second repository to absorb --code as a reference")
     if (project / CODE).exists() and not (nested and clone == project / CODE):
         raise CodeRepositoryError("%s/code already exists and is not this clone; move it away and run intake again" % project)
-    gitlink = None
-    if nested:
-        gitlink = clone.relative_to(project).as_posix()
-        moved = project / CLONES / clone.name
-        if moved.exists():
-            raise CodeRepositoryError("%s already exists, so the clone at %s cannot be moved out of the tree there" % (moved, gitlink))
+    moved = project / CLONES / clone.name if nested else None
+    if moved is not None and moved.exists():
+        raise CodeRepositoryError("%s already exists, so the clone at %s cannot be moved out of the tree there" % (moved, own_gitlink))
+    value = {"clone": str(moved or clone), "url": _remote_url(clone, run), "commit": commit,
+             "uncommitted": None, "license": inherited_license(clone)}
+    if moved is not None:
+        value["moved_from"] = str(clone)
+    _merged(project, {"upstream": value})  # a record harness.json would refuse stops the absorption before main moves
+    if moved is not None:
         moved.parent.mkdir(parents=True, exist_ok=True)
         os.rename(clone, moved)
         try:
-            uncommitted = _absorb(project, moved, commit, gitlink, run)
+            value["uncommitted"] = _absorb(project, moved, commit, own_gitlink, run)
         except BaseException:
             os.rename(moved, clone)  # nothing reached main, so the clone goes back where the owner put it
             raise
-        clone = moved
     else:
-        uncommitted = _absorb(project, clone, commit, gitlink, run)
-    value = {
-        "clone": str(clone), "url": _remote_url(clone, run), "commit": commit,
-        "uncommitted": uncommitted, "license": inherited_license(project / CODE),
-    }
+        value["uncommitted"] = _absorb(project, clone, commit, None, run)
+    value["license"] = inherited_license(project / CODE)
     return _write_record(project, {"upstream": value})["upstream"]
-
-
-def _moved(project, clone):
-    return str(project / CLONES / clone.name)
 
 
 def _absorb(project, clone, commit, gitlink, run):
@@ -233,13 +268,24 @@ def _absorb(project, clone, commit, gitlink, run):
 
 
 def _mirror_working_tree(clone, code, run):
-    """Make `code` hold the clone's working tree; True when the clone has uncommitted changes to carry."""
+    """Make `code` hold the clone's working tree; True when the clone has uncommitted changes to carry.
+
+    A path the clone's index or working tree names is kept, a submodule's directory included: removing the
+    empty directory a gitlink is checked out as would stage the gitlink's deletion.
+    """
     if not _out(_git(run, clone, "status", "--porcelain", "--untracked-files=all")):
         return False
     listed = _out(_git(run, clone, "ls-files", "-z", "--cached", "--others", "--exclude-standard"))
-    keep = {path for path in listed.split("\0") if path and os.path.lexists(clone / path)}
+    staged = (_git(run, clone, "ls-files", "-z", "--stage").stdout or b"").decode("utf-8", errors="replace")
+    gitlinks = {entry.split("\t", 1)[1] for entry in staged.split("\0") if entry.startswith("160000 ") and "\t" in entry}
+    keep = {path for path in listed.split("\0") if path and (os.path.lexists(clone / path) or path in gitlinks)}
     for path in sorted(keep):
         source, target = clone / path, code / path
+        if path in gitlinks or (source.is_dir() and not source.is_symlink()):
+            # A submodule: its gitlink is the commit the index pins, which the absorbed commit already holds. Its empty
+            # directory stays, since a gitlink whose directory is missing is staged as deleted.
+            target.mkdir(parents=True, exist_ok=True)
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.is_symlink() or target.is_file():
             target.unlink()
@@ -247,11 +293,14 @@ def _mirror_working_tree(clone, code, run):
             os.symlink(os.readlink(source), target)
         elif source.is_file():
             shutil.copy2(source, target)
+    submodules = tuple(path + "/" for path in keep if path in gitlinks or ((clone / path).is_dir() and not (clone / path).is_symlink()))
     for target in sorted(code.rglob("*"), reverse=True):
         relative = target.relative_to(code).as_posix()
-        if (target.is_file() or target.is_symlink()) and relative not in keep:
+        if relative in keep or relative.startswith(submodules):
+            continue
+        if target.is_file() or target.is_symlink():
             target.unlink()
-        elif target.is_dir() and not target.is_symlink() and not any(target.iterdir()):
+        elif target.is_dir() and not any(target.iterdir()):
             target.rmdir()
     return True
 
@@ -265,21 +314,60 @@ def _remote_url(clone, run):
     return (_out(_git(run, clone, "remote", "get-url", names[0], ok=None)) or None) if names else None
 
 
-def _repository_name(url):
-    """`name` of a GitHub URL or `owner/name`, without `.git`; None for anything else."""
-    match = re.search(r"(?:github\.com[:/])?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?\Z", str(url or "").strip())
-    return match.group(2) if match else None
+def _github_name(url):
+    """`owner/name` of a GitHub URL (https or ssh) or of `owner/name` itself, lowercased; None for anything else."""
+    match = re.search(r"(?:github\.com[:/]|\A)([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?\Z", str(url or "").strip())
+    return ("%s/%s" % match.groups()).lower() if match else None
 
 
 # --- the split and the push -----------------------------------------------------------------------------------
 
 
-def split(project, run=run_tool):
-    """`git subtree split --prefix=code main`: the code repository's head commit, or None while `code/` holds nothing."""
+class CodePushRejected(CodeRepositoryError):
+    """The remote refused the split: its branch holds commits the split does not descend from. Never forced."""
+
+    def __init__(self, message, commit):
+        super().__init__(message)
+        self.commit = commit
+
+
+def _is_ancestor(run, project, older, newer):
+    return _git(run, project, "merge-base", "--is-ancestor", older, newer, ok=None).returncode == 0
+
+
+def split(project, run=run_tool, since=None, at=MAIN):
+    """`git subtree split --prefix=code`: the code repository's head commit at `at`, or None while `code/` holds nothing.
+
+    `since` is the last `code_pushed` (`{commit, main}`): the split it pushed and the commit of `main` it was cut
+    from. The split then walks only what `main` gained since, not its whole history, which a ledger commit a wave
+    lengthens: a join commit carrying the trailers `git subtree add` writes (`git-subtree-mainline`,
+    `git-subtree-split`) maps that `main` to that split, and the walk starts from a commit off `main` whose parents
+    are `at` and the join. The result is the commit the whole walk gives, so the pushes stay one history. A `since`
+    that `main` no longer holds falls back to the whole walk. Neither commit made for the walk is on any branch.
+    """
     project = Path(project)
-    if _git(run, project, "cat-file", "-e", "%s:%s" % (MAIN, CODE), ok=None).returncode != 0:
+    if _git(run, project, "cat-file", "-e", "%s:%s" % (at, CODE), ok=None).returncode != 0:
         return None
-    return _out(_git(run, project, "subtree", "split", "--prefix=" + CODE, MAIN)).splitlines()[-1]
+    rev = at
+    base, cut = (since or {}).get("main"), (since or {}).get("commit")
+    if base and cut and _git(run, project, "cat-file", "-e", cut + "^{commit}", ok=None).returncode == 0 \
+            and _git(run, project, "cat-file", "-e", base + "^{commit}", ok=None).returncode == 0 \
+            and _is_ancestor(run, project, base, at) \
+            and _out(_git(run, project, "rev-parse", "%s:%s" % (base, CODE), ok=None)) == \
+            _out(_git(run, project, "rev-parse", cut + "^{tree}", ok=None)):
+        identity = _identity(run, project)
+        # `--ignore-joins` reads only a join whose subject is the one `git subtree add` writes by default, which this one
+        # alone has (intake's absorption names its own), so the last push is the one join the walk starts from.
+        join = _out(_git(run, project, *identity, "commit-tree", base + "^{tree}", "-p", base, "-p", cut, "-m",
+                         "Add '%s/' from commit '%s'\n\ngit-subtree-dir: %s\ngit-subtree-mainline: %s\ngit-subtree-split: %s"
+                         % (CODE, cut, CODE, base, cut)))
+        rev = _out(_git(run, project, *identity, "commit-tree", at + "^{tree}", "-p", at, "-p", join, "-m",
+                        "wayline: the walk of code/'s split from the last push"))
+        walked = _git(run, project, "subtree", "split", "--prefix=" + CODE, "--ignore-joins", rev, ok=None)
+        if walked.returncode == 0 and _out(walked):
+            return _out(walked).splitlines()[-1]
+        rev = at  # a join the walk cannot read (one an owner's own `git subtree add` wrote, say): the whole walk instead
+    return _out(_git(run, project, "subtree", "split", "--prefix=" + CODE, rev)).splitlines()[-1]
 
 
 def _push_url(remote):
@@ -290,32 +378,52 @@ def _local(url):
     return url.startswith("file://") or "://" not in url and not re.match(r"^[\w.-]+@[\w.-]+:", url)
 
 
-def push(project, commit, url, repository, run=run_tool):
-    """Push `commit` to `url`'s `main`, never forced, and journal `code_pushed`; code alone calls this, never a worker."""
+_REJECTED = re.compile(r"\[rejected\]|non-fast-forward|fetch first|\[remote rejected\]", re.IGNORECASE)
+
+
+def push(project, commit, url, repository, branch=MAIN, main=None, run=run_tool):
+    """Push `commit` to `url`'s `branch`, never forced, and journal `code_pushed`; code alone calls this, never a worker.
+
+    `main` is the commit of `main` the split was cut from, which the next split starts its walk after. A remote
+    whose branch holds commits the split does not descend from raises `CodePushRejected`.
+    """
     if run is run_tool and not _local(url):
         real_backend("GitHub (the push of the code repository)")
+    main = main or main_commit(project, run)
     # Never a prompt for a password: a run is unattended, and a push without a credential fails and is tried again.
-    _git(run, project, "push", url, "%s:refs/heads/%s" % (commit, MAIN), env={"GIT_TERMINAL_PROMPT": "0"})
-    Ledger(project).append_event(CODE_PUSHED, {"commit": commit, "remote": repository})
+    done = _git(run, project, "push", url, "%s:refs/heads/%s" % (commit, branch), env={"GIT_TERMINAL_PROMPT": "0"}, ok=None)
+    if done.returncode != 0:
+        said = failure_line(done)
+        if _REJECTED.search((done.stderr or b"").decode("utf-8", errors="replace") + said):
+            raise CodePushRejected("%s refused the push of code/'s split %s to %s, which holds commits the split does not "
+                                   "descend from (%s); wayline never forces a push" % (repository, commit[:12], branch, said), commit)
+        raise CodeRepositoryError("git push to %s failed: %s" % (repository, said))
+    Ledger(project).append_event(CODE_PUSHED, {"commit": commit, "remote": repository, "main": main})
     return commit
 
 
-def push_if_changed(project, last_pushed, run=run_tool, push_url=_push_url):
-    """After a wave: push `code/`'s split when it changed since `last_pushed`, the commit the last `code_pushed` named.
+def push_if_changed(project, last_pushed, run=run_tool, push_url=_push_url, skip=None):
+    """After a wave: push `code/`'s split when it changed since `last_pushed`, the last `code_pushed` (`{commit, main}`).
 
     `code/` changed when its tree on `main` is not the tree of the commit last pushed, which a first push
-    always is; a project with no remote, or no `code/`, pushes nothing. Returns the commit pushed, or None.
+    always is; a project with no remote, or no `code/`, pushes nothing, and neither does a split equal to `skip`
+    (one the remote refused, which pushing again cannot mend). Returns the commit pushed, or None.
     """
     project = Path(project)
     remote = record(project).get("remote")
     if not remote:
         return None
-    tree = _out(_git(run, project, "rev-parse", "--verify", "--quiet", "%s:%s" % (MAIN, CODE), ok=None))
+    at = main_commit(project, run)
+    tree = _out(_git(run, project, "rev-parse", "--verify", "--quiet", "%s:%s" % (at, CODE), ok=None)) if at else ""
     if not tree:
         return None
-    if last_pushed and _out(_git(run, project, "rev-parse", "--verify", "--quiet", "%s^{tree}" % last_pushed, ok=None)) == tree:
+    last = (last_pushed or {}).get("commit")
+    if last and _out(_git(run, project, "rev-parse", "--verify", "--quiet", "%s^{tree}" % last, ok=None)) == tree:
         return None
-    return push(project, split(project, run), push_url(remote), remote["repository"], run=run)
+    cut = split(project, run, since=last_pushed, at=at)
+    if cut is None or cut == skip:
+        return None
+    return push(project, cut, push_url(remote), remote["repository"], branch=remote.get("branch") or MAIN, main=at, run=run)
 
 
 # --- the setup question -----------------------------------------------------------------------------------------
@@ -334,7 +442,7 @@ def _gh(run, tools, *args):
 
 
 def _view(run, tools, repository):
-    text = _gh(run, tools, "repo", "view", repository, "--json", "nameWithOwner,url,visibility,viewerPermission")
+    text = _gh(run, tools, "repo", "view", repository, "--json", "nameWithOwner,url,visibility,viewerPermission,defaultBranchRef")
     try:
         return json.loads(text)
     except ValueError:
@@ -347,7 +455,7 @@ def _create(run, tools, name):
     match = re.search(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", text)
     if not match:
         raise CodeRepositoryError("gh repo create %s printed no repository URL: %s" % (name, text[:200]))
-    return {"repository": match.group(1), "url": "https://github.com/" + match.group(1)}
+    return {"repository": match.group(1), "url": "https://github.com/" + match.group(1), "branch": MAIN}
 
 
 ANSWER_FIELDS = ("shape", "license", "visibility", "remote", "name", "confirm_public")
@@ -374,6 +482,13 @@ def check_answer(answer):
     return dict(answer)
 
 
+def last_push(project):
+    """The last `code_pushed` the journal holds, as `{commit, main}`, or None before the first push."""
+    events, _ = Ledger(project).read_events()
+    pushed = [event.get("payload") or {} for event in events if event.get("event") == CODE_PUSHED]
+    return {"commit": pushed[-1].get("commit"), "main": pushed[-1].get("main")} if pushed else None
+
+
 def settle(project, answer, run=run_tool, tools=None, push_url=_push_url):
     """Record the setup question's answer and make the remote; returns `harness.json`'s `code_repository`.
 
@@ -382,11 +497,16 @@ def settle(project, answer, run=run_tool, tools=None, push_url=_push_url):
     `remote` (`owner/name` of a repository to take over), `name` (the new repository's), and
     `confirm_public` (the owner's one confirmation that their own public repository may be taken over).
 
-    A project that already has a remote keeps it and creates nothing. Without one, a taken-over
-    repository that is the owner's (`gh repo view` reports `ADMIN`) becomes the remote; any other gets a
-    new private repository that carries its history, never a fork; and with none named, a new private
-    repository is created, carrying the absorbed upstream's history when intake absorbed a clone. `code/`'s
-    split is pushed at once, and only then is the repository made public when the answer says so.
+    A project that already has a remote keeps it and creates nothing. Without one:
+
+    - with none named, a new private repository is created, carrying the absorbed upstream's history
+      when intake absorbed a clone (`how: copy`), else `how: new`;
+    - a named repository that is the owner's (`gh repo view` reports `ADMIN`) becomes the remote, its
+      default branch the one pushed, once its branch holds nothing the split does not descend from;
+    - a named repository that is not the owner's gets a new private repository carrying its history,
+      never a fork, which only the clone intake absorbed from it can carry: any other is refused.
+
+    `code/`'s split is pushed at once, and only then is the repository made public when the answer says so.
     """
     project = Path(project)
     answer = check_answer(answer)
@@ -397,37 +517,67 @@ def settle(project, answer, run=run_tool, tools=None, push_url=_push_url):
     remote = current.get("remote")
     public_already = current.get("visibility") == "public"
     if not remote:
-        remote, public_already = _remote(run, tools, project, answer, upstream)
+        remote, public_already = _remote(run, tools, project, answer, upstream, push_url)
     settled = _write_record(project, {"shape": answer["shape"], "license": license, "remote": remote,
                                       "visibility": "public" if public_already else "private"})
-    commit = split(project, run)
-    if commit is not None:
-        push(project, commit, push_url(remote), remote["repository"], run=run)
+    push_if_changed(project, last_push(project), run=run, push_url=push_url)
     if visibility == "public" and not public_already:
         settled = make_public(project, by="owner", run=run, tools=tools)
     return settled
 
 
-def _remote(run, tools, project, answer, upstream):
+def _remote(run, tools, project, answer, upstream, push_url):
     """The remote the answer names, made: `(remote record, whether it is public already)`."""
     named = answer.get("remote")
-    if named:
-        seen = _view(run, tools, named)
-        if seen.get("viewerPermission") == "ADMIN":
-            remote = {"repository": seen["nameWithOwner"], "url": seen["url"], "how": "owners_own"}
-            if seen.get("visibility") == "PUBLIC":
-                if not answer.get("confirm_public"):
-                    raise CodeRepositoryError(
-                        "%s is public: taking it over pushes this project's code/ there for anyone to read. Confirm once "
-                        "(confirm_public) to take it over, or let wayline create a new private repository" % named)
-                remote["confirmed_public"] = True
-                return remote, True
-            return remote, False
-        # Not the owner's: a new private repository carrying its history, never a fork (a fork of a public one stays public).
-        made = _create(run, tools, answer.get("name") or _repository_name(named) or project.name)
+    if not named:
+        made = _create(run, tools, answer.get("name") or project.resolve().name)
+        return dict(made, how="copy" if upstream else "new"), False
+    seen = _view(run, tools, named)
+    if seen.get("viewerPermission") != "ADMIN":
+        # Not the owner's: a new private repository carrying its history, never a fork (a fork of a public one stays
+        # public). The history is the one intake absorbed into code/, which only a clone of this repository holds.
+        if _github_name(upstream.get("url")) != _github_name(named):
+            raise CodeRepositoryError(
+                "%s is not yours, and it is not the repository intake absorbed into code/ (%s), so a new private "
+                "repository could not carry its history: absorb its clone at intake first (the spec's clone), and "
+                "wayline then creates the private copy" % (named, upstream.get("url") or "no clone was absorbed"))
+        made = _create(run, tools, answer.get("name") or named.split("/")[-1])
         return dict(made, how="copy"), False
-    made = _create(run, tools, answer.get("name") or project.resolve().name)
-    return dict(made, how="copy" if upstream else "new"), False
+    branch = ((seen.get("defaultBranchRef") or {}).get("name")) or MAIN
+    remote = {"repository": seen["nameWithOwner"], "url": seen["url"], "how": "owners_own", "branch": branch}
+    public = seen.get("visibility") == "PUBLIC"
+    if public and not answer.get("confirm_public"):
+        raise CodeRepositoryError(
+            "%s is public: taking it over pushes this project's code/ there for anyone to read. Confirm once "
+            "(confirm_public) to take it over, or let wayline create a new private repository" % named)
+    _check_takes(run, project, remote, push_url)
+    if public:
+        remote["confirmed_public"] = True
+    return remote, public
+
+
+def _check_takes(run, project, remote, push_url):
+    """Refuse the owner's repository when its branch holds commits `code/`'s split does not descend from.
+
+    An unforced push there would be refused at every wave; wayline never forces one, and says so now, before
+    anything is recorded. An empty repository, or one whose branch is the absorbed history, takes the split.
+    """
+    url = push_url(remote)
+    if run is run_tool and not _local(url):
+        real_backend("GitHub (reading %s before taking it over)" % remote["repository"])
+    fetched = _git(run, project, "fetch", "--quiet", url, "refs/heads/%s" % remote["branch"], env={"GIT_TERMINAL_PROMPT": "0"}, ok=None)
+    if fetched.returncode != 0:
+        said = failure_line(fetched)
+        if "couldn't find remote ref" in said.lower() or "couldn't find remote ref" in (fetched.stderr or b"").decode("utf-8", "replace").lower():
+            return  # an empty repository, or one without that branch yet
+        raise CodeRepositoryError("%s could not be read before taking it over: %s" % (remote["repository"], said))
+    theirs = _out(_git(run, project, "rev-parse", "FETCH_HEAD"))
+    cut = split(project, run)
+    if cut is None or not _is_ancestor(run, project, theirs, cut):
+        raise CodeRepositoryError(
+            "%s's %s holds commits code/'s history does not descend from (%s), so a push there would be refused, and "
+            "wayline never forces one: absorb its clone at intake first (the spec's clone), or let wayline create a new "
+            "private repository" % (remote["repository"], remote["branch"], theirs[:12]))
 
 
 def make_public(project, by, run=run_tool, tools=None):

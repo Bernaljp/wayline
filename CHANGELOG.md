@@ -40,32 +40,44 @@ lists it read-only, marked with its tag.
   under `code/`: the package or scripts, the tests, the environment locks, `README.md`, and `LICENSE`. The new
   module `wayline/code_repository.py` cuts the code repository from it with `git subtree split --prefix=code`, so
   it never holds `research/`, `harness.json`, `jobs/`, or `results/`, and the project stays one working repository.
-  - Intake absorbs the project's own clone (given as `code`, `--repo`, or a loose repository) into `code/` with
-    its history: `git subtree add --prefix=code <clone> <its HEAD>` on a temporary worktree of `main`, then a
-    fast-forward. The clone's uncommitted changes (edits, deletions, and untracked files its `.gitignore` keeps)
-    follow as the next commit, named as such, and the clone itself is never changed. A clone that lay inside the
-    project is moved under `.clones/` (a new `.gitignore` entry), so its `.git` is outside the tree, and the empty
-    gitlink an earlier commit recorded for it is removed in a commit of its own. `harness.json` records the
-    upstream remote, the commit, the uncommitted changes' commit, and the inherited license (its file and SPDX
-    id) under `code_repository.upstream`. Intake absorbs one clone and refuses a second; code from someone else's
-    paper stays `absorb --code`, a reference.
+  - Intake absorbs the project's own clone, the spec's new `clone` (`--clone`), into `code/` with its history:
+    `git subtree add --prefix=code <clone> <its HEAD>` on a temporary worktree of `main`, then a fast-forward. A
+    repository given as `code`, `--repo`, or a loose material is one the work builds on and is still only listed,
+    pinned to its commit. The clone's uncommitted changes (edits, deletions, and untracked files its `.gitignore`
+    keeps) follow as the next commit, named as such; its submodules stay gitlinks; the clone itself is never
+    changed. A clone that lay inside the project is moved under `.clones/` (a new `.gitignore` entry), so its
+    `.git` is outside the tree, and the empty gitlink an earlier commit recorded for it is removed in a commit of
+    its own; a failed absorption moves it back. `harness.json` records, under `code_repository.upstream`, the
+    clone, where the owner put a nested one, its remote, the commit (SHA-1 or SHA-256), the uncommitted changes'
+    commit, and the inherited license (its file and SPDX id), checked against the schema before `main` moves. An
+    intake run again names the clone where it is or where the owner put it, and absorbs nothing more whatever the
+    clone did since: its Code line says where `code/` began. The project itself, a repository enclosing it, and a
+    second clone once `code/` holds one are refused; code from someone else's paper stays `absorb --code`.
   - One setup question, the intake spec's `code_repository` (`shape`: `package` or `reproducibility`;
     `license`, the inherited one by default; `visibility`, private by default; `remote`, a repository to take
     over; `name`; `confirm_public`), is settled by `code_repository.settle` and recorded in `harness.json`, whose
     schema gains `code_repository`. The remote is created with `gh repo create <name> --private` through the
     tool runner, never as a fork: a new private repository by default, carrying the absorbed upstream's history
-    when there is one (`how: copy`); a new private one for a named repository that is not the owner's; and the
-    owner's own repository (`gh repo view` reports `ADMIN`, `how: owners_own`) only on their word, confirmed once
-    (`confirm_public`) when it is public. `gh` joins the system tools `wayline tools install` records.
-  - Code, never a worker, pushes `code/`'s split to the remote's `main`, never forced: at setup, and at the end of
+    when there is one (`how: copy`). A named repository that is not the owner's gets the same private copy, which
+    only the clone intake absorbed from it can carry, so any other is refused. The owner's own repository (`gh repo
+    view` reports `ADMIN`, `how: owners_own`) is used only on their word, confirmed once (`confirm_public`) when it
+    is public, its default branch is the one pushed (`remote.branch`), and it is refused before anything is
+    recorded when that branch holds commits `code/`'s history does not descend from. `gh` joins the system tools
+    `wayline tools install` records.
+  - Code, never a worker, pushes `code/`'s split to the remote's branch, never forced: at setup, and at the end of
     every wave whose `main` holds a `code/` tree other than the one last pushed, which the conductor reads from the
-    journal's new `code_pushed` event (`commit`, `remote`), so a restart pushes nothing twice. A push that fails is
-    said and tried again by the next wave.
+    journal's new `code_pushed` event (`commit`, `remote`, `main`), so a restart pushes nothing twice. The split
+    walks only what `main` gained since the last push, from a join commit off every branch that maps that push's
+    `main` to its split, and gives the commit the whole walk gives. A push the network or a credential failed is
+    said and tried again by the next wave; one the remote refused is told to the owner once (`notified`, event
+    `code_push_rejected`) and that split is not pushed again.
   - Making the code repository public is the owner's word only (`code_repository.make_public(by="owner")`, at
     setup or later; `gh repo edit --visibility public` after the private push), and the decider's irreversible
-    list gains the class `make the code repository public`, which also catches any other visibility change.
-  - `ticket_launched` and `job_launched` carry `commit`, the commit of `main` each ran at, so a result traces to
-    the code that made it.
+    list gains the class `make the code repository public`, which also catches any other visibility change,
+    `gh repo edit --visibility`, open-sourcing the code, and making it public.
+  - `ticket_launched` and `job_launched` carry `commit`, the commit each ran at, so a result traces to the code
+    that made it: the attempt's worktree HEAD (a later attempt's reused branch included), and for a job the HEAD
+    where its working directory lies in the project or a worktree of it, else `main`'s.
   - In a project that keeps a code repository (`code/` exists, or `harness.json` records `code_repository`), a
     `code` ticket's touch set goes under `code/`: the planner's check refuses an entry outside it, and so does the
     touch-set rule a ticket admitted from a proposal is checked by.

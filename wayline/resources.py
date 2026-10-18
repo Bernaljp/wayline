@@ -1381,14 +1381,16 @@ class JobRunner:
             "ended_at": None, "result": None, "exit_code": None, "oom": None, "overrides": dict(overrides or {}),
         }]
         self.write(record)
-        from wayline.code_repository import main_commit  # the code the job ran at (decision 17); git, not a job backend
+        # The code the job ran at (decision 17): HEAD where its working directory lies (a ticket's worktree), else main's.
+        from wayline.code_repository import head_commit, main_commit
 
         payload = {
             "unit": handle.unit, "gpu_uuids": list(spec.gpu_uuids),
             "cores": [int(core) for core in spec.cores], "ram_gb": spec.ram_gb,
             "attempt": len(record["attempts"]),
         }
-        commit = main_commit(self.project)
+        commit = (head_commit(spec.cwd, within=self.project) if spec.cwd and Path(spec.cwd).is_dir() else None) \
+            or main_commit(self.project)
         if commit:
             payload["commit"] = commit
         self._ledger.append_event("job_launched", payload, ticket=int(spec.ticket), job=spec.id)

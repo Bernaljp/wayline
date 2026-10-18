@@ -111,6 +111,7 @@
             "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name on GitHub"},
             "url": {"type": "string", "description": "what code pushes code/'s split to"},
             "how": {"type": "string", "enum": ["new", "copy", "owners_own"], "description": "a new private repository; a new private one carrying a taken-over repository's history, never a fork; or the owner's own repository, taken over on their word"},
+            "branch": {"type": "string", "description": "the branch code pushes the split to: main for a repository wayline created, the default branch of the owner's own"},
             "confirmed_public": {"type": "boolean", "description": "the owner's one confirmation that their own public repository may be taken over"}
           }
         },
@@ -122,7 +123,8 @@
           "properties": {
             "clone": {"type": "string", "description": "where the clone is, its .git outside the project's tree"},
             "url": {"type": ["string", "null"], "description": "the clone's upstream remote"},
-            "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$", "description": "the commit absorbed"},
+            "moved_from": {"type": "string", "description": "where the owner put a clone that lay inside the project, before intake moved it under .clones/"},
+            "commit": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$", "description": "the commit absorbed (SHA-1, or SHA-256 in a repository of that format)"},
             "uncommitted": {"type": ["string", "null"], "description": "the project's commit carrying the clone's uncommitted changes, or null when it had none"},
             "license": {
               "type": ["object", "null"],

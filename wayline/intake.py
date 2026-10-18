@@ -27,7 +27,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -70,7 +70,7 @@ DEFAULT_HUMAN_ONLY = {
 }
 
 SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "materials", "autonomy", "radius",
-               "model_fallback", "ladder_changes", "budgets", "human_only", "goal", "sample", "rationale", "code_repository")
+               "model_fallback", "ladder_changes", "budgets", "human_only", "goal", "sample", "rationale", "clone", "code_repository")
 LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_only")
 BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
 GOAL_OPTIONAL = {"dataset_or_split": None, "held_out_split": None, "baseline": None, "budget": None, "stop_when": "goal_reached"}
@@ -239,8 +239,8 @@ class Gathered:
     data: list
     code: list
     constraints: list
-    # The project's own clones handed over, absorbed into `code/` by `take_intake` (decision 17); their lines follow it.
-    clones: list = field(default_factory=list)
+    # The project's own clone the spec names, absorbed into `code/` by `take_intake` (decision 17); its line follows it.
+    clone: Optional[Path] = None
 
 
 def gather(spec, project, base):
@@ -267,7 +267,9 @@ def gather(spec, project, base):
     for pointer in spec.get("data", []):
         gathered.data.append(_data_line(pointer, project, base))
     for repository in spec.get("code", []):
-        _take_repository(gathered, _existing(repository, base, "repository"), project)
+        gathered.code.append(_code_line(_existing(repository, base, "repository"), project))
+    if spec.get("clone"):
+        gathered.clone = _the_clone(spec["clone"], project, base)
     gathered.constraints.extend(line.strip() for line in spec.get("constraints", []) if line.strip())
     return gathered
 
@@ -285,7 +287,7 @@ def _take_material(gathered, material, project, base):
         return
     if path.is_dir():
         if (path / ".git").exists():
-            _take_repository(gathered, path, project)
+            gathered.code.append(_code_line(path, project))
             return
         files = [child for child in sorted(path.iterdir()) if child.is_file() and not child.name.startswith(".")]
         if files and all(child.suffix.lower() == ".pdf" for child in files):
@@ -402,22 +404,27 @@ def _data_line(pointer, project, base):
     return pointer.strip()
 
 
-def _take_repository(gathered, path, project):
-    """The project's own repository: a clone with a commit is absorbed into `code/`; anything else is only listed."""
-    if (path / ".git").exists() and subprocess.run(["git", "-C", str(path), "rev-parse", "--verify", "--quiet", "HEAD"],
-                                                   capture_output=True).returncode == 0:
-        if path not in gathered.clones:
-            gathered.clones.append(path)
-        return
-    gathered.code.append(_code_line(path, project))
+def _the_clone(text, project, base):
+    """The project's own clone the spec names: where it is, or, once intake moved a nested one under `.clones/`, where it went."""
+    path = _as_path(text, base)
+    if path is not None and not path.exists():
+        moved = code_repository.absorbed_clone(project, path)
+        if moved is not None:
+            return Path(moved["clone"])
+    return _existing(text, base, "clone")
 
 
-def _absorb_clones(project, gathered, run):
-    """Absorb the one clone handed over into `code/` (decision 17) and list it under Code; the `upstream` record or None."""
-    if not gathered.clones:
+def _absorb_clone(project, gathered, run):
+    """Absorb the project's own clone into `code/` (decision 17) and list it first under Code; the `upstream` record or None.
+
+    Only the clone the spec names as the project's own is absorbed: a repository the work builds on, given as
+    `code` or as a loose material, is listed and pinned, never poured into `code/` and pushed as this project's.
+    The clone already absorbed is not absorbed again, whatever it did since; its line says where `code/` began.
+    """
+    if gathered.clone is None:
         return None
     try:
-        upstream = code_repository.absorb_clone(project, gathered.clones[0], run=run)
+        upstream = code_repository.absorb_clone(project, gathered.clone, run=run)
     except code_repository.CodeRepositoryError as failure:
         raise IntakeError(str(failure)) from None
     gathered.code.insert(0, _code_line(Path(upstream["clone"]), project, upstream))
@@ -440,13 +447,19 @@ def _code_line(path, project, upstream=None):
     remote = git("remote", "get-url", "origin")
     if remote:
         line += ", remote `%s`" % remote
+    moved_on = upstream is not None and upstream.get("commit") not in (None, head)
     if upstream is not None:
         line += "; absorbed into `code/` with its history"
+        if moved_on:
+            line += " (absorbed at `%s`, where `code/` began; the clone has moved on since, and the work goes on in `code/`)" % (
+                upstream["commit"][:12])
     dirty = git("status", "--porcelain")
     if dirty:
         count = len(dirty.splitlines())
         plural = "" if count == 1 else "s"
-        if upstream is None:
+        if moved_on:
+            line += "; %d uncommitted change%s, which `code/` does not hold" % (count, plural)
+        elif upstream is None:
             line += "; %d uncommitted change%s, which the commit does not hold" % (count, plural)
         elif upstream.get("uncommitted"):
             line += "; %d uncommitted change%s, absorbed as the next commit `%s`" % (count, plural, upstream["uncommitted"][:12])
@@ -511,7 +524,7 @@ def normalize_spec(raw):
                 value = [value]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise IntakeError("%s is a list of strings" % key)
-        elif key in ("intent", "plan", "sample", "rationale", "autonomy", "radius", "model_fallback", "ladder_changes"):
+        elif key in ("intent", "plan", "sample", "rationale", "autonomy", "radius", "model_fallback", "ladder_changes", "clone"):
             if not isinstance(value, str):
                 raise IntakeError("%s is a string" % key)
         elif key == "budgets":
@@ -575,8 +588,9 @@ def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=No
     failing `eval_command` never leaves half an intake behind. The report is `{intake, harness,
     goal, counts}` where `goal` is the `GoalCheck` or None when no goal was stated.
 
-    The project's own clone, handed over as `code` or as a loose repository, is absorbed into
-    `code/` with its history (decision 17), and the setup answer on the code repository
+    The project's own clone, the spec's `clone`, is absorbed into `code/` with its history
+    (decision 17); a repository given as `code` or as a loose material is one the work builds on,
+    and is only listed, pinned to its commit. The setup answer on the code repository
     (`code_repository`: its shape, remote, visibility, and license) is settled last, once the rest
     is written, since it creates the private GitHub repository. `run`, `tools`, and `push_url` are
     the tool runner's, which tests record.
@@ -587,9 +601,6 @@ def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=No
     gathered = gather(spec, project, base)
     if not gathered.intent and not gathered.plans:
         raise IntakeError("an intake needs the intent: a paragraph (--intent, or text as an argument) or a plan (--plan)")
-    if len(gathered.clones) > 1:
-        raise IntakeError("intake absorbs one clone into code/, and was given %d (%s); give the others to absorb --code "
-                          "as references" % (len(gathered.clones), ", ".join(_shown(path, project) for path in gathered.clones)))
     harness = read_harness(project)
     # The classes already in harness.json stay: an intake that does not name them never shrinks what waits for the owner.
     classes = human_only_classes(list(harness.get("human_only", [])) + spec.get("human_only", []))
@@ -617,7 +628,7 @@ def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=No
     except ValidationError as failure:
         raise IntakeError(str(failure)) from None
 
-    if _absorb_clones(project, gathered, run) is not None:
+    if _absorb_clone(project, gathered, run) is not None:
         updated["code_repository"] = code_repository.record(project)
     ledger = Ledger(project)
     with ledger.lock():
@@ -898,7 +909,8 @@ def intake_command(args, stdin=None):
     parser.add_argument("--plan", help="a plan file, quoted whole under the intent")
     parser.add_argument("--reference", action="append", default=[], help="one reference: a DOI, an arXiv id, a URL, a title, or a PDF")
     parser.add_argument("--data", action="append", default=[], help="one data pointer: a path, or words saying where the data is")
-    parser.add_argument("--repo", action="append", default=[], help="the project's own repository, absorbed into code/ with its history")
+    parser.add_argument("--repo", action="append", default=[], help="a repository the work builds on, listed pinned to its commit")
+    parser.add_argument("--clone", help="the project's own clone, absorbed into code/ with its history")
     parser.add_argument("--constraint", action="append", default=[], help="one constraint")
     parser.add_argument("--autonomy", choices=sorted(AUTONOMY))
     parser.add_argument("--radius", choices=sorted(RADIUS))
@@ -997,7 +1009,7 @@ def _flag_fields(options):
     if options.materials:
         fields["materials"] = list(options.materials)
     for key, value in (("intent", options.intent), ("plan", options.plan), ("autonomy", options.autonomy), ("radius", options.radius),
-                       ("model_fallback", options.model_fallback), ("ladder_changes", options.ladder_changes)):
+                       ("model_fallback", options.model_fallback), ("ladder_changes", options.ladder_changes), ("clone", options.clone)):
         if value:
             fields[key] = value
     for key, value in (("references", options.reference), ("data", options.data), ("code", options.repo),

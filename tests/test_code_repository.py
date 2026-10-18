@@ -8,12 +8,14 @@ URL's place. The `gh repo view --json` answers keep the shape `gh` 2.95.0 printe
 2026-10-18 for a repository of the owner's, and `gh repo create` answers with the URL it prints.
 """
 
+import copy
 import io
 import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 from tests import machine
 from tests.paths import FIXTURES_DIR
@@ -23,6 +25,7 @@ from tests.test_jobs import _spec as job_spec
 from wayline import code_repository, intake, resources, worker
 from wayline.code_repository import CodeRepositoryError
 from wayline.conductor import Conductor
+from wayline.jsonschema import load_schema
 from wayline.ledger import Ledger
 from wayline.project import init_project, read_harness
 from wayline.tickets import tickets_dir
@@ -133,6 +136,66 @@ class AbsorbTheSyntheticRepositoryTest(CodeRepositoryCase):
             self.absorb(other)
         self.assertIn("absorb --code", str(caught.exception))
 
+    def test_the_project_itself_is_refused(self):
+        with self.assertRaises(CodeRepositoryError) as caught:
+            self.absorb(self.project)
+        self.assertIn("the project itself", str(caught.exception))
+        self.assertFalse((self.project / ".clones").exists())
+
+    def test_a_repository_enclosing_the_project_is_refused(self):
+        outer = self.temp / "outer"
+        outer.mkdir()
+        git(outer, "init", "-q", "-b", "main")
+        (outer / "README.md").write_text("outer\n")
+        git(outer, "add", "README.md")
+        git(outer, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "outer")
+        inner = outer / "lantern"
+        inner.mkdir()
+        init_project(inner)
+        with self.assertRaises(CodeRepositoryError) as caught:
+            code_repository.absorb_clone(inner, outer, run=self.run)
+        self.assertIn("encloses the project", str(caught.exception))
+        self.assertFalse((inner / "code").exists())
+
+    def test_a_submodule_of_the_clone_stays_a_gitlink(self):
+        sub = self.temp / "owner" / "sub"
+        subprocess.run([sys.executable, str(MIDWAY / "build_code.py"), str(sub)], check=True)
+        pinned = git(sub, "rev-parse", "HEAD")
+        git(self.clone, "update-index", "--add", "--cacheinfo", "160000,%s,vendor/sub" % pinned)
+        git(self.clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "vendor the submodule")
+        (self.clone / "phaselock.py").write_text("# an uncommitted edit\n")
+        upstream = self.absorb()
+        self.assertIsNotNone(upstream["uncommitted"])
+        self.assertEqual(git(self.project, "ls-files", "--stage", "--", "code/vendor/sub").split()[:2], ["160000", pinned])
+
+    def test_a_sha256_repository_is_recorded(self):
+        project = self.temp / "sha256-project"
+        project.mkdir()
+        git(project, "init", "-q", "-b", "main", "--object-format=sha256")
+        (project / "harness.json").write_text((self.project / "harness.json").read_text())
+        git(project, "add", "harness.json")
+        git(project, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
+        clone = self.temp / "sha256-clone"
+        clone.mkdir()
+        git(clone, "init", "-q", "-b", "main", "--object-format=sha256")
+        (clone / "m.py").write_text("x = 1\n")
+        git(clone, "add", "m.py")
+        git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "m")
+        upstream = code_repository.absorb_clone(project, clone, run=self.run)
+        self.assertEqual(len(upstream["commit"]), 64)
+        self.assertTrue((project / "code" / "m.py").is_file())
+
+    def test_a_record_harness_json_would_refuse_stops_the_absorption_before_main_moves(self):
+        schema = copy.deepcopy(load_schema("harness"))  # the loaded schema is shared: never change it in place
+        upstream = schema["properties"]["code_repository"]["properties"]["upstream"]
+        upstream["properties"]["commit"]["pattern"] = "^never$"  # a commit the schema refuses, as a SHA-256 one was
+        before = git(self.project, "rev-parse", "main")
+        with mock.patch.object(code_repository, "load_schema", lambda name: schema), \
+                self.assertRaises(CodeRepositoryError):
+            self.absorb()
+        self.assertEqual(git(self.project, "rev-parse", "main"), before)
+        self.assertFalse((self.project / "code").exists())
+
     def test_a_directory_with_no_history_is_refused(self):
         plain = self.temp / "plain"
         plain.mkdir()
@@ -141,7 +204,7 @@ class AbsorbTheSyntheticRepositoryTest(CodeRepositoryCase):
 
 
 class IntakeAbsorbsTest(CodeRepositoryCase):
-    """`wayline intake` given the project's own clone absorbs it, and its Code section says so."""
+    """`wayline intake` absorbs the one clone the spec names as the project's own, and its Code section says so."""
 
     def intake(self, **spec):
         spec.setdefault("intent", "Find whether lantern moth colonies synchronize with size.")
@@ -151,9 +214,9 @@ class IntakeAbsorbsTest(CodeRepositoryCase):
         text = (self.project / "research" / "INTAKE.md").read_text(encoding="utf-8")
         return text.split("## Code", 1)[1].split("\n## ", 1)[0]
 
-    def test_a_repository_handed_over_arrives_in_code(self):
+    def test_the_projects_own_clone_arrives_in_code(self):
         (self.clone / "notes.txt").write_text("an untracked note\n")
-        report = self.intake(code=[str(self.clone)])
+        report = self.intake(clone=str(self.clone))
         self.assertTrue((self.project / "code" / "phaselock.py").is_file())
         upstream = report["harness"]["code_repository"]["upstream"]
         self.assertEqual(upstream, read_harness(self.project)["code_repository"]["upstream"])
@@ -164,25 +227,49 @@ class IntakeAbsorbsTest(CodeRepositoryCase):
         self.assertIn("1 uncommitted change, absorbed as the next commit `%s`" % upstream["uncommitted"][:12], section)
         self.assertEqual(report["counts"]["code"], 1)
 
-    def test_a_loose_repository_is_absorbed_too(self):
-        self.intake(materials=[str(self.clone)])
-        self.assertTrue((self.project / "code" / "phaselock.m").is_file())
-
-    def test_a_second_repository_is_refused_before_anything_is_written(self):
+    def test_repositories_the_work_builds_on_are_listed_pinned_and_never_absorbed(self):
         other = self.temp / "owner" / "other"
         subprocess.run([sys.executable, str(MIDWAY / "build_code.py"), str(other)], check=True)
-        before = (self.project / "research" / "INTAKE.md").read_text(encoding="utf-8")
-        with self.assertRaises(intake.IntakeError) as caught:
-            self.intake(code=[str(self.clone), str(other)])
-        self.assertIn("absorb --code", str(caught.exception))
+        report = self.intake(code=[str(self.clone)], materials=[str(other)])
         self.assertFalse((self.project / "code").exists())
-        self.assertEqual((self.project / "research" / "INTAKE.md").read_text(encoding="utf-8"), before)
+        self.assertNotIn("code_repository", read_harness(self.project))
+        self.assertIn(self.clone_head, self.code_section())
+        self.assertNotIn("absorbed", self.code_section())
+        self.assertEqual(report["counts"]["code"], 2)
+
+    def test_the_clone_and_a_repository_it_builds_on_together(self):
+        other = self.temp / "owner" / "other"
+        subprocess.run([sys.executable, str(MIDWAY / "build_code.py"), str(other)], check=True)
+        self.intake(clone=str(self.clone), code=[str(other)])
+        self.assertTrue((self.project / "code" / "phaselock.py").is_file())
+        self.assertEqual(read_harness(self.project)["code_repository"]["upstream"]["clone"], str(self.clone.resolve()))
+        self.assertEqual(self.code_section().count("absorbed into `code/`"), 1)
+
+    def test_intake_again_after_the_clone_moved_on_keeps_code_as_it_is(self):
+        self.intake(clone=str(self.clone))
+        before = git(self.project, "rev-parse", "main")
+        (self.clone / "later.py").write_text("x = 1\n")
+        git(self.clone, "add", "later.py")
+        git(self.clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "later work")
+        self.intake(clone=str(self.clone))
+        self.assertEqual(git(self.project, "rev-parse", "main"), before)
+        self.assertFalse((self.project / "code" / "later.py").exists())
+        self.assertIn("absorbed at `%s`" % self.clone_head[:12], self.code_section())
+
+    def test_intake_again_names_a_nested_clone_by_where_the_owner_put_it(self):
+        shutil.move(str(self.clone), str(self.project / "analysis"))
+        self.intake(clone="lantern/analysis")
+        self.assertTrue((self.project / ".clones" / "analysis" / ".git").is_dir())
+        before = git(self.project, "rev-parse", "main")
+        self.intake(clone="lantern/analysis")
+        self.assertEqual(git(self.project, "rev-parse", "main"), before)
+        self.assertIn(".clones/analysis", self.code_section())
 
     def test_the_setup_answer_rides_in_the_spec(self):
         self.run.gh[("repo", "create")] = recorded("gh-repo-create.txt")
         remote = self.temp / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
-        report = intake.take_intake(self.project, {"intent": "x", "code": [str(self.clone)],
+        report = intake.take_intake(self.project, {"intent": "x", "clone": str(self.clone),
                                                    "code_repository": {"shape": "package", "license": "MIT"}},
                                     base=self.temp, run=self.run, tools=gh_record(self.temp / "tools"),
                                     push_url=lambda record: str(remote))
@@ -194,7 +281,7 @@ class IntakeAbsorbsTest(CodeRepositoryCase):
 
     def test_a_bad_setup_answer_is_refused_before_anything_is_written(self):
         with self.assertRaises(intake.IntakeError):
-            self.intake(code=[str(self.clone)], code_repository={"shape": "monorepo"})
+            self.intake(clone=str(self.clone), code_repository={"shape": "monorepo"})
         self.assertFalse((self.project / "code").exists())
 
 
@@ -305,6 +392,26 @@ class SplitTest(CodeRepositoryCase):
         cut = code_repository.split(self.project, run=self.run)
         self.assertEqual(cut, self.clone_head, "an absorbed history splits back to the very commits it came with")
 
+    def test_a_split_after_a_push_walks_only_what_main_gained_since(self):
+        """The split cut since the last push equals the whole split, and git subtree is not handed `main` to walk."""
+        last = {"commit": code_repository.split(self.project, run=self.run), "main": git(self.project, "rev-parse", "main")}
+        for wave in range(12):
+            (self.project / "research" / "notes.md").write_text("wave %d\n" % wave)
+            git(self.project, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "wayline: wave %d" % wave)
+        (self.project / "code" / "phaselock.py").write_text("# changed by a ticket\n")
+        git(self.project, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "ticket 4: change it")
+        self.run.calls.clear()
+        cut = code_repository.split(self.project, run=self.run, since=last)
+        split_calls = self.run.ran("subtree", "split", "--prefix=code")
+        self.assertEqual(len(split_calls), 1)
+        self.assertNotEqual(split_calls[0][-1], "main", "the walk starts at a join on the last push, not at the root")
+        self.assertEqual(cut, code_repository.split(self.project, run=self.run), "the same split as the whole history gives")
+        self.assertEqual(git(self.project, "rev-parse", "%s^" % cut), last["commit"])
+
+    def test_a_last_push_main_no_longer_holds_falls_back_to_the_whole_split(self):
+        cut = code_repository.split(self.project, run=self.run, since={"commit": self.clone_head, "main": "0" * 40})
+        self.assertEqual(cut, self.clone_head)
+
     def test_a_project_without_code_has_no_split(self):
         bare = self.temp / "bare-project"
         bare.mkdir()
@@ -349,7 +456,7 @@ class SettleTest(CodeRepositoryCase):
         self.assertEqual(record, settled)
         self.assertEqual((record["shape"], record["visibility"], record["license"]), ("package", "private", "MIT"))
         self.assertEqual(record["remote"], {"repository": "jpbernal/lantern", "url": "https://github.com/jpbernal/lantern",
-                                            "how": "copy"})
+                                            "how": "copy", "branch": "main"})
 
     def test_the_first_push_carries_the_split_and_its_upstream_history(self):
         self.absorb()
@@ -386,7 +493,8 @@ class SettleTest(CodeRepositoryCase):
         self.assertEqual(len(self.run.ran("repo", "create")), 1)
         self.assertEqual(record["shape"], "reproducibility")
 
-    def test_a_taken_over_repository_not_the_owners_gets_a_new_private_copy(self):
+    def test_a_taken_over_repository_not_the_owners_gets_a_new_private_copy_with_its_history(self):
+        git(self.clone, "remote", "add", "origin", "https://github.com/ines-varga/phaselock.git")
         self.absorb()
         self.run.gh[("repo", "view")] = recorded("gh-repo-view-theirs.json")
         record = self.settle({"shape": "package", "remote": "ines-varga/phaselock"})
@@ -394,6 +502,17 @@ class SettleTest(CodeRepositoryCase):
         self.assertEqual(record["remote"]["how"], "copy")
         self.assertEqual(record["remote"]["repository"], "jpbernal/lantern")
         self.assertFalse(self.run.ran("repo", "fork"))
+        self.assertEqual(git(self.remote, "log", "--format=%H", "main").splitlines()[-3:],
+                         git(self.clone, "log", "--format=%H", "main").splitlines(), "the copy carries the upstream's commits")
+
+    def test_a_repository_not_the_owners_and_not_absorbed_is_refused(self):
+        self.absorb()  # the synthetic clone has no remote, so it is not ines-varga/phaselock
+        self.run.gh[("repo", "view")] = recorded("gh-repo-view-theirs.json")
+        with self.assertRaises(CodeRepositoryError) as caught:
+            self.settle({"shape": "package", "remote": "ines-varga/phaselock"})
+        self.assertIn("absorb", str(caught.exception))
+        self.assertFalse(self.run.ran("repo", "create"))
+        self.assertNotIn("remote", read_harness(self.project)["code_repository"])
 
     def test_the_owners_own_private_repository_is_taken_over_on_their_word(self):
         self.absorb()
@@ -401,8 +520,26 @@ class SettleTest(CodeRepositoryCase):
         record = self.settle({"shape": "package", "remote": "jpbernal/phaselock"})
         self.assertFalse(self.run.ran("repo", "create"))
         self.assertEqual(record["remote"], {"repository": "jpbernal/phaselock", "url": "https://github.com/jpbernal/phaselock",
-                                            "how": "owners_own"})
+                                            "how": "owners_own", "branch": "master"})
         self.assertEqual(record["visibility"], "private")
+        self.assertTrue(self.run.ran("push", str(self.remote), "%s:refs/heads/master" % self.clone_head),
+                        "the push goes to the repository's default branch")
+        self.assertEqual(git(self.remote, "branch", "--format=%(refname:short)"), "master")
+
+    def test_the_owners_own_repository_holding_other_history_is_refused_before_anything_is_recorded(self):
+        self.absorb()
+        stray = self.temp / "stray"
+        subprocess.run(["git", "init", "-q", "-b", "master", str(stray)], check=True)
+        (stray / "x.txt").write_text("not the absorbed history\n")
+        git(stray, "add", "x.txt")
+        git(stray, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "other history")
+        git(stray, "push", "-q", str(self.remote), "master")
+        self.run.gh[("repo", "view")] = recorded("gh-repo-view-own-private.json")
+        with self.assertRaises(CodeRepositoryError) as caught:
+            self.settle({"shape": "package", "remote": "jpbernal/phaselock"})
+        self.assertIn("master", str(caught.exception))
+        self.assertNotIn("remote", read_harness(self.project)["code_repository"])
+        self.assertFalse(self.run.ran("push"))
 
     def test_the_owners_own_public_repository_is_confirmed_once(self):
         self.absorb()
@@ -503,8 +640,11 @@ class PushAfterTheWaveTest(ProjectTestCase):
         self.assertNotEqual(cut, self.first)
         self.assertEqual(len(self.run.ran("push", str(self.remote), "%s:refs/heads/main" % cut)), 1)
         self.assertEqual(len(self.run.ran("push")), 1)
-        self.assertEqual(self.pushes(), [{"commit": self.first, "remote": "jpbernal/one-ticket"},
-                                         {"commit": cut, "remote": "jpbernal/one-ticket"}])
+        self.assertEqual([(push["commit"], push["remote"]) for push in self.pushes()],
+                         [(self.first, "jpbernal/one-ticket"), (cut, "jpbernal/one-ticket")])
+        cut_from = self.pushes()[-1]["main"]  # the main the split was cut from, which the next split starts after
+        git(self.project, "merge-base", "--is-ancestor", cut_from, "main")
+        self.assertEqual(git(self.project, "rev-parse", cut_from + ":code"), git(self.project, "rev-parse", cut + "^{tree}"))
         self.assertEqual(git(self.remote, "rev-parse", "main"), cut)
         self.assertEqual(git(self.remote, "show", "main:hello.txt"), "hello")
         self.assertNotIn("research", git(self.remote, "ls-tree", "--name-only", "main").splitlines())
@@ -515,6 +655,39 @@ class PushAfterTheWaveTest(ProjectTestCase):
         launched, = [event["payload"] for event in Ledger(self.project).read_events()[0] if event["event"] == "ticket_launched"]
         self.assertEqual(launched["commit"], at)
         self.assertNotEqual(git(self.project, "rev-parse", "main"), at, "main moved on after the launch")
+
+    def test_a_launch_on_a_branch_an_earlier_attempt_left_records_that_branch(self):
+        """An attempt that reuses `ticket/<id>` runs on its commit, not on main's tip."""
+        older = git(self.project, "rev-parse", "main")
+        git(self.project, "branch", "ticket/1", older)
+        (self.project / "elsewhere.txt").write_text("main moved on\n")
+        git(self.project, "add", "elsewhere.txt")
+        git(self.project, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main moves on")
+        self.conduct({"hello.txt": "hello\n"})
+        launched, = [event["payload"] for event in Ledger(self.project).read_events()[0] if event["event"] == "ticket_launched"]
+        self.assertEqual(launched["commit"], older)
+
+    def test_a_rejected_push_is_told_to_the_owner_once_and_not_retried(self):
+        stray = self.temp / "stray"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(stray)], check=True)
+        (stray / "x.txt").write_text("pushed by someone else\n")
+        git(stray, "add", "x.txt")
+        git(stray, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "someone else")
+        git(stray, "push", "-q", "origin", "main")
+        self.code_ticket()
+        told = []
+        with worker.use_fake() as fake:
+            fake.script(done(outputs_written=["code/hello.txt"]), patch=Patch(files={"code/hello.txt": "hello\n"}, message="t"))
+            self.conductor = Conductor(self.project, out=io.StringIO())
+            self.conductor.readings = machine.recorded
+            self.conductor.code_run = self.run
+            self.conductor.notify = lambda event, text, *args, **kwargs: told.append((event, text))
+            drive(self.conductor)
+            self.conductor.wave()
+        self.assertEqual(len(self.run.ran("push")), 1, "a rejected split is not pushed again every wave")
+        self.assertEqual([event for event, _ in told], ["code_push_rejected"])
+        self.assertIn("jpbernal/one-ticket", told[0][1])
+        self.assertEqual(len(self.pushes()), 1)
 
     def test_a_restart_replays_the_last_push_and_pushes_nothing_more(self):
         self.code_ticket()
@@ -543,6 +716,22 @@ class JobLaunchCommitTest(ProjectTestCase):
         project.mkdir()
         init_project(project)
         self.assertEqual(self.launched(project)["commit"], git(project, "rev-parse", "main"))
+
+    def test_a_job_in_a_worktree_records_the_worktree_commit(self):
+        project = self.temp / "p"
+        project.mkdir()
+        init_project(project)
+        older = git(project, "rev-parse", "main")
+        (project / "later.txt").write_text("later\n")
+        git(project, "add", "later.txt")
+        git(project, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "later")
+        worktree = project / ".worktrees" / "7"
+        git(project, "worktree", "add", "-q", "--detach", str(worktree), older)
+        with resources.use_fake_jobs() as fake:
+            fake.script(["running"])
+            resources.JobRunner(project, backend=fake).launch(job_spec(project, cwd=str(worktree), log=str(project / "j.log")))
+        launched = [event["payload"] for event in Ledger(project).read_events()[0] if event["event"] == "job_launched"][-1]
+        self.assertEqual(launched["commit"], older)
 
     def test_a_project_with_no_repository_records_no_commit(self):
         project = self.temp / "p"

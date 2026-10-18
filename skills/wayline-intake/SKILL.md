@@ -24,10 +24,11 @@ take the defaults and say what you assumed.
 - **References**: one line per reference, as the owner gave it (a DOI, an arXiv id, a title, a
   URL, a PDF). The scout resolves them later; nothing here is invented.
 - **Data**: what data exists, where it is, what is held out, and what may not leave the machine.
-- **Code**: the repositories the work builds on; the verb pins each to its commit. The project's own
-  clone (one; someone else's paper's code goes to `absorb --code` as a reference) is absorbed into
-  `code/` with its history, its uncommitted changes as the next commit, so the code repository is cut
-  from `code/`. Ask the code repository's one setup question beside it, as the spec's
+- **Code**: the repositories the work builds on (`code`, `--repo`); the verb pins each to its commit
+  and copies nothing. The project's own clone, and only it, goes in as `clone` (`--clone`): it is
+  absorbed into `code/` with its history, its uncommitted changes as the next commit, so the code
+  repository is cut from `code/`. Ask which repository is the project's own; someone else's paper's
+  code goes to `absorb --code` as a reference. Ask the code repository's one setup question beside it, as the spec's
   `code_repository`: its `shape` (`package`, the developed method and every model the work applies it
   to, callable from the package, a method with its own maintained package a pinned dependency; or
   `reproducibility`, scripts, helpers, and the environment alone), its `license` (the inherited one by
@@ -67,7 +68,7 @@ heredoc on stdin whole, so nothing would be written:
 wayline intake --intent "the owner's paragraph" --plan plan.md \
   --reference "arXiv:1706.03762" --reference "papers/model.pdf" \
   --data "data/expression.csv" --data "split_b is held out and never leaves this machine" \
-  --repo ../analysis --constraint "no GPU before October" \
+  --clone ../analysis --repo ../baseline-models --constraint "no GPU before October" \
   --autonomy checkpoints --radius moderate --model-fallback ask --ladder-changes ask --gpu-hours 10 --wallclock-hours 48 --usage-windows 4 \
   --human-only "baselines: which baselines the claims are compared against"
 ```
@@ -81,7 +82,8 @@ wayline intake --from - <<'EOF'
  "plan": "plan.md",
  "references": ["arXiv:1706.03762", "10.1038/s41592-019-0686-2", "papers/model.pdf"],
  "data": ["data/expression.csv", "split_b is held out and never leaves this machine"],
- "code": ["../analysis"],
+ "code": ["../baseline-models"],
+ "clone": "../analysis",
  "code_repository": {"shape": "package", "license": "MIT"},
  "constraints": ["no GPU before October"],
  "autonomy": "checkpoints", "radius": "moderate", "model_fallback": "ask", "ladder_changes": "ask",

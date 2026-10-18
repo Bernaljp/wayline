@@ -88,9 +88,13 @@ IRREVERSIBLE = (
     # Decision 17: code pushes the code repository's split to its private remote, but making it public, or any other
     # change to its visibility, is the owner's word only (ticket 85).
     ("make the code repository public",
-     r"\b((?:mak(?:e|es|ing)|turn(?:s|ing)?|set(?:s|ting)?|flip(?:s|ping)?) (?:the |our |its )?(?:code )?(?:repositor(?:y|ies)|repos?)(?:'s)? public"
+     r"\b((?:mak(?:e|es|ing)|turn(?:s|ing)?|set(?:s|ting)?|flip(?:s|ping)?) (?:the |our |its )?(?:github |code |project's )?"
+     r"(?:repositor(?:y|ies)|repos?|code/?|package)(?:'s)? public"
+     r"|(?:mak(?:e|es|ing)|turn(?:s|ing)?|set(?:s|ting)?) (?:it|them) public"
      r"|publish(?:es|ed|ing)? (?:the |our |its )?code repositor(?:y|ies)"
-     r"|(?:chang(?:e|es|ing)|set(?:s|ting)?|flip(?:s|ping)?|switch(?:es|ing)?) (?:the |our |its )?(?:code )?(?:repositor(?:y|ies)|repos?)(?:'s)? visibility)\b"),
+     r"|open[- ]sourc(?:e|es|ed|ing) (?:the |our |its )?(?:code|repositor(?:y|ies)|repos?|package|method)"
+     r"|gh repo edit\b[^\n]*--visibility"
+     r"|(?:chang(?:e|es|ing)|set(?:s|ting)?|flip(?:s|ping)?|switch(?:es|ing)?) (?:the |our |its )?(?:github |code )?(?:repositor(?:y|ies)|repos?)(?:'s)? visibility)"),
     ("budgets",
      r"\b(exceed(?:s|ed|ing)? (?:the |its |our )?(?:[\w-]+ )?(?:budget|allowance|quota|cap)"
      r"|(?:rais(?:e|es|ing)|increas(?:e|es|ing)|doubl(?:e|es|ing)|extend(?:s|ing)?|lift(?:s|ing)?|remov(?:e|es|ing)) (?:the |its |our )?(?:[\w-]+ )?(?:budget|cap|allowance|quota|usage window)"
