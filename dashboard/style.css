@@ -13,7 +13,7 @@
    The parts, in order: tokens, the page frame, the header, the index, panels and their headings,
    folding, tables, the empty, loading, and error states, fields and chips, status, the tickets (the
    board, the graph, and the card a node shows), the tails, buttons and the actions, the decisions,
-   outputs and intake, markdown, and last the narrow width and reduced motion. */
+   outputs and intake, markdown, the document viewer, and last the narrow width and reduced motion. */
 
 :root {
   color-scheme: light dark;
@@ -66,6 +66,8 @@
   --accent-soft: #dcefec;
   /* What is legible on top of --accent: 4.5:1 against it in either theme. */
   --on-accent: #ffffff;
+  /* What covers the page behind the open viewer. */
+  --backdrop: rgb(0 0 0 / 0.45);
 
   --done: #116b3d;
   --running: #8a5a00;
@@ -105,6 +107,7 @@
     --accent-ink: #5fd3c0;
     --accent-soft: #10241f;
     --on-accent: #05100e;
+    --backdrop: rgb(0 0 0 / 0.6);
 
     --done: #57c98c;
     --running: #d8a944;
@@ -136,6 +139,7 @@
   --accent-ink: #5fd3c0;
   --accent-soft: #10241f;
   --on-accent: #05100e;
+  --backdrop: rgb(0 0 0 / 0.6);
 
   --done: #57c98c;
   --running: #d8a944;
@@ -341,7 +345,9 @@ h3.sub .count {
 .grid {
   display: grid;
   gap: var(--space-4) var(--space-5);
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  /* Never wider than the panel: on a phone a 420px column widened the layout viewport past the
+     screen, and the viewer's 100vw with it (ticket 74). */
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
   align-items: start;
 }
 .grid > * { min-width: 0; }
@@ -753,9 +759,6 @@ ul.outputs li:last-child { border-bottom: 0; }
 ul.outputs a { overflow-wrap: anywhere; }
 ul.outputs .note { margin: 0; font-size: var(--text-xs); }
 
-#outputs-preview { margin-top: var(--space-4); }
-#outputs-preview img { max-width: 100%; border-radius: var(--radius-1); border: 1px solid var(--line); }
-
 .drop {
   border: 1px dashed var(--line-strong);
   background: var(--surface-2);
@@ -798,6 +801,57 @@ input[type="file"]::file-selector-button {
   padding: var(--space-3);
 }
 .markdown table { margin: var(--space-2) 0; }
+.markdown img { max-width: 100%; border-radius: var(--radius-1); border: 1px solid var(--line); }
+/* Equation numbers start at (1) in each document, whatever else on the page carries math. */
+.markdown { counter-reset: katexEqnNo mmlEqnNo; }
+/* A display too wide for the window scrolls on its own line instead of widening the page. */
+.markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: var(--space-1) 0; }
+/* KaTeX writes its error color inline; the theme's own failed color replaces it. */
+.markdown .katex-error { color: var(--failed) !important; }
+
+/* --- the document viewer (ticket 74) ---------------------------------------------------------- */
+
+/* The page behind the open viewer does not scroll under it. */
+html:has(dialog#viewer[open]) { overflow: hidden; }
+
+dialog#viewer {
+  width: min(100vw - 2 * var(--space-5), 1100px);
+  height: min(100dvh - 2 * var(--space-5), 1400px);
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+}
+dialog#viewer[open] { display: flex; flex-direction: column; }
+dialog#viewer::backdrop { background: var(--backdrop); }
+
+.viewer-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.viewer-bar h2 { flex: 1 1 12em; min-width: 0; margin: 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
+.viewer-download { font-size: var(--text-sm); }
+.zoom { display: flex; }
+.zoom button { border-radius: 0; }
+.zoom button + button { margin-left: -1px; }
+.zoom .level { min-width: 6ch; font-variant-numeric: tabular-nums; }
+
+/* The document scrolls; its scroll never chains to the page. */
+.viewer-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-4) var(--space-5); }
+.viewer-body:focus-visible { outline-offset: -2px; }
+
+/* The zoom: CSS zoom on the document alone, so the bar keeps its size and the text rewraps, where
+   transform: scale would keep the layout and run every line past a phone's edge. */
+.viewer-doc { zoom: var(--zoom, 1); }
+.viewer-doc img { max-width: 100%; }
 
 /* The position memo at the head of the overview: its table of prior work is wide, so the memo
    scrolls inside its panel rather than widening the page. */
@@ -821,6 +875,10 @@ input[type="file"]::file-selector-button {
   .tail li { flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
   .tail .ts, .tail .event { flex: 0 0 auto; }
   form.inline label { min-width: 0; }
+  /* On a phone the viewer is the whole screen, with buttons a thumb can hit. */
+  dialog#viewer { width: 100vw; height: 100dvh; margin: 0; border: 0; border-radius: 0; }
+  .viewer-body { padding: var(--space-3) var(--space-4); }
+  .viewer-bar button.action { min-height: 44px; min-width: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

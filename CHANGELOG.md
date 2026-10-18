@@ -108,6 +108,28 @@ lists it read-only, marked with its tag.
   high`) becomes rung 6, and old rungs 6 and 7 (Fable) become rung 6, the top rung on a cheaper family. Each
   rewrite is printed, and a project whose own `tiers` override defines its ladder is left as it is. An override
   in the shape before the rung ladder that puts a level on Fable now lands on rung 6 too, where it was refused.
+- The document viewer (ticket 74; Implementation Decision 17). A Markdown file or an image the dashboard opens now
+  opens in one native `<dialog>`, opened with `showModal()` and placed outside the panels the polls redraw, so a
+  poll never closes it or moves its scroll; Escape or a click on the backdrop closes it and gives focus back. The
+  outputs list's `view` opens it, in place of the preview under the list. The document zooms with CSS `zoom` from
+  50% to 300% (the bar's minus, level, and plus, or the keys `+`, `-`, and `0`; the level is remembered in the
+  browser), which rewraps the text where pinch zoom only magnifies it, and below 720 px the viewer fills the
+  screen. Math renders through KaTeX 0.18.9, vendored with its woff2 fonts under `dashboard/vendor/katex/` and
+  found by relative URL, so no request leaves the workstation: one marked extension takes `$...$`, `$$...$$`,
+  `\(...\)`, and `\[...\]` (and a bare `\begin{equation}` or `align`) before Markdown reads them, a `*` inside math
+  never pairs into emphasis, and `\label`, `\eqref`, `\ref`, `\DeclareMathOperator`, `multline`, a `\newcommand`
+  of a name KaTeX predefines, and `$$...$$ {#eq:label}` render, equations numbered as amsmath numbers them. A
+  rendered document's relative images and links point into the project, relative to the document, so a report's
+  plots show; one that climbs out of the project is not fetched, and neither is anything a rendered file aims at
+  the network (an image, a `srcset`, a style's `url()`, a video or its poster, an SVG `<image>`). The position memo
+  and a ticket's body render math too, through the same path.
+- **Security:** a rendered document can no longer restyle the dashboard (ticket 74). The sanitizer kept a
+  document's `<style>`, whose rules applied to the whole page, and a model-written stylesheet can exfiltrate what
+  the page shows through attribute selectors and `url()`. Rendering is now KaTeX first, with `trust: false`, then
+  `DOMPurify.sanitize(html, {ADD_TAGS: ['semantics', 'annotation'], FORBID_TAGS: ['style']})`: `<style>` is
+  refused and KaTeX's MathML keeps its annotations.
+- The overview's tables fit a phone (ticket 74). Their 420 px minimum column widened the page past a 390 px
+  screen, and with it the viewer; a column is now never wider than its panel.
 
 - The harness's tools (ticket 75; Implementation Decisions 17 and 1). `wayline tools install` installs, beside the
   converter venv and with no ask at any autonomy, never as root: micromamba's static binary at
