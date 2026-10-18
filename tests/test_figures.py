@@ -322,6 +322,10 @@ class DataShapeTest(ProjectTestCase):
             self.assertEqual((call.request.role, call.request.model), (SHAPE_ROLE, "haiku"))
             self.assertEqual(call.request.allowed_tools, [])
         self.assertEqual(DATA_SHAPES, ("dist", "xy", "series", "category", "whole", "matrix", "multivar", "none"))
+        schema = json.loads((FIXTURES_DIR.parent / "schemas" / "index_shape.json").read_text(encoding="utf-8"))
+        self.assertEqual(tuple(schema["properties"]["data_shape"]["enum"]), DATA_SHAPES)
+        for shape in DATA_SHAPES:
+            self.assertIn("`%s`:" % shape, calls[0].request.prompt)
         self.assertEqual(_by_id(index, "basic-violinplot")["data_shape"], "dist")
         self.assertEqual(_by_id(index, "basic-violinplot")["canonical_chart_type"], "violin")
         self.assertEqual(_by_id(index, "stacked-area-chart")["data_shape"], "whole")

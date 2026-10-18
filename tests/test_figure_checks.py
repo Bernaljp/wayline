@@ -20,6 +20,7 @@ from pathlib import Path
 
 from tests.paths import FIXTURES_DIR
 from wayline import figure_checks as fc
+from wayline import figure_role
 from wayline.jsonschema import load_schema, validate
 
 FIGURES = FIXTURES_DIR / "figures"
@@ -342,6 +343,8 @@ class GeneratorCleanNotRunTest(FigureCase):
         report = fc.run_checks(self.project, request(), {"final": self.final}, style={}, policy=POLICY, artists=False,
                                tools=fc.Tools(which=lambda name: None), only={"generator_clean"})
         self.assertEqual(report, [outcome])
+        self.assertEqual(figure_role.failed_checks(report + [fc.check_outcome("caption_lint", True, "clean")]), [],
+                         "a check not run neither passes nor fails: the figure role does not send it back for repair")
 
 
 @RUFF

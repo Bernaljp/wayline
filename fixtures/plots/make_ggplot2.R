@@ -30,5 +30,19 @@ save(box(one) + labs(x = LONG), "ggplot2-long-label")
 save(box(long) + facet_wrap(~signal) + ggtitle("AUROC by arm"), "ggplot2-suptitle", width = 5)
 flat <- data.frame(arm = c(rep("raw", 11), rep("x3x4", 12)), AUROC = c(rep(0.7, 9), 0.72, 0.68, x3x4))
 save(box(flat), "ggplot2-flat-box")
+# Plots the review of ticket 77 found misjudged.
+counts <- data.frame(arm = c("raw", "x3x4", "x1x2", "raw", "x3x4", "x1x2"), n = c(1000, 800, 2.5, 600, 700, 0.4),
+                     signal = rep(c("signal 2", "signal 4"), each = 3))
+save(ggplot(counts, aes(arm, n, fill = signal)) + geom_col() + labs(x = "arm", y = "count",
+     caption = "Counts per arm over the ten seeds at both signals") + theme(legend.position = "bottom"),
+     "ggplot2-caption-and-bars", width = 5, height = 3.5)
+points <- data.frame(x = c(1, 2, 3), y = c(2, 1, 3), label = c("seed 1", "seed 2", "seed 3"))
+save(ggplot(points, aes(x, y, label = label)) + geom_point() + geom_text(nudge_y = 0.15) + theme_classic(),
+     "ggplot2-points-classic")
+tiles <- expand.grid(seed = 1:8, signal = 1:5)
+tiles$value <- round(runif(nrow(tiles)), 2)
+tiles <- tiles[1:37, ]
+save(ggplot(tiles, aes(factor(seed), factor(signal), fill = value)) + geom_tile(width = 0.9, height = 0.9) +
+     geom_text(aes(label = sprintf("%.2f", value)), size = 2) + labs(x = "seed", y = "signal"), "ggplot2-tile-gaps-37", width = 5)
 # R's own svg() device (cairo) writes every glyph as an outline: the text checks cannot read it.
 ggsave(file.path(out, "ggplot2-cairo-outlines.svg"), box(one), width = 4, height = 3, device = grDevices::svg)

@@ -62,6 +62,22 @@ class ReadabilityChecksTest(unittest.TestCase):
                         with self.subTest(library=library, sample=sample, other=other):
                             self.assertIs(outcome["pass"], True, outcome["detail"])
 
+    def test_plots_that_only_look_like_a_broken_sample_pass_all_five(self):
+        """Bars of tiny values, a stacked bar's thin top, 400 narrow bins, panel letters under a figure title,
+        a mathtext label short as drawn, a ggplot2 caption and bottom legend under a short x title, a
+        `theme_classic` panel of points and labels, and an annotated `imshow` of 36 cells."""
+        for name in ("matplotlib-bars", "matplotlib-imshow-36", "ggplot2-caption-and-bars", "ggplot2-points-classic"):
+            for check_id, outcome in run(name).items():
+                with self.subTest(sample=name, check=check_id):
+                    self.assertIs(outcome["pass"], True, outcome["detail"])
+
+    def test_an_annotated_raster_heatmap_and_one_drawn_with_gaps_are_still_counted(self):
+        for name in ("matplotlib-imshow-49", "ggplot2-tile-gaps-37"):
+            report = run(name)
+            with self.subTest(sample=name):
+                self.assertIs(report["heatmap_cell_labels"]["pass"], False, report["heatmap_cell_labels"]["detail"])
+                self.assertEqual([check for check, outcome in report.items() if outcome["pass"] is not True], ["heatmap_cell_labels"])
+
     def test_the_failures_name_what_broke_the_check(self):
         self.assertIn("'raw'", run("ggplot2-rotated-ticks")["rotated_text"]["detail"])
         self.assertIn("43 characters", run("altair-long-label")["axis_label_length"]["detail"])
@@ -110,6 +126,17 @@ class ThresholdsTest(unittest.TestCase):
     def test_the_shipped_policy_holds_the_two_thresholds(self):
         policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
         self.assertEqual(policy["plot_checks"], {"axis_label_max_chars": 40, "heatmap_label_max_cells": 36})
+
+    def test_the_limits_are_inclusive_one_over_fails(self):
+        """The long-label samples carry 43 characters and the broken heatmaps 37 cells: one over a limit fails, the limit passes."""
+        at = {"plot_checks": {"axis_label_max_chars": 43, "heatmap_label_max_cells": 37}}
+        under = {"plot_checks": {"axis_label_max_chars": 42, "heatmap_label_max_cells": 36}}
+        for library in LIBRARIES:
+            with self.subTest(library=library):
+                self.assertIs(run("%s-long-label" % library, policy=at)["axis_label_length"]["pass"], True)
+                self.assertIs(run("%s-long-label" % library, policy=under)["axis_label_length"]["pass"], False)
+                self.assertIs(run("%s-heatmap-37" % library, policy=at)["heatmap_cell_labels"]["pass"], True)
+                self.assertIs(run("%s-heatmap-37" % library, policy=under)["heatmap_cell_labels"]["pass"], False)
 
     def test_a_project_policy_moves_the_thresholds(self):
         loose = {"plot_checks": {"axis_label_max_chars": 50, "heatmap_label_max_cells": 40}}

@@ -11,9 +11,12 @@ six figure checks a drawing uses (`wayline.figure_checks`):
   titles");
 - `heatmap_cell_labels`: a heatmap's cells carry labels only up to
   `policy.plot_checks.heatmap_label_max_cells` (36) cells ("heatmaps with too much text inside
-  are complicated");
+  are complicated"); a grid of equal filled cells is a heatmap, and so is a raster (`imshow`) with
+  labels inside it, its cells counted by its labels;
 - `flat_summary_mark`: no flat summary mark ("boxplots are good, except when they are flat"): a
-  box, or any rectangle a summary is drawn as, collapsed under one unit along one side.
+  box, or any rectangle a summary is drawn as, collapsed under one unit along one side. A thin
+  rectangle with an edge on another rectangle's edge line in its panel is a bar of a tiny value,
+  a stacked bar's segment, or a histogram's bin, not a summary; Vega names its boxes outright.
 
 **The SVG every library writes.** The checks read the plot's SVG, never an artist report, so
 they hold for whatever drew it. `read_svg` walks the document with every transform applied and
@@ -37,13 +40,15 @@ A check that cannot run on a plot is reported `not run` with the reason
 writer; the three that need text roles run only where the writer's roles can be read.
 """
 
+import json
 import math
 import re
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from wayline.figure_checks import check_not_run
+from wayline import POLICY_PATH
+from wayline.figure_checks import check_not_run, check_outcome
 
 __all__ = [
     "READABILITY_CHECK_IDS", "READABILITY_CHECKS", "DEFAULT_AXIS_LABEL_MAX_CHARS", "DEFAULT_HEATMAP_LABEL_MAX_CELLS",
@@ -61,6 +66,7 @@ ROTATION_TOLERANCE_DEG = 0.5
 FLAT_UNITS = 1.0  # a summary rectangle thinner than one SVG unit along a side is drawn as a line
 MIN_MARK_UNITS = 2.0  # and the other side is long enough to be a mark, not a speck
 CELL_TOLERANCE = 0.5  # two cells this close in size, or edges this close, are one size or touch
+CELL_GAP = 0.25  # of a cell's size: the most space a heatmap leaves between neighbouring cells
 TEXT_WIDTH_PER_SIZE = 0.55  # an estimated glyph advance, used only where the writer gives no textLength
 FULL_CANVAS = 0.95  # a clip region covering this much of the canvas is the canvas, not a panel
 
@@ -152,6 +158,7 @@ class PlotSvg:
     shapes: list = field(default_factory=list)
     panels: list = field(default_factory=list)  # (x0, y0, x1, y1) of each panel
     outlined_glyphs: int = 0  # glyphs drawn as outlines with no string beside them
+    images: list = field(default_factory=list)  # (x0, y0, x1, y1) of each embedded raster
 
     @property
     def text_readable(self):
@@ -165,7 +172,7 @@ class PlotSvg:
 class _Walker:
     def __init__(self, root):
         self.root = root
-        self.texts, self.shapes = [], []
+        self.texts, self.shapes, self.images = [], [], []
         self.clips = {}
         self.outlined_glyphs = 0
         self.mpl_axes = {}  # axes group id -> panel box
@@ -210,8 +217,12 @@ class _Walker:
             href = element.get("{http://www.w3.org/1999/xlink}href") or element.get("href") or ""
             if "glyph" in href:
                 self.outlined_glyphs += 1
-        elif tag in ("path", "rect", "polygon", "polyline", "line"):
+        elif tag in ("path", "rect", "polygon", "polyline", "line", "circle", "ellipse"):
             self._shape(tag, element, matrix, groups, clip, style)
+        elif tag == "image":
+            corners = _rect_box(element, matrix)
+            self.images.append(corners)
+            self.shapes.append(SvgShape([(corners[0], corners[1]), (corners[2], corners[3])], False, False, groups, clip, "image"))
 
     def _note_matplotlib(self, element, identifier, groups):
         if _MPL_AXIS.match(identifier):
@@ -256,7 +267,8 @@ class _Walker:
         self.texts.append(SvgText(string, px, py, angle, size, anchor, width, groups + (entry,), clip))
 
     def _shape(self, tag, element, matrix, groups, clip, style):
-        filled = style.get("fill") not in (None, "none", "transparent") and style.get("fill-opacity", 1.0) > 0 and style.get("opacity", 1.0) > 0
+        filled = (style.get("fill") not in (None, "none", "transparent") and style.get("fill-opacity", 1.0) > 0
+                  and style.get("opacity", 1.0) > 0 and not style.get("hidden"))
         description = element.get("aria-roledescription")
         if tag == "rect":
             x0, y0, x1, y1 = _rect_box(element, IDENTITY)
@@ -267,6 +279,11 @@ class _Walker:
         elif tag == "line":
             subpaths = [([(_first_number(element.get("x1")), _first_number(element.get("y1"))),
                           (_first_number(element.get("x2")), _first_number(element.get("y2")))], False)]
+        elif tag in ("circle", "ellipse"):
+            cx, cy = _first_number(element.get("cx")), _first_number(element.get("cy"))
+            rx = _first_number(element.get("r") or element.get("rx"))
+            ry = _first_number(element.get("r") or element.get("ry"))
+            subpaths = [([(cx + rx * math.cos(step * math.pi / 4), cy + ry * math.sin(step * math.pi / 4)) for step in range(8)], True)]
         else:
             subpaths = _path_subpaths(element.get("d") or "")
         for points, closed in subpaths:
@@ -286,7 +303,7 @@ def read_svg(path):
     walker.walk()
     width, height = _canvas(root)
     writer = _writer(root, walker)
-    plot = PlotSvg(writer, width, height, walker.texts, walker.shapes, outlined_glyphs=walker.outlined_glyphs)
+    plot = PlotSvg(writer, width, height, walker.texts, walker.shapes, outlined_glyphs=walker.outlined_glyphs, images=walker.images)
     if writer == "matplotlib":
         _matplotlib_roles(plot, walker)
     elif writer == "vega":
@@ -297,12 +314,13 @@ def read_svg(path):
 
 
 def _writer(root, walker):
-    text = ElementTree.tostring(root, encoding="unicode", method="xml")[:4000]
-    if any(_local(node.tag) == "g" and node.get("id") == "figure_1" for node in root.iter() if isinstance(node.tag, str)) or "Matplotlib" in text:
+    nodes = [node for node in root.iter() if isinstance(node.tag, str)]
+    credited = " ".join(node.text or "" for node in nodes if _local(node.tag) == "title")  # matplotlib's <metadata> credit
+    if any(_local(node.tag) == "g" and node.get("id") == "figure_1" for node in nodes) or "Matplotlib" in credited:
         return "matplotlib"
     if (root.get("class") or "") == "marks" or walker.vega:
         return "vega"
-    if any(_local(node.tag) == "g" and "svglite" in (node.get("class") or "") for node in root.iter() if isinstance(node.tag, str)):
+    if any(_local(node.tag) == "g" and "svglite" in (node.get("class") or "") for node in nodes):
         return "svglite"
     if walker.outlined_glyphs and not walker.texts:
         return "cairo"
@@ -345,7 +363,8 @@ def _matplotlib_roles(plot, walker):
         elif axes:
             box = panels.get(axes)
             above = box is not None and text.center[1] < box[1] and not text.rotated
-            text.role = "panel_title" if above else "annotation"
+            letter = len(text.text) <= 2  # a panel letter (`A`, `b)`) labels the panel; it is no title
+            text.role = "panel_title" if above and not letter else "annotation"
         else:
             cx, cy = text.center
             if not text.rotated and cy < top:
@@ -430,22 +449,23 @@ def _svglite_roles(plot, walker):
         rows.setdefault(round(text.y / 2.0), []).append(text)
     ordered = [rows[key] for key in sorted(rows)]
     for index, row in enumerate(ordered):
-        last = index == len(ordered) - 1
-        is_label = last and (len(ordered) > 1 or len(row) == 1)
+        if len(ordered) == 1:
+            role = "axis_label" if len(row) == 1 else "tick"
+        else:
+            role = ("tick", "axis_label")[index] if index < 2 else "other"  # a caption, or a legend at the bottom
         for text in row:
-            text.role, text.axis = ("axis_label" if is_label else "tick"), "x"
+            text.role, text.axis = role, "x"
 
 
 # --- the checks -------------------------------------------------------------------------------------
 
 
-def _outcome(check_id, passed, detail, tool):
-    return {"id": check_id, "type": "A", "pass": bool(passed), "tool": tool, "detail": detail}
+def _shorten(items, limit=4):
+    return ", ".join(items[:limit]) + (" and %d more" % (len(items) - limit) if len(items) > limit else "")
 
 
-def _quote(texts, limit=4):
-    shown = ["%r" % text.text for text in texts[:limit]]
-    return ", ".join(shown) + (" and %d more" % (len(texts) - limit) if len(texts) > limit else "")
+def _quote(texts):
+    return _shorten(["%r" % text.text for text in texts])
 
 
 def _cannot_read_roles(check_id, plot):
@@ -463,11 +483,10 @@ def check_rotated_text(plot, policy=None):
         return blocked
     turned = [text for text in plot.texts if text.rotated and not (text.role == "axis_label" and text.axis == "y")]
     if turned:
-        listed = ", ".join("%r (%s, %+.0f deg)" % (text.text, text.role, -text.angle) for text in turned[:4])
-        more = " and %d more" % (len(turned) - 4) if len(turned) > 4 else ""
-        return _outcome("rotated_text", False, "%d rotated text(s) that are not the y-axis label: %s%s" % (len(turned), listed, more), "svg-text")
+        listed = _shorten(["%r (%s, %+.0f deg)" % (text.text, text.role, -text.angle) for text in turned])
+        return check_outcome("rotated_text", False, "%d rotated text(s) that are not the y-axis label: %s" % (len(turned), listed), "svg-text")
     labels = sum(1 for text in plot.texts if text.rotated)
-    return _outcome("rotated_text", True, "%d text(s); %d rotated, each a y-axis label" % (len(plot.texts), labels), "svg-text")
+    return check_outcome("rotated_text", True, "%d text(s); %d rotated, each a y-axis label" % (len(plot.texts), labels), "svg-text")
 
 
 def check_axis_label_length(plot, policy=None):
@@ -477,11 +496,26 @@ def check_axis_label_length(plot, policy=None):
         return blocked
     limit = int(_policy(policy).get("axis_label_max_chars", DEFAULT_AXIS_LABEL_MAX_CHARS))
     labels = [text for text in plot.texts if text.role == "axis_label"]
-    long = [text for text in labels if len(text.text) > limit]
+    long = [text for text in labels if len(_drawn(text.text)) > limit]
     if long:
-        listed = "; ".join("%r is %d characters" % (text.text, len(text.text)) for text in long)
-        return _outcome("axis_label_length", False, "%s (at most %d)" % (listed, limit), "svg-text")
-    return _outcome("axis_label_length", True, "%d axis label(s), none over %d characters" % (len(labels), limit), "svg-text")
+        listed = "; ".join("%r is %d characters" % (_drawn(text.text), len(_drawn(text.text))) for text in long)
+        return check_outcome("axis_label_length", False, "%s (at most %d)" % (listed, limit), "svg-text")
+    return check_outcome("axis_label_length", True, "%d axis label(s), none over %d characters" % (len(labels), limit), "svg-text")
+
+
+_MATH = re.compile(r"\$([^$]*)\$")
+_TEX_COMMAND = re.compile(r"\\(?:mathrm|mathit|mathbf|mathsf|mathtt|mathcal|text|operatorname|left|right)\b|[{}^_]")
+_TEX_SYMBOL = re.compile(r"\\[A-Za-z]+")
+
+
+def _drawn(string):
+    """A label as it is drawn: matplotlib's SVG keeps a mathtext label's source, so `$\\mu\\mathrm{m}^2$` counts as µm2."""
+    def shown(match):
+        body = _TEX_COMMAND.sub("", match.group(1))
+        body = _TEX_SYMBOL.sub("x", body.replace("\\ ", " ").replace("\\,", " "))
+        return body.replace("\\", "")
+
+    return _MATH.sub(shown, string)
 
 
 def check_stacked_titles(plot, policy=None):
@@ -492,30 +526,34 @@ def check_stacked_titles(plot, policy=None):
     figure = [text for text in plot.texts if text.role == "figure_title"]
     panel = [text for text in plot.texts if text.role == "panel_title"]
     if figure and panel:
-        return _outcome("stacked_titles", False, "the figure title %s stands above the panel title(s) %s" % (_quote(figure), _quote(panel)), "svg-text")
-    return _outcome("stacked_titles", True, "%d figure title(s), %d panel title(s): one level of titles" % (len(figure), len(panel)), "svg-text")
+        return check_outcome("stacked_titles", False, "the figure title %s stands above the panel title(s) %s" % (_quote(figure), _quote(panel)), "svg-text")
+    return check_outcome("stacked_titles", True, "%d figure title(s), %d panel title(s): one level of titles" % (len(figure), len(panel)), "svg-text")
 
 
 def check_heatmap_cell_labels(plot, policy=None):
     """A heatmap's cells carry labels only up to the policy's cell count."""
     limit = int(_policy(policy).get("heatmap_label_max_cells", DEFAULT_HEATMAP_LABEL_MAX_CELLS))
-    heatmaps = _heatmaps(plot.shapes)
+    heatmaps = [(cells, _union(cells), len(cells)) for cells in _heatmaps(plot.shapes)]
+    for image in plot.images:  # a raster heatmap (imshow, matshow): its cells are counted by the labels inside it
+        labels = [text for text in plot.texts if _inside(text.center, image)]
+        if len(labels) >= 4:
+            heatmaps.append(([], image, len(labels)))
     if not heatmaps:
-        return _outcome("heatmap_cell_labels", True, "no heatmap", "svg-geometry")
-    large = [cells for cells in heatmaps if len(cells) > limit]
+        return check_outcome("heatmap_cell_labels", True, "no heatmap", "svg-geometry")
+    large = [count for _, _, count in heatmaps if count > limit]
     if large and not plot.text_readable:
         return check_not_run("heatmap_cell_labels", "a heatmap of %d cells, and the %s SVG draws its text as glyph outlines, so its labels cannot be counted"
-                             % (len(large[0]), plot.writer), tool="svg")
+                             % (large[0], plot.writer), tool="svg")
     problems, sizes = [], []
-    for cells in heatmaps:
-        box = (min(c[0] for c in cells), min(c[1] for c in cells), max(c[2] for c in cells), max(c[3] for c in cells))
+    for cells, box, count in heatmaps:
         labels = [text for text in plot.texts if _inside(text.center, box)]
-        sizes.append("%d cells, %d labelled" % (len(cells), len(labels)))
-        if len(cells) > limit and labels:
-            problems.append("a heatmap of %d cells carries %d cell label(s); labels only up to %d cells" % (len(cells), len(labels), limit))
+        counted = "%d cells" % count if cells else "%d cells, a raster counted by its labels" % count
+        sizes.append("%s, %d labelled" % (counted, len(labels)))
+        if count > limit and labels:
+            problems.append("a heatmap of %s carries %d cell label(s); labels only up to %d cells" % (counted, len(labels), limit))
     if problems:
-        return _outcome("heatmap_cell_labels", False, "; ".join(problems), "svg-geometry+text")
-    return _outcome("heatmap_cell_labels", True, "heatmap(s): %s (labels only up to %d cells)" % ("; ".join(sizes), limit), "svg-geometry+text")
+        return check_outcome("heatmap_cell_labels", False, "; ".join(problems), "svg-geometry+text")
+    return check_outcome("heatmap_cell_labels", True, "heatmap(s): %s (labels only up to %d cells)" % ("; ".join(sizes), limit), "svg-geometry+text")
 
 
 def check_flat_summary_mark(plot, policy=None):
@@ -523,19 +561,19 @@ def check_flat_summary_mark(plot, policy=None):
     candidates = [shape for shape in plot.shapes if shape.is_rectangle()]
     if plot.writer == "vega":
         candidates = [shape for shape in candidates if shape.role_description == "box"]
-    flat, solid = [], []
+    flat = []
     for shape in candidates:
         x0, y0, x1, y1 = shape.bbox
         width, height = x1 - x0, y1 - y0
         if min(width, height) < FLAT_UNITS and max(width, height) >= MIN_MARK_UNITS:
             flat.append(shape)
-        elif min(width, height) >= FLAT_UNITS:
-            solid.append(shape.bbox)
-    flat = [shape for shape in flat if not _on_a_baseline(shape, solid)]
+    if plot.writer != "vega":  # Vega names its boxes; elsewhere a bar is told from a box by the edges it shares
+        rectangles = [shape for shape in plot.shapes if shape.is_rectangle()]
+        flat = [shape for shape in flat if not _shares_an_edge(shape, rectangles)]
     if flat:
         where = ", ".join("%.0f wide at (%.1f, %.1f)" % (max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]), s.bbox[0], s.bbox[1]) for s in flat[:4])
-        return _outcome("flat_summary_mark", False, "%d summary mark(s) drawn flat, as a line: %s" % (len(flat), where), "svg-geometry")
-    return _outcome("flat_summary_mark", True, "%d rectangular mark(s), none flat" % len(candidates), "svg-geometry")
+        return check_outcome("flat_summary_mark", False, "%d summary mark(s) drawn flat, as a line: %s" % (len(flat), where), "svg-geometry")
+    return check_outcome("flat_summary_mark", True, "%d rectangular mark(s), none flat" % len(candidates), "svg-geometry")
 
 
 READABILITY_CHECKS = {
@@ -563,18 +601,14 @@ def run_readability_checks(svg_path, policy=None, only=None):
         if only is not None and check_id not in only:
             continue
         if plot is None:
-            report.append(_outcome(check_id, False, reason, "svg"))
+            report.append(check_outcome(check_id, False, reason, "svg"))
         else:
             report.append(READABILITY_CHECKS[check_id](plot, policy))
     return report
 
 
 def _policy(policy):
-    if policy is None:
-        from wayline import POLICY_PATH  # the shipped thresholds; a project passes its own
-
-        import json
-
+    if policy is None:  # the shipped thresholds; a project passes its own
         policy = json.loads(Path(POLICY_PATH).read_text(encoding="utf-8"))
     return policy.get("plot_checks", policy)
 
@@ -605,11 +639,15 @@ def _heatmaps(shapes):
     return found
 
 
+def _union(boxes):
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
 def _touching(boxes):
     """The boxes split into groups that share an edge, cell to cell."""
     remaining, components = list(boxes), []
     while remaining:
-        component, frontier = [remaining.pop()], None
+        component = [remaining.pop()]
         frontier = [component[0]]
         while frontier:
             current = frontier.pop()
@@ -623,23 +661,34 @@ def _touching(boxes):
 
 
 def _adjacent(first, second):
+    """Neighbours in a grid: in one row or column, with at most `CELL_GAP` of a cell between them (`geom_tile(width = 0.9)`)."""
     tol = CELL_TOLERANCE
-    side_by_side = (abs(first[2] - second[0]) <= tol or abs(second[2] - first[0]) <= tol) and abs(first[1] - second[1]) <= tol
-    stacked = (abs(first[3] - second[1]) <= tol or abs(second[3] - first[1]) <= tol) and abs(first[0] - second[0]) <= tol
+    width, height = first[2] - first[0], first[3] - first[1]
+
+    def gap(near_edge, far_edge, size):
+        return -tol <= far_edge - near_edge <= CELL_GAP * size + tol
+
+    side_by_side = abs(first[1] - second[1]) <= tol and (gap(first[2], second[0], width) or gap(second[2], first[0], width))
+    stacked = abs(first[0] - second[0]) <= tol and (gap(first[3], second[1], height) or gap(second[3], first[1], height))
     return side_by_side or stacked
 
 
-def _on_a_baseline(flat, solid):
-    """A flat rectangle on the edge where bars of its width start is a bar of zero, not a summary drawn flat."""
-    x0, y0, x1, y1 = flat.bbox
-    horizontal = (x1 - x0) >= (y1 - y0)
-    for box in solid:
-        if horizontal and abs((box[2] - box[0]) - (x1 - x0)) <= CELL_TOLERANCE:
-            if abs(box[1] - y0) <= CELL_TOLERANCE or abs(box[3] - y0) <= CELL_TOLERANCE:
-                return True
-        if not horizontal and abs((box[3] - box[1]) - (y1 - y0)) <= CELL_TOLERANCE:
-            if abs(box[0] - x0) <= CELL_TOLERANCE or abs(box[2] - x0) <= CELL_TOLERANCE:
-                return True
+def _shares_an_edge(thin, rectangles):
+    """Whether a thin rectangle has an edge on a line another rectangle's edge lies on, in the same
+    panel: bars on one baseline, a stacked bar's segments, or a histogram's bins. A box drawn flat
+    stands alone. A rectangle thin across (a bar of a tiny value) shares a horizontal line; one thin
+    down may share either (a histogram's narrow bins, or a horizontal bar of a tiny value)."""
+    tol = CELL_TOLERANCE
+    flat = thin.bbox
+    thin_down = (flat[2] - flat[0]) < (flat[3] - flat[1])
+    for other in rectangles:
+        box = other.bbox
+        if other is thin or _same_box(box, flat) or (thin.clip and other.clip and thin.clip != other.clip):
+            continue
+        across = any(abs(a - b) <= tol for a in (flat[1], flat[3]) for b in (box[1], box[3]))
+        down = thin_down and any(abs(a - b) <= tol for a in (flat[0], flat[2]) for b in (box[0], box[2]))
+        if across or down:
+            return True
     return False
 
 
@@ -761,6 +810,8 @@ def _cascade(inherited, element):
                 style["font-size"] = _font_size(found.group(0), style.get("font-size", 10.0))
         elif key == "text-anchor":
             style["text-anchor"] = value.strip()
+    if style.get("opacity", 1.0) <= 0:
+        style["hidden"] = True  # a group drawn at no opacity hides everything inside it
     return style
 
 

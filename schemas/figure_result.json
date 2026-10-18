@@ -8,7 +8,7 @@
   "oneOf": [
     {"properties": {"status": {"const": "candidates_ranked"}}, "required": ["candidates"]},
     {"properties": {"status": {"const": "selected"}}, "required": ["candidates", "selected"]},
-    {"properties": {"status": {"const": "verified"}, "checks": {"minItems": 1, "items": {"properties": {"pass": {"const": true}}}}, "honesty_verdict": {"properties": {"verdict": {"const": "pass"}}}}, "required": ["final", "checks", "honesty_verdict"]},
+    {"properties": {"status": {"const": "verified"}, "checks": {"minItems": 1, "items": {"properties": {"pass": {"enum": [true, null]}}}}, "honesty_verdict": {"properties": {"verdict": {"const": "pass"}}}}, "required": ["final", "checks", "honesty_verdict"]},
     {"properties": {"status": {"const": "failed_checks"}}, "required": ["checks"]},
     {"properties": {"status": {"const": "honesty_failed"}, "honesty_verdict": {"properties": {"verdict": {"const": "fail"}}}}, "required": ["checks", "honesty_verdict"]},
     {"properties": {"status": {"const": "refused"}}, "required": ["refusals"]},
@@ -125,7 +125,7 @@
           "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
           "type": {"type": "string", "enum": ["A", "B"]},
           "pass": {"type": ["boolean", "null"], "description": "null for a check listed as not run (Implementation Decision 17)"},
-          "not_run": {"const": true, "description": "the check cannot run on this figure, the reason in detail; never passed or failed"},
+          "not_run": {"const": true, "description": "the check cannot run on this figure, the reason in detail: never passed or failed, so it neither blocks nor makes a verified figure"},
           "tool": {"type": ["string", "null"]},
           "detail": {"type": "string"}
         }

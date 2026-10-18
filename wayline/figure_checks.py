@@ -129,9 +129,9 @@ def check_outcome(check_id, passed, detail, tool=None):
 
 
 def check_not_run(check_id, reason, tool=None):
-    """The entry of a check that cannot run on this figure or plot: listed as not run, never passed or
+    """The entry of a check that cannot run on what it was given: listed as not run, never passed or
     failed (Implementation Decision 17), with `pass` null and the reason as its detail."""
-    return {"id": check_id, "type": "A", "pass": None, "not_run": True, "tool": tool or TOOL.get(check_id, "none"), "detail": reason}
+    return {"id": check_id, "type": "A", "pass": None, "not_run": True, "tool": tool or TOOL.get(check_id), "detail": reason}
 
 
 # --- the outside world ----------------------------------------------------------------------------

@@ -64,11 +64,19 @@ FAMILIES = (
     "evolution", "flow", "map", "network", "multi_dimensional",
 )
 
-# What a chart type draws (the research report prototype's `index_shapes.json`): dist, one numeric
-# variable over groups; xy, two numeric variables per observation; series, a value along an
-# ordered x; category, one value per category; whole, parts of a whole; matrix, a value per pair of
-# categories; multivar, rows of many variables; none, not a chart type for research data.
-DATA_SHAPES = ("dist", "xy", "series", "category", "whole", "matrix", "multivar", "none")
+# What a chart type draws (the research report prototype's `index_shapes.json`), in the words the
+# shape classifier's prompt gives each; `schemas/index_shape.json` enumerates the same eight.
+SHAPE_MEANINGS = (
+    ("dist", "one numeric variable, over one or more groups (seeds, arms, conditions)"),
+    ("xy", "two numeric variables per observation"),
+    ("series", "a value along an ordered x, with or without a band"),
+    ("category", "one value per category, with or without an interval"),
+    ("whole", "parts that add up to a whole, per category or along x"),
+    ("matrix", "a value per pair of categories"),
+    ("multivar", "rows of many variables"),
+    ("none", "not a chart type for research data (styling, a tutorial, a map, art, interaction, animation)"),
+)
+DATA_SHAPES = tuple(shape for shape, _ in SHAPE_MEANINGS)
 SHAPE_ROLE = "shape-classifier"
 SHAPE_SCHEMA = "index_shape"
 SHAPE_MAX_TURNS = 3
@@ -491,7 +499,7 @@ class ShapeClassifier:
             return None
         if stored.get("data_shape") not in DATA_SHAPES:
             return None
-        return {"data_shape": stored["data_shape"], "canonical_chart_type": stored.get("canonical_chart_type")}
+        return _shape_entry(stored)
 
     def _ask(self, entry, page_html, digest):
         from wayline import worker  # the launcher; only a build that classifies needs it
@@ -516,7 +524,13 @@ class ShapeClassifier:
         if not envelope.valid or not envelope.structured_output:
             raise FigureIndexError("; ".join(envelope.errors) if envelope.errors else "no usable answer")
         answer = envelope.structured_output
-        return {"data_shape": answer["data_shape"], "canonical_chart_type": answer.get("canonical_chart_type")}
+        return _shape_entry(answer)
+
+
+def _shape_entry(answer):
+    """The two fields an entry takes from an answer; a page that is no chart type names none."""
+    shape = answer["data_shape"]
+    return {"data_shape": shape, "canonical_chart_type": None if shape == "none" else answer.get("canonical_chart_type")}
 
 
 def _shape_prompt(entry, page_html, role):
@@ -531,15 +545,7 @@ def _shape_prompt(entry, page_html, role):
         "Call: %s" % (implementation.get("function_or_geom") or "none found"),
         "", "Page text (the first %d characters):" % SHAPE_PAGE_CHARS, "", text[:SHAPE_PAGE_CHARS],
         "", "## The shapes", "",
-        "- `dist`: one numeric variable, over one or more groups (seeds, arms, conditions)",
-        "- `xy`: two numeric variables per observation",
-        "- `series`: a value along an ordered x, with or without a band",
-        "- `category`: one value per category, with or without an interval",
-        "- `whole`: parts that add up to a whole, per category or along x",
-        "- `matrix`: a value per pair of categories",
-        "- `multivar`: rows of many variables",
-        "- `none`: not a chart type for research data (styling, a tutorial, a map, art, interaction, animation)",
-    ]
+    ] + ["- `%s`: %s" % (shape, meaning) for shape, meaning in SHAPE_MEANINGS]
     parts = ["\n".join(lines).rstrip(), (role.protocol or "").strip(),
              "# Your answer\n\nReturn `data_shape` (one of the eight), `canonical_chart_type` (the chart's plain name, "
              "such as `density` or `box with points`, the same for every page that draws it; null when the shape is "

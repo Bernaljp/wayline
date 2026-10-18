@@ -21,15 +21,15 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. Every module it edits is built. It blocks 100.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#224](https://github.com/Bernaljp/wayline/issues/224) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (drawings and plots: `build-index`'s `data_shape`, the six checks and the five new ones, SVG of every library, `generator_clean` Python only, "not run"), 13 (figures, the plot index, the machine checks), 14 (the policy table: the plot checks' thresholds); M8 criterion 6 (the checks' half); user story 128.
 
-- [ ] `wayline figures build-index` writes `data_shape` (one of the eight values) and a canonical chart type on every entry, from one Haiku call per entry through the launcher, cached by page hash; an unchanged page makes no call on a rebuild.
-- [ ] Each of the five new checks passes on a clean sample SVG and fails on a sample made to break it: rotated tick labels, a 41-character axis label, a suptitle over titled panels, a labelled heatmap of 37 cells, a flat summary mark.
-- [ ] The checks parse SVG from matplotlib, seaborn, Altair, and ggplot2 samples in `fixtures/`; `generator_clean` runs on Python scripts only, and any check that cannot run reports `not run` with the reason.
-- [ ] The thresholds 40 and 36 are read from policy, and the policy table of decision 14 gains them in the same commit.
-- [ ] Tests: the index build with the fake launcher answering the Haiku calls and a second build hitting the cache; each check over sample SVGs from each library; `not run` for a non-Python generator.
-- [ ] `python -m unittest` passes.
+- [x] `wayline figures build-index` writes `data_shape` (one of the eight values) and a canonical chart type on every entry, from one Haiku call per entry through the launcher, cached by page hash; an unchanged page makes no call on a rebuild.
+- [x] Each of the five new checks passes on a clean sample SVG and fails on a sample made to break it: rotated tick labels, a 41-character axis label, a suptitle over titled panels, a labelled heatmap of 37 cells, a flat summary mark.
+- [x] The checks parse SVG from matplotlib, seaborn, Altair, and ggplot2 samples in `fixtures/`; `generator_clean` runs on Python scripts only, and any check that cannot run reports `not run` with the reason.
+- [x] The thresholds 40 and 36 are read from policy, and the policy table of decision 14 gains them in the same commit.
+- [x] Tests: the index build with the fake launcher answering the Haiku calls and a second build hitting the cache; each check over sample SVGs from each library; `not run` for a non-Python generator.
+- [x] `python -m unittest` passes.

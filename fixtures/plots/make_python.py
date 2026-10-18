@@ -101,6 +101,34 @@ ax.set_ylabel("AUROC")
 ax.set_xlabel("arm")
 save(fig, "matplotlib-flat-box")
 
+# Plots the review of ticket 77 found misjudged, each clean but for what its name says.
+fig, axes = plt.subplots(1, 3, figsize=(8, 3), layout="constrained")
+axes[0].bar(["a", "b", "c"], [1000, 800, 2.5])  # a bar of a tiny value is no summary drawn flat
+axes[0].set_ylabel("count")
+axes[1].bar(["a", "b"], [10, 12])
+axes[1].bar(["a", "b"], [0.02, 0.03], bottom=[10, 12])  # the thin top segment of a stacked bar
+axes[2].hist(rng.normal(0, 1, 2000), bins=400)  # narrow bins, a sparse tail
+for ax, letter in zip(axes, "ABC"):
+    ax.text(-0.1, 1.05, letter, transform=ax.transAxes, fontweight="bold")  # panel letters are not panel titles
+axes[1].set_ylabel(r"$\mathrm{d}\langle x^2\rangle/\mathrm{d}t\ (\mu\mathrm{m}^2/\mathrm{s})$")  # mathtext counts as drawn
+fig.suptitle("Counts by arm")
+save(fig, "matplotlib-bars")
+
+
+def mpl_imshow(rows, cols, name):
+    fig, ax = plt.subplots(figsize=(4, 3.6), layout="constrained")
+    values = np.round(rng.uniform(0, 1, (rows, cols)), 2)
+    ax.imshow(values, cmap="viridis")  # one raster: its cells are counted by their labels
+    for (row, col), value in np.ndenumerate(values):
+        ax.text(col, row, "%.2f" % value, ha="center", va="center", fontsize=5)
+    ax.set_xlabel("seed")
+    ax.set_ylabel("signal")
+    save(fig, name)
+
+
+mpl_imshow(6, 6, "matplotlib-imshow-36")
+mpl_imshow(7, 7, "matplotlib-imshow-49")
+
 # --- seaborn (text written as <text>, the other way matplotlib writes an SVG) -------------------
 
 plt.rcParams["svg.fonttype"] = "none"
