@@ -8,6 +8,8 @@
 <!-- The mark, inline: a favicon served from anywhere else would be a fetch, and no favicon at all
      is a 404 in the browser's console on every load. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 12L6 4l2 5 2-5 4 8' fill='none' stroke='%231d4ed8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<!-- KaTeX's stylesheet finds its fonts at the relative URL `fonts/`, beside it under vendor/katex/. -->
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -148,7 +150,7 @@
   </section>
 
   <section id="outputs" aria-labelledby="outputs-heading">
-    <div class="view-head"><h2 id="outputs-heading">Outputs</h2><p class="note">Every file is downloadable; markdown and images open below.</p></div>
+    <div class="view-head"><h2 id="outputs-heading">Outputs</h2><p class="note">Every file is downloadable; markdown and images open in the viewer.</p></div>
     <div id="outputs-body" class="panel">
       <p class="state loading">indexing the outputs</p>
     </div>
@@ -174,6 +176,25 @@
 <!-- The card a graph node shows while the pointer or the keyboard is on it. -->
 <div id="node-card" class="node-card" role="status" hidden></div>
 
+<!-- The document viewer (ticket 74): every Markdown file the dashboard opens, and every image, opens
+     here. It sits outside the panels the polls redraw, so a poll never closes or resets it, and it
+     opens with showModal(), so the page behind is inert while it is open. -->
+<dialog id="viewer" class="viewer" aria-labelledby="viewer-title">
+  <div class="viewer-bar">
+    <h2 id="viewer-title"></h2>
+    <div class="zoom" role="group" aria-label="zoom">
+      <button type="button" class="action" data-zoom="out" aria-label="zoom out" title="zoom out (-)">&minus;</button>
+      <button type="button" class="action level" data-zoom="reset" aria-label="reset the zoom" title="reset the zoom (0)">100%</button>
+      <button type="button" class="action" data-zoom="in" aria-label="zoom in" title="zoom in (+)">+</button>
+    </div>
+    <a id="viewer-download" class="viewer-download">download</a>
+    <button type="button" class="action" data-close>close</button>
+  </div>
+  <div id="viewer-body" class="viewer-body" tabindex="0" autofocus>
+    <div id="viewer-doc" class="viewer-doc"></div>
+  </div>
+</dialog>
+
 <footer>
   <p class="note">Every action needs the token carried by the URL <code>wayline serve</code> printed.</p>
 </footer>
@@ -181,6 +202,7 @@
 <!-- Pinned, checked in, and served as static assets; never imported by the harness. See vendor/VENDOR.md. -->
 <script src="/vendor/marked.umd.js"></script>
 <script src="/vendor/purify.min.js"></script>
+<script src="/vendor/katex/katex.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

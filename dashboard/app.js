@@ -156,13 +156,189 @@ function subhead(name, count) {
   return el('h3', { class: 'sub' }, parts);
 }
 
+// --- markdown and its math (ticket 74) ----------------------------------------------------------
+//
+// One marked extension with a block and an inline tokenizer, which marked tries before its own at
+// every position, so the math is taken out of the source before marked reads escapes, emphasis, list
+// markers, or HTML inside it (research note 04, `research/viewer-math-and-zoom`). KaTeX renders it to
+// a string, and the whole page is sanitized after, so KaTeX's output passes through DOMPurify like
+// every other byte of markdown. `$` follows Pandoc's rule, so prices are not math, and displayed math
+// holds no blank line (Pandoc's rule too), so a stray `$$` costs one paragraph, not the page.
+//
+//   inline:  $...$  \(...\)  and  $$...$$  \[...\]  inside a paragraph (the last two displayed)
+//   block:   $$...$$  \[...\]  and a bare \begin{equation|align|...}...\end{...} at a line's start,
+//            and `$$...$$ {#eq:label}`, a numbered equation as the sections write one
+
+const MATH_INLINE = /^(?:\$\$((?:\\[\s\S]|[^\\$])+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$(?![\s$])((?:\\[\s\S]|[^\\$])+?)(?<!\s)\$(?!\d))/;
+const MATH_INLINE_START = /\$|\\[([]/;
+const MATH_ENVIRONMENTS = 'equation|align|alignat|gather|multline|flalign';
+const MATH_BLOCK = new RegExp(
+  '^ {0,3}(?:\\$\\$((?:\\\\[\\s\\S]|[^\\\\$])+?)\\$\\$(?:[ \\t]*\\{#(eq:[^}\\s]+)\\})?|\\\\\\[([\\s\\S]+?)\\\\\\]|(\\\\begin\\{(' + MATH_ENVIRONMENTS + ')\\*?\\}[\\s\\S]+?\\\\end\\{\\5\\*?\\}))[ \\t]*(?:\\n+|$)'
+);
+const MATH_BLOCK_START = new RegExp('^ {0,3}(?:\\$\\$|\\\\\\[|\\\\begin\\{(?:' + MATH_ENVIRONMENTS + ')\\*?\\})', 'm');
+const MATH_BLANK_LINE = /\n[ \t]*\n/;
+// The same inline spans, for marked's emStrongMask hook: a `*` or `_` inside math never pairs with
+// one outside it (without the mask, `*see $a*b$ here*` emphasizes the wrong words).
+const MATH_MASK = /\$\$(?:\\[\s\S]|[^\\$])+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$(?![\s$])(?:\\[\s\S]|[^\\$])+?(?<!\s)\$(?!\d)/g;
+
+// Commands a paper's LaTeX has that KaTeX lacks, as KaTeX macros: \label is read and dropped (the
+// equation keeps its number; `numberEquations` turns it into one), and \DeclareMathOperator defines
+// with \def, which also replaces a name KaTeX already has (\argmin). The starred form is renamed
+// before rendering, since a macro cannot see the star.
+const MATH_MACROS = {
+  '\\label': { tokens: [], numArgs: 1 },
+  '\\DeclareMathOperator': '\\def#1{\\operatorname{#2}}',
+  '\\DeclareMathOperatorStar': '\\def#1{\\operatorname*{#2}}',
+};
+
+// KaTeX never trusts the input (no \href, \url, \includegraphics, or \html* commands), caps sizes and
+// macro expansion, and never warns. One `macros` object per document with `globalGroup`, so a
+// \newcommand holds for the rest of that document and never leaks into the next. A \newcommand of a
+// name KaTeX predefines but LaTeX does not (\R, \N, \Z) is retried as \renewcommand for exactly the
+// name KaTeX's error gives; any other error renders as KaTeX's red source with the message on hover,
+// and the rest of the page renders.
+function katexRenderer(macros) {
+  return (tex, display) => {
+    const options = { displayMode: display, throwOnError: true, trust: false, strict: 'ignore', maxSize: 20, maxExpand: 1000, output: 'htmlAndMathml', globalGroup: true, macros };
+    let source = tex.replace(/\\DeclareMathOperator\*/g, '\\DeclareMathOperatorStar');
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        return katex.renderToString(source, options);
+      } catch (error) {
+        const name = /\\newcommand\{(\\[A-Za-z]+)\} attempting to redefine/.exec(String(error && error.message));
+        if (!name) break;
+        source = source.split(`\\newcommand{${name[1]}}`).join(`\\renewcommand{${name[1]}}`);
+      }
+    }
+    return katex.renderToString(source, Object.assign({}, options, { throwOnError: false }));
+  };
+}
+
+// Equation numbers and \label, \ref, \eqref, which KaTeX has no cross-references for. This runs in
+// marked's processAllTokens hook, after the whole document is tokenized and before anything renders.
+// The first pass numbers every numbered equation and row in document order as amsmath does
+// (unstarred equation, align, gather, alignat, flalign, multline, and a `$$...$$ {#eq:label}`;
+// \notag, \nonumber, and \tag honored) and writes each number as that row's \tag, recording its
+// \label; the second puts the numbers where \eqref{key}, \ref{key}, and @eq:key stand, in math or in
+// text. Both passes see the whole document, so a reference before its equation works.
+const REF_NUMBERED = /^\\begin\{(equation|align|gather|alignat|flalign|multline)\}([\s\S]*)\\end\{\1\}$/;
+const REF_ROWS = new Set(['align', 'gather', 'alignat', 'flalign']);
+const REF_LABEL = /\\label\{([^}]*)\}/;
+const REF_USE = /\\(eqref|ref)\{([^}]*)\}|@(eq:[\w:.-]*\w)/g;
+
+// The rows of an environment's body: split at each \\ outside braces and nested environments.
+function refRows(body) {
+  const rows = [];
+  let depth = 0;
+  let nested = 0;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === '\\') {
+      if (body.startsWith('\\begin{', i)) nested += 1;
+      else if (body.startsWith('\\end{', i)) nested -= 1;
+      else if (body[i + 1] === '\\' && depth === 0 && nested === 0) { rows.push(body.slice(start, i)); start = i + 2; }
+      i += 1;
+    } else if (body[i] === '{') depth += 1;
+    else if (body[i] === '}') depth -= 1;
+  }
+  rows.push(body.slice(start));
+  return rows;
+}
+
+function numberEquations(tokens, walk) {
+  const labels = new Map();
+  let counter = 0;
+  const numberRow = (row) => {
+    const label = REF_LABEL.exec(row);
+    const bare = row.replace(REF_LABEL, '');
+    if (/\\(notag|nonumber)(?![A-Za-z])/.test(bare)) return bare;
+    const tag = /\\tag\*?\{([^}]*)\}/.exec(bare);
+    const number = tag ? tag[1] : String(++counter);
+    if (label) labels.set(label[1], number);
+    return tag ? bare : `${bare} \\tag{${number}}`;
+  };
+  walk(tokens, (token) => {
+    if (!(token.type === 'mathBlock' || (token.type === 'mathInline' && token.display))) return;
+    let text = token.text.trim();
+    if (token.label && !REF_NUMBERED.test(text)) text = `\\begin{equation}${text}\\label{${token.label}}\\end{equation}`;
+    const m = REF_NUMBERED.exec(text);
+    if (!m) { token.text = text.replace(REF_LABEL, ''); return; }
+    const [, env, body] = m;
+    if (REF_ROWS.has(env)) {
+      token.text = `\\begin{${env}*}${refRows(body).map((row) => (row.trim() ? numberRow(row) : row)).join('\\\\')}\\end{${env}*}`;
+    } else {
+      // equation and multline carry one number; KaTeX has no multline, so its rows are gathered.
+      const inner = env === 'multline' ? `\\begin{gathered}${body}\\end{gathered}` : body;
+      token.text = `\\begin{equation*}${numberRow(inner)}\\end{equation*}`;
+    }
+  });
+  const resolve = (text, math) => text.replace(REF_USE, (all, kind, key, crossref) => {
+    const name = crossref || key;
+    const number = labels.has(name) ? labels.get(name) : '??';
+    const shown = kind === 'ref' ? number : `(${number})`;
+    return math ? `\\text{${shown}}` : shown;
+  });
+  walk(tokens, (token) => {
+    if (token.type === 'mathBlock' || token.type === 'mathInline') token.text = resolve(token.text, true);
+    else if (token.type === 'text' && !token.tokens) token.text = resolve(token.text, false);
+  });
+  return tokens;
+}
+
+// A new marked instance per document, since the macros a document defines are that document's.
+function markdownWithMath() {
+  const draw = katexRenderer(Object.assign({}, MATH_MACROS));
+  const instance = new marked.Marked();
+  instance.use({
+    extensions: [
+      {
+        name: 'mathBlock',
+        level: 'block',
+        start(src) { const m = src.match(MATH_BLOCK_START); return m ? m.index : undefined; },
+        tokenizer(src) {
+          const m = MATH_BLOCK.exec(src);
+          if (!m) return undefined;
+          const text = m[1] !== undefined ? m[1] : m[3] !== undefined ? m[3] : m[4];
+          if (MATH_BLANK_LINE.test(text)) return undefined;
+          return { type: 'mathBlock', raw: m[0], text: text.trim(), label: m[2] };
+        },
+        renderer(token) { return draw(token.text, true) + '\n'; },
+      },
+      {
+        name: 'mathInline',
+        level: 'inline',
+        start(src) { const m = src.match(MATH_INLINE_START); return m ? m.index : undefined; },
+        tokenizer(src) {
+          const m = MATH_INLINE.exec(src);
+          if (!m) return undefined;
+          const display = m[1] !== undefined || m[2] !== undefined;
+          const text = m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4];
+          return { type: 'mathInline', raw: m[0], text: text.trim(), display };
+        },
+        renderer(token) { return draw(token.text, token.display); },
+      },
+    ],
+    hooks: {
+      emStrongMask: (src) => src.replace(MATH_MASK, (span) => 'a'.repeat(span.length)),
+      processAllTokens: (tokens) => numberEquations(tokens, (list, visit) => instance.walkTokens(list, visit)),
+    },
+  });
+  return instance;
+}
+
+// DOMPurify's defaults drop MathML's <semantics> and <annotation>, which KaTeX wraps every formula's
+// MathML in; kept, the accessible MathML is whole. `annotation-xml`, the integration point where
+// mXSS lives, stays forbidden. <style> is refused: a document's stylesheet would restyle the whole
+// dashboard (the v1.0.1 hole), and KaTeX never writes one; its `style` attributes stay.
+const MATH_PURIFY = { ADD_TAGS: ['semantics', 'annotation'], FORBID_TAGS: ['style'] };
+
 // Markdown from the ledger is written by workers (models), so it is sanitized before it is shown:
 // an unsanitized <script> in a findings file would be a prompt-injection path into the actions the
-// dashboard grows in M4. This is the one place any markdown becomes HTML; the ticket pages of
-// ticket 12 render through it.
+// dashboard grows in M4. This is the one place any markdown becomes HTML; the ticket pages, the
+// position memo, and the document viewer all render through it.
 function renderMarkdown(text) {
   const node = el('div', { class: 'markdown' });
-  node.innerHTML = DOMPurify.sanitize(marked.parse(text || ''));
+  node.innerHTML = DOMPurify.sanitize(markdownWithMath().parse(text || ''), MATH_PURIFY);
   return node;
 }
 
@@ -1094,7 +1270,6 @@ function renderOutputs(view) {
     parts.push(listOrNone(entries, (entry) => outputRow(entry), `nothing under ${name} yet`, 'outputs'));
     if (name === 'docs' && (view.site || []).length) parts.push(siteRow(view.site[0]));
   }
-  parts.push(el('div', { id: 'outputs-preview' }));
   replace(document.getElementById('outputs-body'), parts);
 }
 
@@ -1118,29 +1293,156 @@ function outputRow(entry) {
   ]);
   if (PREVIEWABLE_MARKDOWN.test(entry.path) || PREVIEWABLE_IMAGE.test(entry.path)) {
     const view = el('button', { type: 'button', class: 'action', text: 'view' });
-    view.addEventListener('click', () => previewOutput(entry));
+    view.addEventListener('click', () => openViewer(entry.path));
     row.appendChild(document.createTextNode(' '));
     row.appendChild(view);
   }
   return row;
 }
 
-async function previewOutput(entry) {
-  const preview = document.getElementById('outputs-preview');
-  if (!preview) return;
-  if (PREVIEWABLE_IMAGE.test(entry.path)) {
-    replace(preview, [el('img', { src: downloadUrl(entry.path), alt: entry.path })]);
+// --- the document viewer (ticket 74) --------------------------------------------------------------
+//
+// Every Markdown file the dashboard opens, and every image, opens in one native <dialog> placed in
+// index.html outside the panels the polls redraw, so a poll never closes it, resets its scroll, or
+// replaces what it shows. showModal() makes the page behind inert; Escape closes it and gives focus
+// back to whatever opened it, and so does a click on the backdrop. The document zooms with CSS
+// `zoom`, which rewraps the text where `transform: scale` would run it past a phone's edge (research
+// note 04, section 7); the keys + (or =), -, and 0 step and reset it, and Ctrl, Cmd, and Alt are left
+// to the browser, whose own zoom still works on the whole page.
+
+const ZOOM_STEPS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const viewer = {
+  zoom: ZOOM_STEPS.indexOf(1),
+  opening: 0, // which open the last read belongs to, so a slow read never replaces a newer one
+};
+
+function setZoom(index) {
+  viewer.zoom = Math.max(0, Math.min(ZOOM_STEPS.length - 1, index));
+  const value = ZOOM_STEPS[viewer.zoom];
+  document.getElementById('viewer-doc').style.setProperty('--zoom', String(value));
+  document.querySelector('#viewer [data-zoom="reset"]').textContent = `${Math.round(value * 100)}%`;
+  remember(STORE.zoom, String(value));
+}
+
+// A reference a document makes (an image's `src`, a link's `href`) as a path inside the project,
+// relative to the document's own directory, or null for one that leaves the project. `/x` is the
+// project's own root. Nothing is normalized away: a `..` above the root refuses the reference
+// rather than landing on some other file of the project.
+function documentPath(documentAt, reference) {
+  let path;
+  try {
+    path = decodeURIComponent(reference.split(/[?#]/)[0]);
+  } catch (failure) {
+    return null;
+  }
+  const parts = path.startsWith('/') ? [] : documentAt.split('/').slice(0, -1);
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part !== '..') parts.push(part);
+    else if (parts.length) parts.pop();
+    else return null;
+  }
+  return parts.length ? parts.join('/') : null;
+}
+
+const URL_SCHEME = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+
+// A rendered document's images and links, pointed at the project: a relative image is served from
+// the project through the download route, so a report's plots show; an image from anywhere else is
+// never fetched, since the page makes no request off the workstation and a model-written URL could
+// carry what it read; a relative link to another Markdown file opens it here.
+function pointIntoProject(node, documentAt) {
+  for (const image of node.querySelectorAll('img[src]')) {
+    const source = image.getAttribute('src');
+    if (source.startsWith('data:')) continue;
+    const path = URL_SCHEME.test(source) ? null : documentPath(documentAt, source);
+    if (path) {
+      image.setAttribute('src', downloadUrl(path));
+    } else {
+      image.removeAttribute('src');
+      image.setAttribute('data-refused', source);
+      image.title = `not shown: ${source} is outside the project`;
+    }
+  }
+  for (const link of node.querySelectorAll('a[href]')) {
+    const target = link.getAttribute('href');
+    if (target.startsWith('#')) continue;
+    if (URL_SCHEME.test(target)) {
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      continue;
+    }
+    const path = documentPath(documentAt, target);
+    if (!path) {
+      link.removeAttribute('href');
+      link.title = `${target} is outside the project`;
+      continue;
+    }
+    link.setAttribute('href', downloadUrl(path));
+    if (PREVIEWABLE_MARKDOWN.test(path)) {
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        openViewer(path);
+      });
+    }
+  }
+  return node;
+}
+
+// Open `path`, relative to the project, in the viewer: the one way any view shows a document,
+// report, section, or image.
+async function openViewer(path) {
+  const dialog = document.getElementById('viewer');
+  const body = document.getElementById('viewer-body');
+  const doc = document.getElementById('viewer-doc');
+  const mine = ++viewer.opening;
+  document.getElementById('viewer-title').textContent = path;
+  document.getElementById('viewer-download').href = downloadUrl(path);
+  replace(doc, [loadingState(`reading ${path}`)]);
+  if (!dialog.open) dialog.showModal();
+  if (PREVIEWABLE_IMAGE.test(path)) {
+    replace(doc, [el('img', { src: downloadUrl(path), alt: path })]);
     return;
   }
-  replace(preview, [loadingState(`reading ${entry.path}`)]);
   try {
     const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
-    const response = await fetch(downloadUrl(entry.path), { cache: 'no-store', headers });
+    const response = await fetch(downloadUrl(path), { cache: 'no-store', headers });
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
-    replace(preview, [renderMarkdown(await response.text())]);
+    const text = await response.text();
+    if (mine !== viewer.opening) return;
+    replace(doc, [pointIntoProject(renderMarkdown(text), path)]);
+    body.scrollTop = 0;
   } catch (failure) {
-    replace(preview, [errorState(failure)]);
+    if (mine === viewer.opening) replace(doc, [errorState(failure)]);
   }
+}
+
+function wireViewer() {
+  const dialog = document.getElementById('viewer');
+  dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+  dialog.querySelector('[data-zoom="in"]').addEventListener('click', () => setZoom(viewer.zoom + 1));
+  dialog.querySelector('[data-zoom="out"]').addEventListener('click', () => setZoom(viewer.zoom - 1));
+  dialog.querySelector('[data-zoom="reset"]').addEventListener('click', () => setZoom(ZOOM_STEPS.indexOf(1)));
+  dialog.addEventListener('keydown', (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.target.closest('input, textarea, select')) return;
+    if (event.key === '+' || event.key === '=') setZoom(viewer.zoom + 1);
+    else if (event.key === '-' || event.key === '_') setZoom(viewer.zoom - 1);
+    else if (event.key === '0') setZoom(ZOOM_STEPS.indexOf(1));
+    else return;
+    event.preventDefault();
+  });
+  // A click on the backdrop lands on the dialog itself, since the bar and the body fill it.
+  // (`closedby="any"` does this natively in Chrome 134 and Firefox 141, not yet in Safari.)
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  dialog.addEventListener('close', () => {
+    viewer.opening += 1;
+    replace(document.getElementById('viewer-doc'), []);
+  });
+  const saved = ZOOM_STEPS.indexOf(Number(remembered(STORE.zoom)));
+  setZoom(saved >= 0 ? saved : ZOOM_STEPS.indexOf(1));
 }
 
 // --- the journal tail ---------------------------------------------------------------------------
@@ -1707,7 +2009,7 @@ function wireIntake() {
 // that refuses storage (a private window, blocked site data) still works; it just forgets.
 
 const THEMES = [['auto', 'auto'], ['light', 'day'], ['dark', 'night']];
-const STORE = { theme: 'wayline.theme', folded: 'wayline.folded', view: 'wayline.view' };
+const STORE = { theme: 'wayline.theme', folded: 'wayline.folded', view: 'wayline.view', zoom: 'wayline.viewer.zoom' };
 
 function remember(key, value) {
   try {
@@ -1864,6 +2166,7 @@ function wireIndex() {
 // --- start ---------------------------------------------------------------------------------------
 
 wireTheme();
+wireViewer();
 wireFolds();
 wireIndex();
 wireTicketView();
