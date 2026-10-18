@@ -172,6 +172,8 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
 
     def setUp(self):
         super().setUp()
+        # The repository is absorbed into `code/` (decision 17, ticket 85), which needs the project's own repository.
+        init_project(self.project, harness_root=HARNESS_ROOT, hermes_python=None, owner_email=None)
         self.repository = self.owner / "analysis"
         self.repository.mkdir()
         (self.repository / "train.py").write_text("print('train')\n", encoding="utf-8")
@@ -207,6 +209,11 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
         code = self.section("Code")
         self.assertIn(self.head, code)
         self.assertIn("main", code)
+
+    def test_the_repository_is_absorbed_into_code(self):
+        self.assertIn("absorbed into `code/` with its history", self.section("Code"))
+        self.assertEqual((self.project / "code" / "train.py").read_text(encoding="utf-8"), "print('train')\n")
+        self.assertEqual(read_harness(self.project)["code_repository"]["upstream"]["commit"], self.head)
 
     def test_the_data_pointers_are_listed_as_given(self):
         data = self.section("Data")

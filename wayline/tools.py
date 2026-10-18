@@ -339,11 +339,11 @@ MODEL_FILES = (
     "1_Pooling/config.json",
 )
 # The programs the machine already has that the harness calls, recorded by absolute path and never changed,
-# each with the flag that makes it print its version: LaTeX, poppler, LibreOffice, and git.
+# each with the flag that makes it print its version: LaTeX, poppler, LibreOffice, git, and gh (which creates the code repository).
 SYSTEM_TOOLS = {
     "latexmk": "--version", "pdflatex": "--version", "xelatex": "--version",
     "pdfinfo": "-v", "pdftotext": "-v", "pdfimages": "-v", "pdftoppm": "-v",
-    "soffice": "--version", "git": "--version",
+    "soffice": "--version", "git": "--version", "gh": "--version",
 }
 _PLATFORMS = {"x86_64": ("linux-64", "x86_64-unknown-linux-gnu"), "aarch64": ("linux-aarch64", "aarch64-unknown-linux-gnu")}
 _VERSION = re.compile(r"\d+(?:\.\d+)+(?:-[\d.]+)*")

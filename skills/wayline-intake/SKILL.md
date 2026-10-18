@@ -24,7 +24,16 @@ take the defaults and say what you assumed.
 - **References**: one line per reference, as the owner gave it (a DOI, an arXiv id, a title, a
   URL, a PDF). The scout resolves them later; nothing here is invented.
 - **Data**: what data exists, where it is, what is held out, and what may not leave the machine.
-- **Code**: the repositories the work builds on; the verb pins each to its commit.
+- **Code**: the repositories the work builds on; the verb pins each to its commit. The project's own
+  clone (one; someone else's paper's code goes to `absorb --code` as a reference) is absorbed into
+  `code/` with its history, its uncommitted changes as the next commit, so the code repository is cut
+  from `code/`. Ask the code repository's one setup question beside it, as the spec's
+  `code_repository`: its `shape` (`package`, the developed method and every model the work applies it
+  to, callable from the package, a method with its own maintained package a pinned dependency; or
+  `reproducibility`, scripts, helpers, and the environment alone), its `license` (the inherited one by
+  default), and its remote: a new private GitHub repository by default, or `remote: owner/name` when the
+  owner says wayline may take over their own repository (`confirm_public: true` once, if it is public).
+  It is private until the owner says `visibility: public`, which is their word only.
 - **Constraints**: deadlines, hardware, licences, methods that are off the table, and anything the
   owner said must not change.
 - **Autonomy**: `interactive`, `checkpoints` (the default), or `autonomous`, and beside it the fallback
@@ -73,6 +82,7 @@ wayline intake --from - <<'EOF'
  "references": ["arXiv:1706.03762", "10.1038/s41592-019-0686-2", "papers/model.pdf"],
  "data": ["data/expression.csv", "split_b is held out and never leaves this machine"],
  "code": ["../analysis"],
+ "code_repository": {"shape": "package", "license": "MIT"},
  "constraints": ["no GPU before October"],
  "autonomy": "checkpoints", "radius": "moderate", "model_fallback": "ask", "ladder_changes": "ask",
  "budgets": {"gpu_hours": 10, "wallclock_hours": 48, "usage_windows": 4},

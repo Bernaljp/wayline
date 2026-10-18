@@ -1381,11 +1381,17 @@ class JobRunner:
             "ended_at": None, "result": None, "exit_code": None, "oom": None, "overrides": dict(overrides or {}),
         }]
         self.write(record)
-        self._ledger.append_event("job_launched", {
+        from wayline.code_repository import main_commit  # the code the job ran at (decision 17); git, not a job backend
+
+        payload = {
             "unit": handle.unit, "gpu_uuids": list(spec.gpu_uuids),
             "cores": [int(core) for core in spec.cores], "ram_gb": spec.ram_gb,
             "attempt": len(record["attempts"]),
-        }, ticket=int(spec.ticket), job=spec.id)
+        }
+        commit = main_commit(self.project)
+        if commit:
+            payload["commit"] = commit
+        self._ledger.append_event("job_launched", payload, ticket=int(spec.ticket), job=spec.id)
         return record
 
     def _record_state(self, handle, state):

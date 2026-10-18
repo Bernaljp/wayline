@@ -27,10 +27,11 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from wayline import code_repository
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import DECISION, Ledger, atomic_write
@@ -41,6 +42,7 @@ from wayline.project import (
     read_harness, set_ladder_changes, set_model_fallback,
 )
 from wayline.tickets import section
+from wayline.tools import run_tool
 
 __all__ = [
     "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "GoalCheck", "take_intake", "check_goal", "set_goal",
@@ -68,7 +70,7 @@ DEFAULT_HUMAN_ONLY = {
 }
 
 SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "materials", "autonomy", "radius",
-               "model_fallback", "ladder_changes", "budgets", "human_only", "goal", "sample", "rationale")
+               "model_fallback", "ladder_changes", "budgets", "human_only", "goal", "sample", "rationale", "code_repository")
 LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_only")
 BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
 GOAL_OPTIONAL = {"dataset_or_split": None, "held_out_split": None, "baseline": None, "budget": None, "stop_when": "goal_reached"}
@@ -237,6 +239,8 @@ class Gathered:
     data: list
     code: list
     constraints: list
+    # The project's own clones handed over, absorbed into `code/` by `take_intake` (decision 17); their lines follow it.
+    clones: list = field(default_factory=list)
 
 
 def gather(spec, project, base):
@@ -263,7 +267,7 @@ def gather(spec, project, base):
     for pointer in spec.get("data", []):
         gathered.data.append(_data_line(pointer, project, base))
     for repository in spec.get("code", []):
-        gathered.code.append(_code_line(_existing(repository, base, "repository"), project))
+        _take_repository(gathered, _existing(repository, base, "repository"), project)
     gathered.constraints.extend(line.strip() for line in spec.get("constraints", []) if line.strip())
     return gathered
 
@@ -281,7 +285,7 @@ def _take_material(gathered, material, project, base):
         return
     if path.is_dir():
         if (path / ".git").exists():
-            gathered.code.append(_code_line(path, project))
+            _take_repository(gathered, path, project)
             return
         files = [child for child in sorted(path.iterdir()) if child.is_file() and not child.name.startswith(".")]
         if files and all(child.suffix.lower() == ".pdf" for child in files):
@@ -398,7 +402,30 @@ def _data_line(pointer, project, base):
     return pointer.strip()
 
 
-def _code_line(path, project):
+def _take_repository(gathered, path, project):
+    """The project's own repository: a clone with a commit is absorbed into `code/`; anything else is only listed."""
+    if (path / ".git").exists() and subprocess.run(["git", "-C", str(path), "rev-parse", "--verify", "--quiet", "HEAD"],
+                                                   capture_output=True).returncode == 0:
+        if path not in gathered.clones:
+            gathered.clones.append(path)
+        return
+    gathered.code.append(_code_line(path, project))
+
+
+def _absorb_clones(project, gathered, run):
+    """Absorb the one clone handed over into `code/` (decision 17) and list it under Code; the `upstream` record or None."""
+    if not gathered.clones:
+        return None
+    try:
+        upstream = code_repository.absorb_clone(project, gathered.clones[0], run=run)
+    except code_repository.CodeRepositoryError as failure:
+        raise IntakeError(str(failure)) from None
+    gathered.code.insert(0, _code_line(Path(upstream["clone"]), project, upstream))
+    return upstream
+
+
+def _code_line(path, project, upstream=None):
+    """One repository as INTAKE.md lists it: its commit, branch, and remote, and, absorbed, what `code/` took of it."""
     shown = _shown(path, project)
 
     def git(*args):
@@ -413,10 +440,21 @@ def _code_line(path, project):
     remote = git("remote", "get-url", "origin")
     if remote:
         line += ", remote `%s`" % remote
+    if upstream is not None:
+        line += "; absorbed into `code/` with its history"
     dirty = git("status", "--porcelain")
     if dirty:
         count = len(dirty.splitlines())
-        line += "; %d uncommitted change%s, which the commit does not hold" % (count, "" if count == 1 else "s")
+        plural = "" if count == 1 else "s"
+        if upstream is None:
+            line += "; %d uncommitted change%s, which the commit does not hold" % (count, plural)
+        elif upstream.get("uncommitted"):
+            line += "; %d uncommitted change%s, absorbed as the next commit `%s`" % (count, plural, upstream["uncommitted"][:12])
+        else:
+            line += "; %d uncommitted change%s, none of which changed what `code/` holds" % (count, plural)
+    if upstream is not None and upstream.get("license"):
+        spdx = upstream["license"].get("spdx")
+        line += "; it came with `%s`%s" % (upstream["license"]["file"], " (%s)" % spdx if spdx else ", a license no SPDX id names")
     return line
 
 
@@ -479,6 +517,11 @@ def normalize_spec(raw):
         elif key == "budgets":
             if not isinstance(value, dict) or set(value) - set(BUDGET_FIELDS):
                 raise IntakeError("budgets is an object with %s" % ", ".join(BUDGET_FIELDS))
+        elif key == "code_repository":
+            try:
+                value = code_repository.check_answer(value)
+            except code_repository.CodeRepositoryError as failure:
+                raise IntakeError(str(failure)) from None
         spec[key] = value
     if spec.get("autonomy") is not None and spec["autonomy"] not in AUTONOMY:
         raise IntakeError("autonomy is one of %s, got %r" % (", ".join(AUTONOMY), spec["autonomy"]))
@@ -524,13 +567,19 @@ def human_only_classes(entries):
 # --- the intake -------------------------------------------------------------------------------------
 
 
-def take_intake(project, spec, base=None, timeout_s=None):
+def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=None, push_url=None):
     """Write INTAKE.md, the settings in harness.json, and a measurable goal; returns a report.
 
     `spec` carries the fields of `SPEC_FIELDS`; relative paths in it resolve against `base` (the
     caller's working directory). The goal is checked before anything is written, so a slow or
     failing `eval_command` never leaves half an intake behind. The report is `{intake, harness,
     goal, counts}` where `goal` is the `GoalCheck` or None when no goal was stated.
+
+    The project's own clone, handed over as `code` or as a loose repository, is absorbed into
+    `code/` with its history (decision 17), and the setup answer on the code repository
+    (`code_repository`: its shape, remote, visibility, and license) is settled last, once the rest
+    is written, since it creates the private GitHub repository. `run`, `tools`, and `push_url` are
+    the tool runner's, which tests record.
     """
     project = Path(project).resolve()
     base = Path(base or os.getcwd())
@@ -538,6 +587,9 @@ def take_intake(project, spec, base=None, timeout_s=None):
     gathered = gather(spec, project, base)
     if not gathered.intent and not gathered.plans:
         raise IntakeError("an intake needs the intent: a paragraph (--intent, or text as an argument) or a plan (--plan)")
+    if len(gathered.clones) > 1:
+        raise IntakeError("intake absorbs one clone into code/, and was given %d (%s); give the others to absorb --code "
+                          "as references" % (len(gathered.clones), ", ".join(_shown(path, project) for path in gathered.clones)))
     harness = read_harness(project)
     # The classes already in harness.json stay: an intake that does not name them never shrinks what waits for the owner.
     classes = human_only_classes(list(harness.get("human_only", [])) + spec.get("human_only", []))
@@ -565,6 +617,8 @@ def take_intake(project, spec, base=None, timeout_s=None):
     except ValidationError as failure:
         raise IntakeError(str(failure)) from None
 
+    if _absorb_clones(project, gathered, run) is not None:
+        updated["code_repository"] = code_repository.record(project)
     ledger = Ledger(project)
     with ledger.lock():
         atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
@@ -578,6 +632,13 @@ def take_intake(project, spec, base=None, timeout_s=None):
         set_model_fallback(project, spec["model_fallback"])
     if spec.get("ladder_changes"):
         set_ladder_changes(project, spec["ladder_changes"])
+    if spec.get("code_repository"):
+        # Last, since it creates the private GitHub repository and pushes `code/`'s split there: one setup question (decision 17).
+        try:
+            updated = dict(updated, code_repository=code_repository.settle(
+                project, spec["code_repository"], run=run, tools=tools, **({"push_url": push_url} if push_url else {})))
+        except code_repository.CodeRepositoryError as failure:
+            raise IntakeError("the intake is written, but the code repository is not: %s" % failure) from None
     return {
         "intake": str(ledger.path(INTAKE_MD)),
         "harness": updated,
@@ -837,7 +898,7 @@ def intake_command(args, stdin=None):
     parser.add_argument("--plan", help="a plan file, quoted whole under the intent")
     parser.add_argument("--reference", action="append", default=[], help="one reference: a DOI, an arXiv id, a URL, a title, or a PDF")
     parser.add_argument("--data", action="append", default=[], help="one data pointer: a path, or words saying where the data is")
-    parser.add_argument("--repo", action="append", default=[], help="a repository the work builds on")
+    parser.add_argument("--repo", action="append", default=[], help="the project's own repository, absorbed into code/ with its history")
     parser.add_argument("--constraint", action="append", default=[], help="one constraint")
     parser.add_argument("--autonomy", choices=sorted(AUTONOMY))
     parser.add_argument("--radius", choices=sorted(RADIUS))

@@ -309,6 +309,7 @@ class HarnessToolsTest(ProjectTestCase):
             self.assertEqual((entry["executable"], entry["installer"], entry["route"]), (path, "system", "system"))
             self.assertEqual(Path(path).read_bytes(), before[name], "a system tool is never changed")
         self.assertEqual(self.entry("git")["version"], "2.43.0")
+        self.assertEqual(self.entry("gh")["version"], "2.95.0", "gh creates the code repository through its record (ticket 85)")
         self.assertEqual(self.entry("pdfinfo")["version"], "24.02.0")
         self.assertEqual(self.entry("latexmk")["version"], "4.83")
         self.assertEqual(self.entry("soffice")["version"], "24.2.7.2")

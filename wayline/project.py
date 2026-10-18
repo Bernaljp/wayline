@@ -75,8 +75,9 @@ GITIGNORE_HEADER = "# wayline"
 # forbid re-serving an e-print, so a pushed project never carries the ones its dossiers fetched.
 # And `absorb --code`'s clones, repositories of their own a wave commit would record as empty gitlinks.
 # And the conductor's heartbeat, which is rewritten every wave and means nothing in a commit.
+# And `.clones/`, where intake moves a project's own clone that lay inside the project once `code/` absorbed it (decision 17).
 GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/refs/*/code/",
-                    "research/conductor.json")
+                    "research/conductor.json", ".clones/")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")

@@ -94,6 +94,45 @@
         "python": {"type": ["string", "null"], "description": "the interpreter of the project's own environment Sphinx is installed in; absent or null is research/.cache/docs/venv, which wayline docs env creates"}
       }
     },
-    "owner_email": {"type": ["string", "null"], "description": "sent in the scout's User-Agent to the polite pools"}
+    "owner_email": {"type": ["string", "null"], "description": "sent in the scout's User-Agent to the polite pools"},
+    "code_repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "the code repository's record (Implementation Decision 17): what intake absorbed into code/, and the setup question's shape, remote, visibility, and license",
+      "properties": {
+        "shape": {"type": "string", "enum": ["package", "reproducibility"], "description": "a package of the developed method and every model the work applies it to, or a reproducibility repository of scripts, helpers, and the environment alone"},
+        "visibility": {"type": "string", "enum": ["private", "public"], "description": "private until the owner's word makes it public, which is on the irreversible list"},
+        "license": {"type": ["string", "null"], "description": "the SPDX id of the license the code repository carries"},
+        "remote": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["repository", "url", "how"],
+          "properties": {
+            "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name on GitHub"},
+            "url": {"type": "string", "description": "what code pushes code/'s split to"},
+            "how": {"type": "string", "enum": ["new", "copy", "owners_own"], "description": "a new private repository; a new private one carrying a taken-over repository's history, never a fork; or the owner's own repository, taken over on their word"},
+            "confirmed_public": {"type": "boolean", "description": "the owner's one confirmation that their own public repository may be taken over"}
+          }
+        },
+        "upstream": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clone", "commit"],
+          "description": "the project's own clone intake absorbed into code/ with git subtree add",
+          "properties": {
+            "clone": {"type": "string", "description": "where the clone is, its .git outside the project's tree"},
+            "url": {"type": ["string", "null"], "description": "the clone's upstream remote"},
+            "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$", "description": "the commit absorbed"},
+            "uncommitted": {"type": ["string", "null"], "description": "the project's commit carrying the clone's uncommitted changes, or null when it had none"},
+            "license": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": {"file": {"type": "string"}, "spdx": {"type": ["string", "null"]}},
+              "description": "the license the clone came with, or null without a license file"
+            }
+          }
+        }
+      }
+    }
   }
 }
