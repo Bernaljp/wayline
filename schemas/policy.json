@@ -7,7 +7,7 @@
     "tiers", "difficulty", "budget", "roles", "verifier", "max_parallel_workers", "poll_seconds", "heartbeat_stale_s",
     "acceptance_timeout_s", "pacing", "model_fallback", "context_pack", "escalation", "stall", "proposals", "goal", "absorb",
     "consultant", "kb", "provenance", "artifacts", "reservations", "jobs", "tick", "dashboard", "fixtures",
-    "figures", "plot_index", "quiet_hours", "per_window_worker_budget"
+    "figures", "plot_index", "plot_checks", "quiet_hours", "per_window_worker_budget"
   ],
   "additionalProperties": false,
   "properties": {
@@ -252,6 +252,16 @@
         "crawl_rate_per_s": {"type": "number", "minimum": 0},
         "liveness": {"type": "string", "enum": ["weekly", "monthly", "quarterly"]},
         "recrawl": {"type": "string", "enum": ["weekly", "monthly", "quarterly"]}
+      }
+    },
+    "plot_checks": {
+      "type": "object",
+      "description": "the thresholds of a plot's readability checks (Implementation Decision 17; wayline.plot_checks)",
+      "required": ["axis_label_max_chars", "heatmap_label_max_cells"],
+      "additionalProperties": false,
+      "properties": {
+        "axis_label_max_chars": {"type": "integer", "minimum": 1},
+        "heatmap_label_max_cells": {"type": "integer", "minimum": 0}
       }
     },
     "quiet_hours": {"type": "null", "description": "none until a night is measured (Implementation Decisions 14)"},

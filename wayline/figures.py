@@ -18,6 +18,17 @@ updating `last_verified`) or the full re-crawl (rebuilding the index, updating `
 carrying forward `known_pitfalls` an entry accumulated since); `fold_traps_hit` merges a figure
 result's promoted traps into the index the same way.
 
+**Data shapes** (Implementation Decision 17; ticket 77). The one field a model fills: each entry's
+`data_shape`, one of `DATA_SHAPES` (from the research report prototype's `index_shapes.json`), and
+its `canonical_chart_type`, the chart's plain name shared by every page that draws it (null for a
+page that is no chart type for research data, shape `none`). `ShapeClassifier` asks one session of
+the `shape-classifier` role (`policy.roles`, Haiku at low effort, no tools) per entry through the
+launcher, its answer validated against `schemas/index_shape.json`, and keeps the answer under
+`research/.cache/figures/shapes/<page sha256>.json`, so a rebuild over unchanged pages spends
+nothing; the entry records the hash as `page_sha256`. The page text is the session's to read; the
+index stores only the answer. A drawing matches a result's data views against these shapes to
+choose which chart types to draw.
+
 `figures/structure_index.json` (the four framework-figure layouts) and `figures/style.default.json`
 (the color budget) are static content this module owns outright; they name no site and crawl
 nothing.
@@ -25,22 +36,24 @@ nothing.
 
 import argparse
 import datetime
+import hashlib
 import html
 import json
 import re
 import sys
 import urllib.parse
 import xml.etree.ElementTree as ElementTree
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from wayline import HARNESS_ROOT
 from wayline.cli import parse_args
 from wayline.fetch import FetchError, caching_fetcher, canonical_url, recording_fetcher
-from wayline.project import ProjectError, find_project, read_harness
+from wayline.project import ProjectError, find_project, policy_for, read_harness
 
 __all__ = [
-    "FigureIndexError", "Site", "SITES", "FAMILIES", "PLOT_INDEX_JSON", "STRUCTURE_INDEX_JSON",
+    "FigureIndexError", "Site", "SITES", "FAMILIES", "DATA_SHAPES", "SHAPE_ROLE", "ShapeClassifier",
+    "PLOT_INDEX_JSON", "STRUCTURE_INDEX_JSON",
     "STYLE_DEFAULT_JSON", "build_index", "refresh_liveness", "refresh_full", "fold_traps_hit",
     "structure_index", "default_style", "load_index", "write_index", "index_fetcher",
     "figures_command", "classify_family",
@@ -50,6 +63,17 @@ FAMILIES = (
     "distribution", "correlation", "ranking", "part_of_a_whole",
     "evolution", "flow", "map", "network", "multi_dimensional",
 )
+
+# What a chart type draws (the research report prototype's `index_shapes.json`): dist, one numeric
+# variable over groups; xy, two numeric variables per observation; series, a value along an
+# ordered x; category, one value per category; whole, parts of a whole; matrix, a value per pair of
+# categories; multivar, rows of many variables; none, not a chart type for research data.
+DATA_SHAPES = ("dist", "xy", "series", "category", "whole", "matrix", "multivar", "none")
+SHAPE_ROLE = "shape-classifier"
+SHAPE_SCHEMA = "index_shape"
+SHAPE_MAX_TURNS = 3
+SHAPE_MAX_MINUTES = 5
+SHAPE_PAGE_CHARS = 6000  # of the page's text, enough for the title, the prose, and the call
 
 PLOT_INDEX_JSON = "plot_index.json"
 STRUCTURE_INDEX_JSON = "structure_index.json"
@@ -199,7 +223,7 @@ _NETWORK_PITFALLS = (
 # --- building the index ---------------------------------------------------------------------
 
 
-def build_index(fetcher, clock=None, max_pages_per_site=None, url_filter=None):
+def build_index(fetcher, clock=None, max_pages_per_site=None, url_filter=None, shapes=None):
     """Crawl the five sources through `fetcher` and return a fresh `plot_index.json` payload.
 
     `max_pages_per_site` bounds how many chart pages are fetched per site, for a deliberately
@@ -207,17 +231,31 @@ def build_index(fetcher, clock=None, max_pages_per_site=None, url_filter=None):
     given, keeps only the chart URLs it accepts before that cap is applied: the suite uses it to
     pin the exact pages its fixtures recorded, and a project may use it the same way to restrict
     a build to the chart families or libraries it actually needs.
+
+    `shapes`, a `ShapeClassifier`, fills each entry's `data_shape` and `canonical_chart_type`
+    (the verb always passes one); without it both stay null. An entry the classifier could not
+    answer fails the build once every other entry has been asked, so a rerun asks only for it.
     """
     today = (clock() if clock else datetime.date.today().isoformat())
     entries = []
     counts = {}
+    unanswered = []
     for site in SITES.values():
         pages = _crawl_site(fetcher, site, max_pages_per_site, url_filter)
         counts[site.key] = len(pages)
         for url, page_html in pages:
             entry = _entry_from_page(site, url, page_html, today)
-            if entry is not None:
-                entries.append(entry)
+            if entry is None:
+                continue
+            if shapes is not None:
+                try:
+                    entry.update(shapes.classify(entry, page_html))
+                except FigureIndexError as failure:
+                    unanswered.append("%s: %s" % (entry["id"], failure))
+            entries.append(entry)
+    if unanswered:
+        raise FigureIndexError("the shape classifier answered nothing usable for %d entr%s: %s"
+                               % (len(unanswered), "y" if len(unanswered) == 1 else "ies", "; ".join(unanswered)))
     return {
         "schema_version": 1,
         "built": today,
@@ -311,12 +349,9 @@ def _entry_from_page(site, url, page_html, today):
         "id": "%s-%s" % (slug, site.key),
         "family": family,
         "chart_type": title,
-        "data_shape": {
-            "n_variables": None,
-            "variable_types": [],
-            "grouping": "unspecified",
-            "notes": "not derivable from the page mechanically; refined by a later crawl or a human edit",
-        },
+        "data_shape": None,  # filled by the shape classifier, one of DATA_SHAPES
+        "canonical_chart_type": None,
+        "page_sha256": page_sha256(page_html),
         "when_to_use": None,
         "when_not_to_use": None,
         "library_implementations": [{
@@ -413,6 +448,105 @@ def _seeded_pitfalls(library, family, chart_type):
         yield from _NETWORK_PITFALLS
 
 
+# --- data shapes (decision 17) -----------------------------------------------------------------
+
+
+def page_sha256(page_html):
+    """The hash the shape cache is keyed by: the page's text as fetched."""
+    return hashlib.sha256(page_html.encode("utf-8")).hexdigest()
+
+
+class ShapeClassifier:
+    """One Haiku session per index entry, through the launcher, cached by the entry's page hash.
+
+    `classify(entry, page_html)` returns `{data_shape, canonical_chart_type}`, from
+    `research/.cache/figures/shapes/<page sha256>.json` when the page was answered before, and
+    otherwise from one session of the `shape-classifier` role, whose answer the launcher
+    validates against `schemas/index_shape.json`. A session with no usable answer raises
+    `FigureIndexError` and caches nothing. `calls` counts the sessions this classifier launched.
+    """
+
+    def __init__(self, project, policy=None, harness_root=None):
+        self.project = Path(project).resolve()
+        self.harness_root = Path(harness_root or HARNESS_ROOT).resolve()
+        entry = ((policy if policy is not None else policy_for(self.project)).get("roles") or {}).get(SHAPE_ROLE) or {}
+        self.model, self.effort = entry.get("model") or "haiku", entry.get("effort") or "low"
+        self.cache = self.project / "research" / CACHE / "shapes"
+        self.calls = 0
+
+    def classify(self, entry, page_html):
+        digest = page_sha256(page_html)
+        cached = self._cached(digest)
+        if cached is not None:
+            return cached
+        answer = self._ask(entry, page_html, digest)
+        self.cache.mkdir(parents=True, exist_ok=True)
+        (self.cache / (digest + ".json")).write_text(json.dumps(answer, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return answer
+
+    def _cached(self, digest):
+        try:
+            stored = json.loads((self.cache / (digest + ".json")).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if stored.get("data_shape") not in DATA_SHAPES:
+            return None
+        return {"data_shape": stored["data_shape"], "canonical_chart_type": stored.get("canonical_chart_type")}
+
+    def _ask(self, entry, page_html, digest):
+        from wayline import worker  # the launcher; only a build that classifies needs it
+
+        role = worker.read_role(SHAPE_ROLE, self.harness_root, self.project)
+        run_dir = self.project / "research" / "sessions" / SHAPE_ROLE / digest[:16]
+        number = 1
+        while (run_dir / str(number)).exists():
+            number += 1
+        request = worker.LaunchRequest(
+            role=SHAPE_ROLE, model=self.model, effort=self.effort, prompt=_shape_prompt(entry, page_html, role),
+            agent_json=role.agent_json(self.model, self.effort, SHAPE_MAX_TURNS), allowed_tools=[],
+            disallowed_tools=list(role.disallowed_tools), settings_path=None, add_dirs=[], cwd=str(self.project),
+            env={"WAYLINE_PROJECT": str(self.project), "WAYLINE_RUN": str(run_dir / str(number))},
+            schema_path=str(self.harness_root / "schemas" / (SHAPE_SCHEMA + ".json")), max_minutes=SHAPE_MAX_MINUTES,
+        )
+        self.calls += 1
+        try:
+            envelope = worker.launch(request)
+        except worker.LaunchError as failure:
+            raise FigureIndexError("the session could not be launched: %s" % failure) from None
+        if not envelope.valid or not envelope.structured_output:
+            raise FigureIndexError("; ".join(envelope.errors) if envelope.errors else "no usable answer")
+        answer = envelope.structured_output
+        return {"data_shape": answer["data_shape"], "canonical_chart_type": answer.get("canonical_chart_type")}
+
+
+def _shape_prompt(entry, page_html, role):
+    implementation = (entry.get("library_implementations") or [{}])[0]
+    text = _clean(page_html) or ""
+    lines = [
+        "- subject: the data shape of one plot gallery page's chart type",
+        "", "## The page, as code read it", "",
+        "Title: %s" % (entry.get("chart_type") or ""),
+        "Gallery: %s" % (entry.get("source_site") or ""),
+        "Library: %s" % (implementation.get("library") or "unknown"),
+        "Call: %s" % (implementation.get("function_or_geom") or "none found"),
+        "", "Page text (the first %d characters):" % SHAPE_PAGE_CHARS, "", text[:SHAPE_PAGE_CHARS],
+        "", "## The shapes", "",
+        "- `dist`: one numeric variable, over one or more groups (seeds, arms, conditions)",
+        "- `xy`: two numeric variables per observation",
+        "- `series`: a value along an ordered x, with or without a band",
+        "- `category`: one value per category, with or without an interval",
+        "- `whole`: parts that add up to a whole, per category or along x",
+        "- `matrix`: a value per pair of categories",
+        "- `multivar`: rows of many variables",
+        "- `none`: not a chart type for research data (styling, a tutorial, a map, art, interaction, animation)",
+    ]
+    parts = ["\n".join(lines).rstrip(), (role.protocol or "").strip(),
+             "# Your answer\n\nReturn `data_shape` (one of the eight), `canonical_chart_type` (the chart's plain name, "
+             "such as `density` or `box with points`, the same for every page that draws it; null when the shape is "
+             "`none`), and `reason` (one sentence) through the structured output."]
+    return "\n\n".join(part for part in parts if part) + "\n"
+
+
 # --- refresh ----------------------------------------------------------------------------------
 
 
@@ -446,9 +580,12 @@ def _reachable(fetcher, url):
     return False
 
 
-def refresh_full(fetcher, previous, clock=None, max_pages_per_site=None, url_filter=None):
-    """Rebuild the index; an id also present in `previous` keeps its accumulated `known_pitfalls`."""
-    fresh = build_index(fetcher, clock=clock, max_pages_per_site=max_pages_per_site, url_filter=url_filter)
+def refresh_full(fetcher, previous, clock=None, max_pages_per_site=None, url_filter=None, shapes=None):
+    """Rebuild the index; an id also present in `previous` keeps its accumulated `known_pitfalls`.
+
+    `shapes` classifies as `build_index` does; its cache makes the pages that did not change free.
+    """
+    fresh = build_index(fetcher, clock=clock, max_pages_per_site=max_pages_per_site, url_filter=url_filter, shapes=shapes)
     carried = {entry["id"]: entry.get("known_pitfalls", []) for entry in previous.get("entries", [])}
     for entry in fresh["entries"]:
         old = carried.get(entry["id"])
@@ -638,7 +775,7 @@ def _build_index_command(args):
         project = find_project(options.project)
         email = _email(project)
         fetcher = index_fetcher(project, email=email, fixtures=options.fixtures)
-        index = build_index(fetcher)
+        index = build_index(fetcher, shapes=ShapeClassifier(project))
         directory = Path(project) / FIGURES
         write_index(directory / PLOT_INDEX_JSON, index)
         _write_static(directory / STRUCTURE_INDEX_JSON, structure_index())
@@ -665,7 +802,7 @@ def _refresh_command(args):
         path = Path(project) / FIGURES / PLOT_INDEX_JSON
         previous = load_index(path)
         if options.full:
-            index = refresh_full(fetcher, previous)
+            index = refresh_full(fetcher, previous, shapes=ShapeClassifier(project))
             report = {"mode": "full", "entries": len(index["entries"]), "source_counts": index["source_counts"]}
         else:
             index = previous

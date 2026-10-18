@@ -124,7 +124,8 @@
         "properties": {
           "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
           "type": {"type": "string", "enum": ["A", "B"]},
-          "pass": {"type": "boolean"},
+          "pass": {"type": ["boolean", "null"], "description": "null for a check listed as not run (Implementation Decision 17)"},
+          "not_run": {"const": true, "description": "the check cannot run on this figure, the reason in detail; never passed or failed"},
           "tool": {"type": ["string", "null"]},
           "detail": {"type": "string"}
         }

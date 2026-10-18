@@ -254,6 +254,10 @@
     "liveness": "monthly",
     "recrawl": "quarterly"
   },
+  "plot_checks": {
+    "axis_label_max_chars": 40,
+    "heatmap_label_max_cells": 36
+  },
   "quiet_hours": null,
   "per_window_worker_budget": null
 }

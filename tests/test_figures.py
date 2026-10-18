@@ -5,17 +5,24 @@ sites on 2026-09-12 (see `fixtures/fetch/README.md`). A request nobody recorded 
 test that reached the network would fail rather than pass slowly.
 """
 
+import io
 import json
+import re
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from tests.paths import FIXTURES_DIR
+from tests.projects import ProjectTestCase
+from wayline import project, worker
 from wayline.fetch import Backend, Fetcher, Response, recording_fetcher
 from wayline.figures import (
-    FAMILIES, SITES, build_index, classify_family, default_style, figures_command,
-    fold_traps_hit, load_index, refresh_full, refresh_liveness, structure_index, write_index,
+    DATA_SHAPES, FAMILIES, SHAPE_ROLE, SITES, FigureIndexError, ShapeClassifier, build_index, classify_family,
+    default_style, figures_command, fold_traps_hit, load_index, refresh_full, refresh_liveness, structure_index,
+    write_index,
 )
+from wayline.worker import Envelope
 
 RECORDINGS = FIXTURES_DIR / "fetch"
 EMAIL = "owner@example.org"
@@ -64,7 +71,7 @@ class BuildIndexTest(unittest.TestCase):
     def test_every_entry_has_the_schema_of_research_notes_09(self):
         index = build_index(fetcher(), clock=_clock, url_filter=_keep)
         required = {
-            "id", "family", "chart_type", "data_shape", "when_to_use", "when_not_to_use",
+            "id", "family", "chart_type", "data_shape", "canonical_chart_type", "page_sha256", "when_to_use", "when_not_to_use",
             "library_implementations", "gallery_links", "known_pitfalls", "source_site",
             "source_license", "last_verified", "last_crawled",
         }
@@ -279,6 +286,111 @@ class IndexFileTest(unittest.TestCase):
     def test_loading_a_missing_index_is_a_blank_one_not_an_error(self):
         blank = load_index(Path(tempfile.gettempdir()) / "no-such-plot-index-file.json")
         self.assertEqual(blank["entries"], [])
+
+
+def shape_answer(request, message):
+    """The fake Haiku's answer, read off the chart title the prompt names (ticket 77)."""
+    title = re.search(r"^Title: (.*)$", request.prompt, re.MULTILINE).group(1).lower()
+    for keyword, shape, chart in (("violin", "dist", "violin"), ("scatter", "xy", "scatter"), ("stacked area", "whole", "stacked area"),
+                                  ("barplot", "category", "grouped bar"), ("heatmap", "matrix", "annotated heatmap")):
+        if keyword in title:
+            return Envelope(structured_output={"data_shape": shape, "canonical_chart_type": chart, "reason": "the title names it"},
+                            num_turns=1, duration_ms=5)
+    return Envelope(structured_output={"data_shape": "none", "canonical_chart_type": None, "reason": "not a chart for data"},
+                    num_turns=1, duration_ms=5)
+
+
+class DataShapeTest(ProjectTestCase):
+    """`data_shape` and a canonical chart type on every entry, one Haiku call per page, cached by page hash."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.temp / "study"
+        project.init_project(self.project)
+
+    def build(self, fake, calls=6, **kwargs):
+        for _ in range(calls):
+            fake.script(respond=shape_answer, role=SHAPE_ROLE)
+        return build_index(fetcher(), clock=_clock, url_filter=_keep, shapes=ShapeClassifier(self.project), **kwargs)
+
+    def test_every_entry_carries_one_of_the_eight_shapes_and_a_canonical_chart_type_from_one_haiku_call_each(self):
+        with worker.use_fake() as fake:
+            index = self.build(fake)
+            calls = list(fake.calls)
+        self.assertEqual(len(calls), 6)
+        for call in calls:
+            self.assertEqual((call.request.role, call.request.model), (SHAPE_ROLE, "haiku"))
+            self.assertEqual(call.request.allowed_tools, [])
+        self.assertEqual(DATA_SHAPES, ("dist", "xy", "series", "category", "whole", "matrix", "multivar", "none"))
+        self.assertEqual(_by_id(index, "basic-violinplot")["data_shape"], "dist")
+        self.assertEqual(_by_id(index, "basic-violinplot")["canonical_chart_type"], "violin")
+        self.assertEqual(_by_id(index, "stacked-area-chart")["data_shape"], "whole")
+        self.assertEqual(_by_id(index, "annotated-heatmap")["canonical_chart_type"], "annotated heatmap")
+        for entry in index["entries"]:
+            with self.subTest(entry=entry["id"]):
+                self.assertIn(entry["data_shape"], DATA_SHAPES)
+                self.assertRegex(entry["page_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_a_rebuild_over_unchanged_pages_makes_no_call(self):
+        with worker.use_fake() as fake:
+            first = self.build(fake)
+            fake.reset()
+            second = build_index(fetcher(), clock=_clock, url_filter=_keep, shapes=ShapeClassifier(self.project))
+            self.assertEqual(fake.calls, [])
+        self.assertEqual([(e["id"], e["data_shape"], e["canonical_chart_type"]) for e in second["entries"]],
+                         [(e["id"], e["data_shape"], e["canonical_chart_type"]) for e in first["entries"]])
+
+    def test_a_changed_page_is_asked_again(self):
+        classifier = ShapeClassifier(self.project)
+        entry = {"id": "basic-violinplot-python-graph-gallery", "chart_type": "Basic violinplot", "source_site": "python-graph-gallery",
+                 "library_implementations": [{"library": "seaborn", "function_or_geom": "sns.violinplot"}]}
+        with worker.use_fake() as fake:
+            for _ in range(2):
+                fake.script(respond=shape_answer, role=SHAPE_ROLE)
+            classifier.classify(entry, "<html><title>Basic violinplot</title></html>")
+            classifier.classify(entry, "<html><title>Basic violinplot</title></html>")
+            self.assertEqual(len(fake.calls), 1)
+            classifier.classify(entry, "<html><title>Basic violinplot</title><p>edited</p></html>")
+            self.assertEqual(len(fake.calls), 2)
+
+    def test_an_answer_outside_the_eight_shapes_fails_the_build_and_keeps_the_others_cached(self):
+        def bad_for_altair(request, message):
+            if "altair" in request.prompt:
+                return Envelope(structured_output={"data_shape": "scatter", "canonical_chart_type": "scatter", "reason": "x"},
+                                num_turns=1, duration_ms=5)
+            return shape_answer(request, message)
+
+        with worker.use_fake() as fake:
+            for _ in range(6):
+                fake.script(respond=bad_for_altair, role=SHAPE_ROLE)
+            with self.assertRaises(FigureIndexError) as raised:
+                build_index(fetcher(), clock=_clock, url_filter=_keep, shapes=ShapeClassifier(self.project))
+            self.assertIn("scatter-tooltips-altair", str(raised.exception))
+            fake.reset()
+            fake.script(respond=shape_answer, role=SHAPE_ROLE)
+            index = build_index(fetcher(), clock=_clock, url_filter=_keep, shapes=ShapeClassifier(self.project))
+            self.assertEqual(len(fake.calls), 1, "only the page that failed is asked again")
+        self.assertEqual(_by_id(index, "scatter-tooltips-altair")["data_shape"], "xy")
+
+    def test_the_verb_writes_the_shapes_and_a_second_run_spends_nothing(self):
+        argv = ["build-index", "--project", str(self.project), "--fixtures", str(RECORDINGS), "--json"]
+        with worker.use_fake() as fake:
+            for _ in range(40):
+                fake.script(respond=shape_answer, role=SHAPE_ROLE)
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(figures_command(argv), 0)
+            asked = len(fake.calls)
+            fake.reset()
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(figures_command(argv), 0)
+            self.assertEqual(fake.calls, [])
+        index = load_index(self.project / "figures" / "plot_index.json")
+        self.assertEqual(asked, len(index["entries"]))
+        self.assertGreaterEqual(len(index["entries"]), 6)
+        for entry in index["entries"]:
+            with self.subTest(entry=entry["id"]):
+                self.assertIn(entry["data_shape"], DATA_SHAPES)
+                self.assertIn("canonical_chart_type", entry)
 
 
 class FiguresCommandTest(unittest.TestCase):

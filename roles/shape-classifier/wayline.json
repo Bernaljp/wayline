@@ -1,0 +1,19 @@
+{
+  "id": "shape-classifier",
+  "scope_kind": "global",
+  "capability_summary": "Reads one plot gallery page as code read it and returns the data shape its chart type draws, one of eight, and the chart type's canonical name, with no tools.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "b176bb1e3fb6a04162a9ec37e6e76532eeb1f3e11c0fbef92145cc06781a565c",
+  "may_judge": false,
+  "output_schema": "index_shape",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}
