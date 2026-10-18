@@ -43,7 +43,7 @@ from wayline.tickets import (
 
 __all__ = [
     "research_version", "old_project_message", "old_project_problem",
-    "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "RESEARCH_DIRS",
+    "ProjectError", "HARNESS_JSON", "RESEARCH", "GITIGNORE_ENTRIES", "write_gitignore", "RESEARCH_DIRS",
     "home", "projects_path", "active_path", "read_active", "set_active", "read_projects",
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
     "check_policy", "policy_problems", "old_difficulty_levels", "rung_label", "rung_named", "launch_label", "merge_policy",
@@ -73,8 +73,10 @@ BLOCK_END = "<!-- wayline:end -->"
 GITIGNORE_HEADER = "# wayline"
 # The four entries of Implementation Decisions 1, plus the e-print sources: arXiv's terms of use
 # forbid re-serving an e-print, so a pushed project never carries the ones its dossiers fetched.
+# And `absorb --code`'s clones, repositories of their own a wave commit would record as empty gitlinks.
 # And the conductor's heartbeat, which is rewritten every wave and means nothing in a commit.
-GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/conductor.json")
+GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/refs/*/code/",
+                    "research/conductor.json")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")
@@ -475,8 +477,8 @@ def init_project(path, harness_root=None, harness_tag=TAG, git=True, hermes_pyth
     if note:
         notes.append(note)
 
-    # .gitignore: the four entries of Implementation Decisions 1, appended once.
-    if _write_gitignore(project):
+    # .gitignore: GITIGNORE_ENTRIES, each added once.
+    if write_gitignore(project):
         mark(".gitignore")
 
     # The project directories that live outside the ledger.
@@ -558,7 +560,7 @@ def _write_claude_block(project, harness_root, harness_tag):
     return True, note
 
 
-def _write_gitignore(project):
+def write_gitignore(project):
     """Add the missing entries of Implementation Decisions 1 under the `# wayline` header.
 
     An entry an owner deleted comes back under the header it belongs to, not at the end of the
@@ -572,8 +574,13 @@ def _write_gitignore(project):
     if not missing:
         return False
     if GITIGNORE_HEADER in present:
-        where = [line.strip() for line in lines].index(GITIGNORE_HEADER) + 1
-        lines[where:where] = missing
+        # Each missing entry goes back beside the one it follows in GITIGNORE_ENTRIES, else under the header.
+        for entry in missing:
+            stripped = [line.strip() for line in lines]
+            earlier = GITIGNORE_ENTRIES[:GITIGNORE_ENTRIES.index(entry)]
+            anchors = [stripped.index(item) for item in earlier if item in stripped]
+            where = (max(anchors) if anchors else stripped.index(GITIGNORE_HEADER)) + 1
+            lines.insert(where, entry)
         text = "".join(line + "\n" for line in lines)
     else:
         text = existing

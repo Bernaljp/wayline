@@ -51,7 +51,7 @@ from wayline import HARNESS_ROOT, decider, scout, worker
 from wayline.decisions import PROPOSALS, parked_proposals
 from wayline.ledger import DECISION, PROPOSAL_ADMITTED, PROPOSAL_PARKED, Ledger
 from wayline.project import policy_for, read_harness
-from wayline.tickets import build_graph, next_id, read_tickets, write_ticket
+from wayline.tickets import build_graph, next_id, read_tickets, touches_problems, write_ticket
 
 __all__ = [
     "RADIUS", "RADIUS_RANK", "REASONS", "KIND_ROLE", "DEDUP_ROLE", "DEDUP_SCHEMA",
@@ -60,7 +60,7 @@ __all__ = [
 
 RADIUS = ("strict", "moderate", "exploratory")
 RADIUS_RANK = {name: index for index, name in enumerate(RADIUS)}
-REASONS = ("radius", "duplicate", "cap", "blockers")
+REASONS = ("radius", "duplicate", "cap", "blockers", "touches")
 
 DEDUP_ROLE = "dedup-judge"
 DEDUP_SCHEMA = "dedup_verdict"
@@ -295,6 +295,10 @@ def admit_proposals(project, proposals, *, origin_ticket, origin_prefix, propose
                              "reason": json.loads(parked_path(project, identifier).read_text(encoding="utf-8")).get("reason")})
             continue
         reason = _radius_reason(entry, project_radius)
+        problems = touches_problems(entry.get("touches"), project) if reason is None else []
+        if problems:
+            # The planner's touch-set rule (decision 1): a ticket naming research/ could never be done.
+            reason, entry = "touches", dict(entry, touch_problems=problems)
         if reason is None:
             kind, candidate = _duplicate_candidate(entry, _corpus(project), threshold, low, high)
             if kind == "mechanical":
@@ -350,6 +354,10 @@ def apply_admitted(project, *, policy=None, harness_root=None, wave_cap=None, no
     outcomes = []
     for proposal in parked_proposals(project):
         if decided.get(str(proposal["id"])) != decider.ADMIT:
+            continue
+        if touches_problems(proposal.get("touches"), project):
+            # The decider's `admit` never widens the touch-set rule: such a ticket could never be done.
+            outcomes.append({"id": proposal["id"], "outcome": "parked", "reason": "touches"})
             continue
         radius = proposal.get("radius")
         if cap.get(radius, 0) >= caps.get(radius, 0):

@@ -36,6 +36,15 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The guard and gitignore defects found while charting (ticket 73; Implementation Decisions 1, 4, 17). The
+  touch-set hook denies every write under `research/`, whatever the touch set names. A gate's scope-down and a
+  ticket admitted from a proposal are checked by the planner's touch-set rule (`tickets.touch_problem`): a
+  scope-down naming `research/` raises `GateError` with the reason, and the kill argument and the paper's read now
+  file theirs with no touch set; a proposal naming it is parked with reason `touches`. The command guard denies
+  `gh repo create` and every other `gh` write (any group's verb but `list`, `view`, `status`, `diff`, `checks`,
+  `watch`, `download`; `gh api` with a write method or a body), and still allows the reads. `absorb --code` writes
+  `research/refs/*/code/` into the project's `.gitignore` beside `source/`, so a wave commit records no gitlink.
+
 - A paper's figures tell the writer, not the ticket graph, what the text should say (ticket 66). A figure `wayline
   paper` asked for (`figure_request.ticket: "paper"`) files no proposal and opens no `writing` ticket: its
   `findings_for_text` go on the next build's list for the writer, each with the figure and the `manuscript_locator`
