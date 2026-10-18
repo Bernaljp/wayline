@@ -25,6 +25,21 @@ def open_objective(project, question="Does the method answer the project's quest
     return add_objective(project, question)[0]
 
 
+def open_goal(project, question="Do the products raise the held-out AUROC?", metric="auroc", direction="up", **measure):
+    """Record one open goal through `wayline objective add`: its `eval_command` prints `metric` on a sample outside the project."""
+    from wayline.objectives import add_objective
+    stated = {"metric": metric, "direction": direction, "target": None, "held_out_split": "split_b",
+              "eval_command": "echo %s: 0.5" % metric}
+    stated.update(measure)
+    with tempfile.TemporaryDirectory(prefix="wayline-sample-") as folder:
+        sample = Path(folder) / "sample.txt"
+        sample.write_text("a sample artifact\n", encoding="utf-8")
+        objective, check = add_objective(project, question, measure=stated, sample=sample)
+    if objective["measure"] is None:
+        raise AssertionError("the goal's measure was not accepted: %s" % check.reason)
+    return objective
+
+
 class ProjectTestCase(unittest.TestCase):
     """A test with its own `WAYLINE_HOME`, a temporary directory, and a fake harness checkout."""
 

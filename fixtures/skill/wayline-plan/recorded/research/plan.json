@@ -1,5 +1,5 @@
 {
-  "sha": "b4db2e02ec2c",
+  "sha": "28ae016d49df",
   "cut_at": "2026-09-16T23:46:32.275Z",
   "cut": "plan",
   "change": null,
@@ -61,7 +61,8 @@
             "tabular"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T2",
@@ -97,7 +98,8 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T3",
@@ -132,7 +134,8 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T4",
@@ -179,7 +182,8 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T5",
@@ -225,7 +229,8 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T6",
@@ -256,10 +261,6 @@
             "grep -q '^auroc_gain: ' results/e1/oracle_gain.txt"
           ]
         },
-        "goal_metric": {
-          "reports": "auroc_gain",
-          "expected_direction": "up"
-        },
         "context_pack": [
           "research/SPEC.md#e1-claims-c1",
           "research/SPEC.md#seams",
@@ -280,7 +281,11 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": [
+          "O1"
+        ],
+        "goal": "O1"
       },
       {
         "key": "T7",
@@ -316,7 +321,6 @@
             "grep -q '^auroc_gain: ' results/e2/mlp_over_raw.txt"
           ]
         },
-        "goal_metric": null,
         "context_pack": [
           "research/SPEC.md#e2-claims-c2",
           "research/SPEC.md#risks",
@@ -337,7 +341,8 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T8",
@@ -367,7 +372,6 @@
             "grep -q '^auroc_gain: ' results/e3/paired_gain.txt && grep -q '^n_seeds: 10' results/e3/paired_gain.txt"
           ]
         },
-        "goal_metric": null,
         "context_pack": [
           "research/SPEC.md#e3-claims-c3",
           "research/SPEC.md#anti-claims",
@@ -388,7 +392,8 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T9",
@@ -438,7 +443,8 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T10",
@@ -485,7 +491,8 @@
             "csv"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T11",
@@ -526,7 +533,8 @@
             "tabular"
           ],
           "venues": []
-        }
+        },
+        "objectives": []
       },
       {
         "key": "T12",
@@ -565,7 +573,8 @@
           "libraries": [],
           "data_types": [],
           "venues": []
-        }
+        },
+        "objectives": []
       }
     ],
     "decisions": [

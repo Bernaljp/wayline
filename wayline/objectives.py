@@ -38,7 +38,7 @@ from wayline.project import ProjectError, find_project, policy_for
 __all__ = [
     "OBJECTIVES_JSON", "OBJECTIVES_MD", "STATUSES", "BY", "ARTIFACT", "ObjectiveError", "MeasureCheck", "metric_value",
     "run_on_sample", "normalize_measure", "check_measure", "read_objectives", "open_objectives", "add_objective",
-    "add_measure", "change_objective", "render_objectives", "describe_measure", "objective_command",
+    "add_measure", "change_objective", "render_objectives", "describe_measure", "objective_command", "ticket_goal", "served",
 ]
 
 OBJECTIVES_JSON = "objectives.json"
@@ -222,6 +222,25 @@ def read_objectives(project):
 def open_objectives(project):
     """The objectives pursued now."""
     return [objective for objective in read_objectives(project) if objective.get("status") == "open"]
+
+
+def ticket_goal(ticket, objectives):
+    """The measure of the goal a ticket's `goal` names (`goal: "O2"`), or None when it names none or one without a measure.
+
+    The ticket carries the objective's id alone: the metric and the direction it reports are the measure's.
+    """
+    identifier = (ticket or {}).get("goal")
+    for objective in objectives or ():
+        if identifier and objective.get("id") == identifier:
+            return objective.get("measure")
+    return None
+
+
+def served(ticket):
+    """The objectives a ticket serves: those it names, and the goal it reports."""
+    named = [identifier for identifier in (ticket or {}).get("objectives") or () if identifier]
+    goal = (ticket or {}).get("goal")
+    return named + ([goal] if goal and goal not in named else [])
 
 
 def _next_id(objectives):

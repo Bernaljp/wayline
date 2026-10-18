@@ -149,9 +149,28 @@ class PickTest(unittest.TestCase):
         built = graph(entry(1), entry(2), entry(3, blocked_by=[2]))
         self.assertEqual(ids(schedule.pick(built, slots=2)), [2, 1])
 
-    def test_a_ticket_that_reports_a_goal_metric_goes_before_one_that_does_not(self):
-        built = graph(entry(1), entry(2))
-        self.assertEqual(ids(schedule.pick(built, slots=2, goal_tickets={2})), [2, 1])
+    def test_the_objective_class_comes_second_the_stopping_rules_objectives_first(self):
+        """Ticket 81: 0 serves an objective the stopping rule waits on, 1 another open objective, 2 none."""
+        built = graph(entry(1), entry(2), entry(3))
+        self.assertEqual(ids(schedule.pick(built, slots=3, classes={1: 2, 2: 0, 3: 1})), [2, 3, 1])
+        self.assertEqual(ids(schedule.pick(built, slots=3)), [1, 2, 3], "a ticket the classes do not name is class 2")
+
+    def test_the_critical_path_still_comes_before_the_class(self):
+        built = graph(entry(1), entry(2), entry(3, blocked_by=[1]))
+        self.assertEqual(ids(schedule.pick(built, slots=2, classes={2: 0})), [1, 2])
+
+    def test_the_class_comes_before_the_difficulty(self):
+        built = graph(entry(1, difficulty=5), entry(2, difficulty=1))
+        self.assertEqual(ids(schedule.pick(built, slots=2, classes={2: 1})), [2, 1])
+
+    def test_which_class_a_ticket_is(self):
+        waited, pursued = {"O1"}, {"O1", "O2"}
+        self.assertEqual(schedule.objective_class(["O1"], pursued, waited), 0)
+        self.assertEqual(schedule.objective_class(["O2", "O1"], pursued, waited), 0, "the best class it serves")
+        self.assertEqual(schedule.objective_class(["O2"], pursued, waited), 1)
+        self.assertEqual(schedule.objective_class(["O3"], pursued, waited), 2, "a closed objective counts for nothing")
+        self.assertEqual(schedule.objective_class([], pursued, waited), 2)
+        self.assertEqual(schedule.objective_class(["O2"], pursued), 0, "the default rule, `objectives`, waits on every open one")
 
     def test_the_harder_ticket_goes_first_and_cheap_only_turns_that_around(self):
         built = graph(entry(1, difficulty=1), entry(2, difficulty=2))

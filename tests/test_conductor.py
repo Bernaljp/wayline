@@ -20,8 +20,8 @@ from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests import machine
-from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, fable_policy
-from wayline import conductor, gates, project, resources, tickets, worker
+from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, fable_policy, open_objective
+from wayline import conductor, gates, objectives, project, resources, tickets, worker
 from wayline.conductor import Conductor, ConductorError, WaveResult
 from wayline.ledger import Ledger
 from wayline.worker import Envelope, Patch
@@ -719,6 +719,42 @@ class SlotsTest(FiveTicketsCase):
         with self.assertRaises(ConductorError) as caught:
             Conductor(self.project, policy=policy, out=io.StringIO()).wave()
         self.assertIn("max_parallel_workers", str(caught.exception))
+
+
+class ObjectiveClassTest(FiveTicketsCase):
+    """Ticket 81: after the critical path, a ticket serving an objective the stopping rule waits on goes first."""
+
+    def one_slot(self):
+        return dict(project.policy_for(self.temp / "nowhere", HARNESS_ROOT), max_parallel_workers=1)
+
+    def serve(self, identifier, *served):
+        """Ticket `identifier` names `served` in its `objectives`, as the planner cuts it."""
+        path = [found for found in tickets.tickets_dir(self.project).glob("%02d-*.md" % identifier)][0]
+        fields, body = tickets.read_ticket(path)
+        tickets.write_ticket(self.ledger, dict(fields, objectives=list(served)), body)
+
+    def first_launch(self):
+        with worker.use_fake() as fake:
+            fake.load(FIVE_TICKETS / "fake-worker.json")
+            wave = Conductor(self.project, policy=self.one_slot(), out=io.StringIO()).wave()
+        return wave.launched
+
+    def test_a_ticket_serving_an_open_objective_launches_before_one_serving_none(self):
+        self.lay_out()
+        open_objective(self.project)
+        self.serve(2, "O1")
+        self.assertEqual(self.first_launch(), [2], "tickets 1 and 2 have the same critical path; 2 serves O1")
+
+    def test_a_ticket_serving_a_closed_objective_is_class_2_as_the_journal_says(self):
+        self.lay_out()
+        open_objective(self.project)
+        self.serve(2, "O1")
+        objectives.change_objective(self.project, "O1", "parked", by="owner", answer="later")
+        self.assertEqual(self.first_launch(), [1], "O1 is parked in the journal, so ticket 2 serves nothing open")
+
+    def test_without_objectives_the_order_is_the_one_it_was(self):
+        self.lay_out()
+        self.assertEqual(self.first_launch(), [1])
 
 
 class ParallelOutcomeTest(FiveTicketsCase):

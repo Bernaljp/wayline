@@ -1,7 +1,7 @@
 """Keep-if-better under a quantitative goal (Implementation Decisions 5 and 14; ticket 39).
 
-A ticket with `goal_metric` is measured by code, never by the worker's own word: the goal's
-`eval_command` runs once per seed artifact, from the project root, on the held-out split, and the
+A ticket whose `goal` names a goal (`goal: "O2"`, ticket 81) is measured by code, never by the
+worker's own word: the goal's `eval_command` runs once per seed artifact, from the project root, on the held-out split, and the
 change is kept only when the mean of those readings improves on the best kept value, in the goal's
 `direction`, by more than `policy.goal.margin_sd` standard deviations across at least
 `policy.goal.min_seeds` seeds.
@@ -33,7 +33,7 @@ from typing import Optional
 from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
 from wayline.intake import GOAL_JSON
 from wayline.ledger import PROGRESS
-from wayline.objectives import ARTIFACT, metric_value
+from wayline.objectives import ARTIFACT, metric_value, ticket_goal
 
 __all__ = [
     "SPLIT", "ARTIFACT_ENV", "SPLIT_ENV", "Judgment", "read_goal", "applies", "seed_artifacts",
@@ -100,19 +100,24 @@ def read_goal(ledger):
     return goal
 
 
-def applies(ticket, goal):
+def applies(ticket, goal, objectives=()):
     """Why keep-if-better does not run on this ticket, or None when it does.
 
-    It runs on a ticket whose `goal_metric` reports the goal's own metric; a ticket without one is
-    integrated as any other, and so is one reporting another metric, which is said.
+    It runs on a ticket whose `goal` names an objective whose measure reports the goal's own metric
+    (ticket 81: the metric is read from the measure in `objectives`, the records of `objectives.json`);
+    a ticket without one is integrated as any other, and so is one whose goal reports another metric,
+    which is said. Until ticket 87 the command, the split, and the direction are still `GOAL.json`'s.
     """
-    wanted = ticket.get("goal_metric") or None
-    if wanted is None:
-        return "the ticket reports no goal metric"
+    named = ticket.get("goal")
+    if not named:
+        return "the ticket names no goal"
+    measure = ticket_goal(ticket, objectives)
+    if not measure:
+        return "the ticket's goal %s has no measure, so nothing measures it" % named
     if goal is None:
-        return "the ticket reports %s, and research/GOAL.json states no measurable goal" % wanted.get("reports")
-    if wanted.get("reports") != goal["metric"]:
-        return "the ticket reports %s, and the goal's metric is %s" % (wanted.get("reports"), goal["metric"])
+        return "the ticket's goal %s reports %s, and research/GOAL.json states no measurable goal" % (named, measure["metric"])
+    if measure["metric"] != goal["metric"]:
+        return "the ticket's goal %s reports %s, and the goal's metric is %s" % (named, measure["metric"], goal["metric"])
     return None
 
 

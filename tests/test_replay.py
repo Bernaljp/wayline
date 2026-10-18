@@ -151,6 +151,17 @@ def wave(number, outcomes, progressed, at=0):
 class ProjectViewTest(unittest.TestCase):
     """What holds for the project rather than for one ticket: the windows, the owner's say, the stall."""
 
+    def test_each_objective_s_status_is_its_last_objective_event(self):
+        """Ticket 81: the open objectives the scheduling class reads, rebuilt from the journal alone."""
+        def change(identifier, status, by="owner"):
+            return event("objective", {"id": identifier, "text": "Question %s?" % identifier, "status": status,
+                                       "measure": None, "by": by})
+        view = replay.replay([change("O1", "open"), change("O2", "open"), change("O1", "parked"), run_started(),
+                              change("O3", "open", by="decider")])
+        self.assertEqual(view.objectives, {"O1": "parked", "O2": "open", "O3": "open"})
+        self.assertEqual(view.open_objectives(), {"O2", "O3"})
+        self.assertEqual(replay.replay([]).open_objectives(), set())
+
     def test_the_window_pause_lasts_until_unpaused_and_outlives_a_restart(self):
         paused = event("paused", {"resets_at": "2026-09-12T13:00:00Z", "window": "five_hour", "utilization": 0.93})
         view = replay.replay([run_started(), paused, run_started(resume=True, pid=2)])
