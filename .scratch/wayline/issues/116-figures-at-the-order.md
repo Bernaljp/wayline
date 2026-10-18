@@ -18,7 +18,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#263](https://github.com/Bernaljp/wayline/issues/263) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (The paper order and what it compiles: the figure plan, figures, tables; Drawings and plots: the owner's marks), 13 (figures, the figure role); M8 criterion 17; user stories 129, 158, 159.
 

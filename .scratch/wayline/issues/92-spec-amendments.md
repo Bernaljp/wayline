@@ -26,7 +26,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#239](https://github.com/Bernaljp/wayline/issues/239) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("How objectives change as results come in": the spec amendment); decisions 1 (the verb table: `specify --amend`), 10 (specify, the spec verifier, the planner), 11 (the spec verifier); M8 criterion 2; user story 109.
 

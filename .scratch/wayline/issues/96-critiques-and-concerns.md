@@ -29,7 +29,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#243](https://github.com/Bernaljp/wayline/issues/243) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Documents, critiques, and concerns; How objectives change as results come in: a dropped objective's concerns; Setup, at every autonomy); Implementation Decision 10 (the critic, the grill, specify, the decider's human-only classes: `concern`); Implementation Decision 2 (the event table: `concern`); the schemas list (`concern`); M8 criterion 9; user story 139.
 

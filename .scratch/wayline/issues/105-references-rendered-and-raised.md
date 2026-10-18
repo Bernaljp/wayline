@@ -33,7 +33,7 @@ It blocks 109, 111, 115, and 121.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#252](https://github.com/Bernaljp/wayline/issues/252) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (a reference found during a ticket: what code writes after every render; the scout's outcomes, cache, and joins: important unresolved references and how each autonomy raises them; the account: Library and Waiting on you; talking with the project: notices); milestone M8 criteria 11 and 12; user stories 146, 147, and 162.
 

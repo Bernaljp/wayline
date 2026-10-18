@@ -41,7 +41,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#234](https://github.com/Bernaljp/wayline/issues/234) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Keep-if-better per goal, the stopping rule, and budgets"; "Objectives, goals, and measures": GOAL.json retires; "Vocabulary the build adds": `goal` on `progress` and `discarded`, the `run_ended` reasons, `switch --stop-when` and `--budget`, `harness.json` gaining `stop_when` and losing `usage_windows`, `goal` retiring from the schemas); decisions 1 (the verb table; `harness.json`), 2 (the event table: `progress`, `discarded`, `run_ended`), 4 (the irreversible list), 5 (the conductor's wave), 7 (the tick's relaunch), 14 (the policy table: `goal`; the toy project); M8 criterion 3 and the toy's part of criterion 1; user stories 2, 103, 112, 113, 114, 115, 174.
 

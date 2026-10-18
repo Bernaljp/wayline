@@ -19,7 +19,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#228](https://github.com/Bernaljp/wayline/issues/228) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (objectives, goals, and measures: claims and tickets name objectives, `goal` replacing `goal_metric`, every open objective answered by a claim, specify drafting with one open objective; keep-if-better per goal, the stopping rule, and budgets: scheduling's class key; results and the reports: the spec's `summary`; vocabulary the build adds), 10 (specify, the planner), 5 (the conductor's scheduling), the schemas list (`spec` gains `summary` and claims' `objectives`; `ticket` and `plan` gain `objectives` and `goal` replacing `goal_metric`); M8 criterion 1; user stories 102, 103.
 

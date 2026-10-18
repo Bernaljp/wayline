@@ -23,7 +23,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#222](https://github.com/Bernaljp/wayline/issues/222) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (tools, packages, and environments: the harness's tools, routes, `tools.json`; defects found while charting: `tools.json` merged one entry at a time; converting documents, pandoc's build), 1 (the verb table: `tools install <name>`, `tools run`, `tools show`), 6 (jobs and resources), Testing Decisions (seam 6, the tool runner); M8 criterion 14 (the harness's half); user story 153; research note 03 (`research/installing-software`).
 

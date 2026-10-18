@@ -25,7 +25,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#264](https://github.com/Bernaljp/wayline/issues/264) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (The paper order and what it compiles: per build, unverifiable claims, the inherited verdicts table, responses; Verifying what a project inherited; Documents, critiques, and concerns), 11 (verification, the kill argument), 13 (the paper), 14 (the policy table: the order's three builds); M8 criterion 17; user stories 140, 142, 164.
 

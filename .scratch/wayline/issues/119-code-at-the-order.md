@@ -20,7 +20,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#266](https://github.com/Bernaljp/wayline/issues/266) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Methods and the code: aligned, the `paper-N` tag, stale re-runs, `code/figures/`; Tools, packages, and environments: the order's environment file and Dockerfile; The paper order and what it compiles: code's steps); M8 criteria 13 and 17; user stories 148, 152.
 

@@ -45,7 +45,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#262](https://github.com/Bernaljp/wayline/issues/262) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (The paper order and what it compiles; The outline, binding at the order; Talking with the project; Setup, at every autonomy; Vocabulary the build adds: the paper order's form of `paper`, the paper's parts in place of `paper_draft`), 13 (the paper), 1 (the verb table: `paper`), the schemas list (the paper's parts replacing `paper_draft`); M8 criteria 8 (binding at the order) and 17; user stories 135, 157, 158, 160, 162, 163, 172.
 

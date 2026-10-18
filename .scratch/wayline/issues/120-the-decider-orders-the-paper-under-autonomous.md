@@ -23,7 +23,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#267](https://github.com/Bernaljp/wayline/issues/267) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (The paper order and what it compiles: under `autonomous`; The outline: the decider settles open proposals; The account: Decided for you; Setup, at every autonomy; Vocabulary the build adds: the paper order's setup answer in `harness.json`), 10 (the decider), 1 (`harness.json`); M8 criteria 17 and 19; user stories 157, 172.
 

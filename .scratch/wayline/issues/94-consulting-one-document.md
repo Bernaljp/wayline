@@ -10,7 +10,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#241](https://github.com/Bernaljp/wayline/issues/241) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Documents, critiques, and concerns: "Every document is chunked like an L2 source for the consultant, which now answers from one dossier or one document"); Implementation Decision 9 (the consultant); M8 criterion 9; user story 136.
 

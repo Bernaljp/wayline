@@ -44,7 +44,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#238](https://github.com/Bernaljp/wayline/issues/238) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("How objectives change as results come in"; "Defects found while charting": the decider reads the radius; "Vocabulary the build adds": `objective_proposals` on `result` and `verdict`, the `objective` event with `by` and `proposal`, `objective_proposed`, set-aside standing); decisions 2 (the event table: `objective`, `objective_proposed`, `ticket_cancelled`), 4 (the irreversible list; "change a goal's measure, or the data"), 10 (the decider), 11 (the Type-B verdict), the schemas list (`result`, `verdict`, `spec`); M8 criterion 2; user stories 106, 107, 108, 110, 111.
 

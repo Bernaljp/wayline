@@ -30,7 +30,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#235](https://github.com/Bernaljp/wayline/issues/235) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Sections and passages": tags, the linter at acceptance and render, the owner's edits and passages, consolidation; "Vocabulary the build adds": the conversation's verb for passages); decisions 1 (the verb table: `passage add`, `consolidate`), 2 (the event table: `passage` with `by`), 11 (the provenance linter's tags); M8 criterion 4; user stories 119, 120, 121.
 

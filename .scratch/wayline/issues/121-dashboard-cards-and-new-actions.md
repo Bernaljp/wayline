@@ -16,7 +16,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#268](https://github.com/Bernaljp/wayline/issues/268) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (The dashboard: buttons, the reference hand-over, the plotting select, compilations, alternatives; The paper order and what it compiles; Methods and the code: public on the owner's word), 8 (dashboard actions); M8 criterion 16; user stories 147, 157, 160, 167, 169.
 

@@ -17,7 +17,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#219](https://github.com/Bernaljp/wayline/issues/219) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (upgrades: small and big), 12 (the evolve loop: tags, pins, `upgrade`), 1 (`harness.json`, the verb table's `upgrade` row); M8 criterion 18 (and 21's live half in 122); user story 173.
 

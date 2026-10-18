@@ -36,7 +36,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#247](https://github.com/Bernaljp/wayline/issues/247) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Drawings and plots; Sections and passages: the `plot` tag; Results and the reports: the numbers check); Implementation Decision 13 (figures, the figure checks); Implementation Decision 14 (the policy table: the plotter role at `opus medium`, the drawing's limits of 20 plots, 4 tables, and 4 headline plots, the plot checks' thresholds of 40 characters and 36 cells); Implementation Decision 2 (the event table: `marked`, the drawing's acceptance); the schemas list (`plots`, `drawing`, the kind `drawing`); M8 criterion 6; user stories 127, 128, and 129.
 

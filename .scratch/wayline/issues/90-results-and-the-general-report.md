@@ -31,7 +31,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#237](https://github.com/Bernaljp/wayline/issues/237) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Results and the reports": results, the general report, the numbers check, the edit rule; "Vocabulary the build adds": `report` on `report_rendered`, the conversation's verbs for result merges and renames); decisions 1 (the verb table: `result merge`, `result rename`; `report`), 2 (the event table: `report_rendered`), 11 (verification, provenance, and the report); M8 criterion 5; user stories 38, 111, 122, 123, 125.
 

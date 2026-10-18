@@ -36,7 +36,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#229](https://github.com/Bernaljp/wayline/issues/229) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Tools, packages, and environments"; "Vocabulary the build adds": the decision class `software`, `ticket` and `plan` gaining `software`, the tools each job called); decisions 1 (the verb table: `tools install <name>` for a project's tool, `tools run`), 2 (the event table: the tools on each job record), 6 (jobs: the job spec's `tool`), 10 (the decider's classes), the schemas list (`ticket`, `plan`, the job record); M8 criterion 14; user stories 153, 154, 155.
 

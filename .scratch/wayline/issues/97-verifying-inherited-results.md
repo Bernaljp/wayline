@@ -31,7 +31,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#244](https://github.com/Bernaljp/wayline/issues/244) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Verifying what a project inherited; Setup, at every autonomy: the missing material); Implementation Decision 10 (the critic's memo, the grill, specify, the planner, the decider); Implementation Decision 11 (the verifier); the schemas list (`verdict`'s route, the unverifiable standing); M8 criterion 10; user stories 140, 141, and 142.
 

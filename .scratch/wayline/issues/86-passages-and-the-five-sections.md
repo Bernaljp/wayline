@@ -44,7 +44,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#233](https://github.com/Bernaljp/wayline/issues/233) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Sections and passages"; "Vocabulary the build adds": the `passage` schema and event, `result` gaining `passages`, `ticket` and `plan` gaining `sections`); decisions 1 (the layout: `research/sections/`; `init`), 2 (the event table: `passage`), 5 (the conductor's integration, one at a time under the ledger lock), 10 (the planner's cut: no writing ticket after each analysis), 11 (findings gain `heading`, `replaces`, and `objectives`), the schemas list (`passage`, `result`, `ticket`, `plan`); M8 criterion 4; user stories 116, 117, 118.
 

@@ -17,7 +17,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#221](https://github.com/Bernaljp/wayline/issues/221) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the document viewer; defects found while charting: relative image paths), 8 (the dashboard); M8 criterion 16 (the viewer, KaTeX, zoom, the sanitizer); user story 170; research note 04 (`research/viewer-math-and-zoom`).
 

@@ -25,7 +25,7 @@ What the run finds wrong is filed as follow-up tickets rather than fixed here.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#269](https://github.com/Bernaljp/wayline/issues/269) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** milestone M8 (the demo, criteria 14, 15, and 16 live, 19, and 21); Implementation Decision 17 (every bullet, as run on the toy); Implementation Decision 14 (the toy project); user stories 172, 173, 174.
 

@@ -1,6 +1,6 @@
 # Wayline tickets: which model and effort to implement each one
 
-Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. Ticket 58, a design pass over the dashboard, was added on 2026-09-16 from the owner's verdict in the M1 demo and graded the same way. Ticket 59, worker slots, was added on 2026-09-17 from the review of ticket 38 and graded the same way. 54 was cut as opus high and regraded fable xhigh the same day, because the hold it builds has to replay. Tickets 60 to 64 were added on 2026-09-17 from the finer tiers map (wayline #129), and the same day every open ticket was regraded under the cap (spec, Implementation Decision 16): see "Regraded under the cap" below. Ticket 65, which moves the roles on Fable to Opus 5.5, was added on 2026-09-27 from research note 04 and graded the same way, and 53 was regraded to `opus high` that day: see "Regraded for Opus 5.5" below. Tickets 66 to 70, the follow-ups after v1.0.0, were added the same day from the M7 and docs-site live runs and research note 04, and graded the same way: see "Follow-ups after v1.0.0" below. Each issue also carries a `model:` label with its grade.
+Graded on 2026-09-11 with the harness's own difficulty table (spec, Implementation Decisions 14, the `difficulty` row of `policy.json`, from BRIEF 8.4), so the tickets that build the harness are graded the way the harness will grade its own tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; tickets 54 to 57 were added on 2026-09-13 from the Fable fallback map and graded the same way. Ticket 58, a design pass over the dashboard, was added on 2026-09-16 from the owner's verdict in the M1 demo and graded the same way. Ticket 59, worker slots, was added on 2026-09-17 from the review of ticket 38 and graded the same way. 54 was cut as opus high and regraded fable xhigh the same day, because the hold it builds has to replay. Tickets 60 to 64 were added on 2026-09-17 from the finer tiers map (wayline #129), and the same day every open ticket was regraded under the cap (spec, Implementation Decision 16): see "Regraded under the cap" below. Ticket 65, which moves the roles on Fable to Opus 5.5, was added on 2026-09-27 from research note 04 and graded the same way, and 53 was regraded to `opus high` that day: see "Regraded for Opus 5.5" below. Tickets 66 to 70, the follow-ups after v1.0.0, were added the same day from the M7 and docs-site live runs and research note 04, and graded the same way: see "Follow-ups after v1.0.0" below. Tickets 71 to 123, milestone M8 (the living paper map, wayline #173), were added on 2026-10-18 and graded the same way: see "Milestone M8 (2026-10-18)" below. Each issue also carries a `model:` label with its grade.
 
 | Difficulty | Model | Effort | Tickets | Label |
 |---|---|---|---|---|
@@ -48,6 +48,21 @@ Since 2026-09-22 `opus` launches Opus 5.5 (`claude-opus-5-5`). On the matched pr
 - 67 copies the redraft loop 53 built for the paper. 69 is one launch variable and one exemption in a check. Both take `opus low`, the way 64 copied 55.
 - 68 changes the prompt the escalation chain gives a tier up, which replay must rebuild. 70 migrates the shipped rung ladder that about 40 test lines read. Both take `opus high`.
 
+## Milestone M8 (2026-10-18)
+
+Graded under the cap with Opus 5.5 as the top build model, as the follow-ups were: no build session takes Fable, `xhigh`, or `max`.
+
+| Grade | Open tickets | Label |
+|---|---|---|
+| sonnet medium | 94 | `model:sonnet-medium` |
+| opus low | 72, 73, 78, 101, 102, 106, 113 | `model:opus-low` |
+| opus high | 71, 74, 75, 76, 77, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 95, 96, 97, 98, 99, 100, 103, 104, 105, 107, 108, 109, 110, 111, 112, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123 | `model:opus-high` |
+
+- `opus high` is the default: most of these tickets add a record the later ones read, change what replay rebuilds, or write a role or skill prompt (the plotter, the surveyor, the critique splitter, the `wayline` skill, the writer at the order).
+- `opus low` takes the tickets whose design the spec gives exactly and whose code copies a pattern already built: 72, 73, 78, 101, 102, 106, and 113.
+- `sonnet medium` takes 94, which reuses the consultant's L2 chunking for one document.
+- The two live demos, 122 and 123, take `opus high`, as every demo since 15 has.
+
 ## How the grade was chosen
 
 The grade is for the session that implements the ticket, not for the harness's own workers. A ticket goes up a tier when it:
@@ -72,14 +87,25 @@ Replace the alias (`sonnet`, `opus`, `fable`) and the effort (`low`, `medium`, `
 
 ## Order from here
 
-On 2026-09-27 all 65 tickets of the spec are closed and v1.0.0 is tagged, and this schedule takes the five follow-ups. The waves they fall into are in "What is left after v1.0.0" of `.scratch/wayline/waves.md`; earlier schedules are in this file's history. None of them is a demo, so the rules come down to two: at most three sessions in flight, and a step starts when every ticket of the step before it has landed on `master` and is pushed.
+On 2026-10-18 every ticket before 71 is closed and v1.0.1 is tagged; this schedule takes milestone M8. Its steps are the waves of "What is left on 2026-10-18" in `.scratch/wayline/waves.md`, critical-path ticket first in each; earlier schedules are in this file's history. The rules: at most three sessions in flight, keep one on the next critical-path ticket at all times (76, 81, 86, 89, 90, 104, 105, 109, 115, 116, 120, 122, 123), a ticket starts as soon as its own blockers have landed on `master` and are pushed, and the two demos run alone on `master`.
 
 | Step | Tickets, with their grade | Notes |
 |---|---|---|
-| 1 | 70 opus high, 66 opus high, 67 opus low | Ready now. 70 goes first, since 68 waits for it. |
-| 2 | 68 opus high, 69 opus low | 68 waits for 70. 69 is ready now, and waits only for a free slot. |
+| 1 | 76 opus high, 71 opus high, 72 opus low, 73 opus low, 74 opus high, 75 opus high, 77 opus high, 78 opus low, 79 opus high | Ready now. 71 is the scout fix the spec puts first; 76 starts the critical path; 79 is the batch record seven producers use. |
+| 2 | 81 opus high, 80 opus high, 82 opus high, 84 opus high, 85 opus high | 81 is on the critical path. 80 and 81 both edit the front door's readers of GOAL.json: land 81 first or expect a merge in the plan schema. |
+| 3 | 86 opus high, 83 opus high, 87 opus high, 94 sonnet medium, 106 opus low | 86 is the passage log half the release writes into; 87 retires GOAL.json and needs 80 and 81 merged. |
+| 4 | 89 opus high, 88 opus high, 93 opus high, 98 opus high, 107 opus high | 89 renders the account before 90 moves v1.0's report sections into it. |
+| 5 | 90 opus high, 91 opus high, 95 opus high, 96 opus high | 90 rewrites the general report; 91, 95, and 96 build on the batch record and the passages. |
+| 6 | 104 opus high, 92 opus high, 97 opus high, 100 opus high | 104, the outline, is on the critical path; 100 is the first drawing ticket. |
+| 7 | 105 opus high, 99 opus high, 101 opus low, 102 opus low, 103 opus high, 108 opus high | 105 is on the critical path; 99 waits for the spec amendments of 92. |
+| 8 | 109 opus high, 110 opus high | 109 is the `wayline` skill (critical path); 110 is the dashboard's new shell. |
+| 9 | 115 opus high, 111 opus high, 112 opus high, 114 opus high | 115, the paper order, is on the critical path. 111, 112, and 114 all edit the dashboard's front end: one at a time or expect merges in `app.js`. |
+| 10 | 116 opus high, 113 opus low, 117 opus high, 118 opus high, 119 opus high | Four order tickets on top of 115, and the section editor. |
+| 11 | 120 opus high, 121 opus high | 120 waits for every order ticket; 121 adds the last dashboard actions. |
+| 12 | 122 opus high | 122 is the overnight demo: alone on `master`, a real night. |
+| 13 | 123 opus high | 123 is the PINF sitting with the owner, then the v1.1.0 release. |
 
-When all five have landed, tag v1.0.1 on a release commit, the way 53 released v1.0.0. None of the five needs Fable.
+123 tags v1.1.0 on a release commit, the way 53 released v1.0.0. None of the 53 needs Fable.
 
 ## Per ticket
 
@@ -155,6 +181,59 @@ When all five have landed, tag v1.0.1 on a release commit, the way 53 released v
 | 68 A tier up carries the last failure | #165 | 2 | 3 | opus | high | The failure output a resume sends, carried into a tier-up attempt's prompt and rebuilt the same way on a restart. |
 | 69 No bytecode in a touch set | #166 | 1 | 2 | opus | low | One launch variable and one exemption in the uncommitted-work check. |
 | 70 The rung ladder without Fable | #167 | 1 | 3 | opus | high | The shipped six-rung ladder, decision 14's test-checked rows, the Fable tests moved onto their own rung ladder, and `upgrade`'s index migration. |
+| 71 The scout's outcomes, cache, and joins | #218 | 1 | 3 | opus | high | Every caller of the scout changes: three outcomes, a cache that keeps only answers, the abs-page fallback, the retry flag on a daily clock, joins; the first-wave ticket the spec names. |
+| 72 research_version and the big-upgrade refusal | #219 | 1 | 2 | opus | low | One integer in `harness.json` and one refusal message shared by the writing verbs, the tick, and the dashboard. |
+| 73 The guard and gitignore defects found while charting | #220 | 1 | 2 | opus | low | Four small rules: a hook path rule, `gh` writes in the command guard, the planner's check reused, one gitignore line. |
+| 74 The document viewer: dialog, zoom, KaTeX math, and the sanitizer | #221 | 1 | 3 | opus | high | KaTeX shims, a marked extension that takes math before Markdown, and the sanitizer hole; note 04 carries the recipe. |
+| 75 The harness's tools | #222 | 1 | 3 | opus | high | Three install routes without root, digests, and `tools.json` merged per entry; every converter, parser, and drawing waits on it. |
+| 76 Objectives: the record and objective add | #223 | 1 | 3 | opus | high | The record every later ticket reads, added beside GOAL.json so nothing breaks (the expand step). |
+| 77 Plot index data shapes and the five readability checks | #224 | 1 | 3 | opus | high | Five checks over any library's SVG and a cached Haiku pass over the index; the readability rules come from the owner's marks. |
+| 78 The synthetic start-midway project | #225 | 1 | 2 | opus | low | Synthetic fixtures by hand: a `.docx` with tracked changes, comments, and Mendeley fields, plus a small repository. |
+| 79 Batches and marks | #226 | 1 | 3 | opus | high | An interface seven producers and the marks view build on, defined before any of them. |
+| 80 The front door reads objectives | #227 | 2 | 3 | opus | high | Four front-door modules move from GOAL.json to objectives, with the grill's and position's prompts. |
+| 81 Specify and the plan name objectives | #228 | 2 | 3 | opus | high | The spec and plan schemas gain objectives and `goal`, with the Type-A coverage check and the scheduling class. |
+| 82 Project tools and the software decision | #229 | 2 | 3 | opus | high | A new decision class pausing only its tickets, launchability on recorded tools, and the job spec's tool binding. |
+| 83 Moving a project's environment | #230 | 3 | 3 | opus | high | A move built from the locks and checked before it switches, including a rootless Singularity image measured live. |
+| 84 Documents in: converting and keeping a project's documents | #231 | 2 | 3 | opus | high | Four converters through the tool runner and a document record every inherited ticket reads. |
+| 85 The code repository | #232 | 2 | 3 | opus | high | `git subtree` both ways, a private repository created and pushed by code, and the commit recorded on every launch. |
+| 86 Passages and the five sections | #233 | 3 | 3 | opus | high | The passage log and the five rendered sections: the core record half the release writes into. |
+| 87 Keep-if-better per goal, the stopping rule, and budgets; GOAL.json retires | #234 | 3 | 3 | opus | high | The conductor's end-of-run logic replaced (stopping rule, budgets, per-goal keep-if-better) and GOAL.json retired (the contract step). |
+| 88 The owner's passages, consolidation, and the linter's new tags | #235 | 4 | 3 | opus | high | Taking an owner's edit in by render stamp without losing passages that arrived since, plus three new linter tags. |
+| 89 The account | #236 | 4 | 3 | opus | high | What wayline did leaves the report for a rendered account, with review state and one end notice per run end. |
+| 90 Results and the general report | #237 | 5 | 3 | opus | high | The general report rendered by code alone in a new order, results clustered at acceptance, and the numbers check. |
+| 91 Objective changes | #238 | 5 | 3 | opus | high | Proposals judged, batched, pausing only what they name, and the decider's batch within the radius; replay must rebuild it. |
+| 92 Spec amendments | #239 | 6 | 3 | opus | high | A specify session scoped to one objective that rewrites nothing, judged and planned on its own. |
+| 93 Inherited passages | #240 | 4 | 3 | opus | high | Verbatim deconstruction through the heading table and the claim classifier, with doc tags to the sentence. |
+| 94 Consulting one document | #241 | 3 | 2 | sonnet | medium | The consultant's L2 chunking reused for one document. |
+| 95 Repeated claims | #242 | 5 | 3 | opus | high | Two model reads and two coverage checks that must never lose or add a claim, at setup and at each acceptance. |
+| 96 Critiques and concerns | #243 | 5 | 3 | opus | high | The splitter's prompt, concerns tied through the grill and specify, and the decision ticket after setup. |
+| 97 Verifying inherited results | #244 | 6 | 3 | opus | high | Four verdict routes, the unverifiable standing, and verification edges the planner wires. |
+| 98 References during a ticket | #245 | 4 | 3 | opus | high | A capped scout verb for workers, identifier tags, and an acceptance check that tells invented works from service failures. |
+| 99 The surveyor and lit tickets | #246 | 7 | 3 | opus | high | The surveyor role's prompt and a search verb across four services with a daily count. |
+| 100 Drawings on the plotter | #247 | 6 | 3 | opus | high | A new ticket kind created by code at rest points on a new role, with the clean-room rerun and the checks. |
+| 101 Current and earlier reports | #248 | 7 | 2 | opus | low | Rendering and freezing versions from drawings already accepted. |
+| 102 The plotting library switch | #249 | 7 | 2 | opus | low | One setting applied at the next drawing, with the install through 82's route. |
+| 103 The run-end gates | #250 | 7 | 3 | opus | high | Which gates run at which end, and whether their scope-downs continue the run; replay must rebuild it. |
+| 104 The outline | #251 | 6 | 3 | opus | high | A render that never moves what the owner placed, with embedding-based merge proposals and the venue block. |
+| 105 References rendered and important ones raised | #252 | 7 | 3 | opus | high | CSL-JSON from dossiers, numbering in outline order, and the raise rule for each autonomy. |
+| 106 Reproducing from the code repository | #253 | 3 | 2 | opus | low | Renders from records already kept: commands, inputs, locks. |
+| 107 The rule from code to Methods | #254 | 4 | 3 | opus | high | Python and MATLAB parsers with no tokens and a Type-A check over a diff that a worker must satisfy. |
+| 108 Methods generated by the inventory | #255 | 7 | 3 | opus | high | The parameter table, versions, and citations rendered into Methods, and the setup comparison feeding the verifications. |
+| 109 The wayline skill and setup as one conversation | #256 | 8 | 3 | opus | high | The owner-facing skill every conversation runs: its routing table and setup procedure decide how every project starts. |
+| 110 Dashboard: routes, the projects page, and the Research and Run views | #257 | 8 | 3 | opus | high | The dashboard's new shell: routes, links, the projects page, and two views at phone width. |
+| 111 Dashboard: the Paper and Inherited views | #258 | 9 | 3 | opus | high | Two more views over records already rendered, in 110's pattern. |
+| 112 Dashboard: the marks view | #259 | 9 | 3 | opus | high | Every batch kind shown whole and saved per click, one item per screen at phone width. |
+| 113 Dashboard: editing sections and the outline | #260 | 10 | 2 | opus | low | A plain editor whose save does what a file edit does. |
+| 114 The dashboard's chat | #261 | 9 | 3 | opus | high | A resumed `claude -p` per message under a narrow tool set, with cards the dashboard runs itself; a security boundary. |
+| 115 The paper order and the paper's parts | #262 | 9 | 3 | opus | high | The writer's prompt composing the whole paper by parts, the readiness list, and the order as a rest point. |
+| 116 Figures at the order | #263 | 10 | 3 | opus | high | The figure plan from marks with no panel cap, and the figure role started from planned plots. |
+| 117 Builds at the order | #264 | 10 | 3 | opus | high | Three gates per build, at most three builds, and the inherited verdicts in the supplement. |
+| 118 Compilations | #265 | 10 | 3 | opus | high | pandoc, latexmk, citeproc, and the venue's checks on real output, plus the fitting session. |
+| 119 Code at the order | #266 | 10 | 3 | opus | high | Tag, rerun what is stale, copy scripts, and check all of `code/` at the order. |
+| 120 The decider orders the paper under autonomous | #267 | 11 | 3 | opus | high | The decider's `opus max` judgment of the order, gated by code's checks first. |
+| 121 Dashboard: cards and new actions | #268 | 11 | 3 | opus | high | Cards and actions over verbs that exist, in the designed style. |
+| 122 M8 live demo: the toy overnight | #269 | 12 | 3 | opus | high | A live overnight run across every module, where diagnosing what broke is the work. |
+| 123 M8 live demo: PINF restarted from its own materials, and v1.1.0 | #270 | 13 | 3 | opus | high | A live sitting with the owner on a real start midway, then the release. |
 
 ## Working the window
 
@@ -173,4 +252,4 @@ gh api "repos/Bernaljp/wayline/issues?state=open&labels=ready-for-agent&per_page
         | "#\(.number) \(.title)  [\([.labels[].name | select(startswith("model:")) | sub("model:"; "")] | join(","))]"'
 ```
 
-After the follow-ups were cut on 2026-09-27 it prints 66, 67, 69, and 70; 68 waits for 70.
+After milestone M8 was cut on 2026-10-18 it prints the nine tickets of its first wave: 71 to 79.

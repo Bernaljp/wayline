@@ -22,7 +22,7 @@ It blocks 108 and 119.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#253](https://github.com/Bernaljp/wayline/issues/253) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Methods and the code: "Aligned", `REPRODUCE.md`, `reproduce.json`, the locks, `README.md`; tools, packages, and environments: per-project packages locked in `code/`); milestone M8 criterion 13; user story 152.
 

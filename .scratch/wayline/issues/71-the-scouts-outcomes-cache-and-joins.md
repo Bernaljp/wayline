@@ -27,7 +27,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#218](https://github.com/Bernaljp/wayline/issues/218) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the scout's outcomes, cache, and joins; a reference found during a ticket, for the intake shape; build order), 9 (the scout, the dossier), 1 (the verb table: the hand-over verb), 2 (the event table: `absorbed` at level 0), the schemas list (`dossier` gains `retry`, `resolved_by: owner`, notes, joined names); M8 criterion 12, and criterion 20's reference items for the live run; user stories 146, 147.
 

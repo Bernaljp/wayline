@@ -28,7 +28,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#230](https://github.com/Bernaljp/wayline/issues/230) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Tools, packages, and environments": **Environment**; "Vocabulary the build adds": `switch --environment`, `harness.json` gaining `environment`); decisions 1 (the verb table: `switch --environment`; `harness.json`), 2 (the event table: the `control` command), 6 (jobs run inside the environment); M8 criterion 14; user story 156.
 

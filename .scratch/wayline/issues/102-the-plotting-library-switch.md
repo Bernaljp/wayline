@@ -12,7 +12,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#249](https://github.com/Bernaljp/wayline/issues/249) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Drawings and plots: `harness.json.plotting`; Tools, packages, and environments: a project's tools after a yes); Implementation Decision 1 (`harness.json`, the verb table: `switch --plotting`); Implementation Decision 2 (the event table: the `control` command); M8 criterion 6; user story 130.
 

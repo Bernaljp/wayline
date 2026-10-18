@@ -18,7 +18,7 @@ Then v1.1.0 ships. The changelog's `## Unreleased` becomes `## v1.1.0 (date)`, o
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#270](https://github.com/Bernaljp/wayline/issues/270) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** milestone M8 (the demo, criterion 20); Implementation Decision 17 (every bullet, as run on PINF; Upgrades: small and big); Implementation Decision 12 (releases, the changelog); user stories 101, 136 to 142, 146, 147, 165, 173, 175.
 

@@ -62,7 +62,7 @@ It blocks 114 and 115.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#256](https://github.com/Bernaljp/wayline/issues/256) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (talking with the project; setup, at every autonomy; objectives, goals, and measures: the owner talks normally; sections and passages: "compile"; the account: the autonomous opening), 1 (the verb table: the drafted-ticket verb), 10 (intake's `human_only` classes, the phase skills); milestone M8 criterion 15 and the M4 criteria it supersedes for a project at `research_version` 2; user stories 104, 136, 165, 166, and 172.
 

@@ -36,7 +36,7 @@ It blocks 111, 112, and 114.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#257](https://github.com/Bernaljp/wayline/issues/257) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the five views, the strip, the projects page, thin lists, item links, phone width; upgrades: the old project listed read-only; tools: what Run's Software shows), 8 (the dashboard); milestone M8 criteria 16 and 18; user stories 169 and 173.
 

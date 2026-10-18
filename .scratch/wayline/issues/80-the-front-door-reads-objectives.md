@@ -21,7 +21,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#227](https://github.com/Bernaljp/wayline/issues/227) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (objectives, goals, and measures: intake, position, the grill, the decider, the `objective` class; defects found while charting: the decider reads the radius; setup, `human_only` naming `objective`), 10 (the front door: intake, position, grill, decider), 1 (the verb table: `intake --goal` goes), the schemas list (the position memo's `objectives` in place of `goal_feasibility`); M8 criterion 1; user stories 5, 102, 104, 108.
 

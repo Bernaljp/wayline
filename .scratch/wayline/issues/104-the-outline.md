@@ -41,7 +41,7 @@ It blocks 105, 108, 111, 112, 113, and 115.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#251](https://github.com/Bernaljp/wayline/issues/251) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the outline; sections and passages: heading order and the owner's edit; documents, critiques, and concerns: what each session reads; vocabulary the build adds: the `outline` event, the `outline` schema, the conversation's outline verb), 1 (the verb table), 2 (the event table), the schemas list; milestone M8 criterion 8; user stories 134 and 135.
 

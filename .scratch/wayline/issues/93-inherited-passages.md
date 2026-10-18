@@ -24,7 +24,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#240](https://github.com/Bernaljp/wayline/issues/240) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Inherited passages and repeated claims; Documents, critiques, and concerns; Sections and passages, the `doc` tag); the schemas list (`passage`, the inherited `by`); M8 criteria 9 and 10; user stories 101 and 137.
 

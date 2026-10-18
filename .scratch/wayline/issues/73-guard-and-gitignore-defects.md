@@ -16,7 +16,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#220](https://github.com/Bernaljp/wayline/issues/220) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (defects found while charting; sections and passages, "sections never enter a touch set"; Methods and the code, the worker guard), 1 (the layout, the touch-set rule), 4 (guards and permissions); M8 criteria 4 (the hook clause) and 13 (the worker guard clause); user stories 116, 148.
 

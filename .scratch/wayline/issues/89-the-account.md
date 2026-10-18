@@ -47,7 +47,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#236](https://github.com/Bernaljp/wayline/issues/236) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("The account"; "Talking with the project": notices per autonomy; "Defects found while charting": one wording for applying a global change; "Vocabulary the build adds": `reviewed`, the `report` field on `report_rendered`); decisions 1 (the verb table: `review`; `status`), 2 (the event table: `reviewed`, `report_rendered`), 7 (the tick's and the conductor's notices), 11 (the report), 12 (global changes proposed in the account), 15 (the verdicts and decisions on Opus while Fable was spent); M8 criterion 7; user stories 45, 78, 131, 132, 133.
 

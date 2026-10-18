@@ -45,7 +45,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#231](https://github.com/Bernaljp/wayline/issues/231) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Documents, critiques, and concerns": documents and their sort; "Converting documents"; "Vocabulary the build adds": the `document` schema and event, the conversation's verb for documents); decisions 1 (the verb table: `document add`), 2 (the event table: `document`), 10 (intake's wording), the schemas list (`document`); M8 criterion 9; user stories 101, 136, 175.
 

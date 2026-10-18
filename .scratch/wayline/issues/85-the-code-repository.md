@@ -31,7 +31,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#232](https://github.com/Bernaljp/wayline/issues/232) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Methods and the code": the code repository, intake's absorption, the private push, public on the owner's word; "Setup, at every autonomy": the code repository's question; "Vocabulary the build adds": `harness.json` gaining the code repository's record, the commit on `job_launched` and `ticket_launched`); decisions 1 (`harness.json`; the layout: `code/`), 2 (the event table: the commit on `job_launched` and `ticket_launched`), 4 (the irreversible list: making the repository public), 10 (intake); M8 criterion 13; user stories 148, 149, 175.
 

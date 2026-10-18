@@ -23,7 +23,7 @@ It blocks only 122, the M8 demo that waits for every ticket.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#260](https://github.com/Bernaljp/wayline/issues/260) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the editor; sections and passages: the owner's edit taken in; the outline: the owner's changes), 8 (the dashboard: the `ACTIONS` whitelist); milestone M8 criteria 4, 8, and 16; user stories 119 and 171.
 

@@ -19,7 +19,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#223](https://github.com/Bernaljp/wayline/issues/223) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (objectives, goals, and measures; defects found while charting: `View.progress` and `status`; vocabulary the build adds), 1 (the verb table: `objective add`; `switch --autonomy`), 2 (the event table: `objective`), the schemas list (`objectives`); M8 criterion 1; user stories 2, 102, 103, 104, 105.
 

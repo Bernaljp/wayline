@@ -28,7 +28,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#226](https://github.com/Bernaljp/wayline/issues/226) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the marks view's batches and marks; talking with the project: every batch goes to the marks view, the first answer settles an item, five items or fewer as text; vocabulary the build adds: `marked`), 1 (the verb table: the conversation's marks verb), 2 (the event table: `marked`), the schemas list (the batch record, a reading this cut makes where the spec is silent); M8 criterion 16 (the marks the view saves); user story 168.
 

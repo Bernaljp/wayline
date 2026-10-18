@@ -25,7 +25,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#250](https://github.com/Bernaljp/wayline/issues/250) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Keep-if-better per goal, the stopping rule, and budgets: the run-end gates; Results and the reports: sampled verdicts and the kill argument at a run end); Implementation Decision 11 (verification, the gates); Implementation Decision 5 (the conductor's end of a run); M8 criteria 3 and 5; user story 126.
 

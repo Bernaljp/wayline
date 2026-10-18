@@ -1,21 +1,34 @@
 # Wayline tickets: what can run in parallel, and what waits
 
-Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. The same day the finer tiers map (wayline #129, cut as #141 settled it) added tickets 60 to 64 and eight edges (61, 62, and 63 after 60; 43 after 60, 61, 62, and 63; 45 after 64), for 121 edges among 64 tickets. On 2026-09-27 research note 04 (Opus 5.5) added ticket 65, which moves the roles on Fable to Opus 5.5, and one edge (53 after 65), for 122 edges among 65 tickets. The same day the follow-ups after v1.0.0 added tickets 66 to 70 and one edge (68 after 70), for 123 edges among 70 tickets. Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
+Computed from the 100 blocking edges of the 53 tickets: 98 from the spec on 2026-09-11, plus two sequencing edges added on 2026-09-12 (08 and 10 wait for 09, because all three edit the conductor's wave loop and 09 rewrites the event replay the other two extend). The model and effort to implement each ticket are in `.scratch/wayline/models.md`. On 2026-09-13 the Fable fallback map added tickets 54 to 57 and 11 edges (54 after 10; 55 after 30 and 54; 56 after 24 and 55; 57 after 35 and 55; 14 after 54; 43 after 54, 55, and 56), for 111 edges among 57 tickets. On 2026-09-16 the M1 demo added ticket 58, a design pass over the dashboard, answering the owner's verdict on its look, and one edge (45 after 58, so the feedback form is built in the designed style), for 112 edges among 58 tickets. On 2026-09-17 the review of ticket 38 added ticket 59, worker slots, and one edge (59 after 38), for 113 edges among 59 tickets. The same day the finer tiers map (wayline #129, cut as #141 settled it) added tickets 60 to 64 and eight edges (61, 62, and 63 after 60; 43 after 60, 61, 62, and 63; 45 after 64), for 121 edges among 64 tickets. On 2026-09-27 research note 04 (Opus 5.5) added ticket 65, which moves the roles on Fable to Opus 5.5, and one edge (53 after 65), for 122 edges among 65 tickets. The same day the follow-ups after v1.0.0 added tickets 66 to 70 and one edge (68 after 70), for 123 edges among 70 tickets. On 2026-10-18 the living paper map (wayline #173, decision 17, milestone M8) added tickets 71 to 123 and 151 edges among them, for 274 edges among 123 tickets; 122, the toy's overnight demo, waits for every ticket from 71 to 121 through the five of them nothing else waits for (99, 113, 114, 120, 121). Ticket NN is GitHub issue NN+1 in `Bernaljp/wayline` for tickets 01 to 53, and a later ticket names its issue in the Issue column; the local file under `.scratch/wayline/issues/` is the source, the issue is the mirror.
 
 ## The rule
 
 A ticket can start when every ticket in its **Blocked by** line is done: its commit is on `master`, `python -m unittest` passes there, its local `Status:` line is updated, and its GitHub issue is closed. Tickets in the same wave never depend on each other, so any subset of a wave can run at the same time. A ticket may also start as soon as its own blockers are done, even if the rest of its wave is not; the waves below are the earliest start, not a required batch.
 
-## What is left after v1.0.0 (2026-09-27)
+## What is left on 2026-10-18: milestone M8
 
-All 65 tickets of the spec are closed, and v1.0.0 is tagged. The five follow-ups fall into two waves, and the first of them is exactly what the query under "What is ready right now" prints today. The schedule for them, with each ticket's model and effort, is "Order from here" in `.scratch/wayline/models.md`.
+The 70 tickets before it are closed and v1.0.1 is tagged. Milestone M8 (Implementation Decision 17, v1.1.0) is tickets 71 to 123, sub-issues of #217, which is a sub-issue of #1. They fall into 13 waves; the first is exactly what the query under "What is ready right now" prints today. The schedule, with each ticket's grade, is "Order from here" in `.scratch/wayline/models.md`.
 
 | Wave left | Tickets | Notes |
 |---|---|---|
-| 1 | 66 (#163), 67 (#164), 69 (#166), 70 (#167) | Ready now. None of them is a demo. |
-| 2 | 68 (#165) | Waits for 70, whose rung ladder its tests climb. |
+| 1 | 71 (#218), 72 (#219), 73 (#220), 74 (#221), 75 (#222), 76 (#223), 77 (#224), 78 (#225), 79 (#226) | Ready now. 71 is the scout fix the spec puts first; 76 starts the critical path; 79 is the batch record seven producers use. |
+| 2 | 80 (#227), 81 (#228), 82 (#229), 84 (#231), 85 (#232) | 81 is on the critical path. 80 and 81 both edit the front door's readers of GOAL.json: land 81 first or expect a merge in the plan schema. |
+| 3 | 83 (#230), 86 (#233), 87 (#234), 94 (#241), 106 (#253) | 86 is the passage log half the release writes into; 87 retires GOAL.json and needs 80 and 81 merged. |
+| 4 | 88 (#235), 89 (#236), 93 (#240), 98 (#245), 107 (#254) | 89 renders the account before 90 moves v1.0's report sections into it. |
+| 5 | 90 (#237), 91 (#238), 95 (#242), 96 (#243) | 90 rewrites the general report; 91, 95, and 96 build on the batch record and the passages. |
+| 6 | 92 (#239), 97 (#244), 100 (#247), 104 (#251) | 104, the outline, is on the critical path; 100 is the first drawing ticket. |
+| 7 | 99 (#246), 101 (#248), 102 (#249), 103 (#250), 105 (#252), 108 (#255) | 105 is on the critical path; 99 waits for the spec amendments of 92. |
+| 8 | 109 (#256), 110 (#257) | 109 is the `wayline` skill (critical path); 110 is the dashboard's new shell. |
+| 9 | 111 (#258), 112 (#259), 114 (#261), 115 (#262) | 115, the paper order, is on the critical path. 111, 112, and 114 all edit the dashboard's front end: one at a time or expect merges in `app.js`. |
+| 10 | 113 (#260), 116 (#263), 117 (#264), 118 (#265), 119 (#266) | Four order tickets on top of 115, and the section editor. |
+| 11 | 120 (#267), 121 (#268) | 120 waits for every order ticket; 121 adds the last dashboard actions. |
+| 12 | 122 (#269) | 122 is the overnight demo: alone on `master`, a real night. |
+| 13 | 123 (#270) | 123 is the PINF sitting with the owner, then the v1.1.0 release. |
 
-What is left of the critical path is 70 -> 68, two tickets.
+The critical path of M8 is 76 -> 81 -> 86 -> 89 -> 90 -> 104 -> 105 -> 109 -> 115 -> 116 -> 120 -> 122 -> 123, 13 tickets in a row.
+
+Before M8, the five follow-ups after v1.0.0 (66 to 70) ran in two waves and are closed.
 
 ## Waves (earliest start)
 
@@ -113,6 +126,59 @@ What is left of the critical path is 70 -> 68, two tickets.
 | 68 A tier up carries the last failure | #165 | 2 | 70 | nothing |
 | 69 No bytecode in a touch set | #166 | 1 | nothing | nothing |
 | 70 The rung ladder without Fable | #167 | 1 | nothing | 68 |
+| 71 The scout's outcomes, cache, and joins | #218 | 1 | nothing | 98 and 118 |
+| 72 research_version and the big-upgrade refusal | #219 | 1 | nothing | 110 |
+| 73 The guard and gitignore defects found while charting | #220 | 1 | nothing | 85 |
+| 74 The document viewer: dialog, zoom, KaTeX math, and the sanitizer | #221 | 1 | nothing | 110 |
+| 75 The harness's tools | #222 | 1 | nothing | 82, 84, 95, 100, 104, 107, and 118 |
+| 76 Objectives: the record and objective add | #223 | 1 | nothing | 80 and 81 |
+| 77 Plot index data shapes and the five readability checks | #224 | 1 | nothing | 100 |
+| 78 The synthetic start-midway project | #225 | 1 | nothing | 84 and 85 |
+| 79 Batches and marks | #226 | 1 | nothing | 82, 89, 91, 95, 96, 100, 104, 109, and 112 |
+| 80 The front door reads objectives | #227 | 2 | 76 | 87, 91, 96, and 109 |
+| 81 Specify and the plan name objectives | #228 | 2 | 76 | 86, 87, 91, 97, 99, and 109 |
+| 82 Project tools and the software decision | #229 | 2 | 75 and 79 | 83, 102, 106, 109, 110, and 112 |
+| 83 Moving a project's environment | #230 | 3 | 82 | 110 |
+| 84 Documents in: converting and keeping a project's documents | #231 | 2 | 75 and 78 | 93, 94, and 96 |
+| 85 The code repository | #232 | 2 | 73 and 78 | 97, 106, 107, 109, 111, and 121 |
+| 86 Passages and the five sections | #233 | 3 | 81 | 88, 89, 90, 91, 93, 98, and 107 |
+| 87 Keep-if-better per goal, the stopping rule, and budgets; GOAL.json retires | #234 | 3 | 80 and 81 | 89, 90, 103, and 109 |
+| 88 The owner's passages, consolidation, and the linter's new tags | #235 | 4 | 86 | 109, 113, and 121 |
+| 89 The account | #236 | 4 | 79, 86, and 87 | 90, 91, 105, 109, 110, 112, and 115 |
+| 90 Results and the general report | #237 | 5 | 86, 87, and 89 | 100, 103, 104, 109, 110, and 115 |
+| 91 Objective changes | #238 | 5 | 79, 80, 81, 86, and 89 | 92, 109, and 112 |
+| 92 Spec amendments | #239 | 6 | 91 | 99 |
+| 93 Inherited passages | #240 | 4 | 84 and 86 | 95, 96, 97, and 104 |
+| 94 Consulting one document | #241 | 3 | 84 | 97 |
+| 95 Repeated claims | #242 | 5 | 75, 79, and 93 | 111 and 112 |
+| 96 Critiques and concerns | #243 | 5 | 79, 80, 84, and 93 | 97, 104, 109, 111, 112, and 117 |
+| 97 Verifying inherited results | #244 | 6 | 81, 85, 93, 94, and 96 | 108, 109, 111, 115, and 117 |
+| 98 References during a ticket | #245 | 4 | 71 and 86 | 99 and 105 |
+| 99 The surveyor and lit tickets | #246 | 7 | 81, 92, and 98 | 122 |
+| 100 Drawings on the plotter | #247 | 6 | 75, 77, 79, and 90 | 101, 102, 103, 112, and 116 |
+| 101 Current and earlier reports | #248 | 7 | 100 | 110 |
+| 102 The plotting library switch | #249 | 7 | 82 and 100 | 121 |
+| 103 The run-end gates | #250 | 7 | 87, 90, and 100 | 120 |
+| 104 The outline | #251 | 6 | 75, 79, 90, 93, and 96 | 105, 108, 111, 112, 113, and 115 |
+| 105 References rendered and important ones raised | #252 | 7 | 89, 98, and 104 | 109, 111, 115, and 121 |
+| 106 Reproducing from the code repository | #253 | 3 | 82 and 85 | 108 and 119 |
+| 107 The rule from code to Methods | #254 | 4 | 75, 85, and 86 | 108 and 119 |
+| 108 Methods generated by the inventory | #255 | 7 | 97, 104, 106, and 107 | 111, 113, and 115 |
+| 109 The wayline skill and setup as one conversation | #256 | 8 | 79, 80, 81, 82, 85, 87, 88, 89, 90, 91, 96, 97, and 105 | 114 and 115 |
+| 110 Dashboard: routes, the projects page, and the Research and Run views | #257 | 8 | 72, 74, 82, 83, 89, 90, and 101 | 111, 112, and 114 |
+| 111 Dashboard: the Paper and Inherited views | #258 | 9 | 85, 95, 96, 97, 104, 105, 108, and 110 | 113 |
+| 112 Dashboard: the marks view | #259 | 9 | 79, 82, 89, 91, 95, 96, 100, 104, and 110 | 121 |
+| 113 Dashboard: editing sections and the outline | #260 | 10 | 88, 104, 108, and 111 | 122 |
+| 114 The dashboard's chat | #261 | 9 | 109 and 110 | 122 |
+| 115 The paper order and the paper's parts | #262 | 9 | 89, 90, 97, 104, 105, 108, and 109 | 116, 117, 118, 119, and 121 |
+| 116 Figures at the order | #263 | 10 | 100 and 115 | 120 |
+| 117 Builds at the order | #264 | 10 | 96, 97, and 115 | 120 |
+| 118 Compilations | #265 | 10 | 71, 75, and 115 | 120 and 121 |
+| 119 Code at the order | #266 | 10 | 106, 107, and 115 | 120 |
+| 120 The decider orders the paper under autonomous | #267 | 11 | 103, 116, 117, 118, and 119 | 122 |
+| 121 Dashboard: cards and new actions | #268 | 11 | 85, 88, 102, 105, 112, 115, and 118 | 122 |
+| 122 M8 live demo: the toy overnight | #269 | 12 | every ticket from 71 to 121 | 123 |
+| 123 M8 live demo: PINF restarted from its own materials, and v1.1.0 | #270 | 13 | 122 | nothing |
 
 ## Running tickets in parallel without corrupting git
 

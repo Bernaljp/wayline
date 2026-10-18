@@ -626,6 +626,572 @@
    "title": "The ladder consent",
    "blockers": [],
    "milestone": "M6"
+  },
+  "71": {
+   "number": 218,
+   "id": 5907821389,
+   "title": "The scout's outcomes, cache, and joins",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "72": {
+   "number": 219,
+   "id": 5907821757,
+   "title": "research_version and the big-upgrade refusal",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "73": {
+   "number": 220,
+   "id": 5907822088,
+   "title": "The guard and gitignore defects found while charting",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "74": {
+   "number": 221,
+   "id": 5907822422,
+   "title": "The document viewer: dialog, zoom, KaTeX math, and the sanitizer",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "75": {
+   "number": 222,
+   "id": 5907822803,
+   "title": "The harness's tools",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "76": {
+   "number": 223,
+   "id": 5907823194,
+   "title": "Objectives: the record and objective add",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "77": {
+   "number": 224,
+   "id": 5907823549,
+   "title": "Plot index data shapes and the five readability checks",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "78": {
+   "number": 225,
+   "id": 5907823920,
+   "title": "The synthetic start-midway project",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "79": {
+   "number": 226,
+   "id": 5907824295,
+   "title": "Batches and marks",
+   "blockers": [],
+   "milestone": "M8"
+  },
+  "80": {
+   "number": 227,
+   "id": 5907824717,
+   "title": "The front door reads objectives",
+   "blockers": [
+    "76"
+   ],
+   "milestone": "M8"
+  },
+  "81": {
+   "number": 228,
+   "id": 5907825088,
+   "title": "Specify and the plan name objectives",
+   "blockers": [
+    "76"
+   ],
+   "milestone": "M8"
+  },
+  "82": {
+   "number": 229,
+   "id": 5907825455,
+   "title": "Project tools and the software decision",
+   "blockers": [
+    "75",
+    "79"
+   ],
+   "milestone": "M8"
+  },
+  "83": {
+   "number": 230,
+   "id": 5907825831,
+   "title": "Moving a project's environment",
+   "blockers": [
+    "82"
+   ],
+   "milestone": "M8"
+  },
+  "84": {
+   "number": 231,
+   "id": 5907826183,
+   "title": "Documents in: converting and keeping a project's documents",
+   "blockers": [
+    "75",
+    "78"
+   ],
+   "milestone": "M8"
+  },
+  "85": {
+   "number": 232,
+   "id": 5907826543,
+   "title": "The code repository",
+   "blockers": [
+    "73",
+    "78"
+   ],
+   "milestone": "M8"
+  },
+  "86": {
+   "number": 233,
+   "id": 5907826983,
+   "title": "Passages and the five sections",
+   "blockers": [
+    "81"
+   ],
+   "milestone": "M8"
+  },
+  "87": {
+   "number": 234,
+   "id": 5907827351,
+   "title": "Keep-if-better per goal, the stopping rule, and budgets; GOAL.json retires",
+   "blockers": [
+    "80",
+    "81"
+   ],
+   "milestone": "M8"
+  },
+  "88": {
+   "number": 235,
+   "id": 5907827692,
+   "title": "The owner's passages, consolidation, and the linter's new tags",
+   "blockers": [
+    "86"
+   ],
+   "milestone": "M8"
+  },
+  "89": {
+   "number": 236,
+   "id": 5907828041,
+   "title": "The account",
+   "blockers": [
+    "79",
+    "86",
+    "87"
+   ],
+   "milestone": "M8"
+  },
+  "90": {
+   "number": 237,
+   "id": 5907828436,
+   "title": "Results and the general report",
+   "blockers": [
+    "86",
+    "87",
+    "89"
+   ],
+   "milestone": "M8"
+  },
+  "91": {
+   "number": 238,
+   "id": 5907828777,
+   "title": "Objective changes",
+   "blockers": [
+    "79",
+    "80",
+    "81",
+    "86",
+    "89"
+   ],
+   "milestone": "M8"
+  },
+  "92": {
+   "number": 239,
+   "id": 5907829128,
+   "title": "Spec amendments",
+   "blockers": [
+    "91"
+   ],
+   "milestone": "M8"
+  },
+  "93": {
+   "number": 240,
+   "id": 5907829436,
+   "title": "Inherited passages",
+   "blockers": [
+    "84",
+    "86"
+   ],
+   "milestone": "M8"
+  },
+  "94": {
+   "number": 241,
+   "id": 5907829708,
+   "title": "Consulting one document",
+   "blockers": [
+    "84"
+   ],
+   "milestone": "M8"
+  },
+  "95": {
+   "number": 242,
+   "id": 5907830009,
+   "title": "Repeated claims",
+   "blockers": [
+    "75",
+    "79",
+    "93"
+   ],
+   "milestone": "M8"
+  },
+  "96": {
+   "number": 243,
+   "id": 5907830342,
+   "title": "Critiques and concerns",
+   "blockers": [
+    "79",
+    "80",
+    "84",
+    "93"
+   ],
+   "milestone": "M8"
+  },
+  "97": {
+   "number": 244,
+   "id": 5907830666,
+   "title": "Verifying inherited results",
+   "blockers": [
+    "81",
+    "85",
+    "93",
+    "94",
+    "96"
+   ],
+   "milestone": "M8"
+  },
+  "98": {
+   "number": 245,
+   "id": 5907831031,
+   "title": "References during a ticket",
+   "blockers": [
+    "71",
+    "86"
+   ],
+   "milestone": "M8"
+  },
+  "99": {
+   "number": 246,
+   "id": 5907831347,
+   "title": "The surveyor and lit tickets",
+   "blockers": [
+    "81",
+    "92",
+    "98"
+   ],
+   "milestone": "M8"
+  },
+  "100": {
+   "number": 247,
+   "id": 5907831722,
+   "title": "Drawings on the plotter",
+   "blockers": [
+    "75",
+    "77",
+    "79",
+    "90"
+   ],
+   "milestone": "M8"
+  },
+  "101": {
+   "number": 248,
+   "id": 5907832082,
+   "title": "Current and earlier reports",
+   "blockers": [
+    "100"
+   ],
+   "milestone": "M8"
+  },
+  "102": {
+   "number": 249,
+   "id": 5907832477,
+   "title": "The plotting library switch",
+   "blockers": [
+    "82",
+    "100"
+   ],
+   "milestone": "M8"
+  },
+  "103": {
+   "number": 250,
+   "id": 5907832853,
+   "title": "The run-end gates",
+   "blockers": [
+    "87",
+    "90",
+    "100"
+   ],
+   "milestone": "M8"
+  },
+  "104": {
+   "number": 251,
+   "id": 5907833172,
+   "title": "The outline",
+   "blockers": [
+    "75",
+    "79",
+    "90",
+    "93",
+    "96"
+   ],
+   "milestone": "M8"
+  },
+  "105": {
+   "number": 252,
+   "id": 5907833598,
+   "title": "References rendered and important ones raised",
+   "blockers": [
+    "89",
+    "98",
+    "104"
+   ],
+   "milestone": "M8"
+  },
+  "106": {
+   "number": 253,
+   "id": 5907833953,
+   "title": "Reproducing from the code repository",
+   "blockers": [
+    "82",
+    "85"
+   ],
+   "milestone": "M8"
+  },
+  "107": {
+   "number": 254,
+   "id": 5907834298,
+   "title": "The rule from code to Methods",
+   "blockers": [
+    "75",
+    "85",
+    "86"
+   ],
+   "milestone": "M8"
+  },
+  "108": {
+   "number": 255,
+   "id": 5907834635,
+   "title": "Methods generated by the inventory",
+   "blockers": [
+    "97",
+    "104",
+    "106",
+    "107"
+   ],
+   "milestone": "M8"
+  },
+  "109": {
+   "number": 256,
+   "id": 5907834964,
+   "title": "The wayline skill and setup as one conversation",
+   "blockers": [
+    "79",
+    "80",
+    "81",
+    "82",
+    "85",
+    "87",
+    "88",
+    "89",
+    "90",
+    "91",
+    "96",
+    "97",
+    "105"
+   ],
+   "milestone": "M8"
+  },
+  "110": {
+   "number": 257,
+   "id": 5907835315,
+   "title": "Dashboard: routes, the projects page, and the Research and Run views",
+   "blockers": [
+    "72",
+    "74",
+    "82",
+    "83",
+    "89",
+    "90",
+    "101"
+   ],
+   "milestone": "M8"
+  },
+  "111": {
+   "number": 258,
+   "id": 5907835668,
+   "title": "Dashboard: the Paper and Inherited views",
+   "blockers": [
+    "85",
+    "95",
+    "96",
+    "97",
+    "104",
+    "105",
+    "108",
+    "110"
+   ],
+   "milestone": "M8"
+  },
+  "112": {
+   "number": 259,
+   "id": 5907835966,
+   "title": "Dashboard: the marks view",
+   "blockers": [
+    "79",
+    "82",
+    "89",
+    "91",
+    "95",
+    "96",
+    "100",
+    "104",
+    "110"
+   ],
+   "milestone": "M8"
+  },
+  "113": {
+   "number": 260,
+   "id": 5907836313,
+   "title": "Dashboard: editing sections and the outline",
+   "blockers": [
+    "88",
+    "104",
+    "108",
+    "111"
+   ],
+   "milestone": "M8"
+  },
+  "114": {
+   "number": 261,
+   "id": 5907836660,
+   "title": "The dashboard's chat",
+   "blockers": [
+    "109",
+    "110"
+   ],
+   "milestone": "M8"
+  },
+  "115": {
+   "number": 262,
+   "id": 5907836997,
+   "title": "The paper order and the paper's parts",
+   "blockers": [
+    "89",
+    "90",
+    "97",
+    "104",
+    "105",
+    "108",
+    "109"
+   ],
+   "milestone": "M8"
+  },
+  "116": {
+   "number": 263,
+   "id": 5907837360,
+   "title": "Figures at the order",
+   "blockers": [
+    "100",
+    "115"
+   ],
+   "milestone": "M8"
+  },
+  "117": {
+   "number": 264,
+   "id": 5907837685,
+   "title": "Builds at the order",
+   "blockers": [
+    "96",
+    "97",
+    "115"
+   ],
+   "milestone": "M8"
+  },
+  "118": {
+   "number": 265,
+   "id": 5907837994,
+   "title": "Compilations",
+   "blockers": [
+    "71",
+    "75",
+    "115"
+   ],
+   "milestone": "M8"
+  },
+  "119": {
+   "number": 266,
+   "id": 5907838297,
+   "title": "Code at the order",
+   "blockers": [
+    "106",
+    "107",
+    "115"
+   ],
+   "milestone": "M8"
+  },
+  "120": {
+   "number": 267,
+   "id": 5907838677,
+   "title": "The decider orders the paper under autonomous",
+   "blockers": [
+    "103",
+    "116",
+    "117",
+    "118",
+    "119"
+   ],
+   "milestone": "M8"
+  },
+  "121": {
+   "number": 268,
+   "id": 5907839029,
+   "title": "Dashboard: cards and new actions",
+   "blockers": [
+    "85",
+    "88",
+    "102",
+    "105",
+    "112",
+    "115",
+    "118"
+   ],
+   "milestone": "M8"
+  },
+  "122": {
+   "number": 269,
+   "id": 5907839370,
+   "title": "M8 live demo: the toy overnight",
+   "blockers": [
+    "99",
+    "113",
+    "114",
+    "120",
+    "121"
+   ],
+   "milestone": "M8"
+  },
+  "123": {
+   "number": 270,
+   "id": 5907839826,
+   "title": "M8 live demo: PINF restarted from its own materials, and v1.1.0",
+   "blockers": [
+    "122"
+   ],
+   "milestone": "M8"
   }
  },
  "relationships": {
@@ -633,6 +1199,15 @@
   "sub_issue_error": null,
   "dependencies": 119,
   "dependencies_total": 119,
-  "dependency_error": null
+  "dependency_error": null,
+  "m8_sub_issues": 53,
+  "m8_dependencies": 151
+ },
+ "m8": {
+  "number": 217,
+  "id": 5907820838,
+  "title": "M8 - A paper that grows with the work (v1.1.0)",
+  "parent": 1,
+  "note": "#1 holds 62 sub-issues and GitHub allows 100, so tickets 71 to 123 are sub-issues of this issue, itself a sub-issue of #1."
  }
 }

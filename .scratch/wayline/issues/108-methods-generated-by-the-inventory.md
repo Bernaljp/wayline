@@ -29,7 +29,7 @@ It blocks 111, 113, and 115.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#255](https://github.com/Bernaljp/wayline/issues/255) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Methods and the code: the inventory's parameter table, the software and versions, citations, the rule from Methods to code, the inherited code's reading at setup; verifying what a project inherited: the parser inventory's comparison at setup; drawings and plots: a drawing's Methods passage; the outline: Methods); milestone M8 criteria 10 and 13; user stories 150 and 151.
 

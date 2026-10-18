@@ -16,7 +16,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#261](https://github.com/Bernaljp/wayline/issues/261) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Talking with the project; The dashboard; Setup, at every autonomy; Vocabulary the build adds: the chat's rung in `harness.json`), 3 (the worker launcher, which the chat launches through), 8 (the dashboard), 1 (`harness.json`); M8 criterion 15; user stories 165, 166, 167, 168.
 

@@ -19,7 +19,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#245](https://github.com/Bernaljp/wayline/issues/245) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (A reference found during a ticket; The scout's outcomes, cache, and joins: the check at acceptance as a caller); Implementation Decision 1 (the verb table: `scout <identifier>`); Implementation Decision 9 (dossiers, the scout, absorb, promotions); Implementation Decision 14 (the policy table: the scout's cap of 20 calls a ticket); the schemas list (`result` gains `references`); M8 criterion 11; user stories 143 and 144.
 

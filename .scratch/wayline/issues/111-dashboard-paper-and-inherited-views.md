@@ -37,7 +37,7 @@ It blocks 113.
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#258](https://github.com/Bernaljp/wayline/issues/258) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: Paper and Inherited), 8 (the dashboard); milestone M8 criterion 16; user story 169.
 

@@ -23,7 +23,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#224](https://github.com/Bernaljp/wayline/issues/224) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (drawings and plots: `build-index`'s `data_shape`, the six checks and the five new ones, SVG of every library, `generator_clean` Python only, "not run"), 13 (figures, the plot index, the machine checks), 14 (the policy table: the plot checks' thresholds); M8 criterion 6 (the checks' half); user story 128.
 

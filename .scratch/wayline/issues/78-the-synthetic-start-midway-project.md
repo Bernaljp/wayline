@@ -22,7 +22,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#225](https://github.com/Bernaljp/wayline/issues/225) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (documents, critiques, and concerns; inherited passages and repeated claims; Methods and the code), Testing Decisions (decision 17's document fixtures: "an earlier manuscript as `.docx` with tracked changes, comments, and Mendeley citations, a `.tex` Methods, a critique, a small code repository with a MATLAB and a Python file"); M8 criteria 9 and 10 (the synthetic materials they are covered with); user stories 101, 175.
 

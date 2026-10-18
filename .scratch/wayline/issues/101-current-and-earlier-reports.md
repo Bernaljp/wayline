@@ -21,7 +21,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#248](https://github.com/Bernaljp/wayline/issues/248) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Results and the reports: current and earlier reports; Drawings and plots: a plot the owner asks for); Implementation Decision 2 (the event table: `report` and `version` on `report_rendered`); M8 criterion 5; user stories 124 and 127.
 

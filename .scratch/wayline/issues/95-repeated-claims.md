@@ -22,7 +22,7 @@ Not part of this ticket:
 
 **Status:** ready-for-agent
 
-**GitHub:** PENDING
+**GitHub:** [#242](https://github.com/Bernaljp/wayline/issues/242) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Inherited passages and repeated claims; Setup, at every autonomy: the merges and contradictions batch); Implementation Decision 14 (the policy table: the consistency read's and confirmer's rungs, if they land as policy); M8 criterion 9; user story 138.
 
