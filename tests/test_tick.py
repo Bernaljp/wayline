@@ -19,7 +19,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from tests.projects import ProjectTestCase, on_fable
+from tests.projects import ProjectTestCase, on_fable, open_objective
 from wayline import cli, decisions, notify, pacing, project, resources, tick, tickets, worker
 from wayline.ledger import Ledger
 
@@ -496,6 +496,7 @@ class WorkTest(TickCase):
     def test_a_decision_ticket_a_session_may_take_is_work(self):
         """Under `autonomous` the decider takes a decision ticket that is not human-only, so it is work to relaunch for."""
         self.ran(ended="frontier_empty", autonomy="autonomous")
+        open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
         self.add_ticket(1, kind="decision")
         with mock.patch.object(decisions, "decider_ready", return_value=True):
@@ -503,6 +504,7 @@ class WorkTest(TickCase):
 
     def test_without_a_decider_role_a_decision_ticket_is_not_work_even_under_autonomous(self):
         self.ran(ended="frontier_empty", autonomy="autonomous")
+        open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
         self.add_ticket(1, kind="decision")
         with mock.patch.object(decisions, "decider_ready", return_value=False):

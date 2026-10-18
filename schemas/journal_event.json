@@ -22,7 +22,8 @@
         "decision_opened", "decision",
         "job_launched", "job_finished", "job_retried", "job_failed", "job_cancelled", "job_waiting", "manifest",
         "wave", "stall", "promoted", "demoted", "absorbed", "consulted", "notified", "control", "switched",
-        "feedback", "change_record", "tagged", "pinned", "report_rendered", "paper_started", "figure_result"
+        "feedback", "change_record", "tagged", "pinned", "report_rendered", "paper_started", "figure_result",
+        "objective", "marked"
       ]
     },
     "ticket": {"type": ["integer", "null"], "minimum": 1},

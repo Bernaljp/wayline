@@ -10,6 +10,11 @@ from pathlib import Path
 
 __version__ = "1.0.1"
 TAG = "v" + __version__
+# How this release keeps `research/` (Implementation Decision 17): the one place it is named. `init`
+# writes it into `harness.json`, a project without the key is at 1, and a release that changes how
+# `research/` is kept raises it, its `CHANGELOG.md` entry opening with a **Breaking** line. A project
+# at another version is refused, never migrated (`project.old_project_problem`).
+RESEARCH_VERSION = 2
 
 HARNESS_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = HARNESS_ROOT / "schemas"
@@ -41,5 +46,5 @@ def real_backend(name):
         raise BackendTouched("%s is a real backend, and %s=none keeps this process off it" % (name, BACKENDS_ENV))
 
 
-__all__ = ["__version__", "TAG", "HARNESS_ROOT", "SCHEMAS_DIR", "POLICY_PATH", "BACKENDS_ENV", "BackendTouched",
+__all__ = ["__version__", "TAG", "RESEARCH_VERSION", "HARNESS_ROOT", "SCHEMAS_DIR", "POLICY_PATH", "BACKENDS_ENV", "BackendTouched",
            "backends_off", "real_backend"]

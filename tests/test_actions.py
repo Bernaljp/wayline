@@ -22,7 +22,7 @@ from unittest import mock
 from urllib.parse import quote
 
 from tests.paths import HARNESS_ROOT
-from tests.projects import ProjectTestCase
+from tests.projects import ProjectTestCase, open_objective
 from tests.test_dashboard import Response
 from wayline import dashboard, intake, project, replay, tickets
 from wayline.dashboard import (
@@ -215,6 +215,10 @@ class AnswerActionTest(ActionCase):
 
 
 class AutonomyActionTest(ActionCase):
+    def setUp(self):
+        super().setUp()
+        open_objective(self.project)  # a raise to autonomous needs one open (decision 17)
+
     def test_raising_writes_harness_json_and_journals_the_control(self):
         response = self.act("autonomy", {"autonomy": "autonomous"})
         self.assertEqual(response.status, 200, response.text)
@@ -441,6 +445,7 @@ class NoShellTest(ActionCase):
 
     def test_no_action_runs_a_shell(self):
         self.lay_out("other")
+        open_objective(self.project)  # the autonomy action raises to autonomous, which needs one open (decision 17)
         project.set_active(self.project)
         started = []
         real = subprocess.Popen

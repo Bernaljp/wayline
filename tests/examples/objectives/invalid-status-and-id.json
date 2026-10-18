@@ -1,0 +1,13 @@
+{
+  "objectives": [
+    {
+      "id": "1",
+      "text": "Do interaction terms help?",
+      "measure": null,
+      "status": "closed",
+      "answer": null,
+      "evidence": ["results/auroc.json"],
+      "reframed_as": null
+    }
+  ]
+}

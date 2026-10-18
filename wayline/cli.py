@@ -57,7 +57,12 @@ VERBS = [
     Verb("status", "status [--project <path>] [--json]", "print the frontier, running tickets and jobs, open decisions, the window, the goal, the last events", "views", lazy("wayline.project", "status_command")),
     Verb("answer", "answer <id> \"<text>\" [--rationale \"<why>\"]", "answer a decision ticket from the command line or a session", "views", lazy("wayline.project", "answer_command")),
     Verb("switch", "switch <path> | --autonomy <level> | --fallback auto|ask|wait | --stop-at f --cheap-at f", "make another project the active one, or set its autonomy, its fallback consent, or its pacing thresholds", "views", lazy("wayline.project", "switch_command")),
+    Verb("objective", "objective add \"<question>\" [--measure <file> --sample <artifact>]", "record an objective, a question the research answers; a goal when its measure's eval_command printed the metric on the sample artifact", "views",
+         lazy("wayline.objectives", "objective_command")),
     Verb("feedback", "feedback \"<text>\"", "file feedback for the evolve loop", "views", lazy("wayline.changes", "feedback_command")),
+    Verb("mark", "mark <batch> [<item> [<mark>] [--note \"<text>\"] | --defaults] [--by owner|decider]",
+         "show a batch of the marks view, settle one of its items with a mark, keep a note on one, or take all defaults", "views",
+         lazy("wayline.batches", "mark_command")),
     Verb("reference", "reference <slug> <doi|title|file.pdf|\"leave it\">", "hand over an unresolved reference: a DOI or exact title back to the scout, a PDF as its source, or leave it until the paper order", "views",
          lazy("wayline.dossier", "reference_command")),
     Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services", lazy("wayline.dashboard", "serve_command")),
@@ -82,11 +87,48 @@ VERBS = [
     Verb("paper", "paper [--venue <slug>] [--continue] [--verify]", "draft research/paper/ under a venue's guidelines, build it with the linter and the seven checks, and gate it with the kill argument and one independent read; nothing is submitted", "builders",
          lazy("wayline.paper", "paper_command")),
     Verb("report", "report [--offline] [--no-draft] [--verify]", "render REPORT.md from the ledger, lint every claim, and sample the claims for the verifier", "builders", lazy("wayline.provenance", "report_command")),
-    Verb("tools", "tools install|show [--marker] [--mineru] [--grobid] [--dry-run]", "create the optional converter venv under ~/.wayline/tools/ (docling; marker, MinerU, GROBID on request)", "tools",
+    Verb("tools", "tools install [<name>] [--marker] [--mineru] [--grobid] [--dry-run] | show [--json] | run <name> -- <args>", "install the harness's tools under ~/.wayline/tools/ and record each in tools.json; show the record; run a recorded tool by its absolute path and environment", "tools",
          lazy("wayline.tools", "tools_command")),
     Verb("launch", "launch --smoke [--dir <path>] [--model <alias>] [--effort <effort>]", "one real cheap session through the launcher; prints the envelope and the usage windows", "tools",
          handler=lazy("wayline.worker", "launch_verb"), hidden=True),
 ]
+
+# The verbs that write to a project, so refuse an old one (another `research_version`, decision 17) before their
+# function runs (`refuse_old_project`). The others read it (`status`, the dashboard that lists it read-only), take the
+# way back (`upgrade`, which refuses a big move itself), lay out a new project (`init`), write only to the harness or
+# `~/.wayline/`, or run inside a worktree the conductor launched, which `run` already refuses on an old project.
+WRITING_VERBS = frozenset((
+    "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
+    "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
+))
+
+
+def _named_project(args):
+    """The `--project` a verb's arguments name, or None for the active project."""
+    for index, arg in enumerate(args):
+        if arg == "--project" and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith("--project="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def refuse_old_project(name, args):
+    """The refusal of a writing verb on a project of another `research_version`, or None to let the verb run.
+
+    `switch <path>` only moves the active pointer, and a verb's `--help` reads nothing, so both pass. A project
+    that cannot be found is left to the verb, which says so in its own words.
+    """
+    if name not in WRITING_VERBS or "-h" in args or "--help" in args:
+        return None
+    if name == "switch" and args and not args[0].startswith("-"):
+        return None
+    from wayline import project as projects  # the project module imports this one
+    try:
+        return projects.old_project_problem(projects.find_project(_named_project(args)))
+    except (ValueError, OSError):
+        return None
+
 
 GROUP_TITLES = {
     "project": "Project",
@@ -165,6 +207,10 @@ def main(argv=None):
     if verb.handler is None:
         print("wayline %s: not yet implemented" % verb.name, file=sys.stderr)
         return 2
+    refusal = refuse_old_project(verb.name, args[1:])
+    if refusal is not None:
+        print("wayline %s: %s" % (verb.name, refusal), file=sys.stderr)
+        return 1
     return exit_code(verb.name, verb.handler(args[1:]))
 
 

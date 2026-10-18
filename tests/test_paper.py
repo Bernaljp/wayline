@@ -596,7 +596,7 @@ class GateTest(PaperCase):
         self.assertEqual(len(self.calls_of("verifier")), 2)
         self.assertIsNone(written.read)
         (ticket,) = [fields for fields in tickets.read_tickets(self.project) if fields["id"] in written.tickets]
-        self.assertEqual((ticket["kind"], ticket["origin"], ticket["touches"]), ("writing", paper.PAPER_PATH, [paper.PAPER_PATH]))
+        self.assertEqual((ticket["kind"], ticket["origin"], ticket["touches"]), ("writing", paper.PAPER_PATH, []))
         self.assertFalse(self.build()["kill_argument"]["pass"])
         self.assertIsNone(self.build()["read"])
 
