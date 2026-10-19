@@ -140,7 +140,7 @@ class JudgeTest(unittest.TestCase):
         """A deterministic goal (`min_seeds` 1): one reading, and a gain however small is kept; a tie is not."""
         self.assertTrue(goals.judge("count", (5.0001,), 5.0, "up", min_seeds=1).kept)
         self.assertFalse(goals.judge("count", (5.0,), 5.0, "up", min_seeds=1).kept)
-        self.assertTrue(goals.judge("count", (4.0, 6.5), 5.0, "up", min_seeds=1, margin_sd=20).kept)
+        self.assertFalse(goals.judge("count", (4.0, 6.5), 5.0, "up", min_seeds=1, margin_sd=20).kept, "several readings meet the margin")
         self.assertTrue(goals.judge("error", (0.29,), 0.3, "down", min_seeds=1).kept)
 
 

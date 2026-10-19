@@ -145,6 +145,11 @@ class IrreversibleListTest(unittest.TestCase):
             ("make code/ public before the deadline", "make the code repository public"),
             ("open-source the code with the paper", "make the code repository public"),
             ("yes, make it public", "make the code repository public"),
+            # Decision 17: after setup the stopping rule is the owner's to change, as a budget is theirs to raise (ticket 87).
+            ("change the stopping rule to frontier so the run goes on", "stopping rule"),
+            ("relax the stop condition", "stopping rule"),
+            ("wayline switch --stop-when frontier", "stopping rule"),
+            ("extend the wall-clock budget by a day", "budgets"),
         ):
             with self.subTest(text=text):
                 self.assertEqual(irreversible_class(text), expected)
@@ -766,3 +771,17 @@ class ParkedProposalsTest(ConductedCase):
 class NoParkedProposalsTest(unittest.TestCase):
     def test_a_project_without_the_directory_has_none(self):
         self.assertEqual(decisions.parked_proposals(FIXTURES_DIR / "projects" / "decision-branch"), [])
+
+
+class FrontierAnswersTest(unittest.TestCase):
+    """Ticket 87: one decider answer names each objective of an empty frontier, separated by semicolons, commas, or lines."""
+
+    def test_each_objective_s_choice_is_read(self):
+        for answer in ("O1: replan for it; O2: answer it as it stands", "O1: replan for it, O2: answer it as it stands",
+                       "O1 - replan for it\nO2 - answer it as it stands"):
+            with self.subTest(answer=answer):
+                self.assertEqual(decider.frontier_answers(answer, ["O1", "O2"]),
+                                 {"O1": "replan for it", "O2": "answer it as it stands"})
+
+    def test_an_objective_not_asked_about_is_not_read(self):
+        self.assertEqual(decider.frontier_answers("O3: drop it; O1: park it", ["O1"]), {"O1": "park it"})

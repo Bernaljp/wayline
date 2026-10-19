@@ -119,6 +119,15 @@ class BudgetTest(ProjectTestCase):
         self.assertEqual(stopping.spent({"budgets": {"wallclock_hours": 3, "gpu_hours": 3}}, events, now), [])
         self.assertEqual(stopping.spent({}, events, now), [])
 
+    def test_a_budget_of_zero_is_spent_only_by_the_first_hour_used(self):
+        """`gpu_hours: 0` is a project that uses no GPU: nothing run yet spends it, a GPU job does."""
+        events = [event("run_started", {"resume": False, "harness_tag": "v1.1.0", "autonomy": "autonomous", "radius": "moderate",
+                                        "pid": 1}, "2026-10-01T10:00:00.000Z")]
+        now = at("2026-10-01T12:00:00Z")
+        self.assertEqual(stopping.spent({"budgets": {"gpu_hours": 0}}, events, now), [])
+        events.append(event("job_launched", {"job": "j1", "ticket": 1, "gpu_uuids": ["GPU-a"]}, "2026-10-01T11:00:00.000Z", job="j1"))
+        self.assertEqual([name for name, _, _ in stopping.spent({"budgets": {"gpu_hours": 0}}, events, now)], ["gpu_hours"])
+
 
 def run(*args):
     out, err = io.StringIO(), io.StringIO()

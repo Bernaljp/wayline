@@ -173,6 +173,14 @@ class BudgetTest(StopRuleCase):
         self.assertEqual(results[-1].reason, "budget_spent")
         self.assertIn("the GPU budget of 5 hour(s) is spent (6.00 used)", self.said())
 
+    def test_a_harness_json_that_cannot_be_read_ends_nothing(self):
+        """The tick reads no default rule into a `harness.json` it cannot read: it ends nothing for good on it."""
+        open_objective(self.project)
+        change_objective(self.project, "O1", "answered", "owner", answer="yes")
+        self.assertIsNotNone(tick.ended_for_good(self.project, [], time.time()))
+        (self.project / "harness.json").write_text("{not json", encoding="utf-8")
+        self.assertIsNone(tick.ended_for_good(self.project, [], time.time()))
+
     def test_a_budget_not_spent_ends_nothing(self):
         self.ledger.append_event("phase", {"from": "P4", "to": "P5"})
         self.set_harness(budgets={"wallclock_hours": 10, "gpu_hours": 10})
@@ -243,6 +251,16 @@ class OwnerAnswersTest(EmptyFrontierCase):
         self.assertEqual(sorted(fields["id"] for fields in self.frontier_tickets()), first)
         self.assertEqual(len(self.events("decision_opened")), 2)
 
+    def test_the_end_notice_is_sent_once_run_ended_is_journaled(self):
+        """Its `notified` claim then follows the end, so the tick does not send the end a second time."""
+        seen = []
+        self.recorder = lambda event, text, project=None, ticket=None: seen.append((event, text, self.sequence()))
+        self.conduct((done(), patch()))
+        notices = [(text, journal) for event, text, journal in seen if event == "run_ended"]
+        self.assertEqual(len(notices), 1)
+        self.assertIn("the frontier is empty and the stopping rule", notices[0][0])
+        self.assertEqual(notices[0][1][-1], "run_ended")
+
     def test_the_tick_relaunches_after_the_answer(self):
         self.ledger.append_event("run_started", {"resume": False, "harness_tag": "v1.1.0", "autonomy": "checkpoints",
                                                  "radius": "moderate", "pid": 1})
@@ -262,6 +280,20 @@ class OwnerAnswersTest(EmptyFrontierCase):
         self.assertEqual(results[-1].reason, "objectives_closed")
         bys = [event["payload"]["by"] for event in self.events("objective") if event["payload"]["status"] in ("dropped", "parked")]
         self.assertEqual(bys, ["owner", "owner"])
+
+    def test_a_split_written_after_the_answer_is_not_the_replan(self):
+        self.conduct((done(), patch()))
+        answer(self.project, self.asks()["O1"]["id"], "replan for it")
+        self.ledger.write_json("plan.json", {"sha": "split", "cut_at": now_ts(), "cut": "split"})
+        self.conduct()
+        self.assertEqual([cut.kind for cut in self.planned], ["revise"])
+
+    def test_a_replan_the_planner_could_not_cut_is_said_to_the_owner(self):
+        self.conduct((done(), patch()))
+        answer(self.project, self.asks()["O1"]["id"], "replan for it")
+        self.planner = lambda cut, fall_back: ValueError("the planner returned no plan")
+        self.conduct()
+        self.assertTrue([text for event, text, _ in self.recorder.sent if "the planner could not replan for O1" in text])
 
     def test_a_replan_answer_cuts_once_and_an_answer_as_it_stands_asks_nothing_again(self):
         self.conduct((done(), patch()))

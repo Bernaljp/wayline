@@ -40,7 +40,7 @@ from wayline.project import HARNESS_JSON, ProjectError, control, find_project, r
 __all__ = [
     "OBJECTIVES", "FRONTIER", "RULES", "BUDGETS", "OBJECTIVES_CLOSED", "GOAL_REACHED", "BUDGET_SPENT", "FRONTIER_EMPTY",
     "EXECUTE_PHASE", "rule_of", "describe_rule", "waited", "covered", "rule_end", "reached_goals", "setup_ended_at", "after_setup",
-    "wallclock_hours", "gpu_hours", "spent", "describe_spent", "parse_rule", "set_stop_when", "set_budget", "switch_command", "REPLAN", "ANSWER", "PARK", "DROP", "FRONTIER_OPTIONS",
+    "wallclock_hours", "gpu_hours", "spent", "stated", "describe_spent", "parse_rule", "set_stop_when", "set_budget", "switch_command", "REPLAN", "ANSWER", "PARK", "DROP", "FRONTIER_OPTIONS",
     "DECIDER_CHOICES", "FRONTIER_ORIGIN", "frontier_origin", "frontier_objective", "frontier_choice", "progressed_since", "last_replan",
     "empty_frontier_asks",
 ]
@@ -183,9 +183,16 @@ def spent(harness, events, now):
         limit = budgets.get(name)
         if _number(limit):
             hours = used[name]()
-            if hours >= limit:
+            # A limit of 0 (no GPU, say) is spent by the first hour used, never by nothing having run yet.
+            if hours >= limit and hours > 0:
                 found.append((name, float(limit), hours))
     return found
+
+
+def stated(harness):
+    """Whether `harness.json` states any budget, which is when the journal is worth reading for one."""
+    budgets = (harness or {}).get("budgets") or {}
+    return any(_number(budgets.get(name)) for name in BUDGETS)
 
 
 def describe_spent(found):
@@ -316,7 +323,12 @@ def switch_command(options):
         print("budget %s from %s to %s on %s" % (report["name"], shown(report["from"]), shown(report["to"]), project))
         if report["raised"] and report["after_setup"]:
             print("  setup has ended, so raising it was on the irreversible list: the owner's word alone, and the decider never extends one")
-    print("  the conductor reads it at its next wave")
+    from wayline.project import conductor_holder
+    holder = conductor_holder(project)
+    if holder is not None:
+        print("  the conductor (pid %s) reads it at its next wave" % holder.get("pid", "?"))
+    else:
+        print("  no conductor is running; the tick does not relaunch a run its rule or a budget ended, so wayline run starts the next one")
     return 0
 
 

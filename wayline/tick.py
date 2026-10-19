@@ -1293,7 +1293,10 @@ def ended_for_good(project, events, now):
     """
     from wayline import stopping  # the stopping module imports the goal and objectives modules
     from wayline.objectives import ObjectivesUnreadable, read_objectives
-    harness = _harness(project)
+    try:
+        harness = read_harness(project)
+    except (ProjectError, ValueError, OSError):
+        return None  # a harness.json that cannot be read ends nothing here, as the conductor reads it
     try:
         records = read_objectives(project)
     except (ObjectivesUnreadable, OSError, ValueError):

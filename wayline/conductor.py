@@ -797,7 +797,9 @@ class Conductor:
         self.reporter = self._render_report
         self._replanned = None
         self._objectives_trouble = None
+        self._harness_trouble = None
         self._objective_replans = set()
+        self._answer_stamps = {}
         # The evolve loop (ticket 45, decision 12). A policy nobody handed in is read again every wave, so a local change
         # to `harness.json` is used from the next one. `evolver(fall_back)` is the evolver's session over the pending
         # feedback, `prover` runs a change's fixture on the old and the new subject, and `global_checks` runs the harness
@@ -1041,12 +1043,16 @@ class Conductor:
         # tool nobody is installing keeps none going either: it waits on its software decision (ticket 82).
         if not [entry for entry in tickets.frontier(graph)
                 if not schedule.awaits_owner(entry, autonomy, decider) and not self._needs_tools(entry)] and not running:
-            if self._empty_frontier(autonomy, decider):
+            takes, notice = self._empty_frontier(autonomy, decider)
+            if takes:
                 return  # the decider takes this empty frontier's tickets at the next wave
             for line in schedule.held_back(graph, autonomy, decider):
                 self.say(line)
             self.ledger.append_event(RUN_ENDED, {"reason": stopping.FRONTIER_EMPTY})
             result.ended, result.reason = True, stopping.FRONTIER_EMPTY
+            if notice:
+                # After `run_ended`, so the notifier's claim follows it and the tick does not send the end again.
+                self.notify(RUN_ENDED, "%s: %s; the run ended (frontier_empty)" % (self.project.name, notice), self.project, None)
 
     def _graph(self):
         """`graph.json`, regenerated, with what the next attempt launches at: its difficulty and its rung.
@@ -1371,7 +1377,9 @@ class Conductor:
                      % (fields["id"], ", ".join(stopping.FRONTIER_OPTIONS), identifier))
 
     def _empty_frontier(self, autonomy, decider_ready):
-        """At an empty frontier, the tickets the stopping rule asks for: True when the decider takes them at the next wave.
+        """At an empty frontier, the tickets the stopping rule asks for: `(takes, notice)`.
+
+        `takes` is True when the decider takes them at the next wave; `notice` the end notice the run's end sends, or None.
 
         Under `stop_when: frontier`, or with no open objective the rule waits on, nothing is asked. Otherwise one
         decision ticket per such objective is opened, once per empty frontier (`stopping.empty_frontier_asks`).
@@ -1379,26 +1387,25 @@ class Conductor:
         `interactive` and `checkpoints` they wait for the owner, the run ends `frontier_empty`, and the tick
         relaunches it after the answer. The run's end says which objectives stay open.
         """
-        try:
-            harness = read_harness(self.project)
-        except (ProjectError, ValueError, OSError):
-            harness = {}
+        harness = self._harness_for_rule()
+        if harness is None:
+            return False, None
         rule = stopping.rule_of(harness)
         records = self._objective_records() or []
         still = [record["id"] for record in records if objectives.is_open(record)]
         waiting = stopping.waited(rule, records)
         if rule == stopping.FRONTIER or not waiting:
-            if still:
-                self._frontier_notice("the frontier is empty under the stopping rule %s; the objectives still open: %s"
-                                      % (stopping.describe_rule(rule), ", ".join(still)))
-            return False
+            if not still:
+                return False, None
+            return False, self._frontier_notice("the frontier is empty under the stopping rule %s; the objectives still open: %s"
+                                                % (stopping.describe_rule(rule), ", ".join(still)))
         try:
             events, _ = self.ledger.read_events()
             opened, standing, settled = stopping.empty_frontier_asks(self.project, waiting, rule, events,
                                                                      tickets.read_tickets(self.project), notify=self.notify)
         except (ValueError, OSError) as failure:
             self.say("  the empty frontier's decision tickets could not be opened: %s" % failure)
-            return False
+            return False, None
         self._tail()
         for identifier in opened:
             self.say("  the frontier is empty with an objective the stopping rule waits on: decision ticket %d asks what to do" % identifier)
@@ -1408,7 +1415,7 @@ class Conductor:
         takable = {fields["id"] for fields in tickets.read_tickets(self.project)
                    if fields["status"] == "open" and not fields.get("human_only")}
         if [identifier for identifier in asked if identifier in takable] and autonomy == schedule.AUTONOMOUS and decider_ready:
-            return True
+            return True, None
         words = ["the frontier is empty and the stopping rule %s waits on %s" % (stopping.describe_rule(rule),
                                                                                  ", ".join(record["id"] for record in waiting))]
         if asked:
@@ -1416,13 +1423,27 @@ class Conductor:
         if settled:
             words.append("%s %s answered at the last empty frontier and nothing was created since" % (
                 ", ".join(settled), "was" if len(settled) == 1 else "were"))
-        self._frontier_notice("; ".join(words))
-        return False
+        return False, self._frontier_notice("; ".join(words))
 
     def _frontier_notice(self, words):
-        """The end notice of a run whose frontier emptied with objectives open: said, and sent to the owner."""
+        """The end notice of a run whose frontier emptied with objectives open: said now, sent once `run_ended` is journaled."""
         self.say("  " + words)
-        self.notify(RUN_ENDED, "%s: %s; the run ended (frontier_empty)" % (self.project.name, words), self.project, None)
+        return words
+
+    def _harness_for_rule(self):
+        """`harness.json` for the stopping rule and the budgets, or None when it cannot be read, which is said once per run.
+
+        A file that cannot be read ends nothing: falling back to the default rule could end a run its own rule would not.
+        """
+        try:
+            harness = read_harness(self.project)
+        except (ProjectError, ValueError, OSError) as failure:
+            if str(failure) != self._harness_trouble:
+                self._harness_trouble = str(failure)
+                self.say("  harness.json cannot be read, so the stopping rule and the budgets end nothing until it reads: %s" % failure)
+            return None
+        self._harness_trouble = None
+        return harness
 
     def _owed_objective_replans(self):
         """The empty-frontier tickets answered `replan for it` whose replan is still owed, by ticket id.
@@ -1439,14 +1460,15 @@ class Conductor:
         if not found:
             return {}
         record = plan.read_plan(self.project) or {}
-        cut_at = str(record.get("cut_at") or "")
-        events, _ = self.ledger.read_events()
-        stamps = {}
-        for event in events:
-            payload = event.get("payload") or {}
-            if event.get("event") == "decision" and payload.get("ticket") in found:
-                stamps[payload["ticket"]] = event.get("ts") or ""
-        return {identifier: fields for identifier, fields in found.items() if stamps.get(identifier, "") > cut_at}
+        # Only a revise is a replan for an objective: a split the escalation wrote meanwhile replans nothing of it.
+        cut_at = str(record.get("cut_at") or "") if record.get("cut") == "revise" else ""
+        if any(identifier not in self._answer_stamps for identifier in found):
+            events, _ = self.ledger.read_events()
+            for event in events:
+                payload = event.get("payload") or {}
+                if event.get("event") == "decision" and payload.get("ticket") in found:
+                    self._answer_stamps[payload["ticket"]] = event.get("ts") or ""
+        return {identifier: fields for identifier, fields in found.items() if self._answer_stamps.get(identifier, "") > cut_at}
 
     def _replan_objectives(self, result):
         """The planner's re-cut for the objectives an empty frontier's tickets were answered `replan for it` about (ticket 87).
@@ -1469,7 +1491,11 @@ class Conductor:
         self._objective_replans.update(owed)
         self._tail()
         if isinstance(outcome, BaseException):
-            self.say("  the planner could not replan for %s: %s" % (", ".join(named), outcome))
+            words = "the planner could not replan for %s: %s" % (", ".join(named), outcome)
+            self.say("  " + words)
+            # Not tried again every wave: the owner is told, and answers again (wayline rerun on the ticket) once it is mended.
+            self.notify(RUN_ENDED, "%s: %s; wayline rerun %s asks again" % (
+                self.project.name, words, " / ".join(str(identifier) for identifier in sorted(owed))), self.project, None)
             return
         result.escalated.append((None, REPLAN))
         self.say("  the planner replanned for %s: ticket(s) %s written" % (
@@ -2615,10 +2641,9 @@ class Conductor:
         records = self._objective_records()
         if records is not None:
             records = self._write_reached(records)
-        try:
-            harness = read_harness(self.project)
-        except (ProjectError, ValueError, OSError):
-            harness = {}
+        harness = self._harness_for_rule()
+        if harness is None:
+            return False
         rule = stopping.rule_of(harness)
         reason = stopping.rule_end(rule, records, list(self.view.progress.values())) if records is not None else None
         if reason is not None:
@@ -2626,6 +2651,8 @@ class Conductor:
             words = ("every goal the stopping rule waits on is reached (%s)" if reason == stopping.GOAL_REACHED else
                      "the objectives the stopping rule waits on are closed (%s)") % ", ".join(closed)
         else:
+            if not stopping.stated(harness):
+                return False
             events, _ = self.ledger.read_events()
             found = stopping.spent(harness, events, self.clock())
             if not found:

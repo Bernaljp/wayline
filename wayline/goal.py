@@ -175,8 +175,9 @@ def judge(metric, values, best, direction, min_seeds=DEFAULT_MIN_SEEDS, margin_s
     """Keep only a mean better than `best` in `direction` by more than `margin_sd` standard deviations.
 
     The standard deviation is the sample one across the seeds. Fewer than `min_seeds` readings
-    judge nothing: the `Judgment` carries `short` and is neither kept nor discarded. At `min_seeds` 1,
-    a goal measured by a deterministic computation, the margin does not apply: any strict gain is kept.
+    judge nothing: the `Judgment` carries `short` and is neither kept nor discarded. At `min_seeds` 1, a goal
+    measured by a deterministic computation, one reading has a standard deviation of 0, so any strict gain is kept;
+    several readings are held to the margin as always.
     """
     values = tuple(float(value) for value in values)
     mean = statistics.fmean(values) if values else math.nan
@@ -188,7 +189,7 @@ def judge(metric, values, best, direction, min_seeds=DEFAULT_MIN_SEEDS, margin_s
     if best is None:
         return Judgment(metric, values, mean, sd, best, True)
     gain = mean - best if direction == "up" else best - mean
-    return Judgment(metric, values, mean, sd, best, gain > 0 if min_seeds == 1 else gain > margin_sd * sd)
+    return Judgment(metric, values, mean, sd, best, gain > margin_sd * sd)
 
 
 def progress_payloads(events):

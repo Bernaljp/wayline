@@ -913,7 +913,7 @@ def render_decided(report):
 
 
 FRONTIER_SUBJECT = "the empty frontier"
-_FRONTIER_LINE = re.compile(r"\b(O[1-9][0-9]*)\b\s*[:=\-–—]*\s*([^;\n]*)")
+_FRONTIER_LINE = re.compile(r"\b(O[1-9][0-9]*)\b\s*[:=\-–—]*\s*([^;,\n]*)")
 
 
 def frontier_answers(answer, identifiers):
