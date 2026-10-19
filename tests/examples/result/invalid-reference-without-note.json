@@ -1,0 +1,8 @@
+{
+  "ticket_id": 9,
+  "status": "done",
+  "summary": "Listed a work with no note.",
+  "references": [
+    {"identifier": "10.1038/s41586-020-2649-2"}
+  ]
+}

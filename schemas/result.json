@@ -42,6 +42,19 @@
         }
       }
     },
+    "references": {
+      "type": "array",
+      "description": "every work the ticket drew on, each by a DOI, an arXiv id, or its exact title (never a URL, which is never looked up), with a note kept on its dossier under the ticket's id and never read by the scout; acceptance looks up each one no dossier holds yet (decision 17; ticket 98)",
+      "items": {
+        "type": "object",
+        "required": ["identifier", "note"],
+        "additionalProperties": false,
+        "properties": {
+          "identifier": {"type": "string", "pattern": "^(?!\\s*[Hh][Tt][Tt][Pp][Ss]?://)\\s*\\S", "description": "a DOI, an arXiv id, or the work's exact title; never a URL"},
+          "note": {"type": "string", "description": "what the ticket drew on the work for; may be empty"}
+        }
+      }
+    },
     "goal_progress": {
       "type": ["object", "null"],
       "required": ["metric", "value"],

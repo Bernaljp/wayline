@@ -54,7 +54,7 @@ from wayline.project import policy_for, read_harness
 from wayline.tickets import build_graph, next_id, read_tickets, touches_problems, write_ticket
 
 __all__ = [
-    "RADIUS", "RADIUS_RANK", "REASONS", "KIND_ROLE", "DEDUP_ROLE", "DEDUP_SCHEMA",
+    "RADIUS", "RADIUS_RANK", "REASONS", "KIND_ROLE", "role_for", "DEDUP_ROLE", "DEDUP_SCHEMA",
     "ProposalsError", "parked_path", "admit_proposals", "apply_admitted",
 ]
 
@@ -69,11 +69,30 @@ DEDUP_MAX_MINUTES = 5
 
 # A kind's default role, absent anything else to size an auto-admitted ticket by: the planner's own
 # convention in the toy fixtures, for a ticket that was never planned by a person.
+# A `dossier` ticket has no worker session (the conductor runs it as a promotion through absorb) and a `lit` ticket runs
+# on the surveyor, so neither is routed here (decision 17; ticket 98): `role_for` gives them the role whose registry
+# kinds name them.
 KIND_ROLE = {
-    "dossier": "reader", "lit": "reader", "code": "coder", "docs": "documentarian", "experiment": "experimenter",
+    "code": "coder", "docs": "documentarian", "experiment": "experimenter",
     "analysis": "analyst", "figure": "figure-designer", "writing": "writer", "review": "critic",
     "decision": "decider", "harness": "coder",
 }
+
+
+def role_for(kind, harness_root=None):
+    """The role an admitted ticket of `kind` takes: `KIND_ROLE`'s, else the first harness role whose kinds name it, else `coder`."""
+    if kind in KIND_ROLE:
+        return KIND_ROLE[kind]
+    from wayline import registry
+    roles = Path(harness_root or HARNESS_ROOT) / worker.ROLES
+    for directory in sorted(path for path in roles.iterdir() if path.is_dir()) if roles.is_dir() else []:
+        try:
+            sidecar = registry.read_sidecar(directory / registry.SIDECAR, "role", directory.name)
+        except (ValueError, OSError):
+            continue
+        if kind in (sidecar.get("applicability_tags") or {}).get("kinds", []):
+            return sidecar["id"]
+    return "coder"
 
 
 class ProposalsError(ValueError):
@@ -227,7 +246,7 @@ def _admit(ledger, project, origin_ticket, proposal, notify=None):
             "kind": kind, "difficulty": 1, "status": "open",
             "blocked_by": sorted(set(proposal.get("blocked_by") or ())), "blocking": None, "human_only": False,
             "touches": sorted(item for item in (proposal.get("touches") or ()) if item),
-            "role": KIND_ROLE.get(kind, "coder"), "skills": [], "acceptance": {},
+            "role": role_for(kind), "skills": [], "acceptance": {},
             "origin": proposal["origin"], "proposed_by": proposal["proposed_by"],
             "demo": ((proposal.get("why") or "").strip() or None),
         }

@@ -109,6 +109,7 @@ DOCUMENT = "document"  # one document kept, or a newer version of it, in researc
 CODE_PUSHED = "code_pushed"  # code pushed `code/`'s split to the code repository's remote (decision 17; ticket 85)
 TOOL_INSTALLED = "tool_installed"  # a project's tool installed, licensed software recorded, or either failing (decision 17; ticket 82)
 PASSAGE = "passage"  # one passage of a section written to research/passages.jsonl (decision 17; ticket 86)
+SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted against its ticket (decision 17; ticket 98)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -245,6 +246,7 @@ K_SECTION = "section"  # `passage`: the section it is part of
 K_HEADING = "heading"  # `passage`, `finding`: the heading it stands under
 K_REPLACES = "replaces"  # `passage`, `finding`: the id of the one it replaces, or null
 K_OBJECTIVES = "objectives"  # `passage`, `finding`: the objectives of the ticket that wrote it
+K_IDENTIFIER = "identifier"  # `scouted`: the DOI, arXiv id, or exact title the worker asked about
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -308,6 +310,7 @@ EVENTS = {
     CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
     TOOL_INSTALLED: (K_TICKET, K_NAME, K_OUTCOME, K_VERSION, K_ATTEMPT, K_REASON),
     PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES),
+    SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -346,6 +349,7 @@ PAYLOAD_ENUMS = {
     (DOCUMENT, K_BY): ("session", "code"),
     (TOOL_INSTALLED, K_OUTCOME): ("installed", "recorded", "failed"),
     (PASSAGE, K_SECTION): ("introduction", "discussion", "methods", "references"),
+    (SCOUTED, K_OUTCOME): ("found", "no such work", "failed"),
 }
 
 
