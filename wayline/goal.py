@@ -15,7 +15,7 @@ for every change it did not keep, and ends the run once the best kept value reac
 character names every file it matches. An experiment ticket's jobs add their `expected_outputs`.
 **The command.** `{artifact}` is replaced by the artifact's quoted absolute path and `{split}` by
 the quoted held-out split; both are also exported, as `WAYLINE_ARTIFACT` and
-`WAYLINE_HELD_OUT_SPLIT`. The metric is read the way intake read it when it accepted the goal.
+`WAYLINE_HELD_OUT_SPLIT`. The metric is read the way `wayline objective add` read it when it accepted the measure.
 **The best.** The best kept `progress` value for the goal's metric; before any change was kept,
 the goal's `baseline.value` when one was stated; with neither, the first change is kept, since
 there is nothing to beat.
@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
-from wayline.intake import GOAL_JSON
+from wayline.project import GOAL_JSON
 from wayline.ledger import PROGRESS
 from wayline.objectives import ARTIFACT, is_open, metric_value, named, ticket_goal
 

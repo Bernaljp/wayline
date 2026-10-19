@@ -7,9 +7,10 @@ measure is a goal, and it has at most one measure, because keep-if-better compar
 metric makes a second objective.
 
 A measure stands only when its `eval_command` printed the metric on a sample artifact. That check is the
-one intake ran on `GOAL.json`, moved here (`run_on_sample`); intake still calls it for `intake --goal`
-until ticket 80 takes the goal out of intake. A measure whose command is not ready records the objective
-without it, and `wayline objective add` says why.
+one intake ran on `GOAL.json`, moved here (`run_on_sample`); since ticket 80 intake takes no goal at all.
+A measure whose command is not ready records the objective without it, and `wayline objective add` says why.
+The grill's first tier records the owner's word on each objective through this module too (`add_objective`
+with `status` for one the position memo proposed, `change_objective` for one already recorded).
 
 Every change is journaled as an `objective` event with `by` (`owner`, `decider`, or `code`), and
 `OBJECTIVES.md` is rendered again in the same lock. This is the expand step over `GOAL.json`: every reader
@@ -315,7 +316,7 @@ def _write(ledger, objectives, objective, by):
     ledger.write_markdown(OBJECTIVES_MD, render_objectives(objectives))
 
 
-def add_objective(project, text, measure=None, sample=None, by="owner", timeout_s=None):
+def add_objective(project, text, measure=None, sample=None, by="owner", timeout_s=None, status=OPEN, answer=None):
     """`wayline objective add`: record an open objective, a goal when its measure printed the metric on the sample.
 
     Returns `(objective, check)`: `check` is None without a measure, else the `MeasureCheck`. A measure whose
@@ -323,10 +324,15 @@ def add_objective(project, text, measure=None, sample=None, by="owner", timeout_
     and `check.reason` says why; a measure not in the shape (two of them, a bad direction) is refused with
     `ObjectiveError` and nothing is recorded. The command runs before
     the lock is taken, since it may take as long as the acceptance timeout.
+
+    `status` is `open`, or `parked` for an objective the owner takes up only later (the grill's first tier,
+    ticket 80), with `answer` saying why; one `objective` event records it either way.
     """
     text = " ".join(str(text or "").split())
     if not text:
         raise ObjectiveError("an objective is a question, and none was given")
+    if status not in (OPEN, "parked"):
+        raise ObjectiveError("an objective is recorded open or parked, got %r" % (status,))
     check = check_measure(measure, project, sample=sample, timeout_s=timeout_s) if measure is not None else None
     if check is not None and check.kind == "invalid":
         raise ObjectiveError("the measure is refused and nothing was recorded: %s" % check.reason)
@@ -334,7 +340,7 @@ def add_objective(project, text, measure=None, sample=None, by="owner", timeout_
     with ledger.lock():
         objectives = read_objectives(project)
         objective = {"id": _next_id(objectives), "text": text, "measure": check.measure if check and check.accepted else None,
-                     "status": OPEN, "answer": None, "evidence": [], "reframed_as": None}
+                     "status": status, "answer": None if status == OPEN else answer, "evidence": [], "reframed_as": None}
         objectives.append(objective)
         _write(ledger, objectives, objective, by)
     return objective, check

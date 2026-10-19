@@ -477,7 +477,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   | Verb | Does |
   |---|---|
   | `init <path> [--uninstall-units]` | lays out a project, registers it, installs the three user units once per machine |
-  | `intake [--goal]`, `absorb`, `position`, `grill`, `specify`, `plan` | the phases P0 to P4; the interactive ones are also skills |
+  | `intake`, `absorb`, `position`, `grill`, `specify`, `plan` | the phases P0 to P4; the interactive ones are also skills; intake takes information only, and `intake --goal` is gone (decision 17; objectives and goals are `objective add`'s) |
   | `run [--resume] [--detach] [--simulate-limit [cheap:][fable:]s] [--simulate-failure id]` | the conductor; `--detach` launches it as the transient unit `wayline-conductor` |
   | `pause`, `resume`, `stop [--drain]`, `cancel <id>`, `rerun <id>` | journal `control` events the conductor applies at its next wave |
   | `status`, `answer <id> "<text>"`, `switch <path>`, `switch --fallback auto|ask|wait`, `switch --ladder auto|ask`, `feedback "<text>"` | views and answers that work without the dashboard |

@@ -4,15 +4,16 @@ After the autonomy switch, a max-effort session on the `decider` role resolves w
 open: every open question of the grill's design tree, every decision ticket not marked human-only,
 and, at the end of each wave, every parked proposal. One session per decision, launched through the
 worker launcher (seam 1) on `policy.roles.decider` (`opus`, `max`), with `decision.json` as its
-schema and, in its prompt, `DECISIONS.md`, `POSITION.md`, `GOAL.json`, the L0 and L1 records, and
-the query pack. Every decision it makes is written with rationale, confidence, and
+schema and, in its prompt, `DECISIONS.md`, `POSITION.md`, `OBJECTIVES.md`, the L0 and L1 records, and
+the query pack, with the project's radius, which bounds the objectives it may add (decision 17; ticket 80:
+`proposals.apply_admitted` already trusted it to have weighed the radius). Every decision it makes is written with rationale, confidence, and
 `decided-by: decider`, the model it ran on, and its session, so the owner can audit and reverse any
 of them in the morning: a grill question through `wayline grill answer <id> ... --revise`, a decision
 ticket through `wayline rerun <id>`.
 
 **The line it never crosses.** Nothing on the irreversible list of decision 4 is the decider's:
-deleting or overwriting data, pushing, exceeding or raising a budget, spending money, changing the
-goal or the data, changing the harness globally, and any network write; nor a question the grill
+deleting or overwriting data, pushing, exceeding or raising a budget, spending money, changing a
+goal's measure or the data, changing the harness globally, and any network write; nor a question the grill
 marked human-only or irreversible, which `grill.with_answer` refuses it outright. The session is
 told the line and hands such a decision back with `answer: null`; and code checks every answer it
 does give against the list (`irreversible_class`), because the session's own reading is not the
@@ -49,7 +50,8 @@ from wayline import HARNESS_ROOT, decisions, gates, grill, pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, Ledger
 from wayline.provenance import VENUE_PREFIX
-from wayline.project import ProjectError, human_only_classes_now, policy_for, read_harness
+from wayline.objectives import OBJECTIVES_MD
+from wayline.project import DEFAULT_HUMAN_ONLY, OBJECTIVE_CLASS, ProjectError, human_only_classes_now, policy_for, read_harness
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets
 
 __all__ = [
@@ -73,6 +75,15 @@ RESUME_DECISION = (
 PROMPT_ROOM = 20000
 # The least the records get however small the cap: DECISIONS.md whole, at the very least, since it binds the answer.
 RECORDS_MIN = 20000
+# What each radius lets the decider add (decision 17): the objectives it adds or reframes, once the owner took the
+# class `objective` off the human-only list, and the follow-up work it admits (intake.RADIUS says the latter for
+# INTAKE.md; this is the decider's reading of both). Reopening a parked objective is allowed at every radius.
+RADIUS_BOUNDS = {
+    "strict": "`strict`: no objective added, and only work that traces to a spec claim",
+    "moderate": "`moderate`: a prerequisite, or a narrowing reframe, that an open objective's own work raises, and "
+                "follow-ups that directly probe a claim's failure",
+    "exploratory": "`exploratory`: also one new question within the intent per wave, and new directions gated on a novelty check",
+}
 
 # The irreversible list of decision 4, as classes a code check reads off an answer's words. Each pattern
 # names a change verb with its object, so an answer that keeps the goal, reads the data, or fetches a source
@@ -364,14 +375,15 @@ def records_text(project, max_chars=None):
     """The records the decider reads, inlined in order and cut at `max_chars` with every cut announced.
 
     `DECISIONS.md` first, whole when it fits, because the settled decisions bind the answer; then the
-    position memo, the goal, the L0 and L1 records, and the query pack. Returns `(text, cut)`.
+    position memo, the objectives (`OBJECTIVES.md`, decision 17, in place of `GOAL.json`), the L0 and L1
+    records, and the query pack. Returns `(text, cut)`.
     """
     ledger = Ledger(project)
     entries = [
         ("research/DECISIONS.md", _read(ledger, grill.DECISIONS_MD), "[wayline: there is no DECISIONS.md; nothing is settled yet]"),
         ("research/POSITION.md", _read(ledger, grill.POSITION_MD),
          "[wayline: there is no position memo; the tree rests on INTAKE.md alone]"),
-        ("research/GOAL.json", _read(ledger, "GOAL.json"), "[wayline: no goal is stated]"),
+        ("research/%s" % OBJECTIVES_MD, _read(ledger, OBJECTIVES_MD), "[wayline: no objective is recorded yet]"),
         ("the L0 and L1 records (research/refs/<slug>/dossier.json)", "\n".join(_dossier_lines(ledger)), None),
         ("research/kb/query_pack.md", _read(ledger, "kb/query_pack.md"), "[wayline: there is no query pack; no reference was absorbed]"),
     ]
@@ -432,7 +444,7 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "",
         "The irreversible list is not yours to decide: deleting or overwriting data; pushing or force-pushing; making the "
         "code repository public or changing its visibility; exceeding "
-        "or raising a compute or usage budget; spending money; changing the goal or the data; changing the harness "
+        "or raising a compute or usage budget; spending money; changing a goal's measure or the data; changing the harness "
         "globally; any network write. The human-only classes of this project are: %s. An answer that falls in any of "
         "these, or that cannot be taken back, is the owner's: return `answer: null` with `reversible: false` (or "
         "`human_only: true`), and put what you would have answered in the rationale. The harness checks every answer "
@@ -442,6 +454,12 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "Go without: installing free software through the harness's routes is neither irreversible nor a global harness "
         "change. Changing a tool already installed, the tools venv, and licensed software (MATLAB) are the owner's alone, "
         "and their decisions never reach you.",
+        "",
+        "# The radius",
+        "",
+        "The project's radius is `%s`. It bounds what you may add: %s." % (harness.get("radius"), _radius_bound(harness.get("radius"))),
+        "",
+        _objective_line(harness),
         "",
     ]
     parts = ["\n".join(lines), records]
@@ -467,10 +485,30 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
 
 
 def _classes(harness):
-    """The human-only classes the decider is told, `harness.json`'s plus `ladder` while the ladder consent is not `auto` (decision 16)."""
+    """The human-only classes the decider is told, `harness.json`'s plus `ladder` while the ladder consent is not `auto` (decision 16).
+
+    An old `goal` entry is told as `objective`, which covers goals (decision 17).
+    """
     stated = [name for name in (harness.get("human_only") or []) if isinstance(name, str)]
-    classes = human_only_classes_now(dict(harness, human_only=stated or ["goal", "data"]))
+    classes = human_only_classes_now(dict(harness, human_only=stated or list(DEFAULT_HUMAN_ONLY)))
     return ", ".join("`%s`" % name for name in classes)
+
+
+def _objective_line(harness):
+    """What the decider may do to an objective: nothing that adds, reframes, or reopens one while `objective` is human-only."""
+    if OBJECTIVE_CLASS in human_only_classes_now(dict(harness, human_only=harness.get("human_only") or list(DEFAULT_HUMAN_ONLY))):
+        return ("`objective` is a human-only class of this project, so adding, reframing, or reopening an objective, and "
+                "changing a goal's measure, is the owner's: hand such a decision back with `answer: null` and "
+                "`human_only: true`. The radius above bounds only the work you admit.")
+    return ("The owner took `objective` off the human-only classes, so you may add or reframe an objective within the "
+            "radius above, and reopen a parked one at any radius; changing a goal's measure stays the owner's.")
+
+
+def _radius_bound(radius):
+    """What the radius lets the decider add, every bound named so the session reads its own against the others."""
+    if radius not in RADIUS_BOUNDS:
+        return "the radius is not one the harness knows, so add nothing (%s)" % RADIUS_BOUNDS["strict"]
+    return "; ".join(RADIUS_BOUNDS.values()) + " (yours: `%s`)" % radius
 
 
 # --- one launch -----------------------------------------------------------------------------------

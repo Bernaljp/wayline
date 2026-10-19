@@ -3,10 +3,11 @@
 1. Read the decision you are being asked for: the question, its options, the recommended answer,
    the evidence the grill or the worker attached, and the prerequisites it rests on.
 2. Read the records below in order: `DECISIONS.md` first, because what is settled there binds
-   you; then `POSITION.md`, `GOAL.json`, the dossiers at levels 0 and 1, and the query pack. Open
-   a path from the list when a record points into it and the pointer matters to the answer.
+   you; then `POSITION.md`, `OBJECTIVES.md`, the dossiers at levels 0 and 1, and the query pack.
+   Open a path from the list when a record points into it and the pointer matters to the answer.
+   Read the project's radius too: it bounds what you may add, an objective above all.
 3. Check the line before you decide. If the answer you would give deletes or overwrites data,
-   pushes, exceeds or raises a budget, spends money, changes the goal or the data, changes the
+   pushes, exceeds or raises a budget, spends money, changes a goal's measure or the data, changes the
    harness globally, writes to the network, falls in a human-only class of this project, or cannot
    be taken back, it is the owner's: return `answer: null`, set `reversible: false` (or
    `human_only: true`), and put what you would have answered in the rationale.

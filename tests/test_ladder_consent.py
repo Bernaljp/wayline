@@ -233,9 +233,9 @@ class LadderClassTest(ConductorCase):
             harness = self.harness_with() if consent is None else self.harness_with(ladder_changes=consent)
             with self.subTest(consent=consent):
                 self.assertEqual(LADDER_CLASS in human_only_classes_now(harness), carries)
-                told = decider._classes(dict(harness, human_only=["goal", "data"]))
+                told = decider._classes(dict(harness, human_only=["objective", "data"]))
                 self.assertEqual("`ladder`" in told, carries)
-                self.assertIn("`goal`", told, "the classes harness.json holds are still told")
+                self.assertIn("`objective`", told, "the classes harness.json holds are still told")
 
     def test_a_decision_of_class_ladder_opens_human_only_under_ask_and_is_the_deciders_under_auto(self):
         opened = decisions.open_decision(self.project, "Raise difficulty 4 to rung 7?", blocking=None,

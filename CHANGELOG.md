@@ -330,6 +330,33 @@ lists it read-only, marked with its tag.
   recordings of pandoc, `pdftotext`, LibreOffice, and docling on the synthetic documents of `fixtures/midway/` and
   `fixtures/documents/` (`fixtures/documents/record.py` makes them).
 
+- The front door reads objectives (ticket 80; Implementation Decisions 17, 10, and 1). A project with no metric
+  gets through intake, position, and the grill, and a question that must be answered first can lead.
+  - Intake takes information only: `INTAKE.md` loses its `Goal` section, `wayline intake --goal`, `--sample`, and
+    `--rationale` are gone, and a spec that carries `goal`, `sample`, or `rationale` is refused naming
+    `wayline objective add`, which records an objective and, with a measure checked on a sample, a goal.
+    `INTAKE.md` and its template say so.
+  - `wayline position` no longer needs `GOAL.json`: the critic reads `INTAKE.md`, `OBJECTIVES.md`, and the
+    dossiers. The memo's `goal_feasibility` becomes `objectives`, one row per open or parked objective with a
+    verdict (`reachable`, `uncertain`, `out_of_reach`), the reasoning, and a revised target for a goal only, and
+    each of the three directions names the objectives it would pursue, by id or as a new question, as
+    proposals. `POSITION.md` renders an `## Objectives` section and each direction's objectives;
+    `wayline status`, the notice, and the dashboard read `objectives O1 uncertain (revised target 0.83), ...`.
+  - The grill's first tier settles which objectives the project takes. While the project is in its setup (not
+    past P2), `wayline grill` adds, before the first tier and before every tier once the position memo is written,
+    one human-only question per open or parked objective and per
+    objective the memo proposes that no question names yet, answered `open` or `parked`; while any is open a tier
+    asks the owner only those. Each answer is recorded through the objectives' ledger as an `objective` event
+    `by: owner` (a proposal becomes a new objective, its id kept on the record's new `objective` field in
+    `DECISIONS.md` and on any revision of it); an objective answered, dropped, or reframed since it was asked is
+    refused, and a batch is checked whole before any objective is written.
+  - The decider reads `OBJECTIVES.md` in place of `GOAL.json`, and the project's radius with what each radius
+    lets it add, an objective only once the owner took `objective` off the human-only classes. The human-only
+    class `goal` is now `objective`, which covers goals: `init` writes
+    `["objective", "data"]`, and a `harness.json` that names `goal` is read as `objective` (and rewritten so by
+    the next intake). The irreversible list the decider is told says a goal's measure, not the goal.
+  - The conductor's goal check and keep-if-better still read `GOAL.json` where present, until ticket 87.
+
 - Passages and the five sections (ticket 86; Implementation Decisions 17, 1, 2, 5, 10, and 11). The paper's five
   **sections**, `research/sections/introduction.md`, `results.md`, `discussion.md`, `methods.md`, and
   `references.md`, exist from `wayline init` and are rendered by code (`wayline/sections.py`) after every

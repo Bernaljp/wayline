@@ -1,9 +1,9 @@
 """`GOAL.json`'s `eval_command` (Implementation Decisions 10): the metric off a `toy.train` summary.
 
-`wayline intake --goal` and the keep-if-better loop both run this on an artifact's path, exported
-as `WAYLINE_ARTIFACT` (`intake.check_goal`); `{artifact}` in the command is the same path, for a
-command that would rather take it as an argument. Either way the artifact is one of `toy.train`'s
-summary JSONs, and this prints its `auroc` on the last line the way `intake.metric_value` reads it:
+`wayline objective add --measure` and the keep-if-better loop both run this on an artifact's path,
+exported as `WAYLINE_ARTIFACT` (`objectives.run_on_sample`); `{artifact}` in the command is the same
+path, for a command that would rather take it as an argument. Either way the artifact is one of
+`toy.train`'s summary JSONs, and this prints its `auroc` on the last line the way `objectives.metric_value` reads it:
 `auroc: <value>`. `--split` is accepted for the command line `research/GOAL.json` ships
 (`python -m toy.eval --split held_out`) but names nothing this module reads: `toy.train` only ever
 reports the held-out split, so there is no other one to ask for.
