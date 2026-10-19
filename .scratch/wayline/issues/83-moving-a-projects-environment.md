@@ -26,22 +26,22 @@ Not part of this ticket:
 
 **Blocked by:** 82 - Project tools and the software decision. It blocks 110.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#230](https://github.com/Bernaljp/wayline/issues/230) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Tools, packages, and environments": **Environment**; "Vocabulary the build adds": `switch --environment`, `harness.json` gaining `environment`); decisions 1 (the verb table: `switch --environment`; `harness.json`), 2 (the event table: the `control` command), 6 (jobs run inside the environment); M8 criterion 14; user story 156.
 
-- [ ] `harness.json.environment` is in the schema with `shared`, `conda`, `venv`, and `container`. A project without the key behaves as `shared`.
-- [ ] `wayline switch --environment <value>` builds the new environment from the locks, runs each recorded tool's version check inside it, and only then writes `harness.json` and journals `control`. A failed build or check changes nothing and prints the failing step.
-- [ ] `conda` builds one prefix at `<project>/.wayline/env`. `venv` builds a project venv through uv. `container` builds `<project>/.wayline/env.sif` without root through a Singularity sandbox from `docker://` and micromamba. Docker is used only where the account reaches it.
-- [ ] After the switch, `wayline job add` and `wayline tools run` resolve each tool inside the new environment (inside the image for `container`). MATLAB stays bound in from the host. A job launched before the switch finishes where it started.
-- [ ] The decider never sets `environment`, and the setting is not among the decider's classes.
-- [ ] A rootless Singularity build and one tool's version check inside it run live on this workstation, recorded in `docs/verification/m8.md` with the commands and timings.
-- [ ] Tests:
+- [x] `harness.json.environment` is in the schema with `shared`, `conda`, `venv`, and `container`. A project without the key behaves as `shared`.
+- [x] `wayline switch --environment <value>` builds the new environment from the locks, runs each recorded tool's version check inside it, and only then writes `harness.json` and journals `control`. A failed build or check changes nothing and prints the failing step.
+- [x] `conda` builds one prefix at `<project>/.wayline/env`. `venv` builds a project venv through uv. `container` builds `<project>/.wayline/env.sif` without root through a Singularity sandbox from `docker://` and micromamba. Docker is used only where the account reaches it.
+- [x] After the switch, `wayline job add` and `wayline tools run` resolve each tool inside the new environment (inside the image for `container`). MATLAB stays bound in from the host. A job launched before the switch finishes where it started.
+- [x] The decider never sets `environment`, and the setting is not among the decider's classes.
+- [x] A rootless Singularity build and one tool's version check inside it run live on this workstation, recorded in `docs/verification/m8.md` with the commands and timings.
+- [x] Tests:
   - the tool runner's recordings for a conda build, a venv build, a Singularity sandbox build, and the version checks;
   - a temporary project for a refused move and a switch;
   - a replayed journal for a job launched across the switch.
-- [ ] The verb table of decision 1, the `control` enumeration of the event table, and the `harness.json` schema gain these rows in the same commit as the code.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes the four environments and how a move is checked.
-- [ ] `python -m unittest` passes.
+- [x] The verb table of decision 1, the `control` enumeration of the event table, and the `harness.json` schema gain these rows in the same commit as the code.
+- [x] `CHANGELOG.md` under `## Unreleased` describes the four environments and how a move is checked.
+- [x] `python -m unittest` passes.
