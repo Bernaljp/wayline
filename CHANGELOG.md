@@ -36,6 +36,52 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- `code/` and the code repository (ticket 85; Implementation Decision 17). Everything a project publishes lives
+  under `code/`: the package or scripts, the tests, the environment locks, `README.md`, and `LICENSE`. The new
+  module `wayline/code_repository.py` cuts the code repository from it with `git subtree split --prefix=code`, so
+  it never holds `research/`, `harness.json`, `jobs/`, or `results/`, and the project stays one working repository.
+  - Intake absorbs the project's own clone, the spec's new `clone` (`--clone`), into `code/` with its history:
+    `git subtree add --prefix=code <clone> <its HEAD>` on a temporary worktree of `main`, then a fast-forward. A
+    repository given as `code`, `--repo`, or a loose material is one the work builds on and is still only listed,
+    pinned to its commit. The clone's uncommitted changes (edits, deletions, and untracked files its `.gitignore`
+    keeps) follow as the next commit, named as such; its submodules stay gitlinks; the clone itself is never
+    changed. A clone that lay inside the project is moved under `.clones/` (a new `.gitignore` entry), so its
+    `.git` is outside the tree, and the empty gitlink an earlier commit recorded for it is removed in a commit of
+    its own; a failed absorption moves it back. `harness.json` records, under `code_repository.upstream`, the
+    clone, where the owner put a nested one, its remote, the commit (SHA-1 or SHA-256), the uncommitted changes'
+    commit, and the inherited license (its file and SPDX id), checked against the schema before `main` moves. An
+    intake run again names the clone where it is or where the owner put it, and absorbs nothing more whatever the
+    clone did since: its Code line says where `code/` began. The project itself, a repository enclosing it, and a
+    second clone once `code/` holds one are refused; code from someone else's paper stays `absorb --code`.
+  - One setup question, the intake spec's `code_repository` (`shape`: `package` or `reproducibility`;
+    `license`, the inherited one by default; `visibility`, private by default; `remote`, a repository to take
+    over; `name`; `confirm_public`), is settled by `code_repository.settle` and recorded in `harness.json`, whose
+    schema gains `code_repository`. The remote is created with `gh repo create <name> --private` through the
+    tool runner, never as a fork: a new private repository by default, carrying the absorbed upstream's history
+    when there is one (`how: copy`). A named repository that is not the owner's gets the same private copy, which
+    only the clone intake absorbed from it can carry, so any other is refused. The owner's own repository (`gh repo
+    view` reports `ADMIN`, `how: owners_own`) is used only on their word, confirmed once (`confirm_public`) when it
+    is public, its default branch is the one pushed (`remote.branch`), and it is refused before anything is
+    recorded when that branch holds commits `code/`'s history does not descend from. `gh` joins the system tools
+    `wayline tools install` records.
+  - Code, never a worker, pushes `code/`'s split to the remote's branch, never forced: at setup, and at the end of
+    every wave whose `main` holds a `code/` tree other than the one last pushed, which the conductor reads from the
+    journal's new `code_pushed` event (`commit`, `remote`, `main`), so a restart pushes nothing twice. The split
+    walks only what `main` gained since the last push, from a join commit off every branch that maps that push's
+    `main` to its split, and gives the commit the whole walk gives. A push the network or a credential failed is
+    said and tried again by the next wave; one the remote refused is told to the owner once (`notified`, event
+    `code_push_rejected`) and that split is not pushed again.
+  - Making the code repository public is the owner's word only (`code_repository.make_public(by="owner")`, at
+    setup or later; `gh repo edit --visibility public` after the private push), and the decider's irreversible
+    list gains the class `make the code repository public`, which also catches any other visibility change,
+    `gh repo edit --visibility`, open-sourcing the code, and making it public.
+  - `ticket_launched` and `job_launched` carry `commit`, the commit each ran at, so a result traces to the code
+    that made it: the attempt's worktree HEAD (a later attempt's reused branch included), and for a job the HEAD
+    where its working directory lies in the project or a worktree of it, else `main`'s.
+  - In a project that keeps a code repository (`code/` exists, or `harness.json` records `code_repository`), a
+    `code` ticket's touch set goes under `code/`: the planner's check refuses an entry outside it, and so does the
+    touch-set rule a ticket admitted from a proposal is checked by.
+
 - The guard and gitignore defects found while charting (ticket 73; Implementation Decisions 1, 4, 17). The
   touch-set hook denies every write under `research/`, whatever the touch set names. A gate's scope-down and a
   ticket admitted from a proposal are checked by the planner's touch-set rule (`tickets.touch_problem`): a
@@ -211,6 +257,57 @@ lists it read-only, marked with its tag.
   reading; a project with no objectives still shows its `GOAL.json` goal. This is the expand step: every reader of
   `GOAL.json` (keep-if-better, position, specify, plan, the decider, the report) still reads it, and tickets 80, 81,
   and 87 move them to objectives.
+
+- Specify and the plan name objectives (ticket 81; Implementation Decisions 17, 10, and 5). `wayline specify`
+  drafts once one objective is open, which may be the question to answer first rather than the project's end, and
+  no longer needs `GOAL.json`; with none open it refuses and names the question the conversation asks, "what should
+  the project answer first?". The planner's specify prompt lists the open objectives with their measures, and the
+  verifier reads `OBJECTIVES.md` in place of `GOAL.json`. The spec gains `summary`, about 120 words on what the
+  project is, rendered as the first section of `SPEC.md`, and every claim `objectives`, the open objectives it
+  answers (empty for a claim no objective asked for). The Type-A checks refuse a claim naming an objective the
+  project does not hold or one that is not open, an open objective no claim answers, and a goal whose metric is not
+  among the spec's metrics, each by name; the check of `GOAL.json`'s metric goes. Tickets and the plan schema gain
+  `objectives` (the planner states them, empty for a ticket that serves none) and `goal: "O2"` in place of
+  `goal_metric`: the metric and direction are read from that goal's measure (`objectives.ticket_goal`). The plan
+  returns a ticket naming a closed or unknown objective, or a `goal` with no measure, to the planner, and its prompt
+  inlines `OBJECTIVES.md`. A confirmed spec is not checked against the objectives again when the plan cuts it: what
+  changed since is the amendment's (ticket 92), and the tickets are held to the objectives open then. Keep-if-better
+  runs on a ticket whose goal is open and whose measure has `GOAL.json`'s metric and direction, with `GOAL.json`'s
+  command until ticket 87; a closed goal, or a measure that disagrees, is integrated unjudged with the reason said.
+  The pick order's second key is the objective class: 0 for a ticket serving an objective the stopping rule waits
+  on, 1 for another open objective, 2 for none; until ticket 87 lands `stop_when` the rule is its default,
+  `objectives`, every open objective. Which are open is `objectives.json`'s, the one record specify, the plan, and
+  keep-if-better read. An `objectives.json` that cannot be read stops `wayline specify` and `wayline plan` with its
+  reason, and the conductor says it and judges and orders as if no objective were open, never ending a wave on it.
+  The fixtures that carried `goal_metric` carry `goal`.
+
+- Handing over documents (ticket 84; Implementation Decision 17). The owner hands over their own writing in any
+  form, and `wayline document add <file|folder|file.zip> --kind inherited|critique|other` keeps it as a
+  **document**: converted by code at every autonomy, sorted, recorded, and indexed. A `.docx` goes through pandoc
+  (`--track-changes=accept`: headings, every equation as LaTeX), beside a standard-library reader
+  (`wayline/office.py`) that decodes Mendeley Cite citations into CSL-JSON and reads comment threads (replies and
+  done) with their anchors; a `.tex` goes through pandoc; a PDF with no source beside it through `pdftotext
+  -layout` with the margin line numbers stripped, docling marking its headings where it is installed; an `.xlsx`
+  by the standard library, one CSV per sheet; a `.doc` through LibreOffice into a `.docx` first. Without pandoc a
+  `.docx` is kept and flagged as not converted, its comments and citations still read. Each document lives under
+  `research/documents/<id>/` (`source/` and `media/` gitignored, `text.md` with LaTeX math and a block anchor
+  `<a id="pN"></a>` before every block, `comments.json`, `citations.json`, `tables/*.csv`), is recorded in
+  `research/documents.json` (schema `document`: id, title, kind, version, each file's sha256, the converters and
+  their versions, what the conversion lost, and the damage counted), journaled as the new `document` event with
+  `by` `session` or `code`, and indexed in `research/DOCUMENTS.md`, rendered by code at or under 20,000 characters
+  with each document's kind, version, losses, counts, an inherited one's abstract, and its headings with locators
+  (`D1#p3`) and first sentences. One version per text is current, the newest in its source format (an Office
+  file's save time read from `docProps/core.xml`, since Word stamps every entry 1980-01-01; a file in a subfolder
+  is a text of its own, and a critique has no versions): a folder's versions are kept oldest first, a PDF beside a source of the same text is kept as a copy, and a newer version
+  handed over later becomes the next version, the earlier one's source moving under `source/v<n>/`. A folder is
+  sorted file by file and a `.zip` unpacked first. A file dropped on the dashboard with no session gets code's
+  cautious guess: an identifier makes it a reference (added to `INTAKE.md` as before), review markers a critique,
+  anything else `other`, never `inherited`. A PDF sorted as a reference joins the intake's references, and the
+  project's `.gitignore` gains `research/intake/*.pdf` so the owner's copy is never committed. The intake skill and
+  the drop zone tell the owner to hand over anything in any form: references as bare identifiers, the owner's plan
+  as the plan, and a collaborator's list of experiments as a critique. The tests replay the tool runner's
+  recordings of pandoc, `pdftotext`, LibreOffice, and docling on the synthetic documents of `fixtures/midway/` and
+  `fixtures/documents/` (`fixtures/documents/record.py` makes them).
 
 ## v1.0.0 (2026-09-27)
 

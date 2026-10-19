@@ -65,6 +65,9 @@ VERBS = [
          lazy("wayline.batches", "mark_command")),
     Verb("reference", "reference <slug> <doi|title|file.pdf|\"leave it\">", "hand over an unresolved reference: a DOI or exact title back to the scout, a PDF as its source, or leave it until the paper order", "views",
          lazy("wayline.dossier", "reference_command")),
+    Verb("document", "document add <file|folder|file.zip> [--kind inherited|critique|other|reference]",
+         "keep the project's own writing as documents: converted by code, sorted, recorded in research/documents.json, and indexed in DOCUMENTS.md",
+         "views", lazy("wayline.documents", "document_command")),
     Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services", lazy("wayline.dashboard", "serve_command")),
     Verb("tick", "tick [--project <path>]", "the recurrent job that relaunches work after windows, answers, and jobs", "services", lazy("wayline.tick", "tick_command")),
     Verb("accept", "accept [--where worktree|rebased|main]", "run the ticket's machine acceptance inside a worktree (called by workers)", "worktree", lazy("wayline.gates", "accept")),
@@ -100,7 +103,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "reference",
+    "objective", "mark", "reference", "document",
 ))
 
 

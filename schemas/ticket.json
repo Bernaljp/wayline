@@ -38,15 +38,8 @@
         "quality": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "Type-B gates: questions the verifier answers"}
       }
     },
-    "goal_metric": {
-      "type": ["object", "null"],
-      "required": ["reports", "expected_direction"],
-      "additionalProperties": false,
-      "properties": {
-        "reports": {"type": "string"},
-        "expected_direction": {"type": "string", "enum": ["up", "down"]}
-      }
-    },
+    "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the objectives (research/objectives.json) the ticket serves, open when it was cut; empty or absent for one no objective asked for"},
+    "goal": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "the objective with a measure whose metric the ticket reports; the metric and direction are read from that measure (Implementation Decision 17, replacing goal_metric)"},
     "budget": {
       "type": ["object", "null"],
       "additionalProperties": false,

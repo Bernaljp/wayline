@@ -1,25 +1,27 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "spec",
-  "description": "The research spec of phase P3 (Implementation Decisions 10, specify): what the planner returns in its specify protocol and what research/spec.json holds, from which code renders research/SPEC.md. The schema holds the shape; the Type-A checks of wayline.specify hold the rest (every section non-empty, every claim with an experiment, every experiment naming a claim, every metric naming a script, every anti-claim naming the experiment that would confirm it, and every id resolving), so a draft that fails them is returned to the planner with the failures rather than refused as malformed.",
+  "description": "The research spec of phase P3 (Implementation Decisions 10, specify): what the planner returns in its specify protocol and what research/spec.json holds, from which code renders research/SPEC.md. The schema holds the shape; the Type-A checks of wayline.specify hold the rest (every section non-empty, every claim with an experiment, every experiment naming a claim, every metric naming a script, every anti-claim naming the experiment that would confirm it, every id resolving, every objective a claim names open, every open objective answered by a claim, and every goal's metric among the metrics), so a draft that fails them is returned to the planner with the failures rather than refused as malformed.",
   "type": "object",
-  "required": ["title", "question", "claims", "anti_claims", "methods", "experiments", "baselines", "data", "metrics",
+  "required": ["title", "summary", "question", "claims", "anti_claims", "methods", "experiments", "baselines", "data", "metrics",
                "success_criteria", "budgets", "out_of_scope", "risks", "seams"],
   "additionalProperties": false,
   "properties": {
     "title": {"type": "string", "pattern": "\\S", "description": "the project's research question as a title, one line"},
+    "summary": {"type": "string", "pattern": "\\S", "description": "what the project is, in about 120 words a newcomer can read cold; the general report opens with it (Implementation Decision 17)"},
     "question": {"type": "string", "pattern": "\\S", "description": "the research question the spec answers, in a paragraph"},
     "claims": {
       "type": "array",
       "description": "what the project sets out to show; each is tested by the experiments it names",
       "items": {
         "type": "object",
-        "required": ["id", "text", "experiments"],
+        "required": ["id", "text", "experiments", "objectives"],
         "additionalProperties": false,
         "properties": {
           "id": {"type": "string", "pattern": "^C[1-9][0-9]*$"},
           "text": {"type": "string", "pattern": "\\S"},
-          "experiments": {"type": "array", "items": {"type": "string", "pattern": "^E[1-9][0-9]*$"}, "description": "the experiments that test this claim; at least one"}
+          "experiments": {"type": "array", "items": {"type": "string", "pattern": "^E[1-9][0-9]*$"}, "description": "the experiments that test this claim; at least one"},
+          "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the open objectives (research/OBJECTIVES.md) this claim answers; empty for a claim no objective asked for"}
         }
       }
     },

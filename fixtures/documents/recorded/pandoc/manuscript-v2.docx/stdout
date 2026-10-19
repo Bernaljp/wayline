@@ -1,0 +1,36 @@
+---
+abstract: We measure how closely lantern moths beat their wings in phase. Across forty colonies, synchrony rises with colony size, and it peaks at dusk.
+title: Wingbeat synchrony in captive lantern moth colonies
+---
+
+# Introduction
+
+Lantern moths gather in dusk swarms whose wingbeats lock together (Okafor 2017). Why they synchronize is unknown. Phase locking has been measured in other insects (Lindqvist and Moreau 2019).
+
+# Results
+
+Larger colonies beat more nearly in phase than small ones (Figure 1). The order parameter is lowest at dusk across every colony.
+
+The dusk sweep of 2021 repeated the size series under red light; its recordings are kept in data/dusk-sweep-2021.csv and gave R = 0.71.
+
+$$R = |\frac{1}{N}\sum exp(i\varphi)|$$
+
+Figure 1. Order parameter R against colony size, forty colonies.
+
+# Discussion
+
+Our central finding is that synchrony rises with colony size. Dusk light may be the cue.
+
+# Methods
+
+Wingbeats were filmed at 2000 frames per second; the phase of each moth was taken from the analytic signal, as described in methods.tex.
+
+# Acknowledgements
+
+We thank the moth keepers of the invented Varga lab.
+
+# References
+
+Lindqvist, A. and Moreau, P. (2019). Invented phase locking in crickets. Journal of Made-up Rhythms 4, 1-9.
+
+Okafor, N. (2017). Invented lantern moth swarms. Imaginary Entomology 12, 33-40.

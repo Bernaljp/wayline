@@ -17,6 +17,7 @@ import subprocess
 import threading
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 from urllib.parse import quote
@@ -32,6 +33,7 @@ from wayline.dashboard import (
 from wayline.ledger import Ledger
 
 BRANCH = HARNESS_ROOT / "fixtures" / "projects" / "decision-branch"
+MIDWAY = HARNESS_ROOT / "fixtures" / "midway"
 STATIC = HARNESS_ROOT / "dashboard"
 TOKEN = "a-token-with-enough-entropy-to-stand-in"
 _THE_TOKEN = object()
@@ -382,6 +384,44 @@ class IntakeActionTest(ActionCase):
         with mock.patch.object(intake, "DROP_MAX_BYTES", 8):
             self.assertEqual(self.drop("big.md", b"123456789").status, 413)
         self.assertFalse((self.project / "research" / "intake").exists())
+
+    # Code's cautious guess at a file dropped with no session (ticket 84): an identifier makes it a
+    # reference, review markers a critique, anything else `other`, never `inherited`.
+
+    def documents(self):
+        return json.loads((self.project / "research" / "documents.json").read_text(encoding="utf-8"))["documents"]
+
+    def test_a_dropped_referee_report_is_guessed_a_critique_and_kept_as_a_document(self):
+        data = (MIDWAY / "critiques" / "referee-1.md").read_bytes()
+        response = self.drop("referee-1.md", data)
+        self.assertEqual(response.status, 200, response.text)
+        self.assertEqual({key: response.json[key] for key in ("sorted", "by", "id", "version")},
+                         {"sorted": "critique", "by": "code", "id": "D1", "version": 1})
+        self.assertIn("kept as D1 version 1, sorted critique (code's guess)", response.json["said"])
+        self.assertEqual((self.project / "research" / "documents" / "D1" / "source" / "referee-1.md").read_bytes(), data)
+        self.assertEqual([(document["kind"], document["sorted_by"]) for document in self.documents()], [("critique", "code")])
+        events = [event for event in self.ledger.read_events()[0] if event["event"] == "document"]
+        self.assertEqual([(event["payload"]["kind"], event["payload"]["by"]) for event in events], [("critique", "code")])
+        self.assertIn("## D1 Referee report 1", (self.project / "research" / "DOCUMENTS.md").read_text(encoding="utf-8"))
+
+    def test_a_dropped_manuscript_is_guessed_other_and_never_inherited(self):
+        response = self.drop("manuscript-v2.docx", (MIDWAY / "manuscript-v2.docx").read_bytes())
+        self.assertEqual(response.status, 200, response.text)
+        self.assertEqual((response.json["sorted"], response.json["by"]), ("other", "code"))
+        self.assertEqual([document["kind"] for document in self.documents()], ["other"])
+
+    def test_a_dropped_zip_is_unpacked_and_each_file_guessed(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as package:
+            package.write(MIDWAY / "critiques" / "referee-2.md", "letters/referee-2.md")
+            package.writestr("letters/papers.md", "- 10.1234/wayline.drop.zip\n")
+            package.writestr("notes.txt", "Colony C03 was filmed twice.\n")
+        response = self.drop("from-the-editor.zip", buffer.getvalue())
+        self.assertEqual(response.status, 200, response.text)
+        self.assertEqual(sorted((entry["name"], entry["sorted"]) for entry in response.json["files"]),
+                         [("notes.txt", "other"), ("papers.md", "reference"), ("referee-2.md", "critique")])
+        self.assertEqual(sorted(document["kind"] for document in self.documents()), ["critique", "other"])
+        self.assertTrue((self.project / "research" / "intake" / "papers.md").is_file())
 
 
 class DecisionsEndpointTest(ActionCase):

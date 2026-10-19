@@ -1,20 +1,26 @@
 """Specify, phase P3 (Implementation Decisions 10 and 11; BRIEF 6.1). Built by ticket 33.
 
-From the settled decisions, the position memo, the goal, and the knowledge base, the planner drafts
-the research spec; code checks its structure, one independent verdict checks that every claim has an
-experiment and every experiment defends a claim, and the owner confirms it before planning.
+From the settled decisions, the position memo, the objectives, and the knowledge base, the planner
+drafts the research spec; code checks its structure, one independent verdict checks that every claim
+has an experiment and every experiment defends a claim, and the owner confirms it before planning.
 
-**The draft.** `wayline specify` launches the `planner` role in its specify protocol through the
-worker launcher (seam 1), on `policy.roles.planner`, with `spec.json` as its schema and, in its
-prompt, the records the decider reads (`DECISIONS.md`, `POSITION.md`, `GOAL.json`, the L0 and L1
-records, and the query pack), the grill's open questions, and whatever the owner or the gates asked
-to change. The session writes nothing: code writes what it returns as `research/spec.json` and
-renders `research/SPEC.md` from it, and the pair is the spec.
+**The draft.** `wayline specify` drafts once one objective is open (decision 17, ticket 81): that
+objective may be the question to answer first, not the project's end. With none open it refuses and
+names the question the conversation asks, "what should the project answer first?". It launches the
+`planner` role in its specify protocol through the worker launcher (seam 1), on `policy.roles.planner`,
+with `spec.json` as its schema and, in its prompt, the open objectives with their measures, the records
+the decider reads (`DECISIONS.md`, `POSITION.md`, the L0 and L1 records, and the query pack), the grill's
+open questions, and whatever the owner or the gates asked to change. The session writes nothing: code
+writes what it returns as `research/spec.json` and renders `research/SPEC.md` from it, and the pair is
+the spec. The spec carries `summary`, about 120 words on what the project is, which the general report
+opens with, and every claim its `objectives`, the open objectives it answers (none for a claim no
+objective asked for).
 
 **The two gates.** The Type-A checks (`check_draft`) are the structure: every section present and
 non-empty, every id unique and every reference resolving, every claim with at least one experiment
 that names it back, every experiment naming a claim, every metric naming a script, every anti-claim
-naming the experiment that would confirm it, and the goal's metric among the metrics. A draft that
+naming the experiment that would confirm it, every objective a claim names open, every open objective
+answered by at least one claim, and every goal's metric among the metrics. A draft that
 fails them is returned to the same planner session once with the failures; a second failure ends the
 call and writes nothing. The Type-B gate is one verifier session (`gates.verdict`, `spec_coverage`)
 on the spec as written; a fail returns the draft to the planner once with the findings, and the
@@ -46,7 +52,7 @@ import re
 import sys
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, decider, decisions, gates, grill, pacing, worker
+from wayline import HARNESS_ROOT, decider, decisions, gates, grill, objectives, pacing, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, PHASE, Ledger, LedgerError
@@ -84,9 +90,10 @@ CONFIRMING = frozenset(("confirm", "confirmed", "confirms", "yes", "ok", "okay",
 FILLERS = frozenset(("i", "it", "the", "this", "spec", "go", "ahead", "looks", "as", "is", "please", "all"))
 INTERACTIVE, CHECKPOINTS, AUTONOMOUS = "interactive", "checkpoints", "autonomous"
 
-# The sections of SPEC.md, in order: (the key in spec.json, the heading). "Question" leads because a
-# spec a reader cannot place is not read.
+# The sections of SPEC.md, in order: (the key in spec.json, the heading). The summary leads, then the
+# question, because a spec a reader cannot place is not read.
 SECTIONS = (
+    ("summary", "Summary"),
     ("question", "Question"),
     ("claims", "Claims"),
     ("anti_claims", "Anti-claims"),
@@ -106,12 +113,17 @@ VERDICT_QUESTION = "Does every claim of the spec have at least one experiment th
 VERDICT_SCOPE = (
     "Judge only the mapping between the claims (and anti-claims) and the experiments in research/SPEC.md: whether each "
     "claim's experiments would actually test it, whether each experiment actually bears on the claims it names, and "
-    "whether each anti-claim's experiment would confirm it. Read DECISIONS.md and GOAL.json only to see what the claims "
-    "must answer. Not the science's merit, the budgets, the prose, or anything a later phase decides. The hex after "
+    "whether each anti-claim's experiment would confirm it. Read DECISIONS.md and OBJECTIVES.md only to see what the "
+    "claims must answer. Not the science's merit, the budgets, the prose, or anything a later phase decides. The hex after "
     "`at` in the subject is the first twelve of research/spec.json's sha256, written by the harness beside the file "
     "you read; it needs no checking."
 )
-VERDICT_PATHS = ("research/SPEC.md", "research/spec.json", "research/DECISIONS.md", "research/GOAL.json")
+VERDICT_PATHS = ("research/SPEC.md", "research/spec.json", "research/DECISIONS.md", "research/OBJECTIVES.md")
+
+# Specify drafts once one objective is open (decision 17); with none, the conversation asks this before anything else.
+FIRST_QUESTION = "what should the project answer first?"
+NO_OBJECTIVE = ("no objective is open, so there is nothing for the spec to answer: ask the owner \"%s\" and record the "
+                "answer with wayline objective add \"<question>\", then run wayline specify again" % FIRST_QUESTION)
 
 RESUME_INVALID = (
     "The spec you returned could not be read: %s. Return the whole spec again through the structured output, as the "
@@ -129,7 +141,7 @@ RESUME_FINDINGS = (
 
 
 class SpecifyError(ValueError):
-    """A spec nobody could draft: no goal, a role that cannot be read, a draft that failed its gates twice."""
+    """A spec nobody could draft: no open objective, a role that cannot be read, a draft that failed its gates twice."""
 
     def __init__(self, message, failures=()):
         super().__init__(message)
@@ -179,11 +191,13 @@ def _duplicates(values):
     return repeated
 
 
-def check_draft(draft, goal=None):
+def check_draft(draft, objectives=None):
     """The Type-A checks on a spec draft; returns the failures, each one line, empty when it passes.
 
-    The schema is checked first, because the rest reads the fields it promises. `goal` is `GOAL.json`
-    when there is one: its metric has to be among the spec's metrics.
+    The schema is checked first, because the rest reads the fields it promises. `objectives` is the
+    project's `objectives.json` records (`objectives.read_objectives`), None when the caller has none to
+    hold the draft to: every objective a claim names must be open, every open objective must be
+    answered by at least one claim, and every open goal's metric must be among the spec's metrics.
     """
     try:
         check(draft, load_schema(SPEC_SCHEMA), name="the spec")
@@ -248,9 +262,26 @@ def check_draft(draft, goal=None):
         for reference in criterion["experiments"]:
             if reference not in experiments:
                 failures.append("success criterion %d names the experiment %s, which the spec does not define" % (index, reference))
-    wanted = (goal or {}).get("metric")
-    if wanted and wanted not in metrics:
-        failures.append("the goal's metric %s (GOAL.json) is not among the metrics" % wanted)
+    if objectives is not None:
+        failures += _objective_failures(draft, objectives, metrics)
+    return failures
+
+
+def _objective_failures(draft, records, metrics):
+    """Ticket 81's half of the Type-A checks: the claims against the objectives, and the goals against the metrics."""
+    failures, answered = [], set()
+    for claim in draft["claims"]:
+        failures += objectives.check_named("claim %s" % claim["id"], claim["objectives"], records, "claim")
+        answered.update(identifier for identifier in claim["objectives"] if objectives.is_open(objectives.named(records, identifier)))
+    for item in records:
+        if not objectives.is_open(item):
+            continue
+        if item["id"] not in answered:
+            failures.append("the open objective %s is answered by no claim: name it in the objectives of the claim that answers it"
+                            % item["id"])
+        metric = (item.get("measure") or {}).get("metric")
+        if metric and metric not in metrics:
+            failures.append("the goal %s's metric %s is not among the spec's metrics" % (item["id"], metric))
     return failures
 
 
@@ -271,8 +302,10 @@ def render_spec(draft):
              "Rendered by `wayline specify` from `research/spec.json`; change the spec by answering its confirmation "
              "with what to change, never by editing here.", ""]
     body = {
+        "summary": [_one_line(draft["summary"])],
         "question": [_one_line(draft["question"])],
-        "claims": ["- **%s.** %s (experiments: %s)" % (item["id"], _one_line(item["text"]), _list(item["experiments"]))
+        "claims": ["- **%s.** %s (experiments: %s%s)" % (item["id"], _one_line(item["text"]), _list(item["experiments"]),
+                                                          "; objectives: %s" % _list(item["objectives"]) if item["objectives"] else "")
                    for item in draft["claims"]],
         "anti_claims": ["- **%s.** %s (confirmed by: %s)" % (item["id"], _one_line(item["text"]), item["confirmed_by"] or "none")
                         for item in draft["anti_claims"]],
@@ -320,11 +353,14 @@ def _read_json(ledger, relative):
         return None
 
 
-def check_spec(project):
+def check_spec(project, against_objectives=True):
     """The Type-A checks on the spec as written: `spec.json`'s structure, and `SPEC.md` being what it renders to.
 
     Returns the failures, empty when both pass. This is what a later phase (the planner cutting tickets)
-    runs before it trusts the spec.
+    runs before it trusts the spec, with `against_objectives` False: the claims were held to the objectives
+    when the spec was drafted and confirmed, and an objective opened, answered, or parked since is the spec
+    amendment's (ticket 92) and the tickets' own check (`plan`), never a spec that cannot be cut. An
+    `objectives.json` that cannot be read is a failure, named.
     """
     ledger = Ledger(project)
     try:
@@ -333,7 +369,13 @@ def check_spec(project):
         return ["research/%s is not JSON: %s" % (SPEC_JSON, failure)]
     if draft is None:
         return ["there is no research/%s; run wayline specify" % SPEC_JSON]
-    failures = check_draft(draft, _goal(ledger))
+    records = None
+    if against_objectives:
+        try:
+            records = objectives.read_objectives(project)
+        except objectives.ObjectivesUnreadable as failure:
+            return [str(failure)]
+    failures = check_draft(draft, records)
     try:
         text = ledger.path(SPEC_MD).read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -347,11 +389,6 @@ def check_spec(project):
     return failures
 
 
-def _goal(ledger):
-    try:
-        return _read_json(ledger, "GOAL.json")
-    except ValueError:
-        return None
 
 
 def spec_sha(project):
@@ -491,13 +528,27 @@ def advance(project, events=None):
 # --- the prompt -----------------------------------------------------------------------------------------
 
 
-def specify_prompt(role, records, harness, project, open_questions=(), change=None, cut=False):
-    """The planner's specify prompt: what is asked, the open questions, what to change, the records, the paths, the protocol, the schema."""
+def specify_prompt(role, records, harness, project, open_questions=(), change=None, cut=False, pursued=()):
+    """The planner's specify prompt: what is asked, the objectives, the open questions, what to change, the records, the paths, the protocol, the schema.
+
+    `pursued` is the project's open objectives, which the claims answer.
+    """
     lines = ["# What you are asked for", "",
              "The research spec of this project: phase P3, specify. The harness renders what you return as "
              "`research/SPEC.md`, checks its structure, has an independent verifier read whether every claim has an "
              "experiment and every experiment defends a claim, and asks the owner to confirm it before planning.", "",
              "- autonomy: %s; radius: %s" % (harness.get("autonomy"), harness.get("radius"))]
+    lines += ["", "# The objectives", "",
+              "The questions the project answers now (`research/OBJECTIVES.md`); an objective with a measure is a goal. The "
+              "first may be the question to answer first rather than the project's end. Every one of them is answered by at "
+              "least one claim that names it in its `objectives`; a claim no objective asked for names none, and a claim never "
+              "names an objective that is not listed here. A goal's metric is among the spec's metrics, with its "
+              "`eval_command` as the script. Write `summary` too: what the project is, in about 120 words a newcomer reads "
+              "cold, since the general report opens with it.", ""]
+    for item in pursued:
+        lines.append("- %s: %s (%s)" % (item["id"], _one_line(item["text"]),
+                                        "a goal: %s" % objectives.describe_measure(item["measure"]) if item.get("measure")
+                                        else "an objective: no measure"))
     if open_questions:
         lines += ["", "# The questions the grill left open", "",
                   "The spec takes the recommended answer on each of these where it has to take a side, and names the "
@@ -620,6 +671,8 @@ class PlannerSession:
 class _Session(PlannerSession):
     """The specify session and its one allowance of each return: invalid output, failed checks, failed verdict."""
 
+    objectives = None  # the project's objectives, read once by `draft_spec`, which every draft of the session is checked against
+
     def draft(self, prompt):
         """A draft that passed the schema and the Type-A checks, with each gate's one return spent as needed."""
         envelope = self.start(prompt)
@@ -635,7 +688,7 @@ class _Session(PlannerSession):
     def checked(self, draft, returned=False):
         """`draft` once it passes the Type-A checks; a failing one goes back once, a second failure raises."""
         self.keep(draft, "draft")
-        failures = check_draft(draft, _goal(self.ledger))
+        failures = check_draft(draft, self.objectives)
         if failures and not returned:
             self.say("  the draft failed %d structural check(s); returned to the planner once" % len(failures))
             envelope = self.continue_with(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
@@ -654,7 +707,7 @@ class _Session(PlannerSession):
         if problem is not None:
             raise SpecifyError("the planner's redraft after the verdict could not be read: %s" % problem)
         self.keep(envelope.structured_output, "draft")
-        failures = check_draft(envelope.structured_output, _goal(self.ledger))
+        failures = check_draft(envelope.structured_output, self.objectives)
         if failures:
             raise SpecifyError("the redraft after the verdict failed its structural checks; the spec as written stands "
                                "unverified", failures)
@@ -699,15 +752,21 @@ def draft_spec(project, *, change=None, unchanged_from=None, harness_root=HARNES
     project = Path(project).resolve()
     ledger = Ledger(project)
     policy = policy_for(project, harness_root) if policy is None else policy
-    if not ledger.path("GOAL.json").is_file():
-        raise SpecifyError("%s has no research/GOAL.json; the spec answers a goal, so run wayline intake first" % project)
+    try:
+        records = objectives.read_objectives(project)
+    except objectives.ObjectivesUnreadable as failure:
+        raise SpecifyError("%s; nothing was drafted" % failure) from None
+    pursued = [item for item in records if objectives.is_open(item)]
+    if not pursued:
+        raise SpecifyError(NO_OBJECTIVE)
     events, _ = ledger.read_events()
     session = _Session(project, harness_root, policy, fall_back, say)
+    session.objectives = records  # read once: the draft and its redrafts are held to the objectives it was asked for
     records, cut = decider.records_text(project, context_cap(policy, session.model))
     harness = read_harness(project)
     open_questions = [record for record in grill.read_records(project)
                       if record.get("id") and record.get("answer") is None]
-    prompt = specify_prompt(session.role, records, harness, project, open_questions, change, cut)
+    prompt = specify_prompt(session.role, records, harness, project, open_questions, change, cut, pursued)
     move_phase(ledger, events, SPECIFY_PHASE)
     say("drafting the spec: the planner on %s at %s%s" % (session.model, session.effort,
                                                          " in place of fable" if session.fallback_from else ""))

@@ -14,9 +14,11 @@ A goal is a human decision (decision 4 puts goal changes on the irreversible lis
 this module writes is journaled as a `decision` with `decided_by: human`, and a goal that cannot be
 measured is rejected with the reason rather than written: missing, fails, no number, or invalid.
 
-The dashboard's intake drop zone (ticket 35) hands a file over one at a time: `drop_material` keeps
-it under `research/intake/` and adds it to `INTAKE.md` the way this verb reads a material, and every
-later `wayline intake` takes the files kept there along with what it is given.
+The dashboard's intake drop zone (ticket 35) hands a file over one at a time: since ticket 84 code's
+cautious guess sorts it first (`wayline.documents.drop_document`), and a file it takes for a
+reference comes here, where `drop_material` keeps it under `research/intake/` and adds it to
+`INTAKE.md` the way this verb reads a material, and every later `wayline intake` takes the files
+kept there along with what it is given.
 """
 
 import argparse
@@ -31,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from wayline import code_repository
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import DECISION, Ledger, atomic_write
@@ -41,10 +44,11 @@ from wayline.project import (
     read_harness, set_ladder_changes, set_model_fallback,
 )
 from wayline.tickets import section
+from wayline.tools import run_tool
 
 __all__ = [
     "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "GoalCheck", "take_intake", "check_goal", "set_goal",
-    "describe_goal", "intake_command", "DROP_DIR", "DROP_MAX_BYTES", "dropped_materials", "drop_material",
+    "describe_goal", "intake_command", "DROP_DIR", "DROP_MAX_BYTES", "dropped_materials", "check_drop", "plain_name", "drop_material",
 ]
 
 INTAKE_MD = "INTAKE.md"
@@ -68,7 +72,7 @@ DEFAULT_HUMAN_ONLY = {
 }
 
 SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "materials", "autonomy", "radius",
-               "model_fallback", "ladder_changes", "budgets", "human_only", "goal", "sample", "rationale")
+               "model_fallback", "ladder_changes", "budgets", "human_only", "goal", "sample", "rationale", "clone", "code_repository")
 LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_only")
 BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
 GOAL_OPTIONAL = {"dataset_or_split": None, "held_out_split": None, "baseline": None, "budget": None, "stop_when": "goal_reached"}
@@ -237,6 +241,8 @@ class Gathered:
     data: list
     code: list
     constraints: list
+    # The project's own clone the spec names, absorbed into `code/` by `take_intake` (decision 17); its line follows it.
+    clone: Optional[Path] = None
 
 
 def gather(spec, project, base):
@@ -264,6 +270,8 @@ def gather(spec, project, base):
         gathered.data.append(_data_line(pointer, project, base))
     for repository in spec.get("code", []):
         gathered.code.append(_code_line(_existing(repository, base, "repository"), project))
+    if spec.get("clone"):
+        gathered.clone = _the_clone(spec["clone"], project, base)
     gathered.constraints.extend(line.strip() for line in spec.get("constraints", []) if line.strip())
     return gathered
 
@@ -398,7 +406,35 @@ def _data_line(pointer, project, base):
     return pointer.strip()
 
 
-def _code_line(path, project):
+def _the_clone(text, project, base):
+    """The project's own clone the spec names: where it is, or, once intake moved a nested one under `.clones/`, where it went."""
+    path = _as_path(text, base)
+    if path is not None and not path.exists():
+        moved = code_repository.absorbed_clone(project, path)
+        if moved is not None:
+            return Path(moved["clone"])
+    return _existing(text, base, "clone")
+
+
+def _absorb_clone(project, gathered, run):
+    """Absorb the project's own clone into `code/` (decision 17) and list it first under Code; the `upstream` record or None.
+
+    Only the clone the spec names as the project's own is absorbed: a repository the work builds on, given as
+    `code` or as a loose material, is listed and pinned, never poured into `code/` and pushed as this project's.
+    The clone already absorbed is not absorbed again, whatever it did since; its line says where `code/` began.
+    """
+    if gathered.clone is None:
+        return None
+    try:
+        upstream = code_repository.absorb_clone(project, gathered.clone, run=run)
+    except code_repository.CodeRepositoryError as failure:
+        raise IntakeError(str(failure)) from None
+    gathered.code.insert(0, _code_line(Path(upstream["clone"]), project, upstream))
+    return upstream
+
+
+def _code_line(path, project, upstream=None):
+    """One repository as INTAKE.md lists it: its commit, branch, and remote, and, absorbed, what `code/` took of it."""
     shown = _shown(path, project)
 
     def git(*args):
@@ -413,10 +449,27 @@ def _code_line(path, project):
     remote = git("remote", "get-url", "origin")
     if remote:
         line += ", remote `%s`" % remote
+    moved_on = upstream is not None and upstream.get("commit") not in (None, head)
+    if upstream is not None:
+        line += "; absorbed into `code/` with its history"
+        if moved_on:
+            line += " (absorbed at `%s`, where `code/` began; the clone has moved on since, and the work goes on in `code/`)" % (
+                upstream["commit"][:12])
     dirty = git("status", "--porcelain")
     if dirty:
         count = len(dirty.splitlines())
-        line += "; %d uncommitted change%s, which the commit does not hold" % (count, "" if count == 1 else "s")
+        plural = "" if count == 1 else "s"
+        if moved_on:
+            line += "; %d uncommitted change%s, which `code/` does not hold" % (count, plural)
+        elif upstream is None:
+            line += "; %d uncommitted change%s, which the commit does not hold" % (count, plural)
+        elif upstream.get("uncommitted"):
+            line += "; %d uncommitted change%s, absorbed as the next commit `%s`" % (count, plural, upstream["uncommitted"][:12])
+        else:
+            line += "; %d uncommitted change%s, none of which changed what `code/` holds" % (count, plural)
+    if upstream is not None and upstream.get("license"):
+        spdx = upstream["license"].get("spdx")
+        line += "; it came with `%s`%s" % (upstream["license"]["file"], " (%s)" % spdx if spdx else ", a license no SPDX id names")
     return line
 
 
@@ -473,12 +526,17 @@ def normalize_spec(raw):
                 value = [value]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise IntakeError("%s is a list of strings" % key)
-        elif key in ("intent", "plan", "sample", "rationale", "autonomy", "radius", "model_fallback", "ladder_changes"):
+        elif key in ("intent", "plan", "sample", "rationale", "autonomy", "radius", "model_fallback", "ladder_changes", "clone"):
             if not isinstance(value, str):
                 raise IntakeError("%s is a string" % key)
         elif key == "budgets":
             if not isinstance(value, dict) or set(value) - set(BUDGET_FIELDS):
                 raise IntakeError("budgets is an object with %s" % ", ".join(BUDGET_FIELDS))
+        elif key == "code_repository":
+            try:
+                value = code_repository.check_answer(value)
+            except code_repository.CodeRepositoryError as failure:
+                raise IntakeError(str(failure)) from None
         spec[key] = value
     if spec.get("autonomy") is not None and spec["autonomy"] not in AUTONOMY:
         raise IntakeError("autonomy is one of %s, got %r" % (", ".join(AUTONOMY), spec["autonomy"]))
@@ -524,13 +582,20 @@ def human_only_classes(entries):
 # --- the intake -------------------------------------------------------------------------------------
 
 
-def take_intake(project, spec, base=None, timeout_s=None):
+def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=None, push_url=None):
     """Write INTAKE.md, the settings in harness.json, and a measurable goal; returns a report.
 
     `spec` carries the fields of `SPEC_FIELDS`; relative paths in it resolve against `base` (the
     caller's working directory). The goal is checked before anything is written, so a slow or
     failing `eval_command` never leaves half an intake behind. The report is `{intake, harness,
     goal, counts}` where `goal` is the `GoalCheck` or None when no goal was stated.
+
+    The project's own clone, the spec's `clone`, is absorbed into `code/` with its history
+    (decision 17); a repository given as `code` or as a loose material is one the work builds on,
+    and is only listed, pinned to its commit. The setup answer on the code repository
+    (`code_repository`: its shape, remote, visibility, and license) is settled last, once the rest
+    is written, since it creates the private GitHub repository. `run`, `tools`, and `push_url` are
+    the tool runner's, which tests record.
     """
     project = Path(project).resolve()
     base = Path(base or os.getcwd())
@@ -565,6 +630,8 @@ def take_intake(project, spec, base=None, timeout_s=None):
     except ValidationError as failure:
         raise IntakeError(str(failure)) from None
 
+    if _absorb_clone(project, gathered, run) is not None:
+        updated["code_repository"] = code_repository.record(project)
     ledger = Ledger(project)
     with ledger.lock():
         atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
@@ -578,6 +645,13 @@ def take_intake(project, spec, base=None, timeout_s=None):
         set_model_fallback(project, spec["model_fallback"])
     if spec.get("ladder_changes"):
         set_ladder_changes(project, spec["ladder_changes"])
+    if spec.get("code_repository"):
+        # Last, since it creates the private GitHub repository and pushes `code/`'s split there: one setup question (decision 17).
+        try:
+            updated = dict(updated, code_repository=code_repository.settle(
+                project, spec["code_repository"], run=run, tools=tools, **({"push_url": push_url} if push_url else {})))
+        except code_repository.CodeRepositoryError as failure:
+            raise IntakeError("the intake is written, but the code repository is not: %s" % failure) from None
     return {
         "intake": str(ledger.path(INTAKE_MD)),
         "harness": updated,
@@ -732,6 +806,29 @@ def _with_dropped(spec, project, base):
     return dict(spec, materials=list(spec.get("materials", [])) + extra) if extra else spec
 
 
+def check_drop(name, data, verb="wayline intake <path>"):
+    """`(name, bytes)` of a file dropped on the dashboard, or `IntakeError` saying why the drop takes nothing.
+
+    A name that is not a plain file name is refused, and so is an empty file or one over
+    `DROP_MAX_BYTES`, which `verb` takes on the workstation instead.
+    """
+    name = str(name or "").strip()
+    if not _DROP_NAME.match(name) or Path(name).name != name:
+        raise IntakeError("a dropped file needs a plain file name (letters, digits, and . _ + - or spaces, not starting with a dot), got %r" % name)
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        raise IntakeError("%s is empty, so nothing was kept" % name)
+    if len(data) > DROP_MAX_BYTES:
+        raise IntakeError("%s is %s, over the %s the drop takes; run %s on the workstation for a file this large"
+                          % (name, _size(len(data)), _size(DROP_MAX_BYTES), verb))
+    return name, bytes(data)
+
+
+def plain_name(name):
+    """A file name the drop takes, made from any: each character it refuses becomes `-`."""
+    plain = re.sub(r"[^A-Za-z0-9._+ -]+", "-", Path(str(name)).name).lstrip(".- ")[:128]
+    return plain if _DROP_NAME.match(plain) else "file" + Path(str(name)).suffix[:16]
+
+
 def drop_material(project, name, data):
     """Keep one file the owner dropped on the dashboard under `research/intake/`, and take it into `INTAKE.md`.
 
@@ -748,15 +845,7 @@ def drop_material(project, name, data):
     None when there is no `INTAKE.md` yet.
     """
     project = Path(project).resolve()
-    name = str(name or "").strip()
-    if not _DROP_NAME.match(name) or Path(name).name != name:
-        raise IntakeError("a dropped file needs a plain file name (letters, digits, and . _ + - or spaces, not starting with a dot), got %r" % name)
-    if not isinstance(data, (bytes, bytearray)) or not data:
-        raise IntakeError("%s is empty, so nothing was kept" % name)
-    if len(data) > DROP_MAX_BYTES:
-        raise IntakeError("%s is %s, over the %s the drop takes; run wayline intake <path> on the workstation for a file this large"
-                          % (name, _size(len(data)), _size(DROP_MAX_BYTES)))
-    data = bytes(data)
+    name, data = check_drop(name, data)
     ledger = Ledger(project)
     with ledger.lock():
         relative, already = _drop_path(ledger, name, data)
@@ -837,7 +926,8 @@ def intake_command(args, stdin=None):
     parser.add_argument("--plan", help="a plan file, quoted whole under the intent")
     parser.add_argument("--reference", action="append", default=[], help="one reference: a DOI, an arXiv id, a URL, a title, or a PDF")
     parser.add_argument("--data", action="append", default=[], help="one data pointer: a path, or words saying where the data is")
-    parser.add_argument("--repo", action="append", default=[], help="a repository the work builds on")
+    parser.add_argument("--repo", action="append", default=[], help="a repository the work builds on, listed pinned to its commit")
+    parser.add_argument("--clone", help="the project's own clone, absorbed into code/ with its history")
     parser.add_argument("--constraint", action="append", default=[], help="one constraint")
     parser.add_argument("--autonomy", choices=sorted(AUTONOMY))
     parser.add_argument("--radius", choices=sorted(RADIUS))
@@ -936,7 +1026,7 @@ def _flag_fields(options):
     if options.materials:
         fields["materials"] = list(options.materials)
     for key, value in (("intent", options.intent), ("plan", options.plan), ("autonomy", options.autonomy), ("radius", options.radius),
-                       ("model_fallback", options.model_fallback), ("ladder_changes", options.ladder_changes)):
+                       ("model_fallback", options.model_fallback), ("ladder_changes", options.ladder_changes), ("clone", options.clone)):
         if value:
             fields[key] = value
     for key, value in (("references", options.reference), ("data", options.data), ("code", options.repo),

@@ -1,0 +1,184 @@
+{
+  "documents": [
+    {
+      "id": "D1",
+      "kind": "inherited",
+      "version": 2,
+      "key": "manuscript",
+      "origin": "manuscript-v2.docx",
+      "dated": "2023-04-02T10:00:00",
+      "sorted_by": "session",
+      "added": "2026-10-18T12:00:00.000Z",
+      "title": "Wingbeat synchrony in captive lantern moth colonies",
+      "converted": true,
+      "converters": [
+        {
+          "name": "pandoc",
+          "version": "3.11"
+        },
+        {
+          "name": "wayline.office",
+          "version": "1.0.1"
+        }
+      ],
+      "losses": [
+        "tracked changes accepted: 2 insertions kept, 1 deletion dropped",
+        "comments are kept in comments.json, not in text.md"
+      ],
+      "counts": {
+        "paragraphs": 18,
+        "headings": 6,
+        "equations": 1,
+        "tables": 0,
+        "images": 0,
+        "insertions": 2,
+        "deletions": 1,
+        "formatting_changes": 0,
+        "comments": 4,
+        "threads": 3,
+        "citations": 2,
+        "works": 2,
+        "blocks": 16
+      },
+      "damage": {
+        "headings": 0,
+        "equations": 0,
+        "citations": 0,
+        "comments": 0
+      },
+      "abstract": "We measure how closely lantern moths beat their wings in phase. Across forty colonies, synchrony rises with colony size, and it peaks at dusk.",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Introduction",
+          "locator": "p1",
+          "first_sentence": "Lantern moths gather in dusk swarms whose wingbeats lock together [@Okafor2017]."
+        },
+        {
+          "level": 1,
+          "text": "Results",
+          "locator": "p3",
+          "first_sentence": "Larger colonies beat more nearly in phase than small ones (Figure 1)."
+        },
+        {
+          "level": 1,
+          "text": "Discussion",
+          "locator": "p8",
+          "first_sentence": "Our central finding is that synchrony rises with colony size."
+        },
+        {
+          "level": 1,
+          "text": "Methods",
+          "locator": "p10",
+          "first_sentence": "Wingbeats were filmed at 2000 frames per second; the phase of each moth was taken from the analytic signal, as described in methods.tex."
+        },
+        {
+          "level": 1,
+          "text": "Acknowledgements",
+          "locator": "p12",
+          "first_sentence": "We thank the moth keepers of the invented Varga lab."
+        },
+        {
+          "level": 1,
+          "text": "References",
+          "locator": "p14",
+          "first_sentence": "Lindqvist, A. and Moreau, P."
+        }
+      ],
+      "files": [
+        {
+          "path": "source/manuscript-v2.docx",
+          "sha256": "c49e588f2ea7d4feb6a25b3003e6e48903cbc1e420f96d8f70424adda542c123",
+          "size": 3884
+        },
+        {
+          "path": "citations.json",
+          "sha256": "f6506dcfe582cb1f22fb3b0425c05cfc2e1fac53663651133c8a0f88bd8268eb",
+          "size": 227
+        },
+        {
+          "path": "comments.json",
+          "sha256": "380a97fcbbab1015b843b6b3a8576ceb10e5f4fcce514af8acdcf247c6155a7a",
+          "size": 1287
+        },
+        {
+          "path": "text.md",
+          "sha256": "d1ac24c4021d60c0caad119d3a00f9c31c6796190f762303c1c491270114e42f",
+          "size": 1619
+        }
+      ],
+      "history": [
+        {
+          "version": 1,
+          "origin": "manuscript-v1.docx",
+          "dated": "2022-11-20T09:00:00",
+          "added": "2026-10-18T11:00:00.000Z",
+          "files": [
+            {
+              "path": "source/v1/manuscript-v1.docx",
+              "sha256": "0a58dddeec07aea2dfa0229d341d8dcfc8804d558d319f95437e8bd1388ae0a5",
+              "size": 3784
+            },
+            {
+              "path": "citations.json",
+              "sha256": "f6506dcfe582cb1f22fb3b0425c05cfc2e1fac53663651133c8a0f88bd8268eb",
+              "size": 227
+            },
+            {
+              "path": "comments.json",
+              "sha256": "380a97fcbbab1015b843b6b3a8576ceb10e5f4fcce514af8acdcf247c6155a7a",
+              "size": 1287
+            },
+            {
+              "path": "text.md",
+              "sha256": "b7a8ec25bc5d816e5f5ece37bc488a45dc2a83ff98c7d0e2d078cd63c1968e01",
+              "size": 1595
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D2",
+      "kind": "critique",
+      "version": 1,
+      "key": "referee-2",
+      "origin": "referee-2.md",
+      "dated": "2026-10-18T09:00:00",
+      "sorted_by": "session",
+      "added": "2026-10-18T12:00:00.000Z",
+      "title": "Referee report 2",
+      "converted": true,
+      "converters": [],
+      "losses": [],
+      "counts": {
+        "blocks": 2,
+        "headings": 1,
+        "equations": 0
+      },
+      "damage": {},
+      "abstract": null,
+      "headings": [
+        {
+          "level": 1,
+          "text": "Referee report 2",
+          "locator": "p1",
+          "first_sentence": "1."
+        }
+      ],
+      "files": [
+        {
+          "path": "source/referee-2.md",
+          "sha256": "b98173e7f284bd6c889193a01eae53f27e046d116b1876669b9a6205e7441f67",
+          "size": 145
+        },
+        {
+          "path": "text.md",
+          "sha256": "e4b01737d39bd2dfb748871955c99bb774233eb57b75cc3791b6880f825041c3",
+          "size": 180
+        }
+      ],
+      "history": []
+    }
+  ]
+}

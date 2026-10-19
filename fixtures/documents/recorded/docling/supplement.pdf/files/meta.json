@@ -1,0 +1,10 @@
+{
+  "tool": "docling",
+  "version": "2.126.0",
+  "docling_core": "2.96.0",
+  "device": "cuda",
+  "formula_enrichment": false,
+  "seconds": 5.01,
+  "status": "ConversionStatus.SUCCESS",
+  "images": {}
+}

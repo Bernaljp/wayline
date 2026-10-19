@@ -11,7 +11,7 @@
       "description": "the work tickets, in the order they are numbered; a decision ticket is never here, it is under decisions",
       "items": {
         "type": "object",
-        "required": ["key", "title", "kind", "difficulty", "blocked_by", "touches", "acceptance", "context_pack", "origin", "demo"],
+        "required": ["key", "title", "kind", "difficulty", "blocked_by", "touches", "acceptance", "objectives", "context_pack", "origin", "demo"],
         "additionalProperties": false,
         "properties": {
           "key": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$", "description": "the ticket's name inside this plan (T1, T2, ...), which blocked_by and pauses entries use"},
@@ -42,16 +42,8 @@
               "quality": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "Type-B gates: the question a verifier answers about the result, when the ticket needs a verdict"}
             }
           },
-          "goal_metric": {
-            "type": ["object", "null"],
-            "required": ["reports", "expected_direction"],
-            "additionalProperties": false,
-            "description": "when the ticket reports the goal's metric: which, and the direction the goal wants",
-            "properties": {
-              "reports": {"type": "string", "pattern": "\\S"},
-              "expected_direction": {"type": "string", "enum": ["up", "down"]}
-            }
-          },
+          "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the open objectives (research/OBJECTIVES.md) the ticket serves; empty for one no objective asked for, a plotting ticket or one for an unasked claim"},
+          "goal": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "when the ticket reports a goal's metric: the open objective with a measure it reports, whose metric and direction the measure gives"},
           "context_pack": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the locators the worker is given, smallest first: a path, path:first-last, or path#heading"},
           "origin": {"type": "string", "pattern": "\\S", "description": "what in the spec the ticket comes from, as a locator: research/SPEC.md#e1-claims-c1"},
           "demo": {"type": "string", "pattern": "\\S", "description": "what a person would watch to believe the ticket is done"},

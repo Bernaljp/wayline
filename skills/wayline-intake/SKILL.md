@@ -15,6 +15,35 @@ a pointer at a dataset, a half-written plan, or an existing repository. Ask only
 missing and cannot be inferred, and ask it once, in one batch. When nobody is there to answer,
 take the defaults and say what you assumed.
 
+## What the owner hands over
+
+Tell the owner to hand over anything, in any form: a manuscript as `.docx`, `.tex`, or PDF, a
+separate Methods or a supplement, a spreadsheet, a referee report or an editor's letter, a folder,
+or a `.zip`. Nothing needs tidying first. Take references as bare identifiers (a DOI, an arXiv id,
+an exact title), the owner's plan as the plan, and a collaborator's list of experiments as a
+critique.
+
+The project's own writing is a document; published work, the owner's own preprints included, is a
+reference. Sort each document with the verb, as a command of its own:
+
+```bash
+wayline document add <file> --kind inherited|critique|other
+```
+
+- `inherited`: an earlier manuscript, a separate Methods, a supplement, a thesis chapter;
+- `critique`: a referee report, an editor's letter with points, a collaborator's list of required
+  experiments;
+- `other`: anything else, kept and read only.
+
+Ask the owner in one line only when the kind is unclear. A folder is sorted file by file and a
+`.zip` is unpacked first: give `--kind` to a folder only when every file in it is of that kind, and
+otherwise add the files one by one. A PDF of published work goes `--kind reference`: it joins the
+references, and the absorb keeps it as that reference's source. Conversion is code: the verb
+converts each file, keeps it under `research/documents/<id>/`, and lists it in
+`research/DOCUMENTS.md` with what the conversion lost; read that index back and tell the owner. One
+version per text is current, the newest in its source format: hand an older or a newer version over
+the same way, and the verb records it as such.
+
 ## What the intake holds
 
 `research/INTAKE.md` gets these sections, in this order, every one present even when it is short:
@@ -24,7 +53,17 @@ take the defaults and say what you assumed.
 - **References**: one line per reference, as the owner gave it (a DOI, an arXiv id, a title, a
   URL, a PDF). The scout resolves them later; nothing here is invented.
 - **Data**: what data exists, where it is, what is held out, and what may not leave the machine.
-- **Code**: the repositories the work builds on; the verb pins each to its commit.
+- **Code**: the repositories the work builds on (`code`, `--repo`); the verb pins each to its commit
+  and copies nothing. The project's own clone, and only it, goes in as `clone` (`--clone`): it is
+  absorbed into `code/` with its history, its uncommitted changes as the next commit, so the code
+  repository is cut from `code/`. Ask which repository is the project's own; someone else's paper's
+  code goes to `absorb --code` as a reference. Ask the code repository's one setup question beside it, as the spec's
+  `code_repository`: its `shape` (`package`, the developed method and every model the work applies it
+  to, callable from the package, a method with its own maintained package a pinned dependency; or
+  `reproducibility`, scripts, helpers, and the environment alone), its `license` (the inherited one by
+  default), and its remote: a new private GitHub repository by default, or `remote: owner/name` when the
+  owner says wayline may take over their own repository (`confirm_public: true` once, if it is public).
+  It is private until the owner says `visibility: public`, which is their word only.
 - **Constraints**: deadlines, hardware, licences, methods that are off the table, and anything the
   owner said must not change.
 - **Autonomy**: `interactive`, `checkpoints` (the default), or `autonomous`, and beside it the fallback
@@ -58,7 +97,7 @@ heredoc on stdin whole, so nothing would be written:
 wayline intake --intent "the owner's paragraph" --plan plan.md \
   --reference "arXiv:1706.03762" --reference "papers/model.pdf" \
   --data "data/expression.csv" --data "split_b is held out and never leaves this machine" \
-  --repo ../analysis --constraint "no GPU before October" \
+  --clone ../analysis --repo ../baseline-models --constraint "no GPU before October" \
   --autonomy checkpoints --radius moderate --model-fallback ask --ladder-changes ask --gpu-hours 10 --wallclock-hours 48 --usage-windows 4 \
   --human-only "baselines: which baselines the claims are compared against"
 ```
@@ -72,7 +111,9 @@ wayline intake --from - <<'EOF'
  "plan": "plan.md",
  "references": ["arXiv:1706.03762", "10.1038/s41592-019-0686-2", "papers/model.pdf"],
  "data": ["data/expression.csv", "split_b is held out and never leaves this machine"],
- "code": ["../analysis"],
+ "code": ["../baseline-models"],
+ "clone": "../analysis",
+ "code_repository": {"shape": "package", "license": "MIT"},
  "constraints": ["no GPU before October"],
  "autonomy": "checkpoints", "radius": "moderate", "model_fallback": "ask", "ladder_changes": "ask",
  "budgets": {"gpu_hours": 10, "wallclock_hours": 48, "usage_windows": 4},
