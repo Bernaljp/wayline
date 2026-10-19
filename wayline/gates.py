@@ -74,7 +74,7 @@ __all__ = [
     "findings_text",
     "kill_argument",
     "take_verdict",
-    "ticket_asks", "owed_asks",
+    "ticket_asks", "owed_asks", "code_rule_text",
     "UsageLimited",
     "FableHeld",
     "fallback_now",
@@ -530,6 +530,8 @@ class Verdict:
     # The model the verdict's own session ran on, when its result named another than the one it was launched
     # with (decision 16); None when it ran as asked, which is every recorded verdict.
     model_ran: Optional[str] = None
+    # The judgment of a ticket's parameter reasons and `not_methods` (ticket 107), when the question listed them.
+    code_rule: Optional[dict] = None
     # Every `rate_limit_event` the verdict's sessions wrote, for the conductor to fold into its readings as it
     # does a worker's: a refusal can ride a session that still answered (decision 15). Never journaled.
     rate_limit_events: list = field(default_factory=list, compare=False, repr=False)
@@ -849,7 +851,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         passed=bool(returned["pass"]), question_limit=returned["question_limit"],
         findings=list(returned.get("findings") or []),
         session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
-        proposals=list(returned.get("proposals") or []), rung=rung,
+        proposals=list(returned.get("proposals") or []), rung=rung, code_rule=returned.get("code_rule"),
         # What the verifier's own session ran on, when the result named another model than it was launched with
         # (decision 16): a verdict stands or falls on who read the work, so the journal says which model did.
         model_ran=None if worker.ran_as_asked(model, envelope) else worker.model_ran(envelope),
@@ -896,6 +898,11 @@ def _unusable(envelope):
                 % len(blockers))
     if not returned["pass"] and not returned.get("findings"):
         return "the verdict failed and named no finding, so nothing says what to fix"
+    rule = returned.get("code_rule") or {}
+    unheld = [entry for entry in (rule.get("parameters") or []) + (rule.get("not_methods") or []) if entry.get("holds") is False]
+    if returned["pass"] and unheld:
+        return ("the verdict passed and judges %d of the ticket's reasons or not_methods not to hold (`code_rule`); one that "
+                "does not hold fails the verdict, with a finding that says so" % len(unheld))
     return None
 
 
@@ -920,7 +927,40 @@ DOCS_READ_PATHS = ("docs/", ".readthedocs.yaml", "research/INTAKE.md", "research
                    "research/.cache/docs/checks.json")
 
 
-def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False):
+CODE_RULE_QUESTION = (
+    "Besides, the rule from code to Methods (ticket 107) left these for you to judge. For each parameter, does its "
+    "one-sentence reason justify its value to a reader of the paper's Methods? For each function the worker says is not "
+    "a method, is it indeed not a method the Methods should describe? Give your judgment of every item in `code_rule`; "
+    "an item that does not hold fails this verdict, with a finding that says why."
+)
+
+
+def code_rule_text(rule):
+    """The parameters' reasons and the `not_methods` of one ticket, as the lines a verdict's question lists."""
+    lines = [CODE_RULE_QUESTION]
+    parameters = (rule or {}).get("parameters") or []
+    if parameters:
+        lines.append("Parameters:")
+        for entry in parameters:
+            value = entry.get("value")
+            default = entry.get("default")
+            said = " = %s" % value if value is not None else ""
+            said += " (default %s)" % default if default is not None else (" (its own default)" if value is not None else "")
+            where = " at %s:%s" % (entry["path"], entry["line"]) if entry.get("path") and entry.get("line") else ""
+            lines.append("- `%s` `%s`%s%s: %s" % (entry.get("method"), entry.get("name"), said, where, entry.get("reason")))
+    not_methods = (rule or {}).get("not_methods") or []
+    if not_methods:
+        lines.append("Not methods:")
+        lines.extend("- `%s`: %s" % (entry.get("name"), entry.get("why")) for entry in not_methods)
+    return "\n".join(lines)
+
+
+def _with_code_rule(ask, rule):
+    ask.question = "%s\n\n%s" % (ask.question.rstrip(), code_rule_text(rule))
+    return ask
+
+
+def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False, code_rule=None):
     """The verdicts one done ticket earns: its own quality criteria, and an independent read.
 
     `rung` is the rung the attempt that wrote the work ran on, carried into each verdict's journal event
@@ -934,6 +974,10 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
     difficulty, one read of the site for clarity and completeness (decision 13). `no_diff` is a ticket whose integration added no commit of its
     own (its work is findings, say): its commit would be whatever `main` stood at, so it is read as
     its result instead of as a diff that is not its own.
+
+    `code_rule` is the ticket's `parameters` reasons and `not_methods` (ticket 107), which the verifier's existing verdict
+    judges: the independent read carries them, else the quality verdict; a ticket that earns neither earns a read of its
+    diff for them, since nobody else would judge the reasons.
     """
     identifier = ticket["id"]
     subject = str(ticket_path)
@@ -989,10 +1033,23 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
                         "you looked for it.",
             verdict_type=RESULT, author_model=author_model, ticket=identifier, rung=rung,
         ))
+    if code_rule and ((code_rule.get("parameters") or []) or (code_rule.get("not_methods") or [])):
+        carrier = next((ask for ask in asks if ask.verdict_type in (DIFF, RESULT)), None) or (asks[0] if asks else None)
+        if carrier is None:
+            carrier = Ask(
+                subject_kind="ticket", subject=subject,
+                question="Do the reasons ticket %d's result gives for its parameters and its not_methods hold against "
+                         "its diff, commit %s?" % (identifier, (commit or "HEAD")[:12]),
+                paths=paths,
+                scope_limit="Only the items listed below, read against the diff with `git show %s`." % (commit or "HEAD"),
+                verdict_type=RESULT if no_diff else DIFF, author_model=author_model, ticket=identifier, rung=rung,
+            )
+            asks.append(carrier)
+        _with_code_rule(carrier, code_rule)
     return asks
 
 
-def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False):
+def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False, code_rule=None):
     """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
 
     `passed` is the verdict types the journal holds as passed since the ticket was last done
@@ -1006,7 +1063,7 @@ def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_di
     if works_in_the_harness(ticket):
         return [], []
     earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
-                         outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff)
+                         outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff, code_rule=code_rule)
     passed = set(passed or ())
     return earned, [ask for ask in earned if ask.verdict_type not in passed]
 

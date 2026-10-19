@@ -1,0 +1,198 @@
+{
+ "assignments": [
+  {
+   "function": "phaselock_sweep",
+   "kind": "number",
+   "line": 3,
+   "name": "fs",
+   "value": "2000"
+  },
+  {
+   "function": "phaselock_sweep",
+   "kind": "number",
+   "line": 4,
+   "name": "seglen",
+   "value": "512"
+  },
+  {
+   "function": "phaselock_sweep",
+   "kind": "function_call",
+   "line": 5,
+   "name": "win",
+   "value": "hamming(seglen)"
+  },
+  {
+   "function": "phaselock_sweep",
+   "kind": "binary_operator",
+   "line": 6,
+   "name": "jitter",
+   "value": "0.01 * randn(size(traces))"
+  },
+  {
+   "function": "phaselock_sweep",
+   "kind": "binary_operator",
+   "line": 7,
+   "name": "noisy",
+   "value": "traces + jitter"
+  },
+  {
+   "function": "phaselock_sweep",
+   "kind": "function_call",
+   "line": 8,
+   "name": "f",
+   "value": "pwelch(noisy.', win, [], [], fs)"
+  },
+  {
+   "function": "phaselock_sweep",
+   "kind": "function_call",
+   "line": 8,
+   "name": "P",
+   "value": "pwelch(noisy.', win, [], [], fs)"
+  },
+  {
+   "function": "phaselock_sweep",
+   "kind": "function_call",
+   "line": 9,
+   "name": "drift",
+   "value": "ode45(@(t, y) -0.1 * y, [0 10], 1)"
+  },
+  {
+   "function": "phaselock_sweep",
+   "kind": "function_call",
+   "line": 10,
+   "name": "R",
+   "value": "phaselock(noisy, seglen)"
+  }
+ ],
+ "calls": [
+  {
+   "args": [
+    {
+     "kind": "identifier",
+     "text": "seglen"
+    }
+   ],
+   "end": 5,
+   "function": "phaselock_sweep",
+   "line": 5,
+   "name": "hamming",
+   "text": "hamming(seglen)"
+  },
+  {
+   "args": [
+    {
+     "kind": "function_call",
+     "text": "size(traces)"
+    }
+   ],
+   "end": 6,
+   "function": "phaselock_sweep",
+   "line": 6,
+   "name": "randn",
+   "text": "randn(size(traces))"
+  },
+  {
+   "args": [
+    {
+     "kind": "identifier",
+     "text": "traces"
+    }
+   ],
+   "end": 6,
+   "function": "phaselock_sweep",
+   "line": 6,
+   "name": "size",
+   "text": "size(traces)"
+  },
+  {
+   "args": [
+    {
+     "kind": "postfix_operator",
+     "text": "noisy.'"
+    },
+    {
+     "kind": "identifier",
+     "text": "win"
+    },
+    {
+     "kind": "matrix",
+     "text": "[]"
+    },
+    {
+     "kind": "matrix",
+     "text": "[]"
+    },
+    {
+     "kind": "identifier",
+     "text": "fs"
+    }
+   ],
+   "end": 8,
+   "function": "phaselock_sweep",
+   "line": 8,
+   "name": "pwelch",
+   "text": "pwelch(noisy.', win, [], [], fs)"
+  },
+  {
+   "args": [
+    {
+     "kind": "lambda",
+     "text": "@(t, y) -0.1 * y"
+    },
+    {
+     "kind": "matrix",
+     "text": "[0 10]"
+    },
+    {
+     "kind": "number",
+     "text": "1"
+    }
+   ],
+   "end": 9,
+   "function": "phaselock_sweep",
+   "line": 9,
+   "name": "ode45",
+   "text": "ode45(@(t, y) -0.1 * y, [0 10], 1)"
+  },
+  {
+   "args": [
+    {
+     "kind": "identifier",
+     "text": "noisy"
+    },
+    {
+     "kind": "identifier",
+     "text": "seglen"
+    }
+   ],
+   "end": 10,
+   "function": "phaselock_sweep",
+   "line": 10,
+   "name": "phaselock",
+   "text": "phaselock(noisy, seglen)"
+  }
+ ],
+ "functions": [
+  {
+   "end": 11,
+   "name": "phaselock_sweep",
+   "outputs": "[R, P]",
+   "params": [
+    "traces",
+    "fs"
+   ],
+   "parent": null,
+   "start": 1
+  }
+ ],
+ "has_error": false,
+ "nargin_defaults": [
+  {
+   "function": "phaselock_sweep",
+   "kind": "number",
+   "line": 3,
+   "name": "fs",
+   "value": "2000"
+  }
+ ]
+}

@@ -195,11 +195,12 @@ def _submodule_urls(dest):
 
 
 def detect_language(dest):
-    """`"python"` when the clone has a `*.py` file outside vendored directories, else `"unknown"`."""
+    """`"python"` when the clone has a `*.py` file outside vendored directories, else `"matlab"` for a `*.m` file, else `"unknown"`."""
     dest = Path(dest)
-    for path in dest.rglob("*.py"):
-        if not _is_vendored(path, dest):
-            return "python"
+    for suffix, language in (("*.py", "python"), ("*.m", "matlab")):
+        for path in dest.rglob(suffix):
+            if not _is_vendored(path, dest):
+                return language
     return "unknown"
 
 
@@ -534,13 +535,27 @@ def _recipe_record(install_command, install_exit_code, checked_path, run_command
 # --- the record ----------------------------------------------------------------------------------
 
 
-def code_dossier(slug, url, sha, dest, created=None):
-    """The mechanical inventory and the verified recipe for one pinned commit, as a validated record."""
+def code_dossier(slug, url, sha, dest, created=None, run=None, tools=None):
+    """The mechanical inventory and the verified recipe for one pinned commit, as a validated record.
+
+    `methods` holds the methods the code develops and uses, read by the parsers of the rule from code to
+    Methods (ticket 107): `ast` for Python, tree-sitter-matlab through the tool runner (`run`, `tools`) for
+    MATLAB, whose parse also fills the inventory's modules.
+    """
+    from wayline import methods as rule
+    from wayline.tools import run_tool
+
     dest = Path(dest)
     language = detect_language(dest)
+    found = []
     if language == "python":
         inventory = python_inventory(dest)
         entry_points = entry_points_of(dest)
+        _, found, _ = rule.inventory(dest, language)
+    elif language == "matlab":
+        modules, found, note = rule.inventory(dest, language, run=run or run_tool, tools=tools)
+        inventory = {"modules": modules, "symbols_total": sum(len(module["functions"]) for module in modules), "note": note}
+        entry_points = []
     else:
         inventory = {"modules": [], "symbols_total": 0, "note": "universal-ctags or tree-sitter is not yet wired for %s" % language}
         entry_points = []
@@ -564,6 +579,7 @@ def code_dossier(slug, url, sha, dest, created=None):
             {"module": module["path"], "good": [], "bad": [], "risky": [], "reusable": [], "how_to_call": None}
             for module in inventory["modules"]
         ],
+        "methods": found,
         "created": created or now_ts(),
     }
     check(dossier, load_schema("code_dossier"), name="refs/%s/code_dossier.json" % slug)

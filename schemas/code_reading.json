@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "code_reading",
+  "description": "The code reader's answer at a ticket's acceptance (Implementation Decision 17; ticket 107): for each changed file in a language the parsers do not read, what its changed lines develop, use, and set. Code keeps an item only when grep finds it in the file, then applies the rule from code to Methods to what it kept.",
+  "type": "object",
+  "required": ["files"],
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "developed", "used", "parameters"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "pattern": "\\S", "description": "the file's path exactly as the prompt gives it"},
+          "developed": {
+            "type": "array",
+            "description": "each function, type, or routine the changed lines define or change that implements part of the research method; leave out plumbing (input and output, plotting, argument parsing, tests)",
+            "items": {
+              "type": "object",
+              "required": ["name", "line"],
+              "additionalProperties": false,
+              "properties": {
+                "name": {"type": "string", "pattern": "\\S", "description": "its name exactly as the file spells it"},
+                "line": {"type": "integer", "minimum": 1, "description": "the line it starts on"},
+                "end_line": {"type": ["integer", "null"], "minimum": 1}
+              }
+            }
+          },
+          "used": {
+            "type": "array",
+            "description": "each call in the changed lines to a library routine that is a named method (a filter, a solver, a statistical test, a decomposition), not an elementary operation",
+            "items": {
+              "type": "object",
+              "required": ["call", "method", "line"],
+              "additionalProperties": false,
+              "properties": {
+                "call": {"type": "string", "pattern": "\\S", "description": "the routine's name exactly as the file calls it"},
+                "method": {"type": "string", "pattern": "\\S", "description": "the method's plain name, as a Methods section would name it"},
+                "aliases": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "other names a Methods section may use for it"},
+                "line": {"type": "integer", "minimum": 1}
+              }
+            }
+          },
+          "parameters": {
+            "type": "array",
+            "description": "each parameter of a developed or used method the changed lines set to something other than its documented default, each default a developed method gives itself, and each sensitive default left unset (an unseeded random state, a solver's default tolerances)",
+            "items": {
+              "type": "object",
+              "required": ["method", "name", "value", "default", "line", "what"],
+              "additionalProperties": false,
+              "properties": {
+                "method": {"type": "string", "pattern": "\\S", "description": "the routine the parameter belongs to, as the file names it"},
+                "name": {"type": "string", "pattern": "\\S", "description": "the parameter's name exactly as the file or the routine's documentation spells it"},
+                "value": {"type": ["string", "null"], "description": "the value as the file writes it; null for a sensitive default left unset"},
+                "default": {"type": ["string", "null"], "description": "the documented default; null when the method gives itself the value"},
+                "line": {"type": "integer", "minimum": 1},
+                "what": {"type": "string", "enum": ["set", "own default", "unseeded", "tolerance"]}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

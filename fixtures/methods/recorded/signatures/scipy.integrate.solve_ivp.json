@@ -1,0 +1,64 @@
+{
+ "params": [
+  {
+   "default": null,
+   "has_default": false,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "fun"
+  },
+  {
+   "default": null,
+   "has_default": false,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "t_span"
+  },
+  {
+   "default": null,
+   "has_default": false,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "y0"
+  },
+  {
+   "default": "'RK45'",
+   "has_default": true,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "method"
+  },
+  {
+   "default": "None",
+   "has_default": true,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "t_eval"
+  },
+  {
+   "default": "False",
+   "has_default": true,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "dense_output"
+  },
+  {
+   "default": "None",
+   "has_default": true,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "events"
+  },
+  {
+   "default": "False",
+   "has_default": true,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "vectorized"
+  },
+  {
+   "default": "None",
+   "has_default": true,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "args"
+  },
+  {
+   "default": null,
+   "has_default": false,
+   "kind": "VAR_KEYWORD",
+   "name": "options"
+  }
+ ]
+}

@@ -1,0 +1,3 @@
+{
+ "error": "ValueError: no signature found for builtin <built-in function default_rng>"
+}

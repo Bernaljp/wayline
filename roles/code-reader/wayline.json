@@ -1,0 +1,19 @@
+{
+  "id": "code-reader",
+  "scope_kind": "global",
+  "capability_summary": "Reads the changed files of a ticket in a language the harness parsers do not read and returns, with no tools, the methods their changed lines develop and use and the parameters they set or leave at a sensitive default, for the rule from code to Methods.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "deeadc7a2529f4791ce17d9182f43586e7630e7df34c7480ada206216b6465df",
+  "may_judge": false,
+  "output_schema": "code_reading",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}

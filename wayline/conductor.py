@@ -144,7 +144,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, sections, software, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, methods, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, sections, software, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -764,6 +764,8 @@ class Conductor:
         self.readings = None
         # The tool runner the push of the code repository's split goes through (decision 17, seam 6); a test records it.
         self.code_run = run_tool
+        self.methods_run = run_tool    # the parsers of the rule from code to Methods (ticket 107); tests replay recordings
+        self.methods_tools = None      # `tools.json` as the machine records it, unless a test hands one in
         # The split the remote last refused, which this run does not push again (it is told to the owner once).
         self._code_rejected = None
         # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
@@ -1572,7 +1574,8 @@ class Conductor:
             difficulty = launched.difficulty if launched.difficulty is not None else entry.get("difficulty", ticket["difficulty"])
             earned, asks = gates.owed_asks(ticket, difficulty, launched.model,
                                            self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung,
-                                           no_diff=identifier in self.view.integrated_empty)
+                                           no_diff=identifier in self.view.integrated_empty,
+                                           code_rule=methods.read_code_rule(worker.session_dir(self.project, identifier, launched.number)))
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -3435,7 +3438,7 @@ class Conductor:
         commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
-            results = list(results) + self._sections_check(attempt)
+            results = list(results) + self._sections_check(attempt) + self._methods_check(attempt)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
             results = list(results) + [simulated]
@@ -3458,6 +3461,27 @@ class Conductor:
         problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
         return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
                  "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
+
+    def _methods_check(self, attempt):
+        """The rule from code to Methods (decision 17, ticket 107) as one acceptance result; none when the diff changed no code.
+
+        A developed method with no `code` tag in a current Methods passage, a used method no Methods passage names, or a
+        parameter with no reason fails it, and the worker is sent back with the list. Code fills each `parameters` entry's
+        value and default into the result, and keeps the entries and `not_methods` beside the attempt's session for the
+        verdict that judges them.
+        """
+        try:
+            outcome = methods.check(self.ledger, attempt.worktree, attempt.result, run=self.methods_run, tools=self.methods_tools,
+                                    policy=self.policy, harness_root=self.harness_root, ticket=attempt.id, attempt=attempt.number)
+        except (methods.MethodsError, OSError) as failure:
+            self.say("  ticket %d: the code-to-Methods check could not read the diff: %s" % (attempt.id, failure))
+            return []
+        if outcome is None:
+            return []
+        if outcome.parameters:  # entries come only from a result that gave some, so it is the envelope's own mapping
+            attempt.result["parameters"] = outcome.parameters
+        methods.write_code_rule(self._attempt_dir(attempt), outcome.code_rule())
+        return [outcome.acceptance_result()]
 
     def _timeout(self):
         timeout = self.policy.get("acceptance_timeout_s", 600)
@@ -4022,7 +4046,7 @@ class Conductor:
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
             tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
-            no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty,
+            no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty, code_rule=methods.code_rule(attempt.result),
         )
         if not asks:
             return

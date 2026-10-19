@@ -1,0 +1,22 @@
+{
+ "params": [
+  {
+   "default": null,
+   "has_default": false,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "x"
+  },
+  {
+   "default": "None",
+   "has_default": true,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "N"
+  },
+  {
+   "default": "-1",
+   "has_default": true,
+   "kind": "POSITIONAL_OR_KEYWORD",
+   "name": "axis"
+  }
+ ]
+}
