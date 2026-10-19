@@ -151,7 +151,15 @@ def _items(book, section):
     passages = [item for item in read_passages(book) if item.get("section") == section]
     if section != RESULTS:
         return passages
-    return sorted(read_findings(book) + passages, key=lambda item: str(item.get("ts") or ""))
+    # Each log keeps its own order; the two merge by when each line came, a line with no time (a finding filed before
+    # findings carried one) taking the time of the line before it in its own log.
+    keyed = []
+    for rank, log in enumerate((read_findings(book), passages)):
+        stamp = ""
+        for index, item in enumerate(log):
+            stamp = max(stamp, str(item.get("ts") or ""))
+            keyed.append((stamp, rank, index, item))
+    return [item for _, _, _, item in sorted(keyed, key=lambda entry: entry[:3])]
 
 
 def section_items(project_or_ledger, section):
@@ -181,7 +189,8 @@ def mark_of(item):
     if standing == UNCHECKED:
         return "[unchecked]"
     if standing == UNVERIFIABLE:
-        return "[unverifiable: %s]" % _one_line(item.get("reason") or "no reason given")
+        reason = _one_line(item.get("reason") or "no reason given").replace("[", "(").replace("]", ")")
+        return "[unverifiable: %s]" % reason
     return None
 
 
@@ -265,6 +274,7 @@ def file_finding(project_or_ledger, record, wave=None, render=True):
     record["heading"] = _one_line(record.get("heading")) or None
     record.setdefault("replaces", None)
     record["objectives"] = list(record.get("objectives") or [])
+    record.setdefault("ts", now_ts())  # what orders it against the inherited Results passages it may replace
     if record.get("evidence") is None:
         record.pop("evidence", None)
     elif record["evidence"] not in EVIDENCE or record["replaces"] is None:

@@ -110,6 +110,26 @@ class TheManuscriptTest(InheritedCase):
                                         "{ref:title:Invented reference Okafor2017}{doc:D1#p2.s1}")
         self.assertNotIn("[@", "".join(item["text"] for item in self.ours()))
 
+    def test_a_rendered_paragraph_still_splits_into_its_sentences_and_the_doc_tag_is_no_word(self):
+        from wayline import provenance
+
+        self.deconstruct()
+        paragraph = next(line for line in self.section("introduction").splitlines() if line.startswith("Lantern"))
+        found = provenance.sentences(paragraph)
+        self.assertEqual([sentence.text[:8] for sentence in found], ["Lantern ", "Why they", "Phase lo"])
+        self.assertTrue(found[0].text.endswith("{doc:D1#p2.s1} [unchecked]"), "the mark stays with its claim")
+        self.assertEqual(provenance.strip_tags(found[0].text),
+                         "Lantern moths gather in dusk swarms whose wingbeats lock together.")
+        self.assertEqual(provenance.strip_tags("Why they synchronize is unknown.{doc:D1#p2.s2}"), "Why they synchronize is unknown.")
+
+    def test_a_citation_after_the_full_stop_stays_with_its_sentence(self):
+        (self.temp / "cited.md").write_text("# Introduction\n\nMoths swarm at dusk. [@Okafor2017] Crickets do not.\n",
+                                            encoding="utf-8")
+        self.add(self.temp / "cited.md")
+        self.deconstruct("D2")
+        self.assertEqual([item["text"] for item in self.ours("D2")],
+                         ["Moths swarm at dusk [@Okafor2017].{doc:D2#p2.s1}", "Crickets do not.{doc:D2#p2.s2}"])
+
     def test_a_work_with_a_doi_or_an_arxiv_id_is_tagged_by_it(self):
         self.assertEqual(inherited.citation_tag({"id": "a", "DOI": "https://doi.org/10.1038/ABC.1", "title": "A"}), "{ref:doi:10.1038/abc.1}")
         self.assertEqual(inherited.citation_tag({"id": "b", "URL": "https://arxiv.org/abs/1802.03426v2", "title": "B"}),
@@ -146,7 +166,7 @@ class RenderingTest(InheritedCase):
         return sections.file_finding(self.project, {"id": "t4-a1-f1", "ticket": 4, "text": text,
                                                     "provenance": ["results/dusk.json#min_r"], "negative": False,
                                                     "heading": "Results", "replaces": replaces, "evidence": evidence,
-                                                    "objectives": [], "ts": "9999-01-01T00:00:00.000Z"})
+                                                    "objectives": []})
 
     def test_the_rendered_section_rejoins_a_paragraph_verbatim_with_each_claim_marked_unchecked(self):
         introduction = self.section("introduction")
@@ -327,6 +347,31 @@ class NewerVersionTest(InheritedCase):
                       self.section("results"))
         self.assertEqual(inherited.deconstruct(self.project, "D1")["written"], [], "taking the same version in again changes nothing")
 
+    def test_unchanged_text_the_newer_version_moves_to_another_section_or_heading_follows_it(self):
+        (self.temp / "notes.md").write_text(self.NOTES, encoding="utf-8")
+        self.add(self.temp / "notes.md")
+        self.deconstruct()
+        newer = self.NOTES.replace("\n\n# Discussion\n\nSize matters.\n", "\n\nSize matters.\n").replace("# Introduction", "# Background")
+        (self.temp / "notes-v2.md").write_text(newer, encoding="utf-8")
+        self.add(self.temp / "notes-v2.md")
+        done = self.deconstruct()
+        self.assertEqual((done["new"], done["withdrawn"], done["retagged"]), (1, 1, 1))
+        self.assertNotIn("Size matters", self.section("discussion"))
+        self.assertIn("The dusk sweep gave R = 0.71.{doc:D1#p5.s1} [unchecked]\n\n<!-- wayline:passage", self.section("results"))
+        self.assertIn("Size matters.{doc:D1#p6.s1} [unchecked]", self.section("results"))
+        self.assertIn("## Background\n\n<!-- wayline:passage", self.section("introduction"))
+        self.assertNotIn("## Introduction", self.section("introduction"))
+
+    def test_a_newer_version_kept_without_pandoc_leaves_the_earlier_passages_and_says_so(self):
+        self.add(MIDWAY / "manuscript-v1.docx")
+        self.deconstruct()
+        self.add(MIDWAY / "manuscript-v2.docx", tools=self.tools_without("pandoc"))
+        done = inherited.deconstruct(self.project, "D1")
+        self.assertEqual(len(self.ours()), 9, "nothing written, nothing withdrawn")
+        record = self.record()["deconstructed"]
+        self.assertEqual((record["version"], record["passages"], record["claims"]), (2, 9, 6))
+        self.assertIn("the inherited passages of version 1 stand", done["reason"])
+
     def test_a_claim_a_ticket_already_answered_keeps_its_answer_when_the_document_changes_around_it(self):
         self.add(MIDWAY / "manuscript-v1.docx")
         self.deconstruct()
@@ -334,7 +379,7 @@ class NewerVersionTest(InheritedCase):
         sections.file_finding(self.project, {"id": "t4-a1-f1", "ticket": 4, "text": "R is lowest at dusk in 38 of 40 colonies.",
                                              "provenance": ["results/dusk.json#min_r"], "negative": False, "heading": "Results",
                                              "replaces": claim["id"], "evidence": "narrows", "objectives": [],
-                                             "ts": "9999-01-01T00:00:00.000Z"})
+                                             })
         self.add(MIDWAY / "manuscript-v2.docx")
         self.deconstruct()
         self.assertIn("R is lowest at dusk in 38 of 40 colonies.", self.section("results"))
@@ -403,6 +448,29 @@ class HeadingsTest(InheritedCase):
         self.assertEqual(done["listed"], [])
         self.assertIn({"locator": "p13", "text": "Field notes", "to": "discussion", "by": "session"},
                       self.record(document_id)["deconstructed"]["headings"])
+
+    def test_under_an_unmapped_top_heading_a_heading_the_table_maps_goes_by_the_table(self):
+        document_id = self.add_text("draft.md", "# Draft\n\nAn author.\n\n# Lantern moth synchrony in dusk swarms\n\n"
+                                                "A claim before any section.\n\n## Introduction\n\nMoths swarm.\n\n"
+                                                "## Methods\n\nColonies were filmed.\n\n## Asides\n\nA claim aside.\n")
+        self.deconstruct(document_id)
+        self.assertEqual([(item["heading"], item["section"]) for item in self.ours(document_id)],
+                         [("Lantern moth synchrony in dusk swarms", "results"), ("Introduction", "introduction"),
+                          ("Methods", "methods"), ("Asides", "results")])
+
+    def test_a_place_that_places_nothing_is_refused_before_anything_is_written(self):
+        document_id = self.add_text("study.md", self.PAPER)
+        for places in ({"Feild notes": "discussion"}, {"Model": "results"}, {"Background": "discussion"}):
+            with self.subTest(places=places), self.assertRaises(inherited.InheritedError) as raised:
+                inherited.deconstruct(self.project, document_id, places=places)
+            self.assertIn("places no heading", str(raised.exception))
+        self.assertEqual(self.passages(), [])
+
+    def test_the_session_can_place_a_subheading_of_an_unmapped_heading(self):
+        document_id = self.add_text("study.md", self.PAPER)
+        self.deconstruct(document_id, places={"p15": "methods"})
+        self.assertEqual([(item["heading"], item["section"]) for item in self.ours(document_id) if item["heading"] in ("Field notes", "Night two")],
+                         [("Field notes", "results"), ("Night two", "methods")])
 
     def test_a_place_outside_the_sections_is_refused(self):
         document_id = self.add_text("study.md", self.PAPER)

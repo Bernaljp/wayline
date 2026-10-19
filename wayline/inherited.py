@@ -73,6 +73,8 @@ _NUMBERING = re.compile(r"^(?:\d+(?:\.\d+)*|[ivxlcIVXLC]+|[A-Z])[.)]?\s+")
 _CAPTION = re.compile(r"^[*_]*(?:Supplementary\s+|Extended\s+Data\s+)?(?:Figure|Fig\.?|Table|Movie|Video|Box)\s+S?\d+[A-Za-z]?\s*[.:|]",
                       re.IGNORECASE)
 _CITATION = re.compile(r"\s*\[((?:[^\[\]]*?@[^\[\]]+))\]")
+# A citation written after its sentence's stop (`dusk. [@a] Next`) is put back before the stop, so it stays with its sentence.
+_AFTER_STOP = re.compile(r"([.!?])((?:\s*\[[^\[\]]*@[^\[\]]+\])+)")
 _CITE_KEY = re.compile(r"@([A-Za-z0-9_][A-Za-z0-9_:.#$%&+?<>~/-]*[A-Za-z0-9_])")
 _SENTENCE_TAIL = re.compile(r"([.!?][\"')\]]*)\s*$")
 _DOC_TAG = re.compile(r"\{doc:[^{}]+\}")
@@ -183,27 +185,48 @@ class _Reading:
         self.document, self.works, self.places = document, works, places or {}
         self.units, self.kept, self.headings = [], [], []
         self.pending = []  # (section, heading, locator, block) of prose and whole blocks, before classification
+        self.used = set()  # the places that placed a heading
         self._walk(text)
+        unused = [key for key in self.places if key not in self.used]
+        if unused:
+            raise InheritedError("--place %s places no heading of %s: a place names a heading the table leaves unmapped, "
+                                 "by its words or its locator in DOCUMENTS.md, whose parent is not placed already"
+                                 % (", ".join(sorted(unused)), document["id"]))
 
     def _place(self, locator, heading_text, parent):
-        """Where a heading's text goes: kept by the tables, after its parent, by the heading table, kept as the
-        document's own title, by the setup session, or under Results as written."""
+        """Where a heading's text goes, in this order: kept by the tables; after a parent that was placed (by the
+        table, the session, or kept); by the heading table; by the setup session; after a parent that only landed
+        under Results for want of a placement; kept as the document's own title; or under Results as written.
+
+        A heading the table maps is never swallowed by an unmapped heading above it (a title the record spells
+        differently), and the session may place a subheading of one.
+        """
         to, part = map_heading(heading_text)
         if to == KEPT:
             return {"to": KEPT, "part": part, "by": "table"}
-        if parent is not None:
+        if parent is not None and parent["by"] != "default":
             return dict(parent, by="parent")
         if to is not None:
             return {"to": to, "part": None, "by": "table"}
+        placed = self._session(locator, heading_text)
+        if placed is not None:
+            return placed
+        if parent is not None:
+            return dict(parent, by="parent")
         if _words(heading_text) and _words(heading_text) == _words(self.document.get("title")):
             return {"to": KEPT, "part": "title", "by": "title"}
-        return self._unmapped(locator, heading_text)
+        return {"to": DEFAULT_SECTION, "part": None, "by": "default"}
+
+    def _session(self, locator, heading_text):
+        for key in (locator, _words(heading_text)):
+            if key in self.places:
+                self.used.add(key)
+                placed = self.places[key]
+                return {"to": placed, "part": "back_matter" if placed == KEPT else None, "by": "session"}
+        return None
 
     def _unmapped(self, locator, heading_text):
-        placed = self.places.get(locator) or self.places.get(_words(heading_text))
-        if placed is not None:
-            return {"to": placed, "part": "back_matter" if placed == KEPT else None, "by": "session"}
-        return {"to": DEFAULT_SECTION, "part": None, "by": "default"}
+        return self._session(locator, heading_text) or {"to": DEFAULT_SECTION, "part": None, "by": "default"}
 
     def _walk(self, text):
         blocks = text_blocks(text)
@@ -250,7 +273,8 @@ class _Reading:
         """A prose block's sentences, or a list's, each with its citations as tags; none for a block of markup."""
         if not (_prose(body) or _listed(body)):
             return []
-        return [_cited(sentence.text, self.works) for sentence in provenance.sentences(" ".join(body.split()))]
+        flat = _AFTER_STOP.sub(lambda found: found.group(2) + found.group(1), " ".join(body.split()))
+        return [_cited(sentence.text, self.works) for sentence in provenance.sentences(flat)]
 
     def plan(self, classes):
         """The units, once each sentence's class is known (`classes` maps a sentence hash to its class)."""
@@ -365,12 +389,17 @@ def deconstruct(project, document_id, places=None, offline=False):
                                  % (", ".join(sections.INHERITED), value, key))
     path = book.path("%s/%s/text.md" % (DOCUMENTS_DIR, document_id))
     if not document.get("converted") or not path.is_file():
-        reason = _not_converted(document)
         with book.lock():
-            _record(book, document_id, lambda done: {"version": document["version"], "reason": reason, "passages": 0, "claims": 0,
-                                                     "headings": [], "kept": [], "moves": list(done.get("moves") or [])})
+            standing = document_passages(book, document_id)
+            earlier = (document.get("deconstructed") or {}).get("version")
+            reason = _not_converted(document) + ("; the inherited passages of version %d stand" % earlier
+                                                 if earlier and any(current for _, current in standing) else "")
+            passages, claims = sum(1 for _, current in standing if current), _standing(standing)
+            _record(book, document_id, lambda done: {
+                "version": document["version"], "reason": reason, "passages": passages, "claims": claims,
+                "headings": list(done.get("headings") or []), "kept": list(done.get("kept") or []), "moves": list(done.get("moves") or [])})
         return {"id": document_id, "version": document["version"], "written": [], "new": 0, "replaced": 0, "withdrawn": 0,
-                "retagged": 0, "passages": 0, "claims": 0, "listed": [reason], "reason": reason,
+                "retagged": 0, "passages": passages, "claims": claims, "listed": [reason], "reason": reason,
                 "said": "%s: nothing deconstructed: %s" % (document_id, reason)}
     reading = _Reading(document, path.read_text(encoding="utf-8"), _works(book, document_id), places)
     classes = provenance.classify(project, reading.sentences(), offline=offline)
@@ -402,33 +431,45 @@ def _take_in(book, document_id, units):
     def add(section, heading, text, **fields):
         written.append(sections.add_passage(book, section, heading, text, by=by, render=False, **fields))
 
-    def new(unit):
-        add(unit.section, unit.heading, unit.text, doc=unit.doc, standing=sections.UNCHECKED if unit.claim else None)
+    def new(unit, standing=None, reason=None):
+        add(unit.section, unit.heading, unit.text, doc=unit.doc, standing=standing or (sections.UNCHECKED if unit.claim else None),
+            reason=reason)
         counts["new"] += 1
+
+    def withdraw(item):
+        add(item["section"], item["heading"], item["text"], replaces=item["id"], doc=item.get("doc"), withdrawn=True)
+        counts["withdrawn"] += 1
+
+    def rewrite(item, unit, standing, reason, count):
+        """The piece again as the newer version has it: in its place, under the newer heading, unless the newer version
+        put it in another section (withdrawn here, new there); a piece the session moved keeps where it was moved."""
+        if item.get("moved_from") or unit.section == item["section"]:
+            heading = item["heading"] if item.get("moved_from") else unit.heading
+            add(item["section"], heading, unit.text, replaces=item["id"], doc=unit.doc, standing=standing, reason=reason)
+            counts[count] += 1
+        else:
+            withdraw(item)
+            new(unit, standing, reason)
 
     matcher = difflib.SequenceMatcher(a=[_plain(item.get("text")) for item, _ in old], b=[unit.plain for unit in units], autojunk=False)
     for operation, low, high, start, end in matcher.get_opcodes():
         if operation == "equal":
             for (item, current), unit in zip(old[low:high], units[start:end]):
-                if current and item.get("doc") != unit.doc:
-                    add(item["section"], item["heading"], unit.text, replaces=item["id"], doc=unit.doc,
-                        standing=item.get("standing"), reason=item.get("reason"))
-                    counts["retagged"] += 1
+                moved = not item.get("moved_from") and (unit.section, unit.heading) != (item["section"], item["heading"])
+                if current and (item.get("doc") != unit.doc or moved):
+                    rewrite(item, unit, item.get("standing"), item.get("reason"), "retagged")
             continue
         pairs = min(high - low, end - start) if operation == "replace" else 0
         for (item, current), unit in zip(old[low:low + pairs], units[start:start + pairs]):
             if current:
-                add(item["section"], item["heading"], unit.text, replaces=item["id"], doc=unit.doc,
-                    standing=sections.UNCHECKED if unit.claim else None)
-                counts["replaced"] += 1
+                rewrite(item, unit, sections.UNCHECKED if unit.claim else None, None, "replaced")
             else:
                 new(unit)  # a ticket's word stands where the earlier text stood; the changed text stands beside it
         for unit in units[start + pairs:end]:
             new(unit)
         for item, current in old[low + pairs:high]:
             if current:
-                add(item["section"], item["heading"], item["text"], replaces=item["id"], doc=item.get("doc"), withdrawn=True)
-                counts["withdrawn"] += 1
+                withdraw(item)
     return counts, written
 
 
