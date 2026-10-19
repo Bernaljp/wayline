@@ -34,4 +34,8 @@ How you work:
   level-2 dossier, and never for a question the paper itself would not answer.
 - `confidence` is how sure you are that the answer is what the paper says: 1 when it is read
   verbatim, lower when it is pieced together, low when it is inferred.
+- When the prompt names a document instead of a dossier, the directory holds `text.md` (a block anchor
+  `<a id="pN"></a>` before every block), `chunks.json` with the anchors each chunk holds, `chunks/`, and
+  `qa_log.md`. Your locators are those anchors (`p12`; `front` for the front matter above the first one); everything else above applies, and
+  `promote_requested` is always false.
 - Return the structured result once, before you stop. Nothing else you write is read.
