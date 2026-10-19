@@ -95,7 +95,8 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   left on the frontier keeps no run going: the owner's answer is what the tick relaunches for.
 - A result's `proposals` and `goal_progress` are written into the ticket's `## Result` section so
   the owner sees them; admission is ticket 37. The worker's own `goal_progress` is never what is kept.
-- Keep-if-better (ticket 39, `wayline.goal`). A ticket whose `goal_metric` reports the goal's metric is
+- Keep-if-better (ticket 39, `wayline.goal`). A ticket whose `goal` names an open goal whose measure has
+  `GOAL.json`'s metric and direction (ticket 81: both are read from the measure in `objectives.json`) is
   measured by `GOAL.json`'s `eval_command` on each seed artifact before its integration: a `done` result in
   its worktree, a `running` one once its jobs exited 0. Fewer seeds than `policy.goal.min_seeds` fail the
   ticket with a request for more. A change whose mean does not beat the best kept value by more than
@@ -142,7 +143,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, pacing, proposals, replay, resources, schedule, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, resources, schedule, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -1062,7 +1063,7 @@ class Conductor:
         """
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         busy = self._busy()
-        goal_tickets = self._goal_tickets()
+        classes = self._objective_classes()
         autonomy = self._autonomy()
         decider = decisions.decider_ready(self.harness_root, self.project)
 
@@ -1074,7 +1075,7 @@ class Conductor:
         def pick():
             return schedule.pick(
                 graph, running=running, slots=max(0, self._slots() - busy), action=self.action,
-                root=self.project, free=self.resources_free, goal_tickets=goal_tickets,
+                root=self.project, free=self.resources_free, classes=classes,
                 held=held, autonomy=autonomy, decider=decider,
             )
 
@@ -1347,13 +1348,24 @@ class Conductor:
                                  % (slots,))
         return slots
 
-    def _goal_tickets(self):
-        """The ids of the tickets that report a goal metric, which the pick order prefers.
+    def _objective_classes(self):
+        """The objective class of every ticket, by id, which the pick order reads after the critical path (ticket 81).
 
-        `graph.json` carries the scheduling fields of decision 2 and `goal_metric` is not one of
-        them, so the ticket files answer this; the conductor reads them for every launch anyway.
+        A ticket serves the objectives it names and the goal it reports; which of them are open is
+        `objectives.json`'s, the one record keep-if-better and the plan read too, and the stopping rule
+        waits on every open one, its default `objectives`, until ticket 87 lands `stop_when`. A record
+        that cannot be read is said and counts no objective open, so every ticket is class 2 and the
+        wave goes on in the order it had before objectives. `graph.json` carries the scheduling fields
+        of decision 2 and `objectives` is not one of them, so the ticket files answer this; the
+        conductor reads them for every launch anyway.
         """
-        return {ticket["id"] for ticket in tickets.read_tickets(self.project) if ticket.get("goal_metric")}
+        try:
+            pursued = {objective["id"] for objective in objectives.open_objectives(self.project)}
+        except objectives.ObjectivesUnreadable as failure:
+            self.say("  %s; the pick order counts no objective open" % failure)
+            pursued = set()
+        return {ticket["id"]: schedule.objective_class(objectives.served(ticket), pursued)
+                for ticket in tickets.read_tickets(self.project)}
 
     # --- the tickets of one wave ---
 
@@ -2143,9 +2155,24 @@ class Conductor:
 
     # --- keep-if-better (ticket 39) ---
 
+    def _goal_of(self, ticket):
+        """`(goal, skip)`: `GOAL.json`, and why keep-if-better does not judge this ticket (None when it does).
+
+        Each file is read once per question. `objectives.json` that cannot be read judges nothing, with the reason,
+        as a `GOAL.json` that states no goal does: an integration never ends on a record it could not read.
+        """
+        if not ticket.get("goal"):
+            return None, "the ticket names no goal"
+        try:
+            records = objectives.read_objectives(self.project)
+        except objectives.ObjectivesUnreadable as failure:
+            return None, str(failure)
+        goal = goals.read_goal(self.ledger)
+        return goal, goals.applies(ticket, goal, records)
+
     def _goal_ticket(self, ticket):
-        """Whether keep-if-better judges this ticket: its `goal_metric` reports the metric `GOAL.json` states."""
-        return bool(ticket.get("goal_metric")) and goals.applies(ticket, goals.read_goal(self.ledger)) is None
+        """Whether keep-if-better judges this ticket: its `goal` names an open goal whose measure is `GOAL.json`'s metric and direction."""
+        return self._goal_of(ticket)[1] is None
 
     def _keep_if_better(self, attempt, root, outputs, fail):
         """The `Judgment` of this attempt's seeds under `root`; None when it is no goal ticket; `failed` once `fail` ran.
@@ -2154,10 +2181,9 @@ class Conductor:
         measured again. A measurement that failed, and one with fewer seeds than the policy asks for,
         fail the ticket through `fail(reason)`.
         """
-        goal = goals.read_goal(self.ledger)
-        skip = goals.applies(attempt.ticket, goal)
+        goal, skip = self._goal_of(attempt.ticket)
         if skip is not None:
-            if attempt.ticket.get("goal_metric"):
+            if attempt.ticket.get("goal"):
                 self.say("  ticket %d: keep-if-better does not run: %s" % (attempt.id, skip))
             return None
         policy = self.policy.get("goal") or {}

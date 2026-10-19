@@ -8,6 +8,7 @@
       "blocked_by": ["7"],
       "touches": [],
       "acceptance": {"machine": []},
+      "objectives": [],
       "context_pack": [],
       "origin": "research/SPEC.md#risks",
       "demo": "the owner answers"

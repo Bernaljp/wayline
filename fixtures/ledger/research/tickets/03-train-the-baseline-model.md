@@ -12,7 +12,8 @@ acceptance:
   quality: []
 proposed_by: planner
 resources: {gpu: 1, cpu: 8, ram_gb: 32, wallclock_minutes: 90}
-goal_metric: {reports: auroc, expected_direction: up}
+objectives: [O1]
+goal: O1
 budget: {max_turns: 100, max_minutes: 90}
 outputs: [results/baseline/summary.json]
 demo: Three seeds of the baseline with held-out AUROC.

@@ -17,19 +17,19 @@ Not part of this ticket:
 
 **Blocked by:** 76 - Objectives: the record and objective add. It blocks 86, 87, 91, 97, 99, and 109.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#228](https://github.com/Bernaljp/wayline/issues/228) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (objectives, goals, and measures: claims and tickets name objectives, `goal` replacing `goal_metric`, every open objective answered by a claim, specify drafting with one open objective; keep-if-better per goal, the stopping rule, and budgets: scheduling's class key; results and the reports: the spec's `summary`; vocabulary the build adds), 10 (specify, the planner), 5 (the conductor's scheduling), the schemas list (`spec` gains `summary` and claims' `objectives`; `ticket` and `plan` gain `objectives` and `goal` replacing `goal_metric`); M8 criterion 1; user stories 102, 103.
 
-- [ ] `wayline specify` drafts with one open objective and refuses with none, naming the question the conversation should ask.
-- [ ] The spec schema has `summary` and claims' `objectives`; the specify session writes both; a claim naming a closed or unknown objective is refused.
-- [ ] A Type-A check at specify fails when an open objective has no claim, or a goal's metric is not among the spec's metrics, naming which.
-- [ ] Ticket and plan schemas have `objectives` and `goal` in place of `goal_metric`; the planner fills them; `goal` names an objective with a measure, and its metric and direction are read from the measure; a ticket naming a closed objective is refused.
-- [ ] Scheduling orders the frontier by the class key (0, 1, 2) after its first key, and the conductor's existing scheduling tests are updated to it.
+- [x] `wayline specify` drafts with one open objective and refuses with none, naming the question the conversation should ask.
+- [x] The spec schema has `summary` and claims' `objectives`; the specify session writes both; a claim naming a closed or unknown objective is refused.
+- [x] A Type-A check at specify fails when an open objective has no claim, or a goal's metric is not among the spec's metrics, naming which.
+- [x] Ticket and plan schemas have `objectives` and `goal` in place of `goal_metric`; the planner fills them; `goal` names an objective with a measure, and its metric and direction are read from the measure; a ticket naming a closed objective is refused.
+- [x] Scheduling orders the frontier by the class key (0, 1, 2) after its first key, and the conductor's existing scheduling tests are updated to it.
 - [ ] Projects and fixtures that carry `goal_metric` are moved to `goal` in the same commit, so nothing reads `goal_metric` afterward.
-- [ ] The schemas list in the spec matches the new fields in the same commit.
-- [ ] Tests: specify and the planner with the fake launcher over a temporary project with objectives (one with a measure); the Type-A check's three outcomes; the schema refusals; the scheduling class over replayed journals.
-- [ ] Prompts and role files for specify and the planner name objectives.
-- [ ] `python -m unittest` passes.
+- [x] The schemas list in the spec matches the new fields in the same commit.
+- [x] Tests: specify and the planner with the fake launcher over a temporary project with objectives (one with a measure); the Type-A check's three outcomes; the schema refusals; the scheduling class over replayed journals.
+- [x] Prompts and role files for specify and the planner name objectives.
+- [x] `python -m unittest` passes.

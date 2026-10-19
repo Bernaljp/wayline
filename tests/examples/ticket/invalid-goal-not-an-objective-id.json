@@ -42,10 +42,10 @@
       "Does the ablation isolate the attention term and nothing else?"
     ]
   },
-  "goal_metric": {
-    "reports": "auroc_b",
-    "expected_direction": "lower"
-  },
+  "objectives": [
+    "O1"
+  ],
+  "goal": "auroc_b",
   "budget": {
     "max_turns": 150,
     "max_minutes": 120
