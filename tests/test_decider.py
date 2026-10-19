@@ -249,13 +249,26 @@ class ObjectivesPromptTest(RecordedGrillCase):
             self.assertIn("OBJECTIVES.md", text)
         self.assertIn("# The radius", prompt)
         self.assertIn("The project's radius is `moderate`", prompt)
-        self.assertIn("`strict`: none", prompt)
+        self.assertIn("`strict`: no objective added", prompt)
 
     def test_the_radius_named_in_harness_json_is_the_one_told(self):
         harness = project.read_harness(self.project)
         harness["radius"] = "strict"
         (self.project / project.HARNESS_JSON).write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
         self.assertIn("The project's radius is `strict`", self.prompt())
+
+    def test_the_radius_bounds_objective_additions_only_once_the_owner_took_the_class_off(self):
+        prompt = self.prompt()
+        self.assertIn("`objective` is a human-only class of this project, so adding, reframing, or reopening an objective", prompt)
+        self.assertNotIn("you may add or reframe an objective", prompt)
+        harness = project.read_harness(self.project)
+        harness["human_only"] = ["data"]
+        (self.project / project.HARNESS_JSON).write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+        records, _ = decider.records_text(self.project)
+        subject = Subject(kind="question", key="Q8", question="Add a prerequisite objective?")
+        told = decider.decider_prompt(worker.read_role(decider.DECIDER), subject, records, harness, self.project)
+        self.assertIn("so you may add or reframe an objective within the radius above", told)
+        self.assertIn("The human-only classes of this project are: `data`, `ladder`.", told)
 
     def test_without_objectives_the_prompt_says_so(self):
         (self.project / "research" / "OBJECTIVES.md").unlink()

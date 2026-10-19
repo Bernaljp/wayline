@@ -501,6 +501,21 @@ class NoMeasureTest(PositionCase):
         self.assertIn("O1 has no measure, so it takes no revised target", self.calls()[1].message)
 
 
+class ObjectivesReadOnceTest(PositionCase):
+    """The memo is asked for, checked against, and kept with the objectives read before the session."""
+
+    def test_an_objective_recorded_during_the_session_is_not_kept_as_one_the_memo_read(self):
+        def respond(request, message):
+            open_objective(self.project, "A question recorded while the critic was reading?")
+            return written(memo())
+
+        self.fake.script(respond=respond, role=position.CRITIC)
+        report = position.position(self.project, scout=self.scout, notify=self.notify)
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual([row["id"] for row in self.record()["objectives"]], ["O1", "O2"])
+        self.assertNotIn("O3", self.text())
+
+
 class NoObjectiveTest(PositionCase):
     """A project with neither objectives nor `GOAL.json` is positioned too: its directions propose the objectives."""
 

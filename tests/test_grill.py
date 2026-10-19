@@ -21,7 +21,7 @@ from wayline.conductor import Conductor
 from wayline.grill import GrillError, answer, frontier, read_records, render_decisions, with_answer, with_question
 from wayline.jsonschema import load_schema, validate
 from wayline.ledger import Heartbeat, Ledger, make_event
-from wayline.objectives import read_objectives
+from wayline.objectives import change_objective, read_objectives
 from wayline.project import init_project, read_harness, set_autonomy
 
 BASELINE = "Which baseline do the claims compare against?"
@@ -244,15 +244,54 @@ class ObjectivesFirstTierTest(GrillCase):
         with self.assertRaises(GrillError):
             answer(self.project, "Q1", "open", "the decider's reading", decided_by="decider", model="claude-opus-4-1")
 
-    def test_a_tree_asked_before_objectives_were_recorded_is_not_seeded_again(self):
+    def test_a_memo_written_after_a_tier_was_asked_is_put_to_the_owner_in_the_next(self):
         for name in ("objectives.json", "position.json"):
             (self.project / "research" / name).unlink()
         self.ok("ask", "How many seeds does a comparison use?", "--recommend", "three")
-        self.ok()
+        self.assertEqual(self.tier()["tier"], 1)
         for name in ("objectives.json", "position.json"):
             shutil.copy(FIRST_TIER / "research" / name, self.project / "research" / name)
         view = self.tier()
-        self.assertEqual([record["question"] for record in view["ask"]], ["How many seeds does a comparison use?"])
+        self.assertEqual((view["tier"], [record["objective"]["id"] for record in view["ask"]]), (2, ["O1", "O2", None]))
+
+    def test_past_the_setup_no_question_is_added(self):
+        Ledger(self.project).append_event("phase", {"from": "P2", "to": "P3"})
+        self.assertEqual(self.tier()["total"], 0)
+        self.assertFalse((self.project / "research" / "DECISIONS.md").exists())
+
+    def test_a_batch_refused_for_a_bad_term_records_no_objective(self):
+        self.ok()
+        batch = dict(self.batch, terms=[{"term": "Products", "definition": "one paragraph.\n\nAnd a second."}])
+        code, out, err = self.grill("--from", "-", stdin=json.dumps(batch))
+        self.assertEqual(code, 2, out + err)
+        self.assertEqual(self.objectives().keys(), {"O1", "O2"})
+        self.assertEqual(self.events("objective"), [])
+        self.assertIsNone(self.records()["Q3"]["answer"])
+
+    def test_a_proposal_answered_and_revised_in_one_batch_is_one_objective(self):
+        self.ok()
+        batch = {"answers": [{"id": "Q3", "answer": "open", "rationale": "the flexible baseline"},
+                             {"id": "Q3", "answer": "parked", "rationale": "later, after the comparison", "revise": True}]}
+        self.ok("--from", "-", stdin=json.dumps(batch))
+        objectives = self.objectives()
+        self.assertEqual(sorted(objectives), ["O1", "O2", "O3"])
+        self.assertEqual(objectives["O3"]["status"], "parked")
+        records = self.records()
+        self.assertEqual((records["Q3"]["objective"]["id"], records["Q4"]["objective"]["id"]), ("O3", "O3"))
+
+    def test_an_objective_closed_since_it_was_asked_is_not_reopened_by_the_grill(self):
+        self.ok()
+        change_objective(self.project, "O2", "dropped", by="owner", answer="the owner dropped it by its own verb")
+        code, out, err = self.grill("--from", "-", stdin=json.dumps(self.batch))
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("O2, which is dropped since it was asked", err)
+        self.assertEqual({key: value["status"] for key, value in self.objectives().items()}, {"O1": "open", "O2": "dropped"})
+        self.assertIsNone(self.records()["Q1"]["answer"], "the batch is refused whole")
+
+    def test_a_question_a_session_typed_in_the_same_words_does_not_break_the_tree(self):
+        self.ok("ask", "Does the project take O1, \"%s\": open or parked?" % GOAL_O1, "--recommend", "open")
+        view = self.tier()
+        self.assertEqual([record["objective"]["id"] for record in view["ask"]], ["O2", None])
 
 
 class AnswerTest(GrillCase):

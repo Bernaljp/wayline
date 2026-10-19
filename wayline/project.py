@@ -54,7 +54,7 @@ __all__ = [
     "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "falls_back_now", "ask_falls_back_at",
     "fable_hold", "fable_falls_back",
     "LADDER_CLASS", "LADDER_CHANGES", "LADDER_CONSENTS", "ladder_consent", "ladder_is_human_only",
-    "human_only_classes_now", "set_ladder_changes", "OBJECTIVE_CLASS", "DEFAULT_HUMAN_ONLY", "human_only_class", "human_only_classes",
+    "human_only_classes_now", "set_ladder_changes", "OBJECTIVE_CLASS", "DEFAULT_HUMAN_ONLY", "human_only_class", "human_only_named",
     "set_model_fallback", "hold_status", "render_hold",
     "steer_ticket", "set_pacing", "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
@@ -1683,7 +1683,7 @@ def human_only_class(name):
     return OBJECTIVE_CLASS if name == OLD_GOAL_CLASS else name
 
 
-def human_only_classes(names):
+def human_only_named(names):
     """`harness.json`'s `human_only` entries as the classes they name, in order, each once, `goal` read as `objective`."""
     return list(dict.fromkeys(human_only_class(name) for name in names or () if isinstance(name, str)))
 
@@ -1694,7 +1694,7 @@ def human_only_classes_now(harness, view=None):
     One reader for the decider's prompt and for whoever opens a decision, so the prompt and the ticket never
     disagree about the class (decision 16). An old `goal` entry is read as `objective` (decision 17).
     """
-    classes = human_only_classes((harness or {}).get("human_only"))
+    classes = human_only_named((harness or {}).get("human_only"))
     if ladder_is_human_only(harness, view) and LADDER_CLASS not in classes:
         classes.append(LADDER_CLASS)
     return classes

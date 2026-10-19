@@ -51,7 +51,7 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, Ledger
 from wayline.provenance import VENUE_PREFIX
 from wayline.objectives import OBJECTIVES_MD
-from wayline.project import DEFAULT_HUMAN_ONLY, ProjectError, human_only_classes_now, policy_for, read_harness
+from wayline.project import DEFAULT_HUMAN_ONLY, OBJECTIVE_CLASS, ProjectError, human_only_classes_now, policy_for, read_harness
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets
 
 __all__ = [
@@ -75,10 +75,11 @@ RESUME_DECISION = (
 PROMPT_ROOM = 20000
 # The least the records get however small the cap: DECISIONS.md whole, at the very least, since it binds the answer.
 RECORDS_MIN = 20000
-# What each radius lets the decider add (decision 17): its additions of objectives are bounded by it, and so is
-# every follow-up it admits. Reopening a parked objective is allowed at every radius.
+# What each radius lets the decider add (decision 17): the objectives it adds or reframes, once the owner took the
+# class `objective` off the human-only list, and the follow-up work it admits (intake.RADIUS says the latter for
+# INTAKE.md; this is the decider's reading of both). Reopening a parked objective is allowed at every radius.
 RADIUS_BOUNDS = {
-    "strict": "`strict`: none; you add no objective and admit only work that traces to a spec claim",
+    "strict": "`strict`: no objective added, and only work that traces to a spec claim",
     "moderate": "`moderate`: a prerequisite, or a narrowing reframe, that an open objective's own work raises, and "
                 "follow-ups that directly probe a claim's failure",
     "exploratory": "`exploratory`: also one new question within the intent per wave, and new directions gated on a novelty check",
@@ -456,8 +457,9 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "",
         "# The radius",
         "",
-        "The project's radius is `%s`. It bounds what you may add: %s. Reopening a parked objective is allowed at every "
-        "radius; whatever else you admit or add stays inside it." % (harness.get("radius"), _radius_bound(harness.get("radius"))),
+        "The project's radius is `%s`. It bounds what you may add: %s." % (harness.get("radius"), _radius_bound(harness.get("radius"))),
+        "",
+        _objective_line(harness),
         "",
     ]
     parts = ["\n".join(lines), records]
@@ -490,6 +492,16 @@ def _classes(harness):
     stated = [name for name in (harness.get("human_only") or []) if isinstance(name, str)]
     classes = human_only_classes_now(dict(harness, human_only=stated or list(DEFAULT_HUMAN_ONLY)))
     return ", ".join("`%s`" % name for name in classes)
+
+
+def _objective_line(harness):
+    """What the decider may do to an objective: nothing that adds, reframes, or reopens one while `objective` is human-only."""
+    if OBJECTIVE_CLASS in human_only_classes_now(dict(harness, human_only=harness.get("human_only") or list(DEFAULT_HUMAN_ONLY))):
+        return ("`objective` is a human-only class of this project, so adding, reframing, or reopening an objective, and "
+                "changing a goal's measure, is the owner's: hand such a decision back with `answer: null` and "
+                "`human_only: true`. The radius above bounds only the work you admit.")
+    return ("The owner took `objective` off the human-only classes, so you may add or reframe an objective within the "
+            "radius above, and reopen a parked one at any radius; changing a goal's measure stays the owner's.")
 
 
 def _radius_bound(radius):

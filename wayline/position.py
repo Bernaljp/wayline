@@ -59,7 +59,7 @@ __all__ = [
 CRITIC = "critic"
 POSITION_SCHEMA = "position"
 POSITION_MD = grill.POSITION_MD
-POSITION_JSON = "position.json"
+POSITION_JSON = grill.POSITION_JSON
 PHASE = "P2"
 SESSIONS = "sessions/position"      # research/sessions/position/<n>
 CRITIC_BUDGET = "medium"            # policy.budget: a read-only memo needs no more turns than a decision
@@ -620,8 +620,10 @@ def _objectives(project):
         raise PositionError(str(failure)) from None
 
 
-def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, say=lambda text: None):
+def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, say=lambda text: None, objectives=None):
     """One critic session on the project, checked but not written: `(memo, envelope, model, fallback_from)`.
+
+    `objectives` are the records the memo is asked for and checked against; None reads `objectives.json`.
 
     An unreadable memo, and a memo that fails `check_memo`, are each returned to the same session once;
     what fails a second time raises `PositionError`. A session a usage window refused raises
@@ -630,7 +632,7 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
     project = Path(project).resolve()
     policy = policy_for(project, harness_root) if policy is None else policy
     harness = read_harness(project)
-    objectives = _objectives(project)
+    objectives = _objectives(project) if objectives is None else objectives
     what = "the critic's position memo"
     model, effort, fallback_from = critic_tier(policy, _falls_back_now(project, policy, fall_back))
     role = worker.read_role(CRITIC, harness_root, project)
@@ -686,18 +688,21 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
     return envelope.structured_output, envelope, envelope.model or model, fallback_from
 
 
-def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None, scout=None, say=lambda text: None):
+def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None, scout=None, say=lambda text: None,
+               objectives=None):
     """Resolve the memo's citations, write `research/position.json` and `research/POSITION.md`, and move to P2.
 
-    Returns the record written.
+    `objectives` are the records the memo was checked against, kept beside it as it read them; None reads
+    `objectives.json`, for a memo written apart from its session. Returns the record written.
     """
     project = Path(project).resolve()
     ledger = Ledger(project)
+    objectives = _objectives(project) if objectives is None else objectives
     kept, dropped, written = verify_citations(project, memo, scout=scout, say=say)
     # The objectives as the memo read them: what `POSITION.md` names beside each row, kept as the memo saw them.
     objectives = [{"id": objective["id"], "text": objective["text"], "status": objective["status"],
                    "measure": describe_measure(objective["measure"]) if objective.get("measure") else None}
-                  for objective in _objectives(project)]
+                  for objective in objectives]
     record = {"memo": memo, "prior_work": kept, "dropped": dropped, "dossiers_written": written,
               "radius": read_harness(project).get("radius"), "objectives": objectives,
               "session_id": session_id, "model": model, "fallback_from": fallback_from}
@@ -786,9 +791,10 @@ def position(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None,
     # No guard on GOAL.json or on objectives (decision 17): a project with no goal is positioned, and its directions propose them.
     if not ledger.path("INTAKE.md").is_file():
         raise PositionError("%s has no research/INTAKE.md; the memo reads it, so run wayline intake first" % project)
+    objectives = _objectives(project)  # read once: the memo is asked for, checked against, and kept with these
     try:
         memo, envelope, model, fallback_from = take_memo(project, harness_root=harness_root, policy=policy,
-                                                         fall_back=fall_back, say=say)
+                                                         fall_back=fall_back, say=say, objectives=objectives)
     except PositionError as failure:
         report.update(stopped=str(failure), failures=failure.failures)
         return report
@@ -802,7 +808,7 @@ def position(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None,
         report["stopped"] = str(failure)
         return report
     record = write_memo(project, memo, session_id=envelope.session_id, model=model, fallback_from=fallback_from,
-                        scout=scout, say=say)
+                        scout=scout, say=say, objectives=objectives)
     report["did"].append("wrote research/%s: %d prior work(s) cited, %d dropped, on %s%s"
                          % (POSITION_MD, len(record["prior_work"]), len(record["dropped"]), model,
                             " in place of fable" if fallback_from else ""))

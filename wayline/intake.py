@@ -68,8 +68,8 @@ RADIUS = {
 # Decision 4: objective and data changes wait for the owner, so these two are never removed. The class `objective`
 # was `goal` before decision 17 and covers goals; a `harness.json` that names `goal` is read as `objective`.
 DEFAULT_HUMAN_ONLY = dict(zip(DEFAULT_CLASSES, (
-    "a decision that changes an objective: adding, parking, dropping, or reframing one, or a goal's measure (its metric, "
-    "target, splits, or the command that measures it).",
+    "a decision that adds, reframes, or reopens an objective, or changes a goal's measure (its metric, target, splits, "
+    "or the command that measures it).",
     "a decision that changes the data: what is used, what is held out, or what may leave the machine.",
 )))
 

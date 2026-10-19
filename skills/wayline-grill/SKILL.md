@@ -30,7 +30,8 @@ to see the tree as it stands.
 ## The first tier: which objectives the project takes
 
 Before it asks a first tier, `wayline grill` adds one question per objective: each one
-`OBJECTIVES.md` holds, open or parked, and each new one the memo's directions propose. Each asks
+`OBJECTIVES.md` holds, open or parked, and each new one the memo's directions propose (a memo
+written after a tier was asked is put to the owner in the next one). Each asks
 whether the project takes it, `open` or `parked`, with a recommendation and the memo's verdict as
 evidence. They are human-only: only the owner answers them, under every autonomy, and while any is
 open the tier asks only them, since every later question builds on which objectives are taken. Put

@@ -18,14 +18,18 @@ that tier's number; a question left unanswered is asked again in the next tier a
 number. Under autonomy `autonomous` the frontier is the decider's (ticket 31), so a tier asks the
 owner only the human-only and irreversible questions, which the decider never resolves (decision 4).
 
-**The first tier settles the objectives** (decision 17; ticket 80). Before the first tier is stamped,
-`wayline grill` adds one question per objective: each open or parked one `objectives.json` holds, and
-each new one the position memo's directions propose. Each asks whether the project takes it, `open`
-or `parked`, is human-only (the owner's at every autonomy), and carries the objective in its record's
-`objective` field. While any of them is open on the frontier, a tier asks only those, and the decider
-takes nothing, since the rest of the tree builds on which objectives the project takes. The owner's
-answer is recorded through the objectives' ledger as an `objective` event: a recorded objective moves
-to the status chosen, and a proposed one is recorded with it, its new id kept on the settled record.
+**The first tier settles the objectives** (decision 17; ticket 80). While the project is in its setup
+(its phase is not past P2), before its first tier and, once the position memo is written, before every
+tier, `wayline grill` adds one question per objective no question names yet: each open or parked one
+`objectives.json` holds, and each new one the memo's directions propose, so a memo written after a tier
+was asked is put to the owner too. Each asks
+whether the project takes it, `open` or `parked`, is human-only (the owner's at every autonomy), and
+carries the objective in its record's `objective` field. While any of them is open on the frontier, a
+tier asks the owner only those, since the questions after them build on which objectives the project
+takes; the decider's share is as it was. The owner's answer is recorded through the objectives' ledger
+as an `objective` event: a recorded objective moves to the status chosen (refused when it was answered,
+dropped, or reframed since it was asked), and a proposed one is recorded with it, its new id kept on
+the settled record and on any revision of it.
 """
 
 import argparse
@@ -196,15 +200,8 @@ def _waiting(records):
 
 
 def decider_share(records):
-    """The frontier's questions the decider resolves under `autonomous`: every open one that is not the owner's (decision 4).
-
-    None while a question of the first tier is open on the frontier: the rest builds on which objectives the
-    project takes, and only the owner says that (ticket 80).
-    """
-    ready = frontier(records)
-    if any(record.get("objective") for record in ready):
-        return []
-    return [record for record in ready if not owners(record)]
+    """The frontier's questions the decider resolves under `autonomous`: every open one that is not the owner's (decision 4)."""
+    return [record for record in frontier(records) if not owners(record)]
 
 
 def superseded_by(records):
@@ -386,7 +383,9 @@ def with_tier(records, autonomy):
 
 # The two answers a question of the first tier takes: the project pursues the objective now, or sets it aside.
 TAKE = ("open", "parked")
-POSITION_JSON = "position.json"
+POSITION_JSON = "position.json"   # the position memo's record, which `wayline.position` writes
+# The phases of the setup, while the first tier's questions are still added (decision 17: setup ends at specify).
+SETUP_PHASES = (None, "P0", "P1", "P2")
 
 
 def _direction_name(index, direction):
@@ -452,12 +451,17 @@ def objective_questions(objectives, memo=None):
 
 
 def with_objective_questions(records, specs):
-    """`records` with the first tier's questions added, each human-only; an objective a question already names is skipped."""
+    """`records` with the first tier's questions added, each human-only.
+
+    An objective a question already names is skipped, and so is one whose question the tree already asks in
+    other words' record (a session that typed it with `grill ask`), so adding them never refuses the tree.
+    """
     named = {(record["objective"].get("id") or _normal(record["objective"]["text"]))
              for record in records if record.get("objective")}
+    asked = {_normal(record["question"]) for record in records}
     for spec in specs:
         key = spec["objective"]["id"] or _normal(spec["objective"]["text"])
-        if key in named:
+        if key in named or _normal(spec["question"]) in asked:
             continue
         records, _ = with_question(records, spec["question"], options=list(TAKE), recommended=spec["recommended"],
                                    evidence=spec["evidence"], human_only=True, objective=spec["objective"])
@@ -465,9 +469,22 @@ def with_objective_questions(records, specs):
     return records
 
 
-def _seeded(project, records):
-    """`records` with the first tier's questions, while no tier has been asked; once one has, the tree as it is."""
-    if _current_tier(records):
+def in_setup(events):
+    """Whether the project is still in its setup: the journal has not moved it past P2 (decision 17)."""
+    phase = None
+    for event in events:
+        if event.get("event") == "phase" and (event.get("payload") or {}).get("to"):
+            phase = event["payload"]["to"]
+    return phase in SETUP_PHASES
+
+
+def _seeded(project, records, events):
+    """`records` with a first-tier question for every objective no question names yet, while the project is in its setup.
+
+    Before the first tier, and after it only once the position memo is written: a tree asked before objectives
+    existed and with no memo since is left as it is.
+    """
+    if not in_setup(events) or (_current_tier(records) and not Ledger(project).path(POSITION_JSON).is_file()):
         return records
     from wayline.objectives import ObjectivesUnreadable, read_objectives  # the objectives module imports the gates
     try:
@@ -481,34 +498,73 @@ def _seeded(project, records):
     return with_objective_questions(records, objective_questions(objectives, memo))
 
 
-def _take_objective(project, record):
+def _objective_of(record, records):
+    """The objective a first-tier record settles: its own, or for a revision of a proposal, the id its first answer recorded."""
+    taken = dict(record["objective"])
+    earlier = _questions(records).get(record.get("supersedes"))
+    while taken.get("id") is None and earlier is not None:
+        taken["id"] = (earlier.get("objective") or {}).get("id")
+        earlier = _questions(records).get(earlier.get("supersedes"))
+    return taken
+
+
+def _check_takes(project, records, identifiers):
+    """Why the first-tier answers in `identifiers` cannot be recorded, before any is: an objective closed since it was asked."""
+    from wayline.objectives import read_objectives  # the objectives module imports the gates
+    held = {objective["id"]: objective for objective in read_objectives(project)}
+    questions = _questions(records)
+    for identifier in identifiers:
+        record = questions[identifier]
+        if not record.get("objective"):
+            continue
+        taken = _objective_of(record, records)
+        if taken.get("id") is None:
+            continue
+        found = held.get(taken["id"])
+        if found is None:
+            raise GrillError("%s asks about %s, which objectives.json does not hold" % (identifier, taken["id"]))
+        if found.get("status") not in TAKE:
+            raise GrillError("%s asks about %s, which is %s since it was asked: the grill takes or parks only an open or parked "
+                             "objective" % (identifier, taken["id"], found.get("status")))
+
+
+def _take_objective(project, record, records):
     """Record the owner's answer to a first-tier question through the objectives' ledger; returns the record to keep.
 
     A recorded objective moves to the status answered; a proposed one is recorded with it, and the record names the
-    id it got. Either way one `objective` event says so, `by: owner`; a parked one keeps the rationale as its answer.
+    id it got (a revision of it changes that objective). Either way one `objective` event says so, `by: owner`; a
+    parked one keeps the rationale as its answer.
     """
-    taken = record.get("objective")
-    if not taken or not _settled(record):
+    if not record.get("objective") or not _settled(record):
         return record
     from wayline.objectives import ObjectiveError, add_objective, change_objective  # the objectives module imports the gates
+    taken = _objective_of(record, records)
     status = record["answer"]
     why = None if status == "open" else record.get("rationale")
     try:
         if taken.get("id"):
             change_objective(project, taken["id"], status, by="owner", answer=why)
-            return record
-        made, _ = add_objective(project, taken["text"], by="owner", status=status, answer=why)
+        else:
+            taken["id"] = add_objective(project, taken["text"], by="owner", status=status, answer=why)[0]["id"]
     except ObjectiveError as failure:
         raise GrillError("%s could not be recorded in the objectives: %s" % (record["id"], failure)) from None
-    return _check(_ordered(dict(record, objective={"id": made["id"], "text": taken["text"]})))
+    if taken == record["objective"]:
+        return record
+    return _check(_ordered(dict(record, objective=taken)))
 
 
-def _with_taken(project, records, record):
-    """`records` and `record` after `_take_objective`, the kept record in its place."""
-    kept = _take_objective(project, record)
-    if kept is record:
-        return records, record
-    return [kept if other is record else other for other in records], kept
+def _with_taken(project, records, identifiers):
+    """`records` after the first-tier answers in `identifiers` are recorded in the objectives, each kept record in its place.
+
+    Every answer is checked before any is recorded, so a refused one leaves the objectives as they were.
+    """
+    _check_takes(project, records, identifiers)
+    for identifier in identifiers:
+        record = _questions(records)[identifier]
+        kept = _take_objective(project, record, records)
+        if kept is not record:
+            records = [kept if other is record else other for other in records]
+    return records
 
 
 # --- CONTEXT.md -----------------------------------------------------------------------------------
@@ -663,7 +719,8 @@ def answer(project, identifier, text, rationale, confidence=None, decided_by="hu
                                       decided_by=decided_by, revise=revise, ts=now_ts(), model=model, fallback_from=fallback_from,
                                       session_id=session_id)
         make_event(DECISION, record_payload(record), ts=record["timestamp"])  # an event the journal refuses writes nothing
-        records, record = _with_taken(project, records, record)
+        records = _with_taken(project, records, [record["id"]])
+        record = _questions(records)[record["id"]]
         _write_records(ledger, records)
         _journal_settled(ledger, records, now=(record["id"],))
         if decided_by == "human":
@@ -786,11 +843,11 @@ def apply_batch(project, batch):
                                           confidence=entry.get("confidence"), revise=entry.get("revise", False), ts=now_ts())
             make_event(DECISION, record_payload(record), ts=record["timestamp"])
             answered.append(record["id"])
-        for identifier in answered:  # every answer checked first, so a refused one recorded no objective
-            records, _ = _with_taken(project, records, _questions(records)[identifier])
         before = context = _read_context(ledger)
         for entry in lists["terms"]:
             context, _ = with_term(context, entry.get("term"), entry.get("definition"), entry.get("avoid"))
+        # Last, once every question, answer, and term is checked, so a refused entry recorded no objective.
+        records = _with_taken(project, records, answered)
         if lists["questions"] or lists["answers"]:
             _write_records(ledger, records)
         if context != before:
@@ -891,14 +948,14 @@ def grill_view(project, stamp=True):
     if stamp:
         with ledger.lock():
             records = read_records(project)
-            settled, now = _settle_from_tickets(project, ledger, _seeded(project, records))
+            settled, now = _settle_from_tickets(project, ledger, _seeded(project, records, ledger.read_events()[0]))
             stamped, tier, asked = with_tier(settled, autonomy)
             if stamped != records:
                 _write_records(ledger, stamped)
                 records = stamped
             _journal_settled(ledger, records, now=now)
     else:
-        records = _seeded(project, read_records(project))
+        records = _seeded(project, read_records(project), ledger.read_events()[0])
         _, tier, asked = with_tier(records, autonomy)
     superseded = superseded_by(records)
     questions = _questions(records)

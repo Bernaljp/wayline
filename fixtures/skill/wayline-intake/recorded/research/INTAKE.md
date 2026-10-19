@@ -52,5 +52,5 @@ None.
 
 The decider never resolves these; they wait for the owner.
 
-- `objective`: a decision that changes an objective: adding, parking, dropping, or reframing one, or a goal's measure (its metric, target, splits, or the command that measures it).
+- `objective`: a decision that adds, reframes, or reopens an objective, or changes a goal's measure (its metric, target, splits, or the command that measures it).
 - `data`: a decision that changes the data: what is used, what is held out, or what may leave the machine.
