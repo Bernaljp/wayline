@@ -1,7 +1,13 @@
 # Intake
 
-What the owner has and what they want, in their own words. `wayline intake` (or the
-`wayline-intake` skill) rewrites this file; until then the headings are the questions.
+What the owner has, in their own words. `wayline intake` (or the `wayline-intake` skill)
+rewrites this file; until then the headings are the questions. Hand over anything, in any form:
+a paragraph, a plan, references as bare identifiers, data pointers, a repository, an earlier
+manuscript or a referee report (those are documents, kept with `wayline document add`).
+
+What the research sets out to answer is not kept here: each objective, and each goal (an
+objective with a measure), is recorded with `wayline objective add` and listed in
+`research/OBJECTIVES.md`.
 
 ## Intent
 
@@ -37,9 +43,5 @@ GPU hours, wall clock, and the usage windows the run may spend.
 
 ## Decisions that stay human-only
 
-Decisions that change the goal or the data, and any class the owner adds.
-
-## Goal
-
-The metric, the target, and the command that measures it, if there is one. This is what
-`GOAL.json` is cut from.
+Decisions that change an objective (a goal's measure among them) or the data, and any class the
+owner adds.

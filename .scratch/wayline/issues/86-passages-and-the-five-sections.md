@@ -42,26 +42,26 @@ Not part of this ticket:
 
 **Blocked by:** 81 - Specify and the plan name objectives. It blocks 88, 89, 90, 91, 93, 98, and 107.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#233](https://github.com/Bernaljp/wayline/issues/233) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Sections and passages"; "Vocabulary the build adds": the `passage` schema and event, `result` gaining `passages`, `ticket` and `plan` gaining `sections`); decisions 1 (the layout: `research/sections/`; `init`), 2 (the event table: `passage`), 5 (the conductor's integration, one at a time under the ledger lock), 10 (the planner's cut: no writing ticket after each analysis), 11 (findings gain `heading`, `replaces`, and `objectives`), the schemas list (`passage`, `result`, `ticket`, `plan`); M8 criterion 4; user stories 116, 117, 118.
 
-- [ ] `init` writes the five section files under `research/sections/`, each with a first-line render stamp, and code re-renders them after every integration.
-- [ ] A result's `passages[]` (`{section, heading, text, replaces}`) are written through the ledger into `research/passages.jsonl` with ids P1 onward, `by`, and the ticket's `objectives`, and are journaled as `passage`.
-- [ ] Findings gain `heading`, `replaces`, and `objectives`. A Results passage is a finding with an F id, and a scope-down's finding replaces the one it narrows.
-- [ ] A replaced passage leaves the rendered file and stays in the log. Two replacements of one passage in one wave are both kept and noted in the section. Arrival order within a heading, the replacement's place, and first-appearance heading order hold.
-- [ ] The plan and ticket schemas gain `sections`, set by kind as decision 17 lists. A Type-A check at acceptance sends a worker back when a declared section got no passage, or when Results got no finding.
-- [ ] Sections never enter a touch set. Tickets adding to one section integrate one at a time in id order under the ledger lock.
-- [ ] A worker's context pack holds, per declared section, each heading with its passages' ids and first sentences, plus the owner's passages in full.
-- [ ] Introduction is seeded at setup from the memo's verified prior work and the specify session's passages on the gap. Code-written passages go through the same ledger call with their `by`.
-- [ ] The planner no longer cuts a writing ticket after each analysis, and a `writing` ticket's touch set is empty and never names `research/`.
-- [ ] Tests:
+- [x] `init` writes the five section files under `research/sections/`, each with a first-line render stamp, and code re-renders them after every integration.
+- [x] A result's `passages[]` (`{section, heading, text, replaces}`) are written through the ledger into `research/passages.jsonl` with ids P1 onward, `by`, and the ticket's `objectives`, and are journaled as `passage`.
+- [x] Findings gain `heading`, `replaces`, and `objectives`. A Results passage is a finding with an F id, and a scope-down's finding replaces the one it narrows.
+- [x] A replaced passage leaves the rendered file and stays in the log. Two replacements of one passage in one wave are both kept and noted in the section. Arrival order within a heading, the replacement's place, and first-appearance heading order hold.
+- [x] The plan and ticket schemas gain `sections`, set by kind as decision 17 lists. A Type-A check at acceptance sends a worker back when a declared section got no passage, or when Results got no finding.
+- [x] Sections never enter a touch set. Tickets adding to one section integrate one at a time in id order under the ledger lock.
+- [x] A worker's context pack holds, per declared section, each heading with its passages' ids and first sentences, plus the owner's passages in full.
+- [x] Introduction is seeded at setup from the memo's verified prior work and the specify session's passages on the gap. Code-written passages go through the same ledger call with their `by`.
+- [x] The planner no longer cuts a writing ticket after each analysis, and a `writing` ticket's touch set is empty and never names `research/`.
+- [x] Tests:
   - the ledger seam over a temporary project: passages and findings written and read back, rendered files asserted on;
   - replayed journals for two tickets adding to one section and two replacing one passage in a wave;
   - the declared-sections check as a Type-A function over a worktree and a result;
   - the context pack asserted on the rendered prompt.
-- [ ] The event table of decision 2 and the schemas list gain these rows in the same commit as the code that writes them.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes the sections and passages.
-- [ ] `python -m unittest` passes.
+- [x] The event table of decision 2 and the schemas list gain these rows in the same commit as the code that writes them.
+- [x] `CHANGELOG.md` under `## Unreleased` describes the sections and passages.
+- [x] `python -m unittest` passes.

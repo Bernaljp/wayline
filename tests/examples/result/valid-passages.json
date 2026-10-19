@@ -1,0 +1,28 @@
+{
+  "ticket_id": 7,
+  "status": "done",
+  "summary": "Analysed the ten seeds of E1.",
+  "findings": [
+    {
+      "text": "The products raise the held-out AUROC by 0.04 on split B.",
+      "provenance": "results/e1/summary.json#auroc",
+      "negative": false,
+      "heading": "Products and the held-out AUROC",
+      "replaces": "t3-a1-f1"
+    }
+  ],
+  "passages": [
+    {
+      "section": "methods",
+      "heading": "Seeds and splits",
+      "text": "Each configuration ran on ten seeds, $s \\in \\{0, \\dots, 9\\}$, against split B.",
+      "replaces": null
+    },
+    {
+      "section": "discussion",
+      "heading": "What the AUROC gain means",
+      "text": "The gain holds only on split B, so it is a narrower claim than C1.",
+      "replaces": "P4"
+    }
+  ]
+}

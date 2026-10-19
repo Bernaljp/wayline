@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, pacing, tickets, worker
+from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, pacing, sections, tickets, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, now_ts
@@ -39,7 +39,7 @@ from wayline.project import NEEDS_HUMAN_NOTES, ProjectError, fable_falls_back, f
 __all__ = [
     "ProvenanceError", "MANIFEST", "FINDINGS", "FINDINGS_MD", "RUN_ID_RE",
     "sha256_of", "read_manifest", "manifest_paths", "register_artifact",
-    "read_findings", "add_finding", "render_findings",
+    "read_findings", "current_findings", "add_finding", "render_findings",
     "commit_threshold_bytes", "oversized_tracked_files",
     "TAG_RE", "RES_TAG_RE", "REF_TAG_RE", "Sentence", "sentences", "parse_tag", "strip_tags",
     "REPORT", "CLAIMS_CACHE", "PROSE_CACHE", "SECTIONS", "SENTENCE_CLASSES", "RECORDS_BEGIN", "RECORDS_END",
@@ -167,6 +167,13 @@ def read_findings(project_or_ledger):
     return findings
 
 
+def current_findings(project_or_ledger):
+    """The findings no later finding replaces, in file order (ticket 106)."""
+    findings = read_findings(project_or_ledger)
+    replaced = {finding.get("replaces") for finding in findings if finding.get("replaces")}
+    return [finding for finding in findings if finding.get("id") not in replaced]
+
+
 def _next_finding_id(findings):
     highest = 0
     for finding in findings:
@@ -191,13 +198,18 @@ def _cited(finding):
     return list(provenance or [])
 
 
-def add_finding(project_or_ledger, text, provenance, ticket, negative=False):
-    """Append one finding to `findings.jsonl`, journal `finding`, and re-render `findings.md`.
+def add_finding(project_or_ledger, text, provenance, ticket, negative=False, heading=None, replaces=None, objectives=()):
+    """Append one finding to `findings.jsonl`, journal `finding`, and re-render `findings.md` and the Results section.
+
+    `replaces` names the id of an earlier finding this one replaces: that one is no longer current,
+    and `current_findings` leaves it out (ticket 106).
 
     `provenance` is one locator or a list of them, each `<manifested path>#<locator>`. Refused
     (raises `ProvenanceError`, without writing anything) when a locator carries no `#<locator>`
     half or its artifact half is not a path in `manifest.json`; register the artifact first. The
     caller (the conductor, for a worker's finding) journals the refusal on the ticket itself.
+    A finding is a Results passage (decision 17): `heading` is the one it stands under, `replaces`
+    the finding a scope-down narrows (refused when no finding has that id), and `objectives` its ticket's.
     """
     book = _ledger(project_or_ledger)
     locators = _locators(provenance)
@@ -210,20 +222,17 @@ def add_finding(project_or_ledger, text, provenance, ticket, negative=False):
             if artifact not in manifested:
                 raise ProvenanceError("provenance %r cites %r, which is not in manifest.json; register_artifact it first" % (locator, artifact))
         findings = read_findings(book)
-        finding = {
+        finding = sections.file_finding(book, {
             "id": _next_finding_id(findings),
             "ticket": ticket,
             "text": text,
             "provenance": locators,
             "negative": bool(negative),
+            "heading": heading,
+            "replaces": replaces,
+            "objectives": list(objectives or []),
             "ts": now_ts(),
-        }
-        book.append_line(FINDINGS, json.dumps(finding, ensure_ascii=False))
-        book.append_event(
-            "finding",
-            {"id": finding["id"], "ticket": ticket, "text": text, "provenance": locators, "negative": finding["negative"]},
-            ticket=ticket,
-        )
+        })
         render_findings(book)
     return finding
 

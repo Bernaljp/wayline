@@ -13,6 +13,16 @@
     "recommended": {"type": ["string", "null"]},
     "evidence": {"type": "array", "items": {"type": "string"}},
     "requires": {"type": "array", "items": {"type": "string", "pattern": "^Q[1-9][0-9]*$"}, "description": "the questions whose answers this one waits on; a tier asks it only once they are settled"},
+    "objective": {
+      "type": ["object", "null"],
+      "required": ["id", "text"],
+      "additionalProperties": false,
+      "description": "a question of the grill's first tier (decision 17; ticket 80): whether the project takes this objective, open or parked; id is the objective's, or null for one the position memo proposed until the owner's answer records it",
+      "properties": {
+        "id": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$"},
+        "text": {"type": "string", "pattern": "\\S"}
+      }
+    },
     "blocking": {"enum": ["subgraph", "all", null]},
     "human_only": {"type": "boolean"},
     "tier": {"type": ["integer", "null"], "minimum": 1, "description": "the grill tier that first asked it; null until a tier does"},

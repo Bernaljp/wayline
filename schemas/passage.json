@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "passage",
+  "description": "One line of research/passages.jsonl (Implementation Decision 17; ticket 86): a piece of a section's text with who contributed it, written only by code through the ledger. Results is written as findings in findings.jsonl, so a passage never names it.",
+  "type": "object",
+  "required": ["id", "section", "heading", "text", "replaces", "by", "objectives", "ticket", "wave", "ts"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^P[1-9][0-9]*$", "description": "P1 onward, never reused"},
+    "section": {"type": "string", "enum": ["introduction", "discussion", "methods", "references"]},
+    "heading": {"type": "string", "pattern": "\\S", "description": "the heading it stands under in its section"},
+    "text": {"type": "string", "pattern": "\\S", "description": "Markdown with LaTeX math, from one claim to a paragraph; a claim sentence ends with its provenance tag"},
+    "replaces": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the passage of the same section this one replaces, which then leaves the rendered file and stays here"},
+    "by": {"type": "string", "pattern": "^(t[1-9][0-9]*-a[1-9][0-9]*|owner|document:[A-Za-z0-9._-]+|step:[a-z][a-z0-9-]*|objective:O[1-9][0-9]*|consolidation)$", "description": "who contributed it: a ticket's attempt (t3-a1), the owner, a document, a front-door step (step:position, step:specify), an answered objective, or a consolidation"},
+    "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the objectives of the ticket that wrote it; empty for one no objective asked for"},
+    "ticket": {"type": ["integer", "null"], "minimum": 1, "description": "the ticket that wrote it, or null"},
+    "wave": {"type": ["string", "null"], "description": "the conductor's wave it was integrated in (run and number), or null outside a run; two replacements of one passage in the same wave are both kept"},
+    "ts": {"type": "string", "pattern": "\\S"}
+  }
+}

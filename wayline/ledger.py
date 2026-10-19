@@ -1,7 +1,7 @@
 """The ledger: the only code that writes under a project's `research/` (Implementation Decisions 2).
 
 Every other module returns structured values and the ledger writes them: JSON and markdown by
-write-to-temp-then-rename, `journal.jsonl` and the other line files by append. Every write takes
+write-to-temp-then-rename, `journal.jsonl` and the other line files (`findings.jsonl`, `passages.jsonl`) by append. Every write takes
 `fcntl.flock` on `research/.lock`, because the conductor, the tick, the dashboard, and the CLI
 verbs are separate processes that all write through this module; inside one process the same
 lock is shared by every Ledger of the same project and by every thread, so it is re-entrant for
@@ -108,6 +108,7 @@ MARKED = "marked"  # one mark or note on one item of a batch (decision 17; ticke
 DOCUMENT = "document"  # one document kept, or a newer version of it, in research/documents.json (decision 17; ticket 84)
 CODE_PUSHED = "code_pushed"  # code pushed `code/`'s split to the code repository's remote (decision 17; ticket 85)
 TOOL_INSTALLED = "tool_installed"  # a project's tool installed, licensed software recorded, or either failing (decision 17; ticket 82)
+PASSAGE = "passage"  # one passage of a section written to research/passages.jsonl (decision 17; ticket 86)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -240,6 +241,10 @@ K_TOOLS = "tools"  # `job_launched`: the name, version, and lock digest of every
 K_ENVIRONMENT = "environment"  # `job_launched`: the environment the job runs in, shared, conda, venv, or container (ticket 83)
 K_NAME = "name"
 K_OUTCOME = "outcome"
+K_SECTION = "section"  # `passage`: the section it is part of
+K_HEADING = "heading"  # `passage`, `finding`: the heading it stands under
+K_REPLACES = "replaces"  # `passage`, `finding`: the id of the one it replaces, or null
+K_OBJECTIVES = "objectives"  # `passage`, `finding`: the objectives of the ticket that wrote it
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -267,7 +272,7 @@ EVENTS = {
     TICKET_RERUN: (K_TICKET, K_BY),
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
     VERDICT: (K_SUBJECT_KIND, K_SUBJECT, K_VERDICT_TYPE, K_PASS, K_SESSION_ID, K_MODEL, K_FINDINGS, K_RUNG, K_FALLBACK_FROM, K_MODEL_RAN),
-    FINDING: (K_ID, K_TICKET, K_TEXT, K_PROVENANCE, K_NEGATIVE),
+    FINDING: (K_ID, K_TICKET, K_TEXT, K_PROVENANCE, K_NEGATIVE, K_HEADING, K_REPLACES, K_OBJECTIVES),
     PROGRESS: (K_METRIC, K_VALUE, K_TICKET, K_RUN_ID, K_KEPT),
     DISCARDED: (K_TICKET, K_METRIC, K_BEST, K_SD, K_SEEDS),
     PROPOSAL_ADMITTED: (K_ID, K_FROM, K_KIND, K_TICKET),
@@ -302,6 +307,7 @@ EVENTS = {
     DOCUMENT: (K_ID, K_TITLE, K_KIND, K_VERSION, K_CONVERTER, K_BY),
     CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
     TOOL_INSTALLED: (K_TICKET, K_NAME, K_OUTCOME, K_VERSION, K_ATTEMPT, K_REASON),
+    PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -339,6 +345,7 @@ PAYLOAD_ENUMS = {
     # The session's sort (`wayline document add --kind`), or code's cautious guess at a file dropped with no session.
     (DOCUMENT, K_BY): ("session", "code"),
     (TOOL_INSTALLED, K_OUTCOME): ("installed", "recorded", "failed"),
+    (PASSAGE, K_SECTION): ("introduction", "discussion", "methods", "references"),
 }
 
 

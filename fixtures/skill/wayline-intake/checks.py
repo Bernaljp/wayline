@@ -12,7 +12,7 @@ from wayline.dossier import intake_references
 from wayline.jsonschema import load_schema, validate
 
 SECTIONS = ["Intent", "References", "Data", "Code", "Constraints", "Autonomy", "Radius", "Budgets",
-            "Decisions that stay human-only", "Goal"]
+            "Decisions that stay human-only"]
 
 
 def _sections(root):
@@ -56,6 +56,6 @@ def data_pointer_is_listed(root):
 def harness_records_the_intake(root):
     harness = json.loads((Path(root) / "harness.json").read_text(encoding="utf-8"))
     problems = ["harness.json %s: %s" % (error.path, error.message) for error in validate(harness, load_schema("harness"))]
-    if harness.get("human_only", [])[:2] != ["goal", "data"]:
-        problems.append("harness.json human_only is %r; goal and data come first and always" % harness.get("human_only"))
+    if harness.get("human_only", [])[:2] != ["objective", "data"]:
+        problems.append("harness.json human_only is %r; objective and data come first and always" % harness.get("human_only"))
     return problems

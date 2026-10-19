@@ -28,6 +28,14 @@ refuses a project made before it, which keeps its old tag or starts again on the
 
 ## Unreleased
 
+- Consulting one document (ticket 94; Implementation Decision 17). `wayline consult D1 "<question>"` takes a
+  document id as well as a dossier slug. The document's `text.md` is cut into chunks of whole blocks under
+  `policy.absorb.chunk_max_chars` (`documents/<id>/chunks/`, listed in `chunks.json`, rebuilt when the text
+  changes or a newer version is taken in), the consultant reads that directory, and its locators are block
+  anchors (`p12`). The exchange goes to `documents/<id>/qa_log.md`, is journaled as `consulted` with the id in
+  `slug`, and counts against the ticket's question limit. An unknown id or a document with no text is refused
+  in one line.
+
 **Breaking:** `research_version` 2 (Implementation Decision 17). A project made on v1.0.x is refused, never migrated:
 `wayline upgrade` to this release changes nothing and names the two ways on (`wayline upgrade --to v1.0.1`, or a new
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
@@ -35,6 +43,19 @@ lists it read-only, marked with its tag.
 
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
+
+- `REPRODUCE.md` and the locks (ticket 106; Implementation Decision 17). After a wave that changed `code/` or ran a job a
+  current finding cites (or changed which runs the findings cite), and only then, code renders into `code/`:
+  `REPRODUCE.md` and `reproduce.json`, which list per result each run its current findings cite with its command, the
+  commit of `main` it ran at, its inputs, outputs (with SHA-256), wall-clock time, and hardware (the GPUs it held);
+  `locks/<commit>/`, the package locks (`requirements.lock`, `renv.lock`, the Julia `Project.toml` and `Manifest.toml`,
+  `octave-packages.lock`) as they stood at each commit a cited run ran at, not as installed now, and `locks/tools.json`,
+  every tool a cited job called with the version and lock digest its job record carries; and `README.md`, rendered from
+  the records, keeping word for word the owner's part between `<!-- wayline:owner -->` and `<!-- /wayline:owner -->`
+  (a README with no markers, such as an absorbed clone's, becomes that part whole). The files are committed with the
+  wave and go out with the code repository's next push; none names a path under `research/`, `jobs/`, or `results/`.
+  A finding may name the finding it `replaces` (the worker result schema and `provenance.add_finding`); a replaced
+  finding is no longer current, so its runs drop out.
 
 - `code/` and the code repository (ticket 85; Implementation Decision 17). Everything a project publishes lives
   under `code/`: the package or scripts, the tests, the environment locks, `README.md`, and `LICENSE`. The new
@@ -351,6 +372,66 @@ lists it read-only, marked with its tag.
   as the plan, and a collaborator's list of experiments as a critique. The tests replay the tool runner's
   recordings of pandoc, `pdftotext`, LibreOffice, and docling on the synthetic documents of `fixtures/midway/` and
   `fixtures/documents/` (`fixtures/documents/record.py` makes them).
+
+- The front door reads objectives (ticket 80; Implementation Decisions 17, 10, and 1). A project with no metric
+  gets through intake, position, and the grill, and a question that must be answered first can lead.
+  - Intake takes information only: `INTAKE.md` loses its `Goal` section, `wayline intake --goal`, `--sample`, and
+    `--rationale` are gone, and a spec that carries `goal`, `sample`, or `rationale` is refused naming
+    `wayline objective add`, which records an objective and, with a measure checked on a sample, a goal.
+    `INTAKE.md` and its template say so.
+  - `wayline position` no longer needs `GOAL.json`: the critic reads `INTAKE.md`, `OBJECTIVES.md`, and the
+    dossiers. The memo's `goal_feasibility` becomes `objectives`, one row per open or parked objective with a
+    verdict (`reachable`, `uncertain`, `out_of_reach`), the reasoning, and a revised target for a goal only, and
+    each of the three directions names the objectives it would pursue, by id or as a new question, as
+    proposals. `POSITION.md` renders an `## Objectives` section and each direction's objectives;
+    `wayline status`, the notice, and the dashboard read `objectives O1 uncertain (revised target 0.83), ...`.
+  - The grill's first tier settles which objectives the project takes. While the project is in its setup (not
+    past P2), `wayline grill` adds, before the first tier and before every tier once the position memo is written,
+    one human-only question per open or parked objective and per
+    objective the memo proposes that no question names yet, answered `open` or `parked`; while any is open a tier
+    asks the owner only those. Each answer is recorded through the objectives' ledger as an `objective` event
+    `by: owner` (a proposal becomes a new objective, its id kept on the record's new `objective` field in
+    `DECISIONS.md` and on any revision of it); an objective answered, dropped, or reframed since it was asked is
+    refused, and a batch is checked whole before any objective is written.
+  - The decider reads `OBJECTIVES.md` in place of `GOAL.json`, and the project's radius with what each radius
+    lets it add, an objective only once the owner took `objective` off the human-only classes. The human-only
+    class `goal` is now `objective`, which covers goals: `init` writes
+    `["objective", "data"]`, and a `harness.json` that names `goal` is read as `objective` (and rewritten so by
+    the next intake). The irreversible list the decider is told says a goal's measure, not the goal.
+  - The conductor's goal check and keep-if-better still read `GOAL.json` where present, until ticket 87.
+
+- Passages and the five sections (ticket 86; Implementation Decisions 17, 1, 2, 5, 10, and 11). The paper's five
+  **sections**, `research/sections/introduction.md`, `results.md`, `discussion.md`, `methods.md`, and
+  `references.md`, exist from `wayline init` and are rendered by code (`wayline/sections.py`) after every
+  integration; no model edits them. Each file opens with a one-line render stamp (`<!-- wayline:render {...} -->`:
+  the section, when, the last passage or finding id seen, the body's sha256), and a render that changes nothing
+  keeps the file. A ticket result gains `passages[]`, each `{section, heading, text, replaces}`, which the conductor
+  writes through one ledger call once the ticket's work is on `main`: `research/passages.jsonl` (schema `passage`)
+  with ids P1 onward, `by` naming the ticket's attempt (`t3-a1`), the owner, a document, a front-door step, an
+  answered objective, or a consolidation, the ticket's `objectives`, and the wave, journaled as the new `passage`
+  event. A **finding** is a Results passage: findings keep `findings.jsonl` and their ids and gain `heading` (the
+  ticket's title when none is named), `replaces`, and `objectives`, on the line and on the `finding` event, and
+  `results.md` renders from them. A replaced passage leaves its section and stays in the log; within a heading
+  passages keep their arrival order and a replacement takes the place of what it replaces; headings keep their
+  first-appearance order; two replacements of one passage in the same wave are both kept and the section notes it,
+  and a later wave's replacement replaces what stands in the place. The ticket and plan schemas gain `sections`,
+  set by kind (`code` and `experiment` Methods, `analysis` Methods and Results, `lit` Introduction, `writing` what
+  it writes, the rest none); the plan returns a ticket declaring another set, and a `writing` ticket with a touch
+  set or no section, and a `writing` ticket needs no machine criterion. A Type-A check in the worktree's acceptance
+  sends the worker back when a declared section got no passage (Results: no finding) or a `replaces` names nothing
+  its section holds. Sections never enter a touch set: tickets adding to one section run in the same wave and are
+  written one at a time in id order under the ledger lock. A worker's prompt carries, per declared section, its
+  headings with each passage's id and first sentence, and the owner's passages in full. The Introduction is seeded
+  by code from the position memo's verified prior work (`step:position`, one passage per row, each tagged
+  `{ref:<slug>#<locator>}`) and, once the spec is confirmed, from the spec's new `gap` passages (`step:specify`).
+  The planner no longer cuts a `writing` ticket after each analysis. A review pass fixed these before the ticket
+  landed: a `running` result's passages are written when its jobs close and its change is kept, never at its
+  integration (a discarded or failed run adds none); a discarded change's negative findings replace nothing; a
+  later replacement of a passage replaced twice over replaces what renders now, and a same-wave note leaves once the
+  passages it names no longer both render; a memo taken again or an amended spec rewords its seeded passage (keyed by
+  the reference, or by the heading) rather than adding one beside it; the sections part of a prompt keeps to the
+  tier's context cap; the ticket file's `## Result` lists the passages, which is what a verdict on a `writing` ticket
+  reads; and Results is re-rendered when a discarded run's findings are filed.
 
 ## v1.0.0 (2026-09-27)
 

@@ -1,11 +1,11 @@
 {
   "id": "decider",
   "scope_kind": "global",
-  "capability_summary": "Resolves one open decision after the autonomy switch from DECISIONS.md, POSITION.md, GOAL.json, the dossiers, and the query pack, with rationale and confidence; read-only, never on the irreversible list.",
+  "capability_summary": "Resolves one open decision after the autonomy switch from DECISIONS.md, POSITION.md, OBJECTIVES.md and the radius, the dossiers, and the query pack, with rationale and confidence; read-only, never on the irreversible list.",
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "large",
   "fixtures": [],
-  "sha256": "6e83c647c83d7d0487d0750ff94c6895ccc45bb41696106981af37187e601205",
+  "sha256": "3ef32a5984b94fba6e753d687aed7beb5eb436c8d932bad55a1937c69b130064",
   "may_judge": false,
   "output_schema": "decision",
   "allowed_tools": ["Read", "Glob", "Grep"],

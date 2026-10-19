@@ -17,7 +17,7 @@ from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase, fable_policy, open_goal, open_objective
-from wayline import cli, decider, gates, grill, objectives, project, specify, tickets, worker
+from wayline import cli, decider, gates, grill, objectives, project, sections, specify, tickets, worker
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
 
@@ -312,7 +312,7 @@ class DraftTest(SpecifyCase):
         self.assertEqual(request.allowed_tools, ["Read", "Glob", "Grep"])
         self.assertEqual(request.cwd, self.project.resolve())
         for text in ("## research/DECISIONS.md", "What does the goal become", "## research/POSITION.md", "The hostile reviewer",
-                     "## research/GOAL.json", '"held_out_split": "split_b"', "## research/kb/query_pack.md",
+                     "## research/OBJECTIVES.md", "## research/kb/query_pack.md",
                      "paper-a extends paper-b", "paper-b", "## Specify", "# The spec", "confirmed_by"):
             self.assertIn(text, request.prompt)
         self.assertNotIn("## Plan", request.prompt)
@@ -633,6 +633,20 @@ class InteractiveTest(SpecifyCase):
         self.assertEqual((decision["payload"]["ticket"], decision["payload"]["answer"], decision["payload"]["decided_by"],
                           decision["payload"]["rationale"]), (None, "spec %s: confirm" % sha, "human", "matches the grill"))
         self.assertEqual(self.phases(), [(None, "P3"), ("P3", "P4")])
+
+    def test_the_gap_passages_reach_the_introduction_once_the_spec_is_confirmed(self):
+        """Ticket 86: the specify session writes the Introduction's passages on the gap, which code writes at the confirmation."""
+        gap = [{"heading": "The gap", "text": "No work compares the products on a set whose labels do not depend on them.{ref:paper-a#relation_to_intent}"}]
+        self.script(planned(draft(gap=gap)))
+        self.specify()
+        self.assertEqual(sections.read_passages(self.project), [], "a draft not yet confirmed writes no passage")
+        code, _, err = run("specify", "confirm", "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        [seeded] = sections.read_passages(self.project)
+        self.assertEqual((seeded["section"], seeded["heading"], seeded["by"]), ("introduction", "The gap", "step:specify"))
+        self.assertIn("No work compares the products", (self.project / "research" / "sections" / "introduction.md").read_text(encoding="utf-8"))
+        specify.advance(self.project)
+        self.assertEqual(len(sections.read_passages(self.project)), 1, "a second read of the confirmation seeds nothing")
 
     def test_the_owner_asks_for_a_change_in_the_session(self):
         self.script(planned(draft()), planned(draft(title="Products on the synthetic set")), verdicts=(verdict(), verdict()))

@@ -1,6 +1,6 @@
 ---
 name: wayline-intake
-description: "Phase P0 of a wayline run. Turns whatever the owner has (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) into research/INTAKE.md, the autonomy, radius, fallback consent, ladder consent, budgets, and human-only classes in harness.json, and research/GOAL.json when a quantitative goal is stated and a script can measure it. Use it at the start of a project, and whenever the owner wants to add or replace the goal."
+description: "Phase P0 of a wayline run. Turns whatever the owner has (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) into research/INTAKE.md and the autonomy, radius, fallback consent, ladder consent, budgets, and human-only classes in harness.json; information only, so each objective, and each goal with its measure, is recorded with wayline objective add. Use it at the start of a project."
 ---
 
 # Intake
@@ -79,10 +79,11 @@ the same way, and the verb records it as such.
   no consent and behaves as `ask`.
 - **Radius**: `strict`, `moderate` (the default), or `exploratory`.
 - **Budgets**: GPU hours, wall clock hours, and the usage windows the run may spend.
-- **Decisions that stay human-only**: the classes the decider never resolves. `goal` and `data`
-  are always there; the owner may add classes, and is told that each one added is a decision the
-  run waits on under `autonomous`.
-- **Goal**: what `GOAL.json` holds, or why there is none.
+- **Decisions that stay human-only**: the classes the decider never resolves. `objective` (which
+  covers a goal's measure) and `data` are always there; the owner may add classes, and is told that
+  each one added is a decision the run waits on under `autonomous`.
+
+What the owner wants answered is not a section: it is recorded as objectives (below).
 
 ## Writing it
 
@@ -102,8 +103,7 @@ wayline intake --intent "the owner's paragraph" --plan plan.md \
   --human-only "baselines: which baselines the claims are compared against"
 ```
 
-With the owner in the conversation, the same answers can go in as one JSON spec on stdin; a goal
-goes in a file for `--goal`, or inside the spec:
+With the owner in the conversation, the same answers can go in as one JSON spec on stdin:
 
 ```bash
 wayline intake --from - <<'EOF'
@@ -117,8 +117,7 @@ wayline intake --from - <<'EOF'
  "constraints": ["no GPU before October"],
  "autonomy": "checkpoints", "radius": "moderate", "model_fallback": "ask", "ladder_changes": "ask",
  "budgets": {"gpu_hours": 10, "wallclock_hours": 48, "usage_windows": 4},
- "human_only": ["baselines: which baselines the claims are compared against"],
- "goal": null, "sample": null}
+ "human_only": ["baselines: which baselines the claims are compared against"]}
 EOF
 ```
 
@@ -127,32 +126,39 @@ than a guess, and keeps the project's current autonomy, radius, and fallback con
 run it. The verb prints what it wrote; read `research/INTAKE.md` back and tell the owner what it
 says and what you assumed.
 
-## The goal
+## Objectives and goals
 
-Only when the owner states a quantitative goal, as the spec's `goal`:
+The intake takes information only: it records no goal, and a spec that carries `goal`, `sample`, or
+`rationale` is refused. What the owner wants answered is an objective, a question the research
+sets out to answer; a goal is an objective with a measure that code checks. The conversation
+records each one the owner states, in their words, with its own verb, as a command of its own:
 
-```json
-{"metric": "auroc", "direction": "up", "target": 0.9, "dataset_or_split": null,
- "held_out_split": "split_b", "eval_command": "python eval.py --predictions {artifact}",
- "baseline": {"value": null, "source": null},
- "budget": {"gpu_hours": null, "wallclock": null, "usage_windows": null}, "stop_when": "goal_reached"}
+```bash
+wayline objective add "Do pairwise products raise held-out AUROC on the synthetic set?"
 ```
 
-`direction` is `up` or `down`; `wallclock` is hours; `stop_when` is `goal_reached` or `graph_empty`;
-a baseline number always carries its source. A goal is only a goal when code can measure it:
-`eval_command` is a script the harness can run on an artifact a ticket can produce, and the verb
-runs it on the `sample` artifact before writing anything (`{artifact}` is replaced by the sample's
-path, which is also in `WAYLINE_ARTIFACT`). The command has to print the metric: a JSON object with
-the metric's key, a line `auroc: 0.83`, or the number alone on the last line.
+Only when the owner states a quantitative goal, give its measure in a file and an artifact to check
+it on:
 
-A command that is missing, that fails, or that prints no number means no goal. The verb exits 1,
-says which of the three it was, and writes the intake without the goal. A rejected goal is not a
-failed intake: tell the owner the reason and what they would have to give for the goal to stand,
-and the run proceeds without a number.
+```bash
+wayline objective add "Do pairwise products raise held-out AUROC?" --measure measure.json --sample <artifact>
+```
 
-`wayline intake --goal goal.json --sample <artifact>` adds or replaces the goal later, on its own.
-It runs the same check, updates the Goal section, and journals the goal as a decision made by the
-human; pass `--rationale` with the owner's reason when they gave one.
+```json
+{"metric": "auroc", "direction": "up", "target": 0.9, "held_out_split": "split_b",
+ "eval_command": "python eval.py --predictions {artifact}", "baseline": {"value": null, "source": null},
+ "dataset_or_split": null, "min_seeds": null}
+```
+
+`direction` is `up` or `down`; `target` may be null (keep improving); a baseline number always
+carries its source. The verb runs `eval_command` on the sample artifact (`{artifact}` is its path,
+also in `WAYLINE_ARTIFACT`), and the command has to print the metric: a JSON object with the
+metric's key, a line `auroc: 0.83`, or the number alone on the last line. A command that is
+missing, that fails, or that prints no number records the objective without a measure and says
+why: tell the owner the reason and what they would have to give for the goal to stand. An
+objective has at most one measure; a second metric is a second objective. Read
+`research/OBJECTIVES.md` back with each id. Which objectives the project takes, open or parked, the
+grill's first tier settles with the owner.
 
 ## How you work
 

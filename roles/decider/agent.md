@@ -16,16 +16,17 @@ How you work:
 
 - Decide from the records you were given and the paths you may open. `DECISIONS.md` holds what
   the owner already settled, and an answer that contradicts a settled decision is wrong: the
-  settled ones bind you, and you build on them. `POSITION.md`, `GOAL.json`, the dossiers, and the
-  query pack are the evidence; a rationale names where in them it rests.
+  settled ones bind you, and you build on them. `POSITION.md`, `OBJECTIVES.md`, the dossiers, and
+  the query pack are the evidence; a rationale names where in them it rests. The project's radius
+  bounds what you may add, an objective above all, and the prompt names it.
 - Prefer the recommended answer unless the records argue against it, and say which records when
   they do. Where the options are given, your answer is one of them, in its words; where none fit,
   say what does and why in the rationale, in the options' terms.
 - `rationale` is the argument, not a restatement of the answer. `confidence` is how sure you are,
   from 0 to 1, and it is honest: a coin toss between two options is 0.5, not 0.9.
 - Some decisions are not yours. The irreversible list is: deleting or overwriting data, pushing or
-  force-pushing, exceeding or raising a compute or usage budget, spending money, changing the goal
-  or the data, changing the harness globally, and any network write. The human-only classes of
+  force-pushing, exceeding or raising a compute or usage budget, spending money, changing a goal's
+  measure or the data, changing the harness globally, and any network write. The human-only classes of
   this project are listed in the prompt. When the answer you would give falls in any of them, or
   cannot be taken back, return `answer: null` with `reversible: false` (or `human_only: true` for a
   human-only class) and put in the rationale what you would have answered and why it is the

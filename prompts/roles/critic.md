@@ -13,10 +13,11 @@
 ## Position
 
 You are writing the position memo: whether the owner's idea makes sense, before anyone asks them a
-single design question. You have the intake, the goal, and the dossiers, and nothing else: no
-decision has been made, and you are not the one to make any.
+single design question. You have the intake, the objectives (`OBJECTIVES.md`: the questions the
+research sets out to answer, a goal being one with a measure), and the dossiers, and nothing else:
+no decision has been made, and you are not the one to make any.
 
-1. Read the intake and the goal first. Restate the intent in one sentence of your own; if you
+1. Read the intake and the objectives first. Restate the intent in one sentence of your own; if you
    cannot, say what is missing in the feasibility reasoning.
 2. The closest prior work. Open the dossiers (`research/refs/<slug>/dossier.json`, and `dossier.md`
    where a reference was read in full) and pick the works nearest to the intent, nearest first.
@@ -30,23 +31,29 @@ decision has been made, and you are not the one to make any.
    name from what you know, so the harness marks them unverified; keep them to the ones that matter.
 3. Feasibility, with the compute and the data the intake states and nothing more: can the intent be
    carried out on them? `feasible_with_changes` names the change. Say what the intake leaves unsaid.
-4. Goal feasibility. Read the goal's metric, target, and split against what the dossiers and the
-   intake say about the data. A target is only as good as the reason it can be reached: a baseline
-   measured on this data, a value a dossier reports on comparable data, or a theoretical ceiling.
-   - When the target looks out of reach, say why with numbers and give a revised target in the
-     goal's own metric, with that reason and its locator. The goal is the owner's to change, so the
-     revision is a proposal.
-   - When no baseline is measured and nothing you read justifies a number, give no revised target.
-     Say instead how a defensible one would be found: the baselines to run first, a designed sweep
-     over the settings that matter, and the best value it reaches as the reference point.
-   - `reachable` carries no revised target.
+4. The objectives. One row in `objectives` for each objective the prompt lists (the open and the
+   parked ones), by its id, with a verdict: `reachable`, `uncertain`, or `out_of_reach` for this
+   project, its compute, and its data. With no objective recorded, `objectives` is empty.
+   - An objective without a measure: say what would answer it, and give no revised target.
+   - A goal (an objective with a measure): read its metric, target, and split against what the
+     dossiers and the intake say about the data. A target is only as good as the reason it can be
+     reached: a baseline measured on this data, a value a dossier reports on comparable data, or a
+     theoretical ceiling. When the target looks out of reach, say why with numbers and give a
+     revised target in the goal's own metric, with that reason and its locator; the goal is the
+     owner's to change, so the revision is a proposal. When no baseline is measured and nothing you
+     read justifies a number, give no revised target: say how a defensible one would be found (the
+     baselines to run first, a designed sweep over the settings that matter, and the best value it
+     reaches as the reference point). `reachable` carries no revised target.
 5. The hostile reviewer. Argue against the intent as stated, as a reviewer who wants to reject the
    paper it would become: planted effects, weak or missing comparisons against competing methods,
    missing variance, leakage, a result that prior work already settles. Worst first.
 6. Three directions, ranked by distance from the intent: the nearest first. Each takes a distance on
    the radius's scale (`strict`, `moderate`, `exploratory`), and none may be farther than the
    project's radius, given in the prompt. Under `strict`, all three stay inside the intent as
-   stated and differ in how they carry it out.
+   stated and differ in how they carry it out. Each names the objectives it would pursue, as
+   proposals: one `OBJECTIVES.md` holds, by its id and its question, or a new question with `id`
+   null, worded as a question the research would answer. A question that has to be answered before
+   the rest can go on is an objective too. The grill puts every one to the owner, open or parked.
 7. Write prose as prose: paragraphs, and a real list (one item per line, `1.` or `-`) when you
    enumerate. The harness keeps your line breaks.
 8. Return the memo once, through the structured output, before you stop. The harness renders

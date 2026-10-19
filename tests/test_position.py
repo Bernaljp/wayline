@@ -1,7 +1,8 @@
-"""The position memo, phase P2 (ticket 29; Implementation Decisions 10 and 1).
+"""The position memo, phase P2 (ticket 29; Implementation Decisions 10, 1, and 17; ticket 80).
 
 The critic is driven through the fake launcher (seam 1) over the project of ticket 30's recorded grill:
-its four dossiers (three verified, one unresolved), an intake, and a goal. The critic's answer is
+its four dossiers (three verified, one unresolved), an intake, and two objectives, one of them a goal,
+with no `GOAL.json`. The critic's answer is
 `fixtures/position/memo.json`, the toy intent's memo, or a copy of it broken on purpose. The scout
 runs on the suite's recorded responses, so a citation no dossier holds is resolved offline. What is
 asserted is what the owner and the decider see: `research/POSITION.md` and `research/position.json`,
@@ -17,8 +18,8 @@ import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase, open_objective
-from wayline import cli, dashboard, decider, gates, grill, position, project, worker
+from tests.projects import ProjectTestCase, open_goal, open_objective
+from wayline import cli, dashboard, decider, gates, grill, position, project, sections, worker
 from wayline.fetch import recording_fetcher
 from wayline.ledger import Ledger
 from wayline.scout import Scout
@@ -29,11 +30,15 @@ RECORDED = FIXTURES_DIR / "skill" / "wayline-grill" / "recorded"
 MEMO = json.loads((FIXTURES_DIR / "position" / "memo.json").read_text(encoding="utf-8"))
 RECORDINGS = FIXTURES_DIR / "fetch"
 EMAIL = "owner@example.org"
-GOAL = {
-    "metric": "auroc", "direction": "up", "target": 0.85, "dataset_or_split": None, "held_out_split": "split_b",
-    "eval_command": "python3 toy/eval.py {artifact}", "baseline": {"value": None, "source": None},
-    "budget": {"gpu_hours": None, "wallclock": 4, "usage_windows": None}, "stop_when": "goal_reached",
-}
+GOAL_QUESTION = "Do pairwise products raise the held-out AUROC on the synthetic set?"
+OBJECTIVE_QUESTION = "Below what interaction strength do the products stop helping?"
+MEASURE = {"metric": "auroc", "direction": "up", "target": 0.85, "held_out_split": "split_b", "eval_command": "echo auroc: 0.5",
+           "baseline": {"value": None, "source": None}, "dataset_or_split": None, "min_seeds": None}
+# The objectives the memo's rows answer, as `objectives.json` holds them: a goal and an objective without a measure.
+OBJECTIVES = [
+    {"id": "O1", "text": GOAL_QUESTION, "measure": MEASURE, "status": "open", "answer": None, "evidence": [], "reframed_as": None},
+    {"id": "O2", "text": OBJECTIVE_QUESTION, "measure": None, "status": "open", "answer": None, "evidence": [], "reframed_as": None},
+]
 INTAKE = """# Intake
 
 ## Intent
@@ -104,41 +109,87 @@ class CriticRoleTest(unittest.TestCase):
 
 
 class CheckMemoTest(unittest.TestCase):
-    """What the schema cannot say: the ranking, the radius, the revised target, one row per reference."""
+    """What the schema cannot say: the ranking, the radius, one row per objective, the revised target, one row per reference."""
+
+    def check(self, value, radius="exploratory", objectives=OBJECTIVES):
+        return position.check_memo(value, radius, objectives)
 
     def test_the_toy_memo_passes_under_exploratory(self):
-        self.assertEqual(position.check_memo(memo(), "exploratory"), [])
+        self.assertEqual(self.check(memo()), [])
 
     def test_a_direction_beyond_the_radius(self):
-        failures = position.check_memo(memo(), "moderate")
+        failures = self.check(memo(), "moderate")
         self.assertEqual(failures, ["direction 3 (Where the products stop helping) is exploratory, farther than the "
                                     "project's radius moderate"])
-        self.assertEqual(len(position.check_memo(memo(), "strict")), 2)
+        self.assertEqual(len(self.check(memo(), "strict")), 2)
 
     def test_directions_not_nearest_first(self):
         value = memo()
         value["directions"].reverse()
-        self.assertIn("the directions are not nearest first: exploratory, moderate, strict",
-                      position.check_memo(value, "exploratory"))
+        self.assertIn("the directions are not nearest first: exploratory, moderate, strict", self.check(value))
 
-    def test_the_revised_target_follows_the_verdict(self):
+    def test_the_memo_has_objectives_in_place_of_the_goal_feasibility(self):
+        schema = json.loads((HARNESS_ROOT / "schemas" / "position.json").read_text(encoding="utf-8"))
+        self.assertIn("objectives", schema["required"])
+        self.assertNotIn("goal_feasibility", schema["properties"])
+        row = schema["properties"]["objectives"]["items"]
+        self.assertEqual(row["required"], ["id", "verdict", "reasoning", "revised_target"])
+        self.assertEqual(row["properties"]["verdict"]["enum"], ["reachable", "uncertain", "out_of_reach"])
+        self.assertIn("goal_feasibility", self.check(dict(memo(), goal_feasibility={}))[0], "the old field is refused")
+
+    def test_one_row_per_objective(self):
         value = memo()
-        value["goal_feasibility"] = {"verdict": "out_of_reach", "reasoning": "The ceiling is 0.75.", "revised_target": None}
-        self.assertEqual(position.check_memo(value, "exploratory"), ["the goal is out of reach and no revised target is given"])
-        value["goal_feasibility"] = {"verdict": "reachable", "reasoning": "Easily.", "revised_target": {"value": 0.8, "why": "x"}}
-        self.assertEqual(position.check_memo(value, "exploratory"), ["the goal is reachable, so it takes no revised target"])
+        del value["objectives"][1]
+        self.assertEqual(self.check(value), ["the objective O2 has no row in objectives"])
+        value = memo()
+        value["objectives"].append(dict(value["objectives"][0]))
+        self.assertEqual(self.check(value), ["the objective O1 has more than one row in objectives"])
+        value = memo()
+        value["objectives"][1]["id"] = "O9"
+        self.assertEqual(self.check(value), ["a row of objectives names O9, which the project does not hold",
+                                             "the objective O2 has no row in objectives"])
+
+    def test_a_closed_objective_takes_no_row_and_a_parked_one_does(self):
+        closed = [dict(OBJECTIVES[0]), dict(OBJECTIVES[1], status="answered")]
+        self.assertEqual(self.check(memo(), objectives=closed),
+                         ["a row of objectives names O2, which is answered; the memo rows only the open and parked objectives"])
+        parked = [dict(OBJECTIVES[0]), dict(OBJECTIVES[1], status="parked")]
+        self.assertEqual(self.check(memo(), objectives=parked), [])
+
+    def test_the_revised_target_follows_the_verdict_on_a_goal_and_an_objective_takes_none(self):
+        value = memo()
+        value["objectives"][0].update(verdict="out_of_reach", reasoning="The ceiling is 0.75.", revised_target=None)
+        self.assertEqual(self.check(value), ["the goal O1 is out of reach and no revised target is given"])
+        value["objectives"][0].update(verdict="reachable", reasoning="Easily.", revised_target={"value": 0.8, "why": "x"})
+        self.assertEqual(self.check(value), ["the goal O1 is reachable, so it takes no revised target"])
+        value = memo()
+        value["objectives"][1]["revised_target"] = {"value": 0.8, "why": "x"}
+        self.assertEqual(self.check(value), ["O2 has no measure, so it takes no revised target"])
+
+    def test_a_direction_names_only_objectives_the_project_holds_or_proposes_new_ones(self):
+        value = memo()
+        value["directions"][0]["objectives"] = [{"id": "O7", "text": "a question nobody recorded"}]
+        self.assertEqual(self.check(value), ["direction 1 (The comparison as stated) names O7, which the project does not hold"])
+        value["directions"][0]["objectives"] = [{"id": None, "text": "A question of its own?"}]
+        self.assertEqual(self.check(value), [], "an objective with no id is a proposal")
+
+    def test_a_project_with_no_objectives_is_positioned_and_its_directions_propose_them(self):
+        value = memo(objectives=[])
+        for direction in value["directions"]:
+            direction["objectives"] = [{"id": None, "text": "Does it work?"}]
+        self.assertEqual(self.check(value, objectives=[]), [])
 
     def test_a_reference_named_twice_and_a_schema_failure(self):
         value = memo()
         value["prior_work"].append(dict(value["prior_work"][0]))
-        self.assertEqual(position.check_memo(value, "exploratory"), ["the reference paper-a is named more than once"])
+        self.assertEqual(self.check(value), ["the reference paper-a is named more than once"])
         broken = memo()
         del broken["directions"][2]
-        self.assertIn("minItems", position.check_memo(broken, "exploratory")[0])
+        self.assertIn("minItems", self.check(broken)[0])
 
 
 class PositionCase(ProjectTestCase):
-    """The recorded grill's project with an intake and a goal, the fake launcher and an offline scout in place."""
+    """The recorded grill's project with an intake and two objectives, one a goal, the fake launcher and an offline scout in place."""
 
     autonomy = "checkpoints"
     radius = "exploratory"
@@ -150,16 +201,19 @@ class PositionCase(ProjectTestCase):
         research = self.project / "research"
         shutil.copytree(INPUT / "research" / "refs", research / "refs", dirs_exist_ok=True)
         self.ledger = Ledger(self.project)
-        self.ledger.write_json("GOAL.json", GOAL, schema="goal")
         self.ledger.write_markdown("INTAKE.md", INTAKE)
         harness = project.read_harness(self.project)
         harness["radius"] = self.radius
         (self.project / project.HARNESS_JSON).write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
-        open_objective(self.project)
+        self.record_objectives()
         project.set_autonomy(self.project, self.autonomy)
         self.scout = Scout(recording_fetcher(RECORDINGS, email=EMAIL), EMAIL)
         self.notified = []
         self.fake = self.enterContext(worker.use_fake())
+
+    def record_objectives(self):
+        open_goal(self.project, GOAL_QUESTION, **{key: MEASURE[key] for key in ("target", "held_out_split")})
+        open_objective(self.project, OBJECTIVE_QUESTION)
 
     def notify(self, event, text, path, ticket):
         self.notified.append((event, text))
@@ -184,7 +238,7 @@ class PositionCase(ProjectTestCase):
 
 
 class LaunchTest(PositionCase):
-    """Criterion 1: one critic session through the launcher, with only the dossiers, the intake, and the goal."""
+    """Criterion 1: one critic session through the launcher, with only the dossiers, the intake, and the objectives."""
 
     def test_the_launch(self):
         report = self.take(written(memo()))
@@ -206,7 +260,7 @@ class LaunchTest(PositionCase):
         self.assertEqual(position.scoped_tools(["Read", "Bash(ls *)", "Grep"], "/a b/refs"),
                          ["Read(//a b/refs/**)", "Bash(ls *)", "Grep(//a b/refs/**)"])
 
-    def test_the_prompt_holds_the_intake_the_goal_and_the_dossiers_and_nothing_else(self):
+    def test_the_prompt_holds_the_intake_the_objectives_and_the_dossiers_and_nothing_else(self):
         research = self.project / "research"
         for name in ("DECISIONS.md", "CONTEXT.md"):
             shutil.copy(RECORDED / "research" / name, research / name)
@@ -216,8 +270,12 @@ class LaunchTest(PositionCase):
         prompt = self.calls()[0].request.prompt
         self.assertIn("## research/INTAKE.md", prompt)
         self.assertIn("CPU only for the core comparison.", prompt)
-        self.assertIn("## research/GOAL.json", prompt)
-        self.assertIn('"held_out_split": "split_b"', prompt)
+        self.assertIn("## research/OBJECTIVES.md", prompt)
+        self.assertIn("## O1 %s" % GOAL_QUESTION, prompt)
+        self.assertIn("on the held-out split `split_b`", prompt)
+        self.assertIn("## O2 %s" % OBJECTIVE_QUESTION, prompt)
+        self.assertIn("one row in `objectives` for each of O1, O2", prompt)
+        self.assertNotIn("GOAL.json", prompt)
         for slug in ("paper-a", "paper-b", "paper-c", "paper-d"):
             self.assertIn("## research/refs/%s/dossier.json" % slug, prompt)
         self.assertIn("the project's radius: `exploratory`", prompt)
@@ -234,12 +292,19 @@ class LaunchTest(PositionCase):
         self.assertIn("[wayline: cut here at the context cap;", text)
         self.assertIn("[wayline: left out at the context cap; open the path yourself.]", text)
 
-    def test_no_intake_or_no_goal_is_refused_before_a_session(self):
-        (self.project / "research" / "GOAL.json").unlink()
+    def test_no_intake_is_refused_before_a_session(self):
+        (self.project / "research" / "INTAKE.md").unlink()
         with self.assertRaises(position.PositionError) as raised:
             self.take()
-        self.assertIn("run wayline intake --goal first", str(raised.exception))
+        self.assertIn("run wayline intake first", str(raised.exception))
         self.assertEqual(self.calls(), [])
+
+    def test_the_critics_protocol_reads_objectives_and_not_the_goal_file(self):
+        protocol = worker.protocol_for(worker.read_role(position.CRITIC).protocol, "position")
+        self.assertNotIn("GOAL.json", protocol)
+        self.assertNotIn("goal_feasibility", protocol)
+        self.assertIn("OBJECTIVES.md", protocol)
+        self.assertIn("Each names the objectives it would pursue, as\n   proposals", protocol)
 
     def test_a_memo_failing_its_checks_is_returned_once(self):
         wide = memo()
@@ -341,7 +406,7 @@ class MemoTest(PositionCase):
         self.assertEqual(record["session_id"], "critic-session")
         self.assertTrue(record["model"].startswith("claude-opus"), record["model"])
         headings = [line for line in text.split("\n") if line.startswith("## ")]
-        self.assertEqual(headings, ["## Closest prior work", "## Feasibility", "## Goal feasibility", "## The hostile reviewer",
+        self.assertEqual(headings, ["## Closest prior work", "## Feasibility", "## Objectives", "## The hostile reviewer",
                                     "## Three directions, by distance from the intent"])
         self.assertIn("- **paper-a**\n  - title: *Interaction features for tabular classification* (2021)\n"
                       "  - identifier: doi:10.5555/wayline.fixture.paper-a\n  - what it reports: Pairwise products", text)
@@ -353,19 +418,45 @@ class MemoTest(PositionCase):
         self.assertIn("Dropped, because the scout did not verify them:\n\n- *paper-d*: research/refs/paper-d/dossier.json says "
                       "existence: unresolved.", text)
         self.assertIn("**Feasible.** No GPU is needed", text)
-        self.assertIn("The goal: auroc at least 0.85, held out on split_b.", text)
-        self.assertIn("**Uncertain.**", text)
-        self.assertIn("Revised target: **0.83**.", text)
+        self.assertIn("### O1 %s\n\nA goal: `auroc` up to 0.85 on the held-out split `split_b`" % GOAL_QUESTION, text)
+        self.assertIn("**Uncertain.** The generator draws", text)
+        self.assertIn("Revised target: **0.83**. The goal is the owner's to change; this is a proposal.", text)
         self.assertIn("- why it is reachable: Below the likely ceiling", text)
+        self.assertIn("### O2 %s\n\nAn objective without a measure.\n\n**Reachable.** Sweeping" % OBJECTIVE_QUESTION, text)
+        self.assertEqual([(row["id"], row["text"], row["status"]) for row in record["objectives"]],
+                         [("O1", GOAL_QUESTION, "open"), ("O2", OBJECTIVE_QUESTION, "open")])
+        self.assertTrue(record["objectives"][0]["measure"].startswith("`auroc` up to 0.85 on the held-out split `split_b`"))
+        self.assertIsNone(record["objectives"][1]["measure"])
+        self.assertNotIn("goal", record)
         self.assertIn("4. Trying every pairwise product", text)
         self.assertIn("Nearest first, none farther than the radius `exploratory`.", text)
         self.assertIn("1. **The comparison as stated** (strict):", text)
         self.assertIn("3. **Where the products stop helping** (exploratory):", text)
+        self.assertIn("The objectives each direction names are proposals", text)
+        self.assertIn("   - would pursue O1: %s" % GOAL_QUESTION, text)
+        self.assertIn("   - proposes a new objective: Does a flexible model without products match the products on the synthetic set?", text)
+        self.assertIn("   - would pursue O2: %s" % OBJECTIVE_QUESTION, text)
+
+    def test_the_introduction_is_seeded_from_the_verified_prior_work_once(self):
+        """Ticket 86: code seeds the Introduction with one passage per verified row, by the position step, never twice."""
+        self.take(written(memo()))
+        record = self.record()
+        seeded = [item for item in sections.read_passages(self.project) if item["section"] == "introduction"]
+        self.assertEqual([item["by"] for item in seeded], ["step:position"] * len(record["prior_work"]))
+        self.assertEqual({item["heading"] for item in seeded}, {"Prior work"})
+        first = seeded[0]
+        self.assertIn("*Interaction features for tabular classification* (2021) reports: Pairwise products", first["text"])
+        self.assertTrue(first["text"].endswith("{ref:paper-a#%s}" % position.ref_locator(record["prior_work"][0])), first["text"])
+        self.assertNotIn("paper-d", " ".join(item["text"] for item in seeded), "a dropped row seeds nothing")
+        introduction = (self.project / "research" / "sections" / "introduction.md").read_text(encoding="utf-8")
+        self.assertIn("## Prior work", introduction)
+        position.write_memo(self.project, record["memo"], scout=self.scout)
+        self.assertEqual(len([item for item in sections.read_passages(self.project) if item["section"] == "introduction"]), len(seeded))
 
     def test_lists_and_paragraphs_in_prose_are_kept(self):
         value = memo()
         value["feasibility"]["reasoning"] = "Three changes are needed:\n1. **Seeds.** Run several.\n2. Add a baseline.\n\n\n\nThe rest holds."
-        value["goal_feasibility"]["reasoning"] = "- first problem\n- second problem\n  continued"
+        value["objectives"][0]["reasoning"] = "- first problem\n- second problem\n  continued"
         value["hostile_review"][0] = "Two points:\n- one\n- two"
         value["prior_work"][0]["reports"] = "AUROC | accuracy both rose"
         self.take(written(value))
@@ -399,6 +490,67 @@ class MemoTest(PositionCase):
         self.assertIn("Revised target: **0.83**.", records)
 
 
+class NoMeasureTest(PositionCase):
+    """Ticket 80: a project with objectives and none with a measure, and no `GOAL.json`, is positioned."""
+
+    def record_objectives(self):
+        open_objective(self.project, GOAL_QUESTION)
+        open_objective(self.project, OBJECTIVE_QUESTION)
+
+    def test_position_runs_without_a_goal_and_rows_each_objective(self):
+        value = memo()
+        value["objectives"][0].update(verdict="uncertain", revised_target=None)
+        self.assertFalse((self.project / "research" / "GOAL.json").exists())
+        report = self.take(written(value))
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual(len(self.calls()), 1, "nothing was returned to the critic")
+        text = self.text()
+        self.assertIn("### O1 %s\n\nAn objective without a measure.\n\n**Uncertain.**" % GOAL_QUESTION, text)
+        self.assertNotIn("Revised target", text)
+        self.assertEqual([row["measure"] for row in self.record()["objectives"]], [None, None])
+        self.assertEqual([item["id"] for item in report["view"]["objectives"]], ["O1", "O2"])
+
+    def test_a_revised_target_on_an_objective_goes_back_to_the_critic(self):
+        report = self.take(written(memo()), written(dict(memo(), objectives=[
+            dict(memo()["objectives"][0], revised_target=None), memo()["objectives"][1]])))
+        self.assertIsNone(report["stopped"], report)
+        self.assertIn("O1 has no measure, so it takes no revised target", self.calls()[1].message)
+
+
+class ObjectivesReadOnceTest(PositionCase):
+    """The memo is asked for, checked against, and kept with the objectives read before the session."""
+
+    def test_an_objective_recorded_during_the_session_is_not_kept_as_one_the_memo_read(self):
+        def respond(request, message):
+            open_objective(self.project, "A question recorded while the critic was reading?")
+            return written(memo())
+
+        self.fake.script(respond=respond, role=position.CRITIC)
+        report = position.position(self.project, scout=self.scout, notify=self.notify)
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual([row["id"] for row in self.record()["objectives"]], ["O1", "O2"])
+        self.assertNotIn("O3", self.text())
+
+
+class NoObjectiveTest(PositionCase):
+    """A project with neither objectives nor `GOAL.json` is positioned too: its directions propose the objectives."""
+
+    def record_objectives(self):
+        pass
+
+    autonomy = "interactive"
+
+    def test_position_runs_and_the_directions_propose(self):
+        value = memo(objectives=[])
+        for direction in value["directions"]:
+            direction["objectives"] = [{"id": None, "text": "Do pairwise products help?"}]
+        report = self.take(written(value))
+        self.assertIsNone(report["stopped"], report)
+        text = self.text()
+        self.assertIn("## Objectives\n\nNo objective is recorded yet; the directions below propose them.", text)
+        self.assertIn("[wayline: no objective is recorded yet; propose them in the directions]", self.calls()[0].request.prompt)
+
+
 class ShownTest(PositionCase):
     """Criterion 3, the owner's side: notified, and first in `status` and the dashboard."""
 
@@ -415,7 +567,7 @@ class ShownTest(PositionCase):
         self.take(written(memo()))
         (notice,) = self.notified
         self.assertEqual(notice[0], "position")
-        self.assertIn("feasible; the goal is uncertain, revised target 0.83", notice[1])
+        self.assertIn("feasible; objectives O1 uncertain (revised target 0.83), O2 reachable", notice[1])
 
     def test_status_leads_with_the_memo_until_the_project_moves_past_p2(self):
         self.take(written(memo()))
@@ -424,8 +576,8 @@ class ShownTest(PositionCase):
         self.assertEqual(view["position"]["handed_to"], "owner")
         lines = project.render_status(view).split("\n")
         self.assertTrue(lines[3].startswith("position memo  research/POSITION.md: read it before the grill"), lines[:6])
-        self.assertIn("feasibility feasible   goal uncertain, revised target 0.83   prior work 3 cited, 1 dropped   objections 4",
-                      lines[4])
+        self.assertIn("feasibility feasible   objectives O1 uncertain (revised target 0.83), O2 reachable   prior work 3 cited, "
+                      "1 dropped   objections 4", lines[4])
         self.assertEqual(lines[5], "  1. The comparison as stated (strict)")
         self.ledger.append_event("phase", {"from": "P2", "to": "P3"})
         view = project.status_view(self.project, refresh=False)

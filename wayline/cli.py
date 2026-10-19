@@ -39,9 +39,9 @@ def lazy(module, attribute):
 # verb decisions 4 and 6 give experiment workers to write a job file for the runner.
 VERBS = [
     Verb("init", "init <path> [--email <address>] | init --uninstall-units", "lay out a project, register it, make it the active one, and install the tick and dashboard user units", "project", lazy("wayline.project", "init_command")),
-    Verb("intake", "intake [<material>...] [--goal <file>] [--from <spec>]", "phase P0: take what the owner has and write INTAKE.md, harness settings, and a measurable GOAL.json (also a skill)", "phases", lazy("wayline.intake", "intake_command")),
+    Verb("intake", "intake [<material>...] [--from <spec>]", "phase P0: take what the owner has and write INTAKE.md and the harness settings; information only (also a skill)", "phases", lazy("wayline.intake", "intake_command")),
     Verb("absorb", "absorb [--level 0|1|2 [<slug>...]] [--code <slug> <url>@<sha>] [--inventory <slug> [--pdf <path>]]", "phase P1: build the dossiers for the references (level 2 reads one promoted paper in full), and one reference's inventory from its arXiv source or a PDF", "phases", lazy("wayline.dossier", "absorb_command")),
-    Verb("position", "position", "phase P2: a fresh critic writes POSITION.md from the dossiers, the intake, and the goal, with the prior work the scout verified", "phases", lazy("wayline.position", "position_command")),
+    Verb("position", "position", "phase P2: a fresh critic writes POSITION.md from the dossiers, the intake, and the objectives, with the prior work the scout verified", "phases", lazy("wayline.position", "position_command")),
     Verb("grill", "grill [ask|answer|term] [--from <file>]", "phase P2: ask the design tree's frontier in tiers, and record each answer and term (also a skill)", "phases", lazy("wayline.grill", "grill_command")),
     Verb("specify", "specify [confirm | revise \"<change>\"]", "phase P3: draft SPEC.md with claims, experiments, and seams, check and judge it, and ask for its confirmation", "phases",
          lazy("wayline.specify", "specify_command")),
@@ -71,7 +71,7 @@ VERBS = [
     Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services", lazy("wayline.dashboard", "serve_command")),
     Verb("tick", "tick [--project <path>]", "the recurrent job that relaunches work after windows, answers, and jobs", "services", lazy("wayline.tick", "tick_command")),
     Verb("accept", "accept [--where worktree|rebased|main]", "run the ticket's machine acceptance inside a worktree (called by workers)", "worktree", lazy("wayline.gates", "accept")),
-    Verb("consult", "consult <slug> \"<question>\" [--json]", "ask the consultant one question about one dossier (called by workers; at most policy.consultant.max_questions_per_ticket per ticket)", "worktree", lazy("wayline.consult", "consult_command")),
+    Verb("consult", "consult <slug|document id> \"<question>\" [--json]", "ask the consultant one question about one dossier or one document (called by workers; at most policy.consultant.max_questions_per_ticket per ticket)", "worktree", lazy("wayline.consult", "consult_command")),
     Verb("job", "job add [<file>]", "write a job file for the runner from a JSON spec on stdin (called by experiment workers)", "worktree", lazy("wayline.resources", "job_command")),
     Verb("evolve", "evolve [\"<text>\"] [--apply <id>] [--retrospective] [--tag <tag>]", "turn feedback into change records, harness tickets, and fixtures; tag the global changes main now holds", "evolve",
          lazy("wayline.changes", "evolve_command")),

@@ -107,16 +107,18 @@
     },
     {
       "key": "T8",
-      "title": "Write the results section",
+      "title": "Discuss what the interaction gain means for the toy's question",
       "kind": "writing",
       "difficulty": 3,
       "blocked_by": ["T7"],
-      "touches": ["paper/results.md"],
-      "acceptance": {"machine": ["test -f paper/results.md"], "quality": ["Does every claim sentence end with a provenance tag that resolves?"]},
+      "touches": [],
+      "sections": ["discussion"],
+      "acceptance": {"machine": [], "quality": ["Does every claim sentence end with a provenance tag that resolves?"]},
       "objectives": [],
-      "context_pack": ["analysis/findings.md", "research/SPEC.md#claims"],
+      "context_pack": ["research/sections/results.md", "research/SPEC.md#claims"],
       "origin": "research/SPEC.md#claims",
-      "demo": "`paper/results.md` reports the three claims with their outcomes."
+      "demo": "The Discussion carries a passage on what the gain means, each claim tagged.",
+      "notes": "A Discussion the owner asked for; the findings themselves are the analysis ticket's."
     }
   ],
   "decisions": [

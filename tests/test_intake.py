@@ -1,18 +1,17 @@
-"""Phase P0: intake, the goal, and `intake --goal` (Implementation Decisions 10; BRIEF 6.4).
+"""Phase P0: intake, which takes information only (Implementation Decisions 10 and 17; BRIEF 6.4; ticket 80).
 
 Each test lays out a project with `init`, hands `wayline intake` one of the shapes an owner arrives
 with, and reads back what a later phase sees: `research/INTAKE.md` (through the dossier module's own
-reference reader, which is what `absorb` uses), `harness.json`, `GOAL.json`, and the journal.
+reference reader, which is what `absorb` uses), `harness.json`, and the journal. A goal is not
+intake's: `wayline objective add` records it as an objective with a measure (ticket 76).
 """
 
 import importlib.util
 import io
 import json
 import re
-import shlex
 import shutil
 import subprocess
-import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -22,19 +21,11 @@ from tests.projects import ProjectTestCase
 from wayline import cli, intake
 from wayline.dossier import read_intake
 from wayline.intake import IntakeError, drop_material, dropped_materials
-from wayline.jsonschema import check, load_schema
 from wayline.ledger import Ledger
 from wayline.project import init_project, read_harness
 
 SECTIONS = ["Intent", "References", "Data", "Code", "Constraints", "Autonomy", "Radius", "Budgets",
-            "Decisions that stay human-only", "Goal"]
-
-EVAL_SCRIPT = """import os, sys
-artifact = sys.argv[1]
-assert artifact == os.environ["WAYLINE_ARTIFACT"], "the artifact reaches the command both ways"
-print("scoring", artifact, "with 3 folds")
-print("auroc: %s" % open(artifact).read().strip())
-"""
+            "Decisions that stay human-only"]
 
 # A PDF as a publisher ships one: the DOI sits in the uncompressed XMP packet, the text does not.
 PDF = b"""%PDF-1.7
@@ -92,18 +83,9 @@ class IntakeTestCase(ProjectTestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def measurable_goal(self, target=0.9, **changes):
-        """A goal whose eval_command prints the sample artifact's number, and that sample."""
-        self.write("eval.py", EVAL_SCRIPT, root=self.project)
-        sample = self.write("predictions.txt", "0.83\n")
-        goal = {"metric": "auroc", "direction": "up", "target": target, "held_out_split": "split_b",
-                "eval_command": "%s eval.py {artifact}" % shlex.quote(sys.executable)}
-        goal.update(changes)
-        return self.write("goal-%s.json" % target, json.dumps(goal)), sample
 
-
-class VagueIntentWithReferencesAndAGoalTest(IntakeTestCase):
-    """A paragraph, a reference list, a PDF, and a goal with a sample artifact."""
+class VagueIntentWithReferencesTest(IntakeTestCase):
+    """A paragraph, a reference list, and a PDF."""
 
     def setUp(self):
         super().setUp()
@@ -112,10 +94,9 @@ class VagueIntentWithReferencesAndAGoalTest(IntakeTestCase):
                                            "- Highly accurate protein structure prediction with AlphaFold\n")
         pdf = self.owner / "scipy.pdf"
         pdf.write_bytes(PDF)
-        goal, sample = self.measurable_goal()
         self.code, self.out, self.err = run(
             "--project", str(self.project), "I think interaction terms help on the synthetic set, maybe?",
-            str(references), str(pdf), "--goal", str(goal), "--sample", str(sample))
+            str(references), str(pdf))
 
     def test_the_intake_succeeds(self):
         self.assertEqual(self.code, 0, self.err)
@@ -139,31 +120,17 @@ class VagueIntentWithReferencesAndAGoalTest(IntakeTestCase):
             ("doi", "10.1038/s41592-019-0686-2"),
         })
 
-    def test_the_goal_is_written_whole_with_nothing_unstated_guessed(self):
-        goal = json.loads(self.goal_path().read_text(encoding="utf-8"))
-        check(goal, load_schema("goal"))
-        self.assertEqual((goal["metric"], goal["direction"], goal["target"]), ("auroc", "up", 0.9))
-        self.assertEqual(goal["held_out_split"], "split_b")
-        self.assertIsNone(goal["dataset_or_split"])
-        self.assertEqual(goal["baseline"], {"value": None, "source": None})
-        self.assertEqual(goal["budget"], {"gpu_hours": None, "wallclock": None, "usage_windows": None})
-        self.assertEqual(goal["stop_when"], "goal_reached")
-
-    def test_the_goal_section_reports_what_the_command_measured(self):
-        self.assertIn("0.83", self.section("Goal"))
-
-    def test_the_goal_is_journaled_as_a_decision_by_the_human(self):
-        decisions = self.decisions()
-        self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0]["payload"]["decided_by"], "human")
-        self.assertIn("auroc", decisions[0]["payload"]["answer"])
+    def test_no_goal_is_written_or_journaled(self):
+        self.assertFalse(self.goal_path().exists())
+        self.assertEqual(self.decisions(), [])
+        self.assertNotIn("GOAL.json", self.out)
 
     def test_harness_json_keeps_the_defaults_and_records_the_human_only_classes(self):
         harness = read_harness(self.project)
         self.assertEqual(harness["autonomy"], "checkpoints")
         self.assertEqual(harness["radius"], "moderate")
-        self.assertEqual(harness["human_only"], ["goal", "data"])
-        self.assertIn("`goal`", self.section("Decisions that stay human-only"))
+        self.assertEqual(harness["human_only"], ["objective", "data"])
+        self.assertIn("`objective`", self.section("Decisions that stay human-only"))
         self.assertIn("`data`", self.section("Decisions that stay human-only"))
 
 
@@ -195,7 +162,6 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
         self.assertEqual(self.code, 0, self.err)
         self.assertFalse(self.goal_path().exists())
         self.assertEqual(self.decisions(), [])
-        self.assertIn("No quantitative goal", self.section("Goal"))
 
     def test_the_plan_is_quoted_whole_as_the_intent(self):
         intent = self.section("Intent")
@@ -226,7 +192,7 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
         code, _, err = run("--project", str(self.project), "--intent", "the same question, restated")
         self.assertEqual(code, 0, err)
         harness = read_harness(self.project)
-        self.assertEqual(harness["human_only"], ["goal", "data", "baselines"])
+        self.assertEqual(harness["human_only"], ["objective", "data", "baselines"])
         self.assertEqual((harness["autonomy"], harness["radius"]), ("autonomous", "strict"))
 
     def test_the_settings_land_in_harness_json_and_in_intake_md(self):
@@ -234,7 +200,7 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
         self.assertEqual(harness["autonomy"], "autonomous")
         self.assertEqual(harness["radius"], "strict")
         self.assertEqual(harness["budgets"], {"gpu_hours": 10, "wallclock_hours": 48, "usage_windows": 4})
-        self.assertEqual(harness["human_only"], ["goal", "data", "baselines"])
+        self.assertEqual(harness["human_only"], ["objective", "data", "baselines"])
         self.assertIn("`autonomous`", self.section("Autonomy"))
         self.assertIn("`strict`", self.section("Radius"))
         self.assertIn("48", self.section("Budgets"))
@@ -242,149 +208,67 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
         self.assertIn("no new dependencies beyond scikit-learn", self.section("Constraints"))
 
 
-class BadGoalTest(IntakeTestCase):
-    """A goal nothing can measure is rejected with the reason, and the intake is written without it."""
+class IntakeTakesInformationOnlyTest(IntakeTestCase):
+    """Ticket 80: intake takes no goal. A goal is an objective with a measure, which `wayline objective add` records."""
 
-    def intake_with(self, goal, sample=True):
-        path = self.write("goal.json", json.dumps(goal))
-        args = ["--project", str(self.project), "--intent", "find out whether it works", "--goal", str(path)]
-        if sample:
-            args += ["--sample", str(self.write("sample.txt", "0.5\n"))]
-        return run(*args)
+    def test_the_goal_flag_is_gone(self):
+        template = self.intake_md()
+        code, _, err = run("--project", str(self.project), "--intent", "find out whether it works", "--goal", "goal.json")
+        self.assertEqual(code, 2, err)
+        self.assertIn("--goal", err)
+        self.assertEqual(self.intake_md(), template)
+        self.assertFalse(self.goal_path().exists())
 
-    def assert_rejected(self, result, words):
-        code, out, err = result
-        self.assertEqual(code, 1, out + err)
-        self.assertIn("rejected", err)
-        for word in words:
-            self.assertIn(word, err)
-            self.assertIn(word, self.section("Goal"))
+    def test_a_spec_that_carries_a_goal_or_a_sample_is_refused_with_where_the_goal_goes(self):
+        for field in ("goal", "sample", "rationale"):
+            with self.subTest(field=field):
+                spec = {"intent": "find out whether it works", field: {"metric": "auroc"} if field == "goal" else "x"}
+                code, _, err = run("--project", str(self.project), "--from", "-", stdin=json.dumps(spec))
+                self.assertEqual(code, 2, err)
+                self.assertIn(field, err)
+                self.assertIn("wayline objective add", err)
         self.assertFalse(self.goal_path().exists())
         self.assertEqual(self.decisions(), [])
-        self.assertIn("find out whether it works", self.section("Intent"), "a rejected goal is not a failed intake")
 
-    def test_a_goal_with_no_sample_artifact_is_rejected_as_missing_even_when_its_command_needs_none(self):
-        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "echo 'auroc: 0.95'"}
-        self.assert_rejected(self.intake_with(goal, sample=False), ["missing", "--sample"])
+    def test_the_intake_says_where_objectives_and_goals_are_recorded(self):
+        code, _, err = run("--project", str(self.project), "--intent", "find out whether it works")
+        self.assertEqual(code, 0, err)
+        intro = self.intake_md().split("\n## ", 1)[0]
+        self.assertIn("wayline objective add", intro)
+        self.assertIn("OBJECTIVES.md", intro)
+        self.assertNotIn("Goal", [name for name, _ in sections(self.intake_md())])
 
-    def test_a_rejected_goal_changes_nothing_in_harness_json(self):
-        before = (self.project / "harness.json").read_bytes()
-        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "exit 3",
-                "budget": {"gpu_hours": 999, "wallclock": None, "usage_windows": None}}
-        self.assert_rejected(self.intake_with(goal), ["fails"])
+    def test_the_template_has_no_goal_section_and_tells_the_owner_what_to_hand_over(self):
+        template = (HARNESS_ROOT / "templates" / "project" / "research" / "INTAKE.md").read_text(encoding="utf-8")
+        self.assertEqual([name for name, _ in sections(template)], SECTIONS)
+        self.assertNotIn("GOAL.json", template)
+        self.assertIn("wayline objective add", template)
+
+    def test_a_harness_json_that_names_goal_is_read_as_objective(self):
         harness = read_harness(self.project)
-        self.assertIsNone(harness["budgets"]["gpu_hours"])
-        self.assertNotEqual((self.project / "harness.json").read_bytes(), before, "the intake itself is still recorded")
-
-    def test_a_goal_without_an_eval_command_is_rejected_as_missing(self):
-        self.assert_rejected(self.intake_with({"metric": "auroc", "direction": "up", "target": 0.9}), ["missing", "eval_command"])
-
-    def test_a_command_the_shell_cannot_find_is_rejected_as_missing(self):
-        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "wayline-no-such-scorer {artifact}"}
-        self.assert_rejected(self.intake_with(goal), ["missing", "wayline-no-such-scorer"])
-
-    def test_a_command_that_needs_an_artifact_and_got_none_is_rejected_as_missing(self):
-        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "cat {artifact}"}
-        self.assert_rejected(self.intake_with(goal, sample=False), ["missing", "--sample"])
-
-    def test_a_command_that_fails_is_rejected_with_its_exit_code_and_output(self):
-        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "echo 'labels file is empty' >&2; exit 3"}
-        self.assert_rejected(self.intake_with(goal), ["fails", "exit 3", "labels file is empty"])
-
-    def test_a_command_that_prints_no_number_is_rejected(self):
-        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "echo scoring done"}
-        self.assert_rejected(self.intake_with(goal), ["no number", "auroc"])
-
-    def test_a_number_that_is_not_the_metric_is_not_taken_for_it(self):
-        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "echo 'read 1200 rows'; echo done"}
-        self.assert_rejected(self.intake_with(goal), ["no number"])
-
-    def test_a_goal_outside_the_shape_is_rejected_as_invalid(self):
-        goal = {"metric": "auroc", "direction": "sideways", "target": "high", "eval_command": "echo 'auroc: 1'"}
-        self.assert_rejected(self.intake_with(goal), ["invalid", "direction"])
-
-    def test_a_baseline_number_without_a_source_is_rejected(self):
-        goal = {"metric": "auroc", "direction": "up", "target": 0.9, "eval_command": "echo 'auroc: 0.7'", "baseline": {"value": 0.8}}
-        self.assert_rejected(self.intake_with(goal), ["invalid", "baseline"])
-
-
-class GoalLaterTest(IntakeTestCase):
-    """`wayline intake --goal` adds a goal after the intake, replaces it, and journals each change."""
-
-    def setUp(self):
-        super().setUp()
-        code, _, err = run("--project", str(self.project), "--intent", "see whether interaction terms help",
-                           "--constraint", "CPU only")
+        harness["human_only"] = ["goal", "data", "methods"]
+        (self.project / "harness.json").write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+        code, _, err = run("--project", str(self.project), "--intent", "find out whether it works", "--human-only", "goal")
         self.assertEqual(code, 0, err)
-        self.before = self.intake_md()
+        self.assertEqual(read_harness(self.project)["human_only"], ["objective", "data", "methods"])
+        classes = self.section("Decisions that stay human-only")
+        self.assertIn("`objective`", classes)
+        self.assertNotIn("`goal`", classes)
 
-    def test_a_goal_added_later_is_written_journaled_and_reflected_in_intake_md(self):
-        goal, sample = self.measurable_goal()
-        code, out, err = run("--project", str(self.project), "--goal", str(goal), "--sample", str(sample))
-        self.assertEqual(code, 0, err)
-        self.assertEqual(json.loads(self.goal_path().read_text(encoding="utf-8"))["target"], 0.9)
-        decisions = self.decisions()
-        self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0]["payload"]["decided_by"], "human")
-        self.assertIsNone(decisions[0]["ticket"])
-        self.assertIn("0.83", self.section("Goal"))
-        unchanged = [(name, body) for name, body in sections(self.before) if name != "Goal"]
-        self.assertEqual([(name, body) for name, body in sections(self.intake_md()) if name != "Goal"], unchanged)
-
-    def test_a_replaced_goal_names_the_one_it_replaces(self):
-        first, sample = self.measurable_goal(target=0.85)
-        self.assertEqual(run("--project", str(self.project), "--goal", str(first), "--sample", str(sample))[0], 0)
-        second, sample = self.measurable_goal(target=0.9)
-        code, _, err = run("--project", str(self.project), "--goal", str(second), "--sample", str(sample),
-                           "--rationale", "the position memo says 0.85 is already published")
-        self.assertEqual(code, 0, err)
-        self.assertEqual(json.loads(self.goal_path().read_text(encoding="utf-8"))["target"], 0.9)
-        decisions = self.decisions()
-        self.assertEqual(len(decisions), 2)
-        self.assertIn("the position memo says 0.85 is already published", decisions[1]["payload"]["rationale"])
-        self.assertIn("0.85", decisions[1]["payload"]["rationale"])
-
-    def test_the_same_goal_twice_changes_nothing(self):
-        goal, sample = self.measurable_goal()
-        self.assertEqual(run("--project", str(self.project), "--goal", str(goal), "--sample", str(sample))[0], 0)
-        code, out, _ = run("--project", str(self.project), "--goal", str(goal), "--sample", str(sample))
-        self.assertEqual(code, 0)
-        self.assertIn("unchanged", out)
-        self.assertEqual(len(self.decisions()), 1)
-
-    def test_a_rejected_replacement_leaves_the_standing_goal_alone(self):
-        goal, sample = self.measurable_goal()
-        run("--project", str(self.project), "--goal", str(goal), "--sample", str(sample))
-        standing, journal = self.goal_path().read_bytes(), (self.project / "research" / "journal.jsonl").read_bytes()
-        bad = self.write("bad.json", json.dumps({"metric": "auroc", "direction": "up", "target": 0.95, "eval_command": "false"}))
-        code, _, err = run("--project", str(self.project), "--goal", str(bad))
-        self.assertEqual(code, 1)
-        self.assertIn("rejected", err)
-        self.assertEqual(self.goal_path().read_bytes(), standing)
-        self.assertEqual((self.project / "research" / "journal.jsonl").read_bytes(), journal)
-
-    def test_the_goal_can_arrive_on_stdin(self):
-        goal, sample = self.measurable_goal()
-        code, _, err = run("--project", str(self.project), "--goal", "-", "--sample", str(sample),
-                           stdin=goal.read_text(encoding="utf-8"))
-        self.assertEqual(code, 0, err)
-        self.assertTrue(self.goal_path().exists())
 
 
 class SpecOnStdinTest(IntakeTestCase):
     """The skill's path: one JSON spec on stdin, the ledger writing what the conversation settled."""
 
     def test_a_spec_on_stdin_writes_the_same_intake_the_flags_do(self):
-        goal, sample = self.measurable_goal()
         spec = {"intent": "does it help?", "references": ["10.1038/s41586-020-2649-2"], "data": ["data/ lives on the NAS"],
                 "constraints": ["finish by October"], "autonomy": "interactive", "radius": "exploratory",
-                "budgets": {"gpu_hours": 2}, "human_only": ["methods"],
-                "goal": json.loads(goal.read_text(encoding="utf-8")), "sample": str(sample)}
+                "budgets": {"gpu_hours": 2}, "human_only": ["methods"]}
         code, _, err = run("--project", str(self.project), "--from", "-", stdin=json.dumps(spec))
         self.assertEqual(code, 0, err)
         harness = read_harness(self.project)
         self.assertEqual((harness["autonomy"], harness["radius"]), ("interactive", "exploratory"))
-        self.assertEqual(harness["human_only"], ["goal", "data", "methods"])
+        self.assertEqual(harness["human_only"], ["objective", "data", "methods"])
         self.assertEqual(harness["budgets"]["gpu_hours"], 2)
         self.assertEqual([reference.value for reference in read_intake(self.project)], ["10.1038/s41586-020-2649-2"])
 
