@@ -206,6 +206,8 @@ def record_exchange(project_or_ledger, slug, question, answer, by, session_id=No
     promotion share one hold of the lock, so two consults that finish together cannot both record a
     sixth question, nor both spend the phase's last level-2 slot.
     """
+    if is_document_id(slug) and isinstance(answer, dict):
+        answer = dict(answer, promote_requested=False)  # a document has no levels: nothing is requested, so nothing is recorded as requested
     problems = check_answer(answer)
     if problems:
         raise ConsultError("the consultant's answer about %s was not usable: %s" % (slug, "; ".join(problems)))
@@ -248,13 +250,8 @@ def ask(project, slug, question, ticket=None, launcher=None, resumer=None, harne
     if not isinstance(question, str) or not question.strip():
         raise ConsultError("a consultant question is a non-empty string")
     policy = policy_for(project, harness_root)
-    if is_document_id(slug):
-        dossier = None
-        try:
-            chunk_document(ledger, slug, ((policy.get("absorb") or {}).get("chunk_max_chars", CHUNK_MAX_CHARS)))
-        except DocumentError as failure:
-            raise ConsultError(str(failure)) from None
-    else:
+    dossier = None
+    if not is_document_id(slug):
         try:
             dossier = read_dossier(ledger, slug)
         except DossierError as failure:
@@ -263,6 +260,11 @@ def ask(project, slug, question, ticket=None, launcher=None, resumer=None, harne
     asked = questions_asked(ledger, ticket) if ticket is not None else None
     if ticket is not None and asked >= limit:
         raise _refusal(ticket, asked, limit)
+    if is_document_id(slug):  # after the limit: a refused question changes nothing under documents/
+        try:
+            chunk_document(ledger, slug, ((policy.get("absorb") or {}).get("chunk_max_chars", CHUNK_MAX_CHARS)))
+        except DocumentError as failure:
+            raise ConsultError(str(failure)) from None
     request = consult_request(project, slug, question, _read_level(dossier) if dossier is not None else None, harness_root=harness_root, policy=policy)
     launcher = launcher or worker.launch
     resumer = resumer if resumer is not None else (worker.resume if launcher is worker.launch else None)

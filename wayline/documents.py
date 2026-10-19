@@ -87,6 +87,7 @@ ZIP_MAX_BYTES = 512 * 1024 * 1024
 CONVERTERS_DIR = Path(__file__).resolve().parent.parent / "converters"
 
 _ID = re.compile(r"^D([1-9][0-9]*)\Z")
+FRONT = "front"                  # the locator of the front matter, which comes before the first block anchor
 _ANCHOR = re.compile(r'^<a id="(p[0-9]+)"></a>$')
 CORE_XML = "docProps/core.xml"
 STAMP = "%Y-%m-%dT%H:%M:%S"
@@ -721,17 +722,17 @@ def is_document_id(text):
 
 
 def _anchored(text):
-    """`text.md` as `(locator, block text)` pairs: the blocks after each `<a id="pN"></a>` line, front matter left out."""
-    blocks, locator, lines = [], None, []
+    """`text.md` as `(locator, block text)` pairs: the blocks after each `<a id="pN"></a>` line, the front matter first as `front`."""
+    blocks, locator, lines = [], FRONT, []
     for line in text.split("\n"):
         found = _ANCHOR.match(line)
         if found:
-            if locator is not None:
+            if "".join(lines).strip():
                 blocks.append((locator, "\n".join(lines).strip()))
             locator, lines = found.group(1), []
-        elif locator is not None:
+        else:
             lines.append(line)
-    if locator is not None:
+    if "".join(lines).strip():
         blocks.append((locator, "\n".join(lines).strip()))
     return blocks
 
@@ -769,20 +770,29 @@ def chunk_document(project_or_ledger, document_id, max_chars=CHUNK_MAX_CHARS):
     if not ledger.path(base + "/text.md").is_file():
         raise DocumentError("document %s has no text yet (%s was kept without a conversion)" % (document_id, document.get("origin") or "its source"))
     data = ledger.path(base + "/text.md").read_bytes()
+    blocks = _anchored(data.decode("utf-8"))
+    if not blocks:
+        raise DocumentError("document %s has no text yet (its text.md holds no blocks)" % document_id)
     digest, max_chars = _sha(data), max(1, int(max_chars))
     if ledger.path(base + "/" + CHUNKS_JSON).is_file():
         try:
             kept = ledger.read_json(base + "/" + CHUNKS_JSON)
         except ValueError:
             kept = None
-        if (isinstance(kept, dict) and kept.get("text_sha256") == digest and kept.get("chunk_max_chars") == max_chars
+        if (isinstance(kept, dict) and kept.get("text_sha256") == digest and kept.get("version") == document.get("version") and kept.get("chunk_max_chars") == max_chars
                 and all(ledger.path("%s/%s/%s.md" % (base, CHUNKS_DIR, chunk["id"])).is_file() for chunk in kept.get("chunks") or [])):
             return kept
+    with ledger.lock():  # one hold for the whole rebuild: no reader finds the directory half replaced
+        return _rebuild(ledger, document, base, blocks, digest, max_chars)
+
+
+def _rebuild(ledger, document, base, blocks, digest, max_chars):
+    document_id = document["id"]
     ledger.remove_tree(base + "/" + CHUNKS_DIR)
     listed = []
-    for number, group in enumerate(_cut(_anchored(data.decode("utf-8")), max_chars), 1):
+    for number, group in enumerate(_cut(blocks, max_chars), 1):
         chunk_id = "c%d" % number
-        body = "".join('<a id="%s"></a>\n\n%s\n\n' % (locator, text) for locator, text in group)
+        body = "".join(('<a id="%s"></a>\n\n' % locator if locator != FRONT else "<!-- front matter -->\n\n") + text + "\n\n" for locator, text in group)
         head = "# %s, %s: %s to %s\n\nWhole blocks of `%s/text.md`; each block's anchor is its locator.\n\n" % (
             document_id, chunk_id, group[0][0], group[-1][0], base)
         ledger.write_markdown("%s/%s/%s.md" % (base, CHUNKS_DIR, chunk_id), head + body)

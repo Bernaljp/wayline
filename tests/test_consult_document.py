@@ -51,12 +51,17 @@ class ChunkingTest(ConsultDocumentCase):
         seen = []
         for chunk in manifest["chunks"]:
             found = re.findall(r'<a id="(p\d+)"></a>', self.chunk_text(chunk))
-            self.assertEqual(found, chunk["locators"])
+            self.assertEqual(found, [locator for locator in chunk["locators"] if locator != "front"])
             seen += found
             if len(found) > 1:
                 self.assertLessEqual(chunk["chars"], 400)
         self.assertEqual(seen, anchors, "every block lands in exactly one chunk, in reading order")
         self.assertIn("Dusk light may be the cue.", "".join(self.chunk_text(chunk) for chunk in manifest["chunks"]))
+
+    def test_the_front_matter_is_the_first_block_under_the_locator_front(self):
+        manifest = chunk_document(self.project, "D1", max_chars=20000)
+        self.assertEqual(manifest["chunks"][0]["locators"][0], "front")
+        self.assertIn("Wingbeat synchrony in captive lantern moth colonies", self.chunk_text(manifest["chunks"][0]))
 
     def test_chunks_are_kept_while_the_text_is_unchanged_and_rebuilt_when_the_text_changes(self):
         first = chunk_document(self.project, "D1", max_chars=400)
@@ -121,6 +126,8 @@ class AskTest(ConsultDocumentCase):
 
     def test_a_promotion_request_on_a_document_is_ignored_for_a_document_has_no_levels(self):
         self.assertIsNone(self.ask(promote_requested=True)["promotion"])
+        self.assertNotIn("promotion requested", (self.directory() / "qa_log.md").read_text(encoding="utf-8"))
+        self.assertFalse(self.consulted()[0]["payload"]["promote_requested"])
 
     def test_the_ticket_limit_counts_document_questions_and_refuses_the_one_past_it(self):
         limit = consult.question_limit({})
@@ -131,6 +138,15 @@ class AskTest(ConsultDocumentCase):
             self.ask(question="One too many?", ticket=7)
         self.assertEqual(len(self.fake.calls), calls, "refused before a session starts")
         self.assertEqual(len(self.consulted()), limit)
+
+    def test_a_refused_question_leaves_the_documents_directory_as_it_was(self):
+        for number in range(consult.question_limit({})):
+            self.ask(question="Question %d?" % number, ticket=7)
+        chunks = self.directory() / "chunks.json"
+        chunks.unlink()
+        with self.assertRaises(consult.ConsultRefused):
+            self.ask(question="One too many?", ticket=7)
+        self.assertFalse(chunks.exists())
 
     def test_an_unknown_document_and_one_with_no_text_are_refused_before_a_session_starts(self):
         with self.assertRaisesRegex(consult.ConsultError, "no document D9"):
