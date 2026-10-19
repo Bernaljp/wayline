@@ -206,8 +206,14 @@ class WholePathTest(ConductorCase):
 
     def test_the_finding_reaches_findings_jsonl_and_the_journal(self):
         written = [json.loads(line) for line in (self.project / "research" / "findings.jsonl").read_text(encoding="utf-8").split("\n") if line]
-        self.assertEqual(written, [{"id": "t1-a1-f1", "ticket": 1, "text": "a finding", "provenance": "hello.txt#L1", "negative": False}])
+        # A finding is a Results passage (ticket 86): under the ticket's title when it named no heading, with the wave it landed in.
+        wave = written[0].pop("wave")
+        self.assertRegex(wave, r"^[0-9a-f]{8}/2$")
+        self.assertEqual(written, [{"id": "t1-a1-f1", "ticket": 1, "text": "a finding", "provenance": "hello.txt#L1", "negative": False,
+                                    "heading": "Write the hello file", "replaces": None, "objectives": []}])
         self.assertEqual(self.payload("finding"), written[0])
+        results = (self.project / "research" / "sections" / "results.md").read_text(encoding="utf-8")
+        self.assertIn("## Write the hello file\n\n<!-- wayline:passage t1-a1-f1 -->\na finding{res:t1-a1/hello.txt#L1}", results)
 
     def test_the_run_ends_when_the_frontier_is_empty(self):
         self.assertTrue(self.result.ended)

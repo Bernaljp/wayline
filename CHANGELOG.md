@@ -330,6 +330,39 @@ lists it read-only, marked with its tag.
   recordings of pandoc, `pdftotext`, LibreOffice, and docling on the synthetic documents of `fixtures/midway/` and
   `fixtures/documents/` (`fixtures/documents/record.py` makes them).
 
+- Passages and the five sections (ticket 86; Implementation Decisions 17, 1, 2, 5, 10, and 11). The paper's five
+  **sections**, `research/sections/introduction.md`, `results.md`, `discussion.md`, `methods.md`, and
+  `references.md`, exist from `wayline init` and are rendered by code (`wayline/sections.py`) after every
+  integration; no model edits them. Each file opens with a one-line render stamp (`<!-- wayline:render {...} -->`:
+  the section, when, the last passage or finding id seen, the body's sha256), and a render that changes nothing
+  keeps the file. A ticket result gains `passages[]`, each `{section, heading, text, replaces}`, which the conductor
+  writes through one ledger call once the ticket's work is on `main`: `research/passages.jsonl` (schema `passage`)
+  with ids P1 onward, `by` naming the ticket's attempt (`t3-a1`), the owner, a document, a front-door step, an
+  answered objective, or a consolidation, the ticket's `objectives`, and the wave, journaled as the new `passage`
+  event. A **finding** is a Results passage: findings keep `findings.jsonl` and their ids and gain `heading` (the
+  ticket's title when none is named), `replaces`, and `objectives`, on the line and on the `finding` event, and
+  `results.md` renders from them. A replaced passage leaves its section and stays in the log; within a heading
+  passages keep their arrival order and a replacement takes the place of what it replaces; headings keep their
+  first-appearance order; two replacements of one passage in the same wave are both kept and the section notes it,
+  and a later wave's replacement replaces what stands in the place. The ticket and plan schemas gain `sections`,
+  set by kind (`code` and `experiment` Methods, `analysis` Methods and Results, `lit` Introduction, `writing` what
+  it writes, the rest none); the plan returns a ticket declaring another set, and a `writing` ticket with a touch
+  set or no section, and a `writing` ticket needs no machine criterion. A Type-A check in the worktree's acceptance
+  sends the worker back when a declared section got no passage (Results: no finding) or a `replaces` names nothing
+  its section holds. Sections never enter a touch set: tickets adding to one section run in the same wave and are
+  written one at a time in id order under the ledger lock. A worker's prompt carries, per declared section, its
+  headings with each passage's id and first sentence, and the owner's passages in full. The Introduction is seeded
+  by code from the position memo's verified prior work (`step:position`, one passage per row, each tagged
+  `{ref:<slug>#<locator>}`) and, once the spec is confirmed, from the spec's new `gap` passages (`step:specify`).
+  The planner no longer cuts a `writing` ticket after each analysis. A review pass fixed these before the ticket
+  landed: a `running` result's passages are written when its jobs close and its change is kept, never at its
+  integration (a discarded or failed run adds none); a discarded change's negative findings replace nothing; a
+  later replacement of a passage replaced twice over replaces what renders now, and a same-wave note leaves once the
+  passages it names no longer both render; a memo taken again or an amended spec rewords its seeded passage (keyed by
+  the reference, or by the heading) rather than adding one beside it; the sections part of a prompt keeps to the
+  tier's context cap; the ticket file's `## Result` lists the passages, which is what a verdict on a `writing` ticket
+  reads; and Results is re-rendered when a discarded run's findings are filed.
+
 ## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts

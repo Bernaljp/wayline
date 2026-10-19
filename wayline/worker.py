@@ -610,7 +610,8 @@ class Prompt:
         return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
 
-def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX, notes=(), failure=None):
+def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX, notes=(), failure=None,
+                    sections=""):
     """The worker's prompt, assembled in the order of decision 3.
 
     One `/wayline-<skill>` line per assigned skill, the body of every skill after the first
@@ -621,7 +622,9 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
     `notes` is what the conductor has to tell this session about the ticket's state before it starts
     (a fresh session taking over a stopped one's partial work, decision 15), set under the ticket.
     `failure` is the last failure output of the attempt before this one, which a tier up carries into
-    its fresh session (ticket 68), set under a heading of its own after the notes.
+    its fresh session (ticket 68), set under a heading of its own after the notes. `sections` is the context pack's
+    part on the paper (`wayline.sections.pack_text`: the declared sections' headings, passage ids, and first
+    sentences, and the owner's passages in full; decision 17), set after the planner's pack.
     """
     pack = _context_section(ticket.get("context_pack") or [], roots, max_chars)
     skills = _skill_section(ticket.get("skills") or [], roots, max_chars)
@@ -632,6 +635,7 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         _notes_section(notes),
         LAST_FAILURE_HEADING + "\n\n" + failure.strip() if failure and failure.strip() else "",
         pack.text,
+        sections or "",
         # A role with more than one job (the critic) keeps the section named after the result it returns here.
         protocol_for(role.protocol, role.output_schema or "result"),
         _result_section(ticket, role),
@@ -734,7 +738,7 @@ def _ticket_section(ticket, budget):
     lines = ["# Ticket %s: %s" % (ticket["id"], ticket["title"]), "", "- kind: %s" % ticket["kind"]]
     if ticket.get("demo"):
         lines.append("- demo: %s" % ticket["demo"])
-    lines.append("- touch set: %s" % ", ".join("`%s`" % item for item in ticket["touches"]))
+    lines.append("- touch set: %s" % (", ".join("`%s`" % item for item in ticket["touches"]) or EMPTY_TOUCH_SET))
     machine = machine_acceptance(ticket)
     if machine:
         lines.append("- acceptance, which the conductor runs again in the worktree, after the rebase, and on `main`:")
@@ -747,6 +751,8 @@ def _ticket_section(ticket, budget):
 
 
 LAST_FAILURE_HEADING = "# The last failure"
+# A `writing` ticket's touch set (decision 17): its passages are its work, and code writes them.
+EMPTY_TOUCH_SET = "none (this ticket writes no file; its passages are its work)"
 
 
 def _notes_section(notes):
@@ -884,7 +890,9 @@ def _contract_section(ticket, consult_max):
     return "\n".join([
         "# The contract",
         "",
-        "- Write only under the touch set: %s. A hook blocks every write outside it." % ", ".join("`%s`" % item for item in ticket["touches"]),
+        ("- Write only under the touch set: %s. A hook blocks every write outside it." % ", ".join("`%s`" % item for item in ticket["touches"])
+         if ticket["touches"] else "- Write no file: the touch set is empty, and a hook blocks every write. Your work is the result's "
+                                   "`passages`, which code writes into the paper's sections."),
     ] + [
         "- Claude Code refuses every write under `.claude/`, so write `%s` at `%s` instead; `wayline accept` moves it into place, "
         "and you commit it where it lands." % (touch, staged_path(touch)) for touch in ticket["touches"] if staged_path(touch) is not None

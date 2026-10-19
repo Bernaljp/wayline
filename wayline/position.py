@@ -36,7 +36,7 @@ import re
 import sys
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, gates, grill, pacing, specify, worker
+from wayline import HARNESS_ROOT, gates, grill, pacing, sections, specify, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, LedgerError
@@ -46,7 +46,7 @@ from wayline.tickets import TicketError
 __all__ = [
     "CRITIC", "POSITION_SCHEMA", "POSITION_MD", "POSITION_JSON", "PHASE", "DISTANCES", "PositionError", "critic_tier",
     "scoped_tools", "inputs_text", "position_prompt", "check_memo", "verify_citations", "render_position", "read_position", "take_memo",
-    "write_memo", "position", "position_view", "render_report", "position_command",
+    "write_memo", "position", "position_view", "render_report", "position_command", "SEED_BY", "ref_locator", "prior_work_passages",
 ]
 
 CRITIC = "critic"
@@ -601,7 +601,7 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
 
 
 def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None, scout=None, say=lambda text: None):
-    """Resolve the memo's citations, write `research/position.json` and `research/POSITION.md`, and move to P2.
+    """Resolve the memo's citations, write `research/position.json` and `research/POSITION.md`, seed the Introduction, and move to P2.
 
     Returns the record written.
     """
@@ -617,9 +617,48 @@ def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None
               "session_id": session_id, "model": model, "fallback_from": fallback_from}
     ledger.write_json(POSITION_JSON, record)
     ledger.write_markdown(POSITION_MD, render_position(record))
+    sections.seed_passages(ledger, "introduction", prior_work_passages(record), by=SEED_BY, key=_cited_slug)
     events, _ = ledger.read_events()
     specify.move_phase(ledger, events, PHASE, session_id=session_id)
     return record
+
+
+# --- the Introduction's seed (decision 17; ticket 86) ------------------------------------------------
+
+
+SEED_BY = "step:position"
+PRIOR_WORK = "Prior work"
+
+
+def ref_locator(row):
+    """Where a prior-work row was read, as a `ref` tag's locator: the anchor of its locator, else its file, else `dossier`."""
+    locator = _one_line(row.get("locator"))
+    anchor = locator.partition("#")[2] or locator.rsplit("/", 1)[-1] if locator else ""
+    return re.sub(r"\s+", "-", anchor.strip()) or "dossier"
+
+
+def _cited_slug(heading, text):
+    """What a seeded prior-work passage is about: the reference its tag names, so a memo taken again rewords that row."""
+    found = re.search(r"\{ref:([^#{}]+)#", text)
+    return found.group(1) if found else text
+
+
+def prior_work_passages(record):
+    """The Introduction's passages code seeds from the memo: one per verified row, `(heading, text)`, each claim tagged.
+
+    Only the rows the scout verified (`record["prior_work"]`) seed anything; a dropped row never reaches the paper.
+    """
+    items = []
+    for row in record.get("prior_work") or []:
+        citation = row["citation"]
+        title = "*%s*" % _one_line(citation.get("title") or citation["slug"])
+        if citation.get("year"):
+            title += " (%s)" % citation["year"]
+        reports = _one_line(row["reports"])
+        if reports and reports[-1] not in ".!?":
+            reports += "."
+        items.append((PRIOR_WORK, "%s reports: %s{ref:%s#%s}" % (title, reports, citation["slug"], ref_locator(row))))
+    return items
 
 
 # --- where the memo stands --------------------------------------------------------------------------

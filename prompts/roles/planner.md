@@ -19,7 +19,11 @@ The planner has one protocol per phase; the harness gives you the one below that
    Every open objective is answered by at least one claim; a claim no objective asked for names
    none, and a claim never names an objective that is not open. Then the anti-claims: what the
    project does not claim, and what would show a claim wrong. Every objection in the position memo
-   is met by a claim, an anti-claim, an experiment, or an out-of-scope line.
+   is met by a claim, an anti-claim, an experiment, or an out-of-scope line. Then `gap`: the
+   Introduction's passages on the gap the project fills (what the closest prior work leaves open and
+   why it matters), each a heading and a paragraph whose claim sentences end with a `{ref:<slug>#<locator>}`
+   tag naming the dossier they rest on; code writes them into the Introduction once the spec is
+   confirmed.
 4. Write the experiments, each with an id `E<n>`: `claims` names the claims it defends (at least
    one), `design` says what is run on what, `baselines` and `data` name ids from those sections,
    `metrics` names metrics by name, and `success` is the outcome that supports the claims, stated
@@ -54,13 +58,15 @@ The planner has one protocol per phase; the harness gives you the one below that
    `research/DECISIONS.md` for what the owner settled, and the code the tickets build on whenever
    a touch set or a criterion depends on what is already there.
 3. Cut along the seams, for the frontier. One ticket per thing that can be demoed on its own: a
-   metric script, a feature, a baseline, an experiment, the analysis of its results, the writing
-   that reports them. Tickets that can run at the same time must not block each other; a ticket
+   metric script, a feature, a baseline, an experiment, the analysis of its results. Tickets that can run at the same time must not block each other; a ticket
    waits only on what it reads. Every experiment of the spec is an `experiment` ticket, with
    `goal` naming the goal (an objective with a measure) whose metric it reports; a script a metric
    names that does not exist yet
    is a `code` ticket before it; the experiments of a claim are followed by an `analysis` ticket
-   that files the findings, and the findings by a `writing` ticket. A `code` ticket that adds a
+   that files the findings. No `writing` ticket follows an analysis: every ticket returns its
+   passages for the paper's sections with its result, and code writes the sections from them. A
+   `writing` ticket is cut only for a scope-down or for work the owner asks for; it declares the
+   sections it writes, and its touch set is empty. A `code` ticket that adds a
    function, a class, a command, or a file another ticket or a person calls says so with
    `adds_public_api: true`, and a `docs` ticket that waits on it follows. A `docs` ticket builds
    the package's documentation site: its touch set is `docs/` and `.readthedocs.yaml`, with
@@ -89,7 +95,11 @@ The planner has one protocol per phase; the harness gives you the one below that
    person would watch; `notes` for the worker; `tags` (data types, libraries, venues) for the
    librarian, which assigns the role and the skills by them; and `software`, the tools the ticket
    runs beyond Python (`octave`, `r`, `julia`, `matlab`), which the harness asks for before the
-   ticket launches and which only the tickets that name them wait on.
+   ticket launches and which only the tickets that name them wait on; and `sections`, the paper's
+   sections the ticket adds passages to, which its kind sets (`code` and `experiment`: `methods`;
+   `analysis`: `methods` and `results`; `lit`: `introduction`; `writing`: the ones it writes; any
+   other kind none). Sections never enter a touch set: tickets adding to one section run at the
+   same time, and code integrates their passages one at a time.
 5. Where the spec leaves open a choice a ticket depends on, do not settle it quietly: put it under
    `decisions` with the question, the options, the recommended answer, the evidence, `blocking`
    (`subgraph` with the keys it pauses, or `all`), and `human_only` when the answer changes the
@@ -104,7 +114,8 @@ The planner has one protocol per phase; the harness gives you the one below that
    ticket that waits on one being re-cut.
 7. Check before you return: the keys are unique and every reference resolves; the graph has no
    cycle; every ticket has a demo, a machine criterion, a touch set, a context pack, and a
-   difficulty; every objective a ticket names is open and a `goal` names one with a measure; no
+   difficulty (a `writing` ticket has neither a machine criterion nor a touch set, and declares its
+   sections); every objective a ticket names is open and a `goal` names one with a measure; no
    criterion passes before the work; every `code` ticket that adds public API is
    followed by a `docs` ticket; every kind you used has a role in the registry. The harness runs
    the same checks and returns a plan that fails them, with the failures.

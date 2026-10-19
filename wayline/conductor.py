@@ -138,16 +138,17 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, software, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, sections, software, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
-    ACCEPTANCE, CONTROL, DIFFICULTY_RAISED, DISCARDED, FEEDBACK, FINDING, INTEGRATED, PROGRESS, JOB_FAILED, JOB_FINISHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
+    ACCEPTANCE, CONTROL, DIFFICULTY_RAISED, DISCARDED, FEEDBACK, INTEGRATED, PROGRESS, JOB_FAILED, JOB_FINISHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
     TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION, STALL, WAVE, ConductorBusy, Ledger, conductor_holder, now_ts,
 )
@@ -166,10 +167,11 @@ __all__ = [
 
 MAIN = "main"
 RESEARCH = "research"
-FINDINGS = "findings.jsonl"
 WORKTREES = ".worktrees"
 BRANCH = "ticket/%s"
 LEDGER_COMMIT = "ledger: wave %d"
+# The acceptance result the declared-sections check of decision 17 adds in the worktree (ticket 86).
+SECTIONS_CHECK = "wayline: the declared sections got their passages"
 # What the owner is told when the code repository's remote refuses code/'s split (decision 17; the `notified` event's `event`).
 CODE_PUSH_REJECTED = "code_push_rejected"
 # The heartbeat is rewritten every wave; committing it would make every wave a ledger commit.
@@ -717,6 +719,9 @@ class Conductor:
         self.ledger = Ledger(self.project)
         self.policy = policy_for(self.project, self.harness_root) if policy is None else policy
         self.number = 0
+        # What names this run's waves on a passage (`<run>/<number>`): wave numbers start again at every run, and two
+        # replacements of one passage are kept side by side only when they land in the same wave (decision 17).
+        self._run_key = uuid.uuid4().hex[:8]
         self.out = sys.stdout if out is None else out
         self._who_args = None
         # The Type-B queue of decision 11: what each done ticket earned, drained later in the wave
@@ -1856,6 +1861,7 @@ class Conductor:
             consult_max=(self.policy.get("consultant") or {}).get("max_questions_per_ticket", worker.CONSULT_MAX),
             notes=notes,
             failure=self._last_failure(attempt),
+            sections=sections.pack_text(self.ledger, sections.declared(attempt.ticket), attempt.tier.context_chars),
         )
 
     def _keep_last_failure(self, attempt):
@@ -2193,6 +2199,8 @@ class Conductor:
         # A goal ticket's worktree was kept for its judgment; kept, or no longer judged since GOAL.json changed, it goes.
         if (self._worktree(identifier) / ".git").exists():
             self._remove_worktree(identifier)
+        # The passages its worker returned with the jobs it left (decision 17): its change stands on `main` now.
+        note += self._file_passages(attempt, self._running_output(attempt, known).get("passages"))
         self._set_status(identifier, "done", note)
         self.ledger.append_event(TICKET_DONE, {"ticket": identifier}, ticket=identifier)
         self._tail()
@@ -2354,17 +2362,22 @@ class Conductor:
         result.done.append(identifier)
         self.say("  ticket %d done and discarded: its change is reverted on main" % identifier)
 
-    def _running_findings(self, attempt, known):
-        """The findings of the `running` result an experiment ticket's worker returned, read from its session."""
+    def _running_output(self, attempt, known):
+        """The `running` result a job-bearing ticket's worker returned, read from its session; empty when it cannot be read."""
         session = known.sessions[-1] if known is not None and known.sessions else None
         run_dir = self._session_path(attempt, session) if session is not None else None
         try:
             returned = json.loads((run_dir / "result.json").read_text(encoding="utf-8")) if run_dir else {}
         except (OSError, ValueError):
-            return []
+            return {}
         if not isinstance(returned, dict):
-            return []
+            return {}
         output = returned.get("structured_output") if isinstance(returned.get("structured_output"), dict) else returned
+        return output if isinstance(output, dict) else {}
+
+    def _running_findings(self, attempt, known):
+        """The findings of the `running` result an experiment ticket's worker returned, read from its session."""
+        output = self._running_output(attempt, known)
         findings = output.get("findings") if isinstance(output.get("findings"), list) else []
         return [finding for finding in findings
                 if isinstance(finding, dict) and isinstance(finding.get("text"), str) and isinstance(finding.get("provenance"), str)]
@@ -2581,7 +2594,7 @@ class Conductor:
             from wayline import changes
             changes.set_status(self.project, record["id"], "applied")
         if outcome == "done" and running:
-            self._leave_running(attempt)
+            self._leave_running(attempt)  # its passages wait for its jobs: written when they close and the change is kept
             return "running"
         if judgment is not None and outcome in ("done", "failed"):
             # A change judged better is kept only once it is on `main`; one whose integration failed was not kept.
@@ -3421,6 +3434,8 @@ class Conductor:
             self._place_staged(attempt)
         commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
+        if where == "worktree":
+            results = list(results) + self._sections_check(attempt)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
             results = list(results) + [simulated]
@@ -3431,6 +3446,18 @@ class Conductor:
         }, ticket=attempt.id, session_id=attempt.session_id)
         self.say("  acceptance (%s): %s" % (where, "pass" if record["pass"] else "fail"))
         return record
+
+    def _sections_check(self, attempt):
+        """The declared-sections check of decision 17 as one acceptance result, or none for a ticket that declares none.
+
+        A declared section that got no passage (Results, no finding) or a `replaces` naming nothing its section holds
+        fails it, and the worker is sent back with the problems, as for any machine criterion that failed in its worktree.
+        """
+        if not sections.declared(attempt.ticket):
+            return []
+        problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
+        return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
+                 "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
 
     def _timeout(self):
         timeout = self.policy.get("acceptance_timeout_s", 600)
@@ -3736,6 +3763,8 @@ class Conductor:
         and branch stay.
         """
         notes = self._file_findings(attempt, attempt.result.get("findings") or [], discarded is not None, attempt.worktree)
+        if discarded is None and waits_for_owner is None:
+            notes += self._file_passages(attempt)  # its work is on `main` now; a change not integrated adds no passage
         if discarded is not None:
             notes.append(self._discard_note(attempt, discarded))
         if waits_for_owner is not None:
@@ -3772,15 +3801,58 @@ class Conductor:
                 "text": finding["text"],
                 "provenance": provenance,
                 "negative": bool(negative or finding.get("negative", False)),
+                # A finding is a Results passage (decision 17): its heading (the ticket's title when it named none),
+                # the finding a scope-down narrows, and the ticket's objectives.
+                "heading": finding.get("heading") or attempt.ticket["title"],
+                # A discarded change displaces nothing: its findings stand beside what they would have replaced.
+                "replaces": None if negative else finding.get("replaces"),
+                "objectives": list(attempt.ticket.get("objectives") or []),
             }
             if record["id"] in self.view.findings:
                 continue  # filed before a restart
-            line = dict(record)
-            if isinstance(finding.get("replaces"), str) and finding["replaces"] in self.view.findings:
-                line["replaces"] = finding["replaces"]  # the earlier finding is no longer current (ticket 106)
-            self.ledger.append_record(FINDINGS, line)
-            self.ledger.append_event(FINDING, record, ticket=attempt.id)
+            try:
+                sections.file_finding(self.ledger, record, wave=self._wave_key(), render=False)
+            except sections.SectionError as failure:
+                refused.append("A finding was refused: %s (%s)" % (failure, finding["text"]))
+                self.say("  ticket %d: a finding was refused: %s" % (attempt.id, failure))
+                continue
             attempt.findings += 1
+        if attempt.findings:
+            sections.render_section(self.ledger, sections.RESULTS)
+        return refused
+
+    def _wave_key(self):
+        """The wave a passage or a finding lands in, unique across runs: `<run>/<number>`."""
+        return "%s/%d" % (self._run_key, self.number)
+
+    def _file_passages(self, attempt, passages=None):
+        """Write the passages the attempt returned (or `passages`), through the ledger, and render the sections they
+        touched; the notes on those refused.
+
+        Called once the ticket's work is on `main` (for a running result, once its jobs closed and its change was
+        kept), under the ledger lock, so tickets adding to one section are written one at a time in the order the wave
+        carries them, which is id order. A passage filed before a restart (the same `by`, section, heading, and text)
+        is not filed again.
+        """
+        refused, touched = [], set()
+        passages = attempt.result.get("passages") if passages is None else passages
+        by = sections.by_ticket(attempt.id, attempt.number)
+        with self.ledger.lock():
+            filed = {(item.get("section"), item.get("heading"), item.get("text")) for item in sections.read_passages(self.ledger)
+                     if item.get("by") == by}
+            for item in [entry for entry in passages or [] if isinstance(entry, dict)]:
+                key = (item.get("section"), " ".join(str(item.get("heading") or "").split()), str(item.get("text") or "").strip())
+                if key in filed:
+                    continue
+                try:
+                    sections.add_passage(self.ledger, item.get("section"), item.get("heading"), item.get("text"), by=by,
+                                         replaces=item.get("replaces"), objectives=attempt.ticket.get("objectives") or [],
+                                         ticket=attempt.id, wave=self._wave_key(), render=False)
+                    touched.add(item.get("section"))
+                except sections.SectionError as failure:
+                    refused.append("A passage was refused: %s (%s)" % (failure, item.get("heading")))
+                    self.say("  ticket %d: a passage was refused: %s" % (attempt.id, failure))
+            sections.render_sections(self.ledger, only=[name for name in sections.SECTIONS if name in touched])
         return refused
 
     def _in_worktree(self, provenance, worktree):

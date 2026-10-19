@@ -22,7 +22,23 @@
           "text": {"type": "string"},
           "provenance": {"type": "string", "description": "a path with a locator the manifest can resolve"},
           "negative": {"type": "boolean"},
-          "replaces": {"type": "string", "description": "the id of an earlier finding this one replaces, which is then no longer current (ticket 106)"}
+          "heading": {"type": ["string", "null"], "description": "a finding is a Results passage: the Results heading it stands under, naming the question; reuse one the section already has when it fits (the ticket's title when absent)"},
+          "replaces": {"type": ["string", "null"], "pattern": "\\S", "description": "the id of the finding this one replaces, when it narrows or corrects it (a scope-down); null otherwise"}
+        }
+      }
+    },
+    "passages": {
+      "type": "array",
+      "description": "what this ticket adds to the paper's sections (Introduction, Discussion, Methods, References), each written by code into research/sections/; Results is written as findings. A claim sentence ends with its provenance tag, and math is LaTeX ($...$, $$...$$)",
+      "items": {
+        "type": "object",
+        "required": ["section", "heading", "text", "replaces"],
+        "additionalProperties": false,
+        "properties": {
+          "section": {"type": "string", "enum": ["introduction", "discussion", "methods", "references"]},
+          "heading": {"type": "string", "pattern": "\\S", "description": "the heading it stands under; reuse one the section already has when it fits"},
+          "text": {"type": "string", "pattern": "\\S", "description": "Markdown, from one claim to a paragraph"},
+          "replaces": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the id of the passage this one replaces (P<n>), or null"}
         }
       }
     },

@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from string import Template
 
-from wayline import HARNESS_ROOT, POLICY_PATH, RESEARCH_VERSION, TAG, replay
+from wayline import HARNESS_ROOT, POLICY_PATH, RESEARCH_VERSION, TAG, replay, sections
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema, validate
 from wayline.ledger import (
@@ -623,6 +623,10 @@ def _write_research(project, harness_root, harness_tag):
         if not (project / RESEARCH / GRAPH).exists():
             ledger.write_json(GRAPH, empty_graph())
             changes.append("%s/%s" % (RESEARCH, GRAPH))
+        # The paper's five sections exist from the start, rendered by code from their passages (decision 17).
+        for name in sections.SECTIONS:
+            if not (project / RESEARCH / sections.section_path(name)).exists() and sections.render_section(ledger, name):
+                changes.append("%s/%s" % (RESEARCH, sections.section_path(name)))
     return changes
 
 

@@ -278,6 +278,14 @@ def with_result(body, attempt, result):
         items = result.get(key) or []
         if items:
             lines.extend(["", "%s: %s" % (label, ", ".join("`%s`" % item for item in items))])
+    # The passages it returned for the paper's sections (decision 17), which a verdict on a writing ticket reads here.
+    passages = [item for item in result.get("passages") or [] if isinstance(item, dict)]
+    if passages:
+        lines.extend(["", "Passages:", ""])
+        for item in passages:
+            where = "%s, %s%s" % (item.get("section"), " ".join(str(item.get("heading") or "").split()),
+                                  ", replacing %s" % item["replaces"] if item.get("replaces") else "")
+            lines.append("- %s: %s" % (where, " ".join(str(item.get("text") or "").split())))
     for note in result_notes(result):
         lines.extend(["", note[0].upper() + note[1:] + "."])
     return with_result_note(body, lines)

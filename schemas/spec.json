@@ -9,6 +9,7 @@
   "properties": {
     "title": {"type": "string", "pattern": "\\S", "description": "the project's research question as a title, one line"},
     "summary": {"type": "string", "pattern": "\\S", "description": "what the project is, in about 120 words a newcomer can read cold; the general report opens with it (Implementation Decision 17)"},
+    "gap": {"type": "array", "description": "the Introduction's passages on the gap the project fills: what the closest prior work leaves open and why it matters, each claim sentence ending with a {ref:<slug>#<locator>} tag; code writes them into research/sections/introduction.md once the spec is confirmed (Implementation Decision 17)", "items": {"type": "object", "required": ["heading", "text"], "additionalProperties": false, "properties": {"heading": {"type": "string", "pattern": "\\S"}, "text": {"type": "string", "pattern": "\\S"}}}},
     "question": {"type": "string", "pattern": "\\S", "description": "the research question the spec answers, in a paragraph"},
     "claims": {
       "type": "array",

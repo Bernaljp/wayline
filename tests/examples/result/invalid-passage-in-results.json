@@ -1,0 +1,13 @@
+{
+  "ticket_id": 7,
+  "status": "done",
+  "summary": "A Results passage is a finding, so a passage never names Results.",
+  "passages": [
+    {
+      "section": "results",
+      "heading": "Products",
+      "text": "The products raise the AUROC.",
+      "replaces": null
+    }
+  ]
+}

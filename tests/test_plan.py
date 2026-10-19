@@ -602,6 +602,42 @@ class ObjectivesTest(PlanCase):
         self.assertIn("could not be read", self.second_message())
 
 
+class SectionsTest(PlanCase):
+    """Ticket 86: every ticket declares the sections its kind adds to, and a writing ticket's touch set is empty."""
+
+    def test_the_tickets_declare_their_sections_by_kind(self):
+        self.script(planned(cut()))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        declared = {identifier: self.ticket(identifier).get("sections") for identifier in range(1, 9)}
+        self.assertEqual(declared, {1: ["methods"], 2: None, 3: ["methods"], 4: ["methods"], 5: ["methods"], 6: ["methods"],
+                                    7: ["methods", "results"], 8: ["discussion"]})
+        self.assertEqual(self.ticket(8)["touches"], [], "a writing ticket writes only its passages")
+
+    def test_a_writing_ticket_with_a_touch_set_or_no_sections_and_a_kind_declaring_another_section_are_returned(self):
+        broken = cut()
+        broken["tickets"][7]["touches"] = ["paper/discussion.md"]
+        broken["tickets"][7].pop("sections")
+        broken["tickets"][0]["sections"] = ["results"]
+        self.script(planned(broken), planned(cut()))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        message = self.second_message()
+        self.assertIn("T8 (ticket 8) is a writing ticket, whose touch set is empty: code writes the sections from its passages", message)
+        self.assertIn("T8 (ticket 8) is a writing ticket and declares no section", message)
+        self.assertIn("T1 (ticket 1) declares results; a code ticket declares methods", message)
+
+    def test_the_schemas_hold_sections(self):
+        for name in ("ticket.json", "plan.json"):
+            schema = json.loads((HARNESS_ROOT / "schemas" / name).read_text(encoding="utf-8"))
+            properties = schema["properties"] if name == "ticket.json" else schema["properties"]["tickets"]["items"]["properties"]
+            self.assertEqual(properties["sections"]["items"]["enum"], ["introduction", "results", "discussion", "methods", "references"])
+
+    def test_the_planner_is_told_no_writing_ticket_follows_an_analysis(self):
+        protocol = (HARNESS_ROOT / "prompts" / "roles" / "planner.md").read_text(encoding="utf-8")
+        self.assertIn("No `writing` ticket follows an analysis", protocol)
+
+
 class CheckpointsTest(PlanCase):
     """Criterion 5 under checkpoints: a blocking-all ticket gates the graph; a revise parks it at once."""
 
