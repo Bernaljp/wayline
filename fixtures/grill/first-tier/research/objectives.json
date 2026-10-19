@@ -1,0 +1,34 @@
+{
+  "objectives": [
+    {
+      "id": "O1",
+      "text": "Do pairwise products raise the held-out AUROC on the synthetic set?",
+      "measure": {
+        "metric": "auroc",
+        "direction": "up",
+        "target": 0.85,
+        "held_out_split": "split_b",
+        "eval_command": "echo auroc: 0.5",
+        "baseline": {
+          "value": null,
+          "source": null
+        },
+        "dataset_or_split": null,
+        "min_seeds": null
+      },
+      "status": "open",
+      "answer": null,
+      "evidence": [],
+      "reframed_as": null
+    },
+    {
+      "id": "O2",
+      "text": "Below what interaction strength do the products stop helping?",
+      "measure": null,
+      "status": "open",
+      "answer": null,
+      "evidence": [],
+      "reframed_as": null
+    }
+  ]
+}

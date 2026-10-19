@@ -4,15 +4,20 @@ Before any decision is asked, a fresh critic tells the owner whether the idea ma
 
 **The session.** `wayline position` launches the `critic` role in its position protocol through the
 worker launcher (seam 1), on `policy.roles.critic` (`opus`, `high`), with `position.json` as its
-schema. It reads only the dossiers, `INTAKE.md`, and `GOAL.json`: the intake and the goal are inlined
-in its prompt with the dossiers after them, and the session runs in `research/refs/` with its `Read`,
+schema. It reads only the dossiers, `INTAKE.md`, and `OBJECTIVES.md` (decision 17, in place of
+`GOAL.json`; ticket 80): the intake and the objectives are inlined in its prompt with the dossiers
+after them, and the session runs in `research/refs/` with its `Read`,
 `Glob`, and `Grep` rules scoped to that directory (`scoped_tools`), so no decision, spec, or earlier
 memo reaches it. It writes nothing.
 
 **The checks.** Code validates the memo against the schema and then reads what the schema cannot say
-(`check_memo`): three directions nearest first, none farther than the project's radius; a revised
-target when the goal is out of reach, and none when it is reachable; no reference named twice. A memo
-that fails is returned to the same session once with the failures; a second failure writes nothing.
+(`check_memo`): three directions nearest first, none farther than the project's radius, each naming
+objectives the project holds or proposing new ones; one row per open or parked objective, with a
+revised target when a goal is out of reach, none when it is reachable, and none for an objective
+without a measure; no reference named twice. A memo that fails is returned to the same session once
+with the failures; a second failure writes nothing. A project with no goal, or with no objective yet,
+is positioned all the same: its directions propose the objectives, and the grill's first tier puts
+them to the owner.
 
 **The citations.** Every row of the closest-prior-work table names a reference, and the scout has the
 last word on it (`verify_citations`): a slug, a DOI, an arXiv id, or a title that matches a dossier
@@ -40,11 +45,13 @@ from wayline import HARNESS_ROOT, gates, grill, pacing, specify, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, LedgerError
+from wayline.objectives import OBJECTIVES_MD, ObjectivesUnreadable, describe_measure, read_objectives
 from wayline.project import ProjectError, find_project, policy_for, read_harness
 from wayline.tickets import TicketError
 
 __all__ = [
-    "CRITIC", "POSITION_SCHEMA", "POSITION_MD", "POSITION_JSON", "PHASE", "DISTANCES", "PositionError", "critic_tier",
+    "CRITIC", "POSITION_SCHEMA", "POSITION_MD", "POSITION_JSON", "PHASE", "DISTANCES", "ROWED", "PositionError", "critic_tier",
+    "rowed",
     "scoped_tools", "inputs_text", "position_prompt", "check_memo", "verify_citations", "render_position", "read_position", "take_memo",
     "write_memo", "position", "position_view", "render_report", "position_command",
 ]
@@ -62,7 +69,9 @@ REFS = "refs"
 PROMPT_ROOM = 20000
 INPUTS_MIN = 20000
 FEASIBILITY = {"feasible": "Feasible", "feasible_with_changes": "Feasible with changes", "infeasible": "Not feasible"}
-GOAL_VERDICTS = {"reachable": "Reachable", "uncertain": "Uncertain", "out_of_reach": "Out of reach"}
+VERDICTS = {"reachable": "Reachable", "uncertain": "Uncertain", "out_of_reach": "Out of reach"}
+# The objectives the memo rows (decision 17): those the project pursues or may take up again; a closed one has its answer.
+ROWED = ("open", "parked")
 AUTONOMOUS = "autonomous"
 READING_TOOLS = ("Read", "Glob", "Grep")
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
@@ -78,7 +87,7 @@ RESUME_CHECKS = (
 
 
 class PositionError(ValueError):
-    """A memo nobody could write: no intake or goal, a role that cannot be read, a memo that failed its checks twice."""
+    """A memo nobody could write: no intake, unreadable objectives, a role that cannot be read, a memo that failed its checks twice."""
 
     def __init__(self, message, failures=()):
         super().__init__(message)
@@ -136,16 +145,22 @@ def _dossiers(ledger):
     return found
 
 
+def rowed(objectives):
+    """The objectives the memo gives a row each, in id order: the open and the parked."""
+    return [objective for objective in objectives or () if objective.get("status") in ROWED]
+
+
 def inputs_text(project, max_chars=None):
     """The critic's inputs, inlined in order and cut at `max_chars` with every cut announced: `(text, cut)`.
 
-    `INTAKE.md`, then `GOAL.json`, then each reference's `dossier.json` with its `dossier.md` when it
-    was read in full. Nothing else: no decision, no spec, and no earlier memo.
+    `INTAKE.md`, then `OBJECTIVES.md`, then each reference's `dossier.json` with its `dossier.md` when it
+    was read in full. Nothing else: no decision, no spec, no earlier memo, and no `GOAL.json`.
     """
     research = Path(project) / "research"
     entries = [
         ("research/INTAKE.md", _read(research / "INTAKE.md"), "[wayline: there is no INTAKE.md]"),
-        ("research/GOAL.json", _read(research / "GOAL.json"), "[wayline: no goal is stated]"),
+        ("research/%s" % OBJECTIVES_MD, _read(research / OBJECTIVES_MD),
+         "[wayline: no objective is recorded yet; propose them in the directions]"),
     ]
     refs = research / REFS
     slugs = sorted(path.parent.name for path in refs.glob("*/dossier.json")) if refs.is_dir() else []
@@ -157,7 +172,7 @@ def inputs_text(project, max_chars=None):
     if not slugs:
         entries.append(("the dossiers", None, "[wayline: no reference has a dossier; the table of prior work will be empty]"))
     cap = None if max_chars is None else max(INPUTS_MIN, int(max_chars) - PROMPT_ROOM)
-    rendered, used, cut = ["# What you read", "", "The intake, the goal, and the dossiers: nothing else is yours to read."], 0, False
+    rendered, used, cut = ["# What you read", "", "The intake, the objectives, and the dossiers: nothing else is yours to read."], 0, False
     for heading, text, absent in entries:
         rendered.extend(["", "## %s" % heading, ""])
         if text is None or not text.strip():
@@ -181,17 +196,21 @@ def inputs_text(project, max_chars=None):
     return "\n".join(rendered) + "\n", cut
 
 
-def position_prompt(role, inputs, harness, project, cut=False):
-    """The critic's position prompt: what is asked, the radius, the inputs, the paths, the protocol, the schema."""
+def position_prompt(role, inputs, harness, project, cut=False, objectives=()):
+    """The critic's position prompt: what is asked, the radius, the objectives to row, the inputs, the paths, the protocol, the schema."""
+    asked = [objective["id"] for objective in rowed(objectives)]
     head = "\n".join([
         "# What you are asked for",
         "",
         "The position memo of this project: phase P2, before any design question is put to the owner. Tell the owner "
         "whether the idea makes sense: the closest prior work, whether it is feasible with the compute and data they "
-        "stated, whether the goal is within reach, what a hostile reviewer would say, and three directions it could take.",
+        "stated, whether each objective is within reach, what a hostile reviewer would say, and three directions it "
+        "could take, each naming the objectives it would pursue.",
         "",
         "- the project's radius: `%s` (no direction may be farther from the intent than this)" % harness.get("radius"),
         "- autonomy: `%s`" % harness.get("autonomy"),
+        ("- the objectives: one row in `objectives` for each of %s, and no other" % ", ".join(asked)) if asked else
+        "- the objectives: none is recorded yet, so `objectives` is empty and the directions propose them (`id` null)",
     ])
     parts = [head, inputs]
     if cut:
@@ -218,8 +237,13 @@ def _one_line(text):
     return " ".join(str(text or "").split())
 
 
-def check_memo(memo, radius):
-    """The checks on a memo the schema cannot make; returns the failures, each one line, empty when it passes."""
+def check_memo(memo, radius, objectives=()):
+    """The checks on a memo the schema cannot make; returns the failures, each one line, empty when it passes.
+
+    `objectives` are the project's records (`objectives.json`): the memo rows each open or parked one once, a
+    revised target follows a goal's verdict and is never given for an objective without a measure, and a
+    direction names only objectives the project holds, or new ones with no id.
+    """
     try:
         check(memo, load_schema(POSITION_SCHEMA), name="the memo")
     except ValidationError as failure:
@@ -234,17 +258,48 @@ def check_memo(memo, radius):
             if DISTANCES.index(direction["distance"]) > DISTANCES.index(radius):
                 failures.append("direction %d (%s) is %s, farther than the project's radius %s"
                                 % (index, _one_line(direction["title"]), direction["distance"], radius))
-    goal = memo["goal_feasibility"]
-    if goal["verdict"] == "out_of_reach" and goal["revised_target"] is None:
-        failures.append("the goal is out of reach and no revised target is given")
-    if goal["verdict"] == "reachable" and goal["revised_target"] is not None:
-        failures.append("the goal is reachable, so it takes no revised target")
+    held = {objective.get("id"): objective for objective in objectives or ()}
+    for index, direction in enumerate(memo["directions"], 1):
+        for named in direction["objectives"]:
+            if named["id"] is not None and named["id"] not in held:
+                failures.append("direction %d (%s) names %s, which the project does not hold"
+                                % (index, _one_line(direction["title"]), named["id"]))
+    failures += _row_failures(memo["objectives"], held)
     seen = set()
     for row in memo["prior_work"]:
         key = _one_line(row["reference"]).lower()
         if key in seen:
             failures.append("the reference %s is named more than once" % _one_line(row["reference"]))
         seen.add(key)
+    return failures
+
+
+def _row_failures(rows, held):
+    """Why the memo's `objectives` rows are not one per open or parked objective, or a revised target is misplaced."""
+    failures, counted = [], {}
+    for row in rows:
+        counted[row["id"]] = counted.get(row["id"], 0) + 1
+        objective = held.get(row["id"])
+        if objective is None:
+            failures.append("a row of objectives names %s, which the project does not hold" % row["id"])
+            continue
+        if objective.get("status") not in ROWED:
+            failures.append("a row of objectives names %s, which is %s; the memo rows only the open and parked objectives"
+                            % (row["id"], objective.get("status")))
+            continue
+        revised = row["revised_target"]
+        if not objective.get("measure"):
+            if revised is not None:
+                failures.append("%s has no measure, so it takes no revised target" % row["id"])
+        elif row["verdict"] == "out_of_reach" and revised is None:
+            failures.append("the goal %s is out of reach and no revised target is given" % row["id"])
+        elif row["verdict"] == "reachable" and revised is not None:
+            failures.append("the goal %s is reachable, so it takes no revised target" % row["id"])
+    for objective in rowed(held.values()):
+        if counted.get(objective["id"], 0) == 0:
+            failures.append("the objective %s has no row in objectives" % objective["id"])
+        elif counted[objective["id"]] > 1:
+            failures.append("the objective %s has more than one row in objectives" % objective["id"])
     return failures
 
 
@@ -435,7 +490,7 @@ def render_position(record):
     memo = record["memo"]
     lines = ["# Position", "",
              "Rendered by `wayline position` from `research/position.json`: the %s critic's memo, read from the dossiers, "
-             "`INTAKE.md`, and `GOAL.json` only." % (record.get("model") or "unnamed"), ""]
+             "`INTAKE.md`, and `OBJECTIVES.md` only." % (record.get("model") or "unnamed"), ""]
     lines += _lead("Intent", memo["intent"]) + ["", "## Closest prior work", ""]
     if not record["prior_work"]:
         lines.append("No reference the scout verified bears on the intent.")
@@ -465,25 +520,47 @@ def render_position(record):
     feasibility = memo["feasibility"]
     lines += ["", "## Feasibility", ""] + _lead(FEASIBILITY[feasibility["verdict"]], feasibility["reasoning"]) + [""]
     lines += _item("- compute: ", feasibility["compute"]) + _item("- data: ", feasibility["data"])
-    goal = memo["goal_feasibility"]
-    stated = record.get("goal") or {}
-    lines += ["", "## Goal feasibility", ""]
-    if stated.get("metric") is not None:
-        lines += ["The goal: %s %s %s%s." % (stated["metric"], "at least" if stated.get("direction") == "up" else "at most",
-                                             _number(stated.get("target")),
-                                             ", held out on %s" % stated["held_out_split"] if stated.get("held_out_split") else ""), ""]
-    lines += _lead(GOAL_VERDICTS[goal["verdict"]], goal["reasoning"])
-    if goal["revised_target"] is not None:
-        lines += ["", "Revised target: **%s**. The goal is the owner's to change; this is a proposal." % _number(goal["revised_target"]["value"]), ""]
-        lines += _item("- why it is reachable: ", goal["revised_target"]["why"])
+    lines += ["", "## Objectives", ""] + _objective_rows(memo["objectives"], record.get("objectives") or [])
     lines += ["", "## The hostile reviewer", ""]
     for index, text in enumerate(memo["hostile_review"], 1):
         lines += _item("%d. " % index, text)
     lines += ["", "## Three directions, by distance from the intent", "",
-              "Nearest first, none farther than the radius `%s`." % record.get("radius"), ""]
+              "Nearest first, none farther than the radius `%s`. The objectives each direction names are proposals: the "
+              "grill's first tier asks the owner which the project takes, open or parked." % record.get("radius"), ""]
     for index, direction in enumerate(memo["directions"], 1):
-        lines += _item("%d. **%s** (%s): " % (index, _one_line(direction["title"]), direction["distance"]), direction["text"])
+        marker = "%d. " % index
+        lines += _item(marker + "**%s** (%s): " % (_one_line(direction["title"]), direction["distance"]), direction["text"])
+        for named in direction.get("objectives") or ():
+            pad = " " * len(marker)
+            if named.get("id"):
+                lines.append(pad + "- would pursue %s: %s" % (named["id"], _one_line(named["text"])))
+            else:
+                lines.append(pad + "- proposes a new objective: %s" % _one_line(named["text"]))
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _objective_rows(rows, recorded):
+    """The `## Objectives` section: each row under its objective's question, the goal's measure, the verdict, a revised target."""
+    if not rows:
+        return ["No objective is recorded yet; the directions below propose them."]
+    known = {objective.get("id"): objective for objective in recorded}
+    lines = []
+    for row in rows:
+        objective = known.get(row["id"]) or {}
+        lines += ["### %s %s" % (row["id"], _one_line(objective.get("text") or "an objective the record does not name")), ""]
+        if objective.get("measure"):
+            lines += ["A goal: %s." % objective["measure"], ""]
+        else:
+            lines += ["An objective without a measure.", ""]
+        lines += _lead(VERDICTS[row["verdict"]], row["reasoning"])
+        if row["revised_target"] is not None:
+            lines += ["", "Revised target: **%s**. The goal is the owner's to change; this is a proposal."
+                      % _number(row["revised_target"]["value"]), ""]
+            lines += _item("- why it is reachable: ", row["revised_target"]["why"])
+        lines.append("")
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def read_position(project):
@@ -535,6 +612,14 @@ def _unusable(envelope):
     return None
 
 
+def _objectives(project):
+    """The project's objectives as `objectives.json` holds them; an unreadable record stops the memo with the reason."""
+    try:
+        return read_objectives(project)
+    except ObjectivesUnreadable as failure:
+        raise PositionError(str(failure)) from None
+
+
 def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, say=lambda text: None):
     """One critic session on the project, checked but not written: `(memo, envelope, model, fallback_from)`.
 
@@ -545,6 +630,7 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
     project = Path(project).resolve()
     policy = policy_for(project, harness_root) if policy is None else policy
     harness = read_harness(project)
+    objectives = _objectives(project)
     what = "the critic's position memo"
     model, effort, fallback_from = critic_tier(policy, _falls_back_now(project, policy, fall_back))
     role = worker.read_role(CRITIC, harness_root, project)
@@ -553,7 +639,7 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
     refs.mkdir(parents=True, exist_ok=True)
     run_dir = _session_dir(project)
     request = worker.LaunchRequest(
-        role=role.name, model=model, effort=effort, prompt=position_prompt(role, inputs, harness, project, cut),
+        role=role.name, model=model, effort=effort, prompt=position_prompt(role, inputs, harness, project, cut, objectives),
         agent_json=role.agent_json(model, effort, _budget(policy, "max_turns")),
         allowed_tools=scoped_tools(role.allowed_tools, refs), disallowed_tools=list(role.disallowed_tools),
         settings_path=gates.write_worker_settings(run_dir / "settings.json", harness_root),
@@ -582,18 +668,18 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
         problem = _unusable(envelope)
         if problem is not None:
             raise PositionError("the critic returned no memo the schema accepts: %s" % problem)
-        failures = check_memo(envelope.structured_output, harness.get("radius"))
+        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives)
         if failures:
             raise PositionError("the memo failed its checks after it was returned once; nothing was written", failures)
     else:
-        failures = check_memo(envelope.structured_output, harness.get("radius"))
+        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives)
         if failures:
             say("  the memo failed %d check(s); returned to the critic once" % len(failures))
             envelope = again(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
             problem = _unusable(envelope)
             if problem is not None:
                 raise PositionError("the critic's second memo could not be read: %s" % problem, failures)
-            failures = check_memo(envelope.structured_output, harness.get("radius"))
+            failures = check_memo(envelope.structured_output, harness.get("radius"), objectives)
             if failures:
                 raise PositionError("the memo failed its checks twice; nothing was written", failures)
     envelope.session_id = envelope.session_id or session_id
@@ -608,12 +694,12 @@ def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None
     project = Path(project).resolve()
     ledger = Ledger(project)
     kept, dropped, written = verify_citations(project, memo, scout=scout, say=say)
-    try:
-        goal = json.loads(ledger.path("GOAL.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
-        goal = None
+    # The objectives as the memo read them: what `POSITION.md` names beside each row, kept as the memo saw them.
+    objectives = [{"id": objective["id"], "text": objective["text"], "status": objective["status"],
+                   "measure": describe_measure(objective["measure"]) if objective.get("measure") else None}
+                  for objective in _objectives(project)]
     record = {"memo": memo, "prior_work": kept, "dropped": dropped, "dossiers_written": written,
-              "radius": read_harness(project).get("radius"), "goal": goal,
+              "radius": read_harness(project).get("radius"), "objectives": objectives,
               "session_id": session_id, "model": model, "fallback_from": fallback_from}
     ledger.write_json(POSITION_JSON, record)
     ledger.write_markdown(POSITION_MD, render_position(record))
@@ -643,16 +729,17 @@ def position_view(project, harness=None, events=None):
     handed = harness.get("autonomy") == AUTONOMOUS
     try:
         feasibility = memo["feasibility"]["verdict"]
-        goal = memo["goal_feasibility"]
+        objectives = [{"id": row["id"], "verdict": row["verdict"],
+                       "revised_target": row["revised_target"]["value"] if isinstance(row.get("revised_target"), dict) else None}
+                      for row in memo["objectives"]]
         directions = ["%s (%s)" % (_one_line(item["title"]), item["distance"]) for item in memo["directions"]]
     except (KeyError, TypeError):
         return None
-    revised = goal.get("revised_target")
     return {
         "path": "research/%s" % POSITION_MD,
         "feasibility": feasibility,
-        "goal": goal.get("verdict"),
-        "revised_target": revised.get("value") if isinstance(revised, dict) else None,
+        "objectives": objectives,
+        "verdicts": verdicts_line(objectives),
         "cited": len(record.get("prior_work") or []),
         "dropped": len(record.get("dropped") or []),
         "objections": len(memo.get("hostile_review") or []),
@@ -664,12 +751,19 @@ def position_view(project, harness=None, events=None):
     }
 
 
+def verdicts_line(objectives):
+    """The memo's verdict on each objective in one line: `O1 uncertain (revised target 0.83), O2 reachable`."""
+    if not objectives:
+        return "none recorded"
+    return ", ".join("%s %s%s" % (item["id"], item["verdict"], " (revised target %s)" % _number(item["revised_target"])
+                                  if item.get("revised_target") is not None else "") for item in objectives)
+
+
 def render_view(view):
     """The lines `wayline status` leads with while the memo is the owner's to read."""
-    goal = view["goal"] + (", revised target %s" % _number(view["revised_target"]) if view["revised_target"] is not None else "")
     lines = ["position memo  %s: read it before the grill" % view["path"],
-             "  feasibility %s   goal %s   prior work %d cited, %d dropped   objections %d"
-             % (view["feasibility"], goal, view["cited"], view["dropped"], view["objections"])]
+             "  feasibility %s   objectives %s   prior work %d cited, %d dropped   objections %d"
+             % (view["feasibility"], view["verdicts"], view["cited"], view["dropped"], view["objections"])]
     lines += ["  %d. %s" % (index, direction) for index, direction in enumerate(view["directions"], 1)]
     return lines
 
@@ -689,9 +783,9 @@ def position(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None,
     harness = read_harness(project)
     autonomy = harness.get("autonomy")
     report = {"project": str(project), "autonomy": autonomy, "did": [], "stopped": None, "failures": [], "view": None}
-    for name, verb in (("INTAKE.md", "wayline intake"), ("GOAL.json", "wayline intake --goal")):
-        if not ledger.path(name).is_file():
-            raise PositionError("%s has no research/%s; the memo reads it, so run %s first" % (project, name, verb))
+    # No guard on GOAL.json or on objectives (decision 17): a project with no goal is positioned, and its directions propose them.
+    if not ledger.path("INTAKE.md").is_file():
+        raise PositionError("%s has no research/INTAKE.md; the memo reads it, so run wayline intake first" % project)
     try:
         memo, envelope, model, fallback_from = take_memo(project, harness_root=harness_root, policy=policy,
                                                          fall_back=fall_back, say=say)
@@ -732,10 +826,10 @@ def _decide(project, report, harness_root, policy, fall_back, notify, say):
 
 def _tell_owner(project, record, notify):
     memo = record["memo"]
-    text = "The position memo is written (research/%s): %s; the goal is %s%s. Read it before the grill." % (
-        POSITION_MD, FEASIBILITY[memo["feasibility"]["verdict"]].lower(), GOAL_VERDICTS[memo["goal_feasibility"]["verdict"]].lower(),
-        ", revised target %s" % _number(memo["goal_feasibility"]["revised_target"]["value"])
-        if memo["goal_feasibility"]["revised_target"] else "")
+    rows = [{"id": row["id"], "verdict": row["verdict"],
+             "revised_target": row["revised_target"]["value"] if row["revised_target"] else None} for row in memo["objectives"]]
+    text = "The position memo is written (research/%s): %s; objectives %s. Read it before the grill." % (
+        POSITION_MD, FEASIBILITY[memo["feasibility"]["verdict"]].lower(), verdicts_line(rows))
     if notify is not None:
         notify("position", text, str(Path(project) / "research" / POSITION_MD), None)
         return
@@ -759,9 +853,10 @@ def render_report(report):
 def position_command(args):
     parser = argparse.ArgumentParser(
         prog="wayline position",
-        description="phase P2: a fresh critic reads only the dossiers, INTAKE.md, and GOAL.json and writes "
-                    "research/POSITION.md: the closest prior work the scout verified, feasibility, goal feasibility, "
-                    "the hostile reviewer, and three directions by radius. Under autonomous it goes to the decider.")
+        description="phase P2: a fresh critic reads only the dossiers, INTAKE.md, and OBJECTIVES.md and writes "
+                    "research/POSITION.md: the closest prior work the scout verified, feasibility, a verdict on each "
+                    "objective, the hostile reviewer, and three directions by radius, each naming the objectives it "
+                    "would pursue. Under autonomous it goes to the decider.")
     parser.add_argument("--project", help="the project; the active one by default")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     options, code = parse_args(parser, args)

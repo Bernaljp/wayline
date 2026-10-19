@@ -32,14 +32,23 @@
     "data": "toy/make_synthetic.py writes the synthetic set and split_b is held out, which is enough to answer the question on synthetic data.",
     "reasoning": "No GPU is needed for the core comparison. The intake does not say which library fits the models, nor how many seeds the generator is run with."
   },
-  "goal_feasibility": {
-    "verdict": "uncertain",
-    "reasoning": "The generator draws each label from a logistic of a linear term and one product term, so no model can beat the AUROC of the true log-odds, and at the generator's default strengths that ceiling may be close to the 0.85 target. The ceiling cannot be computed without running the generator.",
-    "revised_target": {
-      "value": 0.83,
-      "why": "Below the likely ceiling of the true log-odds at the default strengths, so a model can reach it."
+  "objectives": [
+    {
+      "id": "O1",
+      "verdict": "uncertain",
+      "reasoning": "The generator draws each label from a logistic of a linear term and one product term, so no model can beat the AUROC of the true log-odds, and at the generator's default strengths that ceiling may be close to the 0.85 target. The ceiling cannot be computed without running the generator.",
+      "revised_target": {
+        "value": 0.83,
+        "why": "Below the likely ceiling of the true log-odds at the default strengths, so a model can reach it."
+      }
+    },
+    {
+      "id": "O2",
+      "verdict": "reachable",
+      "reasoning": "Sweeping the generator's interaction strength over a grid and refitting both models at each point answers it on the synthetic set in minutes on a CPU.",
+      "revised_target": null
     }
-  },
+  ],
   "hostile_review": [
     "The synthetic set plants the interaction, so recovering it shows only that the method recovers what was put there.",
     "A logistic regression without products is a weak baseline when paper-b reports that a flexible model finds interactions on its own.",
@@ -50,17 +59,39 @@
     {
       "distance": "strict",
       "title": "The comparison as stated",
-      "text": "Logistic regression with and without pairwise products on the default synthetic set, over several seeds, scored by held-out AUROC on split_b."
+      "text": "Logistic regression with and without pairwise products on the default synthetic set, over several seeds, scored by held-out AUROC on split_b.",
+      "objectives": [
+        {
+          "id": "O1",
+          "text": "Do pairwise products raise the held-out AUROC on the synthetic set?"
+        }
+      ]
     },
     {
       "distance": "moderate",
       "title": "A flexible second baseline",
-      "text": "The same comparison, plus a flexible model without products (gradient-boosted trees or a small network), the second baseline paper-b calls for."
+      "text": "The same comparison, plus a flexible model without products (gradient-boosted trees or a small network), the second baseline paper-b calls for.",
+      "objectives": [
+        {
+          "id": "O1",
+          "text": "Do pairwise products raise the held-out AUROC on the synthetic set?"
+        },
+        {
+          "id": null,
+          "text": "Does a flexible model without products match the products on the synthetic set?"
+        }
+      ]
     },
     {
       "distance": "far",
       "title": "Where the products stop helping",
-      "text": "Sweep the generator's interaction strength and find the strength below which the products stop helping."
+      "text": "Sweep the generator's interaction strength and find the strength below which the products stop helping.",
+      "objectives": [
+        {
+          "id": "O2",
+          "text": "Below what interaction strength do the products stop helping?"
+        }
+      ]
     }
   ],
   "missing_prior_work": [

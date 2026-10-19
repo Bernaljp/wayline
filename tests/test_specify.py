@@ -312,7 +312,7 @@ class DraftTest(SpecifyCase):
         self.assertEqual(request.allowed_tools, ["Read", "Glob", "Grep"])
         self.assertEqual(request.cwd, self.project.resolve())
         for text in ("## research/DECISIONS.md", "What does the goal become", "## research/POSITION.md", "The hostile reviewer",
-                     "## research/GOAL.json", '"held_out_split": "split_b"', "## research/kb/query_pack.md",
+                     "## research/OBJECTIVES.md", "## research/kb/query_pack.md",
                      "paper-a extends paper-b", "paper-b", "## Specify", "# The spec", "confirmed_by"):
             self.assertIn(text, request.prompt)
         self.assertNotIn("## Plan", request.prompt)

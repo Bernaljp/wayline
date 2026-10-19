@@ -22,8 +22,8 @@ from tests.projects import ProjectTestCase
 from wayline import resources as r
 from wayline.dossier import absorb_level_0
 from wayline.fetch import recording_fetcher
-from wayline.intake import check_goal
 from wayline.jsonschema import load_schema, validate
+from wayline.objectives import run_on_sample
 from wayline.project import init_project
 from wayline.scout import VERIFIED
 
@@ -112,15 +112,16 @@ class GoalTest(unittest.TestCase):
         self.assertEqual(self.goal["direction"], "up")
         self.assertLess(self.goal["target"], 0.9)  # below every seed's trained auroc, recorded live in m5.md
 
-    def test_eval_command_prints_the_metric_check_goal_reads(self):
+    def test_eval_command_prints_the_metric_the_measure_check_reads(self):
+        """The check `wayline objective add` runs on a measure's sample artifact (ticket 76), where intake's went."""
         import tempfile
 
         with tempfile.TemporaryDirectory() as workspace:
             artifact = Path(workspace) / "summary.json"
             artifact.write_text(json.dumps({"seed": 1, "auroc": 0.851}), encoding="utf-8")
-            result = check_goal(self.goal, SAMPLE, sample=artifact)
-        self.assertTrue(result.accepted, result.reason)
-        self.assertAlmostEqual(result.value, 0.851)
+            kind, reason, value = run_on_sample(self.goal["eval_command"], self.goal["metric"], SAMPLE, artifact)
+        self.assertEqual(kind, "accepted", reason)
+        self.assertAlmostEqual(value, 0.851)
 
 
 class IntakeReferencesTest(unittest.TestCase):

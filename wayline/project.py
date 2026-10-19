@@ -54,7 +54,7 @@ __all__ = [
     "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "falls_back_now", "ask_falls_back_at",
     "fable_hold", "fable_falls_back",
     "LADDER_CLASS", "LADDER_CHANGES", "LADDER_CONSENTS", "ladder_consent", "ladder_is_human_only",
-    "human_only_classes_now", "set_ladder_changes",
+    "human_only_classes_now", "set_ladder_changes", "OBJECTIVE_CLASS", "DEFAULT_HUMAN_ONLY", "human_only_class", "human_only_classes",
     "set_model_fallback", "hold_status", "render_hold",
     "steer_ticket", "set_pacing", "pause_command", "resume_command", "stop_command", "cancel_command", "rerun_command", "answer_command",
 ]
@@ -121,6 +121,12 @@ LADDER_CHANGES = {
     ASK: "a proposed change to the rung ladder (`tiers` or `difficulty`) is a human-only decision ticket of class `ladder` under every autonomy.",
 }
 LADDER_CONSENTS = (AUTO, ASK)
+
+# The human-only classes every project holds (decision 4): a change to an objective, which covers a goal, and to the
+# data. Decision 17 renamed the first from `goal`; a `harness.json` that still names `goal` is read as `objective`.
+OBJECTIVE_CLASS = "objective"
+OLD_GOAL_CLASS = "goal"
+DEFAULT_HUMAN_ONLY = (OBJECTIVE_CLASS, "data")
 
 # `LIVE_JOB_STATUSES` (Implementation Decisions 6) is the job runner's, re-exported here because
 # the views were reading it from this module before the runner existed.
@@ -352,7 +358,7 @@ def default_harness(harness_tag=TAG, policy=None, hermes_python=_DETECT, owner_e
         "research_version": RESEARCH_VERSION,
         "autonomy": "checkpoints",
         "radius": "moderate",
-        "human_only": ["goal", "data"],  # decision 4: goal and data changes wait for the owner
+        "human_only": list(DEFAULT_HUMAN_ONLY),  # decision 4: objective and data changes wait for the owner (decision 17)
         "reservations": {
             "gpu": list(reservations.get("gpu", [])),
             "cores": reservations.get("cores", 8),
@@ -1672,13 +1678,23 @@ def ladder_is_human_only(harness, view=None):
     return ladder_consent(harness, view)[0] != AUTO
 
 
+def human_only_class(name):
+    """The class a `human_only` entry names: `goal` is read as `objective`, which covers goals (decision 17)."""
+    return OBJECTIVE_CLASS if name == OLD_GOAL_CLASS else name
+
+
+def human_only_classes(names):
+    """`harness.json`'s `human_only` entries as the classes they name, in order, each once, `goal` read as `objective`."""
+    return list(dict.fromkeys(human_only_class(name) for name in names or () if isinstance(name, str)))
+
+
 def human_only_classes_now(harness, view=None):
     """The decision classes the decider never resolves right now: `harness.json`'s, plus `ladder` while the consent is not `auto`.
 
     One reader for the decider's prompt and for whoever opens a decision, so the prompt and the ticket never
-    disagree about the class (decision 16).
+    disagree about the class (decision 16). An old `goal` entry is read as `objective` (decision 17).
     """
-    classes = [name for name in ((harness or {}).get("human_only") or []) if isinstance(name, str)]
+    classes = human_only_classes((harness or {}).get("human_only"))
     if ladder_is_human_only(harness, view) and LADDER_CLASS not in classes:
         classes.append(LADDER_CLASS)
     return classes

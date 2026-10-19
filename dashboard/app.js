@@ -508,10 +508,10 @@ function renderOverview(view, project) {
   // a line, then the memo itself, sanitized like every other markdown the ledger holds.
   if (view.position && view.position.first) {
     const memo = view.position;
-    const revised = memo.revised_target === null ? '' : `, revised target ${memo.revised_target}`;
+    // One verdict per objective (decision 17), in place of the goal's: `O1 uncertain (revised target 0.83), O2 reachable`.
     parts.push(
       subhead('position memo'),
-      el('p', { class: 'memo-line', text: `feasibility ${memo.feasibility}, goal ${memo.goal}${revised}; ${memo.cited} prior work cited, ${memo.dropped} dropped. Read ${memo.path} before the grill.` }),
+      el('p', { class: 'memo-line', text: `feasibility ${memo.feasibility}, objectives ${memo.verdicts}; ${memo.cited} prior work cited, ${memo.dropped} dropped. Read ${memo.path} before the grill.` }),
       el('details', { class: 'memo', open: '' }, [el('summary', { text: 'the memo' }), renderMarkdown(view.position.text, 'research/POSITION.md')]),
       el('hr', { class: 'rule' }),
     );

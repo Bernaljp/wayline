@@ -17,6 +17,15 @@ are settled. `wayline grill` stamps each question a tier puts to the owner for t
 that tier's number; a question left unanswered is asked again in the next tier and keeps its first
 number. Under autonomy `autonomous` the frontier is the decider's (ticket 31), so a tier asks the
 owner only the human-only and irreversible questions, which the decider never resolves (decision 4).
+
+**The first tier settles the objectives** (decision 17; ticket 80). Before the first tier is stamped,
+`wayline grill` adds one question per objective: each open or parked one `objectives.json` holds, and
+each new one the position memo's directions propose. Each asks whether the project takes it, `open`
+or `parked`, is human-only (the owner's at every autonomy), and carries the objective in its record's
+`objective` field. While any of them is open on the frontier, a tier asks only those, and the decider
+takes nothing, since the rest of the tree builds on which objectives the project takes. The owner's
+answer is recorded through the objectives' ledger as an `objective` event: a recorded objective moves
+to the status chosen, and a proposed one is recorded with it, its new id kept on the settled record.
 """
 
 import argparse
@@ -36,7 +45,7 @@ __all__ = [
     "GrillError", "DECISIONS_MD", "CONTEXT_MD", "read_records", "parse_records", "render_decisions", "frontier",
     "missing", "with_question", "with_answer", "with_tier", "with_term", "ask", "answer", "settle_term", "with_human_only",
     "turn_over", "apply_batch", "grill_view", "render_grill", "grill_command", "machine_line", "record_payload", "superseded_by",
-    "decider_share",
+    "decider_share", "TAKE", "objective_questions", "with_objective_questions",
 ]
 
 DECISIONS_MD = "DECISIONS.md"
@@ -48,7 +57,7 @@ AUTONOMOUS = "autonomous"
 _RECORD = re.compile(r"^<!-- wayline:decision (\{.*\}) -->$")
 _ID = re.compile(r"^Q([1-9][0-9]*)\Z")
 # The order a record's keys are written in, so a diff of DECISIONS.md shows what changed and nothing else.
-FIELDS = ("id", "ticket", "question", "options", "recommended", "evidence", "requires", "human_only", "reversible",
+FIELDS = ("id", "ticket", "question", "options", "recommended", "evidence", "requires", "objective", "human_only", "reversible",
           "tier", "supersedes", "answer", "rationale", "confidence", "decided_by", "model", "fallback_from", "session_id",
           "timestamp")
 # What a settled record carries about the session that answered it (decision 15; ticket 31): never on the owner's answer.
@@ -187,8 +196,15 @@ def _waiting(records):
 
 
 def decider_share(records):
-    """The frontier's questions the decider resolves under `autonomous`: every open one that is not the owner's (decision 4)."""
-    return [record for record in frontier(records) if not owners(record)]
+    """The frontier's questions the decider resolves under `autonomous`: every open one that is not the owner's (decision 4).
+
+    None while a question of the first tier is open on the frontier: the rest builds on which objectives the
+    project takes, and only the owner says that (ticket 80).
+    """
+    ready = frontier(records)
+    if any(record.get("objective") for record in ready):
+        return []
+    return [record for record in ready if not owners(record)]
 
 
 def superseded_by(records):
@@ -235,12 +251,13 @@ def _check(record):
 
 
 def with_question(records, question, identifier=None, options=(), recommended=None, requires=(), evidence=(),
-                  human_only=False, reversible=True):
+                  human_only=False, reversible=True, objective=None):
     """`records` with one open question added to the tree, and that question.
 
     The id is the one given (`Q` and a number nobody holds) or the next free one. A prerequisite must
     already be in the tree, which is what keeps the tree acyclic, and a question the tree already
-    asks, in any spelling of the same words, is refused with the record that asks it.
+    asks, in any spelling of the same words, is refused with the record that asks it. `objective`
+    (`{id, text}`) makes it a question of the first tier, answered `open` or `parked` (ticket 80).
     """
     question = _text(question, "a question")
     identifier = identifier or _next_id(records)
@@ -259,14 +276,17 @@ def with_question(records, question, identifier=None, options=(), recommended=No
                          % (identifier, ", ".join(unknown)))
     if recommended is not None and not isinstance(recommended, str):
         raise GrillError("a recommended answer is text")
-    record = _check({
+    record = {
         "id": identifier, "question": question, "options": _strings(options, "options"),
         "recommended": recommended.strip() if recommended and recommended.strip() else None,
         "evidence": _strings(evidence, "evidence"), "requires": requires,
         "human_only": _flag(human_only, "human_only"), "reversible": _flag(reversible, "reversible"),
         "tier": None, "supersedes": None, "answer": None, "rationale": None, "confidence": None, "decided_by": None,
         "timestamp": None,
-    })
+    }
+    if objective is not None:
+        record["objective"] = objective
+    record = _check(_ordered(record))
     return records + [record], record
 
 
@@ -294,6 +314,11 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
     if record is None:
         raise GrillError("the design tree has no question %s" % (identifier,))
     text = _text(text, "an answer")
+    if record.get("objective"):
+        taken = text.casefold().rstrip(".")
+        if taken not in TAKE:
+            raise GrillError("%s asks whether the project takes an objective: answer open or parked, got %r" % (identifier, text))
+        text = taken
     rationale = _text(rationale, "an answer's rationale")
     if confidence is not None and (isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1):
         raise GrillError("confidence is a number from 0 to 1, or not stated; got %r" % (confidence,))
@@ -342,6 +367,9 @@ def with_tier(records, autonomy):
     already open. An empty frontier is no tier (None).
     """
     asked = [record for record in frontier(records) if autonomy != AUTONOMOUS or owners(record)]
+    leading = [record for record in asked if record.get("objective")]
+    if leading:
+        asked = leading  # the first tier settles the objectives before anything that builds on them (ticket 80)
     if not asked:
         return records, None, []
     current = _current_tier(records)
@@ -351,6 +379,136 @@ def with_tier(records, autonomy):
     tier = current + 1
     stamp = lambda record: dict(record, tier=tier) if record.get("id") in fresh else record  # noqa: E731
     return [stamp(record) for record in records], tier, [stamp(record) for record in asked]
+
+
+# --- the first tier: the objectives (decision 17; ticket 80) ---------------------------------------
+
+
+# The two answers a question of the first tier takes: the project pursues the objective now, or sets it aside.
+TAKE = ("open", "parked")
+POSITION_JSON = "position.json"
+
+
+def _direction_name(index, direction):
+    return "direction %d (%s, %s)" % (index, _line(direction.get("title") or "untitled"), direction.get("distance"))
+
+
+def _memo_line(row):
+    revised = row.get("revised_target")
+    value = revised.get("value") if isinstance(revised, dict) else None
+    return "position memo: %s %s%s: %s" % (row.get("id"), row.get("verdict"),
+                                          " (revised target %g)" % value if isinstance(value, (int, float)) else "",
+                                          _line(row.get("reasoning") or "no reasoning given"))
+
+
+def objective_questions(objectives, memo=None):
+    """The first tier's questions, as `with_question` fields: one per objective to take, open or parked.
+
+    One for each open or parked objective `objectives` holds, recommended as it stands, with the memo's verdict
+    on it and the directions that would pursue it as evidence; then one for each new objective the memo's
+    directions propose (`id` null), in the memo's order, a question two directions propose asked once. The
+    proposals of the nearest direction that proposes any are recommended `open`, the rest `parked`.
+    """
+    memo = memo if isinstance(memo, dict) else {}
+    rows = {row.get("id"): row for row in memo.get("objectives") or () if isinstance(row, dict)}
+    directions = [direction for direction in memo.get("directions") or () if isinstance(direction, dict)]
+    specs, proposed = [], {}
+    for objective in objectives or ():
+        if objective.get("status") not in TAKE:
+            continue
+        identifier = objective["id"]
+        measure = objective.get("measure")
+        evidence = ["research/OBJECTIVES.md: %s is %s, %s" % (identifier, objective["status"], "a goal measured by `%s`"
+                                                                % measure.get("metric") if measure else "an objective without a measure")]
+        if identifier in rows:
+            evidence.append(_memo_line(rows[identifier]))
+        evidence += ["the position memo's %s would pursue it" % _direction_name(index, direction)
+                     for index, direction in enumerate(directions, 1)
+                     if any(isinstance(named, dict) and named.get("id") == identifier for named in direction.get("objectives") or ())]
+        specs.append({"objective": {"id": identifier, "text": objective["text"]},
+                      "question": "Does the project take %s, \"%s\": open or parked?" % (identifier, _line(objective["text"])),
+                      "recommended": objective["status"], "evidence": evidence})
+    recorded = {_normal(objective.get("text") or "") for objective in objectives or ()}
+    nearest = None
+    for index, direction in enumerate(directions, 1):
+        for named in direction.get("objectives") or ():
+            if not isinstance(named, dict) or named.get("id") is not None or not str(named.get("text") or "").strip():
+                continue
+            key = _normal(named["text"])
+            if key in recorded:
+                continue
+            said = "the position memo's %s proposes it" % _direction_name(index, direction)
+            if key in proposed:
+                proposed[key]["evidence"].append(said)
+                continue
+            nearest = nearest or index
+            text = " ".join(str(named["text"]).split())
+            proposed[key] = {"objective": {"id": None, "text": text},
+                             "question": "Does the project take the objective the position memo proposes, \"%s\": open or parked?"
+                                         % _line(text),
+                             "recommended": "open" if index == nearest else "parked", "evidence": [said]}
+            specs.append(proposed[key])
+    return specs
+
+
+def with_objective_questions(records, specs):
+    """`records` with the first tier's questions added, each human-only; an objective a question already names is skipped."""
+    named = {(record["objective"].get("id") or _normal(record["objective"]["text"]))
+             for record in records if record.get("objective")}
+    for spec in specs:
+        key = spec["objective"]["id"] or _normal(spec["objective"]["text"])
+        if key in named:
+            continue
+        records, _ = with_question(records, spec["question"], options=list(TAKE), recommended=spec["recommended"],
+                                   evidence=spec["evidence"], human_only=True, objective=spec["objective"])
+        named.add(key)
+    return records
+
+
+def _seeded(project, records):
+    """`records` with the first tier's questions, while no tier has been asked; once one has, the tree as it is."""
+    if _current_tier(records):
+        return records
+    from wayline.objectives import ObjectivesUnreadable, read_objectives  # the objectives module imports the gates
+    try:
+        objectives = read_objectives(project)
+    except ObjectivesUnreadable as failure:
+        raise ProjectError(str(failure)) from None
+    try:
+        memo = (Ledger(project).read_json(POSITION_JSON) or {}).get("memo")
+    except (OSError, ValueError, AttributeError):
+        memo = None
+    return with_objective_questions(records, objective_questions(objectives, memo))
+
+
+def _take_objective(project, record):
+    """Record the owner's answer to a first-tier question through the objectives' ledger; returns the record to keep.
+
+    A recorded objective moves to the status answered; a proposed one is recorded with it, and the record names the
+    id it got. Either way one `objective` event says so, `by: owner`; a parked one keeps the rationale as its answer.
+    """
+    taken = record.get("objective")
+    if not taken or not _settled(record):
+        return record
+    from wayline.objectives import ObjectiveError, add_objective, change_objective  # the objectives module imports the gates
+    status = record["answer"]
+    why = None if status == "open" else record.get("rationale")
+    try:
+        if taken.get("id"):
+            change_objective(project, taken["id"], status, by="owner", answer=why)
+            return record
+        made, _ = add_objective(project, taken["text"], by="owner", status=status, answer=why)
+    except ObjectiveError as failure:
+        raise GrillError("%s could not be recorded in the objectives: %s" % (record["id"], failure)) from None
+    return _check(_ordered(dict(record, objective={"id": made["id"], "text": taken["text"]})))
+
+
+def _with_taken(project, records, record):
+    """`records` and `record` after `_take_objective`, the kept record in its place."""
+    kept = _take_objective(project, record)
+    if kept is record:
+        return records, record
+    return [kept if other is record else other for other in records], kept
 
 
 # --- CONTEXT.md -----------------------------------------------------------------------------------
@@ -505,6 +663,7 @@ def answer(project, identifier, text, rationale, confidence=None, decided_by="hu
                                       decided_by=decided_by, revise=revise, ts=now_ts(), model=model, fallback_from=fallback_from,
                                       session_id=session_id)
         make_event(DECISION, record_payload(record), ts=record["timestamp"])  # an event the journal refuses writes nothing
+        records, record = _with_taken(project, records, record)
         _write_records(ledger, records)
         _journal_settled(ledger, records, now=(record["id"],))
         if decided_by == "human":
@@ -627,6 +786,8 @@ def apply_batch(project, batch):
                                           confidence=entry.get("confidence"), revise=entry.get("revise", False), ts=now_ts())
             make_event(DECISION, record_payload(record), ts=record["timestamp"])
             answered.append(record["id"])
+        for identifier in answered:  # every answer checked first, so a refused one recorded no objective
+            records, _ = _with_taken(project, records, _questions(records)[identifier])
         before = context = _read_context(ledger)
         for entry in lists["terms"]:
             context, _ = with_term(context, entry.get("term"), entry.get("definition"), entry.get("avoid"))
@@ -730,14 +891,14 @@ def grill_view(project, stamp=True):
     if stamp:
         with ledger.lock():
             records = read_records(project)
-            settled, now = _settle_from_tickets(project, ledger, records)
+            settled, now = _settle_from_tickets(project, ledger, _seeded(project, records))
             stamped, tier, asked = with_tier(settled, autonomy)
             if stamped != records:
                 _write_records(ledger, stamped)
                 records = stamped
             _journal_settled(ledger, records, now=now)
     else:
-        records = read_records(project)
+        records = _seeded(project, read_records(project))
         _, tier, asked = with_tier(records, autonomy)
     superseded = superseded_by(records)
     questions = _questions(records)

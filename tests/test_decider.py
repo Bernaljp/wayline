@@ -230,6 +230,49 @@ class RecordedGrillCase(ProjectTestCase):
         return decider.decide_rest(self.project, notify=self.notify)
 
 
+class ObjectivesPromptTest(RecordedGrillCase):
+    """Ticket 80: the decider reads `OBJECTIVES.md` and the radius in place of `GOAL.json`, and the class `objective`."""
+
+    def prompt(self):
+        self.decide_rest(Q8=decision(Q8_ANSWER), Q10=decision(Q10_ANSWER))
+        return self.decider_calls()[0].request.prompt
+
+    def test_the_prompt_holds_the_objectives_and_the_radius_and_not_the_goal_file(self):
+        prompt = self.prompt()
+        self.assertIn("## research/OBJECTIVES.md", prompt)
+        self.assertIn("## O1 Does the method answer the project's question?", prompt, "OBJECTIVES.md is inlined")
+        self.assertNotIn("## research/GOAL.json", prompt)
+        self.assertNotIn('"held_out_split": "split_b"', prompt, "the goal file's contents are not read")
+        role = worker.read_role(decider.DECIDER)
+        for text in (role.protocol, (HARNESS_ROOT / "roles" / "decider" / "agent.md").read_text(encoding="utf-8")):
+            self.assertNotIn("GOAL.json", text)
+            self.assertIn("OBJECTIVES.md", text)
+        self.assertIn("# The radius", prompt)
+        self.assertIn("The project's radius is `moderate`", prompt)
+        self.assertIn("`strict`: none", prompt)
+
+    def test_the_radius_named_in_harness_json_is_the_one_told(self):
+        harness = project.read_harness(self.project)
+        harness["radius"] = "strict"
+        (self.project / project.HARNESS_JSON).write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+        self.assertIn("The project's radius is `strict`", self.prompt())
+
+    def test_without_objectives_the_prompt_says_so(self):
+        (self.project / "research" / "OBJECTIVES.md").unlink()
+        records, _ = decider.records_text(self.project)
+        self.assertIn("## research/OBJECTIVES.md", records)
+        self.assertIn("[wayline: no objective is recorded yet]", records)
+
+    def test_the_class_objective_replaces_goal_and_an_old_goal_entry_is_read_as_objective(self):
+        prompt = self.prompt()
+        self.assertIn("The human-only classes of this project are: `objective`, `data`, `ladder`.", prompt)
+        self.assertIn("changing a goal's measure or the data", prompt)
+        harness = project.read_harness(self.project)
+        harness["human_only"] = ["goal", "data", "objective", "baselines"]
+        self.assertEqual(project.human_only_classes_now(harness)[:3], ["objective", "data", "baselines"])
+        self.assertEqual(decider._classes(dict(harness, human_only=[])), "`objective`, `data`, `ladder`")
+
+
 class DecideRestTest(RecordedGrillCase):
     """Criteria 1, 2, and 4: the frontier is resolved one session at a time, each recorded as the decider's."""
 
@@ -285,17 +328,17 @@ class DecideRestTest(RecordedGrillCase):
         self.assertIn("- the question: Which flexible model without products is the second baseline?", prompt)
         self.assertIn("- recommended: a small multilayer network", prompt)
         self.assertIn("- rests on Q2, Which of the position memo's directions does the project take?: settled as moderate", prompt)
-        for heading in ("## research/DECISIONS.md", "## research/POSITION.md", "## research/GOAL.json",
+        for heading in ("## research/DECISIONS.md", "## research/POSITION.md", "## research/OBJECTIVES.md",
                         "## the L0 and L1 records (research/refs/<slug>/dossier.json)", "## research/kb/query_pack.md"):
             with self.subTest(heading=heading):
                 self.assertIn(heading, prompt)
         self.assertIn("### Q2. Which of the position memo's directions does the project take?", prompt, "DECISIONS.md is inlined")
         self.assertIn("`paper-a` (level 2): Interaction features for tabular classification (2021)", prompt)
         self.assertIn("relation to the intent: The nearest work", prompt)
-        self.assertIn('"held_out_split": "split_b"', prompt)
+        self.assertIn("## O1 Does the method answer the project's question?", prompt)
         self.assertIn("paper-a extends paper-b", prompt)
         # `ladder` joins them while the ladder consent is not `auto`, which a project without the key behaves as (decision 16).
-        self.assertIn("The human-only classes of this project are: `goal`, `data`, `ladder`.", prompt)
+        self.assertIn("The human-only classes of this project are: `objective`, `data`, `ladder`.", prompt)
         self.assertIn("# The line", prompt)
         self.assertIn("# Protocol", prompt)
         self.assertIn("`decision` schema", prompt)

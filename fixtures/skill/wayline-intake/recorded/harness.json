@@ -3,7 +3,7 @@
   "autonomy": "checkpoints",
   "radius": "moderate",
   "human_only": [
-    "goal",
+    "objective",
     "data"
   ],
   "budgets": {

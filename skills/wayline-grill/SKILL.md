@@ -20,11 +20,31 @@ machine's active project, which another terminal may have switched to a differen
 ## Before the first tier
 
 Read `research/INTAKE.md` (the intent, the constraints, the human-only classes),
-`research/POSITION.md` (the closest prior work, the feasibility verdict, the goal feasibility, the
-hostile reviewer's objections, the three directions), `research/GOAL.json` when there is one, the
+`research/POSITION.md` (the closest prior work, the feasibility verdict, a verdict on each
+objective, the hostile reviewer's objections, the three directions and the objectives each would
+pursue), `research/OBJECTIVES.md` (the objectives recorded, a goal being one with a measure), the
 dossiers under `research/refs/`, and `research/CONTEXT.md` and `research/DECISIONS.md` when they
 exist already, which means a grill is being picked up again. Then run `wayline grill --project .`
 to see the tree as it stands.
+
+## The first tier: which objectives the project takes
+
+Before it asks a first tier, `wayline grill` adds one question per objective: each one
+`OBJECTIVES.md` holds, open or parked, and each new one the memo's directions propose. Each asks
+whether the project takes it, `open` or `parked`, with a recommendation and the memo's verdict as
+evidence. They are human-only: only the owner answers them, under every autonomy, and while any is
+open the tier asks only them, since every later question builds on which objectives are taken. Put
+them to the owner as the verb prints them and hand each answer back as `open` or `parked`, with the
+owner's reason as the rationale:
+
+```bash
+wayline grill answer Q2 parked --rationale "the owner's reason" --project .
+```
+
+The verb records each answer through the objectives' ledger: a recorded objective moves to the
+status chosen, and a proposed one is recorded as a new objective. A question the owner wants
+answered first is an objective too: record it with `wayline objective add` before the first tier,
+and it is asked with the others.
 
 When there is no `POSITION.md`, tell the owner in one line that the questions rest on the intake
 alone.
@@ -58,8 +78,9 @@ The verb prints each question's id (`Q1`, `Q2`, and so on). Every question gets 
 answer; a question you cannot recommend an answer to is usually a fact you have not looked up yet.
 
 Mark a question `--human-only` when its answer falls in a class `harness.json` lists under
-`human_only`; a change to the goal or to the data always does. Mark it `--irreversible` when its
-answer cannot be taken back: it spends a budget, deletes or overwrites data, or changes the goal.
+`human_only`; a change to an objective (a goal's measure among them) or to the data always does
+(`objective` was named `goal` before, and is read so). Mark it `--irreversible` when its answer
+cannot be taken back: it spends a budget, deletes or overwrites data, or changes a goal's measure.
 The decider never resolves either kind, even after the switch; both wait for the owner.
 
 ## Facts are looked up, decisions are asked

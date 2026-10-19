@@ -21,6 +21,7 @@ from wayline.conductor import Conductor
 from wayline.grill import GrillError, answer, frontier, read_records, render_decisions, with_answer, with_question
 from wayline.jsonschema import load_schema, validate
 from wayline.ledger import Heartbeat, Ledger, make_event
+from wayline.objectives import read_objectives
 from wayline.project import init_project, read_harness, set_autonomy
 
 BASELINE = "Which baseline do the claims compare against?"
@@ -145,6 +146,113 @@ class AskTheTierTest(GrillCase):
         self.assertIn("no position memo", self.ok())
         Ledger(self.project).write_markdown("POSITION.md", "# Position\n")
         self.assertIn("research/POSITION.md", self.ok())
+
+
+FIRST_TIER = FIXTURES_DIR / "grill" / "first-tier"
+GOAL_O1 = "Do pairwise products raise the held-out AUROC on the synthetic set?"
+OBJECTIVE_O2 = "Below what interaction strength do the products stop helping?"
+PROPOSED = "Does a flexible model without products match the products on the synthetic set?"
+
+
+class ObjectivesFirstTierTest(GrillCase):
+    """Ticket 80: the first tier settles which objectives the project takes, open or parked, each the owner's.
+
+    The project is the recorded fixture `fixtures/grill/first-tier/`: what `wayline position` left over the fake
+    critic for the toy intent, two objectives recorded (O1 a goal, O2 without a measure) and a memo whose second
+    direction proposes a third.
+    """
+
+    def setUp(self):
+        super().setUp()
+        shutil.copytree(FIRST_TIER / "research", self.project / "research", dirs_exist_ok=True)
+        self.batch = json.loads((FIRST_TIER / "answers.json").read_text(encoding="utf-8"))
+
+    def objectives(self):
+        return {objective["id"]: objective for objective in read_objectives(self.project)}
+
+    def test_the_first_tier_asks_one_question_per_objective_recorded_or_proposed_each_the_owners(self):
+        view = self.tier()
+        self.assertEqual(view["tier"], 1)
+        asked = view["ask"]
+        self.assertEqual([record["objective"] for record in asked], [
+            {"id": "O1", "text": GOAL_O1}, {"id": "O2", "text": OBJECTIVE_O2}, {"id": None, "text": PROPOSED}])
+        for record in asked:
+            with self.subTest(record=record["id"]):
+                self.assertEqual(record["options"], ["open", "parked"])
+                self.assertTrue(record["human_only"], "reserved for the owner")
+                self.assertEqual(record["tier"], 1)
+        self.assertEqual([record["recommended"] for record in asked], ["open", "open", "open"])
+        self.assertIn("O1, \"%s\"" % GOAL_O1, asked[0]["question"])
+        self.assertIn("position memo: O1 uncertain (revised target 0.83)", " ".join(asked[0]["evidence"]))
+        self.assertIn("direction 2 (A flexible second baseline, moderate)", " ".join(asked[2]["evidence"]))
+        self.assertEqual(self.objectives().keys(), {"O1", "O2"}, "a proposal is not recorded until the owner takes it")
+
+    def test_asking_again_is_the_same_tier_and_seeds_nothing_twice(self):
+        first = self.ok()
+        written = self.decisions_md()
+        self.assertEqual(self.ok(), first)
+        self.assertEqual(self.decisions_md(), written)
+
+    def test_the_objective_questions_lead_and_the_rest_wait_for_the_next_tier(self):
+        self.ok()
+        self.ok("ask", "How many seeds does a comparison use?", "--recommend", "three")
+        view = self.tier()
+        self.assertEqual([record["objective"]["id"] for record in view["ask"]], ["O1", "O2", None])
+        self.assertNotIn("How many seeds does a comparison use?", [record["question"] for record in view["ask"]])
+        self.ok("--from", "-", stdin=json.dumps(self.batch))
+        view = self.tier()
+        self.assertEqual((view["tier"], [record["question"] for record in view["ask"]]),
+                         (2, ["How many seeds does a comparison use?"]))
+
+    def test_each_answer_is_recorded_through_the_objectives_ledger_as_an_objective_event(self):
+        self.ok()
+        self.ok("--from", "-", stdin=json.dumps(self.batch))
+        objectives = self.objectives()
+        self.assertEqual({key: value["status"] for key, value in objectives.items()}, {"O1": "open", "O2": "parked", "O3": "open"})
+        self.assertEqual(objectives["O3"]["text"], PROPOSED)
+        self.assertIsNone(objectives["O3"]["measure"])
+        self.assertEqual(objectives["O2"]["answer"], "parked by the owner until the comparison is in")
+        events = [event["payload"] for event in self.events("objective")][-3:]
+        self.assertEqual([(event["id"], event["status"], event["by"]) for event in events],
+                         [("O1", "open", "owner"), ("O2", "parked", "owner"), ("O3", "open", "owner")])
+        self.assertEqual(len(self.events("decision")), 3, "each answer is a decision as every grill answer is")
+        self.assertEqual(self.records()["Q3"]["objective"], {"id": "O3", "text": PROPOSED}, "the record names what it made")
+        self.assertIn("## O3 %s" % PROPOSED, (self.project / "research" / "OBJECTIVES.md").read_text(encoding="utf-8"))
+
+    def test_an_answer_that_is_neither_open_nor_parked_is_refused_and_records_nothing(self):
+        self.ok()
+        code, out, err = self.grill("answer", "Q1", "maybe later", "--rationale", "unsure")
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("open or parked", err)
+        self.assertEqual(self.events("objective"), [])
+        self.assertEqual(self.objectives()["O1"]["status"], "open")
+        self.assertIsNone(self.records()["Q1"]["answer"])
+
+    def test_a_revision_changes_the_objective_again(self):
+        self.ok()
+        self.ok("--from", "-", stdin=json.dumps(self.batch))
+        self.ok("answer", "Q2", "open", "--rationale", "the comparison is in", "--revise")
+        self.assertEqual(self.objectives()["O2"]["status"], "open")
+        self.assertEqual(self.events("objective")[-1]["payload"], {"id": "O2", "text": OBJECTIVE_O2, "status": "open",
+                                                                   "measure": None, "by": "owner"})
+
+    def test_the_decider_is_never_handed_an_objective_question(self):
+        set_autonomy(self.project, "autonomous")
+        view = self.tier()
+        self.assertEqual(len(view["ask"]), 3, "under autonomous the tier still asks the owner each objective")
+        self.assertEqual(view["decider"], [])
+        with self.assertRaises(GrillError):
+            answer(self.project, "Q1", "open", "the decider's reading", decided_by="decider", model="claude-opus-4-1")
+
+    def test_a_tree_asked_before_objectives_were_recorded_is_not_seeded_again(self):
+        for name in ("objectives.json", "position.json"):
+            (self.project / "research" / name).unlink()
+        self.ok("ask", "How many seeds does a comparison use?", "--recommend", "three")
+        self.ok()
+        for name in ("objectives.json", "position.json"):
+            shutil.copy(FIRST_TIER / "research" / name, self.project / "research" / name)
+        view = self.tier()
+        self.assertEqual([record["question"] for record in view["ask"]], ["How many seeds does a comparison use?"])
 
 
 class AnswerTest(GrillCase):
@@ -416,6 +524,7 @@ class SwitchAutonomyTest(GrillCase):
     def test_the_switch_mid_grill_journals_control_updates_harness_json_and_hands_the_rest_to_the_decider(self):
         self.tree()
         self.ok()
+        self.answer("Q5", "open")  # the first tier's question on the objective setUp recorded (ticket 80)
         self.answer("Q1", "logistic regression")
         before = self.decisions_md()
         code, out, err = self.switch("--autonomy", "autonomous")
@@ -464,13 +573,15 @@ class SwitchAutonomyTest(GrillCase):
         self.ok("ask", "Delete the raw data once the features are built?", "--irreversible", "--recommend", "no")
         self.ok("ask", SEEDS, "--recommend", "three")
         self.assertEqual(self.switch("--autonomy", "autonomous")[0], 0)
+        self.assertEqual([record["id"] for record in self.tier()["ask"]], ["Q3"], "the objective setUp recorded leads (ticket 80)")
+        self.answer("Q3", "open")
         view = self.tier()
         self.assertEqual([record["id"] for record in view["ask"]], ["Q1"])
         self.assertEqual([record["id"] for record in view["decider"]], ["Q2"])
         with self.assertRaises(GrillError) as caught:
             answer(self.project, "Q1", "yes", rationale="it saves disk", decided_by="decider")
         self.assertIn("irreversible", str(caught.exception))
-        self.assertEqual(self.events("decision"), [])
+        self.assertEqual([event["payload"]["answer"][:3] for event in self.events("decision")], ["Q3 "])
 
     def edit_harness(self, autonomy):
         path = self.project / "harness.json"

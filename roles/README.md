@@ -64,12 +64,15 @@ Ticket 29 gives the critic its second job. `wayline position` (`wayline.position
 sidecar's `output_schema` stays the verdict the gate reads. Its protocol file therefore has one
 section per job, `## Verdict` and `## Position`, and each launch is given only its own
 (`worker.protocol_for`). The session is fresh and reads only the dossiers, `INTAKE.md`, and
-`GOAL.json`. The intake and the goal are inlined in its prompt with the dossiers, and it runs in
+`OBJECTIVES.md` (decision 17, in place of `GOAL.json`; ticket 80). The intake and the objectives are
+inlined in its prompt with the dossiers, and it runs in
 `research/refs/` with its `Read`, `Glob`, and `Grep` rules scoped to that directory
 (`Read(//<project>/research/refs/**)`), so no decision, spec, or earlier memo can reach it. The
 working directory alone would not do that: under `dontAsk` a bare `Read` rule reads any path, and a
 scoped `Read` alone still lets `Glob` and `Grep` reach outside (`docs/verification/m4.md`). Code
-checks what it returns, has the scout verify every citation, and renders `research/POSITION.md`.
+checks what it returns, has the scout verify every citation, and renders `research/POSITION.md`: a
+verdict on each open or parked objective, a revised target only for a goal, and directions that
+name the objectives they would pursue, as proposals the grill's first tier puts to the owner.
 
 ## The decider is launched by the grill and the conductor, one decision per session
 
@@ -85,8 +88,10 @@ and the touch-set guard blocks any write it might try, as it does for the verifi
 
 Its prompt is assembled by `wayline.decider.decider_prompt`: the one decision (the question, the
 options, the recommendation, the evidence, the prerequisites' answers), the irreversible list and
-the project's human-only classes, and the records inlined in order (`DECISIONS.md`, `POSITION.md`,
-`GOAL.json`, the L0 and L1 records, the query pack), cut at the context cap with the cut announced.
+the project's human-only classes (`objective` in place of `goal`, which is read so), the project's
+radius, which bounds the objectives it may add, and the records inlined in order (`DECISIONS.md`,
+`POSITION.md`, `OBJECTIVES.md`, the L0 and L1 records, the query pack), cut at the context cap with
+the cut announced.
 The session hands back a decision on the irreversible list with `answer: null`, and code refuses one
 it did give anyway (`decider.irreversible_class`, read on the option's words when the answer only
 points at an option): a refused decision becomes the owner's, as a human-only question in the tree

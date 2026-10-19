@@ -1,18 +1,19 @@
-"""Phase P0, intake: what the owner has, normalized, and the goal only when code can measure it.
+"""Phase P0, intake: what the owner has, normalized; information only.
 
-Implementation Decisions 10 and BRIEF 6.4. `wayline intake` takes whatever the owner hands over
-(a paragraph, a reference list, PDFs, data pointers, a plan, a repository) and writes three things:
-`research/INTAKE.md` with the sections of `SECTIONS`, the `autonomy`, `radius`, `model_fallback`, `ladder_changes`, `budgets`, and
-`human_only` classes in `harness.json` (the file the conductor rereads), and `research/GOAL.json`
-when a quantitative goal was stated and its `eval_command` printed the metric on a sample artifact.
+Implementation Decisions 10 and 17 and BRIEF 6.4. `wayline intake` takes whatever the owner hands
+over (a paragraph, a reference list, PDFs, data pointers, a plan, a repository) and writes two
+things: `research/INTAKE.md` with the sections of `SECTIONS`, and the `autonomy`, `radius`,
+`model_fallback`, `ladder_changes`, `budgets`, and `human_only` classes in `harness.json` (the file
+the conductor rereads).
 
 The `wayline-intake` skill is the same phase with a person in the conversation: it settles the
 answers with the owner and hands them to this verb as one JSON spec, because the ledger is the only
 writer of `research/` (decision 2) and a model that wrote `INTAKE.md` itself would bypass it.
 
-A goal is a human decision (decision 4 puts goal changes on the irreversible list), so every goal
-this module writes is journaled as a `decision` with `decided_by: human`, and a goal that cannot be
-measured is rejected with the reason rather than written: missing, fails, no number, or invalid.
+Intake takes no goal (decision 17; ticket 80). What the research sets out to answer is an objective,
+and a goal is an objective with a measure: the conversation records each with `wayline objective add`
+in `research/objectives.json`, where the measure is checked on a sample artifact (ticket 76). A spec
+that still carries a `goal` is refused with that verb named, and `intake --goal` is gone.
 
 The dashboard's intake drop zone (ticket 35) hands a file over one at a time: since ticket 84 code's
 cautious guess sorts it first (`wayline.documents.drop_document`), and a file it takes for a
@@ -35,28 +36,27 @@ from typing import Optional
 
 from wayline import code_repository
 from wayline.cli import parse_args
-from wayline.jsonschema import ValidationError, check, load_schema, validate
-from wayline.ledger import DECISION, Ledger, atomic_write
-from wayline.objectives import run_on_sample
+from wayline.jsonschema import ValidationError, check, load_schema
+from wayline.ledger import Ledger, atomic_write
 from wayline.pacing import ASK, CONSENTS
 from wayline.project import (
-    AUTONOMY, HARNESS_JSON, LADDER_CHANGES, LADDER_CONSENTS, MODEL_FALLBACK, UNSET_CONSENT, ProjectError, find_project,
-    read_harness, set_ladder_changes, set_model_fallback,
+    AUTONOMY, DEFAULT_HUMAN_ONLY as DEFAULT_CLASSES, HARNESS_JSON, LADDER_CHANGES, LADDER_CONSENTS, MODEL_FALLBACK,
+    UNSET_CONSENT, ProjectError, find_project, human_only_class, read_harness, set_ladder_changes,
+    set_model_fallback,
 )
 from wayline.tickets import section
 from wayline.tools import run_tool
 
 __all__ = [
-    "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "GoalCheck", "take_intake", "check_goal", "set_goal",
-    "describe_goal", "intake_command", "DROP_DIR", "DROP_MAX_BYTES", "dropped_materials", "check_drop", "plain_name", "drop_material",
+    "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "take_intake", "intake_command", "DROP_DIR", "DROP_MAX_BYTES", "dropped_materials", "check_drop", "plain_name", "drop_material",
 ]
 
 INTAKE_MD = "INTAKE.md"
-GOAL_JSON = "GOAL.json"
 
-# The sections of INTAKE.md, in order. The fixture of the wayline-intake skill pins the same list.
+# The sections of INTAKE.md, in order. The fixture of the wayline-intake skill pins the same list. Decision 17 took
+# the `Goal` section out: objectives and goals live in `research/objectives.json`, rendered as `OBJECTIVES.md`.
 SECTIONS = ("Intent", "References", "Data", "Code", "Constraints", "Autonomy", "Radius", "Budgets",
-            "Decisions that stay human-only", "Goal")
+            "Decisions that stay human-only")
 
 # BRIEF 6.3.
 RADIUS = {
@@ -65,17 +65,23 @@ RADIUS = {
     "exploratory": "they may also add new directions, capped per wave and gated on a novelty check.",
 }
 
-# Decision 4: goal and data changes are on the irreversible list, so these two are never removed.
-DEFAULT_HUMAN_ONLY = {
-    "goal": "a decision that changes the goal: the metric, the target, the splits, or the command that measures it.",
-    "data": "a decision that changes the data: what is used, what is held out, or what may leave the machine.",
-}
+# Decision 4: objective and data changes wait for the owner, so these two are never removed. The class `objective`
+# was `goal` before decision 17 and covers goals; a `harness.json` that names `goal` is read as `objective`.
+DEFAULT_HUMAN_ONLY = dict(zip(DEFAULT_CLASSES, (
+    "a decision that changes an objective: adding, parking, dropping, or reframing one, or a goal's measure (its metric, "
+    "target, splits, or the command that measures it).",
+    "a decision that changes the data: what is used, what is held out, or what may leave the machine.",
+)))
 
 SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "materials", "autonomy", "radius",
-               "model_fallback", "ladder_changes", "budgets", "human_only", "goal", "sample", "rationale", "clone", "code_repository")
+               "model_fallback", "ladder_changes", "budgets", "human_only", "clone", "code_repository")
+# The fields a goal came with before decision 17; a spec that carries one is told where the goal goes now.
+GOAL_FIELDS = ("goal", "sample", "rationale")
+GOAL_ELSEWHERE = ("intake takes information only, so it records no goal (Implementation Decision 17): a goal is an "
+                  "objective with a measure, recorded with wayline objective add \"<question>\" --measure <file> "
+                  "--sample <artifact>")
 LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_only")
 BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
-GOAL_OPTIONAL = {"dataset_or_split": None, "held_out_split": None, "baseline": None, "budget": None, "stop_when": "goal_reached"}
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ""}
 TEXT_MAX_BYTES = 1_000_000
@@ -99,134 +105,6 @@ _PDF_ARXIV = re.compile(r"arXiv:\s?(\d{4}\.\d{4,5}(?:v\d+)?)")
 
 class IntakeError(ValueError):
     """An intake nobody can write: a spec field intake does not know, a path that is not there, no intent."""
-
-
-# --- the goal ---------------------------------------------------------------------------------------
-
-
-@dataclass
-class GoalCheck:
-    """What running a goal's `eval_command` on the sample artifact showed.
-
-    `kind` is `accepted`, or why not: `missing`, `fails`, `no_number`, `invalid`.
-    """
-
-    kind: str
-    reason: Optional[str]
-    goal: Optional[dict]
-    value: Optional[float] = None
-    sample: Optional[str] = None
-    stated: Optional[dict] = None
-
-    @property
-    def accepted(self):
-        return self.kind == "accepted"
-
-
-def check_goal(goal, project, sample=None, timeout_s=None):
-    """Normalize a stated goal and run its `eval_command` on `sample`; returns a `GoalCheck`.
-
-    The run on the sample is the objectives module's `run_on_sample`, where the check moved with
-    decision 17 (a measure stands only when its `eval_command` printed the metric on a sample); intake
-    keeps calling it for `intake --goal` until ticket 80 takes the goal out of intake.
-    """
-    project = Path(project)
-    stated = goal if isinstance(goal, dict) else None
-    if stated is None:
-        return GoalCheck("invalid", "invalid: the goal is not a JSON object", None, stated=None)
-    command = stated.get("eval_command")
-    if not isinstance(command, str) or not command.strip():
-        return GoalCheck("missing", "missing: the goal names no eval_command, so nothing can measure it", None, stated=stated)
-    normalized, problems = normalize_goal(stated)
-    if problems:
-        return GoalCheck("invalid", "invalid: the goal is not in the GOAL.json shape: %s" % "; ".join(problems), None, stated=stated)
-    kind, reason, value = run_on_sample(command, normalized["metric"], project, sample, timeout_s=timeout_s, label="wayline intake")
-    if kind != "accepted":
-        return GoalCheck(kind, reason, None, stated=stated)
-    return GoalCheck("accepted", None, normalized, value=value, sample=str(Path(sample).expanduser().resolve()), stated=stated)
-
-
-def normalize_goal(goal):
-    """The goal with every key of the shape present, and the problems the schema found; never a guess."""
-    value = dict(goal)
-    for key, default in GOAL_OPTIONAL.items():
-        if value.get(key) is None:
-            value[key] = default
-    if value["baseline"] is None:
-        value["baseline"] = {"value": None, "source": None}
-    elif isinstance(value["baseline"], dict):
-        value["baseline"] = {"value": value["baseline"].get("value"), "source": value["baseline"].get("source"), **value["baseline"]}
-    if value["budget"] is None:
-        value["budget"] = {"gpu_hours": None, "wallclock": None, "usage_windows": None}
-    elif isinstance(value["budget"], dict):
-        value["budget"] = {"gpu_hours": None, "wallclock": None, "usage_windows": None, **value["budget"]}
-    errors = validate(value, load_schema("goal"))
-    return value, ["%s: %s" % (error.path, error.message) for error in errors]
-
-
-def describe_goal(goal):
-    """One line a person reads: the metric, the direction, the target, the split, and the command."""
-    if not isinstance(goal, dict):
-        return "no goal"
-    words = "`%s` %s to %s" % (goal.get("metric"), "down" if goal.get("direction") == "down" else "up", _number(goal.get("target")))
-    if goal.get("held_out_split"):
-        words += " on the held-out split `%s`" % goal["held_out_split"]
-    elif goal.get("dataset_or_split"):
-        words += " on `%s`" % goal["dataset_or_split"]
-    if goal.get("eval_command"):
-        words += ", measured by `%s`" % goal["eval_command"]
-    if goal.get("stop_when"):
-        words += ", stop when `%s`" % goal["stop_when"]
-    return words
-
-
-def _number(value):
-    return ("%g" % value) if _finite(value) else str(value)
-
-
-def _finite(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
-def _read_goal(ledger):
-    try:
-        value = ledger.read_json(GOAL_JSON)
-    except (OSError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def _write_goal(ledger, goal, rationale):
-    """Write GOAL.json and journal the human's decision; returns False when the goal was already this one."""
-    previous = _read_goal(ledger)
-    if previous == goal:
-        return False
-    if previous is not None:
-        rationale = "%s; replaces the goal %s" % (rationale, describe_goal(previous))
-    with ledger.lock():
-        ledger.write_json(GOAL_JSON, goal, schema="goal")
-        ledger.append_event(DECISION, {"ticket": None, "answer": "goal: %s" % describe_goal(goal), "decided_by": "human",
-                                       "rationale": rationale, "confidence": None})
-    return True
-
-
-def set_goal(project, goal, sample=None, rationale=None, timeout_s=None):
-    """`wayline intake --goal`: check a goal, and when it is measurable write it and update INTAKE.md.
-
-    Returns `(check, changed)`. A rejected goal writes nothing, so the standing goal stays.
-    """
-    project = Path(project)
-    result = check_goal(goal, project, sample=sample, timeout_s=timeout_s)
-    if not result.accepted:
-        return result, False
-    ledger = Ledger(project)
-    with ledger.lock():
-        changed = _write_goal(ledger, result.goal, rationale or "set by the owner with wayline intake --goal")
-        if changed:
-            path = ledger.path(INTAKE_MD)
-            text = path.read_text(encoding="utf-8") if path.exists() else "# Intake\n"
-            ledger.write_markdown(INTAKE_MD, replace_section(text, "Goal", _goal_section(result, None)))
-    return result, changed
 
 
 # --- the materials --------------------------------------------------------------------------------
@@ -512,6 +390,9 @@ def normalize_spec(raw):
     """A spec with every field checked for its type; unknown fields are refused, not ignored."""
     if not isinstance(raw, dict):
         raise IntakeError("an intake spec is a JSON object")
+    stale = [key for key in GOAL_FIELDS if key in raw]
+    if stale:
+        raise IntakeError("the spec carries %s; %s" % (", ".join(stale), GOAL_ELSEWHERE))
     unknown = sorted(set(raw) - set(SPEC_FIELDS))
     if unknown:
         raise IntakeError("intake does not know the field(s) %s; it takes %s" % (", ".join(unknown), ", ".join(SPEC_FIELDS)))
@@ -526,7 +407,7 @@ def normalize_spec(raw):
                 value = [value]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise IntakeError("%s is a list of strings" % key)
-        elif key in ("intent", "plan", "sample", "rationale", "autonomy", "radius", "model_fallback", "ladder_changes", "clone"):
+        elif key in ("intent", "plan", "autonomy", "radius", "model_fallback", "ladder_changes", "clone"):
             if not isinstance(value, str):
                 raise IntakeError("%s is a string" % key)
         elif key == "budgets":
@@ -567,11 +448,14 @@ def _reference_specs(value):
 
 
 def human_only_classes(entries):
-    """`slug` or `slug: what it covers`, as the owner named them; goal and data are always first."""
+    """`slug` or `slug: what it covers`, as the owner named them; objective and data are always first.
+
+    `goal`, the class's name before decision 17, is read as `objective`.
+    """
     classes = dict(DEFAULT_HUMAN_ONLY)
     for entry in entries:
         slug, _, description = entry.partition(":")
-        slug = slug.strip().lower().replace(" ", "-")
+        slug = human_only_class(slug.strip().lower().replace(" ", "-"))
         if not _SLUG.match(slug):
             raise IntakeError("a human-only class is a lower-case name like `baselines`, got %r" % entry)
         if slug not in DEFAULT_HUMAN_ONLY or description.strip():
@@ -582,13 +466,12 @@ def human_only_classes(entries):
 # --- the intake -------------------------------------------------------------------------------------
 
 
-def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=None, push_url=None):
-    """Write INTAKE.md, the settings in harness.json, and a measurable goal; returns a report.
+def take_intake(project, spec, base=None, run=run_tool, tools=None, push_url=None):
+    """Write INTAKE.md and the settings in harness.json; returns a report.
 
     `spec` carries the fields of `SPEC_FIELDS`; relative paths in it resolve against `base` (the
-    caller's working directory). The goal is checked before anything is written, so a slow or
-    failing `eval_command` never leaves half an intake behind. The report is `{intake, harness,
-    goal, counts}` where `goal` is the `GoalCheck` or None when no goal was stated.
+    caller's working directory). The report is `{intake, harness, counts}`. A goal is not intake's:
+    `wayline objective add` records it (decision 17).
 
     The project's own clone, the spec's `clone`, is absorbed into `code/` with its history
     (decision 17); a repository given as `code` or as a loose material is one the work builds on,
@@ -617,10 +500,6 @@ def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=No
     updated["human_only"] = list(classes)
     budgets = {key: harness.get("budgets", {}).get(key) for key in BUDGET_FIELDS}
     budgets.update({key: value for key, value in spec.get("budgets", {}).items() if value is not None})
-
-    goal = None
-    if spec.get("goal") is not None:
-        goal = check_goal(spec["goal"], project, sample=_sample(spec.get("sample"), base), timeout_s=timeout_s)
     updated["budgets"] = budgets
     schema = load_schema("harness")
     order = list(schema["properties"])  # the schema's order, so the new keys sit beside autonomy and radius
@@ -635,11 +514,7 @@ def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=No
     ledger = Ledger(project)
     with ledger.lock():
         atomic_write(project / HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
-        standing = _read_goal(ledger)
-        if goal is not None and goal.accepted:
-            _write_goal(ledger, goal.goal, spec.get("rationale") or "set by the owner at intake")
-            standing = None
-        ledger.write_markdown(INTAKE_MD, render(gathered, updated, classes, goal, standing))
+        ledger.write_markdown(INTAKE_MD, render(gathered, updated, classes))
     if spec.get("model_fallback"):
         # `harness.json` says it already; a run still open that heard another consent is told as the switch tells it.
         set_model_fallback(project, spec["model_fallback"])
@@ -655,24 +530,22 @@ def take_intake(project, spec, base=None, timeout_s=None, run=run_tool, tools=No
     return {
         "intake": str(ledger.path(INTAKE_MD)),
         "harness": updated,
-        "goal": goal,
         "counts": {"references": len(gathered.references), "data": len(gathered.data), "code": len(gathered.code),
                    "constraints": len(gathered.constraints)},
     }
 
 
-def _sample(text, base):
-    return None if not text else _as_path(text, base) or Path(text)
-
-
 # --- INTAKE.md ------------------------------------------------------------------------------------------
 
 
-def render(gathered, harness, classes, goal, standing):
+def render(gathered, harness, classes):
     """INTAKE.md: every section of `SECTIONS`, in order, none of them empty."""
     parts = ["# Intake", "",
              "What the owner handed over, normalized by `wayline intake`. `harness.json` holds the same "
-             "autonomy, radius, fallback consent, budgets, and human-only classes, and is the copy the conductor reads."]
+             "autonomy, radius, fallback consent, budgets, and human-only classes, and is the copy the conductor reads.",
+             "",
+             "What the research sets out to answer is not here: each objective, and each goal (an objective with a "
+             "measure), is recorded with `wayline objective add` and listed in `research/OBJECTIVES.md`."]
 
     intent = list(gathered.intent)
     for shown, text in gathered.plans:
@@ -688,7 +561,6 @@ def render(gathered, harness, classes, goal, standing):
         "Budgets": _budgets(harness.get("budgets") or {}),
         "Decisions that stay human-only": "The decider never resolves these; they wait for the owner.\n\n"
                                           + _bullets(["`%s`: %s" % (slug, text) for slug, text in classes.items()], ""),
-        "Goal": _goal_section(goal, standing),
     }
     for name in SECTIONS:
         parts += ["", "## " + name, "", sections[name].strip()]
@@ -745,6 +617,11 @@ def _prose(notes):
     return ("\n\n" + "\n".join(notes)) if notes else ""
 
 
+def _number(value):
+    finite = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    return ("%g" % value) if finite else str(value)
+
+
 def _budgets(budgets):
     def stated(value, unit=""):
         return "not stated" if value is None else "%s%s" % (_number(value), unit)
@@ -754,21 +631,6 @@ def _budgets(budgets):
         "- Wall clock: %s" % stated(budgets.get("wallclock_hours"), " hours"),
         "- Usage windows: %s" % stated(budgets.get("usage_windows")),
     ])
-
-
-def _goal_section(goal, standing):
-    later = "`wayline intake --goal <file> --sample <artifact>`"
-    if goal is None:
-        if standing is not None:
-            return "No goal was stated at this intake; the `GOAL.json` already in the ledger stands: %s." % describe_goal(standing)
-        return "No quantitative goal was stated. %s adds one later." % later
-    if goal.accepted:
-        on = "the sample artifact `%s`" % goal.sample if goal.sample else "no sample artifact"
-        return "`GOAL.json` holds the goal: %s. When intake checked it, `eval_command` printed %s with %s." % (
-            describe_goal(goal.goal), _number(goal.value), on)
-    stated = describe_goal(goal.stated) if isinstance(goal.stated, dict) and goal.stated.get("metric") else "the stated goal"
-    return "No goal was written. %s was rejected, %s. %s adds it once a script can measure it on an artifact a ticket can produce." % (
-        stated[0].upper() + stated[1:], goal.reason, later)
 
 
 def replace_section(text, heading, body):
@@ -919,8 +781,8 @@ def _with_bullets(text, heading, lines, notes, empty):
 def intake_command(args, stdin=None):
     parser = argparse.ArgumentParser(
         prog="wayline intake",
-        description="phase P0: write research/INTAKE.md, the settings in harness.json, and GOAL.json when a script can "
-                    "measure the goal; with only --goal, add or replace the goal. Exit 1 when a goal was rejected.")
+        description="phase P0: write research/INTAKE.md and the settings in harness.json from what the owner has. "
+                    "Information only: an objective, or a goal with its measure, is recorded with wayline objective add.")
     parser.add_argument("materials", nargs="*", help="what the owner has: the intent as text, a reference list, PDFs, a plan, data, a repository")
     parser.add_argument("--intent", help="the intent, in the owner's words")
     parser.add_argument("--plan", help="a plan file, quoted whole under the intent")
@@ -939,31 +801,17 @@ def intake_command(args, stdin=None):
     parser.add_argument("--wallclock-hours", type=float)
     parser.add_argument("--usage-windows", type=int)
     parser.add_argument("--human-only", action="append", default=[], metavar="CLASS[: WHAT IT COVERS]",
-                        help="a decision class the decider never resolves; goal and data always are")
-    parser.add_argument("--goal", metavar="FILE", help="the goal as JSON, or - for stdin; alone, it adds or replaces the goal")
-    parser.add_argument("--sample", help="the artifact the goal's eval_command is run on")
-    parser.add_argument("--rationale", help="why the goal is what it is, for the journal")
+                        help="a decision class the decider never resolves; objective and data always are")
     parser.add_argument("--from", dest="spec", metavar="FILE", help="the whole intake as one JSON spec, or - for stdin")
     parser.add_argument("--project", help="the project; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     stdin = stdin if stdin is not None else sys.stdin
-    if options.spec == "-" and options.goal == "-":
-        return _refuse("--from - and --goal - cannot both read stdin")
     try:
         project = find_project(options.project)
         spec = normalize_spec(_load_json(options.spec, stdin, "--from")) if options.spec else {}
         flags = _flag_fields(options)
-        if options.goal:
-            if "goal" in spec:
-                raise IntakeError("the goal is given twice, in the spec and with --goal")
-            spec["goal"] = _load_json(options.goal, stdin, "--goal")
-        if options.sample:
-            spec["sample"] = options.sample
-        if options.rationale:
-            spec["rationale"] = options.rationale
-        goal_only = options.goal and not options.spec and not flags
         for key, value in flags.items():
             if key in LIST_FIELDS:
                 spec[key] = list(spec.get(key, [])) + value
@@ -977,8 +825,6 @@ def intake_command(args, stdin=None):
         print("wayline intake: %s" % failure, file=sys.stderr)
         return 1
 
-    if goal_only:
-        return _goal_only(project, spec)
     try:
         report = take_intake(project, spec)
     except IntakeError as failure:
@@ -992,32 +838,7 @@ def intake_command(args, stdin=None):
     print("  autonomy %s   radius %s   fallback %s   ladder %s   human-only %s" % (harness["autonomy"], harness["radius"],
           harness.get("model_fallback") or UNSET_CONSENT, harness.get("ladder_changes") or UNSET_CONSENT,
           ", ".join(harness["human_only"])))
-    goal = report["goal"]
-    if goal is None:
-        print("  goal  none stated")
-        return 0
-    if goal.accepted:
-        print("  goal  %s (printed %s)" % (describe_goal(goal.goal), _number(goal.value)))
-        return 0
-    print("wayline intake: the goal was rejected, %s. INTAKE.md was written without it." % goal.reason, file=sys.stderr)
-    return 1
-
-
-def _goal_only(project, spec):
-    try:
-        result, changed = set_goal(project, spec["goal"], sample=_sample(spec.get("sample"), Path.cwd()),
-                                   rationale=spec.get("rationale"))
-    except (ProjectError, OSError, ValidationError) as failure:
-        print("wayline intake: %s" % failure, file=sys.stderr)
-        return 1
-    if not result.accepted:
-        print("wayline intake: the goal was rejected, %s. The standing goal, if any, is unchanged." % result.reason, file=sys.stderr)
-        return 1
-    if changed:
-        print("goal  %s (printed %s)" % (describe_goal(result.goal), _number(result.value)))
-        print("  journaled as a decision by the human")
-    else:
-        print("goal  unchanged: %s" % describe_goal(result.goal))
+    print("  objectives and goals: wayline objective add \"<question>\" [--measure <file> --sample <artifact>]")
     return 0
 
 
