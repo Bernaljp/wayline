@@ -28,6 +28,14 @@ refuses a project made before it, which keeps its old tag or starts again on the
 
 ## Unreleased
 
+- Consulting one document (ticket 94; Implementation Decision 17). `wayline consult D1 "<question>"` takes a
+  document id as well as a dossier slug. The document's `text.md` is cut into chunks of whole blocks under
+  `policy.absorb.chunk_max_chars` (`documents/<id>/chunks/`, listed in `chunks.json`, rebuilt when the text
+  changes or a newer version is taken in), the consultant reads that directory, and its locators are block
+  anchors (`p12`). The exchange goes to `documents/<id>/qa_log.md`, is journaled as `consulted` with the id in
+  `slug`, and counts against the ticket's question limit. An unknown id or a document with no text is refused
+  in one line.
+
 **Breaking:** `research_version` 2 (Implementation Decision 17). A project made on v1.0.x is refused, never migrated:
 `wayline upgrade` to this release changes nothing and names the two ways on (`wayline upgrade --to v1.0.1`, or a new
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
@@ -35,6 +43,19 @@ lists it read-only, marked with its tag.
 
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
+
+- `REPRODUCE.md` and the locks (ticket 106; Implementation Decision 17). After a wave that changed `code/` or ran a job a
+  current finding cites (or changed which runs the findings cite), and only then, code renders into `code/`:
+  `REPRODUCE.md` and `reproduce.json`, which list per result each run its current findings cite with its command, the
+  commit of `main` it ran at, its inputs, outputs (with SHA-256), wall-clock time, and hardware (the GPUs it held);
+  `locks/<commit>/`, the package locks (`requirements.lock`, `renv.lock`, the Julia `Project.toml` and `Manifest.toml`,
+  `octave-packages.lock`) as they stood at each commit a cited run ran at, not as installed now, and `locks/tools.json`,
+  every tool a cited job called with the version and lock digest its job record carries; and `README.md`, rendered from
+  the records, keeping word for word the owner's part between `<!-- wayline:owner -->` and `<!-- /wayline:owner -->`
+  (a README with no markers, such as an absorbed clone's, becomes that part whole). The files are committed with the
+  wave and go out with the code repository's next push; none names a path under `research/`, `jobs/`, or `results/`.
+  A finding may name the finding it `replaces` (the worker result schema and `provenance.add_finding`); a replaced
+  finding is no longer current, so its runs drop out.
 
 - `code/` and the code repository (ticket 85; Implementation Decision 17). Everything a project publishes lives
   under `code/`: the package or scripts, the tests, the environment locks, `README.md`, and `LICENSE`. The new
