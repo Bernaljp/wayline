@@ -86,8 +86,10 @@ The planner has one protocol per phase; the harness gives you the one below that
    whatever it needs; `context_pack`, the locators the worker reads, smallest
    first (`path`, `path:first-last`, or `path#heading-slug`; the spec's experiment E1 is
    `research/SPEC.md#e1-claims-c1`); `origin`, the locator the ticket comes from; `demo`, what a
-   person would watch; `notes` for the worker; and `tags` (data types, libraries, venues) for the
-   librarian, which assigns the role and the skills by them.
+   person would watch; `notes` for the worker; `tags` (data types, libraries, venues) for the
+   librarian, which assigns the role and the skills by them; and `software`, the tools the ticket
+   runs beyond Python (`octave`, `r`, `julia`, `matlab`), which the harness asks for before the
+   ticket launches and which only the tickets that name them wait on.
 5. Where the spec leaves open a choice a ticket depends on, do not settle it quietly: put it under
    `decisions` with the question, the options, the recommended answer, the evidence, `blocking`
    (`subgraph` with the keys it pauses, or `all`), and `human_only` when the answer changes the

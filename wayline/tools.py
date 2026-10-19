@@ -791,8 +791,16 @@ def run_recorded(name, args, tools=None, run=run_tool, timeout=TOOL_RUN_TIMEOUT_
     tools = tools if tools is not None else Tools()
     entry = tools.entry(name)
     if not entry or not entry.get("executable"):
-        hint = ("wayline tools install %s" % name if name in HARNESS_INSTALLERS or name in SYSTEM_TOOLS or name == "docling"
-                else "the harness's tools are %s" % ", ".join(HARNESS_INSTALLERS))
+        from wayline import software
+
+        if name in HARNESS_INSTALLERS or name in SYSTEM_TOOLS or name == "docling":
+            hint = "wayline tools install %s" % name
+        elif name in software.PROJECT_TOOLS:
+            hint = "a project's tool, installed after a yes on its software decision"
+        elif name in software.LICENSED:
+            hint = "licensed software, which the owner installs and says where it is"
+        else:
+            hint = "the harness's tools are %s" % ", ".join(HARNESS_INSTALLERS)
         raise ToolsError("%s is not recorded in %s (%s)" % (name, tools.root / TOOLS_JSON, hint))
     if not exists(entry["executable"]):
         raise ToolsError("%s is recorded at %s, which is no longer there (wayline tools install %s)" % (name, entry["executable"], name))
@@ -970,22 +978,39 @@ def _install_one(name, root, extras, grobid):
 
 
 def tools_command(args):
+    from wayline import software  # a project's tools and packages, which build on this record (ticket 82)
+
     if args[:1] == ["run"]:
         return _tools_run(args[1:])
+    if args[:1] == ["package"]:
+        return software.package_command(args[1:])
+    if args[:1] == ["needs"]:
+        return software.needs_command(args[1:])
     parser = argparse.ArgumentParser(
         prog="wayline tools", description="the harness's tools under ~/.wayline/tools/, each recorded in tools.json",
-        epilog="wayline tools run <name> -- <args> runs a recorded tool by its absolute path and environment")
+        epilog="wayline tools run <name> -- <args> runs a recorded tool by its absolute path and environment; "
+               "wayline tools package <python|r|julia|octave> <name>... installs a project's packages")
     parser.add_argument("action", choices=["install", "show"], help="install the tools (or one), or show what tools.json records")
-    parser.add_argument("name", nargs="?", help="install only this tool (%s, docling, or a system tool)" % ", ".join(HARNESS_INSTALLERS))
+    parser.add_argument("name", nargs="?", help="install only this tool (%s, docling, or a system tool), or a project's tool (%s) after "
+                        "a yes, or record licensed software (%s) with --at" % (", ".join(HARNESS_INSTALLERS), ", ".join(software.PROJECT_TOOLS),
+                                                                               ", ".join(software.LICENSED)))
     parser.add_argument("--marker", action="store_true", help="also install marker (fallback A; its OCR needs a GPU and a vLLM server)")
     parser.add_argument("--mineru", action="store_true", help="also install MinerU's pipeline backend (fallback B; 20 GB of models)")
     parser.add_argument("--grobid", action="store_true", help="also pull the GROBID CRF Docker image for references and metadata")
     parser.add_argument("--dry-run", action="store_true", help="print the routes and commands and change nothing")
     parser.add_argument("--json", action="store_true", help="print the record as JSON")
+    parser.add_argument("--yes", action="store_true", help="a project's tool: the owner said yes in the setup conversation")
+    parser.add_argument("--decision", type=int, help="a project's tool: the software decision ticket answered Install")
+    parser.add_argument("--attempt", type=int, help="which install of that answer this is, as journaled in tool_installed")
+    parser.add_argument("--project", help="the project whose journal records the install; WAYLINE_PROJECT or the active one by default")
+    parser.add_argument("--change", action="store_true", help="change an installed project's tool; the owner's word alone")
+    parser.add_argument("--at", help="licensed software: the absolute path of the executable the owner installed")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     root = tools_home()
+    if options.action == "install" and options.name in software.PROJECT_TOOLS + tuple(software.LICENSED):
+        return software.install_command(options.name, options, root=root)
     extras = [name for name in EXTRAS if getattr(options, name)]
     if options.action == "show":
         return _show(root, options.json)

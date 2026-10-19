@@ -79,7 +79,9 @@ GITIGNORE_HEADER = "# wayline"
 # the intake, which the absorb keeps as the reference's source: the owner's copies are never committed.
 # And `.clones/`, where intake moves a project's own clone that lay inside the project once `code/` absorbed it (decision 17).
 GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/refs/*/code/",
-                    "research/conductor.json", "research/documents/*/source/", "research/documents/*/media/", "research/intake/*.pdf", ".clones/")
+                    "research/conductor.json", "research/documents/*/source/", "research/documents/*/media/", "research/intake/*.pdf", ".clones/",
+                    # A project's packages (decision 17; ticket 82): the venv, the R library, and its own Octave Forge prefix.
+                    ".venv/", ".wayline/packages/")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")

@@ -38,7 +38,21 @@
     },
     "attempts": {"type": "array", "items": {"$ref": "#/$defs/attempt"}},
     "status": {"type": "string", "enum": ["pending", "running", "exited", "oom_host", "oom_gpu", "failed", "killed", "gone"]},
-    "wallclock_minutes": {"type": "integer", "minimum": 1}
+    "wallclock_minutes": {"type": "integer", "minimum": 1},
+    "tools": {
+      "type": "array",
+      "description": "every tool the job calls, by name, version, and lock digest (decision 17; ticket 82); a job file written before it has none",
+      "items": {
+        "type": "object",
+        "required": ["name", "version", "lock"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "version": {"type": ["string", "null"]},
+          "lock": {"type": ["string", "null"], "description": "the SHA-256 of the tool's lock, else its download's digest or its revision"}
+        }
+      }
+    }
   },
   "$defs": {
     "attempt": {

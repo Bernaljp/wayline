@@ -18,3 +18,9 @@
 
 If you get stuck, say where. `blocked_on` with the path or the missing piece is a result the
 planner can act on; a session that runs out of turns in silence is not.
+
+Call the ticket's tools through `wayline tools run <name> -- <args>`, never by a name on the
+`PATH`. A package the code imports goes in with `wayline tools package <python|r|julia|octave>
+<name>`, which asks nobody and writes its lock under `code/`; never `pip`, `install.packages`, or
+`Pkg.add` yourself. When an installed tool lacks what the code needs (a function, a version, a
+toolbox), stop with `blocked_on: "software <tool>: <what it lacks>"`: the harness asks the owner.

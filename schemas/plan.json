@@ -59,6 +59,7 @@
               "venues": {"type": "array", "items": {"type": "string", "pattern": "\\S"}}
             }
           },
+          "software": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}, "description": "the tools the ticket needs, by their names in tools.json (octave, r, julia, matlab, or a harness tool); it is not launchable until every one is recorded or its software decision said Go without (decision 17; ticket 82)"},
           "retry": {
             "type": ["object", "null"],
             "additionalProperties": false,

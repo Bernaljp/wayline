@@ -441,9 +441,13 @@ class ToolsVerbsTest(ProjectTestCase):
         self.assertIn("git", out)
 
     def test_tools_install_refuses_a_name_it_does_not_know(self):
+        code, _, err = cli_run("install", "photoshop")
+        self.assertEqual(code, 2)
+        self.assertIn("no tool is called photoshop", err)
+        # MATLAB is licensed software since ticket 82: the owner installs it, and the verb only records it where they say.
         code, _, err = cli_run("install", "matlab")
         self.assertEqual(code, 2)
-        self.assertIn("no tool is called matlab", err)
+        self.assertIn("matlab is licensed software", err)
 
     def test_the_dry_run_names_every_harness_tool_and_its_route(self):
         code, out, _ = cli_run("install", "--dry-run")

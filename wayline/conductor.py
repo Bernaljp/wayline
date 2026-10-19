@@ -143,7 +143,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, resources, schedule, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, resources, schedule, software, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -748,6 +748,11 @@ class Conductor:
         self._dropped = []
         self._proposal_cap = {}
         self.resources_free = schedule.everything_free
+        # What the wave's `software` step left (ticket 82): the tools gone without, the install and check jobs under
+        # way, and why each ticket that needs a missing tool waits. `tools` is the record it read, `~/.wayline/tools/`.
+        self.software = software.Settled()
+        self.tools = None
+        self._said_software = ()
         # The job runner of decision 6, made when a wave first has a job to poll or launch, and the machine readings the
         # free-slot rule places pending jobs by (`resources.read_readings`), which a test replaces with a recorded one.
         self.jobs_runner = None
@@ -833,6 +838,7 @@ class Conductor:
         self._poll_jobs(result)
         self._poll(result)
         self._place_jobs(result)
+        self._software(result)
         self._pace()
         if not self._reached_goal(result) and not self._holds_launches() and not self._stops_at_stall(result):
             self._escalate(result)
@@ -1012,12 +1018,16 @@ class Conductor:
             return
         if self._owed_steps() or self._owed_replan() is not None:
             return  # a failed ticket still waits on its step, or a stall on its replan: both wait, like any model work
+        if self.software.in_flight:
+            return  # an install or a licensed check runs as a job, and the tickets waiting on it launch once it is recorded
         graph = self._graph()
         running = [entry for entry in graph["tickets"] if entry["status"] == "running"]
         autonomy, decider = self._autonomy(), decisions.decider_ready(self.harness_root, self.project)
         # A decision ticket the owner answers stays on the frontier for them and no session takes it, so it keeps no run
-        # going: the owner's answer is what the tick relaunches the conductor for (decision 7).
-        if not [entry for entry in tickets.frontier(graph) if not schedule.awaits_owner(entry, autonomy, decider)] and not running:
+        # going: the owner's answer is what the tick relaunches the conductor for (decision 7). A ticket that waits for a
+        # tool nobody is installing keeps none going either: it waits on its software decision (ticket 82).
+        if not [entry for entry in tickets.frontier(graph)
+                if not schedule.awaits_owner(entry, autonomy, decider) and not self._needs_tools(entry)] and not running:
             for line in schedule.held_back(graph, autonomy, decider):
                 self.say(line)
             self.ledger.append_event(RUN_ENDED, {"reason": "frontier_empty"})
@@ -1046,6 +1056,34 @@ class Conductor:
 
     # --- what this wave launches (decision 5, wave steps 7 to 9) ---
 
+    def _software(self, result):
+        """Wave step 2's software part (decision 17; ticket 82): marks and answers kept in step, installs as jobs, asks opened.
+
+        The dry runs that size an ask, the installs, and the licensed check are jobs, so they run
+        whatever the pacing says, and the conductor never waits on the network: `software.settle`
+        launches them through the job runner, and the job poll of the next waves concludes them like
+        any job. A refused launch or a tools error is said, and fails no wave.
+        """
+        from wayline.tools import Tools
+
+        self.tools = Tools()
+        try:
+            self.software = software.settle(self.project, self._runner, tools=self.tools, notify=self.notify, say=self.say,
+                                            harness_root=self.harness_root)
+        except (ValueError, OSError, RuntimeError) as failure:  # a refused job launch (`resources.JobError`) or a tools error fails no wave
+            self.say("  the software step could not run: %s" % failure)
+            self.software = software.Settled()
+        self._tail()
+
+    def _needs_tools(self, entry):
+        """The tools this ticket needs that are neither recorded nor gone without: it is not launchable while any is (ticket 82)."""
+        if not entry.get("software"):
+            return []
+        if self.tools is None:
+            from wayline.tools import Tools
+            self.tools = Tools()
+        return self.software.missing(entry, self.tools)
+
     def _picks(self, graph):
         """The tickets to launch now: the launchable subset of the frontier, in pick order.
 
@@ -1072,10 +1110,13 @@ class Conductor:
                 return True
             return self._rung_held(entry) is not None
 
+        def free(entry):
+            return self.resources_free(entry) and not self._needs_tools(entry)
+
         def pick():
             return schedule.pick(
                 graph, running=running, slots=max(0, self._slots() - busy), action=self.action,
-                root=self.project, free=self.resources_free, classes=classes,
+                root=self.project, free=free, classes=classes,
                 held=held, autonomy=autonomy, decider=decider,
             )
 
@@ -1096,6 +1137,13 @@ class Conductor:
             for line in waiting:
                 self.say(line)
             self._said_held_rungs = tuple(waiting)
+        tools = tuple("  ticket %d waits: %s" % (entry["id"], "; ".join(self.software.waiting.get(entry["id"]) or
+                                                                         ["it needs %s" % ", ".join(self._needs_tools(entry))]))
+                      for entry in tickets.frontier(graph) if self._needs_tools(entry))
+        if tools != self._said_software:  # a ticket waits for its tools until they are recorded; the wait is said on change
+            for line in tools:
+                self.say(line)
+            self._said_software = tools
         return picks
 
     def _launch_rung(self, identifier, rung):
@@ -2834,7 +2882,18 @@ class Conductor:
             path = ", ".join(outside) if outside else blocked_on
             self._write_ticket(attempt, "blocked", attempt.result)
             self.ledger.append_event(TICKET_BLOCKED, {"ticket": attempt.id, "path": path}, ticket=attempt.id)
-            self.say("  ticket %d is blocked on %s; the planner re-cuts it" % (attempt.id, path))
+            gap = None if outside else software.gap_of(blocked_on)
+            if gap is None:
+                self.say("  ticket %d is blocked on %s; the planner re-cuts it" % (attempt.id, path))
+                return "failed"
+            # An installed tool lacks what the code needs (ticket 82): code opens the decision, which only the owner answers.
+            try:
+                report = software.open_gap(self.project, attempt.id, gap[0], gap[1], notify=self.notify)
+            except (ValueError, OSError, RuntimeError) as failure:
+                self.say("  ticket %d is blocked on a gap in %s, and its decision could not be opened: %s" % (attempt.id, gap[0], failure))
+                return "failed"
+            self.say("  ticket %d is blocked: the installed %s lacks what its code needs (%s); decision ticket %d asks the owner"
+                     % (attempt.id, gap[0], gap[1], report["ticket"]))
             return "failed"
         if status == "done":
             return "done"

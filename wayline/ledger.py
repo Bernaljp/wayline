@@ -107,6 +107,7 @@ OBJECTIVE = "objective"  # one change to research/objectives.json (decision 17)
 MARKED = "marked"  # one mark or note on one item of a batch (decision 17; ticket 79)
 DOCUMENT = "document"  # one document kept, or a newer version of it, in research/documents.json (decision 17; ticket 84)
 CODE_PUSHED = "code_pushed"  # code pushed `code/`'s split to the code repository's remote (decision 17; ticket 85)
+TOOL_INSTALLED = "tool_installed"  # a project's tool installed, licensed software recorded, or either failing (decision 17; ticket 82)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -235,6 +236,9 @@ K_TITLE = "title"  # `document`: the document's title
 K_CONVERTER = "converter"  # `document`: the converters and their versions, null for a document kept but not converted
 K_REMOTE = "remote"  # `code_pushed`: the code repository's `owner/name` on GitHub
 K_MAIN = "main"  # `code_pushed`: the commit of `main` the split was cut from, where the next split's walk starts
+K_TOOLS = "tools"  # `job_launched`: the name, version, and lock digest of every tool the job calls (ticket 82)
+K_NAME = "name"
+K_OUTCOME = "outcome"
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -269,7 +273,7 @@ EVENTS = {
     PROPOSAL_PARKED: (K_ID, K_FROM, K_KIND, K_REASON),
     DECISION_OPENED: (K_TICKET, K_BLOCKING, K_HUMAN_ONLY),
     DECISION: (K_TICKET, K_ANSWER, K_DECIDED_BY, K_RATIONALE, K_CONFIDENCE, K_MODEL, K_FALLBACK_FROM),
-    JOB_LAUNCHED: (K_JOB, K_TICKET, K_UNIT, K_GPU_UUIDS, K_CORES, K_RAM_GB, K_ATTEMPT, K_COMMIT),
+    JOB_LAUNCHED: (K_JOB, K_TICKET, K_UNIT, K_GPU_UUIDS, K_CORES, K_RAM_GB, K_ATTEMPT, K_TOOLS, K_COMMIT),
     JOB_FINISHED: (K_JOB, K_EXIT_CODE, K_SECONDS, K_OUTPUTS_OK),
     JOB_RETRIED: (K_JOB, K_ATTEMPT, K_OOM, K_OVERRIDES),
     JOB_FAILED: (K_JOB, K_REASON, K_LOG_TAIL),
@@ -296,6 +300,7 @@ EVENTS = {
     MARKED: (K_BATCH, K_ITEM, K_MARK, K_NOTE, K_BY),
     DOCUMENT: (K_ID, K_TITLE, K_KIND, K_VERSION, K_CONVERTER, K_BY),
     CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
+    TOOL_INSTALLED: (K_TICKET, K_NAME, K_OUTCOME, K_VERSION, K_ATTEMPT, K_REASON),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -332,6 +337,7 @@ PAYLOAD_ENUMS = {
     (DOCUMENT, K_KIND): ("inherited", "critique", "other"),
     # The session's sort (`wayline document add --kind`), or code's cautious guess at a file dropped with no session.
     (DOCUMENT, K_BY): ("session", "code"),
+    (TOOL_INSTALLED, K_OUTCOME): ("installed", "recorded", "failed"),
 }
 
 
