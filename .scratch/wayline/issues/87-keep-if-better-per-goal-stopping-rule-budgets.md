@@ -39,24 +39,24 @@ Not part of this ticket:
 
 **Blocked by:** 80 - The front door reads objectives; 81 - Specify and the plan name objectives. It blocks 89, 90, 103, and 109.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#234](https://github.com/Bernaljp/wayline/issues/234) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Keep-if-better per goal, the stopping rule, and budgets"; "Objectives, goals, and measures": GOAL.json retires; "Vocabulary the build adds": `goal` on `progress` and `discarded`, the `run_ended` reasons, `switch --stop-when` and `--budget`, `harness.json` gaining `stop_when` and losing `usage_windows`, `goal` retiring from the schemas); decisions 1 (the verb table; `harness.json`), 2 (the event table: `progress`, `discarded`, `run_ended`), 4 (the irreversible list), 5 (the conductor's wave), 7 (the tick's relaunch), 14 (the policy table: `goal`; the toy project); M8 criterion 3 and the toy's part of criterion 1; user stories 2, 103, 112, 113, 114, 115, 174.
 
-- [ ] `progress` and `discarded` carry `goal`. Each goal's best kept value is recomputed from its own events from its baseline, with its measure's metric, direction, split, and command. A measure's own `min_seeds` overrides the policy's, and at 1 any strict gain is kept.
-- [ ] A change kept for one goal is never re-measured on another, and a ticket serving an objective with no measure is not judged by keep-if-better. A goal is written "reached" by code from the measured values.
-- [ ] `stop_when` in `harness.json` takes `objectives` (the default), a list of objective ids, or `frontier`, and the conductor reads it every wave. `run_ended` journals `objectives_closed`, `goal_reached`, `frontier_empty`, or `budget_spent`, and the tick refuses to relaunch a run that its rule or a budget ended.
-- [ ] `budgets.wallclock_hours` (from the end of setup) and `budgets.gpu_hours` (job hours times GPUs held) end the run `budget_spent` when spent. The decider never extends one, and `usage_windows` is gone from the schema.
-- [ ] `wayline switch --stop-when` and `wayline switch --budget` write `harness.json` and journal `control`. After setup, changing the rule or raising a budget is on the irreversible list.
-- [ ] An empty frontier with the rule waiting on open objectives opens one decision ticket per such objective with replan, answer as it stands, park, and drop. Replan is recommended only after progress since the last replan. Under `interactive` and `checkpoints` the run ends `frontier_empty` and the tick relaunches after the answer. Under `autonomous` the decider takes one session and only replans or answers for an objective the rule names.
-- [ ] Under `stop_when: frontier` no such ticket opens, and the end notice lists the open objectives.
-- [ ] No module reads `GOAL.json`, the `goal` schema is retired, and a project holding a `GOAL.json` runs as if it were absent.
-- [ ] The toy fixture's goal is an objective with a measure in `objectives.json`, and its `stop_when` is in `harness.json`. Its conductor tests pass on the new shape.
-- [ ] Tests:
+- [x] `progress` and `discarded` carry `goal`. Each goal's best kept value is recomputed from its own events from its baseline, with its measure's metric, direction, split, and command. A measure's own `min_seeds` overrides the policy's, and at 1 any strict gain is kept.
+- [x] A change kept for one goal is never re-measured on another, and a ticket serving an objective with no measure is not judged by keep-if-better. A goal is written "reached" by code from the measured values.
+- [x] `stop_when` in `harness.json` takes `objectives` (the default), a list of objective ids, or `frontier`, and the conductor reads it every wave. `run_ended` journals `objectives_closed`, `goal_reached`, `frontier_empty`, or `budget_spent`, and the tick refuses to relaunch a run that its rule or a budget ended.
+- [x] `budgets.wallclock_hours` (from the end of setup) and `budgets.gpu_hours` (job hours times GPUs held) end the run `budget_spent` when spent. The decider never extends one, and `usage_windows` is gone from the schema.
+- [x] `wayline switch --stop-when` and `wayline switch --budget` write `harness.json` and journal `control`. After setup, changing the rule or raising a budget is on the irreversible list.
+- [x] An empty frontier with the rule waiting on open objectives opens one decision ticket per such objective with replan, answer as it stands, park, and drop. Replan is recommended only after progress since the last replan. Under `interactive` and `checkpoints` the run ends `frontier_empty` and the tick relaunches after the answer. Under `autonomous` the decider takes one session and only replans or answers for an objective the rule names.
+- [x] Under `stop_when: frontier` no such ticket opens, and the end notice lists the open objectives.
+- [x] No module reads `GOAL.json`, the `goal` schema is retired, and a project holding a `GOAL.json` runs as if it were absent.
+- [x] The toy fixture's goal is an objective with a measure in `objectives.json`, and its `stop_when` is in `harness.json`. Its conductor tests pass on the new shape.
+- [x] Tests:
   - replayed journals for keep-if-better on two goals, a measure with `min_seeds` 1, each `run_ended` reason, a spent wall-clock budget and a spent GPU budget, a relaunch the tick refuses, and the empty-frontier ticket under each autonomy, idempotence included;
   - the schema and the switches as plain functions over a temporary project.
-- [ ] The verb table of decision 1, the event table of decision 2, the policy table of decision 14, and the schemas list gain these rows in the same commit as the code.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes the stopping rule, the budgets, and GOAL.json's retirement.
-- [ ] `python -m unittest` passes.
+- [x] The verb table of decision 1, the event table of decision 2, the policy table of decision 14, and the schemas list gain these rows in the same commit as the code.
+- [x] `CHANGELOG.md` under `## Unreleased` describes the stopping rule, the budgets, and GOAL.json's retirement.
+- [x] `python -m unittest` passes.
