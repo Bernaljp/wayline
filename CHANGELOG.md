@@ -35,10 +35,12 @@ refuses a project made before it, which keeps its old tag or starts again on the
   `WAYLINE_TICKET` and the call past `policy.scout.calls_per_ticket` (20) is refused; the coder, analyst,
   experimenter, and writer have the verb, and their prompts say how to cite. A result gains `references[]` of
   `{identifier, note}`. At the worktree's acceptance every cited work (each `ref` tag of the passages and findings)
-  must be a dossier or listed, the listed works no dossier holds are looked up free, each note is kept on its
-  dossier as `ticket <id>`, and a locator must name what the dossier holds at its level (`abstract` or
-  `metadata.<field>`, and at L2 an entry's locator): no such work and a locator beyond the level send the worker
-  back, and a service failure passes with the flag. A `ref` tag names a work by slug or by `doi:` or `arxiv:`,
+  must be a dossier or listed, the scout runs free on every work neither a found dossier nor known yet (each
+  listed one, and each cited by `doi:` or `arxiv:`), each note is kept on its dossier as `ticket <id>`, and a
+  locator must name what the dossier holds at its level (`abstract` or `metadata.<field>`, and at L2 an entry's
+  locator): no such work and a locator beyond the level send the worker back, a service failure passes with the
+  flag, and an identifier tag with no locator (the inherited citation's form) passes. Lookups ask the services
+  outside the ledger's lock and file under it, so two workers scouting at once never share a slug. A `ref` tag names a work by slug or by `doi:` or `arxiv:`,
   resolved through position's identifier index. A `dossier` ticket has no worker session: the conductor promotes
   the paper on the `planner_or_decider` trigger and reads it through absorb, waiting on the decision a promotion
   beyond the phase's budget opens; `proposals.KIND_ROLE` routes neither `dossier` nor `lit`.

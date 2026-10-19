@@ -66,7 +66,7 @@ __all__ = [
     "strip_comments", "environments", "latex_inventory", "aux_numbers", "apply_aux_numbers",
     "html_inventory", "build_inventory", "source_fetcher",
     "LOOKUP_FIELDS", "work_keys", "same_work", "merge_lookup", "file_lookup", "retry_state", "give_up", "retry_flagged",
-    "filed_index", "join_duplicates", "keep_source_pdf", "hand_over", "pdf_details", "reference_command", "look_up_one", "keep_ticket_note", "filed_slug",
+    "filed_index", "join_duplicates", "keep_source_pdf", "hand_over", "pdf_details", "reference_command", "look_up_one", "finish_lookups", "keep_ticket_note", "filed_slug",
 ]
 
 REFS = "refs"
@@ -1951,7 +1951,7 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
     return report
 
 
-def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock=None):
+def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock=None, finish=True):
     """One reference looked up for a ticket (decision 17): `{outcome, slug, dossier, change}`.
 
     What `wayline scout <identifier>` and the check at acceptance share. A reference a dossier
@@ -1961,6 +1961,11 @@ def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock
     the dossier of the same work if one exists, and filed unresolved with the `retry` flag when a
     service failed; when every service answered no match, nothing is filed and `slug` is None.
     `outcome` is `scout.outcome` of what the dossier now says: `found`, `failed`, or `no such work`.
+
+    `wayline scout` runs in several workers at once, so the services are asked outside the ledger's lock
+    and the answer is filed under it, against what the project holds by then: a work another worker filed
+    meanwhile is joined rather than given a second slug. `finish` joins duplicates and rebuilds the query
+    pack after a found work; a caller looking up several passes False and calls `finish_lookups` once.
     """
     project = Path(project)
     ledger = ledger_for(ledger if ledger is not None else project)
@@ -1970,21 +1975,35 @@ def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock
     clock = clock or time.time
     if not isinstance(reference, Reference):
         reference = parse_reference(reference)
-    known = _known_slugs(ledger)
-    existing = _existing(ledger, known.get((reference.kind, reference.value.lower())))
-    report = {"disagreements": []}
-    dossier, change = _look_up(ledger, Scout(fetcher, email, clock=clock), reference, existing, {path.parent.name for path in (ledger.research / REFS).glob("*/dossier.json")},
-                               clock, _give_up_days(project), report, filed_index(ledger), file_no_such_work=False)
+    key = (reference.kind, reference.value.lower())
+
+    def holdings():
+        """What the project holds now: the dossier filed under this name, the slugs taken, and the filed works."""
+        return (_existing(ledger, _known_slugs(ledger).get(key)), {path.parent.name for path in (ledger.research / REFS).glob("*/dossier.json")},
+                filed_index(ledger))
+
+    existing, taken, index = holdings()
+    dossier, change = _look_up(ledger, Scout(fetcher, email, clock=clock), reference, existing, taken, clock, _give_up_days(project),
+                               {"disagreements": []}, index, file_no_such_work=False, filing=ledger.lock, refresh=holdings)
+    if dossier is not None:
+        with ledger.lock():
+            if dossier["existence"] == VERIFIED and finish:
+                finish_lookups(project, ledger, clock)
+            dossier = read_dossier(ledger, dossier["slug"])
+            if dossier.get("joined_into"):
+                dossier = read_dossier(ledger, dossier["joined_into"])
     if dossier is None:
         return {"outcome": NO_SUCH_WORK, "slug": None, "dossier": None, "change": change}
-    if dossier["existence"] == VERIFIED:
-        join_duplicates(ledger, timestamp(clock()))
-        rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
-        dossier = read_dossier(ledger, dossier["slug"])
-        if dossier.get("joined_into"):
-            dossier = read_dossier(ledger, dossier["joined_into"])
     found = outcome(dossier)
     return {"outcome": NO_SUCH_WORK if found == NOT_LOOKED_UP else found, "slug": dossier["slug"], "dossier": dossier, "change": change}
+
+
+def finish_lookups(project, ledger=None, clock=None):
+    """After found works were filed: join two dossiers of one work, and rebuild the query pack."""
+    ledger = ledger_for(ledger if ledger is not None else project)
+    with ledger.lock():
+        join_duplicates(ledger, timestamp((clock or time.time)()))
+        rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
 
 
 def filed_slug(ledger, reference, index=None):
@@ -2003,15 +2022,16 @@ def filed_slug(ledger, reference, index=None):
 def keep_ticket_note(ledger, slug, text, ticket, now=None):
     """A ticket's note on a reference, kept on its dossier as `ticket <id>`; the scout never reads it. Returns the dossier."""
     ledger = ledger_for(ledger)
-    dossier = read_dossier(ledger, slug)
-    if dossier.get("joined_into"):
-        dossier = read_dossier(ledger, dossier["joined_into"])
-    note = {"text": str(text), "by": "ticket %s" % ticket, "ts": now or now_ts()}
-    notes = list(dossier.get("notes") or [])
-    if any(item.get("text") == note["text"] and item.get("by") == note["by"] for item in notes):
-        return dossier
-    dossier = dict(dossier, notes=notes + [note])
-    _write_dossier(ledger, dossier)
+    with ledger.lock():  # read, add, and write in one hold, so a lookup another worker files at once is not lost
+        dossier = read_dossier(ledger, slug)
+        if dossier.get("joined_into"):
+            dossier = read_dossier(ledger, dossier["joined_into"])
+        note = {"text": str(text), "by": "ticket %s" % ticket, "ts": now or now_ts()}
+        notes = list(dossier.get("notes") or [])
+        if any(item.get("text") == note["text"] and item.get("by") == note["by"] for item in notes):
+            return dossier
+        dossier = dict(dossier, notes=notes + [note])
+        _write_dossier(ledger, dossier)
     return dossier
 
 
@@ -2055,7 +2075,7 @@ def retry_flagged(project, fetcher=None, email=None, ledger=None, clock=None, sk
     return report
 
 
-def _look_up(ledger, scout, reference, existing, taken, clock, days, report, index=None, file_no_such_work=True):
+def _look_up(ledger, scout, reference, existing, taken, clock, days, report, index=None, file_no_such_work=True, filing=None, refresh=None):
     """One reference looked up and filed, unless its flag says to wait or to give up. Returns `(dossier, change)`.
 
     A reference no dossier holds yet that resolves to a work `index` already files (by DOI, arXiv
@@ -2063,6 +2083,8 @@ def _look_up(ledger, scout, reference, existing, taken, clock, days, report, ind
     its names. With `file_no_such_work` false, a reference no dossier holds that every service
     answered no match for files nothing and returns `(None, "no such work")`: what `wayline scout`
     and the check at acceptance do (decision 17), where intake's references are filed whatever they come to.
+    `filing` (the ledger's lock) is held while the answer is filed, after the services were asked without it,
+    and `refresh()` then re-reads `(existing, taken, index)`, so what another process filed meanwhile counts.
     """
     now = clock()
     state = retry_state(existing, now, days) if existing else None
@@ -2074,6 +2096,16 @@ def _look_up(ledger, scout, reference, existing, taken, clock, days, report, ind
         return existing, GAVE_UP
     found = bool(existing and existing["existence"] == VERIFIED and state is None)
     resolved = scout.resolve(reference, found=found)
+    if filing is None:
+        return _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work)
+    with filing():
+        if refresh is not None:
+            existing, taken, index = refresh()
+        return _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work)
+
+
+def _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work):
+    """`_look_up`'s second half: the scout's answer filed under the dossier it belongs to. Returns `(dossier, change)`."""
     if existing is None and not file_no_such_work and outcome(resolved) in (NO_SUCH_WORK, NOT_LOOKED_UP):
         return None, NO_SUCH_WORK
     if existing is None and resolved["existence"] == VERIFIED and index:

@@ -1438,11 +1438,11 @@ class Conductor:
         of their own; the wave waits only until each process exists or its launch failed, so
         `launched` names exactly the tickets whose `ticket_launched` was journaled.
         """
-        attempts = []
+        attempts, promotions = [], []
         for entry in picks:
             ticket, body = self._ticket(entry["id"])
             if ticket["kind"] == tickets.DOSSIER:
-                self._run_dossier(ticket, result)  # no worker session: a promotion through absorb (decision 17; ticket 98)
+                promotions.append(ticket)  # no worker session: a promotion through absorb, run once the workers started (ticket 98)
                 continue
             attempt = _Attempt(ticket, body, int(entry.get("attempt") or 0) + 1, self._worktree(entry["id"]))
             try:
@@ -1460,6 +1460,10 @@ class Conductor:
                 self.flight[attempt.id] = attempt
             else:
                 self._carry(attempt, result)  # the launcher refused it before a process started
+        for ticket in promotions:
+            self._beat()
+            self._run_dossier(ticket, result)
+            self._beat()
 
     def _run_dossier(self, ticket, result):
         """Run a `dossier` ticket as a promotion through absorb, with no worker session (decision 17; ticket 98).

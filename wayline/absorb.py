@@ -1245,6 +1245,9 @@ def run_dossier_ticket(project, ticket, *, tickets_by_id=None, answers=None, abs
         if promotion.get("decision_ticket"):
             return {"outcome": WAITS, "slug": slug, "reason": "beyond the phase's level-2 budget", "decision": promotion["decision_ticket"],
                     "report": None}
+    record = read_dossier(ledger, slug)
+    if record.get("l2") and (record["l2"].get("coverage") or {}).get("pass"):
+        return {"outcome": DONE, "slug": slug, "reason": "already read in full", "decision": None, "report": None}
     if not ledger.path(_refs(slug, INVENTORY)).is_file():
         try:
             (inventory or dossiers.build_inventory)(project, slug)

@@ -67,6 +67,32 @@ class FoundTest(ScoutCase):
         self.assertEqual(self.slugs(), [self.report["slug"]])
 
 
+class RaceTest(ScoutCase):
+    def test_a_work_another_worker_filed_while_the_services_answered_is_joined_not_overwritten(self):
+        from tests.scout_net import Net
+        from wayline.dossier import l0_dossier, write_l0
+        from wayline.fetch import Fetcher
+        from wayline.scout import resolve
+
+        ledger, answers = self.ledger, doi_answers(crossref_work())
+
+        class Racing(Net):
+            raced = False
+
+            def send(self, request):
+                if not self.raced:  # another worker files the same work, under the slug this lookup would take
+                    self.raced = True
+                    record = resolve(DOI, Fetcher(Net(answers), email=EMAIL), EMAIL)
+                    write_l0(ledger, dict(l0_dossier(record, "lovelace-2021-work-services-know"), notes=[{"text": "theirs", "by": "ticket 3", "ts": "2026-09-21T14:13:20.000Z"}]))
+                return super().send(request)
+
+        from wayline.fetch import Fetcher as Fetching
+        report = references.scout(self.project, DOI, ticket=7, fetcher=Fetching(Racing(answers), email=EMAIL), email=EMAIL, clock=lambda: NOW)
+        self.assertEqual(self.slugs(), ["lovelace-2021-work-services-know"])
+        self.assertEqual(report["slug"], "lovelace-2021-work-services-know")
+        self.assertEqual(read_dossier(self.ledger, report["slug"])["notes"][0]["text"], "theirs")
+
+
 class FailureTest(ScoutCase):
     def setUp(self):
         super().setUp()

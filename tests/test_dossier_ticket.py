@@ -29,6 +29,12 @@ class KindRoleTest(ProposalsCase):
         fields, _ = tickets.read_ticket(next(tickets.tickets_dir(self.project).glob("%02d-*.md" % outcome["ticket"])))
         self.assertEqual(fields["role"], "reader")
 
+    def test_an_admitted_lit_proposal_waits_for_the_surveyor_never_the_coder(self):
+        outcome = self.admit([{"title": "Survey the flows literature", "kind": "lit", "why": "the Introduction is empty",
+                               "radius": "moderate"}])[0]
+        fields, _ = tickets.read_ticket(next(tickets.tickets_dir(self.project).glob("%02d-*.md" % outcome["ticket"])))
+        self.assertEqual(fields["role"], "surveyor")
+
 
 class DossierTicketCase(ConductorCase):
     def setUp(self):
@@ -92,6 +98,16 @@ class PromotionTest(DossierTicketCase):
         self.assertEqual(self.status(), "done")
         sequence = [event["event"] for event in self.events() if event["event"] in ("promoted", "absorbed", "ticket_done")]
         self.assertEqual(sequence[-3:], ["promoted", "absorbed", "ticket_done"])
+
+
+class AlreadyReadTest(DossierTicketCase):
+    def test_a_paper_already_read_in_full_is_not_read_again(self):
+        dossier = read_dossier(self.ledger, self.slug)
+        self.ledger.write_json("refs/%s/dossier.json" % self.slug, dict(dossier, level=2, l2={"coverage": {"pass": True}}))
+        self.write_dossier_ticket()
+        self.conduct()
+        self.assertEqual(self.absorbed, [])
+        self.assertEqual(self.status(), "done")
 
 
 class CoverageFailsTest(DossierTicketCase):

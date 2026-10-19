@@ -31,7 +31,7 @@ from wayline.cli import parse_args
 from wayline.ledger import SCOUTED, LedgerError, ledger_for
 from wayline.project import ProjectError, find_project, policy_for
 from wayline.provenance import TAG_RE, identifier_index, parse_tag, ref_slug
-from wayline.scout import FAILED, FOUND, NO_SUCH_WORK, VERIFIED, ScoutError, parse_reference
+from wayline.scout import FAILED, FOUND, NO_SUCH_WORK, VERIFIED, ScoutError, outcome, parse_reference
 
 __all__ = [
     "CALLS_PER_TICKET", "LOOKED_UP_KINDS", "ReferenceError_", "ScoutRefused", "call_limit", "calls_made", "looked_up", "scout", "scout_command", "render",
@@ -55,8 +55,7 @@ class ScoutRefused(ReferenceError_):
 
 def calls_made(project_or_ledger, ticket):
     """How many `scouted` events the journal holds for `ticket`."""
-    events, _ = ledger_for(project_or_ledger).read_events()
-    return sum(1 for event in events if event.get("event") == SCOUTED and event.get("ticket") == ticket)
+    return ledger_for(project_or_ledger).count_events(SCOUTED, ticket)
 
 
 def call_limit(policy):
@@ -211,18 +210,46 @@ def held_locators(ledger, dossier):
 def check_references(project, ticket, result, fetcher=None, email=None, clock=None, ledger=None):
     """The Type-A check of a ticket's references at acceptance: `{problems, flagged, filed}`.
 
-    Every listed reference (`result.references`, `{identifier, note}`) that no dossier holds is looked up by the
-    scout, free and uncounted: found, it is filed; a service failure files it with the `retry` flag and is
-    accepted (`flagged`); no such work is a problem, the work most likely invented. A URL is a problem, never
-    looked up. Each note is kept on its dossier as `ticket <id>`. Every cited work (a `ref` tag in the
-    passages or the findings) must then be a dossier or listed, and its locator must name what the dossier
-    holds at its level (`held_locators`). `problems` sends the worker back; an empty list passes.
+    Every cited work (a `ref` tag in the passages or the findings) must be a dossier or listed in
+    `result.references` (`{identifier, note}`), and the scout runs free and uncounted on every work that is
+    neither a found dossier nor known yet: each listed one, and each cited by `doi:` or `arxiv:` that no
+    dossier holds. Found, it is filed; a service failure files it with the `retry` flag and is accepted
+    (`flagged`); no such work is a problem, the work most likely invented. A URL is a problem, never looked
+    up, and so is a slug no dossier holds. Each note is kept on its dossier as `ticket <id>`. A locator must
+    name what the dossier holds at its level (`held_locators`); an identifier tag with no locator is the
+    inherited citation's form, and passes. `problems` sends the worker back; an empty list passes.
     """
     project = Path(project).resolve()
     ledger = ledger_for(ledger if ledger is not None else project)
     clock = clock or time.time
     problems, flagged, filed, listed, invented = [], [], [], {}, set()
-    index = identifier_index(project)
+    state = {"index": None}
+
+    def index():
+        if state["index"] is None:
+            state["index"] = identifier_index(project)
+        return state["index"]
+
+    def look_up(reference, named_as):
+        """The slug the scout filed `reference` under, or None with the problem said; a failure is flagged."""
+        key = (reference.kind, reference.value.lower())
+        slug = dossiers.filed_slug(ledger, reference, index())
+        record = _dossier(ledger, slug) if slug else None
+        if record is not None and record.get("existence") == VERIFIED:
+            return record["slug"]
+        found = dossiers.look_up_one(project, reference, fetcher=fetcher, email=email, ledger=ledger, clock=clock, finish=False)
+        if found["outcome"] == NO_SUCH_WORK:
+            problems.append("%s names %s, which no service knows (every one asked answered no match): it is most likely invented; "
+                            "take it out, and the claims that cite it, or give its exact DOI, arXiv id, or title" % (named_as, reference.raw))
+            invented.add(key)
+            return None
+        if found["outcome"] == FAILED:
+            flagged.append(found["slug"])
+        if found["slug"] != slug:
+            filed.append(found["slug"])
+            state["index"] = None
+        return found["slug"]
+
     for item in (result or {}).get("references") or []:
         identifier, note = str((item or {}).get("identifier") or "").strip(), str((item or {}).get("note") or "").strip()
         try:
@@ -230,17 +257,9 @@ def check_references(project, ticket, result, fetcher=None, email=None, clock=No
         except ReferenceError_ as failure:
             problems.append("references names %r: %s" % (identifier, failure))
             continue
-        slug = dossiers.filed_slug(ledger, reference, index)
+        slug = look_up(reference, "references")
         if slug is None:
-            found = dossiers.look_up_one(project, reference, fetcher=fetcher, email=email, ledger=ledger, clock=clock)
-            if found["outcome"] == NO_SUCH_WORK:
-                problems.append("references names %s, which no service knows (every one asked answered no match): it is most likely "
-                                "invented; take it out, and the claims that cite it, or give its exact DOI, arXiv id, or title" % identifier)
-                invented.add((reference.kind, reference.value.lower()))
-                continue
-            slug = found["slug"]
-            filed.append(slug)
-            index = identifier_index(project)
+            continue
         if note:
             dossiers.keep_ticket_note(ledger, slug, note, ticket, now=dossiers.timestamp(clock()))
         listed[(reference.kind, reference.value.lower())] = slug
@@ -248,38 +267,53 @@ def check_references(project, ticket, result, fetcher=None, email=None, clock=No
         if parts is None:
             problems.append("`{%s}` is not a `ref` tag: write `{ref:<slug>#<locator>}`, or `doi:` or `arxiv:` with the identifier in place of the slug" % tag)
             continue
-        slug = ref_slug(parts, index)
-        named = None
+        slug = ref_slug(parts, index())
         if parts.get("identifier"):
             prefix, _, value = parts["identifier"].partition(":")
             named = (prefix, value.lower())
-            slug = slug or listed.get(named)
-        if slug is None:
             if named in invented:
-                continue  # sent back already, as a listed work no service knows
-            problems.append("`{%s}` cites %s, which is neither a dossier nor listed in references: list it as {identifier, note}, "
-                            "or check it with `wayline scout <identifier>`" % (tag, parts.get("identifier") or parts.get("slug")))
-            continue
-        try:
-            record = dossiers.read_dossier(ledger, slug)
-            if record.get("joined_into"):
-                record = dossiers.read_dossier(ledger, record["joined_into"])
-        except dossiers.DossierError:
+                continue  # sent back already, as a work no service knows
+            slug = slug or listed.get(named)
+            if slug is None or (_dossier(ledger, slug) or {}).get("existence") != VERIFIED:
+                slug = look_up(looked_up(parts["identifier"]), "`{%s}`" % tag)
+                if slug is None:
+                    continue
+        record = _dossier(ledger, slug)
+        if record is None:
             problems.append("`{%s}` names %s, which no dossier holds: check the work with `wayline scout <identifier>` and cite the slug "
-                            "it prints, or cite it by `doi:` or `arxiv:` and list it in references" % (tag, slug))
+                            "it prints, or cite it by `doi:` or `arxiv:`" % (tag, slug))
             continue
         if record.get("existence") != VERIFIED:
-            flagged.append(record["slug"])  # a dossier whose lookup failed: accepted with its flag, its claims to be resolved
+            if outcome(record) == NO_SUCH_WORK:
+                problems.append("`{%s}` cites refs/%s, which no service knows (every one asked answered no match): it is most likely "
+                                "invented; take the claim out, or cite the work by its exact DOI, arXiv id, or title" % (tag, record["slug"]))
+            else:
+                flagged.append(record["slug"])  # its lookup failed, or nothing can look it up: accepted with its flag, to be resolved
             continue
         locator = parts.get("locator")
-        if not locator:
-            problems.append("`{%s}` names no locator: say where in refs/%s the claim is read (#abstract or #metadata.<field>)" % (tag, record["slug"]))
-        elif not held_locators(ledger, record)(locator):
+        if locator and not held_locators(ledger, record)(locator):
             level = int(record.get("level") or 0)
             problems.append("`{%s}` names #%s, which refs/%s does not hold at level %d: cite #abstract or #metadata.<field>%s; a claim "
                             "beyond the abstract says only what the abstract says, or proposes the work's promotion"
                             % (tag, locator, record["slug"], level, ", or an entry's locator" if level >= dossiers.LEVEL_2 else ""))
+        elif not locator and parts.get("slug"):
+            problems.append("`{%s}` names no locator: say where in refs/%s the claim is read (#abstract or #metadata.<field>)" % (tag, record["slug"]))
+    for slug in filed:
+        record = _dossier(ledger, slug)
+        if record is not None and record.get("existence") != VERIFIED:
+            flagged.append(slug)
+    if any((_dossier(ledger, slug) or {}).get("existence") == VERIFIED for slug in filed):
+        dossiers.finish_lookups(project, ledger, clock)
     return {"problems": problems, "flagged": sorted(set(flagged)), "filed": filed}
+
+
+def _dossier(ledger, slug):
+    """The dossier filed under `slug`, the one it was joined into for a pointer; None when there is none."""
+    try:
+        record = dossiers.read_dossier(ledger, slug)
+        return dossiers.read_dossier(ledger, record["joined_into"]) if record.get("joined_into") else record
+    except dossiers.DossierError:
+        return None
 
 
 def _authors(authors):

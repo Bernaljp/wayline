@@ -77,10 +77,14 @@ KIND_ROLE = {
     "analysis": "analyst", "figure": "figure-designer", "writing": "writer", "review": "critic",
     "decision": "decider", "harness": "coder",
 }
+# The role decision 17 gives a kind whose role no shipped sidecar names yet: a `lit` ticket runs on the surveyor (ticket 99),
+# and until that role ships its launch fails on the missing role, handing it to a person, rather than running on the coder.
+DECISION_17_ROLES = {"lit": "surveyor"}
 
 
 def role_for(kind, harness_root=None):
-    """The role an admitted ticket of `kind` takes: `KIND_ROLE`'s, else the first harness role whose kinds name it, else `coder`."""
+    """The role an admitted ticket of `kind` takes: `KIND_ROLE`'s, else the first harness role whose kinds name it,
+    else decision 17's (`DECISION_17_ROLES`), else `coder`."""
     if kind in KIND_ROLE:
         return KIND_ROLE[kind]
     from wayline import registry
@@ -92,7 +96,7 @@ def role_for(kind, harness_root=None):
             continue
         if kind in (sidecar.get("applicability_tags") or {}).get("kinds", []):
             return sidecar["id"]
-    return "coder"
+    return DECISION_17_ROLES.get(kind, "coder")
 
 
 class ProposalsError(ValueError):

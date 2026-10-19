@@ -80,10 +80,32 @@ class CitedDossierTest(CheckCase):
         self.assertEqual(len(check["problems"]), 1)
         self.assertIn("ghost-2020-paper", check["problems"][0])
 
-    def test_a_work_cited_by_identifier_that_is_neither_a_dossier_nor_listed_sends_the_worker_back(self):
-        check = self.check(self.result("The flows are learned {ref:doi:%s#abstract}." % OTHER_DOI))
+    def test_a_work_cited_by_identifier_that_is_neither_a_dossier_nor_listed_is_looked_up_free(self):
+        check = self.check(self.result("The flows are learned {ref:doi:%s#abstract}." % DOI), doi_answers(crossref_work()))
+        self.assertEqual(check["problems"], [])
+        self.assertEqual(check["filed"], self.slugs())
+        self.assertEqual(len(self.slugs()), 1)
+
+    def test_a_work_cited_by_identifier_that_no_service_knows_sends_the_worker_back(self):
+        check = self.check(self.result("The flows are learned {ref:doi:%s#abstract}." % OTHER_DOI), doi_answers(NOT_FOUND))
         self.assertEqual(len(check["problems"]), 1)
-        self.assertIn("references", check["problems"][0])
+        self.assertIn("most likely invented", check["problems"][0])
+        self.assertEqual(self.slugs(), [])
+
+    def test_a_cited_dossier_whose_lookup_failed_is_accepted_with_its_flag(self):
+        slug = self.file(doi_answers(DOWN, rest=DOWN))
+        check = self.check(self.result("It holds {ref:%s#abstract}." % slug))
+        self.assertEqual((check["problems"], check["flagged"]), ([], [slug]))
+
+    def test_a_cited_dossier_no_service_knows_sends_the_worker_back(self):
+        from wayline.dossier import absorb_level_0
+        (self.project / "research" / "INTAKE.md").write_text("# Intake\n\n## References\n\n- %s\n" % OTHER_DOI, encoding="utf-8")
+        fetcher, _ = net_fetcher(doi_answers(NOT_FOUND))
+        absorb_level_0(self.project, fetcher=fetcher, email=EMAIL, clock=lambda: NOW)  # intake files it unresolved, whatever it comes to
+        [slug] = self.slugs()
+        check = self.check(self.result("It holds {ref:%s#abstract}." % slug))
+        self.assertEqual(len(check["problems"]), 1)
+        self.assertIn("most likely invented", check["problems"][0])
 
 
 class LocatorTest(CheckCase):
@@ -110,9 +132,9 @@ class LocatorTest(CheckCase):
         self.assertEqual(self.check(self.result("It is cited {ref:%s#flat.tex:13}." % slug))["problems"], [])
         self.assertEqual(len(self.check(self.result("It is cited {ref:%s#flat.tex:99}." % slug))["problems"]), 1)
 
-    def test_a_citation_a_ticket_writes_names_its_locator(self):
+    def test_an_identifier_tag_with_no_locator_is_the_inherited_form_and_passes(self):
         self.file()
-        self.assertEqual(len(self.check(self.result("It is cited {ref:doi:%s}." % DOI))["problems"]), 1)
+        self.assertEqual(self.check(self.result("It is cited {ref:doi:%s}." % DOI))["problems"], [])
 
 
 class ListedReferenceTest(CheckCase):

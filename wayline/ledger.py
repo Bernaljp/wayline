@@ -594,6 +594,11 @@ class Ledger:
 
     # --- reads (anyone may read; these are conveniences for replay) ---
 
+    def count_events(self, event, ticket):
+        """How many `event` records the journal holds for `ticket`: what a per-ticket cap counts (the consultant's, the scout's)."""
+        events, _ = self.read_events()
+        return sum(1 for record in events if record.get("event") == event and record.get("ticket") == ticket)
+
     def read_events(self, offset=0):
         """The journal events from byte `offset` on, and the offset after the last whole line.
 
