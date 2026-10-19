@@ -306,6 +306,8 @@ class View:
     autonomy: Optional[str] = None
     model_fallback: Optional[str] = None
     ladder_changes: Optional[str] = None
+    # The environment the last `control environment` moved the project to (ticket 83); None before one, and `harness.json` says it.
+    environment: Optional[str] = None
     thresholds: dict = field(default_factory=dict)
     stall: int = 0
     run: Optional[dict] = None
@@ -493,6 +495,8 @@ class View:
             self.model_fallback = args["model_fallback"]
         elif command == "ladder_changes" and args.get("ladder_changes") in LADDER_CONSENTS and self.run is not None and not self.run["ended"]:
             self.ladder_changes = args["ladder_changes"]
+        elif command == "environment" and args.get("environment"):
+            self.environment = args["environment"]
         elif command == "pacing":
             self.thresholds.update({key: args[key] for key in ("stop_at", "cheap_at") if key in args})
 
@@ -507,6 +511,8 @@ class View:
         record["status"] = JOB_STATUS_AFTER[name]
         if _int(payload.get("attempt")) is not None:
             record["attempt"] = payload["attempt"]
+        if name == JOB_LAUNCHED and payload.get("environment"):
+            record["environment"] = payload["environment"]  # where it runs to its end, whatever a later move says (ticket 83)
         if name == JOB_FINISHED:
             record["exit_code"] = _int(payload.get("exit_code"))
         if name == JOB_WAITING:

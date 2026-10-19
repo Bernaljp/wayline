@@ -339,11 +339,12 @@ MODEL_FILES = (
     "1_Pooling/config.json",
 )
 # The programs the machine already has that the harness calls, recorded by absolute path and never changed,
-# each with the flag that makes it print its version: LaTeX, poppler, LibreOffice, git, and gh (which creates the code repository).
+# each with the flag that makes it print its version: LaTeX, poppler, LibreOffice, git, gh (which creates the code repository),
+# and SingularityCE, which builds and runs a project's container without root (ticket 83).
 SYSTEM_TOOLS = {
     "latexmk": "--version", "pdflatex": "--version", "xelatex": "--version",
     "pdfinfo": "-v", "pdftotext": "-v", "pdfimages": "-v", "pdftoppm": "-v",
-    "soffice": "--version", "git": "--version", "gh": "--version",
+    "soffice": "--version", "git": "--version", "gh": "--version", "singularity": "--version",
 }
 _PLATFORMS = {"x86_64": ("linux-64", "x86_64-unknown-linux-gnu"), "aarch64": ("linux-aarch64", "aarch64-unknown-linux-gnu")}
 _VERSION = re.compile(r"\d+(?:\.\d+)+(?:-[\d.]+)*")
@@ -782,14 +783,21 @@ for _prefix, (_calls, _programs) in CONDA_TOOLS.items():
 HARNESS_INSTALLERS.update((name, _python_package_installer(name)) for name in PYTHON_PACKAGES)
 
 
-def run_recorded(name, args, tools=None, run=run_tool, timeout=TOOL_RUN_TIMEOUT_S, exists=os.path.exists):
+def run_recorded(name, args, tools=None, run=run_tool, timeout=TOOL_RUN_TIMEOUT_S, exists=os.path.exists, project=None):
     """Run a recorded tool by its absolute executable and the environment its entry requires.
 
     A tool `tools.json` does not record is refused, and so is one whose executable is gone: no
-    lookup on the `PATH` ever stands in for the record.
+    lookup on the `PATH` ever stands in for the record. With a `project`, the tool resolves through
+    the project's environment (ticket 83): the conda prefix's, the venv's, or the image's.
     """
     tools = tools if tools is not None else Tools()
     entry = tools.entry(name)
+    if project is not None:
+        from wayline import environment
+
+        if environment.setting(project) != environment.SHARED and (entry or name == environment.PYTHON):
+            resolved = environment.resolve(project, name, tools)
+            return run(resolved.argv + list(args), timeout=timeout, env=resolved.env or None)
     if not entry or not entry.get("executable"):
         from wayline import software
 
@@ -911,8 +919,15 @@ def _tools_run(args):
     name, rest = args[0], list(args[1:])
     if rest[:1] == ["--"]:
         rest = rest[1:]
+    from wayline import software
+    from wayline.project import ProjectError
+
     try:
-        done = run_recorded(name, rest)
+        project = software._project_for(None, required=False)  # the session's project, whose environment the tool runs in
+    except (ProjectError, OSError):
+        project = None
+    try:
+        done = run_recorded(name, rest, project=project)
     except ToolsError as failure:
         print("wayline tools run: %s" % failure, file=sys.stderr)
         return 2

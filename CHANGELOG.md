@@ -240,6 +240,43 @@ lists it read-only, marked with its tag.
     version, and lock digest of every tool the job calls. The journal gains `tool_installed`. Installing free
     software is on neither the irreversible list nor the global harness changes.
 
+- Moving a project's environment (ticket 83; Implementation Decisions 17, 1, 2, and 6). `harness.json` gains
+  `environment`, one of four; a project without the key is `shared`. The new module `wayline/environment.py`.
+  - **The four environments.** `shared` is the tools as `~/.wayline/tools/tools.json` records them and the
+    project's own packages (ticket 82). `conda` is one prefix at `<project>/.wayline/env` holding the project's
+    tools and packages. `venv` is one project venv at `<project>/.wayline/env-venv`, built through uv; it holds
+    only Python, so the project's other tools stay the shared ones. `container` is one Singularity image at
+    `<project>/.wayline/env.sif`, built without root: a sandbox from `docker://debian:bookworm-slim`, the
+    harness's micromamba and uv copied in, each tool installed from its lock inside it with the host's package
+    cache bound in, then the SIF built from the sandbox. Docker is used only where the account reaches its daemon
+    (then the base comes through `docker-daemon://`). SingularityCE is recorded as a `system` tool. `init`
+    gitignores `.wayline/env*`.
+  - **How a move is checked.** `wayline switch --environment shared|conda|venv|container` builds the new
+    environment from the locks ticket 82 writes: each conda tool's explicit export, checked against the digest
+    `tools.json` recorded; `code/requirements.lock` through `uv pip sync` on the `.venv`'s Python minor version;
+    `code/renv.lock` through `renv::restore`; `code/Manifest.toml` through `Pkg.instantiate`;
+    `code/octave-packages.lock` through Octave Forge. Julia's checked tree is copied in, and MATLAB stays the
+    owner's install on the host, bound into the image. Code then runs each carried tool's version check inside
+    the new environment and compares the Python and Octave packages with their locks. Only when every check
+    passes does it write `harness.json` and journal `control environment` (`{environment, from}`). A failed build
+    or check removes what it half built, leaves `harness.json`, the journal, and the old environment as they were,
+    and prints the failing step. A move is accepted with a conductor running or not; jobs keep running in the old
+    environment while it builds. `.wayline/env.json` records what each environment holds, and
+    `.wayline/env-move.json` names a move in progress (`environment.move_in_progress`, for the Run view of ticket
+    110). A second move while one is in progress is refused. A rebuild is refused while a job still runs in the
+    place it would replace.
+  - **After the switch** `wayline job add` and `wayline tools run` resolve each tool through the environment: the
+    prefix's or the venv's executable, or inside the image for a container. A job that names no tool runs inside
+    it too (`bin/` first on its `PATH`, or the whole command in the image), and the harness's own jobs, such as a
+    `software` decision's install, stay on the host. The job file (schema `job`) and `job_launched` gain
+    `environment`, the environment a job was resolved in when it was added, so a job launched before the switch
+    finishes where it started, retries included. A tool recorded after the move is refused until the owner moves
+    there again, which rebuilds the environment with it. The harness's and the machine's tools always run as
+    `tools.json` records them.
+  - The decider never sets the environment. `move` refuses `by: decider`, no decision class names it, its prompt
+    says so, and the irreversible list's code check gains the class `environment`, so an answer that would move
+    a project is the owner's.
+
 - Objectives (ticket 76; Implementation Decision 17). A project holds objectives, questions the research answers,
   in `research/objectives.json`, written only by code through the ledger (schema `objectives`) and rendered as
   `research/OBJECTIVES.md` in id order with each one's status, measure, answer, and evidence. Ids run O1 onward and

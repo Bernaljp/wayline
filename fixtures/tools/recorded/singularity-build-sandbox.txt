@@ -1,0 +1,8 @@
+INFO:    Starting build...
+Getting image source signatures
+Copying blob sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39
+Writing manifest to image destination
+Storing signatures
+2026/10/19 16:10:44  info unpack layer: sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39
+INFO:    Creating sandbox directory...
+INFO:    Build complete: /tmp/wl83/sandbox

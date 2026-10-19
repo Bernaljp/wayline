@@ -81,7 +81,9 @@ GITIGNORE_HEADER = "# wayline"
 GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/refs/*/code/",
                     "research/conductor.json", "research/documents/*/source/", "research/documents/*/media/", "research/intake/*.pdf", ".clones/",
                     # A project's packages (decision 17; ticket 82): the venv, the R library, and its own Octave Forge prefix.
-                    ".venv/", ".wayline/packages/")
+                    ".venv/", ".wayline/packages/",
+                    # A project's environment (decision 17; ticket 83): the conda prefix, the venv, the image, and their record.
+                    ".wayline/env*")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")
@@ -2068,6 +2070,7 @@ def switch_command(args):
         description="make another project the active one; with --autonomy instead, raise the project's autonomy, "
                     "or lower it while no conductor is running; with --fallback, set its fallback consent at any time; "
                     "with --ladder, set its ladder consent at any time; "
+                    "with --environment, move its environment at any time once the new one is built and checked; "
                     "with --stop-at or --cheap-at, set its pacing thresholds at any time")
     parser.add_argument("path", nargs="?", help="the project to switch to")
     parser.add_argument("--autonomy", choices=list(AUTONOMY), help="the autonomy to set on the project, instead of switching")
@@ -2081,11 +2084,23 @@ def switch_command(args):
                         help="the pacing threshold at which nothing that needs a model launches, from 0 to 1, instead of switching")
     parser.add_argument("--cheap-at", type=float, metavar="FRACTION",
                         help="the pacing threshold at which every launch runs one rung down, from 0 to 1, instead of switching")
+    parser.add_argument("--environment", choices=["shared", "conda", "venv", "container"],
+                        help="move the project's environment, instead of switching: built from the locks, every tool checked inside "
+                             "it, and only then set; the owner's word alone (ticket 83)")
     parser.add_argument("--project",
-                        help="with --autonomy, --fallback, --ladder, --stop-at, or --cheap-at, the project to set; the active one by default")
+                        help="with --autonomy, --fallback, --ladder, --environment, --stop-at, or --cheap-at, the project to set; "
+                             "the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.environment is not None:
+        if (options.path is not None or options.autonomy is not None or options.fallback is not None or options.ladder is not None
+                or options.stop_at is not None or options.cheap_at is not None):
+            print("wayline switch: give --environment on its own, not with a project to switch to, --autonomy, --fallback, --ladder, "
+                  "--stop-at, or --cheap-at (--project names the project it moves)", file=sys.stderr)
+            return 2
+        from wayline import environment
+        return environment.switch_command(options)
     if options.stop_at is not None or options.cheap_at is not None:
         if options.path is not None or options.autonomy is not None or options.fallback is not None or options.ladder is not None:
             print("wayline switch: give --stop-at and --cheap-at on their own, not with a project to switch to, --autonomy, --fallback, "
