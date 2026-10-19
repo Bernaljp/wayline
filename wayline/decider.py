@@ -122,10 +122,11 @@ IRREVERSIBLE = (
     # Decision 17: moving a project between the shared tools, a conda prefix, a venv, and a container is the owner's word
     # alone; no decision class names it, and an answer that would move it is refused (ticket 83).
     ("environment",
-     r"\b(switch --environment|(?:mov(?:e|es|ing)|switch(?:es|ing)?|chang(?:e|es|ing)|set(?:s|ting)?|migrat(?:e|es|ing)|rebuild(?:s|ing)?)"
-     r" (?:the |our |its |this )?(?:project(?:'s)? |it )?(?:(?:project's |run's )?environment (?:to|into)|(?:in)?to (?:a |an |the )?"
-     r"(?:conda (?:prefix|env(?:ironment)?)|venv|virtual ?env(?:ironment)?|container|singularity(?: image)?|docker(?: image)?|shared (?:tools|environment)))"
-     r"|(?:project's |the )environment to (?:shared|conda|venv|container))"),
+     r"\b(switch --environment"
+     r"|(?:mov(?:e|es|ing)|switch(?:es|ing)?|chang(?:e|es|ing)|set(?:s|ting)?|migrat(?:e|es|ing)|rebuild(?:s|ing)?|run(?:s|ning)?|put(?:s|ting)?)"
+     r" (?:the |our |its |this )?(?:project(?:'s)? |it |everything |(?:the )?jobs? |(?:project's |run's )?environment )?"
+     r"(?:to|into|in|inside|as) (?:a |an |the )?"
+     r"(?:conda\b|venv|virtual ?env(?:ironment)?|container|singularity|docker (?:image|container)|shared(?: tools| environment)?\b))"),
     ("network write",
      r"\b(upload(?:s|ed|ing)?|post(?:s|ed|ing)? (?:it |them |the \w+ )?to|submit(?:s|ted|ting)? (?:it |them |the \w+ )?to"
      r"|send(?:s|ing)? (?:it |them |the \w+ )?to (?:a |the |an )?(?:server|api|service|endpoint|slack|telegram|e-?mail|webhook|channel)"

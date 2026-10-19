@@ -256,18 +256,24 @@ lists it read-only, marked with its tag.
     `tools.json` recorded; `code/requirements.lock` through `uv pip sync` on the `.venv`'s Python minor version;
     `code/renv.lock` through `renv::restore`; `code/Manifest.toml` through `Pkg.instantiate`;
     `code/octave-packages.lock` through Octave Forge. Julia's checked tree is copied in, and MATLAB stays the
-    owner's install on the host, bound into the image. Code then runs each carried tool's version check inside
+    owner's install on the host, bound into the image by its own installation folder, found through any link. Code then runs each carried tool's version check inside
     the new environment and compares the Python and Octave packages with their locks. Only when every check
     passes does it write `harness.json` and journal `control environment` (`{environment, from}`). A failed build
     or check removes what it half built, leaves `harness.json`, the journal, and the old environment as they were,
     and prints the failing step. A move is accepted with a conductor running or not; jobs keep running in the old
     environment while it builds. `.wayline/env.json` records what each environment holds, and
     `.wayline/env-move.json` names a move in progress (`environment.move_in_progress`, for the Run view of ticket
-    110). A second move while one is in progress is refused. A rebuild is refused while a job still runs in the
-    place it would replace.
+    110). A second move while one is in progress is refused. A rebuild is refused while a job still runs, or waits
+    to launch, in the place it would replace. Rebuilding the environment the project is in sets its prefix or venv
+    aside and puts it back if the build fails or is interrupted, and no job is added there meanwhile; a new image
+    replaces the old one only once its checks passed. A project already in an environment is built again when
+    the owner moves there and a tool or a lock changed since (the build records each lock's SHA-256), and
+    otherwise changes nothing.
   - **After the switch** `wayline job add` and `wayline tools run` resolve each tool through the environment: the
     prefix's or the venv's executable, or inside the image for a container. A job that names no tool runs inside
-    it too (`bin/` first on its `PATH`, or the whole command in the image), and the harness's own jobs, such as a
+    it too (`bin/` first on its `PATH`, before what it had, or the whole command in the image, run with `--nv` so a
+    GPU job sees the driver, and `LC_ALL=C.UTF-8`), Julia activates `code/` as in `shared`, and the harness's own
+    jobs, such as a
     `software` decision's install, stay on the host. The job file (schema `job`) and `job_launched` gain
     `environment`, the environment a job was resolved in when it was added, so a job launched before the switch
     finishes where it started, retries included. A tool recorded after the move is refused until the owner moves

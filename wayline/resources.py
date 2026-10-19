@@ -1493,6 +1493,7 @@ def add_jobs(project, spec, ticket=None, backend=None, tools=None, environment=N
         from wayline.environment import setting
         environment = setting(project)
     schema = load_schema("job")
+    memo = {}  # each tool resolved once per spec, however many members an array has
     records = []
     for index, member in enumerate([None] if members is None else members, start=1):
         if member is not None:
@@ -1502,7 +1503,7 @@ def add_jobs(project, spec, ticket=None, backend=None, tools=None, environment=N
             if stray:
                 raise JobError("member %d has no field(s) %s" % (index, ", ".join(stray)))
         fields = _with_ticket_defaults(project, dict(base, **(member or {})), ticket)
-        fields = _with_tool(project, fields, tools, environment)
+        fields = _with_tool(project, fields, tools, environment, memo)
         # A spec's own `id` names the array, not its members: an array whose members inherited it
         # would write every one of them to the same job file, and the last would be the only one.
         named = (member or {}).get("id") if members is not None else fields.get("id")
@@ -1531,7 +1532,7 @@ def _tools_record(tools):
     return Tools()
 
 
-def _with_tool(project, fields, tools, environment="shared"):
+def _with_tool(project, fields, tools, environment="shared", memo=None):
     """A member's fields with the tool it names resolved in the project's environment, and the tools it calls listed (tickets 82, 83).
 
     A named tool must be recorded, and its command is an argv: the executable stands in for a first
@@ -1563,7 +1564,10 @@ def _with_tool(project, fields, tools, environment="shared"):
         if command is not None and (isinstance(command, (str, bytes)) or not isinstance(command, (list, tuple))):
             raise JobError("a job's command is a list of strings, its arguments when it names a tool, got %s" % type(command).__name__)
         try:
-            resolved = places.resolve(project, name, tools, kind=environment)
+            memo = {} if memo is None else memo
+            if name not in memo:
+                memo[name] = places.resolve(project, name, tools, kind=environment)
+            resolved = memo[name]
         except ToolsError as failure:
             raise JobError("the job names the tool %s: %s" % (name, failure)) from None
         arguments = [str(argument) for argument in command or ()]

@@ -795,7 +795,8 @@ def run_recorded(name, args, tools=None, run=run_tool, timeout=TOOL_RUN_TIMEOUT_
     if project is not None:
         from wayline import environment
 
-        if environment.setting(project) != environment.SHARED and (entry or name == environment.PYTHON):
+        ours = name == environment.PYTHON or name in environment.PROJECT_NAMES or name in environment.LICENSED
+        if ours and environment.setting(project) != environment.SHARED:
             resolved = environment.resolve(project, name, tools)
             return run(resolved.argv + list(args), timeout=timeout, env=resolved.env or None)
     if not entry or not entry.get("executable"):

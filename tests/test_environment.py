@@ -404,6 +404,85 @@ class MoveRulesTest(EnvironmentTestCase):
         self.assertTrue(report["changed"])
         self.assertIn("octave", report["record"]["tools"])
 
+    def test_a_failed_rebuild_of_the_environment_the_project_is_in_puts_the_old_one_back(self):
+        self.move("conda")
+        prefix = self.project / ".wayline" / "env"
+        (prefix / "kept").write_text("the prefix jobs ran in\n", encoding="utf-8")
+        self.add_octave()
+        with self.assertRaises(environment.MoveError) as caught:
+            self.move("conda", machine=EnvironmentMachine(versions={"octave": "GNU Octave, version 9.4.0\n"}))
+        self.assertIn("stays in conda", str(caught.exception))
+        self.assertEqual((prefix / "kept").read_text(encoding="utf-8"), "the prefix jobs ran in\n")
+        self.assertFalse((self.project / ".wayline" / "env.previous").exists())
+        self.assertEqual(self.harness()["environment"], "conda")
+        self.assertNotIn("octave", environment.records(self.project)["conda"]["tools"])
+
+    def test_a_failed_check_of_a_new_image_leaves_the_image_the_project_runs(self):
+        singularity = self.temp / "singularity"
+        singularity.write_text("#!/bin/sh\n", encoding="utf-8")
+        which = {"singularity": str(singularity)}.get
+        self.move("container", which=which)
+        image = self.project / ".wayline" / "env.sif"
+        before = image.read_bytes()
+        image.write_bytes(b"the image jobs run\n")
+        self.add_octave()
+        with self.assertRaises(environment.MoveError) as caught:
+            self.move("container", machine=EnvironmentMachine(versions={"octave": "GNU Octave, version 9.4.0\n"}), which=which)
+        self.assertEqual(caught.exception.step, "check octave")
+        self.assertEqual(image.read_bytes(), b"the image jobs run\n")
+        self.assertEqual([path.name for path in (self.project / ".wayline").iterdir() if path.name.startswith("env.s")], ["env.sif"])
+        self.assertTrue(before)
+
+    def test_a_lock_changed_after_the_move_builds_the_environment_again(self):
+        self.move("conda")
+        calls = len(self.machine.calls)
+        (self.project / "code" / "requirements.lock").write_bytes(LOCK + b"scipy==1.16.2\n")
+        machine = EnvironmentMachine(freeze=b"scipy==1.16.2\nsix==1.17.0\n")
+        report = self.move("conda", machine=machine)
+        self.assertTrue(report["changed"], "the prefix is built again from the new lock")
+        self.assertTrue(machine.ran("micromamba"))
+        self.assertFalse(self.move("conda", machine=machine)["changed"])
+        self.assertGreater(calls, 0)
+
+    def test_an_interrupted_rebuild_puts_the_old_prefix_back(self):
+        self.move("conda")
+        prefix = self.project / ".wayline" / "env"
+        (prefix / "kept").write_text("kept\n", encoding="utf-8")
+        self.add_octave()
+
+        def interrupted(argv, cwd=None, timeout=None, env=None):
+            if Path(argv[0]).name == "micromamba":
+                raise KeyboardInterrupt
+            return self.machine(argv, cwd=cwd, timeout=timeout, env=env)
+
+        with self.assertRaises(KeyboardInterrupt):
+            self.move("conda", machine=interrupted)
+        self.assertEqual((prefix / "kept").read_text(encoding="utf-8"), "kept\n")
+        self.assertIsNone(environment.move_in_progress(self.project))
+
+    def test_jobs_are_refused_while_the_environment_the_project_is_in_is_rebuilt(self):
+        self.move("venv")
+        (self.project / "code" / "requirements.lock").write_bytes(LOCK + b"scipy==1.16.2\n")
+        seen = []
+
+        def build_step(argv, cwd=None, timeout=None, env=None):
+            if Path(argv[0]).name == "uv" and argv[1] == "venv":
+                with self.assertRaises(toolbox.ToolsError) as caught:
+                    environment.inside(self.project, ["python", "fit.py"], {})
+                seen.append(str(caught.exception))
+            return self.machine(argv, cwd=cwd, timeout=timeout, env=env)
+
+        self.machine.freeze = b"scipy==1.16.2\nsix==1.17.0\n"
+        self.move("venv", machine=build_step)
+        self.assertIn("being rebuilt", seen[0])
+
+    def test_a_refusal_before_the_build_names_where_the_project_stays(self):
+        self.move("venv")
+        (self.project / "code" / "renv.lock").write_text("{}\n", encoding="utf-8")
+        with self.assertRaises(environment.MoveError) as caught:
+            self.move("conda")
+        self.assertIn("stays in venv", str(caught.exception))
+
     def test_the_decider_never_sets_the_environment(self):
         with self.assertRaises(project.ProjectError) as caught:
             self.move("container", by="decider")
@@ -480,7 +559,7 @@ class ResolveAfterTheSwitchTest(EnvironmentTestCase):
     def image_prefix(self):
         """What runs a command in the image: the project is bound in when it lies outside the home, which a test's temporary one does."""
         binds = [] if Path.home().resolve() in self.project.resolve().parents else ["--bind", str(self.project.resolve())]
-        return [str(self.singularity), "exec"] + binds + [str(self.project.resolve() / ".wayline" / "env.sif")]
+        return [str(self.singularity), "exec", "--nv"] + binds + [str(self.project.resolve() / ".wayline" / "env.sif")]
 
     def test_before_any_move_a_job_runs_as_tools_json_records_its_tool(self):
         record = self.add({"tool": "octave", "command": ["--eval", "1"]})
@@ -520,6 +599,39 @@ class ResolveAfterTheSwitchTest(EnvironmentTestCase):
         record = self.add({"tool": "matlab", "command": ["-batch", "fit"]})
         prefix = self.image_prefix()
         self.assertEqual(record["command"], prefix[:-1] + ["--bind", str(matlab.parent.parent), prefix[-1], str(matlab), "-batch", "fit"])
+
+    def test_a_job_naming_no_tool_keeps_the_path_it_had_after_the_prefix(self):
+        self.move("conda")
+        with mock.patch.dict(os.environ, {"PATH": "/usr/local/cuda/bin:/usr/bin"}):
+            record = self.add({"command": ["bash", "run.sh"]})
+        prefix = self.project.resolve() / ".wayline" / "env"
+        self.assertEqual(record["env"]["PATH"], "%s/bin:/usr/local/cuda/bin:/usr/bin" % prefix)
+
+    def test_julia_activates_the_projects_environment_after_a_move(self):
+        julia = self.root / "julia-1.12.7"
+        (julia / "bin").mkdir(parents=True)
+        (julia / "bin" / "julia").write_text("#!/bin/sh\n", encoding="utf-8")
+        record_entry(self.root, "julia", tool_entry(julia / "bin" / "julia", "1.12.7", "tarball"))
+        from wayline import tickets
+        tickets.write_ticket(Ledger(self.project), experiment_ticket(2, software=["julia"]), "## Demo\n\nthe fit runs\n")
+        self.move("conda")
+        record = self.add({"tool": "julia", "command": ["fit.jl"]})
+        self.assertEqual(record["env"]["JULIA_PROJECT"], str(self.project / "code"))
+        self.assertTrue(record["env"]["JULIA_DEPOT_PATH"].endswith("julia-depot"))
+
+    def test_matlab_through_a_link_is_bound_by_its_own_root(self):
+        matlab = self.temp / "MATLAB" / "R2024b" / "bin" / "matlab"
+        matlab.parent.mkdir(parents=True)
+        matlab.write_text("#!/bin/sh\n", encoding="utf-8")
+        link = self.temp / "local" / "bin" / "matlab"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(matlab)
+        record_entry(self.root, "matlab", tool_entry(link, "24.2.0.2712019", "owner", installer="owner"))
+        from wayline import tickets
+        tickets.write_ticket(Ledger(self.project), experiment_ticket(2, software=["matlab"]), "## Demo\n\nthe fit runs\n")
+        report = self.move("container", which=self.which)
+        self.assertEqual(report["record"]["binds"], [str(matlab.resolve().parent.parent)])
+        self.assertEqual(report["record"]["tools"]["matlab"]["executable"], str(matlab.resolve()))
 
     def test_a_tool_recorded_after_the_move_is_refused_until_the_environment_is_built_again(self):
         self.move("venv")
@@ -624,10 +736,12 @@ class DeciderNeverMovesTest(unittest.TestCase):
     def test_an_answer_that_moves_the_environment_is_the_owners(self):
         from wayline.decider import irreversible_class
         for text in ("Move the project to a container.", "wayline switch --environment conda", "switch the environment to venv",
-                     "move it into a Singularity image", "change the project's environment to shared"):
+                     "move it into a Singularity image", "change the project's environment to shared", "switch to conda",
+                     "move the project to conda", "rebuild the environment as a container", "run it in a container"):
             with self.subTest(text=text):
                 self.assertEqual(irreversible_class(text), "environment")
-        for text in ("Install", "run the fit inside the job", "keep the environment variable SEED at 1", "Go without"):
+        for text in ("Install", "run the fit inside the job", "keep the environment variable SEED at 1", "Go without",
+                     "set the seed to 3", "install conda-forge's r-base"):
             with self.subTest(text=text):
                 self.assertIsNone(irreversible_class(text))
 

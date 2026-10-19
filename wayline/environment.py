@@ -34,7 +34,6 @@ run as `tools.json` records them.
 import argparse
 import contextlib
 import fcntl
-import hashlib
 import json
 import os
 import shutil
@@ -73,6 +72,8 @@ CONDA_TOOLS = ("octave", "r")   # a project's tools whose lock is an explicit co
 BOOTSTRAP = ("pip", "setuptools", "wheel")  # what a conda-forge Python holds beside the lock: its own installers
 # The image holds no locale but the C one glibc builds in, so the host's LANG would warn on every start (measured live).
 IMAGE_ENV = {"LC_ALL": "C.UTF-8"}
+# Folders an installation root cannot be when it is bound into an image: they hold the image's own programs.
+UNBINDABLE = ("/", "/usr", "/usr/local", "/opt", "/bin", "/home")
 PROJECT_NAMES = ("octave", "r", "rscript", "julia")
 LICENSED = ("matlab",)
 _RESTORE = ("renv::restore(lockfile = Sys.getenv('WAYLINE_LOCK'), library = Sys.getenv('WAYLINE_R_LIBRARY'), "
@@ -90,7 +91,7 @@ class MoveError(RuntimeError):
     """A move that did not happen: the step that failed, and why. The project is where it was."""
 
     def __init__(self, kind, step, why, stays=SHARED):
-        self.kind, self.step, self.why = kind, step, why
+        self.kind, self.step, self.why, self.stays = kind, step, why, stays
         super().__init__("the move to %s failed at `%s`: %s; the project stays in %s" % (kind, step, why, stays))
 
 
@@ -134,7 +135,7 @@ def _installed(entry):
 
 
 def _sha256(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return toolbox.sha256_file(path)
 
 
 def _code(project):
@@ -265,7 +266,8 @@ class _Build:
         if "julia" in self.names:
             folder = self.copy_julia(prefix)
             depot = prefix / "julia-depot"
-            self.record["tools"]["julia"] = {"executable": str(folder / "bin" / "julia"), "env": {"JULIA_DEPOT_PATH": str(depot)}}
+            self.record["tools"]["julia"] = {"executable": str(folder / "bin" / "julia"),
+                                             "env": {"JULIA_DEPOT_PATH": str(depot), "JULIA_PROJECT": str(_code(self.project))}}
         self.packages(lambda argv: argv, lambda name: self.record["tools"][name])
         self.licensed()
 
@@ -318,9 +320,15 @@ class _Build:
         for name in LICENSED:
             if name in self.names:
                 executable = self.entry(name)["executable"]
-                self.record["tools"][name] = {"executable": executable, "env": dict(self.entry(name).get("env") or {})}
                 if binds:
-                    self.record["binds"].append(str(Path(executable).parent.parent))
+                    # Bound by its own root, found through any link: `/usr/local/bin/matlab` would otherwise bind all of `/usr/local`.
+                    executable = str(Path(executable).resolve())
+                    root = Path(executable).parent.parent
+                    if str(root) in UNBINDABLE:
+                        self.fail("build %s" % name, "%s resolves to %s, whose installation folder %s cannot be bound into an image "
+                                                     "without hiding the image's own" % (name, executable, root))
+                    self.record["binds"].append(str(root))
+                self.record["tools"][name] = {"executable": executable, "env": dict(self.entry(name).get("env") or {})}
 
     # -- venv ----------------------------------------------------------------------------------------------
 
@@ -415,7 +423,8 @@ class _Build:
                 folder = self.copy_julia(sandbox / "opt", inner="/opt")
                 depot = self.project / WAYLINE_DIR / JULIA_DEPOT
                 self.record["tools"]["julia"] = {"executable": str(folder / "bin" / "julia"),
-                                                 "env": {"JULIA_DEPOT_PATH": "%s:/opt/julia-depot" % depot},
+                                                 "env": {"JULIA_DEPOT_PATH": "%s:/opt/julia-depot" % depot,
+                                                         "JULIA_PROJECT": str(_code(self.project).resolve())},
                                                  "build_env": {"JULIA_DEPOT_PATH": "/opt/julia-depot"}}
             self.packages(wrap, lambda name: self.record["tools"][name], env=inner_env, code=STAGE + "/code")
             if "julia" in self.record["tools"]:
@@ -427,14 +436,28 @@ class _Build:
             for staged in ("pkgs", "uv-cache", "mamba/pkgs", "home"):
                 shutil.rmtree(sandbox / STAGE.lstrip("/") / staged, ignore_errors=True)
             self.step("build image", [singularity, "build", str(building), str(sandbox)], env=build_env)
-            os.replace(building, image)  # a job still running the old image keeps it open; the next ones run the new
         finally:
-            for leftover in (sandbox, scratch, building):
+            for leftover in (sandbox, scratch):
+                shutil.rmtree(leftover, ignore_errors=True)
+        # The checks run on the new image where it was built; `finish` puts it in place once they passed.
+        self.record.update({"place": str(image), "image": str(building), "runner": singularity})
+
+    def finish(self):
+        """The checked image takes the old one's place: a job still running the old image keeps it open; the next ones run the new."""
+        if self.kind == CONTAINER:
+            image = place(self.project, CONTAINER)
+            os.replace(self.record["image"], image)
+            self.record["image"] = str(image)
+
+    def abandon(self):
+        """A failed container build leaves the image the project had, and nothing of its own."""
+        if self.kind == CONTAINER:
+            for leftover in (self.project / WAYLINE_DIR / SANDBOX, self.project / WAYLINE_DIR / SCRATCH,
+                             self.project / WAYLINE_DIR / (PLACES[CONTAINER] + ".new")):
                 if leftover.is_dir():
                     shutil.rmtree(leftover, ignore_errors=True)
                 elif leftover.exists():
                     leftover.unlink()
-        self.record.update({"place": str(image), "image": str(image), "runner": singularity})
 
     def stage(self, sandbox):
         """What the build needs inside the sandbox: micromamba and uv, the CA bundle, the locks, and the package locks of `code/`."""
@@ -567,7 +590,8 @@ def _wrapped(project, record, argv):
         binds += ["--bind", str(project)]
     for bind in record.get("binds") or []:
         binds += ["--bind", bind]
-    return [record["runner"], "exec"] + binds + [record["image"]] + list(argv)
+    # `--nv` brings the host's NVIDIA driver in, so a GPU job sees its devices; a machine without one only warns.
+    return [record["runner"], "exec", "--nv"] + binds + [record["image"]] + list(argv)
 
 
 # --- the move -------------------------------------------------------------------------------------------
@@ -590,7 +614,7 @@ def move_in_progress(project):
 
 
 @contextlib.contextmanager
-def _one_move(project, kind):
+def _one_move(project, kind, stays):
     folder = Path(project) / WAYLINE_DIR
     folder.mkdir(parents=True, exist_ok=True)
     with open(folder / MOVE_LOCK, "a") as handle:
@@ -599,7 +623,7 @@ def _one_move(project, kind):
         except OSError:
             under_way = move_in_progress(project) or {}
             raise MoveError(kind, "start", "a move to %s is already under way (pid %s)" % (under_way.get("to", "another environment"),
-                                                                                         under_way.get("pid", "?"))) from None
+                                                                                         under_way.get("pid", "?")), stays=stays) from None
         try:
             yield
         finally:
@@ -616,16 +640,39 @@ def _live_jobs_in(project, kind):
     return found
 
 
+def _lock_digests(project, names, tools):
+    """The SHA-256 of every lock a build of `names` reads: each conda tool's export and each package lock under `code/`."""
+    digests = {}
+    for name in names:
+        lock = (tools.entry(name) or {}).get("lock")
+        if name in CONDA_TOOLS and isinstance(lock, dict) and lock.get("sha256"):
+            digests[name] = lock["sha256"]
+        language = "r" if name == "rscript" else name
+        for file in (LOCKS.get(language),) + (("Project.toml",) if language == "julia" else ()):
+            if file and (_code(project) / file).is_file():
+                digests[file] = _sha256(_code(project) / file)
+    return digests
+
+
 def _current(project, kind, tools):
-    """Whether the project already is in `kind`, with everything it now carries built there."""
+    """Whether the project already is in `kind`, with everything it now carries built there from the locks as they are now."""
     built = records(project).get(kind)
     if kind == SHARED:
         return True
     if not built:
         return False
-    wanted = set(carried(project, tools, kind))
+    wanted = carried(project, tools, kind)
     where = built.get("image") or built.get("place")
-    return wanted <= set(built.get("tools") or {}) and bool(where) and Path(where).exists()
+    return (set(wanted) <= set(built.get("tools") or {}) and built.get("locks") == _lock_digests(project, wanted, tools)
+            and bool(where) and Path(where).exists())
+
+
+def _rebuilt_now(project, kind):
+    """A `ToolsError` while the environment the project is in is rebuilt in place: its prefix or venv is set aside meanwhile."""
+    under_way = move_in_progress(project)
+    if under_way and under_way.get("from") == under_way.get("to") == kind and kind in (CONDA, VENV):
+        raise ToolsError("the project's %s environment is being rebuilt (pid %s); launch once the move ended"
+                         % (kind, under_way.get("pid")))
 
 
 def move(project, kind, by="cli", run=run_tool, tools=None, which=shutil.which, echo=None):
@@ -655,32 +702,49 @@ def move(project, kind, by="cli", run=run_tool, tools=None, which=shutil.which, 
     tools = tools if tools is not None else Tools()
     before = setting(project)
     report = {"from": before, "to": kind, "changed": False, "conductor": conductor_holder(project), "record": records(project).get(kind)}
-    if before == kind and _current(project, kind, tools):
-        return report
-    with _one_move(project, kind):
+    try:
+        if before == kind and _current(project, kind, tools):
+            return report
+    except MoveError as failure:
+        raise MoveError(kind, failure.step, failure.why, stays=before) from None
+    with _one_move(project, kind, before):
         live = _live_jobs_in(project, kind) if kind in (CONDA, VENV) else []
         if live:
             raise MoveError(kind, "start", "job %s still runs in the %s environment a rebuild would replace; move once it ended"
                             % (", ".join(live), kind), stays=before)
         marker = _marker(project)
         toolbox._write_record(marker, {"from": before, "to": kind, "started": now_ts(), "pid": os.getpid()})
-        build = None
+        build, target, aside = None, place(project, kind), None
         try:
             build = _Build(project, kind, tools, run, which, echo)
-            if kind in (CONDA, VENV):
-                target = place(project, kind)
-                if target.exists():
-                    shutil.rmtree(target)
+            if kind in (CONDA, VENV) and target.exists():
+                # A prefix or a venv cannot move, so the one there now is set aside and comes back if the build fails.
+                aside = target.with_name(target.name + ".previous")
+                if aside.exists():
+                    shutil.rmtree(aside)
+                os.replace(target, aside)
             getattr(build, kind)()
             build.check()
-        except MoveError as failure:
-            if kind in (CONDA, VENV) and place(project, kind).exists():
-                shutil.rmtree(place(project, kind), ignore_errors=True)
-            raise MoveError(kind, failure.step, failure.why, stays=before) from None
+            build.finish()
+        except BaseException as failure:  # an interrupt too: the project must never be left without the place it runs in
+            if kind in (CONDA, VENV):
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
+                if aside is not None and aside.exists():
+                    os.replace(aside, target)
+            elif build is not None:
+                build.abandon()
+            if not isinstance(failure, (MoveError, ToolsError, OSError, ValueError)):
+                raise
+            step, why = (failure.step, failure.why) if isinstance(failure, MoveError) else ("build", str(failure))
+            raise MoveError(kind, step, why, stays=before) from None
         finally:
             if marker.exists():
                 marker.unlink()
+        if aside is not None:
+            shutil.rmtree(aside, ignore_errors=True)
         build.record["built"] = now_ts()
+        build.record["locks"] = _lock_digests(project, build.names, tools)
         build.record["python"] = build.python if PYTHON in build.record["tools"] else None
         ledger = Ledger(project)
         with ledger.lock():
@@ -726,6 +790,7 @@ def resolve(project, name, tools=None, kind=None):
         if kind == SHARED:
             env.update(software.project_env(project, name))
         return Resolved([str(entry["executable"])], env, kind, entry)
+    _rebuilt_now(project, kind)
     built = records(project).get(kind)
     if not built:
         raise ToolsError("the project's environment is %s, and %s holds no record of its build; wayline switch --environment %s "
@@ -756,6 +821,7 @@ def inside(project, command, env, kind=None):
     command, env = list(command), dict(env or {})
     if kind == SHARED:
         return command, env
+    _rebuilt_now(project, kind)
     built = records(project).get(kind)
     if not built:
         raise ToolsError("the project's environment is %s, and %s holds no record of its build; wayline switch --environment %s "
@@ -768,7 +834,7 @@ def inside(project, command, env, kind=None):
     folder = Path(built["place"]) / "bin"
     if command and "/" not in command[0] and (folder / command[0]).exists():
         command[0] = str(folder / command[0])
-    env.setdefault("PATH", "%s:%s" % (folder, DEFAULT_PATH))
+    env.setdefault("PATH", "%s:%s" % (folder, os.environ.get("PATH") or DEFAULT_PATH))  # first, before what the job had
     env.setdefault("CONDA_PREFIX" if kind == CONDA else "VIRTUAL_ENV", built["place"])
     return command, env
 
