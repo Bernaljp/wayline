@@ -19,17 +19,17 @@ Not part of this ticket:
 
 **Blocked by:** 76 - Objectives: the record and objective add. It blocks 87, 91, 96, and 109.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#227](https://github.com/Bernaljp/wayline/issues/227) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (objectives, goals, and measures: intake, position, the grill, the decider, the `objective` class; defects found while charting: the decider reads the radius; setup, `human_only` naming `objective`), 10 (the front door: intake, position, grill, decider), 1 (the verb table: `intake --goal` goes), the schemas list (the position memo's `objectives` in place of `goal_feasibility`); M8 criterion 1; user stories 5, 102, 104, 108.
 
-- [ ] `INTAKE.md` has no `Goal` section and `wayline intake --goal` is gone, with the verb table of decision 1 changed in the same commit; intake's settings are unchanged otherwise.
-- [ ] `wayline position` runs on a project with no `GOAL.json`; its memo schema has `objectives` (one row per objective: verdict, reasoning, revised target for a goal out of reach) in place of `goal_feasibility`, and its directions name objectives as proposals; `POSITION.md` renders them.
-- [ ] The grill's first tier asks, per proposed objective, open or parked, reserved for the owner, and records each answer as an `objective` event.
-- [ ] The decider's prompt reads `OBJECTIVES.md` and the radius, not `GOAL.json`; the human-only class `objective` replaces `goal`, and an old `goal` entry in `harness.json` is read as `objective`.
-- [ ] The conductor's goal check and keep-if-better still read `GOAL.json` where present, unchanged.
-- [ ] Tests: position with the fake launcher on a project with objectives and none with a measure; the memo schema's `objectives` rows; the grill's first tier from a recorded fixture; the decider's prompt assembly asserted on the rendered prompt (objectives and radius present, `GOAL.json` absent); the `goal` to `objective` class reading.
-- [ ] Prompts and role files that mention `GOAL.json` or `goal_feasibility` for these phases are updated.
-- [ ] `python -m unittest` passes.
+- [x] `INTAKE.md` has no `Goal` section and `wayline intake --goal` is gone, with the verb table of decision 1 changed in the same commit; intake's settings are unchanged otherwise.
+- [x] `wayline position` runs on a project with no `GOAL.json`; its memo schema has `objectives` (one row per objective: verdict, reasoning, revised target for a goal out of reach) in place of `goal_feasibility`, and its directions name objectives as proposals; `POSITION.md` renders them.
+- [x] The grill's first tier asks, per proposed objective, open or parked, reserved for the owner, and records each answer as an `objective` event.
+- [x] The decider's prompt reads `OBJECTIVES.md` and the radius, not `GOAL.json`; the human-only class `objective` replaces `goal`, and an old `goal` entry in `harness.json` is read as `objective`.
+- [x] The conductor's goal check and keep-if-better still read `GOAL.json` where present, unchanged.
+- [x] Tests: position with the fake launcher on a project with objectives and none with a measure; the memo schema's `objectives` rows; the grill's first tier from a recorded fixture; the decider's prompt assembly asserted on the rendered prompt (objectives and radius present, `GOAL.json` absent); the `goal` to `objective` class reading.
+- [x] Prompts and role files that mention `GOAL.json` or `goal_feasibility` for these phases are updated.
+- [x] `python -m unittest` passes.
