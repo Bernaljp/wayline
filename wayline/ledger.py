@@ -105,6 +105,7 @@ PAPER_STARTED = "paper_started"
 FIGURE_RESULT = "figure_result"
 OBJECTIVE = "objective"  # one change to research/objectives.json (decision 17)
 MARKED = "marked"  # one mark or note on one item of a batch (decision 17; ticket 79)
+CODE_PUSHED = "code_pushed"  # code pushed `code/`'s split to the code repository's remote (decision 17; ticket 85)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -229,6 +230,8 @@ K_BATCH = "batch"
 K_ITEM = "item"
 K_MARK = "mark"
 K_NOTE = "note"
+K_REMOTE = "remote"  # `code_pushed`: the code repository's `owner/name` on GitHub
+K_MAIN = "main"  # `code_pushed`: the commit of `main` the split was cut from, where the next split's walk starts
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -241,7 +244,7 @@ EVENTS = {
     UNPAUSED: (K_MODEL,),
     TICKET_CREATED: (K_TICKET, K_KIND, K_PROPOSED_BY, K_ORIGIN, K_BLOCKED_BY),
     ASSIGNED: (K_TICKET, K_ROLE, K_SKILLS),
-    TICKET_LAUNCHED: (K_TICKET, K_ATTEMPT, K_ROLE, K_MODEL, K_EFFORT, K_SKILLS, K_WORKTREE, K_PID, K_CONTEXT_CHARS, K_PROMPT_SHA256, K_DIFFICULTY, K_RUNG, K_FALLBACK_FROM),
+    TICKET_LAUNCHED: (K_TICKET, K_ATTEMPT, K_ROLE, K_MODEL, K_EFFORT, K_SKILLS, K_WORKTREE, K_PID, K_CONTEXT_CHARS, K_PROMPT_SHA256, K_DIFFICULTY, K_RUNG, K_FALLBACK_FROM, K_COMMIT),
     TICKET_SESSION: (K_TICKET, K_ATTEMPT, K_SESSION_ID, K_MODEL),
     TICKET_RESULT: (K_TICKET, K_ATTEMPT, K_SESSION_ID, K_STATUS, K_TURNS, K_DURATION_MS, K_USAGE, K_PERMISSION_DENIALS, K_VALID, K_JOBS, K_MODEL_RAN),
     TICKET_RESUMED: (K_TICKET, K_ATTEMPT, K_SESSION_ID, K_REASON),
@@ -263,7 +266,7 @@ EVENTS = {
     PROPOSAL_PARKED: (K_ID, K_FROM, K_KIND, K_REASON),
     DECISION_OPENED: (K_TICKET, K_BLOCKING, K_HUMAN_ONLY),
     DECISION: (K_TICKET, K_ANSWER, K_DECIDED_BY, K_RATIONALE, K_CONFIDENCE, K_MODEL, K_FALLBACK_FROM),
-    JOB_LAUNCHED: (K_JOB, K_TICKET, K_UNIT, K_GPU_UUIDS, K_CORES, K_RAM_GB, K_ATTEMPT),
+    JOB_LAUNCHED: (K_JOB, K_TICKET, K_UNIT, K_GPU_UUIDS, K_CORES, K_RAM_GB, K_ATTEMPT, K_COMMIT),
     JOB_FINISHED: (K_JOB, K_EXIT_CODE, K_SECONDS, K_OUTPUTS_OK),
     JOB_RETRIED: (K_JOB, K_ATTEMPT, K_OOM, K_OVERRIDES),
     JOB_FAILED: (K_JOB, K_REASON, K_LOG_TAIL),
@@ -288,6 +291,7 @@ EVENTS = {
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
     OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY),
     MARKED: (K_BATCH, K_ITEM, K_MARK, K_NOTE, K_BY),
+    CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.

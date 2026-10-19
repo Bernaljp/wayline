@@ -208,6 +208,11 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
         self.assertIn(self.head, code)
         self.assertIn("main", code)
 
+    def test_a_repository_the_work_builds_on_is_not_absorbed(self):
+        """Only the spec's `clone` is the project's own (ticket 85); a repository handed over loose is listed, pinned."""
+        self.assertFalse((self.project / "code").exists())
+        self.assertNotIn("code_repository", read_harness(self.project))
+
     def test_the_data_pointers_are_listed_as_given(self):
         data = self.section("Data")
         self.assertIn("cells.csv", data)

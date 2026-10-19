@@ -364,6 +364,10 @@ BLOCKED_COMMANDS = [
     ("git branch with the short force pair", "git branch -d -f feature/old", "force flag"),
     ("git branch with a bundled force delete", "git branch -df feature/old", "force flag"),
     ("git send-pack", "git send-pack origin main", "is a push"),
+    # Code pushes the code repository's split; a worker never does, by any spelling (decision 17, ticket 85).
+    ("git subtree push of code/", "git subtree push --prefix=code origin main", "git subtree push"),
+    ("git push of the split", "git push https://github.com/me/lantern.git 3f2a:refs/heads/main", "git push"),
+    ("gh repo create of the code repository", "gh repo create lantern --private", "gh repo create"),
     ("curl with an attached method", "curl -XPOST https://example.com/api", "network write"),
     ("curl with an attached data flag", "curl -dpayload https://example.com/api", "upload flag"),
     ("curl with an attached form flag", "curl -F@dist/pkg.whl https://example.com/api", "upload flag"),

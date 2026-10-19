@@ -295,7 +295,7 @@ def admit_proposals(project, proposals, *, origin_ticket, origin_prefix, propose
                              "reason": json.loads(parked_path(project, identifier).read_text(encoding="utf-8")).get("reason")})
             continue
         reason = _radius_reason(entry, project_radius)
-        problems = touches_problems(entry.get("touches"), project) if reason is None else []
+        problems = touches_problems(entry.get("touches"), project, entry.get("kind")) if reason is None else []
         if problems:
             # The planner's touch-set rule (decision 1): a ticket naming research/ could never be done.
             reason, entry = "touches", dict(entry, touch_problems=problems)
@@ -355,7 +355,7 @@ def apply_admitted(project, *, policy=None, harness_root=None, wave_cap=None, no
     for proposal in parked_proposals(project):
         if decided.get(str(proposal["id"])) != decider.ADMIT:
             continue
-        if touches_problems(proposal.get("touches"), project):
+        if touches_problems(proposal.get("touches"), project, proposal.get("kind")):
             # The decider's `admit` never widens the touch-set rule: such a ticket could never be done.
             outcomes.append({"id": proposal["id"], "outcome": "parked", "reason": "touches"})
             continue

@@ -143,8 +143,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, decider, decisions, gates, notify, objectives, pacing, proposals, replay, resources, schedule, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, resources, schedule, tick, tickets, worker
 from wayline import goal as goals
+from wayline.tools import run_tool
 from wayline.ledger import (
     ACCEPTANCE, CONTROL, DIFFICULTY_RAISED, DISCARDED, FEEDBACK, FINDING, INTEGRATED, PROGRESS, JOB_FAILED, JOB_FINISHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED, UNPAUSED,
     TICKET_BLOCKED, TICKET_CANCELLED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN,
@@ -169,6 +170,8 @@ FINDINGS = "findings.jsonl"
 WORKTREES = ".worktrees"
 BRANCH = "ticket/%s"
 LEDGER_COMMIT = "ledger: wave %d"
+# What the owner is told when the code repository's remote refuses code/'s split (decision 17; the `notified` event's `event`).
+CODE_PUSH_REJECTED = "code_push_rejected"
 # The heartbeat is rewritten every wave; committing it would make every wave a ledger commit.
 HEARTBEAT_PATH = RESEARCH + "/conductor.json"
 
@@ -749,6 +752,10 @@ class Conductor:
         # free-slot rule places pending jobs by (`resources.read_readings`), which a test replaces with a recorded one.
         self.jobs_runner = None
         self.readings = None
+        # The tool runner the push of the code repository's split goes through (decision 17, seam 6); a test records it.
+        self.code_run = run_tool
+        # The split the remote last refused, which this run does not push again (it is told to the owner once).
+        self._code_rejected = None
         # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
         # its own so a slow channel never holds a wave; a test stands in its own. `notifying` is those threads.
         self.notify = self._notify_in_background
@@ -843,9 +850,35 @@ class Conductor:
         self._check_stall(result)
         self._end(result)
         result.ledger_commit = self._commit_ledger()
+        self._push_code()
         self._tail()
         self._beat()
         return result
+
+    def _push_code(self):
+        """Push `code/`'s split once a wave changed it (decision 17): code, never a worker, keeps the code repository's remote.
+
+        What was pushed last is the latest `code_pushed` the view folded, so a restart pushes nothing a run before it
+        already pushed, and the split walks only what `main` gained since. A push the network or a credential failed
+        is said and tried again by the next wave. A push the remote refused (its branch holds commits the split does
+        not descend from) is never forced: the owner is told once, and that split is not pushed again, since pushing
+        it again cannot mend it; a later change to `code/` makes a new split, which is tried.
+        """
+        try:
+            pushed = code_repository.push_if_changed(self.project, self.view.code_pushed, run=self.code_run,
+                                                     skip=self._code_rejected)
+        except code_repository.CodePushRejected as rejected:
+            self._code_rejected = rejected.commit
+            self.say("  the code repository refused the push: %s" % rejected)
+            self.notify(CODE_PUSH_REJECTED, "%s: %s. Bring that branch into code/'s history, or answer the setup "
+                        "question again with another remote." % (self.project.name, rejected), self.project)
+            return None
+        except code_repository.CodeRepositoryError as failure:
+            self.say("  the code repository was not pushed: %s; the next wave tries again" % failure)
+            return None
+        if pushed:
+            self.say("  pushed code/ to the code repository as %s" % pushed[:12])
+        return pushed
 
     def run(self, max_waves=None, resume=False, wait=None):
         """Take the heartbeat, journal `run_started`, and take waves until the run ends.
@@ -1838,6 +1871,10 @@ class Conductor:
         }
         if attempt.fallback_from:
             payload["fallback_from"] = attempt.fallback_from
+        # The code the attempt runs at (decision 17): its worktree's HEAD, which a later attempt's reused branch keeps.
+        commit = code_repository.head_commit(attempt.worktree)
+        if commit:
+            payload["commit"] = commit
         self.ledger.append_event(TICKET_LAUNCHED, payload, ticket=attempt.id)
 
     # --- jobs (decision 6, wave step 2; ticket 19) ---

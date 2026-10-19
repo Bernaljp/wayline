@@ -381,7 +381,7 @@ def check_tickets(new, graph, project, *, base=True, timeout_s=None, declared=fr
         if not touches:
             failures.append("%s has no touch set" % label)
         for touch in touches:
-            problem = touch_problem(touch, project)
+            problem = touch_problem(touch, project, fields.get("kind"))
             if problem:
                 failures.append("%s: the touch set entry `%s` %s" % (label, touch, problem))
         if not isinstance(fields.get("difficulty"), int) or not 1 <= fields["difficulty"] <= 5:

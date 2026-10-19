@@ -14,6 +14,7 @@ the ticket's own difficulty, because the conductor picks the model from the grap
 never changes a pin.
 """
 
+import json
 import os
 import re
 from pathlib import Path
@@ -29,7 +30,7 @@ __all__ = [
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
     "with_result", "with_result_note", "result_notes", "ANSWER_HEADING", "SUPERSEDED_ANSWER_HEADING", "section", "answer_section", "with_answer", "retire_answer",
-    "touch_problem", "touches_problems",
+    "touch_problem", "touches_problems", "keeps_code", "CODE_KIND", "CODE_DIR",
 ]
 
 RESEARCH = "research"
@@ -52,6 +53,9 @@ HARDEST = 5
 # The kind whose acceptance always includes the documentation site's machine checks (decision 13).
 DOCS = "docs"
 DOCS_BUILD = "wayline docs build"
+# The kind whose touch set goes under `code/`, the folder the code repository is cut from (decision 17).
+CODE_KIND = "code"
+CODE_DIR = "code"
 # A criterion that already runs the build, however it is spelled (`--offline`, after a `cd`), is not doubled.
 _RUNS_DOCS_BUILD = re.compile(r"(?:^|[\s;&|(/])wayline\s+docs\s+build\b")
 
@@ -148,13 +152,14 @@ def machine_acceptance(ticket):
     return commands
 
 
-def touch_problem(touch, project):
+def touch_problem(touch, project, kind=None):
     """Why a touch set entry is not a path under the project, or None when it is one.
 
     Absolute paths, `..`, and the whole project are refused, and so is anything under `research/`,
     which only code writes (decision 1): the touch-set hook denies it whatever the touch set says, so
-    a ticket naming it could never be done. The planner's tickets, a gate's scope-downs, and the
-    tickets admitted from proposals are all checked by this one rule.
+    a ticket naming it could never be done. A `code` ticket's entries go under `code/`, which the code
+    repository is cut from (decision 17), in a project that keeps one (`keeps_code`). The planner's
+    tickets, a gate's scope-downs, and the tickets admitted from proposals are all checked by this one rule.
     """
     text = str(touch or "").strip()
     if not text:
@@ -171,13 +176,31 @@ def touch_problem(touch, project):
         return "resolves outside the project"
     if parts[0] == RESEARCH:
         return "is under research/, which the ledger alone writes"
+    if kind == CODE_KIND and parts[0] != CODE_DIR and keeps_code(project):
+        return "is not under code/, where everything the code repository publishes lives"
     return None
 
 
-def touches_problems(touches, project):
+def keeps_code(project):
+    """Whether the project keeps a code repository: `code/` exists, or `harness.json` records the setup question's answer.
+
+    Intake's absorption makes `code/`, and setup's code repository question writes `code_repository`, so every project
+    set up on v1.1.0 keeps one by the time the planner cuts a ticket; a layout older than `code/` keeps its own paths.
+    """
+    root = Path(project)
+    if (root / CODE_DIR).is_dir():
+        return True
+    try:
+        harness = json.loads((root / "harness.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(harness, dict) and bool(harness.get("code_repository"))
+
+
+def touches_problems(touches, project, kind=None):
     """`["the touch set entry `x` <why>", ...]` for every entry of `touches` that `touch_problem` refuses."""
     return ["the touch set entry `%s` %s" % (touch, problem)
-            for touch in touches or () for problem in [touch_problem(touch, project)] if problem]
+            for touch in touches or () for problem in [touch_problem(touch, project, kind)] if problem]
 
 
 def relative_path(ticket):

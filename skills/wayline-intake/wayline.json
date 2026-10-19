@@ -5,5 +5,5 @@
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "medium",
   "fixtures": ["skill/wayline-intake"],
-  "sha256": "2b4c1cc2cb383a0b6b9f0f98c13c036cf4c4d34c1a8b63af56b9e71aef139ea9"
+  "sha256": "73d5898dc8c5b405bc7567e03c28fd71c52877dd4e5c412a307446d3f13c4b65"
 }
