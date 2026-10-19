@@ -40,7 +40,9 @@ page reads it from its own address and sends it with each action.
 `feedback` (ticket 45: the feedback form, filed as `wayline feedback` files it, read back by `GET .../changes`), and
 `intake`. Each calls the function its
 verb calls and nothing else, so no action runs a shell. A JSON object carries the arguments, and
-`intake` takes the dropped file itself as the body, with its name in `X-Wayline-Filename`. The reply
+`intake` takes the dropped file itself as the body, with its name in `X-Wayline-Filename`; with no
+session to sort it, code's cautious guess does (ticket 84): an identifier makes it a reference for
+`INTAKE.md`, review markers a critique, anything else a document of kind `other`. The reply
 is JSON too: `{"ok": true, "action": ...}` with what the function reported, or `{"ok": false,
 "error": ...}` under a 4xx status that says why nothing was done. A `switch` away from a project
 whose conductor has to drain answers 202 at once and finishes in a thread, because the drain lasts
@@ -1680,7 +1682,8 @@ def run_action(name, project, body, headers=None, server=None):
 
     `body` is the raw request body. The functions are the ones the verbs call, told `by="dashboard"`
     wherever the journal records who asked: `project.answer`, `set_autonomy`, `control`,
-    `switch_project`, `steer_ticket`, `set_pacing`, `set_model_fallback`, `set_ladder_changes`, and `intake.drop_material`. Raises
+    `switch_project`, `steer_ticket`, `set_pacing`, `set_model_fallback`, `set_ladder_changes`, and `documents.drop_document`
+    (code's cautious guess at a dropped file, a reference going on to `intake.drop_material`). Raises
     `DashboardError` for a body the action cannot take and `ActionConflict` for a switch already under
     way, and lets a verb's own refusal (a `ValueError`) through, which the handler answers with 400.
     """
@@ -1689,13 +1692,14 @@ def run_action(name, project, body, headers=None, server=None):
     if refusal is not None:  # an old project is read-only: its files open, its actions are refused (decision 17)
         raise DashboardError(refusal)
     if name == "intake":
-        from wayline.intake import IntakeError, drop_material  # the intake imports the gates, which no view needs
+        from wayline.documents import DocumentError, drop_document  # the documents import the intake and the gates, which no view needs
+        from wayline.intake import IntakeError
         named = (headers or {}).get(FILENAME_HEADER)
         if not named:
             raise DashboardError("an intake drop names its file in the %s header" % FILENAME_HEADER)
         try:
-            return HTTPStatus.OK, drop_material(project, unquote(named), body)
-        except IntakeError as failure:
+            return HTTPStatus.OK, drop_document(project, unquote(named), body)
+        except (IntakeError, DocumentError) as failure:
             raise DashboardError(str(failure)) from None
     if name == "answer":
         fields = _fields(body, ("ticket", "answer"), ("rationale", "confidence"))

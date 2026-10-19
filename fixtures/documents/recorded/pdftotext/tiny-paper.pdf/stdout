@@ -1,0 +1,68 @@
+         A tiny two-column paper, written for the PDF inventory
+                                            The Wayline Suite
+
+
+Abstract
+This paper exists so that a PDF inventory has some-
+thing to count. It has two columns, three numbered
+equations, two figures, one ruled table, one algorithm,
+a theorem, a lemma, an appendix, and two refer-
+ences.
+
+
+1     Introduction
+A tiny paper needs a tiny introduction. The method Figure 1: A signal that rises from left to right and
+of Section 2 is one line, and Figure 1 shows it do- means nothing.
+ing nothing in particular. Earlier work on nothing
+includes Knuth [1] and Lamport [2].
+                                                    Theorem 1 (Tininess). Every tiny paper is tiny.
+1.1    Scope                                                  Proof. By inspection of this page.
+Nothing at all is in scope, which is the point. The Lemma 1. Some tiny papers are tinier than others.
+two columns of this page are there to see whether a
+converter reads the left column to the bottom before Algorithm 1 Do nothing, carefully
+it starts on the right.                               x←0
+                                                      for i = 1 to n do
+2 Method                                                x←x+0
+                                                      end for
+The method is one numbered equation,                  return x
+
+                     y = mx + b,                   (1)
+followed by a display that carries no number,                 3    Results
+                   Z 1
+                                1
+                       x2 dx = ,                              Table 1 lists the numbers the method produced, and
+                     0          3
+                                                              Figure 2 puts them side by side.
+and an aligned pair that is numbered twice:
+                        n
+                   a=
+                        X
+                              bi ,                 (2)
+                                                              A     Proof of the lemma
+                        i=1
+                       p                                      The proof of Lemma 1 is left to the reader, who is
+                    c = a2 + d2 .                  (3)        the point of the inventory.
+
+
+                                                          1
+     Figure 2: Two panels that span both columns, so the caption sits under the whole page width.
+
+
+    Table 1: Numbers the method produced.
+            Run    Input Output
+            first       1        0
+            second      2        0
+            third       3        0
+
+
+References
+[1] D. E. Knuth. The TEXbook. Addison-Wesley,
+    1984.
+[2] L. Lamport. LATEX: A Document Preparation
+    System. Addison-Wesley, 1994.
+
+
+
+
+                                                  2
+

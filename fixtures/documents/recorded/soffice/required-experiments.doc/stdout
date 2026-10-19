@@ -1,0 +1,1 @@
+convert ~/Documents/SpecDrivenResearch/.claude/worktrees/agent-af4e248597ec7b60d/fixtures/documents/required-experiments.doc as a Writer document -> /tmp/wayline-document-68phnb6n/soffice/required-experiments.docx using filter : MS Word 2007 XML

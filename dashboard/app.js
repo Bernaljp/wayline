@@ -1995,11 +1995,9 @@ async function upload(files) {
     const row = el('li', { text: `${file.name}: sending ${humanSize(file.size)}...` });
     list.prepend(row);
     try {
+      // Code's cautious guess sorted it (ticket 84), and the reply says how in one line.
       const reply = await act('intake', file, { 'X-Wayline-Filename': encodeURIComponent(file.name), 'Content-Type': 'application/octet-stream' });
-      let where = 'INTAKE.md already lists it';
-      if (reply.taken === null) where = 'there is no INTAKE.md yet, so the next wayline intake takes it';
-      else if (reply.taken.length) where = `added to INTAKE.md under ${reply.taken.join(', ')}`;
-      row.textContent = `${file.name}: kept as ${reply.path} (${humanSize(reply.size)}); ${where}`;
+      row.textContent = `${file.name} (${humanSize(file.size)}): ${reply.said}`;
     } catch (failure) {
       row.textContent = `${file.name}: ${failure.message || failure}`;
       row.className = 'problems';

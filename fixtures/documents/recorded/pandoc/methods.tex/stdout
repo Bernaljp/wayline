@@ -1,0 +1,3 @@
+# Methods
+
+Each colony of lantern moths was filmed from below at 2000 frames per second for ten minutes at dusk. The wingbeat trace of each moth was band-passed between 20 and 60 Hz, and its phase was taken from the analytic signal over a window of 256 samples. The order parameter $R$ is the modulus of the mean phase vector across moths, averaged over the window.

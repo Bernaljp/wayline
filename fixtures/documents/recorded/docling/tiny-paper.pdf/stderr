@@ -1,0 +1,17 @@
+[32m[INFO] 2026-10-18 17:15:38,785 [RapidOCR] base.py:23: Using engine_name: torch[0m
+[32m[INFO] 2026-10-18 17:15:38,787 [RapidOCR] device_config.py:64: Using GPU device with ID: 0[0m
+[32m[INFO] 2026-10-18 17:15:38,795 [RapidOCR] download_file.py:60: File exists and is valid: ~/.wayline/tools/venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.pth[0m
+[32m[INFO] 2026-10-18 17:15:38,795 [RapidOCR] main.py:50: Using ~/.wayline/tools/venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.pth[0m
+[32m[INFO] 2026-10-18 17:15:39,079 [RapidOCR] base.py:23: Using engine_name: torch[0m
+[32m[INFO] 2026-10-18 17:15:39,080 [RapidOCR] device_config.py:64: Using GPU device with ID: 0[0m
+[32m[INFO] 2026-10-18 17:15:39,081 [RapidOCR] download_file.py:60: File exists and is valid: ~/.wayline/tools/venv/lib/python3.12/site-packages/rapidocr/models/ch_ptocr_mobile_v2.0_cls_mobile.pth[0m
+[32m[INFO] 2026-10-18 17:15:39,081 [RapidOCR] main.py:50: Using ~/.wayline/tools/venv/lib/python3.12/site-packages/rapidocr/models/ch_ptocr_mobile_v2.0_cls_mobile.pth[0m
+[32m[INFO] 2026-10-18 17:15:39,323 [RapidOCR] base.py:23: Using engine_name: torch[0m
+[32m[INFO] 2026-10-18 17:15:39,323 [RapidOCR] device_config.py:64: Using GPU device with ID: 0[0m
+[32m[INFO] 2026-10-18 17:15:39,338 [RapidOCR] download_file.py:60: File exists and is valid: ~/.wayline/tools/venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.pth[0m
+[32m[INFO] 2026-10-18 17:15:39,338 [RapidOCR] main.py:50: Using ~/.wayline/tools/venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.pth[0m
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights: 100%|██████████| 770/770 [00:00<00:00, 8726.56it/s]
+~/.wayline/tools/venv/lib/python3.12/site-packages/torch/nn/modules/conv.py:560: UserWarning: Using padding='same' with even kernel lengths and odd dilation may require a zero-padded copy of the input be created (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/native/Convolution.cpp:1104.)
+  return F.conv2d(
+[33m[WARNING] 2026-10-18 17:15:44,825 [RapidOCR] main.py:132: The text detection result is empty[0m
+RapidOCR returned empty result!
