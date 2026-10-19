@@ -28,6 +28,24 @@ refuses a project made before it, which keeps its old tag or starts again on the
 
 ## Unreleased
 
+- Inherited passages (ticket 93; Implementation Decision 17). `wayline document deconstruct D1` cuts an inherited
+  document (an earlier manuscript, a separate Methods, a supplement) verbatim into inherited passages, `by:
+  document:D1`, in `research/passages.jsonl`. Only text under headings the fixed table maps is taken (Introduction
+  or Background; Discussion, Conclusions, or Outlook; Methods, Materials and methods, Theory, Model, or Algorithm;
+  Results, and "Results and discussion" to Results); a subheading follows its parent, and any other heading is
+  placed by the setup session (`--place "<heading>=<section>"`) or, with none, lands under Results as written and
+  is listed in `DOCUMENTS.md`. The title, abstract, front matter, captions, back matter, availability statements,
+  and reference list stay in the document's record (`deconstructed.kept`), never passages. Each claim sentence the
+  classifier marks is one passage and the sentences between claims stay together, each ending with a
+  `{doc:D1#p4.s2}` tag (provenance, never a citation); a pandoc citation becomes an identifier `ref` tag with no
+  locator. An inherited claim stands `unchecked` until a ticket's passage or finding replaces it with `evidence`
+  (`supports`, `narrows`, or `contradicts`; the acceptance check asks for it), or is found `unverifiable` with its
+  reason. Results now renders from the findings and the inherited Results passages; a render rejoins a document
+  paragraph's passages, each claim marked `[unchecked]`. `wayline document move P12 results` moves a separate
+  document's outcome passage on the setup session's proposal, listed for the owner. A `.docx` kept without pandoc
+  is not deconstructed and the reason is listed; a newer version taken in again comes in like a section edit (new
+  text new passages, changed text replacements, removed text withdrawals).
+
 - Consulting one document (ticket 94; Implementation Decision 17). `wayline consult D1 "<question>"` takes a
   document id as well as a dossier slug. The document's `text.md` is cut into chunks of whole blocks under
   `policy.absorb.chunk_max_chars` (`documents/<id>/chunks/`, listed in `chunks.json`, rebuilt when the text

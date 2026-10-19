@@ -3807,6 +3807,8 @@ class Conductor:
                 # A discarded change displaces nothing: its findings stand beside what they would have replaced.
                 "replaces": None if negative else finding.get("replaces"),
                 "objectives": list(attempt.ticket.get("objectives") or []),
+                # What this project's evidence says of the inherited claim it replaces (ticket 93).
+                "evidence": None if negative else finding.get("evidence"),
             }
             if record["id"] in self.view.findings:
                 continue  # filed before a restart
@@ -3847,7 +3849,7 @@ class Conductor:
                 try:
                     sections.add_passage(self.ledger, item.get("section"), item.get("heading"), item.get("text"), by=by,
                                          replaces=item.get("replaces"), objectives=attempt.ticket.get("objectives") or [],
-                                         ticket=attempt.id, wave=self._wave_key(), render=False)
+                                         ticket=attempt.id, wave=self._wave_key(), render=False, evidence=item.get("evidence"))
                     touched.add(item.get("section"))
                 except sections.SectionError as failure:
                     refused.append("A passage was refused: %s (%s)" % (failure, item.get("heading")))

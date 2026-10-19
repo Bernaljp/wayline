@@ -1,20 +1,30 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "passage",
-  "description": "One line of research/passages.jsonl (Implementation Decision 17; ticket 86): a piece of a section's text with who contributed it, written only by code through the ledger. Results is written as findings in findings.jsonl, so a passage never names it.",
+  "description": "One line of research/passages.jsonl (Implementation Decision 17; tickets 86 and 93): a piece of a section's text with who contributed it, written only by code through the ledger. A ticket's Results passage is a finding in findings.jsonl, so only an inherited passage (by a document) names Results.",
   "type": "object",
   "required": ["id", "section", "heading", "text", "replaces", "by", "objectives", "ticket", "wave", "ts"],
   "additionalProperties": false,
+  "oneOf": [
+    {"properties": {"section": {"enum": ["introduction", "discussion", "methods", "references"]}}},
+    {"properties": {"section": {"const": "results"}, "by": {"pattern": "^document:"}}}
+  ],
   "properties": {
     "id": {"type": "string", "pattern": "^P[1-9][0-9]*$", "description": "P1 onward, never reused"},
-    "section": {"type": "string", "enum": ["introduction", "discussion", "methods", "references"]},
+    "section": {"type": "string", "enum": ["introduction", "results", "discussion", "methods", "references"], "description": "results only for an inherited passage, by a document"},
     "heading": {"type": "string", "pattern": "\\S", "description": "the heading it stands under in its section"},
     "text": {"type": "string", "pattern": "\\S", "description": "Markdown with LaTeX math, from one claim to a paragraph; a claim sentence ends with its provenance tag"},
-    "replaces": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the passage of the same section this one replaces, which then leaves the rendered file and stays here"},
+    "replaces": {"type": ["string", "null"], "description": "the passage of the same section this one replaces, which then leaves the rendered file and stays here; in Results, a finding or an inherited Results passage"},
     "by": {"type": "string", "pattern": "^(t[1-9][0-9]*-a[1-9][0-9]*|owner|document:[A-Za-z0-9._-]+|step:[a-z][a-z0-9-]*|objective:O[1-9][0-9]*|consolidation)$", "description": "who contributed it: a ticket's attempt (t3-a1), the owner, a document, a front-door step (step:position, step:specify), an answered objective, or a consolidation"},
     "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the objectives of the ticket that wrote it; empty for one no objective asked for"},
     "ticket": {"type": ["integer", "null"], "minimum": 1, "description": "the ticket that wrote it, or null"},
     "wave": {"type": ["string", "null"], "description": "the conductor's wave it was integrated in (run and number), or null outside a run; two replacements of one passage in the same wave are both kept"},
-    "ts": {"type": "string", "pattern": "\\S"}
+    "ts": {"type": "string", "pattern": "\\S"},
+    "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"], "description": "on a passage replacing an inherited claim: whether this project's evidence supports, narrows, or contradicts it"},
+    "doc": {"type": "string", "pattern": "^D[1-9][0-9]*#p[1-9][0-9]*(\\.s[1-9][0-9]*(-s[1-9][0-9]*)?)?$", "description": "an inherited passage's locator in its document's text.md: the block, and the sentence or run of sentences (D1#p4.s2, D1#p4.s1-s3, D1#p6)"},
+    "standing": {"type": "string", "enum": ["unchecked", "unverifiable"], "description": "an inherited claim's standing: unchecked until a passage or finding replaces it with evidence, or unverifiable with its reason"},
+    "reason": {"type": "string", "pattern": "\\S", "description": "why an unverifiable claim could not be checked"},
+    "withdrawn": {"const": true, "description": "a withdrawal: it takes the passage it replaces out of the section, its text kept here as it stood"},
+    "moved_from": {"type": "string", "pattern": "^P[1-9][0-9]*$", "description": "the inherited passage, in another section, this one was moved from; a withdrawal there takes it out"}
   }
 }
