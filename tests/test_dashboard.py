@@ -230,7 +230,7 @@ class ProjectsEndpointTest(DashboardTestCase):
 class OverviewEndpointTest(DashboardTestCase):
     def test_it_carries_the_fields_decision_8_names(self):
         view = self.api("/overview").json
-        for key in ("phase", "autonomy", "radius", "goal", "window", "resources", "running", "jobs", "frontier", "decisions", "counts", "events", "offset"):
+        for key in ("phase", "autonomy", "radius", "objectives", "stopping", "window", "resources", "running", "jobs", "frontier", "decisions", "counts", "events", "offset"):
             self.assertIn(key, view)
         self.assertEqual(view["id"], self.project_id)
         self.assertEqual(view["autonomy"], "checkpoints")

@@ -8,8 +8,7 @@
   ],
   "budgets": {
     "gpu_hours": null,
-    "wallclock_hours": null,
-    "usage_windows": null
+    "wallclock_hours": null
   },
   "reservations": {
     "gpu": [],

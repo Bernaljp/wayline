@@ -393,7 +393,8 @@ class ReportTest(RunCase):
 
     def test_the_goal_trajectory_is_drawn_with_the_discarded_change(self):
         third = self.section(3)
-        self.assertIn("Goal: `auroc`, direction `up`, target 0.85", third)
+        self.assertIn("Goal O1 (answered): `auroc`, direction `up`, target 0.85", third)
+        self.assertIn("Stopping rule: objectives", third)
         chart = third.split("```")[1]
         rows = [line for line in chart.splitlines() if line.strip()]
         self.assertEqual(len(rows), 4, "three readings and the target")

@@ -48,7 +48,7 @@ __all__ = [
     "register", "default_harness", "detect_hermes", "detect_email", "ask_email", "read_harness", "find_project", "is_project", "policy_for",
     "check_policy", "policy_problems", "old_difficulty_levels", "rung_label", "rung_named", "launch_label", "merge_policy",
     "init_project", "refresh_symlinks", "status_view", "render_status", "switch_project", "read_jobs",
-    "window_status", "stepping_down", "goal_progress", "init_command", "status_command", "switch_command",
+    "window_status", "stepping_down", "stopping_view", "init_command", "status_command", "switch_command",
     "NEEDS_HUMAN_NOTES", "needs_human_view",
     "control", "answer", "journal_written_answers", "wait_for_conductor", "DRAIN_POLL_S", "AUTONOMY", "set_autonomy",
     "MODEL_FALLBACK", "UNSET_CONSENT", "fallback_consent", "consent_for", "falls_back_now", "ask_falls_back_at",
@@ -62,7 +62,6 @@ __all__ = [
 HARNESS_JSON = "harness.json"
 CLAUDE_MD = "CLAUDE.md"
 RESEARCH = "research"
-GOAL_JSON = "GOAL.json"
 JOBS = "jobs"
 
 # The block `init` appends to CLAUDE.md, marked so a second run can find and refresh it instead
@@ -889,9 +888,9 @@ def status_view(project, refresh=True):
         "counts": {status: len(ids) for status, ids in by_status(graph).items()},
         "window": window_status(events, harness, view, policy),
         "hold": hold_status(project, events, harness, graph, tickets, view),
-        # `GOAL.json` is still read for the conductor's goal, but status shows the objectives' statuses (decision 17).
-        "goal": goal_progress(project, events),
-        "objectives": objectives_view(project, problems),
+        # The objectives and their goals' best kept values, and the stopping rule and budgets (decision 17; ticket 87).
+        "objectives": objectives_view(project, problems, events),
+        "stopping": stopping_view(harness, events),
         "resources": resources,
         "events": events[-10:],
         "offset": offset,
@@ -1149,61 +1148,41 @@ def _waiting_on_fable(project, events, view, graph, fields, falls_back):
     return waiting
 
 
-def goal_progress(project, events):
-    """The goal and the progress readings the journal holds for its metric, or None when there is no goal.
+def stopping_view(harness, events, now=None):
+    """The stopping rule and each budget, with what was used of it: what `status` shows in place of GOAL.json's stop (ticket 87)."""
+    from wayline import stopping  # the stopping module imports this one
+    now = time.time() if now is None else now
+    budgets = harness.get("budgets") or {}
+    used = {"wallclock_hours": stopping.wallclock_hours(events, now), "gpu_hours": stopping.gpu_hours(events, now)}
+    return {"rule": stopping.rule_of(harness), "line": stopping.describe_rule(stopping.rule_of(harness)),
+            "budgets": {name: {"limit": budgets.get(name), "used": round(used[name], 2)} for name in stopping.BUDGETS},
+            "spent": [name for name, _, _ in stopping.spent(harness, events, now)]}
 
-    `GOAL.json` is written by the intake phase; this reads it tolerantly, because a goal the owner
-    edited by hand should still print.
+
+def objectives_view(project, problems=None, events=()):
+    """Each objective's id, question, status, and its goal's metric, target, and best kept value (None for an objective without a measure).
+
+    What `status` shows in place of GOAL.json's latest reading (decision 17): an objective's status is the record's,
+    which code alone writes, and a goal's best kept value is recomputed from its own `progress` events (ticket 87).
+    An unreadable record is a problem, never a crash.
     """
-    path = Path(project) / RESEARCH / GOAL_JSON
-    try:
-        goal = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(goal, dict):
-        return None
-    metric = goal.get("metric")
-    direction = goal.get("direction")
-    target = goal.get("target")
-    readings = [event.get("payload") or {} for event in events if event.get("event") == "progress"]
-    readings = [payload for payload in readings if metric is None or payload.get("metric") == metric]
-    kept = [payload for payload in readings if payload.get("kept")]
-    latest = (kept or readings)[-1] if (kept or readings) else None
-    value = latest.get("value") if latest else None
-    reached = None
-    if isinstance(value, (int, float)) and isinstance(target, (int, float)) and direction in ("up", "down"):
-        reached = value >= target if direction == "up" else value <= target
-    return {
-        "metric": metric,
-        "direction": direction,
-        "target": target,
-        "value": value,
-        "readings": len(readings),
-        "kept": len(kept),
-        "reached": reached,
-        "stop_when": goal.get("stop_when"),
-    }
-
-
-def objectives_view(project, problems=None):
-    """Each objective's id, question, status, and its goal's metric and target (None for an objective without a measure).
-
-    What `status` shows in place of the latest reading (decision 17): an objective's status is the record's,
-    which code alone writes. An unreadable record is a problem, never a crash.
-    """
-    from wayline.objectives import read_objectives  # the objectives module imports this one
+    from wayline import goal as goals  # the goal module imports the objectives module, which imports this one
+    from wayline.objectives import read_objectives
     try:
         objectives = read_objectives(project)
     except (OSError, ValueError) as failure:
         if problems is not None:
             problems.append("objectives.json: %s" % failure)
         return []
+    progress = goals.progress_payloads(events)
     view = []
     for objective in objectives:
         measure = objective.get("measure") if isinstance(objective.get("measure"), dict) else None
         view.append({"id": objective.get("id"), "text": objective.get("text"), "status": objective.get("status"),
                      "metric": measure.get("metric") if measure else None, "direction": measure.get("direction") if measure else None,
-                     "target": measure.get("target") if measure else None, "answer": objective.get("answer")})
+                     "target": measure.get("target") if measure else None, "answer": objective.get("answer"),
+                     "best": goals.best_kept(progress, objective, baseline=False) if measure else None,
+                     "reached": goals.reached(progress, objective) if measure else None})
     return view
 
 
@@ -1232,10 +1211,10 @@ def render_status(view):
         lines.append(view["hold"]["line"])
     if view.get("objectives"):
         lines.extend(_render_objectives(view["objectives"]))
-    elif view.get("goal") is not None:
-        lines.append(_render_goal(view["goal"]))  # a project from before objectives, whose GOAL.json is all it has
     else:
         lines.append("objectives  none recorded (wayline objective add)")
+    if view.get("stopping"):
+        lines.append(_render_stopping(view["stopping"]))
     if view.get("resources") is not None:
         lines.extend(render_resources(view["resources"]))
     lines.append("")
@@ -1364,21 +1343,20 @@ def _render_objectives(objectives):
         line = "  %s  %-*s  %s" % (objective["id"], width, objective["status"], _one_line(objective["text"]))
         if objective["metric"] is not None:
             target = "with no target" if objective["target"] is None else "to %s" % _number(objective["target"])
-            line += "  (goal: `%s` %s %s)" % (objective["metric"], "down" if objective["direction"] == "down" else "up", target)
+            best = "" if objective.get("best") is None else ", best kept %s%s" % (_number(objective["best"]), ", reached" if objective.get("reached") else "")
+            line += "  (goal: `%s` %s %s%s)" % (objective["metric"], "down" if objective["direction"] == "down" else "up", target, best)
         lines.append(line)
     return lines
 
 
-def _render_goal(goal):
-    if goal is None:
-        return "goal     none set"
-    if goal["value"] is None:
-        return "goal     %s (%s), target %s, no reading yet" % (goal["metric"], goal["direction"], _number(goal["target"]))
-    reached = "" if goal["reached"] is None else ("  reached" if goal["reached"] else "")
-    readings = "%d reading%s" % (goal["readings"], "" if goal["readings"] == 1 else "s")
-    return "goal     %s %s of %s (%s)   %s, %d kept%s" % (
-        goal["metric"], _number(goal["value"]), _number(goal["target"]), goal["direction"], readings, goal["kept"], reached,
-    )
+def _render_stopping(stopping):
+    def budget(name, words):
+        found = stopping["budgets"][name]
+        if found["limit"] is None:
+            return "%s no limit (%s used)" % (words, _number(found["used"]))
+        return "%s %s of %s%s" % (words, _number(found["used"]), _number(found["limit"]), " SPENT" if name in stopping["spent"] else "")
+    return "stopping  %s; budgets: %s, %s (hours)" % (stopping["line"], budget("wallclock_hours", "wall clock"),
+                                                     budget("gpu_hours", "GPU"))
 
 
 def _number(value):
@@ -2091,7 +2069,9 @@ def switch_command(args):
                     "or lower it while no conductor is running; with --fallback, set its fallback consent at any time; "
                     "with --ladder, set its ladder consent at any time; "
                     "with --environment, move its environment at any time once the new one is built and checked; "
-                    "with --stop-at or --cheap-at, set its pacing thresholds at any time")
+                    "with --stop-at or --cheap-at, set its pacing thresholds at any time; "
+                    "with --stop-when, set its stopping rule; with --budget, set one of its budgets "
+                    "(after setup, a changed rule or a raised budget is the owner's word alone)")
     parser.add_argument("path", nargs="?", help="the project to switch to")
     parser.add_argument("--autonomy", choices=list(AUTONOMY), help="the autonomy to set on the project, instead of switching")
     parser.add_argument("--fallback", choices=list(CONSENTS),
@@ -2107,12 +2087,27 @@ def switch_command(args):
     parser.add_argument("--environment", choices=["shared", "conda", "venv", "container"],
                         help="move the project's environment, instead of switching: built from the locks, every tool checked inside "
                              "it, and only then set; the owner's word alone (ticket 83)")
+    parser.add_argument("--stop-when", metavar="RULE",
+                        help="the stopping rule to set on the project, instead of switching: objectives (no objective open), "
+                             "frontier (no work left), or objective ids separated by commas (those closed)")
+    parser.add_argument("--budget", metavar="NAME=HOURS",
+                        help="one budget to set on the project, instead of switching: wallclock_hours=<hours> or "
+                             "gpu_hours=<hours>, or =none for no limit")
     parser.add_argument("--project",
-                        help="with --autonomy, --fallback, --ladder, --environment, --stop-at, or --cheap-at, the project to set; "
-                             "the active one by default")
+                        help="with --autonomy, --fallback, --ladder, --environment, --stop-at, --cheap-at, --stop-when, or "
+                             "--budget, the project to set; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.stop_when is not None or options.budget is not None:
+        others = (options.path, options.autonomy, options.fallback, options.ladder, options.environment, options.stop_at,
+                  options.cheap_at)
+        if any(value is not None for value in others) or (options.stop_when is not None and options.budget is not None):
+            print("wayline switch: give --stop-when or --budget on its own, not with a project to switch to or another "
+                  "setting (--project names the project it sets)", file=sys.stderr)
+            return 2
+        from wayline import stopping  # the stopping module imports this one
+        return stopping.switch_command(options)
     if options.environment is not None:
         if (options.path is not None or options.autonomy is not None or options.fallback is not None or options.ladder is not None
                 or options.stop_at is not None or options.cheap_at is not None):

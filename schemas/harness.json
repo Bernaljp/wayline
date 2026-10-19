@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "harness",
-  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, the fallback consent, the ladder consent, the environment, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
+  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, the fallback consent, the ladder consent, the environment, the stopping rule, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
   "type": "object",
   "required": ["harness_tag", "autonomy", "radius"],
   "additionalProperties": false,
@@ -35,9 +35,16 @@
       "additionalProperties": false,
       "properties": {
         "gpu_hours": {"type": ["number", "null"], "minimum": 0},
-        "wallclock_hours": {"type": ["number", "null"], "minimum": 0},
-        "usage_windows": {"type": ["integer", "null"], "minimum": 0}
-      }
+        "wallclock_hours": {"type": ["number", "null"], "minimum": 0}
+      },
+      "description": "the run's limits, read by code (Implementation Decision 17; ticket 87): wallclock_hours counted from the end of setup, gpu_hours as each job's hours times the GPUs it held; spending one ends the run budget_spent; null is no limit"
+    },
+    "stop_when": {
+      "description": "the stopping rule (Implementation Decision 17; ticket 87): objectives (the default, no objective open), a list of objective ids (those closed), or frontier (no work left); a project without the key behaves as objectives",
+      "oneOf": [
+        {"type": "string", "enum": ["objectives", "frontier"]},
+        {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}}
+      ]
     },
     "reservations": {
       "type": "object",

@@ -3,6 +3,7 @@
   "research_version": 2,
   "autonomy": "autonomous",
   "radius": "moderate",
+  "stop_when": "objectives",
   "reservations": {
     "gpu": [],
     "cores": 8,

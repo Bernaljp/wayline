@@ -15,7 +15,7 @@ import statistics
 import unittest
 
 from tests import machine
-from tests.projects import open_goal
+from tests.projects import open_goal, open_objective
 from tests.test_conductor import ConductorCase, done, drive, patch
 from tests.test_sweep import RATES, SweepCase
 from wayline import goal as goals
@@ -27,16 +27,30 @@ TITLE = "Raise the held-out AUROC"
 SEEDS = ("metrics/seed-1.txt", "metrics/seed-2.txt", "metrics/seed-3.txt")
 
 
-def goal_record(**overrides):
+def measure(**overrides):
+    """A goal's measure in `objectives.json`'s shape (decision 17): what keep-if-better reads in place of GOAL.json."""
     record = {
         "metric": "auroc", "direction": "up", "target": 0.99, "dataset_or_split": "synthetic",
         "held_out_split": "heldout", "eval_command": "cat {artifact}",
-        "baseline": {"value": None, "source": None},
-        "budget": {"gpu_hours": None, "wallclock": None, "usage_windows": None},
-        "stop_when": "graph_empty",
+        "baseline": {"value": None, "source": None}, "min_seeds": None,
     }
     record.update(overrides)
     return record
+
+
+def set_measure(ledger, identifier="O1", **overrides):
+    """Give the goal `identifier` the measure `measure(**overrides)`, as `objectives.json` holds it (ticket 87)."""
+    record = ledger.read_json("objectives.json")
+    for objective in record["objectives"]:
+        if objective["id"] == identifier:
+            objective["measure"] = measure(**overrides)
+    ledger.write_json("objectives.json", record, schema="objectives")
+
+
+def prior_reading(ledger, value, kept=True, ticket=99, goal="O1"):
+    """A reading an earlier ticket left in the journal for the goal `goal`."""
+    ledger.append_event(PROGRESS, {"metric": "auroc", "value": value, "ticket": ticket, "run_id": "t%d-a1" % ticket, "kept": kept,
+                                   "goal": goal}, ticket=ticket)
 
 
 def seeds(*values, extra=None):
@@ -62,37 +76,30 @@ class Recorder:
 # --- the Type-A half -------------------------------------------------------------------------
 
 
-def goal_objective(identifier="O1", metric="auroc", status="open", direction="up"):
+def goal_objective(identifier="O1", metric="auroc", status="open", direction="up", **overrides):
     return {"id": identifier, "text": "Does it improve?", "status": status, "answer": None, "evidence": [], "reframed_as": None,
-            "measure": None if metric is None else dict(goal_record(metric=metric, direction=direction), min_seeds=None)}
+            "measure": None if metric is None else measure(metric=metric, direction=direction, **overrides)}
 
 
 class AppliesTest(unittest.TestCase):
-    """Ticket 81: a ticket names its goal by objective (`goal: "O1"`), and the metric is read from that goal's measure."""
+    """A ticket names its goal by objective (`goal: "O1"`), and everything it is judged by is that goal's measure."""
 
-    def test_a_ticket_whose_goal_measures_the_goal_json_metric_is_judged(self):
-        self.assertIsNone(goals.applies({"goal": "O1"}, goal_record(), [goal_objective()]))
+    def test_a_ticket_whose_goal_is_an_open_goal_is_judged_on_that_goal(self):
+        found, skip = goals.goal_for({"goal": "O2"}, [goal_objective(), goal_objective("O2", metric="loss", direction="down")])
+        self.assertIsNone(skip)
+        self.assertEqual((found["id"], found["measure"]["metric"]), ("O2", "loss"))
 
     def test_why_it_is_not_judged(self):
-        self.assertEqual(goals.applies({"objectives": ["O1"]}, goal_record(), [goal_objective()]), "the ticket names no goal")
-        self.assertEqual(goals.applies({"goal": "O1"}, goal_record(), [goal_objective(metric=None)]),
+        self.assertEqual(goals.applies({"objectives": ["O1"]}, [goal_objective()]), "the ticket names no goal")
+        self.assertEqual(goals.applies({"goal": "O1"}, [goal_objective(metric=None)]),
                          "the ticket's goal O1 has no measure, so nothing measures it")
-        self.assertEqual(goals.applies({"goal": "O2"}, goal_record(), [goal_objective()]),
+        self.assertEqual(goals.applies({"goal": "O2"}, [goal_objective()]),
                          "the ticket's goal O2 has no measure, so nothing measures it")
-        self.assertEqual(goals.applies({"goal": "O1"}, None, [goal_objective()]),
-                         "the ticket's goal O1 reports auroc, and research/GOAL.json states no measurable goal")
-        self.assertEqual(goals.applies({"goal": "O1"}, goal_record(metric="loss"), [goal_objective()]),
-                         "the ticket's goal O1 reports auroc, and the goal's metric is loss")
-
-    def test_a_goal_whose_direction_is_not_goal_json_s_is_not_judged(self):
-        """The direction is the goal's measure's; until ticket 87 the judging is GOAL.json's, so a disagreement judges nothing."""
-        self.assertEqual(goals.applies({"goal": "O1"}, goal_record(direction="down"), [goal_objective()]),
-                         "the ticket's goal O1 wants auroc up, and research/GOAL.json's direction is down")
 
     def test_a_closed_goal_is_not_judged(self):
         for status in ("answered", "parked", "dropped"):
             with self.subTest(status=status):
-                self.assertEqual(goals.applies({"goal": "O1"}, goal_record(), [goal_objective(status=status)]),
+                self.assertEqual(goals.applies({"goal": "O1"}, [goal_objective(status=status)]),
                                  "the ticket's goal O1 is %s, and keep-if-better judges only a goal pursued now" % status)
 
 
@@ -129,29 +136,50 @@ class JudgeTest(unittest.TestCase):
         self.assertTrue(goals.judge("auroc", (0.80, 0.85, 0.90), 0.80, "up", margin_sd=0.5).kept)
         self.assertFalse(goals.judge("auroc", (0.90, 0.91, 0.92), 0.80, "up", margin_sd=20).kept)
 
+    def test_at_one_seed_any_strict_gain_is_kept(self):
+        """A deterministic goal (`min_seeds` 1): one reading, and a gain however small is kept; a tie is not."""
+        self.assertTrue(goals.judge("count", (5.0001,), 5.0, "up", min_seeds=1).kept)
+        self.assertFalse(goals.judge("count", (5.0,), 5.0, "up", min_seeds=1).kept)
+        self.assertTrue(goals.judge("count", (4.0, 6.5), 5.0, "up", min_seeds=1, margin_sd=20).kept)
+        self.assertTrue(goals.judge("error", (0.29,), 0.3, "down", min_seeds=1).kept)
+
+
+class MinSeedsTest(unittest.TestCase):
+    def test_a_measure_s_own_min_seeds_overrides_the_policy_s(self):
+        self.assertEqual(goals.min_seeds(measure(min_seeds=1), {"min_seeds": 3}), 1)
+        self.assertEqual(goals.min_seeds(measure(min_seeds=None), {"min_seeds": 5}), 5)
+        self.assertEqual(goals.min_seeds(measure(), {}), 3)
+
 
 class BestTest(unittest.TestCase):
-    def progress(self, *pairs):
-        return [{"metric": metric, "value": value, "kept": kept} for metric, value, kept in pairs]
+    def progress(self, *rows):
+        return [{"goal": goal, "metric": "auroc", "value": value, "kept": kept} for goal, value, kept in rows]
 
-    def test_the_best_is_the_best_kept_reading_in_the_goal_s_direction(self):
-        readings = self.progress(("auroc", 0.8, True), ("auroc", 0.95, False), ("auroc", 0.85, True), ("loss", 0.99, True))
-        self.assertEqual(goals.best_kept(readings, goal_record()), 0.85)
-        self.assertEqual(goals.best_kept(readings, goal_record(direction="down")), 0.8)
+    def test_the_best_is_the_best_kept_reading_of_this_goal_in_its_direction(self):
+        readings = self.progress(("O1", 0.8, True), ("O1", 0.95, False), ("O1", 0.85, True), ("O2", 0.99, True))
+        self.assertEqual(goals.best_kept(readings, goal_objective()), 0.85)
+        self.assertEqual(goals.best_kept(readings, goal_objective(direction="down")), 0.8)
+        self.assertEqual(goals.best_kept(readings, goal_objective("O2")), 0.99)
+
+    def test_a_reading_of_another_goal_on_the_same_metric_is_not_this_goal_s(self):
+        readings = self.progress(("O2", 0.99, True), (None, 0.98, True))
+        self.assertIsNone(goals.best_kept(readings, goal_objective()))
+        self.assertFalse(goals.reached(readings, goal_objective()))
 
     def test_before_anything_was_kept_the_baseline_is_the_best_and_never_reaches_the_target(self):
-        goal = goal_record(baseline={"value": 0.995, "source": "the paper"})
+        goal = goal_objective(baseline={"value": 0.995, "source": "the paper"})
         self.assertEqual(goals.best_kept([], goal), 0.995)
         self.assertFalse(goals.reached([], goal))
 
     def test_the_goal_is_reached_at_or_beyond_the_target(self):
-        self.assertTrue(goals.reached(self.progress(("auroc", 0.99, True)), goal_record()))
-        self.assertFalse(goals.reached(self.progress(("auroc", 0.999, False)), goal_record()))
-        self.assertTrue(goals.reached(self.progress(("auroc", 0.2, True)), goal_record(direction="down", target=0.3)))
+        self.assertTrue(goals.reached(self.progress(("O1", 0.99, True)), goal_objective()))
+        self.assertFalse(goals.reached(self.progress(("O1", 0.999, False)), goal_objective()))
+        self.assertTrue(goals.reached(self.progress(("O1", 0.2, True)), goal_objective(direction="down", target=0.3)))
+        self.assertFalse(goals.reached(self.progress(("O1", 0.999, True)), goal_objective(target=None)))
 
     def test_the_payloads_come_from_the_journal_in_order(self):
-        events = [make_event(PROGRESS, {"metric": "auroc", "value": 0.8, "ticket": 1, "run_id": "t1-a1", "kept": True})]
-        self.assertEqual(goals.kept_readings(goals.progress_payloads(events), "auroc"), [0.8])
+        events = [make_event(PROGRESS, {"goal": "O1", "metric": "auroc", "value": 0.8, "ticket": 1, "run_id": "t1-a1", "kept": True})]
+        self.assertEqual(goals.kept_readings(goals.progress_payloads(events), "O1"), [0.8])
 
 
 class SeedsTest(ConductorCase):
@@ -166,17 +194,17 @@ class SeedsTest(ConductorCase):
         artifact = self.temp / "seed.json"
         artifact.write_text(json.dumps({"auroc": 0.7}), encoding="utf-8")
         command = 'test "$WAYLINE_HELD_OUT_SPLIT" = heldout && test {split} = heldout && cat {artifact}'
-        self.assertEqual(goals.evaluate(goal_record(eval_command=command), [artifact], self.project, 30), (0.7,))
+        self.assertEqual(goals.evaluate(measure(eval_command=command), [artifact], self.project, 30), (0.7,))
 
     def test_no_seed_a_failing_command_and_no_number_are_each_an_error(self):
         artifact = self.temp / "seed.txt"
         artifact.write_text("nothing here\n", encoding="utf-8")
         with self.assertRaisesRegex(goals.GoalError, "no seed artifact"):
-            goals.evaluate(goal_record(), [], self.project, 30)
+            goals.evaluate(measure(), [], self.project, 30)
         with self.assertRaisesRegex(goals.GoalError, "exited 3"):
-            goals.evaluate(goal_record(eval_command="exit 3"), [artifact], self.project, 30)
+            goals.evaluate(measure(eval_command="exit 3"), [artifact], self.project, 30)
         with self.assertRaisesRegex(goals.GoalError, "printed no number for `auroc`"):
-            goals.evaluate(goal_record(), [artifact], self.project, 30)
+            goals.evaluate(measure(), [artifact], self.project, 30)
 
 
 class ViewTest(unittest.TestCase):
@@ -218,13 +246,16 @@ class GoalTicketCase(ConductorCase):
     def body(self):
         return self.ticket_and_body()[1]
 
-    def set_goal(self, **overrides):
-        self.ledger.write_json("GOAL.json", goal_record(**overrides), schema="goal")
+    def set_goal(self, identifier="O1", **overrides):
+        set_measure(self.ledger, identifier, **overrides)
 
-    def prior(self, value, kept=True, ticket=99):
-        """A reading an earlier ticket left in the journal."""
-        self.ledger.append_event(PROGRESS, {"metric": "auroc", "value": value, "ticket": ticket,
-                                            "run_id": "t%d-a1" % ticket, "kept": kept}, ticket=ticket)
+    def prior(self, value, kept=True, ticket=99, goal="O1"):
+        prior_reading(self.ledger, value, kept, ticket, goal)
+
+    def set_harness(self, **changes):
+        harness = json.loads((self.project / "harness.json").read_text(encoding="utf-8"))
+        harness.update(changes)
+        (self.project / "harness.json").write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
 
     def conduct(self, *scripted, waves=None, conductor=None):
         with worker.use_fake() as fake:
@@ -282,7 +313,6 @@ class KeptTest(GoalTicketCase):
 
     def test_down_keeps_a_lower_mean(self):
         self.set_goal(direction="down", target=0.01)
-        self.aim_at(open_goal(self.project, "Does the change lower the held-out AUROC?", direction="down"))
         self.prior(0.50)
         self.conduct((finding_result(), seeds(0.40, 0.41, 0.42)))
         self.assertTrue(self.payload("progress")["kept"])
@@ -307,12 +337,50 @@ class KeptTest(GoalTicketCase):
         self.assertNotIn("progress", self.sequence())
         self.assertIn("research/objectives.json cannot be read", self.said())
 
-    def test_a_ticket_reporting_another_metric_is_integrated_unjudged(self):
-        self.set_goal(metric="loss")
+    def test_a_ticket_serving_an_objective_with_no_measure_is_integrated_with_nothing_in_place_of_keep_if_better(self):
+        objective = open_objective(self.project, "Is the hello file read?")
+        ticket, body = self.ticket_and_body()
+        tickets.write_ticket(self.ledger, dict(ticket, objectives=[objective["id"]], goal=None), body)
         self.conduct((finding_result(), seeds(0.1, 0.1, 0.1)))
         self.assertIn("integrated", self.sequence())
         self.assertNotIn("progress", self.sequence())
-        self.assertIn("keep-if-better does not run", self.said())
+        self.assertNotIn("discarded", self.sequence())
+
+
+class PerGoalTest(GoalTicketCase):
+    """Ticket 87: keep-if-better runs per goal, each from its own events and on its own measure."""
+
+    def test_each_goal_is_judged_from_its_own_best_and_a_change_is_measured_on_its_own_goal_only(self):
+        second = open_goal(self.project, "Does the change lower the loss?", metric="loss", direction="down")
+        self.set_goal()
+        self.set_goal(second["id"], metric="loss", direction="down", eval_command="touch measured-on-o2 && cat {artifact}")
+        self.prior(0.80)
+        self.prior(0.99, ticket=98, goal=second["id"])  # a reading of another goal, better than anything here, is not O1's
+        self.conduct((finding_result(), seeds(0.90, 0.91, 0.92)))
+        progress = self.payload("progress")
+        self.assertEqual((progress["goal"], progress["kept"]), ("O1", True))
+        self.assertFalse((self.project / "measured-on-o2").exists(), "a change kept for O1 is never measured on O2")
+        self.assertEqual([event["payload"]["goal"] for event in self.events("progress")], ["O1", second["id"], "O1"])
+
+    def test_a_discard_names_its_goal(self):
+        self.set_goal()
+        self.prior(0.80)
+        self.conduct((finding_result(), seeds(0.80, 0.85, 0.90)))
+        self.assertEqual(self.payload("discarded")["goal"], "O1")
+
+    def test_a_measure_with_one_seed_keeps_any_strict_gain(self):
+        self.set_goal(min_seeds=1)
+        self.prior(0.80)
+        self.conduct((done(outputs_written=["metrics/seed-1.txt"], findings=[]), seeds(0.8001)))
+        progress = self.payload("progress")
+        self.assertEqual((progress["kept"], progress["goal"]), (True, "O1"))
+        self.assertIn("integrated", self.sequence())
+
+    def test_a_measure_with_one_seed_does_not_keep_a_tie(self):
+        self.set_goal(min_seeds=1)
+        self.prior(0.80)
+        self.conduct((done(outputs_written=["metrics/seed-1.txt"], findings=[]), seeds(0.80)))
+        self.assertFalse(self.payload("progress")["kept"])
 
 
 class DiscardedTest(GoalTicketCase):
@@ -428,11 +496,12 @@ class ReportMeansTest(unittest.TestCase):
     def test_each_discard_is_paired_with_its_own_attempt_s_mean(self):
         from wayline.provenance import _discarded_means
         def progress(value, run, kept=False):
-            return make_event("progress", {"metric": "auroc", "value": value, "ticket": 1, "run_id": run, "kept": kept}, ticket=1)
+            return make_event("progress", {"metric": "auroc", "value": value, "ticket": 1, "run_id": run, "kept": kept, "goal": "O1"},
+                              ticket=1)
         def discarded():
-            return make_event("discarded", {"ticket": 1, "metric": "auroc", "best": 0.9, "sd": 0.01, "seeds": 3}, ticket=1)
+            return make_event("discarded", {"ticket": 1, "metric": "auroc", "best": 0.9, "sd": 0.01, "seeds": 3, "goal": "O1"}, ticket=1)
         pairs = _discarded_means([progress(0.5, "t1-a1"), discarded(), progress(0.6, "t1-a2"), discarded(),
-                                  progress(0.7, "t1-a3")], "auroc")
+                                  progress(0.7, "t1-a3")], "O1")
         self.assertEqual([mean for _, mean in pairs], [0.5, 0.6])
 
 
@@ -460,23 +529,38 @@ class ShortOrUnmeasuredTest(GoalTicketCase):
 
 
 class GoalReachedTest(GoalTicketCase):
-    def test_goal_reached_ends_the_run_and_notifies(self):
-        self.set_goal(target=0.9, stop_when="goal_reached")
-        results = self.conduct((finding_result(), seeds(0.90, 0.91, 0.92)))
+    def test_code_writes_the_goal_reached_and_the_rule_ends_the_run_goal_reached(self):
+        self.set_goal(target=0.9)
+        results = self.conduct((finding_result(), seeds(0.90, 0.91, 0.92)), waves=4)
         self.assertTrue(results[-1].ended)
         self.assertEqual(results[-1].reason, "goal_reached")
         self.assertEqual([event["payload"]["reason"] for event in self.events("run_ended")], ["goal_reached"])
         self.assertEqual([event for event, _, _ in self.recorder.sent], ["goal_reached"])
-        self.assertIn("0.91", self.recorder.sent[0][1])
+        self.assertIn("every goal the stopping rule waits on is reached (O1)", self.recorder.sent[0][1])
+        written = [event["payload"] for event in self.events("objective") if event["payload"]["status"] == "answered"]
+        self.assertEqual([(payload["id"], payload["by"]) for payload in written], [("O1", "code")])
+        record = json.loads((self.project / "research" / "objectives.json").read_text(encoding="utf-8"))["objectives"][0]
+        self.assertIn("reached: the best kept auroc is 0.91 against the target 0.9 (up), measured by code on t1-a1", record["answer"])
+
+    def test_a_goal_closed_by_another_way_ends_the_rule_objectives_closed(self):
+        self.set_goal(target=0.9)
+        second = open_objective(self.project, "Is the hello file read?")
+        from wayline.objectives import change_objective
+        change_objective(self.project, second["id"], "dropped", "owner", answer="not worth asking")
+        results = self.conduct((finding_result(), seeds(0.90, 0.91, 0.92)), waves=4)
+        self.assertEqual(results[-1].reason, "objectives_closed")
 
     def test_a_discarded_reading_beyond_the_target_does_not_reach_it(self):
-        self.set_goal(target=0.5, stop_when="goal_reached")
+        self.set_goal(target=0.5)
         self.prior(0.45)
         results = self.conduct((finding_result(), seeds(0.1, 0.5, 0.9)))
         self.assertEqual(results[-1].reason, "frontier_empty")
+        self.assertEqual(json.loads((self.project / "research" / "objectives.json").read_text(encoding="utf-8"))["objectives"][0]["status"],
+                         "open")
 
-    def test_under_graph_empty_the_run_goes_on_past_the_target(self):
-        self.set_goal(target=0.9, stop_when="graph_empty")
+    def test_under_frontier_the_run_goes_on_past_the_target(self):
+        self.set_goal(target=0.9)
+        self.set_harness(stop_when="frontier")
         results = self.conduct((finding_result(), seeds(0.90, 0.91, 0.92)))
         self.assertEqual(results[-1].reason, "frontier_empty")
         self.assertEqual(self.recorder.sent, [])
@@ -495,7 +579,7 @@ class JobsGoalCase(SweepCase):
         ticket.update(objectives=["O1"], goal="O1")
         tickets.write_ticket(self.ledger, ticket, body)
         open_goal(self.project, metric="auroc")
-        self.ledger.write_json("GOAL.json", goal_record(), schema="goal")
+        set_measure(self.ledger)
 
     def plain_jobs(self, jobs):
         for job in ("t1-1", "t1-2", "t1-3"):
@@ -507,7 +591,7 @@ class JobsGoalCase(SweepCase):
         return {"results/sweep/lr-%s.json" % RATES[job]: json.dumps({"lr": float(RATES[job]), "auroc": values[job]}) + "\n"}
 
     def prior(self, value):
-        self.ledger.append_event(PROGRESS, {"metric": "auroc", "value": value, "ticket": 99, "run_id": "t99-a1", "kept": True}, ticket=99)
+        prior_reading(self.ledger, value)
 
     def git(self, *args):
         import subprocess

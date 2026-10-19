@@ -72,7 +72,7 @@ __all__ = [
     "TICK_LOCK", "LOGIN_ORIGIN", "FINAL_ENDS", "RELAUNCH_REFUSED", "Machine", "TickResult", "tick", "tick_command", "tick_lock",
     "check_login", "read_credentials", "login_expiry", "credentials_path", "read_usage", "poll_jobs", "due_checks",
     "render_report", "report_due", "due_notifications", "send_due_notifications", "notify_refused", "journal_answers",
-    "owed_verdicts", "work_remaining", "window_closed", "fable_spent", "answered_since", "relaunch_decision", "relaunch",
+    "owed_verdicts", "work_remaining", "window_closed", "fable_spent", "answered_since", "ended_for_good", "relaunch_decision", "relaunch",
 ]
 
 TICK_SERVICE = "wayline-tick.service"
@@ -544,10 +544,12 @@ CONDUCTOR_ALIVE = "conductor_alive"
 RELAUNCHED = "relaunched"
 NOT_RELAUNCHED = "not_relaunched"
 
-# The ends of a run that only an answer undoes: the owner stopped it, the goal was reached, a strict
-# stall stopped it to report, or `switch` took the project away. A relaunch after one of them would
-# undo, fifteen minutes later, the reason the run ended.
-FINAL_ENDS = ("stopped", "goal_reached", "stall_strict", "switched")
+# The ends of a run that only an answer undoes: the owner stopped it, the stopping rule ended it (its objectives
+# closed, or its goals reached), a strict stall stopped it to report, a budget was spent, or `switch` took the project
+# away. A relaunch after one of them would undo, fifteen minutes later, the reason the run ended. The stopping rule and
+# the budgets are read again besides (`ended_for_good`): while the rule holds or a budget is spent, not even an answer
+# relaunches the run, since its first wave would end it again (decision 17; ticket 87).
+FINAL_ENDS = ("stopped", "goal_reached", "objectives_closed", "budget_spent", "stall_strict", "switched")
 
 # The login tickets the tick opens are told apart by their `origin`: a warning records the expiry it
 # warned of, and a lapse the moment it asked.
@@ -1256,6 +1258,9 @@ def relaunch_decision(project, ledger, policy, reading, now):
     switched = view.switched or {}
     if switched.get("from") == str(project) and switched.get("to") != str(project):
         return None, "the project was switched away from, to %s" % switched.get("to")
+    ended = ended_for_good(project, events, now)
+    if ended is not None:
+        return None, ended
     if answered_since(events):
         return "a decision ticket was answered since the conductor last ran", None
     if view.stop is not None:
@@ -1278,6 +1283,30 @@ def relaunch_decision(project, ledger, policy, reading, now):
     if closed is not None:
         return None, "%s, but %s" % (", ".join(work), closed)
     return "%s, and the window is open" % ", ".join(work), None
+
+
+def ended_for_good(project, events, now):
+    """Why a relaunched run would end at its first wave, or None: its stopping rule holds, or a budget is spent (ticket 87).
+
+    The rule is `harness.json`'s `stop_when` over `objectives.json`; the budgets are `harness.json`'s, counted from the
+    journal at `now`. A record that cannot be read ends nothing here, as the conductor reads it.
+    """
+    from wayline import stopping  # the stopping module imports the goal and objectives modules
+    from wayline.objectives import ObjectivesUnreadable, read_objectives
+    harness = _harness(project)
+    try:
+        records = read_objectives(project)
+    except (ObjectivesUnreadable, OSError, ValueError):
+        records = None
+    progress = [event.get("payload") or {} for event in events if event.get("event") == "progress"]
+    rule = stopping.rule_of(harness)
+    reason = stopping.rule_end(rule, records, progress) if records is not None else None
+    if reason is not None:
+        return "the stopping rule %s holds (%s), which only the owner undoes" % (stopping.describe_rule(rule), reason)
+    found = stopping.spent(harness, events, now)
+    if found:
+        return "%s, and only the owner raises a budget (wayline switch --budget)" % stopping.describe_spent(found)
+    return None
 
 
 def relaunch(project):

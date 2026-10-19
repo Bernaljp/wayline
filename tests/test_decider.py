@@ -21,7 +21,7 @@ from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase, fable_policy, on_fable, open_objective
 from tests.test_conductor import drive
 from tests.test_decisions import ConductedCase
-from wayline import cli, decider, decisions, grill, pacing, project, provenance, tickets, worker
+from wayline import cli, decider, decisions, grill, pacing, project, provenance, stopping, tickets, worker
 from wayline.decider import Subject, irreversible_class, refusal
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
@@ -204,7 +204,7 @@ class RecordedGrillCase(ProjectTestCase):
             "metric": "auroc", "direction": "up", "target": 0.85, "dataset_or_split": None, "held_out_split": "split_b",
             "eval_command": "python3 toy/eval.py {artifact}", "baseline": {"value": None, "source": None},
             "budget": {"gpu_hours": None, "wallclock": 4, "usage_windows": None}, "stop_when": "goal_reached",
-        }, schema="goal")
+        })
         self.ledger.write_markdown("kb/query_pack.md", "# Query pack\n\n- paper-a extends paper-b\n")
         open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
@@ -535,6 +535,8 @@ class ConductorDecidesTest(ConductedCase):
         super().setUp()
         open_objective(self.project)
         project.set_autonomy(self.project, "autonomous")
+        # These tests are about the decision tickets the run asks; the empty frontier's own (ticket 87) is test_stop_rule's.
+        stopping.set_stop_when(self.project, "frontier")
 
     def decider_calls(self):
         return [call for call in self.fake.calls if call.request.role == decider.DECIDER]
@@ -631,7 +633,7 @@ class ConductorDecidesTest(ConductedCase):
         opened = self.events("decision_opened")
         self.assertEqual(opened[-1]["payload"], {"ticket": 2, "blocking": "subgraph", "human_only": True})
         self.assertIn(("decision_opened", 2), [(event, ticket) for event, ticket, _ in self.notified])
-        self.assertIn("is now human only: the decider was refused it", self.notified[-1][2])
+        self.assertTrue([text for _, _, text in self.notified if "is now human only: the decider was refused it" in text])
         self.assertIn("decision ticket 2 waits for the owner's answer: it is human-only", self.out.getvalue())
         self.assertEqual(decisions.decisions_view(self.project)["open"][0]["awaits"], "owner")
         self.assertEqual(len(self.decider_calls()), 1, "not launched again on the next wave")

@@ -155,7 +155,7 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
             "--data", "split_b is held out and never leaves this machine",
             "--constraint", "no new dependencies beyond scikit-learn",
             "--autonomy", "autonomous", "--radius", "strict",
-            "--gpu-hours", "10", "--wallclock-hours", "48", "--usage-windows", "4",
+            "--gpu-hours", "10", "--wallclock-hours", "48",
             "--human-only", "baselines: which baselines the claims are compared against")
 
     def test_the_intake_succeeds_without_a_goal(self):
@@ -199,7 +199,7 @@ class PrecisePlanWithARepositoryTest(IntakeTestCase):
         harness = read_harness(self.project)
         self.assertEqual(harness["autonomy"], "autonomous")
         self.assertEqual(harness["radius"], "strict")
-        self.assertEqual(harness["budgets"], {"gpu_hours": 10, "wallclock_hours": 48, "usage_windows": 4})
+        self.assertEqual(harness["budgets"], {"gpu_hours": 10, "wallclock_hours": 48})
         self.assertEqual(harness["human_only"], ["objective", "data", "baselines"])
         self.assertIn("`autonomous`", self.section("Autonomy"))
         self.assertIn("`strict`", self.section("Radius"))

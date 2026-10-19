@@ -95,17 +95,22 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   left on the frontier keeps no run going: the owner's answer is what the tick relaunches for.
 - A result's `proposals` and `goal_progress` are written into the ticket's `## Result` section so
   the owner sees them; admission is ticket 37. The worker's own `goal_progress` is never what is kept.
-- Keep-if-better (ticket 39, `wayline.goal`). A ticket whose `goal` names an open goal whose measure has
-  `GOAL.json`'s metric and direction (ticket 81: both are read from the measure in `objectives.json`) is
-  measured by `GOAL.json`'s `eval_command` on each seed artifact before its integration: a `done` result in
-  its worktree, a `running` one once its jobs exited 0. Fewer seeds than `policy.goal.min_seeds` fail the
-  ticket with a request for more. A change whose mean does not beat the best kept value by more than
-  `policy.goal.margin_sd` standard deviations is discarded: `progress` with `kept: false` and `discarded`
-  are journaled, the ticket is `done` and earns no verdict, its findings are filed as negative results, and
-  its branch and worktree stay, renamed `ticket/<id>-a<n>` and `.worktrees/<id>-a<n>`. A `done` result is then never fast-forwarded; a `running` one, whose branch
-  reached `main` before its jobs, is reverted there. A kept change journals `progress` with `kept: true`
-  once it is on `main`, and with `stop_when: goal_reached`, the first wave whose best kept value reaches the
-  target journals `run_ended` with `goal_reached` and notifies the owner (wave step 6).
+- Keep-if-better, per goal (tickets 39 and 87, `wayline.goal`). A ticket whose `goal` names an open goal (an
+  objective with a measure in `objectives.json`) is measured by that measure's `eval_command` on each seed
+  artifact before its integration: a `done` result in its worktree, a `running` one once its jobs exited 0.
+  Fewer seeds than the measure's `min_seeds` (else `policy.goal.min_seeds`) fail the ticket with a request for
+  more. A change whose mean does not beat the goal's own best kept value by more than `policy.goal.margin_sd`
+  standard deviations (at one seed, by any strict gain) is discarded: `progress` with `kept: false` and
+  `discarded` are journaled with the goal, the ticket is `done` and earns no verdict, its findings are filed as
+  negative results, and its branch and worktree stay, renamed `ticket/<id>-a<n>` and `.worktrees/<id>-a<n>`. A
+  `done` result is then never fast-forwarded; a `running` one, whose branch reached `main` before its jobs, is
+  reverted there. A kept change journals `progress` with `kept: true` once it is on `main`.
+- The stopping rule and the budgets (ticket 87, `wayline.stopping`; wave step 6). Code writes each open goal whose
+  best kept value reached its target answered; `harness.json`'s `stop_when` is read every wave and ends the run
+  `objectives_closed` (or `goal_reached`), and a spent budget ends it `budget_spent`. An empty frontier with an
+  objective the rule waits on opens one decision ticket per such objective: the owner answers under `interactive`
+  and `checkpoints` (the run ends `frontier_empty` meanwhile), the decider under `autonomous` in one session,
+  replanning or answering only; a `replan for it` answer is cut by the planner as a revise.
 - The ask of decision 15 (ticket 57). Under the fallback consent `ask`, the first wave whose hold drops a
   launch on Fable opens one human-only decision ticket about the window, keyed by its reset, which
   pauses nothing (`decisions.open_fable_ask`). Its answer, read at the next wave, falls back for the
@@ -144,7 +149,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, sections, software, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -791,6 +796,8 @@ class Conductor:
         self.plan_pre_check = True
         self.reporter = self._render_report
         self._replanned = None
+        self._objectives_trouble = None
+        self._objective_replans = set()
         # The evolve loop (ticket 45, decision 12). A policy nobody handed in is read again every wave, so a local change
         # to `harness.json` is used from the next one. `evolver(fall_back)` is the evolver's session over the pending
         # feedback, `prover` runs a change's fixture on the old and the new subject, and `global_checks` runs the harness
@@ -845,10 +852,11 @@ class Conductor:
         self._place_jobs(result)
         self._software(result)
         self._pace()
-        if not self._reached_goal(result) and not self._holds_launches() and not self._stops_at_stall(result):
+        if not self._rule_ends(result) and not self._holds_launches() and not self._stops_at_stall(result):
             self._escalate(result)
             self._replan(result)
             self._decide(result)
+            self._replan_objectives(result)
             self._evolve(result)
             self._fold_answered_refusals()  # the decider, the planner, and the evolver answer in this wave
             picks = self._picks(self._graph())
@@ -1001,10 +1009,10 @@ class Conductor:
         session that has not started yet to the next run, whose take-over finds it in the journal.
         """
         if result.ended:
-            return  # the goal was reached earlier in this wave, which journaled `run_ended`
-        stopping = self._stop_requested()
-        if stopping is not None:
-            if stopping.drain:
+            return  # the stopping rule or a budget ended the run earlier in this wave, which journaled `run_ended`
+        requested = self._stop_requested()
+        if requested is not None:
+            if requested.drain:
                 for identifier, attempt in list(self.flight.items()):
                     if attempt.want is not None and not attempt.running:
                         self.flight.pop(identifier)
@@ -1015,14 +1023,14 @@ class Conductor:
                 if left:
                     self.say("  ticket(s) %s still have a worker running; it finishes on its own and the next run re-adopts it"
                              % ", ".join(str(identifier) for identifier in left))
-            self.ledger.append_event(RUN_ENDED, {"reason": stopping.reason})
-            result.ended, result.reason = True, stopping.reason
+            self.ledger.append_event(RUN_ENDED, {"reason": requested.reason})
+            result.ended, result.reason = True, requested.reason
             return
         if self.flight or self.verdicts:
             # Queued verdicts wait on pacing or on the hold on Fable's weekly window, and are taken once it allows.
             return
-        if self._owed_steps() or self._owed_replan() is not None:
-            return  # a failed ticket still waits on its step, or a stall on its replan: both wait, like any model work
+        if self._owed_steps() or self._owed_replan() is not None or self._owed_objective_replans():
+            return  # a failed ticket still waits on its step, a stall or an empty frontier on its replan: all wait, like any model work
         if self.software.in_flight:
             return  # an install or a licensed check runs as a job, and the tickets waiting on it launch once it is recorded
         graph = self._graph()
@@ -1033,10 +1041,12 @@ class Conductor:
         # tool nobody is installing keeps none going either: it waits on its software decision (ticket 82).
         if not [entry for entry in tickets.frontier(graph)
                 if not schedule.awaits_owner(entry, autonomy, decider) and not self._needs_tools(entry)] and not running:
+            if self._empty_frontier(autonomy, decider):
+                return  # the decider takes this empty frontier's tickets at the next wave
             for line in schedule.held_back(graph, autonomy, decider):
                 self.say(line)
-            self.ledger.append_event(RUN_ENDED, {"reason": "frontier_empty"})
-            result.ended, result.reason = True, "frontier_empty"
+            self.ledger.append_event(RUN_ENDED, {"reason": stopping.FRONTIER_EMPTY})
+            result.ended, result.reason = True, stopping.FRONTIER_EMPTY
 
     def _graph(self):
         """`graph.json`, regenerated, with what the next attempt launches at: its difficulty and its rung.
@@ -1326,6 +1336,145 @@ class Conductor:
             self._tail()
             self._consent_wave = None  # a timeout's `fall back` is read again before this wave launches anything
 
+    def _answered_frontier(self, fields, known):
+        """Act on the answer to an empty-frontier ticket at its closing (ticket 87).
+
+        `park it` and `drop it` close the objective, the owner's word; `replan for it` is owed to the planner
+        (`_replan_objectives`); `answer it as it stands` is handed to the fresh verifier's path of decision 17, and the
+        objective stays open until that path writes its answer. An answer that picks none of the four applies nothing.
+        """
+        identifier = stopping.frontier_objective(fields.get("origin"))
+        if identifier is None:
+            return
+        choice = stopping.frontier_choice(known.get("answer"))
+        if choice in (stopping.PARK, stopping.DROP):
+            status = "parked" if choice == stopping.PARK else "dropped"
+            by = "decider" if known.get("decided_by") == "decider" else "owner"
+            try:
+                records = objectives.read_objectives(self.project)
+                found = objectives.named(records, identifier)
+                if found is not None and objectives.is_open(found):
+                    objectives.change_objective(self.project, identifier, status, by, answer="the frontier emptied with it open, and "
+                                                "the %s chose to %s it (ticket %d)" % (by, choice.split()[0], fields["id"]))
+                    self._tail()
+            except (objectives.ObjectivesUnreadable, objectives.ObjectiveError, ValueError, OSError) as failure:
+                self.say("  ticket %d: %s could not be %s: %s" % (fields["id"], identifier, status, failure))
+                return
+            self.say("  ticket %d: %s is %s" % (fields["id"], identifier, status))
+        elif choice == stopping.REPLAN:
+            self.say("  ticket %d: the planner replans for %s" % (fields["id"], identifier))
+        elif choice == stopping.ANSWER:
+            self.say("  ticket %d: %s is to be answered as it stands by a fresh verifier; it stays open until that answer is written"
+                     % (fields["id"], identifier))
+        else:
+            self.say("  ticket %d: the answer picks none of %s, so nothing is applied to %s"
+                     % (fields["id"], ", ".join(stopping.FRONTIER_OPTIONS), identifier))
+
+    def _empty_frontier(self, autonomy, decider_ready):
+        """At an empty frontier, the tickets the stopping rule asks for: True when the decider takes them at the next wave.
+
+        Under `stop_when: frontier`, or with no open objective the rule waits on, nothing is asked. Otherwise one
+        decision ticket per such objective is opened, once per empty frontier (`stopping.empty_frontier_asks`).
+        Under `autonomous`, with a decider, the run goes on so the decider answers them in one session; under
+        `interactive` and `checkpoints` they wait for the owner, the run ends `frontier_empty`, and the tick
+        relaunches it after the answer. The run's end says which objectives stay open.
+        """
+        try:
+            harness = read_harness(self.project)
+        except (ProjectError, ValueError, OSError):
+            harness = {}
+        rule = stopping.rule_of(harness)
+        records = self._objective_records() or []
+        still = [record["id"] for record in records if objectives.is_open(record)]
+        waiting = stopping.waited(rule, records)
+        if rule == stopping.FRONTIER or not waiting:
+            if still:
+                self._frontier_notice("the frontier is empty under the stopping rule %s; the objectives still open: %s"
+                                      % (stopping.describe_rule(rule), ", ".join(still)))
+            return False
+        try:
+            events, _ = self.ledger.read_events()
+            opened, standing, settled = stopping.empty_frontier_asks(self.project, waiting, rule, events,
+                                                                     tickets.read_tickets(self.project), notify=self.notify)
+        except (ValueError, OSError) as failure:
+            self.say("  the empty frontier's decision tickets could not be opened: %s" % failure)
+            return False
+        self._tail()
+        for identifier in opened:
+            self.say("  the frontier is empty with an objective the stopping rule waits on: decision ticket %d asks what to do" % identifier)
+        asked = opened + standing
+        # The decider takes an open one that is not human-only: one it was refused is the owner's now, and one it could not
+        # answer (`needs_human`) waits for a person, so neither keeps the run going.
+        takable = {fields["id"] for fields in tickets.read_tickets(self.project)
+                   if fields["status"] == "open" and not fields.get("human_only")}
+        if [identifier for identifier in asked if identifier in takable] and autonomy == schedule.AUTONOMOUS and decider_ready:
+            return True
+        words = ["the frontier is empty and the stopping rule %s waits on %s" % (stopping.describe_rule(rule),
+                                                                                 ", ".join(record["id"] for record in waiting))]
+        if asked:
+            words.append("decision ticket(s) %s wait for the owner" % ", ".join(str(identifier) for identifier in asked))
+        if settled:
+            words.append("%s %s answered at the last empty frontier and nothing was created since" % (
+                ", ".join(settled), "was" if len(settled) == 1 else "were"))
+        self._frontier_notice("; ".join(words))
+        return False
+
+    def _frontier_notice(self, words):
+        """The end notice of a run whose frontier emptied with objectives open: said, and sent to the owner."""
+        self.say("  " + words)
+        self.notify(RUN_ENDED, "%s: %s; the run ended (frontier_empty)" % (self.project.name, words), self.project, None)
+
+    def _owed_objective_replans(self):
+        """The empty-frontier tickets answered `replan for it` whose replan is still owed, by ticket id.
+
+        Owed until this run cut it, or until a cut was written after the answer (`plan.json`'s `cut_at`).
+        """
+        from wayline import plan
+        answers = {identifier: known for identifier, known in self.view.answers.items()
+                   if identifier not in self._objective_replans and stopping.frontier_choice(known.get("answer")) == stopping.REPLAN}
+        if not answers:
+            return {}
+        found = {fields["id"]: fields for fields in tickets.read_tickets(self.project)
+                 if fields["id"] in answers and stopping.frontier_objective(fields.get("origin")) is not None}
+        if not found:
+            return {}
+        record = plan.read_plan(self.project) or {}
+        cut_at = str(record.get("cut_at") or "")
+        events, _ = self.ledger.read_events()
+        stamps = {}
+        for event in events:
+            payload = event.get("payload") or {}
+            if event.get("event") == "decision" and payload.get("ticket") in found:
+                stamps[payload["ticket"]] = event.get("ts") or ""
+        return {identifier: fields for identifier, fields in found.items() if stamps.get(identifier, "") > cut_at}
+
+    def _replan_objectives(self, result):
+        """The planner's re-cut for the objectives an empty frontier's tickets were answered `replan for it` about (ticket 87).
+
+        One cut covers every objective owed, a revise that cuts new tickets serving each within the spec; it waits,
+        like any model work, while pacing or the hold allows none.
+        """
+        owed = self._owed_objective_replans()
+        if not owed or self._holds_launches() or self.action != schedule.NORMAL:
+            return
+        from wayline import plan
+        named = sorted({stopping.frontier_objective(fields.get("origin")) for fields in owed.values()})
+        records = self._objective_records() or []
+        about = "; ".join("%s, \"%s\"" % (identifier, (objectives.named(records, identifier) or {}).get("text", "")) for identifier in named)
+        change = ("Replan for the open objective(s) %s: the frontier emptied with them open and the stopping rule waits on them. "
+                  "Cut new tickets that serve them within the spec; work already done stands." % about)
+        outcome = self._launch_cut(plan.Cut("revise", change=change), "the planner's replan for %s" % ", ".join(named))
+        if outcome is None:
+            return
+        self._objective_replans.update(owed)
+        self._tail()
+        if isinstance(outcome, BaseException):
+            self.say("  the planner could not replan for %s: %s" % (", ".join(named), outcome))
+            return
+        result.escalated.append((None, REPLAN))
+        self.say("  the planner replanned for %s: ticket(s) %s written" % (
+            ", ".join(named), ", ".join(str(item) for item in outcome.get("tickets") or []) or "none"))
+
     def _answered_ask(self, identifier, known):
         """Say what the owner's answer to the ask of decision 15 does, at its closing; one that matches no option is also sent to the owner."""
         ask = self.view.asks.get(identifier)
@@ -1405,19 +1554,25 @@ class Conductor:
         """The objective class of every ticket, by id, which the pick order reads after the critical path (ticket 81).
 
         A ticket serves the objectives it names and the goal it reports; which of them are open is
-        `objectives.json`'s, the one record keep-if-better and the plan read too, and the stopping rule
-        waits on every open one, its default `objectives`, until ticket 87 lands `stop_when`. A record
-        that cannot be read is said and counts no objective open, so every ticket is class 2 and the
-        wave goes on in the order it had before objectives. `graph.json` carries the scheduling fields
-        of decision 2 and `objectives` is not one of them, so the ticket files answer this; the
-        conductor reads them for every launch anyway.
+        `objectives.json`'s, the one record keep-if-better and the plan read too, and which the stopping
+        rule waits on is `harness.json`'s `stop_when` (ticket 87: every open one under `objectives`, the
+        open ones it names under a list, none under `frontier`). A record that cannot be read is said and
+        counts no objective open, so every ticket is class 2 and the wave goes on in the order it had
+        before objectives. `graph.json` carries the scheduling fields of decision 2 and `objectives` is
+        not one of them, so the ticket files answer this; the conductor reads them for every launch anyway.
         """
         try:
-            pursued = {objective["id"] for objective in objectives.open_objectives(self.project)}
+            records = objectives.read_objectives(self.project)
         except objectives.ObjectivesUnreadable as failure:
             self.say("  %s; the pick order counts no objective open" % failure)
-            pursued = set()
-        return {ticket["id"]: schedule.objective_class(objectives.served(ticket), pursued)
+            records = []
+        try:
+            rule = stopping.rule_of(read_harness(self.project))
+        except (ProjectError, ValueError, OSError):
+            rule = stopping.OBJECTIVES
+        pursued = {record["id"] for record in records if objectives.is_open(record)}
+        waited = {record["id"] for record in stopping.waited(rule, records)}
+        return {ticket["id"]: schedule.objective_class(objectives.served(ticket), pursued, waited)
                 for ticket in tickets.read_tickets(self.project)}
 
     # --- the tickets of one wave ---
@@ -2212,10 +2367,11 @@ class Conductor:
     # --- keep-if-better (ticket 39) ---
 
     def _goal_of(self, ticket):
-        """`(goal, skip)`: `GOAL.json`, and why keep-if-better does not judge this ticket (None when it does).
+        """`(goal, skip)`: the open goal this ticket reports, from `objectives.json`, and why keep-if-better does not judge it.
 
-        Each file is read once per question. `objectives.json` that cannot be read judges nothing, with the reason,
-        as a `GOAL.json` that states no goal does: an integration never ends on a record it could not read.
+        `goal` is the objective record with its measure (`goals.goal_for`), None when `skip` says why not. An
+        `objectives.json` that cannot be read judges nothing, with the reason: an integration never ends on a record
+        it could not read.
         """
         if not ticket.get("goal"):
             return None, "the ticket names no goal"
@@ -2223,11 +2379,10 @@ class Conductor:
             records = objectives.read_objectives(self.project)
         except objectives.ObjectivesUnreadable as failure:
             return None, str(failure)
-        goal = goals.read_goal(self.ledger)
-        return goal, goals.applies(ticket, goal, records)
+        return goals.goal_for(ticket, records)
 
     def _goal_ticket(self, ticket):
-        """Whether keep-if-better judges this ticket: its `goal` names an open goal whose measure is `GOAL.json`'s metric and direction."""
+        """Whether keep-if-better judges this ticket: its `goal` names an open goal, an objective with a measure."""
         return self._goal_of(ticket)[1] is None
 
     def _keep_if_better(self, attempt, root, outputs, fail):
@@ -2254,12 +2409,13 @@ class Conductor:
         else:
             artifacts = goals.seed_artifacts(outputs, root)
             try:
-                values = goals.evaluate(goal, artifacts, self.project, self._timeout())
+                values = goals.evaluate(goal["measure"], artifacts, self.project, self._timeout())
             except goals.GoalError as failure:
                 fail("keep-if-better measured nothing: %s" % failure)
                 return "failed"
-        judgment = goals.judge(goal["metric"], values, goals.best_kept(self.view.progress.values(), goal), goal["direction"],
-                               min_seeds=policy.get("min_seeds", goals.DEFAULT_MIN_SEEDS),
+        measure = goal["measure"]
+        judgment = goals.judge(measure["metric"], values, goals.best_kept(self.view.progress.values(), goal), measure["direction"],
+                               min_seeds=goals.min_seeds(measure, policy),
                                margin_sd=policy.get("margin_sd", goals.DEFAULT_MARGIN_SD))
         if saved is not None and judgment == saved:
             attempt.judgment = saved
@@ -2268,8 +2424,8 @@ class Conductor:
         if judgment.short is not None:
             fail("keep-if-better: %s" % judgment.short)
             return "failed"
-        record = {"metric": judgment.metric, "values": list(judgment.values), "mean": judgment.mean, "sd": judgment.sd,
-                  "best": judgment.best, "kept": judgment.kept}
+        record = {"goal": goal["id"], "metric": judgment.metric, "values": list(judgment.values), "mean": judgment.mean,
+                  "sd": judgment.sd, "best": judgment.best, "kept": judgment.kept}
         if artifacts is not None:
             record["artifacts"] = [str(path) for path in artifacts]
         self.ledger.write_json(self._judgment_record(attempt.id, attempt.number), record)
@@ -2298,10 +2454,11 @@ class Conductor:
         run_id = goals.run_id(attempt.id, attempt.number)
         if run_id not in self.view.progress:
             self.ledger.append_event(PROGRESS, {"metric": judgment.metric, "value": judgment.mean, "ticket": attempt.id,
-                                                "run_id": run_id, "kept": kept}, ticket=attempt.id)
+                                                "run_id": run_id, "kept": kept, "goal": attempt.ticket.get("goal")}, ticket=attempt.id)
         if not judgment.kept and attempt.id not in self.view.discarded:
             self.ledger.append_event(DISCARDED, {"ticket": attempt.id, "metric": judgment.metric, "best": judgment.best,
-                                                 "sd": judgment.sd, "seeds": judgment.seeds}, ticket=attempt.id)
+                                                 "sd": judgment.sd, "seeds": judgment.seeds, "goal": attempt.ticket.get("goal")},
+                                     ticket=attempt.id)
         self._tail()
         attempt.kept = kept
         self.say("  ticket %d: %s" % (attempt.id, "kept" if kept else (
@@ -2414,25 +2571,76 @@ class Conductor:
         self.say("  ticket %d: reverted %s on main; the branch %s keeps the change" % (attempt.id, span, BRANCH % attempt.id))
         return None
 
-    def _reached_goal(self, result):
-        """Wave step 6: under `stop_when: goal_reached`, end the run once the best kept value reaches the target.
+    def _objective_records(self):
+        """`objectives.json`'s objectives, or None when the record cannot be read, which is said once per run."""
+        try:
+            return objectives.read_objectives(self.project)
+        except objectives.ObjectivesUnreadable as failure:
+            if str(failure) != self._objectives_trouble:
+                self._objectives_trouble = str(failure)
+                self.say("  %s; the stopping rule waits on no objective until it reads" % failure)
+            return None
 
-        The workers still running finish on their own, as after a stop, and the owner is notified.
+    def _write_reached(self, records):
+        """Code writes each open goal whose best kept value reached its target answered, from the measured values; the records after."""
+        progress = list(self.view.progress.values())
+        reached = stopping.reached_goals(records, progress)
+        for record in reached:
+            measure = record["measure"]
+            best = goals.best_kept(progress, record, baseline=False)
+            kept = [payload.get("run_id") for payload in progress if payload.get("goal") == record["id"] and payload.get("kept")
+                    and payload.get("value") == best]
+            answer = "reached: the best kept %s is %s against the target %s (%s), measured by code%s" % (
+                measure["metric"], goals.number(best), goals.number(measure.get("target")), measure["direction"],
+                " on %s" % kept[-1] if kept else "")
+            try:
+                objectives.change_objective(self.project, record["id"], "answered", "code", answer=answer)
+            except (objectives.ObjectiveError, ValueError, OSError) as failure:
+                self.say("  goal %s reached, and it could not be written: %s" % (record["id"], failure))
+                continue
+            self.say("  goal %s %s" % (record["id"], answer))
+        if not reached:
+            return records
+        self._tail()
+        return self._objective_records() or records
+
+    def _rule_ends(self, result):
+        """Wave step 6 (decision 17; ticket 87): end the run when the stopping rule holds or a budget is spent.
+
+        Code first writes reached every open goal whose best kept value reached its target. Then the rule of
+        `harness.json`'s `stop_when` is read, every wave: it ends the run `objectives_closed`, or `goal_reached` when
+        every objective it closed was a goal that reached its target. A budget spent ends it `budget_spent`. The
+        workers still running finish on their own, as after a stop, and the owner is notified.
         """
-        goal = goals.read_goal(self.ledger)
-        if goal is None or goal.get("stop_when") != "goal_reached" or not goals.reached(self.view.progress.values(), goal):
-            return False
-        best = goals.best_kept(self.view.progress.values(), goal, baseline=False)
-        self.ledger.append_event(RUN_ENDED, {"reason": tick.GOAL_REACHED})
-        result.ended, result.reason = True, tick.GOAL_REACHED
-        words = "the goal is reached: the best kept %s is %s, against the target %s (%s); the run ended" % (
-            goal["metric"], goals.number(best), goals.number(goal.get("target")), goal["direction"])
+        records = self._objective_records()
+        if records is not None:
+            records = self._write_reached(records)
+        try:
+            harness = read_harness(self.project)
+        except (ProjectError, ValueError, OSError):
+            harness = {}
+        rule = stopping.rule_of(harness)
+        reason = stopping.rule_end(rule, records, list(self.view.progress.values())) if records is not None else None
+        if reason is not None:
+            closed = [record["id"] for record in stopping.covered(rule, records)]
+            words = ("every goal the stopping rule waits on is reached (%s)" if reason == stopping.GOAL_REACHED else
+                     "the objectives the stopping rule waits on are closed (%s)") % ", ".join(closed)
+        else:
+            events, _ = self.ledger.read_events()
+            found = stopping.spent(harness, events, self.clock())
+            if not found:
+                return False
+            reason, words = stopping.BUDGET_SPENT, stopping.describe_spent(found)
+        self.ledger.append_event(RUN_ENDED, {"reason": reason})
+        result.ended, result.reason = True, reason
+        words = "%s; the run ended (%s)" % (words, reason)
         self.say("  " + words)
         left = sorted(identifier for identifier, attempt in self.flight.items() if attempt.running or attempt.adopted)
         if left:
             self.say("  ticket(s) %s still have a worker running; it finishes on its own and the next run re-adopts it"
                      % ", ".join(str(identifier) for identifier in left))
-        self.notify(tick.GOAL_REACHED, "%s: %s" % (self.project.name, words), project=self.project)
+        self.notify(tick.GOAL_REACHED if reason == stopping.GOAL_REACHED else RUN_ENDED, "%s: %s" % (self.project.name, words),
+                    self.project, None)
         return True
 
     def _place_jobs(self, result):
@@ -3355,6 +3563,7 @@ class Conductor:
                 self._set_status(ticket["id"], "done")
                 self.say("  ticket %d answered by the %s: %s" % (ticket["id"], known.get("decided_by"), known.get("answer")))
                 self._answered_ask(ticket["id"], known)
+                self._answered_frontier(ticket, known)
 
     def _say_arrival(self, event):
         payload = event.get("payload") or {}
@@ -3903,6 +4112,11 @@ class Conductor:
         except (ValueError, OSError) as failure:
             self.say("  the decision tickets could not be read for the decider: %s" % failure)
             return
+        frontier = [(fields, body, record, stopping.frontier_objective(fields.get("origin"))) for fields, body, record in asked
+                    if stopping.frontier_objective(fields.get("origin")) is not None]
+        asked = [(fields, body, record) for fields, body, record in asked if stopping.frontier_objective(fields.get("origin")) is None]
+        if frontier and not self._decide_frontier(frontier, result):
+            return
         for fields, body, record in asked:
             if self._holds_launches() or self.action != schedule.NORMAL:
                 return
@@ -3922,6 +4136,31 @@ class Conductor:
         if result.decided:
             self._tail()
             self._apply_answers()  # closed now, so what the answered tickets paused is launchable in this wave
+
+    def _decide_frontier(self, entries, result):
+        """The decider on an empty frontier's tickets, in one session (ticket 87); False when the wave decides no more.
+
+        It replans or answers each objective the rule waits on; a park, a drop, or nothing is turned over to the owner.
+        """
+        if self._holds_launches() or self.action != schedule.NORMAL:
+            return False
+        outcome, stopped = self._launch_decider(decider.FRONTIER_SUBJECT, lambda falls_back: decider.decide_frontier(
+            self.project, entries, harness_root=self.harness_root, policy=self.policy, fall_back=falls_back, notify=self.notify))
+        if stopped:
+            return False
+        if outcome is None:
+            return True
+        if isinstance(outcome, tuple):
+            outcome, decided = outcome
+        else:
+            decided = []
+        if outcome.status == "failed":
+            for fields, _, _, _ in entries:
+                self._decider_failed(fields["id"], outcome.why)
+            return True
+        self.say("  %s" % outcome.line)
+        result.decided.extend(decided)
+        return True
 
     def _launch_decider(self, what, decide):
         """One launch of the decider under the wave's rules: `(outcome, stopped)`.

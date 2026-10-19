@@ -7,10 +7,12 @@ foregone conclusion.
 
 ## What is here
 
-- `research/INTAKE.md`, `research/GOAL.json`: the intent, three references, and a quantitative
-  goal (`auroc` up to `0.82` on the held-out split, `stop_when: goal_reached`).
-- `harness.json`: `autonomy: autonomous`, `radius: moderate` -- the settings this project runs
-  under once intake is done, not the interactive settings intake itself might have used.
+- `research/INTAKE.md`, `research/objectives.json`: the intent, three references, and one objective
+  with a measure, a goal (O1: `auroc` up to `0.82` on the held-out split). `GOAL.json` retired with
+  ticket 87, and nothing reads it.
+- `harness.json`: `autonomy: autonomous`, `radius: moderate`, `stop_when: objectives` -- the settings
+  this project runs under once setup is done: the run ends once O1 is closed, which code writes when
+  a kept reading reaches the target (`run_ended` with `goal_reached`).
 - `src/toy/generate.py`: the dataset. Four features uniform on `[-1, 1]`; the label depends on a
   linear part and one pairwise interaction term, `x3 * x4`, scaled by `--signal`; a fixed 80/20
   split into `train` and `held_out` taken off the end of one seeded draw. Stdlib only.
@@ -20,7 +22,7 @@ foregone conclusion.
   (256) this costs nothing, and the oversized configuration's batch size (90000) is enough to ask
   a 24 GB card for more than it has. `--dataloader-workers` sizes the training `DataLoader`. Needs
   torch; run it through `wayline tools install`'s venv, or on a machine that already has it.
-- `src/toy/eval.py`: `GOAL.json`'s `eval_command`. Reads a `toy.train` summary (`WAYLINE_ARTIFACT`,
+- `src/toy/eval.py`: O1's measure's `eval_command`. Reads a `toy.train` summary (`WAYLINE_ARTIFACT`,
   or a path argument) and prints `auroc: <value>`. Stdlib only.
 - `materials/`: the three references' source material -- `paper-a.pdf` and `paper-b.pdf`, two
   short synthetic papers, and `paper-c-source.tar.gz`, an arXiv-style e-print source whose text
@@ -32,12 +34,12 @@ foregone conclusion.
   with no network. Also rebuilt by `make.py`.
 
 None of `research/refs/`, `research/kb/`, `research/jobs/`, or anything else under `research/`
-past `INTAKE.md` and `GOAL.json` is committed: those are what a run writes, and a run that has not
+past `INTAKE.md` and `objectives.json` is committed: those are what a run writes, and a run that has not
 happened yet has none of them.
 
 ## Rebuilding the generated pieces
 
-`research/INTAKE.md`, `research/GOAL.json`, and `harness.json` are hand-authored, the way
+`research/INTAKE.md`, `research/objectives.json`, and `harness.json` are hand-authored, the way
 `fixtures/projects/ten-references/` and `fixtures/projects/m0-live/` are. Everything else that is
 generated -- the two PDFs, the tarball, the three cassettes -- comes from `make.py`:
 
@@ -62,7 +64,7 @@ PYTHONPATH=/tmp/toy/src ~/.wayline/tools/venv/bin/python -m toy.train --seed 1 \
 
 The first two run offline; `absorb` resolves the three references from the recorded responses.
 The third needs a real GPU and the tools venv (`wayline tools install`); on an RTX 3090 it finishes
-in a few seconds and prints a held-out AUROC around 0.85, comfortably past `GOAL.json`'s target
+in a few seconds and prints a held-out AUROC around 0.85, comfortably past O1's target
 of 0.82. Passing `--batch-size 90000` instead is the oversized configuration: it OOMs on the
 interaction-gram allocation with a genuine `torch.OutOfMemoryError: CUDA out of memory`, uncaught,
 which is what the log needs for the conductor's OOM rule (Implementation Decisions 6) to read it
@@ -74,7 +76,7 @@ the very same seed and so the very same data.
 
 An overnight run of this project, with `autonomous` autonomy and `moderate` radius, should show:
 
-1. Intake already done (`INTAKE.md`, `GOAL.json` in place); `absorb --level 0` resolving the three
+1. Intake already done (`INTAKE.md`, `objectives.json` in place); `absorb --level 0` resolving the three
    references, and at least one of them going on to a level-1 read.
 2. A planner graph with at least the baseline experiment (`toy.train` at the default batch size)
    and a follow-up that adds the interaction term explicitly to the ticket's own feature list if
@@ -83,8 +85,9 @@ An overnight run of this project, with `autonomous` autonomy and `moderate` radi
 3. The experiment ticket launching a real GPU job, the fake-jobs path already covered by the
    suite (`tests/test_toy_project.py`'s `RetryLadderTest`) and the live path by
    `docs/verification/m5.md`.
-4. At least one `progress` event with `metric: auroc`, and the run ending with `run_ended` and
-   `reason: goal_reached` once a kept run's AUROC clears `0.82`.
+4. At least one `progress` event with `metric: auroc` and `goal: O1`, code writing O1 reached, and the
+   run ending under its stopping rule with `run_ended` and `reason: goal_reached` once a kept run's
+   AUROC clears `0.82`.
 5. `wayline report` rendering a `REPORT.md` whose goal trajectory section shows that progress and
    whose provenance linter passes.
 

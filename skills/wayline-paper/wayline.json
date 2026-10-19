@@ -5,5 +5,5 @@
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "large",
   "fixtures": ["skill/wayline-paper"],
-  "sha256": "d09f9c36f835d778c8b1ca1b250c32d1389007191a4e36494ede0d60b6247f26"
+  "sha256": "4f5452fbcea84fa7f992b1fc5db54f0537e64a8bcff51b57448b98ffbd49c414"
 }

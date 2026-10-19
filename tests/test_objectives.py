@@ -261,16 +261,25 @@ class StatusTest(ObjectivesTestCase):
         self.assertIn("objectives  none recorded (wayline objective add)", run("status", "--project", str(self.project))[1].splitlines())
 
 
-class GoalJsonStillReadTest(ObjectivesTestCase):
-    """The expand step: a project with both a `GOAL.json` and objectives behaves as it did on its goal."""
+class GoalJsonRetiredTest(ObjectivesTestCase):
+    """Ticket 87, the contract step: nothing reads `GOAL.json`, and a project holding one runs as if it were absent."""
 
     def setUp(self):
         super().setUp()
         self.project = self.ledger_fixture()
-        add_objective(self.project, "Do interaction terms help?")
+        (self.project / "research" / "GOAL.json").write_text(json.dumps({"metric": "loss", "direction": "down", "target": 0.1,
+                                                                         "stop_when": "goal_reached"}), encoding="utf-8")
 
-    def test_the_goal_json_readers_still_read_it(self):
+    def test_nothing_reads_it(self):
+        import pathlib
         from wayline import goal
-        self.assertEqual(goal.read_goal(Ledger(self.project))["metric"], "auroc")
-        self.assertEqual(status_view(self.project)["goal"]["metric"], "auroc")
-        self.assertEqual(status_view(self.project)["objectives"][0]["id"], "O1")
+        self.assertFalse(hasattr(goal, "read_goal"))
+        view = status_view(self.project)
+        self.assertNotIn("goal", view)
+        self.assertEqual([(objective["id"], objective["metric"]) for objective in view["objectives"]], [("O1", "auroc")])
+        package = pathlib.Path(goal.__file__).parent
+        readers = [path.name for path in package.glob("*.py") if "GOAL.json\")" in path.read_text(encoding="utf-8")
+                   or "GOAL_JSON" in path.read_text(encoding="utf-8")]
+        self.assertEqual(readers, [])
+        with self.assertRaises(FileNotFoundError):
+            load_schema("goal")

@@ -13,7 +13,7 @@ from wayline.project import check_policy, policy_problems
 
 # The schemas this ticket ships; later tickets add the rest of Implementation Decisions 2's list.
 SHIPPED = ["journal_event", "ticket", "result", "harness", "policy", "job", "manifest", "decision",
-           "dossier", "registry_entry", "l1_record", "code_dossier", "verdict", "guidelines", "inventory", "goal",
+           "dossier", "registry_entry", "l1_record", "code_dossier", "verdict", "guidelines", "inventory",
            "claim_classes", "report_prose", "figure_request", "figure_result",
            "dossier_entry", "dossier_entry_list", "dossier_sections", "absorb_result", "fixture", "fixture_verdict",
            "dedup_verdict", "spec", "consultant_answer", "plan", "position", "change", "change_list",

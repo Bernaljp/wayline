@@ -13,7 +13,7 @@ linter every claim sentence has to satisfy.
 What it will do, from Implementation Decisions 11 and 13, so that nothing here has to be
 re-derived:
 
-- Draft from the ledger, never from memory: `findings.jsonl`, `manifest.json`, `GOAL.json`,
+- Draft from the ledger, never from memory: `findings.jsonl`, `manifest.json`, `OBJECTIVES.md`,
   `DECISIONS.md`, the dossiers, and the figures.
 - End every claim sentence with a provenance tag, `{res:<run-id>/<artifact>#<locator>}` for a result
   and `{ref:<slug>#<locator>}` for a reference. A negative result is a claim and needs one too.

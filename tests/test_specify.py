@@ -261,7 +261,7 @@ class SpecifyCase(ProjectTestCase):
         shutil.copy(INPUT / "research" / "POSITION.md", research / "POSITION.md")
         shutil.copytree(INPUT / "research" / "refs", research / "refs", dirs_exist_ok=True)
         self.ledger = Ledger(self.project)
-        self.ledger.write_json("GOAL.json", GOAL, schema="goal")
+        self.ledger.write_json("GOAL.json", GOAL)  # an old project's goal file, which nothing reads (ticket 87)
         self.ledger.write_markdown("kb/query_pack.md", "# Query pack\n\n- paper-a extends paper-b\n")
         open_objective(self.project)
         project.set_autonomy(self.project, self.autonomy)

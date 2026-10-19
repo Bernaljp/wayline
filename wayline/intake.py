@@ -81,7 +81,8 @@ GOAL_ELSEWHERE = ("intake takes information only, so it records no goal (Impleme
                   "objective with a measure, recorded with wayline objective add \"<question>\" --measure <file> "
                   "--sample <artifact>")
 LIST_FIELDS = ("references", "data", "code", "constraints", "materials", "human_only")
-BUDGET_FIELDS = ("gpu_hours", "wallclock_hours", "usage_windows")
+# The budgets code reads (decision 17; ticket 87): spending one ends the run. `usage_windows` went with GOAL.json.
+BUDGET_FIELDS = ("gpu_hours", "wallclock_hours")
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ""}
 TEXT_MAX_BYTES = 1_000_000
@@ -629,7 +630,6 @@ def _budgets(budgets):
     return "\n".join([
         "- GPU hours: %s" % stated(budgets.get("gpu_hours")),
         "- Wall clock: %s" % stated(budgets.get("wallclock_hours"), " hours"),
-        "- Usage windows: %s" % stated(budgets.get("usage_windows")),
     ])
 
 
@@ -797,9 +797,8 @@ def intake_command(args, stdin=None):
                         help="the fallback consent: whether Fable work falls back to Opus while Fable's weekly window is spent")
     parser.add_argument("--ladder-changes", choices=list(LADDER_CONSENTS),
                         help="the ladder consent (`ask` recommended): whether an autonomous run may change the rung ladder on its own")
-    parser.add_argument("--gpu-hours", type=float)
-    parser.add_argument("--wallclock-hours", type=float)
-    parser.add_argument("--usage-windows", type=int)
+    parser.add_argument("--gpu-hours", type=float, help="the GPU-hour budget: each job's hours times the GPUs it held; spent, it ends the run")
+    parser.add_argument("--wallclock-hours", type=float, help="the wall-clock budget, counted from the end of setup; spent, it ends the run")
     parser.add_argument("--human-only", action="append", default=[], metavar="CLASS[: WHAT IT COVERS]",
                         help="a decision class the decider never resolves; objective and data always are")
     parser.add_argument("--from", dest="spec", metavar="FILE", help="the whole intake as one JSON spec, or - for stdin")
@@ -854,8 +853,8 @@ def _flag_fields(options):
                        ("constraints", options.constraint), ("human_only", options.human_only)):
         if value:
             fields[key] = list(value)
-    budgets = {key: value for key, value in (("gpu_hours", options.gpu_hours), ("wallclock_hours", options.wallclock_hours),
-                                              ("usage_windows", options.usage_windows)) if value is not None}
+    budgets = {key: value for key, value in (("gpu_hours", options.gpu_hours), ("wallclock_hours", options.wallclock_hours))
+               if value is not None}
     if budgets:
         fields["budgets"] = {key: (int(value) if isinstance(value, float) and value.is_integer() else value) for key, value in budgets.items()}
     return fields

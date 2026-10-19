@@ -98,7 +98,7 @@ TICKETS = [
            "research/findings.md#ticket-1", blocking="subgraph", human_only=True),
     ticket(7, "Convert the second reference's PDF", "dossier", 2, "needs_human", "reader", "research/INTAKE.md#references",
            touches=["research/refs/paper-b/"]),
-    ticket(8, "Which held-out split does the goal read?", "decision", 1, "done", "decider", "research/GOAL.json",
+    ticket(8, "Which held-out split does the goal read?", "decision", 1, "done", "decider", "research/objectives.json",
            blocking="subgraph", human_only=False),
     ticket(9, "Probe the calibration of the interaction model", "analysis", 2, "parked", "analyst", CLAIM, blocked_by=[3],
            touches=["results/calibration/"], proposed_by="worker:3"),
@@ -136,10 +136,14 @@ def main():
     def event(name, payload, ticket=None, session_id=None, job=None, minutes=1):
         book.append_event(name, payload, ticket=ticket, session_id=session_id, job=job, ts=clock.tick(minutes))
 
-    book.write_json("GOAL.json", {
-        "metric": "auroc", "direction": "up", "target": 0.85, "held_out_split": "split_b",
-        "eval_command": "python -m toy.eval --split held_out", "stop_when": "goal_reached",
-    })
+    # The goal is an objective with a measure (decision 17; ticket 87), which code wrote reached from the kept 0.861.
+    book.write_json("objectives.json", {"objectives": [{
+        "id": "O1", "text": "Do feature interaction terms raise the held-out AUROC on the synthetic set?",
+        "measure": {"metric": "auroc", "direction": "up", "target": 0.85, "held_out_split": "split_b",
+                    "eval_command": "python -m toy.eval --split held_out", "baseline": {"value": None, "source": None},
+                    "dataset_or_split": None, "min_seeds": None},
+        "status": "answered", "answer": "reached: the best kept auroc is 0.861 against the target 0.85 (up), measured by code on t3-a1",
+        "evidence": [], "reframed_as": None}]}, schema="objectives")
     book.write_markdown("INTAKE.md", "# Intake\n\nFind whether adding feature interaction terms improves held-out AUROC on the synthetic set.\n")
     for fields in TICKETS:
         body = "## Demo\n\n%s\n" % (fields["demo"] or fields["title"])
@@ -238,7 +242,7 @@ def main():
     worked(2, "experimenter", "opus", "high", 22, 12, status="running")
     job(2, "j-0001", 2700)
     manifest("results/baseline/")
-    event("progress", {"metric": "auroc", "value": 0.812, "ticket": 2, "run_id": "t2-a1", "kept": True}, ticket=2)
+    event("progress", {"metric": "auroc", "value": 0.812, "ticket": 2, "run_id": "t2-a1", "kept": True, "goal": "O1"}, ticket=2)
     closed(2, "claude-opus-5", "diff", fallback_from="fable")
 
     event("paused", {"resets_at": "2026-09-12T02:00:00Z", "window": "five_hour", "utilization": 0.92})
@@ -249,7 +253,7 @@ def main():
     worked(3, "experimenter", "fable", "max", 41, 25, status="running")
     job(3, "j-0002", 3000)
     manifest("results/interactions/")
-    event("progress", {"metric": "auroc", "value": 0.861, "ticket": 3, "run_id": "t3-a1", "kept": True}, ticket=3)
+    event("progress", {"metric": "auroc", "value": 0.861, "ticket": 3, "run_id": "t3-a1", "kept": True, "goal": "O1"}, ticket=3)
     event("proposal_admitted", {"id": "p-0001", "from": 3, "kind": "figure", "ticket": 5}, ticket=3)
     event("proposal_parked", {"id": "p-0002", "from": 3, "kind": "analysis", "reason": "cap"}, ticket=3)
     event("proposal_parked", {"id": "p-0003", "from": 4, "kind": "experiment", "reason": "radius"}, ticket=4)
@@ -258,8 +262,8 @@ def main():
     worked(4, "experimenter", "opus", "high", 19, 10, status="running")
     job(4, "j-0003", 2400)
     manifest("results/depth/")
-    event("progress", {"metric": "auroc", "value": 0.815, "ticket": 4, "run_id": "t4-a1", "kept": False}, ticket=4)
-    event("discarded", {"ticket": 4, "metric": "auroc", "best": 0.861, "sd": 0.011, "seeds": 3}, ticket=4)
+    event("progress", {"metric": "auroc", "value": 0.815, "ticket": 4, "run_id": "t4-a1", "kept": False, "goal": "O1"}, ticket=4)
+    event("discarded", {"ticket": 4, "metric": "auroc", "best": 0.861, "sd": 0.011, "seeds": 3, "goal": "O1"}, ticket=4)
     closed(4)
 
     worked(5, "figure-designer", "sonnet", "medium", 9, 6)

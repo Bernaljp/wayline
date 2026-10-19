@@ -104,22 +104,31 @@ class StatusViewTest(ProjectTestCase):
         self.assertEqual(window["window"], "seven_day")
         self.assertEqual(window["resets_at"], "2026-09-11T18:00:00Z")
 
-    def test_the_goal_carries_the_target_and_the_last_kept_reading(self):
-        goal = self.view["goal"]
-        self.assertEqual(goal["metric"], "auroc")
-        self.assertEqual(goal["direction"], "up")
-        self.assertEqual(goal["target"], 0.9)
-        self.assertEqual(goal["value"], 0.812)
-        self.assertEqual(goal["kept"], 1)
+    def test_a_goal_carries_its_target_and_its_best_kept_reading(self):
+        """Ticket 87: the goal is an objective with a measure, its best kept value recomputed from its own `progress`."""
+        goal = self.view["objectives"][0]
+        self.assertEqual((goal["id"], goal["metric"], goal["direction"], goal["target"]), ("O1", "auroc", "up", 0.9))
+        self.assertEqual(goal["best"], 0.812)
         self.assertFalse(goal["reached"])
+        self.assertNotIn("goal", self.view, "GOAL.json is read by nobody")
 
     def test_a_reading_past_the_target_reaches_the_goal(self):
-        Ledger(self.project).append_event("progress", {"metric": "auroc", "value": 0.94, "ticket": 3, "run_id": "t3-a2", "kept": True})
-        self.assertTrue(status_view(self.project)["goal"]["reached"])
+        Ledger(self.project).append_event("progress", {"metric": "auroc", "value": 0.94, "ticket": 3, "run_id": "t3-a2", "kept": True,
+                                                       "goal": "O1"})
+        self.assertTrue(status_view(self.project)["objectives"][0]["reached"])
 
-    def test_a_project_without_a_goal_has_none(self):
-        (self.project / "research" / "GOAL.json").unlink()
-        self.assertIsNone(status_view(self.project)["goal"])
+    def test_a_reading_of_no_goal_is_not_this_goal_s(self):
+        Ledger(self.project).append_event("progress", {"metric": "auroc", "value": 0.94, "ticket": 3, "run_id": "t3-a2", "kept": True})
+        self.assertEqual(status_view(self.project)["objectives"][0]["best"], 0.812)
+
+    def test_a_project_without_objectives_has_none(self):
+        (self.project / "research" / "objectives.json").unlink()
+        self.assertEqual(status_view(self.project)["objectives"], [])
+
+    def test_the_stopping_rule_and_the_budgets(self):
+        stopping = self.view["stopping"]
+        self.assertEqual((stopping["rule"], stopping["spent"]), ("objectives", []))
+        self.assertEqual(stopping["budgets"]["gpu_hours"]["limit"], None)
 
     def test_the_last_ten_events_are_the_tail_of_the_journal(self):
         events, _ = Ledger(self.project).read_events()
@@ -218,7 +227,7 @@ class RenderStatusTest(ProjectTestCase):
 
     def test_the_text_names_every_section(self):
         for heading in ("project", "harness", "frontier (2)", "running tickets (1)", "running jobs (1)",
-                        "open decision tickets (1)", "tickets needing a person (1)", "window", "goal", "tickets",
+                        "open decision tickets (1)", "tickets needing a person (1)", "window", "objectives", "stopping", "tickets",
                         "last 10 events"):
             self.assertIn(heading, self.text)
 
@@ -238,9 +247,10 @@ class RenderStatusTest(ProjectTestCase):
         self.assertIn("Plot the learning curves", self.text)
         self.assertIn("Which split is held out?", self.text)
 
-    def test_the_text_carries_the_window_and_the_goal(self):
+    def test_the_text_carries_the_window_the_goal_and_the_stopping_rule(self):
         self.assertIn("five_hour 0.41", self.text)
-        self.assertIn("auroc 0.812 of 0.9 (up)", self.text)
+        self.assertIn("(goal: `auroc` up to 0.9, best kept 0.812)", self.text)
+        self.assertIn("stopping  objectives (the run ends when no objective is open); budgets: wall clock no limit", self.text)
 
     def test_the_text_carries_the_running_job(self):
         self.assertIn("j-0001", self.text)

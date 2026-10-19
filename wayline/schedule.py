@@ -173,8 +173,8 @@ def objective_class(served, pursued, waited_on=None):
 
     0 when it serves an objective the stopping rule waits on (`waited_on`), 1 when it serves another
     objective that is open (`pursued`), 2 when it serves none that is open. `waited_on` None is the
-    rule's default, `objectives`, which waits on every open objective; until ticket 87 lands
-    `stop_when` that is the only rule there is, so class 1 appears only once a rule names a list.
+    rule's default, `objectives`, which waits on every open objective; the conductor passes the open
+    objectives `harness.json`'s `stop_when` waits on (ticket 87), so class 1 appears under a list or `frontier`.
     """
     pursued = set(pursued)
     waited = pursued if waited_on is None else set(waited_on) & pursued

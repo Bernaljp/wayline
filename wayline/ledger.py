@@ -171,6 +171,7 @@ K_TEXT = "text"
 K_PROVENANCE = "provenance"
 K_NEGATIVE = "negative"
 K_METRIC = "metric"
+K_GOAL = "goal"  # the goal (an objective id) a `progress` or `discarded` judged (decision 17; ticket 87)
 K_VALUE = "value"
 K_RUN_ID = "run_id"
 K_KEPT = "kept"
@@ -273,8 +274,8 @@ EVENTS = {
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
     VERDICT: (K_SUBJECT_KIND, K_SUBJECT, K_VERDICT_TYPE, K_PASS, K_SESSION_ID, K_MODEL, K_FINDINGS, K_RUNG, K_FALLBACK_FROM, K_MODEL_RAN),
     FINDING: (K_ID, K_TICKET, K_TEXT, K_PROVENANCE, K_NEGATIVE, K_HEADING, K_REPLACES, K_OBJECTIVES),
-    PROGRESS: (K_METRIC, K_VALUE, K_TICKET, K_RUN_ID, K_KEPT),
-    DISCARDED: (K_TICKET, K_METRIC, K_BEST, K_SD, K_SEEDS),
+    PROGRESS: (K_METRIC, K_VALUE, K_TICKET, K_RUN_ID, K_KEPT, K_GOAL),
+    DISCARDED: (K_TICKET, K_METRIC, K_BEST, K_SD, K_SEEDS, K_GOAL),
     PROPOSAL_ADMITTED: (K_ID, K_FROM, K_KIND, K_TICKET),
     PROPOSAL_PARKED: (K_ID, K_FROM, K_KIND, K_REASON),
     DECISION_OPENED: (K_TICKET, K_BLOCKING, K_HUMAN_ONLY),
@@ -312,7 +313,8 @@ EVENTS = {
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
 PAYLOAD_ENUMS = {
-    (RUN_ENDED, K_REASON): ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched"),
+    (RUN_ENDED, K_REASON): ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched", "objectives_closed",
+                            "budget_spent"),
     (PACING, K_ACTION): ("normal", "cheap_only", "stop"),
     (PACING, K_FABLE_ACTION): ("normal", "cheap_only", "stop"),
     (PAUSED, K_WINDOW): ("five_hour", "seven_day", "unknown"),
@@ -331,7 +333,8 @@ PAYLOAD_ENUMS = {
     (JOB_RETRIED, K_OOM): ("host", "gpu"),
     (STALL, K_ACTION): ("replan", "stop"),
     (NOTIFIED, K_CHANNEL): ("notify-send", "hermes", "none"),
-    (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes", "environment"),
+    (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes", "environment",
+                         "stop_when", "budget"),
     # `retrospective` is the one code files after a run ended (ticket 45), read by the evolver like the owner's.
     # `figure` is the figure role's, carrying the traps a figure result would promote into the plot index (ticket 50).
     (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective", "figure"),

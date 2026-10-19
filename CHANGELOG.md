@@ -28,6 +28,27 @@ refuses a project made before it, which keeps its old tag or starts again on the
 
 ## Unreleased
 
+- The stopping rule, the budgets, and keep-if-better per goal; `GOAL.json` retires (ticket 87; Implementation
+  Decision 17). `stop_when` in `harness.json` is `objectives` (the default: the run ends when no objective is open),
+  a list of objective ids (when those are closed), or `frontier` (when no work is left); the conductor reads it every
+  wave and journals `run_ended` with `objectives_closed`, or `goal_reached` when every objective it closed was a goal
+  that reached its target. `budgets.wallclock_hours` (counted from the end of setup) and `budgets.gpu_hours` (each
+  job's hours times the GPUs it held) are now read by code: spending one ends the run `budget_spent`, and the tick
+  relaunches no run its rule or a spent budget ended. `wayline switch --stop-when <rule>` and `wayline switch --budget
+  <name>=<hours>` write `harness.json` and journal `control`; after setup, changing the rule or raising a budget is on
+  the irreversible list, and the decider is refused both. Keep-if-better runs per goal: `progress` and `discarded`
+  carry `goal`, each goal's best kept value comes from its own events from its baseline, its metric, direction,
+  split, and command from its measure in `objectives.json`, and a measure's own `min_seeds` overrides the policy's
+  (at 1, any strict gain is kept); code writes a goal reached (`objective` answered, `by: code`). When the frontier
+  empties while the rule waits on open objectives, one decision ticket per objective offers replan for it, answer it
+  as it stands, park it, or drop it (a replan recommended only after progress since the last one); the owner answers
+  under `interactive` and `checkpoints` while the run ends `frontier_empty`, the decider under `autonomous` in one
+  session, replan or answer only. Under `stop_when: frontier` none opens and the end notice lists the open
+  objectives. Nothing reads `GOAL.json` any more: the `goal` schema is gone, `harness.json.budgets` loses
+  `usage_windows` (and `wayline intake` its `--usage-windows`), `wayline status` shows each goal's best kept value
+  and the rule and budgets in its place, and the toy project's goal is O1 in `research/objectives.json` with
+  `stop_when` in `harness.json`.
+
 - Consulting one document (ticket 94; Implementation Decision 17). `wayline consult D1 "<question>"` takes a
   document id as well as a dossier slug. The document's `text.md` is cut into chunks of whole blocks under
   `policy.absorb.chunk_max_chars` (`documents/<id>/chunks/`, listed in `chunks.json`, rebuilt when the text

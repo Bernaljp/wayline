@@ -1,8 +1,0 @@
-{
-  "metric": "auroc",
-  "direction": "up",
-  "target": 0.85,
-  "held_out_split": "split_b",
-  "eval_command": "python -m toy.eval --split held_out",
-  "stop_when": "goal_reached"
-}

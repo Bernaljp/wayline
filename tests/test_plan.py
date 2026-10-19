@@ -247,7 +247,7 @@ class PlanCase(ProjectTestCase):
         shutil.copytree(INPUT / "research" / "refs", research / "refs", dirs_exist_ok=True)
         shutil.copytree(INPUT / "context" / "toy", self.project / "toy")
         self.ledger = Ledger(self.project)
-        self.ledger.write_json("GOAL.json", GOAL, schema="goal")
+        self.ledger.write_json("GOAL.json", GOAL)  # an old project's goal file, which nothing reads (ticket 87)
         self.ledger.write_markdown("kb/query_pack.md", "# Query pack\n\n- paper-a extends paper-b\n")
         self.confirm_spec()
         open_objective(self.project)
@@ -331,12 +331,13 @@ class CutTest(PlanCase):
         self.assertEqual(request.allowed_tools, ["Read", "Glob", "Grep"])
         self.assertEqual(request.cwd, self.project)
         for text in ("- the cut: the first cut", "## research/SPEC.md", "# Spec: Do pairwise interaction terms", "### E1 (claims: C1)",
-                     "## research/GOAL.json", "## research/kb/query_pack.md", "paper-a extends paper-b",
+                     "## research/OBJECTIVES.md", "## research/kb/query_pack.md", "paper-a extends paper-b",
                      "# The registry", "`coder` for code, harness tickets", "`documentarian` for docs tickets", "`experimenter` for experiment tickets",
                      "no role covers `lit`, `figure`, `review` tickets", "# The difficulty rubric", "- 3: a new code path",
                      "# What the journal says", "# The paths you may open", "## Plan", "# The plan", "adds_public_api"):
             self.assertIn(text, request.prompt)
         self.assertNotIn("## Specify", request.prompt)
+        self.assertNotIn("## research/GOAL.json", request.prompt, "the goals are the objectives' measures (ticket 87)")
         self.assertNotIn("# The graph as it stands", request.prompt, "a first cut has no graph to show")
         self.assertTrue((self.project / "research" / "registry.json").is_file(), "the registry is rebuilt at the launch")
 

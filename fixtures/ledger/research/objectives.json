@@ -1,0 +1,25 @@
+{
+  "objectives": [
+    {
+      "id": "O1",
+      "text": "Do pairwise interaction terms raise the held-out AUROC?",
+      "measure": {
+        "metric": "auroc",
+        "direction": "up",
+        "target": 0.9,
+        "held_out_split": "split_b",
+        "eval_command": "python -m toy.eval --split held_out",
+        "baseline": {
+          "value": null,
+          "source": null
+        },
+        "dataset_or_split": null,
+        "min_seeds": null
+      },
+      "status": "open",
+      "answer": null,
+      "evidence": [],
+      "reframed_as": null
+    }
+  ]
+}

@@ -28,7 +28,7 @@
 {"ts":"2026-09-11T22:11:00.000Z","event":"manifest","ticket":2,"session_id":null,"job":null,"payload":{"path":"results/baseline/seed-2/summary.json","sha256":"69014fbec0012e7588a490a5580dffca79561106b2e8df648e77c7cb32aa1b7c","size":34,"job":"j-0001","run_id":"t2-a1"}}
 {"ts":"2026-09-11T22:12:00.000Z","event":"manifest","ticket":2,"session_id":null,"job":null,"payload":{"path":"results/baseline/seed-3/summary.json","sha256":"d3f60e9f5f2e138fe8aacb98fe71930814fd0fcc428d30f52f7fc026f1af0b47","size":34,"job":"j-0001","run_id":"t2-a1"}}
 {"ts":"2026-09-11T22:13:00.000Z","event":"manifest","ticket":2,"session_id":null,"job":null,"payload":{"path":"results/baseline/summary.json","sha256":"0dfa123c51bc0160a1c0c79153f60d0d860bc80b90cd1152c85cc8d9da38109e","size":61,"job":"j-0001","run_id":"t2-a1"}}
-{"ts":"2026-09-11T22:14:00.000Z","event":"progress","ticket":2,"session_id":null,"job":null,"payload":{"metric":"auroc","value":0.812,"ticket":2,"run_id":"t2-a1","kept":true}}
+{"ts":"2026-09-11T22:14:00.000Z","event":"progress","ticket":2,"session_id":null,"job":null,"payload":{"metric":"auroc","value":0.812,"ticket":2,"run_id":"t2-a1","kept":true,"goal":"O1"}}
 {"ts":"2026-09-11T22:15:00.000Z","event":"acceptance","ticket":2,"session_id":null,"job":null,"payload":{"ticket":2,"attempt":1,"where":"main","pass":true,"results":[{"command":"python -m unittest","exit_code":0}]}}
 {"ts":"2026-09-11T22:16:00.000Z","event":"integrated","ticket":2,"session_id":null,"job":null,"payload":{"ticket":2,"commit":"4c2f9a2","resolved_by":"none"}}
 {"ts":"2026-09-11T22:17:00.000Z","event":"ticket_done","ticket":2,"session_id":null,"job":null,"payload":{"ticket":2}}
@@ -45,7 +45,7 @@
 {"ts":"2026-09-11T23:56:00.000Z","event":"job_launched","ticket":3,"session_id":null,"job":"j-0002","payload":{"job":"j-0002","ticket":3,"unit":"wayline-job-j-0002.service","gpu_uuids":["GPU-2f9c1b7e-0000-0000-0000-000000000001"],"cores":8,"ram_gb":32,"attempt":1}}
 {"ts":"2026-09-12T00:46:00.000Z","event":"job_finished","ticket":3,"session_id":null,"job":"j-0002","payload":{"job":"j-0002","exit_code":0,"seconds":3000,"outputs_ok":true}}
 {"ts":"2026-09-12T00:47:00.000Z","event":"manifest","ticket":3,"session_id":null,"job":null,"payload":{"path":"results/interactions/summary.json","sha256":"999374b6968623322eec9cb65b4c5b7e372cc35b670fcb4b27c4736828883f09","size":61,"job":"j-0002","run_id":"t3-a1"}}
-{"ts":"2026-09-12T00:48:00.000Z","event":"progress","ticket":3,"session_id":null,"job":null,"payload":{"metric":"auroc","value":0.861,"ticket":3,"run_id":"t3-a1","kept":true}}
+{"ts":"2026-09-12T00:48:00.000Z","event":"progress","ticket":3,"session_id":null,"job":null,"payload":{"metric":"auroc","value":0.861,"ticket":3,"run_id":"t3-a1","kept":true,"goal":"O1"}}
 {"ts":"2026-09-12T00:49:00.000Z","event":"proposal_admitted","ticket":3,"session_id":null,"job":null,"payload":{"id":"p-0001","from":3,"kind":"figure","ticket":5}}
 {"ts":"2026-09-12T00:50:00.000Z","event":"proposal_parked","ticket":3,"session_id":null,"job":null,"payload":{"id":"p-0002","from":3,"kind":"analysis","reason":"cap"}}
 {"ts":"2026-09-12T00:51:00.000Z","event":"proposal_parked","ticket":4,"session_id":null,"job":null,"payload":{"id":"p-0003","from":4,"kind":"experiment","reason":"radius"}}
@@ -61,8 +61,8 @@
 {"ts":"2026-09-12T01:10:00.000Z","event":"job_launched","ticket":4,"session_id":null,"job":"j-0003","payload":{"job":"j-0003","ticket":4,"unit":"wayline-job-j-0003.service","gpu_uuids":["GPU-2f9c1b7e-0000-0000-0000-000000000001"],"cores":8,"ram_gb":32,"attempt":1}}
 {"ts":"2026-09-12T01:50:00.000Z","event":"job_finished","ticket":4,"session_id":null,"job":"j-0003","payload":{"job":"j-0003","exit_code":0,"seconds":2400,"outputs_ok":true}}
 {"ts":"2026-09-12T01:51:00.000Z","event":"manifest","ticket":4,"session_id":null,"job":null,"payload":{"path":"results/depth/summary.json","sha256":"dcc3f32ab0a8880d689bc6637a5406145667eac0ea3d3432d867c7a90808d0eb","size":61,"job":"j-0003","run_id":"t4-a1"}}
-{"ts":"2026-09-12T01:52:00.000Z","event":"progress","ticket":4,"session_id":null,"job":null,"payload":{"metric":"auroc","value":0.815,"ticket":4,"run_id":"t4-a1","kept":false}}
-{"ts":"2026-09-12T01:53:00.000Z","event":"discarded","ticket":4,"session_id":null,"job":null,"payload":{"ticket":4,"metric":"auroc","best":0.861,"sd":0.011,"seeds":3}}
+{"ts":"2026-09-12T01:52:00.000Z","event":"progress","ticket":4,"session_id":null,"job":null,"payload":{"metric":"auroc","value":0.815,"ticket":4,"run_id":"t4-a1","kept":false,"goal":"O1"}}
+{"ts":"2026-09-12T01:53:00.000Z","event":"discarded","ticket":4,"session_id":null,"job":null,"payload":{"ticket":4,"metric":"auroc","best":0.861,"sd":0.011,"seeds":3,"goal":"O1"}}
 {"ts":"2026-09-12T01:54:00.000Z","event":"acceptance","ticket":4,"session_id":null,"job":null,"payload":{"ticket":4,"attempt":1,"where":"main","pass":true,"results":[{"command":"python -m unittest","exit_code":0}]}}
 {"ts":"2026-09-12T01:55:00.000Z","event":"integrated","ticket":4,"session_id":null,"job":null,"payload":{"ticket":4,"commit":"4c2f9a4","resolved_by":"none"}}
 {"ts":"2026-09-12T01:56:00.000Z","event":"ticket_done","ticket":4,"session_id":null,"job":null,"payload":{"ticket":4}}
