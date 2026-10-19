@@ -52,7 +52,7 @@ import re
 import sys
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, decider, decisions, gates, grill, objectives, pacing, worker
+from wayline import HARNESS_ROOT, decider, decisions, gates, grill, objectives, pacing, sections, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, PHASE, Ledger, LedgerError
@@ -72,6 +72,7 @@ PLANNER = "planner"
 SPEC_SCHEMA = "spec"
 SPEC_MD = "SPEC.md"
 SPEC_JSON = "spec.json"
+GAP_BY = "step:specify"             # who wrote the Introduction's passages on the gap (decision 17)
 SUBJECT = "research/" + SPEC_MD
 SESSIONS = "sessions/specify"      # research/sessions/specify/<n>
 PLANNER_BUDGET = "large"           # policy.budget: the planner is a large-budget role (policy.roles, opus xhigh)
@@ -519,10 +520,25 @@ def advance(project, events=None):
         events, _ = ledger.read_events()
     if spec_state(project, events)["state"] != "confirmed":
         return False
+    seed_gap(ledger)
     now = current_phase(events)
     if now is not None and PHASES.index(now) >= PHASES.index(PLAN_PHASE):
         return False
     return move_phase(ledger, events, PLAN_PHASE)
+
+
+def seed_gap(project_or_ledger):
+    """Write the confirmed spec's `gap` passages into the Introduction (decision 17), each once, by the specify step.
+
+    Returns the passages written; a spec without `gap`, or one whose passages were written already, writes none.
+    """
+    ledger = project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
+    try:
+        draft = _read_json(ledger, SPEC_JSON)
+    except (OSError, ValueError):
+        return []
+    items = [(item.get("heading"), item.get("text")) for item in (draft or {}).get("gap") or [] if isinstance(item, dict)]
+    return sections.seed_passages(ledger, "introduction", items, by=GAP_BY) if items else []
 
 
 # --- the prompt -----------------------------------------------------------------------------------------

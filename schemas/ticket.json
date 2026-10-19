@@ -40,6 +40,7 @@
     },
     "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the objectives (research/objectives.json) the ticket serves, open when it was cut; empty or absent for one no objective asked for"},
     "goal": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "the objective with a measure whose metric the ticket reports; the metric and direction are read from that measure (Implementation Decision 17, replacing goal_metric)"},
+    "sections": {"type": "array", "items": {"type": "string", "enum": ["introduction", "results", "discussion", "methods", "references"]}, "description": "the sections of the paper the ticket adds to, set by its kind (code and experiment: methods; analysis: methods and results; lit: introduction; writing: what it writes); a Type-A check at acceptance sends the worker back when one got no passage, or Results no finding (decision 17; ticket 86). Sections never enter the touch set"},
     "budget": {
       "type": ["object", "null"],
       "additionalProperties": false,

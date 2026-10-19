@@ -18,7 +18,7 @@ from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase, open_objective
-from wayline import cli, dashboard, decider, gates, grill, position, project, worker
+from wayline import cli, dashboard, decider, gates, grill, position, project, sections, worker
 from wayline.fetch import recording_fetcher
 from wayline.ledger import Ledger
 from wayline.scout import Scout
@@ -361,6 +361,22 @@ class MemoTest(PositionCase):
         self.assertIn("Nearest first, none farther than the radius `exploratory`.", text)
         self.assertIn("1. **The comparison as stated** (strict):", text)
         self.assertIn("3. **Where the products stop helping** (exploratory):", text)
+
+    def test_the_introduction_is_seeded_from_the_verified_prior_work_once(self):
+        """Ticket 86: code seeds the Introduction with one passage per verified row, by the position step, never twice."""
+        self.take(written(memo()))
+        record = self.record()
+        seeded = [item for item in sections.read_passages(self.project) if item["section"] == "introduction"]
+        self.assertEqual([item["by"] for item in seeded], ["step:position"] * len(record["prior_work"]))
+        self.assertEqual({item["heading"] for item in seeded}, {"Prior work"})
+        first = seeded[0]
+        self.assertIn("*Interaction features for tabular classification* (2021) reports: Pairwise products", first["text"])
+        self.assertTrue(first["text"].endswith("{ref:paper-a#%s}" % position.ref_locator(record["prior_work"][0])), first["text"])
+        self.assertNotIn("paper-d", " ".join(item["text"] for item in seeded), "a dropped row seeds nothing")
+        introduction = (self.project / "research" / "sections" / "introduction.md").read_text(encoding="utf-8")
+        self.assertIn("## Prior work", introduction)
+        position.write_memo(self.project, record["memo"], scout=self.scout)
+        self.assertEqual(len([item for item in sections.read_passages(self.project) if item["section"] == "introduction"]), len(seeded))
 
     def test_lists_and_paragraphs_in_prose_are_kept(self):
         value = memo()

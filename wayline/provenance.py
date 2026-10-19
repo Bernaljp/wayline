@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, pacing, tickets, worker
+from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, pacing, sections, tickets, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, now_ts
@@ -191,13 +191,15 @@ def _cited(finding):
     return list(provenance or [])
 
 
-def add_finding(project_or_ledger, text, provenance, ticket, negative=False):
-    """Append one finding to `findings.jsonl`, journal `finding`, and re-render `findings.md`.
+def add_finding(project_or_ledger, text, provenance, ticket, negative=False, heading=None, replaces=None, objectives=()):
+    """Append one finding to `findings.jsonl`, journal `finding`, and re-render `findings.md` and the Results section.
 
     `provenance` is one locator or a list of them, each `<manifested path>#<locator>`. Refused
     (raises `ProvenanceError`, without writing anything) when a locator carries no `#<locator>`
     half or its artifact half is not a path in `manifest.json`; register the artifact first. The
     caller (the conductor, for a worker's finding) journals the refusal on the ticket itself.
+    A finding is a Results passage (decision 17): `heading` is the one it stands under, `replaces`
+    the finding a scope-down narrows (refused when no finding has that id), and `objectives` its ticket's.
     """
     book = _ledger(project_or_ledger)
     locators = _locators(provenance)
@@ -210,20 +212,17 @@ def add_finding(project_or_ledger, text, provenance, ticket, negative=False):
             if artifact not in manifested:
                 raise ProvenanceError("provenance %r cites %r, which is not in manifest.json; register_artifact it first" % (locator, artifact))
         findings = read_findings(book)
-        finding = {
+        finding = sections.file_finding(book, {
             "id": _next_finding_id(findings),
             "ticket": ticket,
             "text": text,
             "provenance": locators,
             "negative": bool(negative),
+            "heading": heading,
+            "replaces": replaces,
+            "objectives": list(objectives or []),
             "ts": now_ts(),
-        }
-        book.append_line(FINDINGS, json.dumps(finding, ensure_ascii=False))
-        book.append_event(
-            "finding",
-            {"id": finding["id"], "ticket": ticket, "text": text, "provenance": locators, "negative": finding["negative"]},
-            ticket=ticket,
-        )
+        })
         render_findings(book)
     return finding
 
