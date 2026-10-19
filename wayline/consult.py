@@ -8,6 +8,13 @@ Workflow script the same role is `agent(question, {agentType: 'consultant', sche
 answer the script returns to code (`workflows/absorb.js` does, for a reader's clarification
 question), and `record_exchange` records it the same way.
 
+From ticket 94 the first argument is a dossier slug or a document id (`D1`, as `research/DOCUMENTS.md`
+lists them). A document is chunked like an L2 source (`documents.chunk_document`, under
+`policy.absorb.chunk_max_chars`, rebuilt when its text has changed) and the consultant reads
+`research/documents/<id>/`, answering with block anchors (`p12`) of its `text.md`; its exchanges go to
+`documents/<id>/qa_log.md`, journaled as `consulted` with the id in `slug`, and counted against the
+ticket like any other. A document has no levels, so it is never promoted.
+
 Every answer is validated again in code, including the one rule the schema leaves out: an answer
 read in the source names a locator. The ledger appends the exchange to `refs/<slug>/qa_log.md`
 and journals `consulted`; `promote_requested: true` goes to `dossier.promote` with the
@@ -31,6 +38,7 @@ from pathlib import Path
 
 from wayline import HARNESS_ROOT, gates, pacing, worker
 from wayline.cli import parse_args
+from wayline.documents import CHUNK_MAX_CHARS, DOCUMENTS_DIR, DocumentError, chunk_document, is_document_id
 from wayline.dossier import CONSULTANT_QUESTION, LEVEL_1, LEVEL_2, REFS, DossierError, promote, read_dossier
 from wayline.jsonschema import ValidationError, load_schema, validate
 from wayline.ledger import CONSULTED, LedgerError, ledger_for, now_ts
@@ -85,12 +93,28 @@ def question_limit(policy):
 
 
 def consult_prompt(slug, question, dossier_dir, level):
-    """The question first, as the spec's launch line has it, then where the dossier is."""
+    """The question first, as the spec's launch line has it, then where the dossier is.
+
+    A `level` of None marks a document, whose directory holds `text.md`, the `chunks/`, and `chunks.json`.
+    """
+    if level is None:
+        return (
+            "%s\n\n"
+            "[wayline: this question is about the document `%s`. Its directory is `%s`: `text.md` is its text, a block anchor "
+            "`<a id=\"pN\"></a>` before every block, and `chunks.json` lists the chunks (`chunks/`) with the anchors each holds; "
+            "answer from the files in it alone, name block anchors (`p12`) as locators, and return the consultant_answer "
+            "through the structured output.]\n"
+        ) % (question.strip(), slug, dossier_dir)
     return (
         "%s\n\n"
         "[wayline: this question is about the paper `%s`. Its dossier is the directory `%s`, at level %d; "
         "answer from the files in it alone, and return the consultant_answer through the structured output.]\n"
     ) % (question.strip(), slug, dossier_dir, level)
+
+
+def _base(slug):
+    """The project-relative directory a consult reads: a document's, or a dossier's."""
+    return "%s/%s" % (DOCUMENTS_DIR if is_document_id(slug) else REFS, slug)
 
 
 def _session_dir(project, slug):
@@ -115,11 +139,11 @@ def consult_request(project, slug, question, level, harness_root=None, policy=No
     tier = ((policy.get("roles") or {}).get(ROLE) or {})
     model, effort = tier.get("model") or TIER[0], tier.get("effort") or TIER[1]
     role = worker.read_role(ROLE, harness_root, project)
-    dossier_dir = project / "research" / REFS / slug
+    dossier_dir = project / "research" / _base(slug)
     run_dir = _session_dir(project, slug)
     return worker.LaunchRequest(
         role=role.name, model=model, effort=effort,
-        prompt=consult_prompt(slug, question, dossier_dir, level),
+        prompt=consult_prompt(slug, question, dossier_dir, None if is_document_id(slug) else level),
         agent_json=role.agent_json(model, effort, max_turns=MAX_TURNS),
         allowed_tools=list(role.allowed_tools), disallowed_tools=list(role.disallowed_tools),
         settings_path=gates.write_worker_settings(run_dir / "settings.json", harness_root),
@@ -186,7 +210,8 @@ def record_exchange(project_or_ledger, slug, question, answer, by, session_id=No
     if problems:
         raise ConsultError("the consultant's answer about %s was not usable: %s" % (slug, "; ".join(problems)))
     ledger = ledger_for(project_or_ledger)
-    relpath = "%s/%s/%s" % (REFS, slug, QA_LOG)
+    document = is_document_id(slug)
+    relpath = "%s/%s" % (_base(slug), QA_LOG)
     digest = hashlib.sha256(question.encode("utf-8")).hexdigest()
     with ledger.lock():
         if ticket is not None and limit is not None:
@@ -200,7 +225,7 @@ def record_exchange(project_or_ledger, slug, question, answer, by, session_id=No
             "slug": slug, "by": by, "question_sha256": digest,
             "promote_requested": bool(answer["promote_requested"]), "session_id": session_id,
         }, ticket=ticket, session_id=session_id)
-        if not answer["promote_requested"]:
+        if document or not answer["promote_requested"]:
             return None
         return promote(ledger, slug, CONSULTANT_QUESTION, ticket=ticket, detail="question %s" % digest[:12])
 
@@ -222,16 +247,23 @@ def ask(project, slug, question, ticket=None, launcher=None, resumer=None, harne
     ledger = ledger_for(ledger if ledger is not None else project)
     if not isinstance(question, str) or not question.strip():
         raise ConsultError("a consultant question is a non-empty string")
-    try:
-        dossier = read_dossier(ledger, slug)
-    except DossierError as failure:
-        raise ConsultError(str(failure)) from None
     policy = policy_for(project, harness_root)
+    if is_document_id(slug):
+        dossier = None
+        try:
+            chunk_document(ledger, slug, ((policy.get("absorb") or {}).get("chunk_max_chars", CHUNK_MAX_CHARS)))
+        except DocumentError as failure:
+            raise ConsultError(str(failure)) from None
+    else:
+        try:
+            dossier = read_dossier(ledger, slug)
+        except DossierError as failure:
+            raise ConsultError(str(failure)) from None
     limit = question_limit(policy)
     asked = questions_asked(ledger, ticket) if ticket is not None else None
     if ticket is not None and asked >= limit:
         raise _refusal(ticket, asked, limit)
-    request = consult_request(project, slug, question, _read_level(dossier), harness_root=harness_root, policy=policy)
+    request = consult_request(project, slug, question, _read_level(dossier) if dossier is not None else None, harness_root=harness_root, policy=policy)
     launcher = launcher or worker.launch
     resumer = resumer if resumer is not None else (worker.resume if launcher is worker.launch else None)
     try:
@@ -279,9 +311,9 @@ def _resume_once(request, envelope, problems, resumer):
 
 
 def consult_command(args):
-    """`wayline consult <slug> "<question>" [--json] [--project <path>]`."""
-    parser = argparse.ArgumentParser(prog="wayline consult", description="ask the consultant one question about one dossier")
-    parser.add_argument("slug", help="the reference whose dossier answers the question")
+    """`wayline consult <slug|document id> "<question>" [--json] [--project <path>]`."""
+    parser = argparse.ArgumentParser(prog="wayline consult", description="ask the consultant one question about one dossier or one document")
+    parser.add_argument("slug", help="the reference whose dossier answers the question, or a document id (D1)")
     parser.add_argument("question", help="the one question, quoted")
     parser.add_argument("--project", help="the project; WAYLINE_PROJECT or the active one by default")
     parser.add_argument("--json", action="store_true", help="print the answer object as JSON")
@@ -296,7 +328,7 @@ def consult_command(args):
     try:
         project = find_project(options.project or os.environ.get("WAYLINE_PROJECT") or None)
         report = ask(project, options.slug, options.question, ticket=ticket)
-    except (ConsultError, ProjectError, DossierError, ValidationError, LedgerError, worker.RoleError, OSError) as failure:
+    except (ConsultError, ProjectError, DossierError, ValidationError, LedgerError, worker.RoleError, DocumentError, OSError) as failure:
         print("wayline consult: %s" % failure, file=sys.stderr)
         return 1
     if options.json:

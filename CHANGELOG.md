@@ -28,6 +28,14 @@ refuses a project made before it, which keeps its old tag or starts again on the
 
 ## Unreleased
 
+- Consulting one document (ticket 94; Implementation Decision 17). `wayline consult D1 "<question>"` takes a
+  document id as well as a dossier slug. The document's `text.md` is cut into chunks of whole blocks under
+  `policy.absorb.chunk_max_chars` (`documents/<id>/chunks/`, listed in `chunks.json`, rebuilt when the text
+  changes or a newer version is taken in), the consultant reads that directory, and its locators are block
+  anchors (`p12`). The exchange goes to `documents/<id>/qa_log.md`, is journaled as `consulted` with the id in
+  `slug`, and counts against the ticket's question limit. An unknown id or a document with no text is refused
+  in one line.
+
 **Breaking:** `research_version` 2 (Implementation Decision 17). A project made on v1.0.x is refused, never migrated:
 `wayline upgrade` to this release changes nothing and names the two ways on (`wayline upgrade --to v1.0.1`, or a new
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard

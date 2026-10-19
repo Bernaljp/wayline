@@ -62,7 +62,8 @@ from wayline.tools import ToolOutput, Tools, ToolsError, failure_line, run_recor
 __all__ = [
     "DOCUMENTS_JSON", "DOCUMENTS_MD", "DOCUMENTS_DIR", "KINDS", "SORTS", "BY", "RENDER_MAX_CHARS", "DocumentError",
     "Conversion", "convert", "guess_kind", "text_key", "read_documents", "add_document", "add_documents",
-    "drop_document", "render_documents", "anchor_blocks", "strip_line_numbers", "recording_runner", "recorded_runner",
+    "drop_document", "render_documents", "anchor_blocks", "CHUNKS_JSON", "CHUNKS_DIR", "CHUNK_MAX_CHARS", "is_document_id",
+    "chunk_document", "strip_line_numbers", "recording_runner", "recorded_runner",
     "document_command",
 ]
 
@@ -74,6 +75,9 @@ REFERENCE = "reference"
 SORTS = KINDS + (REFERENCE,)
 BY = PAYLOAD_ENUMS[(DOCUMENT, K_BY)]
 RENDER_MAX_CHARS = 20000
+CHUNKS_JSON = "chunks.json"
+CHUNKS_DIR = "chunks"
+CHUNK_MAX_CHARS = 20000          # the fallback when a policy carries no `absorb.chunk_max_chars`
 STDLIB = {"name": "wayline.office", "version": __version__}
 TOOL_TIMEOUT_S = 600
 TEXT_SUFFIXES = (".md", ".markdown", ".txt")
@@ -83,6 +87,7 @@ ZIP_MAX_BYTES = 512 * 1024 * 1024
 CONVERTERS_DIR = Path(__file__).resolve().parent.parent / "converters"
 
 _ID = re.compile(r"^D([1-9][0-9]*)\Z")
+_ANCHOR = re.compile(r'^<a id="(p[0-9]+)"></a>$')
 CORE_XML = "docProps/core.xml"
 STAMP = "%Y-%m-%dT%H:%M:%S"
 _MODIFIED = re.compile(r"<dcterms:modified[^>]*>([^<]+)<")
@@ -707,6 +712,88 @@ def read_documents(project):
     return list(record["documents"])
 
 
+# --- the chunks the consultant reads ------------------------------------------------------------------
+
+
+def is_document_id(text):
+    """Whether `text` is spelled as a document id (`D1`), as against a dossier slug."""
+    return isinstance(text, str) and _ID.match(text) is not None
+
+
+def _anchored(text):
+    """`text.md` as `(locator, block text)` pairs: the blocks after each `<a id="pN"></a>` line, front matter left out."""
+    blocks, locator, lines = [], None, []
+    for line in text.split("\n"):
+        found = _ANCHOR.match(line)
+        if found:
+            if locator is not None:
+                blocks.append((locator, "\n".join(lines).strip()))
+            locator, lines = found.group(1), []
+        elif locator is not None:
+            lines.append(line)
+    if locator is not None:
+        blocks.append((locator, "\n".join(lines).strip()))
+    return blocks
+
+
+def _cut(blocks, max_chars):
+    """Groups of whole blocks in reading order, each under `max_chars` unless one block alone is longer."""
+    groups, current, size = [], [], 0
+    for locator, body in blocks:
+        width = len(body) + len(locator) + 2
+        if current and size + width > max_chars:
+            groups.append(current)
+            current, size = [], 0
+        current.append((locator, body))
+        size += width
+    if current:
+        groups.append(current)
+    return groups
+
+
+def chunk_document(project_or_ledger, document_id, max_chars=CHUNK_MAX_CHARS):
+    """Chunk one document's `text.md` the way an L2 source is, for the consultant; returns the manifest.
+
+    A chunk is whole blocks, each under its `<a id="pN"></a>` anchor, up to `max_chars` (a block longer
+    than that is a chunk of its own: an anchor is the smallest locator). `chunks/c<n>.md` holds each
+    chunk and `chunks.json` lists them with their locators and the sha256 of the `text.md` and the cap
+    they were cut from. Called again with the same text and cap it changes nothing; when a newer version
+    has been taken in, or the cap moved, the directory is replaced whole. Raises DocumentError for an
+    unknown document and for one with no text yet.
+    """
+    ledger = project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
+    document = next((entry for entry in read_documents(ledger.project) if entry.get("id") == document_id), None)
+    if document is None:
+        raise DocumentError("no document %s; the documents are listed in research/%s" % (document_id, DOCUMENTS_MD))
+    base = "%s/%s" % (DOCUMENTS_DIR, document_id)
+    if not ledger.path(base + "/text.md").is_file():
+        raise DocumentError("document %s has no text yet (%s was kept without a conversion)" % (document_id, document.get("origin") or "its source"))
+    data = ledger.path(base + "/text.md").read_bytes()
+    digest, max_chars = _sha(data), max(1, int(max_chars))
+    if ledger.path(base + "/" + CHUNKS_JSON).is_file():
+        try:
+            kept = ledger.read_json(base + "/" + CHUNKS_JSON)
+        except ValueError:
+            kept = None
+        if (isinstance(kept, dict) and kept.get("text_sha256") == digest and kept.get("chunk_max_chars") == max_chars
+                and all(ledger.path("%s/%s/%s.md" % (base, CHUNKS_DIR, chunk["id"])).is_file() for chunk in kept.get("chunks") or [])):
+            return kept
+    ledger.remove_tree(base + "/" + CHUNKS_DIR)
+    listed = []
+    for number, group in enumerate(_cut(_anchored(data.decode("utf-8")), max_chars), 1):
+        chunk_id = "c%d" % number
+        body = "".join('<a id="%s"></a>\n\n%s\n\n' % (locator, text) for locator, text in group)
+        head = "# %s, %s: %s to %s\n\nWhole blocks of `%s/text.md`; each block's anchor is its locator.\n\n" % (
+            document_id, chunk_id, group[0][0], group[-1][0], base)
+        ledger.write_markdown("%s/%s/%s.md" % (base, CHUNKS_DIR, chunk_id), head + body)
+        listed.append({"id": chunk_id, "path": "%s/%s.md" % (CHUNKS_DIR, chunk_id), "locators": [locator for locator, _ in group],
+                       "chars": sum(len(text) for _, text in group)})
+    manifest = {"schema_version": 1, "document": document_id, "version": document.get("version"), "text_sha256": digest,
+                "chunk_max_chars": max_chars, "chunks": listed}
+    ledger.write_json(base + "/" + CHUNKS_JSON, manifest)
+    return manifest
+
+
 def _next_id(documents):
     numbers = [int(match.group(1)) for match in (_ID.match(str(document.get("id"))) for document in documents) if match]
     return "D%d" % (max(numbers, default=0) + 1)
@@ -905,6 +992,8 @@ def _next_version(ledger, document, kind, by, name, data, dated, conversion):
                 ledger.remove_file(current)
     if ledger.path(base + "/media").is_dir():
         ledger.remove_tree(base + "/media")
+    ledger.remove_tree(base + "/" + CHUNKS_DIR)
+    ledger.remove_file(base + "/" + CHUNKS_JSON)
     document.update(_fields(conversion))
     document.update(kind=kind, version=document["version"] + 1, origin=name, dated=dated, sorted_by=by, added=now_ts())
     document["files"] = _write_files(ledger, document["id"], conversion, name, data)
