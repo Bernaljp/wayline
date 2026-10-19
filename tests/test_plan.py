@@ -20,14 +20,17 @@ import unittest
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase, open_objective
+from tests.projects import ProjectTestCase, open_goal, open_objective
 from tests.test_specify import DRAFT, GOAL, INPUT, RECORDED, run
-from wayline import cli, decider, plan, project, registry, specify, tickets, worker
+from wayline import cli, decider, objectives, plan, project, registry, specify, tickets, worker
 from wayline.ledger import Ledger
 from wayline.tickets import read_ticket, read_tickets, tickets_dir, write_ticket
 from wayline.worker import Envelope
 
 CUT = json.loads((FIXTURES_DIR / "plan" / "cut.json").read_text(encoding="utf-8"))
+# The toy spec with C1 answering both objectives the plan tests record: O1, and O2, the goal on `auroc`.
+SPEC = copy.deepcopy(DRAFT)
+SPEC["claims"][0]["objectives"] = ["O1", "O2"]
 CHECKS = FIXTURES_DIR / "skill" / "wayline-plan" / "checks.py"
 IDENTITY = ("-c", "user.name=wayline test", "-c", "user.email=test@wayline.invalid")
 
@@ -248,14 +251,15 @@ class PlanCase(ProjectTestCase):
         self.ledger.write_markdown("kb/query_pack.md", "# Query pack\n\n- paper-a extends paper-b\n")
         self.confirm_spec()
         open_objective(self.project)
+        open_goal(self.project)  # O2, a goal on `auroc`, which the cut's E1 ticket names as its `goal`
         project.set_autonomy(self.project, self.autonomy)
         self.notified = []
         self.fake = self.enterContext(worker.use_fake())
 
     def confirm_spec(self):
         """The spec as ticket 33 leaves it: written, judged, confirmed in an interactive session, the phase at P4."""
-        self.ledger.write_json("spec.json", DRAFT, schema="spec")
-        self.ledger.write_markdown("SPEC.md", specify.render_spec(DRAFT))
+        self.ledger.write_json("spec.json", SPEC, schema="spec")
+        self.ledger.write_markdown("SPEC.md", specify.render_spec(SPEC))
         self.ledger.append_event("verdict", {"subject_kind": "spec", "subject": "research/SPEC.md at %s" % specify.spec_sha(self.project),
                                              "verdict_type": "spec_coverage", "pass": True, "session_id": "verifier-1",
                                              "model": "claude-opus-5", "findings": []})
@@ -357,7 +361,7 @@ class CutTest(PlanCase):
         four = self.ticket(4)
         self.assertEqual((four["kind"], four["role"], four["blocked_by"]), ("experiment", "experimenter", [1, 3]))
         self.assertEqual(four["resources"], {"gpu": 0, "cpu": 4, "ram_gb": 8, "wallclock_minutes": 30})
-        self.assertEqual(four["goal_metric"], {"reports": "auroc", "expected_direction": "up"})
+        self.assertEqual((four["objectives"], four["goal"]), (["O2"], "O2"))
         self.assertEqual(four["retry"], {"host_oom": ["--rows=10000"], "gpu_oom": []}, "a ladder step in the file's spelling")
         self.assertEqual((self.ticket(2)["role"], self.ticket(7)["role"], self.ticket(8)["role"]), ("documentarian", "analyst", "writer"))
         self.assertEqual(self.ticket(6)["blocked_by"], [1, 3, 9], "the decision ticket pauses the network experiment")
@@ -525,6 +529,77 @@ class CutTest(PlanCase):
         report = self.plan()
         self.assertIn("fails its checks", report["stopped"])
         self.assertEqual(self.fake.calls, [])
+
+
+class ObjectivesTest(PlanCase):
+    """Ticket 81: the tickets name the open objectives they serve, and `goal` the one whose measure they report."""
+
+    def test_the_tickets_carry_their_objectives_and_the_goal_names_an_objective_with_a_measure(self):
+        self.script(planned(cut()))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        four = self.ticket(4)
+        self.assertEqual((four["objectives"], four["goal"]), (["O2"], "O2"))
+        self.assertNotIn("goal_metric", four)
+        self.assertEqual(self.ticket(5)["objectives"], ["O1"])
+        self.assertEqual(self.ticket(1)["objectives"], [], "a ticket no objective asked for serves none")
+        self.assertNotIn("goal", self.ticket(1))
+        records = objectives.read_objectives(self.project)
+        measure = objectives.ticket_goal(four, records)
+        self.assertEqual((measure["metric"], measure["direction"]), ("auroc", "up"), "the metric and direction come from the goal")
+        self.assertIsNone(objectives.ticket_goal(self.ticket(1), records))
+
+    def test_objectives_changed_after_the_confirmation_leave_the_spec_cuttable(self):
+        """An objective opened or parked after the spec was confirmed is no dead end: the tickets are held to what is open."""
+        objectives.add_objective(self.project, "A question asked after the confirmation")
+        objectives.change_objective(self.project, "O1", "parked", by="owner", answer="later")
+        value = cut()
+        value["tickets"][4]["objectives"] = []  # T5 named O1, which is parked now
+        self.script(planned(value))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual(self.ticket(4)["goal"], "O2")
+
+    def test_the_planner_reads_the_objectives(self):
+        self.script(planned(cut()))
+        self.plan()
+        prompt = self.calls(plan.PLANNER)[0].request.prompt
+        self.assertIn("## research/OBJECTIVES.md", prompt)
+        self.assertIn("## O2 Do the products raise the held-out AUROC?", prompt)
+
+    def test_a_ticket_naming_a_closed_or_unknown_objective_or_a_goal_with_no_measure_is_returned(self):
+        objectives.add_objective(self.project, "A question set aside")
+        objectives.change_objective(self.project, "O3", "parked", by="owner", answer="later")
+        broken = cut()
+        broken["tickets"][3]["goal"] = "O1"
+        broken["tickets"][1]["objectives"] = ["O3"]
+        broken["tickets"][2]["objectives"] = ["O9"]
+        broken["tickets"][0]["goal"] = "O3"
+        self.script(planned(broken), planned(cut()))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        message = self.second_message()
+        self.assertIn("T4 (ticket 4)'s goal O1 has no measure, so it is an objective and not a goal: name it among "
+                      "`objectives` and leave `goal` null", message)
+        self.assertIn("T2 (ticket 2) names the objective O3, which is parked; a ticket names only open objectives", message)
+        self.assertIn("T3 (ticket 3) names the objective O9, which the project does not hold", message)
+        self.assertIn("T1 (ticket 1)'s goal O3 is parked; a ticket's goal is an open objective", message)
+        self.assertEqual(self.ticket(4)["goal"], "O2", "the second plan is the one written")
+
+    def test_the_schemas_hold_objectives_and_goal_in_place_of_goal_metric(self):
+        ticket_schema, plan_schema = (json.loads((HARNESS_ROOT / "schemas" / name).read_text(encoding="utf-8"))
+                                      for name in ("ticket.json", "plan.json"))
+        item = plan_schema["properties"]["tickets"]["items"]
+        self.assertIn("objectives", item["required"], "the planner states them, empty for a ticket that serves none")
+        for properties in (ticket_schema["properties"], item["properties"]):
+            self.assertIn("objectives", properties)
+            self.assertIn("goal", properties)
+            self.assertNotIn("goal_metric", properties)
+        wrong = cut()
+        wrong["tickets"][3]["goal_metric"] = {"reports": "auroc", "expected_direction": "up"}
+        self.script(planned(wrong), planned(cut()))
+        self.assertIsNone(self.plan()["stopped"])
+        self.assertIn("could not be read", self.second_message())
 
 
 class CheckpointsTest(PlanCase):
@@ -759,11 +834,11 @@ class ReplanTest(PlanCase):
             "tickets": [
                 {"key": "T1", "title": "Run E1 with the products only", "kind": "experiment", "difficulty": 3, "blocked_by": ["#1", "#3"],
                  "touches": ["experiments/e1/", "results/e1/"], "resources": {"gpu": 0, "cpu": 4, "ram_gb": 8, "wallclock_minutes": 30},
-                 "acceptance": {"machine": ["test -f results/e1/summary.json"], "quality": []}, "goal_metric": {"reports": "auroc", "expected_direction": "up"},
+                 "acceptance": {"machine": ["test -f results/e1/summary.json"], "quality": []}, "objectives": ["O2"], "goal": "O2",
                  "context_pack": ["research/SPEC.md#e1-claims-c1"], "origin": "research/SPEC.md#e1-claims-c1",
                  "demo": "`results/e1/summary.json` holds ten paired differences."},
                 {"key": "T2", "title": "File the findings of E1", "kind": "analysis", "difficulty": 2, "blocked_by": ["T1"], "touches": ["analysis/"],
-                 "acceptance": {"machine": ["test -f analysis/findings.md"], "quality": []}, "context_pack": ["results/e1/summary.json"],
+                 "acceptance": {"machine": ["test -f analysis/findings.md"], "quality": []}, "objectives": [], "context_pack": ["results/e1/summary.json"],
                  "origin": "research/SPEC.md#success-criteria", "demo": "`analysis/findings.md` says whether C1 held."},
             ],
             "decisions": [],
@@ -859,10 +934,12 @@ class SplitTest(PlanCase):
         items = [
             {"key": "T1", "title": "Run E1 on seeds 0 to 4", "kind": "experiment", "difficulty": difficulty, "blocked_by": [],
              "touches": ["experiments/e1/first/", "results/e1/first/"], "acceptance": {"machine": ["test -f results/e1/first/summary.json"], "quality": []},
+             "objectives": ["O2"], "goal": "O2",
              "context_pack": ["research/SPEC.md#e1-claims-c1"], "origin": "research/SPEC.md#e1-claims-c1",
              "demo": "`results/e1/first/summary.json` holds five paired differences."},
             {"key": "T2", "title": "Run E1 on seeds 5 to 9", "kind": "experiment", "difficulty": 2, "blocked_by": list(second_blocked_by),
              "touches": ["experiments/e1/second/", "results/e1/second/"], "acceptance": {"machine": ["test -f results/e1/second/summary.json"], "quality": []},
+             "objectives": ["O2"], "goal": "O2",
              "context_pack": ["research/SPEC.md#e1-claims-c1"], "origin": "research/SPEC.md#e1-claims-c1",
              "demo": "`results/e1/second/summary.json` holds five paired differences."},
         ]

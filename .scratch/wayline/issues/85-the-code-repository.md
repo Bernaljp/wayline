@@ -29,24 +29,24 @@ Not part of this ticket:
 
 **Blocked by:** 73 - The guard and gitignore defects found while charting; 78 - The synthetic start-midway project. It blocks 97, 106, 107, 109, 111, and 121.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#232](https://github.com/Bernaljp/wayline/issues/232) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Methods and the code": the code repository, intake's absorption, the private push, public on the owner's word; "Setup, at every autonomy": the code repository's question; "Vocabulary the build adds": `harness.json` gaining the code repository's record, the commit on `job_launched` and `ticket_launched`); decisions 1 (`harness.json`; the layout: `code/`), 2 (the event table: the commit on `job_launched` and `ticket_launched`), 4 (the irreversible list: making the repository public), 10 (intake); M8 criterion 13; user stories 148, 149, 175.
 
-- [ ] Intake absorbs a project's own clone into `code/` with `git subtree add --prefix=code <clone> <recorded commit>`. Uncommitted changes become the next commit, named as such. The clone's `.git` stays outside the tree, and the upstream remote, the commit, and the inherited license are recorded. The synthetic start-midway project's repository arrives with its history and no gitlink.
-- [ ] Code tickets' touch sets go under `code/`, and the planner's check refuses a code ticket whose touch set leaves it.
-- [ ] `git subtree split --prefix=code` cuts the code repository, which never contains `research/`, `harness.json`, `jobs/`, or `results/`.
-- [ ] One setup question settles the shape (package or reproducibility repository), the remote, the visibility, and the license, recorded in `harness.json`.
-- [ ] Code creates a new private GitHub repository with `gh` through the tool runner. A taken-over repository that is not the owner's gets a new private repository carrying its upstream history, never a fork. The owner's own repository is used as the remote only on their word, confirmed once if it is public.
-- [ ] Code pushes `code/`'s split after every wave that changed it, and never otherwise. No worker pushes.
-- [ ] Making the repository public is on the irreversible list and runs only on the owner's word.
-- [ ] `job_launched` and `ticket_launched` carry the commit of `main` each ran at.
-- [ ] Tests:
+- [x] Intake absorbs a project's own clone into `code/` with `git subtree add --prefix=code <clone> <recorded commit>`. Uncommitted changes become the next commit, named as such. The clone's `.git` stays outside the tree, and the upstream remote, the commit, and the inherited license are recorded. The synthetic start-midway project's repository arrives with its history and no gitlink.
+- [x] Code tickets' touch sets go under `code/`, and the planner's check refuses a code ticket whose touch set leaves it.
+- [x] `git subtree split --prefix=code` cuts the code repository, which never contains `research/`, `harness.json`, `jobs/`, or `results/`.
+- [x] One setup question settles the shape (package or reproducibility repository), the remote, the visibility, and the license, recorded in `harness.json`.
+- [x] Code creates a new private GitHub repository with `gh` through the tool runner. A taken-over repository that is not the owner's gets a new private repository carrying its upstream history, never a fork. The owner's own repository is used as the remote only on their word, confirmed once if it is public.
+- [x] Code pushes `code/`'s split after every wave that changed it, and never otherwise. No worker pushes.
+- [x] Making the repository public is on the irreversible list and runs only on the owner's word.
+- [x] `job_launched` and `ticket_launched` carry the commit of `main` each ran at.
+- [x] Tests:
   - the tool runner's recordings of `git subtree add`, `git subtree split`, `gh repo create --private`, and the push;
   - a temporary project absorbing the synthetic repository;
   - a replayed journal with a wave that changed `code/` and one that did not.
-- [ ] The event table of decision 2 and the `harness.json` schema gain these rows in the same commit as the code that writes them.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes `code/` and the code repository.
-- [ ] `python -m unittest` passes.
+- [x] The event table of decision 2 and the `harness.json` schema gain these rows in the same commit as the code that writes them.
+- [x] `CHANGELOG.md` under `## Unreleased` describes `code/` and the code repository.
+- [x] `python -m unittest` passes.

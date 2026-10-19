@@ -12,28 +12,28 @@ role: decider
 skills: []
 acceptance: {}
 context_pack: [research/graph.json, research/plan.json]
-origin: "plan: confirm research/graph.json at b4db2e02ec2c"
+origin: "plan: confirm research/graph.json at 28ae016d49df"
 proposed_by: planner
-demo: "The owner or the decider answers: Confirm the graph (research/graph.json at b4db2e02ec2c: tickets 1 to 12, and decision tickets 13) before the conductor runs it? Answer confirm, or revise: and what to change."
+demo: "The owner or the decider answers: Confirm the graph (research/graph.json at 28ae016d49df: tickets 1 to 12, and decision tickets 13) before the conductor runs it? Answer confirm, or revise: and what to change."
 ---
 
 ## Decision
 
-Confirm the graph (research/graph.json at b4db2e02ec2c: tickets 1 to 12, and decision tickets 13) before the conductor runs it? Answer confirm, or revise: and what to change.
+Confirm the graph (research/graph.json at 28ae016d49df: tickets 1 to 12, and decision tickets 13) before the conductor runs it? Answer confirm, or revise: and what to change.
 
 - options:
   - confirm
   - revise: <what to change, in a sentence>
 - recommended: confirm
 - evidence:
-  - research/graph.json at b4db2e02ec2c: its plan-time checks passed, the base commit included
+  - research/graph.json at 28ae016d49df: its plan-time checks passed, the base commit included
   - the plan as returned, with the ids it became: research/plan.json
   - a revise parks the graph at once; the next wayline plan cuts it again with the change
 - blocking: `all`, so no other ticket launches until it is answered
 - human-only: no, so under autonomy `autonomous` the decider may answer it
-- asked by: plan: confirm research/graph.json at b4db2e02ec2c
+- asked by: plan: confirm research/graph.json at 28ae016d49df
 
-<!-- wayline:decision {"ticket":14,"question":"Confirm the graph (research/graph.json at b4db2e02ec2c: tickets 1 to 12, and decision tickets 13) before the conductor runs it? Answer confirm, or revise: and what to change.","options":["confirm","revise: \u003cwhat to change, in a sentence\u003e"],"recommended":"confirm","evidence":["research/graph.json at b4db2e02ec2c: its plan-time checks passed, the base commit included","the plan as returned, with the ids it became: research/plan.json","a revise parks the graph at once; the next wayline plan cuts it again with the change"],"human_only":false,"reversible":true,"answer":null,"rationale":null,"confidence":null,"decided_by":null,"timestamp":null,"blocking":"all"} -->
+<!-- wayline:decision {"ticket":14,"question":"Confirm the graph (research/graph.json at 28ae016d49df: tickets 1 to 12, and decision tickets 13) before the conductor runs it? Answer confirm, or revise: and what to change.","options":["confirm","revise: \u003cwhat to change, in a sentence\u003e"],"recommended":"confirm","evidence":["research/graph.json at 28ae016d49df: its plan-time checks passed, the base commit included","the plan as returned, with the ids it became: research/plan.json","a revise parks the graph at once; the next wayline plan cuts it again with the change"],"human_only":false,"reversible":true,"answer":null,"rationale":null,"confidence":null,"decided_by":null,"timestamp":null,"blocking":"all"} -->
 
 ## How to answer
 

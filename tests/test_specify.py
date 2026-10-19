@@ -16,8 +16,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.projects import ProjectTestCase, fable_policy, open_objective
-from wayline import cli, decider, gates, grill, project, specify, tickets, worker
+from tests.projects import ProjectTestCase, fable_policy, open_goal, open_objective
+from wayline import cli, decider, gates, grill, objectives, project, specify, tickets, worker
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
 
@@ -40,7 +40,7 @@ def draft(**changes):
 def unlinked():
     """The toy spec with a claim no experiment tests and a metric with no script: two structural failures."""
     value = draft()
-    value["claims"].append({"id": "C4", "text": "The products also help calibration.", "experiments": []})
+    value["claims"].append({"id": "C4", "text": "The products also help calibration.", "experiments": [], "objectives": []})
     value["metrics"][1]["script"] = None
     return value
 
@@ -88,6 +88,20 @@ class PlannerRoleTest(unittest.TestCase):
         self.assertEqual(specify.protocol_for("# Protocol\n\nno sections\n", "specify"), "# Protocol\n\nno sections\n")
         self.assertEqual(specify.protocol_for("## Plan\n\nplan\n\n## Specify\n\nspec\n", "specify"), "## Specify\n\nspec\n")
 
+    def test_the_protocols_and_the_role_name_objectives(self):
+        """Ticket 81: the specify protocol ties claims to open objectives, the plan protocol tickets, and the role reads OBJECTIVES.md."""
+        specify_cut = specify.protocol_for(self.role.protocol, "specify")
+        plan_cut = specify.protocol_for(self.role.protocol, "plan")
+        for text in ("`research/OBJECTIVES.md`", "`objectives`", "summary", "every open objective has a claim"):
+            self.assertIn(text, specify_cut)
+        for text in ("`research/OBJECTIVES.md`", "`objectives`", "`goal`"):
+            self.assertIn(text, plan_cut)
+        self.assertNotIn("GOAL.json", specify_cut + plan_cut)
+        self.assertNotIn("goal_metric", plan_cut)
+        agent = (HARNESS_ROOT / "roles" / "planner" / "agent.md").read_text(encoding="utf-8")
+        self.assertIn("`OBJECTIVES.md`", agent)
+        self.assertNotIn("GOAL.json", agent)
+
     def test_the_tier_is_opus_xhigh_and_a_planner_on_fable_falls_back_to_opus_xhigh(self):
         for fall_back in (False, True):
             self.assertEqual(specify.planner_tier(self.policy, fall_back=fall_back), ("opus", "xhigh", None))
@@ -102,7 +116,7 @@ class TypeAChecksTest(unittest.TestCase):
     """Criterion 2: the structural checks, each failure named."""
 
     def test_the_toy_spec_passes(self):
-        self.assertEqual(specify.check_draft(draft(), GOAL), [])
+        self.assertEqual(specify.check_draft(draft()), [])
 
     def test_a_claim_without_an_experiment_and_an_experiment_without_a_claim(self):
         value = draft()
@@ -152,9 +166,56 @@ class TypeAChecksTest(unittest.TestCase):
                      "success criterion 1 names the experiment E6, which the spec does not define"):
             self.assertIn(text, failures)
 
-    def test_the_goals_metric_is_among_the_metrics(self):
-        self.assertIn("the goal's metric brier (GOAL.json) is not among the metrics",
-                      specify.check_draft(draft(), dict(GOAL, metric="brier")))
+
+def objective(identifier, status="open", metric=None, direction="up"):
+    """One record of `research/objectives.json`; a goal when `metric` is given."""
+    measure = None
+    if metric is not None:
+        measure = {"metric": metric, "direction": direction, "target": None, "held_out_split": "split_b",
+                   "eval_command": "python3 toy/eval.py {artifact}", "baseline": {"value": None, "source": None},
+                   "dataset_or_split": None, "min_seeds": None}
+    return {"id": identifier, "text": "Question %s?" % identifier, "measure": measure, "status": status,
+            "answer": None if status == "open" else "set aside", "evidence": [], "reframed_as": None}
+
+
+class ObjectivesCheckTest(unittest.TestCase):
+    """Ticket 81: claims name open objectives, every open objective has a claim, every goal's metric is a metric."""
+
+    def test_a_spec_whose_claims_answer_every_open_objective_passes(self):
+        self.assertEqual(specify.check_draft(draft(), objectives=[objective("O1", metric="auroc")]), [])
+
+    def test_an_open_objective_no_claim_answers_is_named(self):
+        failures = specify.check_draft(draft(), objectives=[objective("O1"), objective("O2")])
+        self.assertEqual(failures, ["the open objective O2 is answered by no claim: name it in the objectives of the claim "
+                                    "that answers it"])
+
+    def test_a_closed_objective_needs_no_claim(self):
+        self.assertEqual(specify.check_draft(draft(), objectives=[objective("O1"), objective("O2", status="parked")]), [])
+
+    def test_a_goal_whose_metric_is_not_among_the_metrics_is_named(self):
+        failures = specify.check_draft(draft(), objectives=[objective("O1", metric="brier")])
+        self.assertEqual(failures, ["the goal O1's metric brier is not among the spec's metrics"])
+
+    def test_a_claim_naming_a_closed_or_unknown_objective_is_refused(self):
+        value = draft()
+        value["claims"][1]["objectives"] = ["O2"]
+        value["claims"][2]["objectives"] = ["O9"]
+        failures = specify.check_draft(value, objectives=[objective("O1"), objective("O2", status="answered")])
+        self.assertIn("claim C2 names the objective O2, which is answered; a claim names only open objectives", failures)
+        self.assertIn("claim C3 names the objective O9, which the project does not hold", failures)
+
+    def test_the_schema_asks_for_the_summary_and_every_claims_objectives(self):
+        self.assertTrue(DRAFT["summary"].strip())
+        self.assertEqual([claim["objectives"] for claim in DRAFT["claims"]], [["O1"], [], []], "a claim may serve none")
+        missing = draft()
+        del missing["summary"]
+        self.assertTrue(specify.check_draft(missing)[0].startswith("the spec is not valid"))
+        unnamed = draft()
+        del unnamed["claims"][0]["objectives"]
+        self.assertTrue(specify.check_draft(unnamed)[0].startswith("the spec is not valid"))
+        malformed = draft()
+        malformed["claims"][0]["objectives"] = ["objective one"]
+        self.assertTrue(specify.check_draft(malformed)[0].startswith("the spec is not valid"))
 
 
 class RenderTest(unittest.TestCase):
@@ -172,10 +233,17 @@ class RenderTest(unittest.TestCase):
         self.assertIn("- **auroc**: area under the ROC curve of the model's scores on split_b (script: `python3 toy/eval.py {artifact}`)", text)
         self.assertIn("- wall clock: 4 hours", text)
 
+    def test_the_summary_leads_and_each_claim_names_its_objectives(self):
+        text = specify.render_spec(draft())
+        self.assertEqual([line[3:] for line in text.split("\n") if line.startswith("## ")][:2], ["Summary", "Question"])
+        self.assertIn("## Summary\n\nThis project asks whether explicit pairwise interaction terms", text)
+        self.assertIn("(experiments: E1; objectives: O1)", text)
+        self.assertIn("(experiments: E2)\n", text, "a claim no objective asked for names none")
+
     def test_text_is_kept_to_one_line(self):
         value = draft()
         value["claims"][0]["text"] = "two\n\n## Not a heading"
-        self.assertIn("- **C1.** two ## Not a heading (experiments: E1)", specify.render_spec(value))
+        self.assertIn("- **C1.** two ## Not a heading (experiments: E1; objectives: O1)", specify.render_spec(value))
 
 
 class SpecifyCase(ProjectTestCase):
@@ -327,11 +395,83 @@ class DraftTest(SpecifyCase):
         self.assertIn("# What to change", launch.request.prompt)
         self.assertIn("E2 compares the network", launch.request.prompt)
 
-    def test_no_goal_no_spec(self):
-        (self.project / "research" / "GOAL.json").unlink()
+    def test_no_open_objective_no_spec_and_the_question_to_ask_is_named(self):
+        objectives.change_objective(self.project, "O1", "parked", by="owner", answer="later")
         report = self.specify()
-        self.assertIn("run wayline intake first", report["stopped"])
+        self.assertIn("no objective is open", report["stopped"])
+        self.assertIn('"what should the project answer first?"', report["stopped"])
+        self.assertIn("wayline objective add", report["stopped"])
         self.assertEqual(self.fake.calls, [])
+        self.assertEqual(self.phases(), [], "a refused draft moves no phase")
+        code, out, _ = run("specify", "--project", str(self.project))
+        self.assertEqual(code, 1)
+        self.assertIn("what should the project answer first?", out)
+
+    def test_an_objectives_json_that_cannot_be_read_stops_the_draft_without_a_traceback(self):
+        self.ledger.write_json("objectives.json", {"objectives": 3})
+        report = self.specify()
+        self.assertIn("research/objectives.json cannot be read", report["stopped"])
+        self.assertEqual(self.fake.calls, [])
+        code, out, err = run("specify", "--project", str(self.project))
+        self.assertEqual(code, 1)
+        self.assertNotIn("Traceback", err)
+
+    def test_check_spec_names_an_objectives_json_it_cannot_read(self):
+        self.script(planned(draft()))
+        self.specify()
+        self.ledger.write_json("objectives.json", {"objectives": 3})
+        self.assertTrue(specify.check_spec(self.project)[0].startswith("research/objectives.json cannot be read"))
+
+    def test_a_confirmed_spec_is_not_held_to_objectives_that_changed_after_it(self):
+        """What changes after the confirmation is an amendment's (ticket 92) and the tickets' own check, not a dead end."""
+        self.script(planned(draft()))
+        self.specify()
+        objectives.add_objective(self.project, "A question asked after the confirmation")
+        self.assertEqual(specify.check_spec(self.project, against_objectives=False), [])
+        self.assertIn("the open objective O2 is answered by no claim: name it in the objectives of the claim that answers it",
+                      specify.check_spec(self.project))
+
+    def test_one_open_objective_is_enough_and_no_goal_json_is_needed(self):
+        """The objective may be the question to answer first, not the project's end; it need carry no measure."""
+        (self.project / "research" / "GOAL.json").unlink()
+        self.script(planned(draft()))
+        report = self.specify()
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual(report["state"]["state"], "pending")
+
+    def test_the_prompt_names_the_open_objectives_and_the_goals_measure(self):
+        open_goal(self.project)
+        objectives.add_objective(self.project, "A question set aside")
+        objectives.change_objective(self.project, "O3", "parked", by="owner", answer="later")
+        value = draft()
+        value["claims"][0]["objectives"] = ["O1", "O2"]
+        self.script(planned(value))
+        report = self.specify()
+        self.assertIsNone(report["stopped"], report)
+        prompt = self.calls(specify.PLANNER)[0].request.prompt
+        section = prompt.split("# The objectives", 1)[1].split("\n# ", 1)[0]
+        self.assertIn("- O1: Does the method answer the project's question? (an objective: no measure)", section)
+        self.assertIn("- O2: Do the products raise the held-out AUROC? (a goal: `auroc` up", section)
+        self.assertNotIn("O3", section, "a parked objective is not the spec's to answer")
+        self.assertIn("`objectives`", section)
+        self.assertIn("`summary`", section)
+        self.assertEqual([claim["objectives"] for claim in json.loads(
+            (self.project / "research" / "spec.json").read_text(encoding="utf-8"))["claims"]], [["O1", "O2"], [], []])
+        self.assertIn("## Summary", self.spec_md())
+
+    def test_a_draft_that_leaves_an_open_objective_unanswered_goes_back_with_its_name(self):
+        open_goal(self.project, metric="brier")
+        self.script(planned(draft()), planned(draft()))
+        report = self.specify()
+        self.assertIn("failed its structural checks twice", report["stopped"])
+        message = self.calls(specify.PLANNER)[1].message
+        self.assertIn("- the open objective O2 is answered by no claim", message)
+        self.assertIn("- the goal O2's metric brier is not among the spec's metrics", message)
+
+    def test_the_verifier_reads_the_objectives_not_the_goal_json(self):
+        self.assertIn("research/OBJECTIVES.md", specify.VERDICT_PATHS)
+        self.assertNotIn("research/GOAL.json", specify.VERDICT_PATHS)
+        self.assertIn("OBJECTIVES.md", specify.VERDICT_SCOPE)
 
     def test_a_hand_edit_of_spec_md_fails_the_check(self):
         self.script(planned(draft()))

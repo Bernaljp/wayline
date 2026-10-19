@@ -21,7 +21,7 @@ from wayline.ledger import (
     JOB_LAUNCHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, STALL, SWITCHED,
     TICKET_ACCEPTED, TICKET_BLOCKED, TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED,
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
-    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED, DIFFICULTY_RAISED,
+    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED, DIFFICULTY_RAISED, CODE_PUSHED,
 )
 # The model a `paused` and an `unpaused` name for the hold on Fable's weekly window, the fallback consents a `control` may set,
 # and the window a ticket's origin names when it is the ask of decision 15.
@@ -338,6 +338,10 @@ class View:
     # When the last `stall` that asked for a replan was journaled: the replan it owes, until a re-cut is written after it
     # or its run ends (a later run starts its own count).
     replan_at: Optional[str] = None
+    # The last `code_pushed` as `{commit, main}`: the code repository's split as code last pushed it and the commit of
+    # `main` it was cut from (decision 17, ticket 85), which the next wave's push is measured against and its split
+    # walks on from, so a restart pushes nothing a run before it pushed.
+    code_pushed: Optional[dict] = None
 
     def apply(self, event):
         """Fold one journal record into the view; returns the view."""
@@ -432,6 +436,8 @@ class View:
                 ticket.latest.integrated = True
         elif name in JOB_STATUS_AFTER:
             self._job(name, payload, event)
+        elif name == CODE_PUSHED and payload.get("commit"):
+            self.code_pushed = {"commit": payload["commit"], "main": payload.get("main")}
         return self
 
     @staticmethod

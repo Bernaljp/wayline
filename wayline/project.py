@@ -77,8 +77,9 @@ GITIGNORE_HEADER = "# wayline"
 # And the conductor's heartbeat, which is rewritten every wave and means nothing in a commit.
 # And a document's own files as given and their media (decision 17, ticket 84), and a reference's PDF dropped for
 # the intake, which the absorb keeps as the reference's source: the owner's copies are never committed.
+# And `.clones/`, where intake moves a project's own clone that lay inside the project once `code/` absorbed it (decision 17).
 GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/sessions/*/*/stream.jsonl", "research/refs/*/source/", "research/refs/*/code/",
-                    "research/conductor.json", "research/documents/*/source/", "research/documents/*/media/", "research/intake/*.pdf")
+                    "research/conductor.json", "research/documents/*/source/", "research/documents/*/media/", "research/intake/*.pdf", ".clones/")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")

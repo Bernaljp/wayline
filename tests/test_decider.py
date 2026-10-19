@@ -135,6 +135,16 @@ class IrreversibleListTest(unittest.TestCase):
             ("edit the harness policy.json so every project gets 4 slots", "global harness change"),
             ("upload the figures to the wiki", "network write"),
             ("post the results to the Slack channel", "network write"),
+            # Decision 17: the code repository goes public on the owner's word only (ticket 85).
+            ("make the code repository public so reviewers can read it", "make the code repository public"),
+            ("publish the code repository now", "make the code repository public"),
+            ("change the repository's visibility to public", "make the code repository public"),
+            ("set the repo visibility to internal", "make the code repository public"),
+            ("run gh repo edit me/lantern --visibility public", "make the code repository public"),
+            ("make the GitHub repository public", "make the code repository public"),
+            ("make code/ public before the deadline", "make the code repository public"),
+            ("open-source the code with the paper", "make the code repository public"),
+            ("yes, make it public", "make the code repository public"),
         ):
             with self.subTest(text=text):
                 self.assertEqual(irreversible_class(text), expected)

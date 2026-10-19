@@ -12,7 +12,8 @@ resources: {cpu: 2, gpu: 0, ram_gb: 4, wallclock_minutes: 20}
 acceptance:
   machine: [test $(ls predictions/default/lr-products-*.csv | wc -l) -eq 10 && test $(ls predictions/default/lr-raw-*.csv | wc -l) -eq 10 && test $(ls predictions/default/lr-planted-*.csv | wc -l) -eq 10, "grep -q '^auroc_gain: ' results/e1/paired_gain.txt && grep -q '^n_seeds: 10' results/e1/paired_gain.txt", "grep -q '^auroc_gain: ' results/e1/oracle_gain.txt"]
   quality: []
-goal_metric: {reports: auroc_gain, expected_direction: up}
+objectives: [O1]
+goal: O1
 context_pack: [research/SPEC.md#e1-claims-c1, research/SPEC.md#seams, research/CONTEXT.md#language, toy/make_sets.py, toy/fit_lr.py, toy/paired_gain.py]
 origin: research/SPEC.md#e1-claims-c1
 proposed_by: planner

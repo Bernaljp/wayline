@@ -1,10 +1,11 @@
 {
   "title": "Do pairwise interaction terms improve held-out AUROC on the synthetic set?",
+  "summary": "This project asks whether explicit pairwise interaction terms help a simple classifier on a synthetic two-class set whose generator plants exactly one interaction. A logistic regression is fitted with and without all 28 pairwise products of the eight features, on ten generator seeds, and scored by held-out AUROC on split_b, the differences paired within a seed. Two controls frame the gain: a small multilayer network on the raw features, which asks whether a flexible model recovers the interaction without the products, and a null set generated with no interaction, on which the products should change nothing. The work is synthetic only and makes no claim about real data; it is a small, fully scripted test of whether the products carry the planted signal and nothing else.",
   "question": "On the toy generator's synthetic two-class set, does a logistic regression given all 28 pairwise products of x0..x7 reach a higher held-out AUROC on split_b than the same model without them, by at least +0.02 averaged over ten generator seeds, and does that gain survive a flexible model without products and vanish on a set with no planted interaction?",
   "claims": [
-    {"id": "C1", "text": "Adding all 28 pairwise products to a logistic regression raises held-out AUROC on split_b by at least +0.02, mean over ten generator seeds, paired within a seed.", "experiments": ["E1"]},
-    {"id": "C2", "text": "The products' gain is not matched by a small multilayer network on the raw features, so explicit products carry information a flexible model without them does not recover at this size.", "experiments": ["E2"]},
-    {"id": "C3", "text": "The gain comes from the planted interaction: on a set generated with interaction 0 the products change held-out AUROC by less than 0.005.", "experiments": ["E3"]}
+    {"id": "C1", "text": "Adding all 28 pairwise products to a logistic regression raises held-out AUROC on split_b by at least +0.02, mean over ten generator seeds, paired within a seed.", "experiments": ["E1"], "objectives": ["O1"]},
+    {"id": "C2", "text": "The products' gain is not matched by a small multilayer network on the raw features, so explicit products carry information a flexible model without them does not recover at this size.", "experiments": ["E2"], "objectives": []},
+    {"id": "C3", "text": "The gain comes from the planted interaction: on a set generated with interaction 0 the products change held-out AUROC by less than 0.005.", "experiments": ["E3"], "objectives": []}
   ],
   "anti_claims": [
     {"id": "A1", "text": "No claim is made about real data: the set plants exactly one product, and the result is synthetic-only.", "confirmed_by": "E3"},

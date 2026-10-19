@@ -85,6 +85,16 @@ IRREVERSIBLE = (
     ("push",
      r"\b(force[- ]push(?:es|ed|ing)?|git push|push(?:es|ed|ing)? (?:it |them |the \w+ )?(?:to |onto )?(?:main|master|origin|upstream|the remote|a shared branch)"
      r"|publish(?:es|ed|ing)? (?:the |a )?(?:branch|release|package|tag))\b"),
+    # Decision 17: code pushes the code repository's split to its private remote, but making it public, or any other
+    # change to its visibility, is the owner's word only (ticket 85).
+    ("make the code repository public",
+     r"\b((?:mak(?:e|es|ing)|turn(?:s|ing)?|set(?:s|ting)?|flip(?:s|ping)?) (?:the |our |its )?(?:github |code |project's )?"
+     r"(?:repositor(?:y|ies)|repos?|code/?|package)(?:'s)? public"
+     r"|(?:mak(?:e|es|ing)|turn(?:s|ing)?|set(?:s|ting)?) (?:it|them) public"
+     r"|publish(?:es|ed|ing)? (?:the |our |its )?code repositor(?:y|ies)"
+     r"|open[- ]sourc(?:e|es|ed|ing) (?:the |our |its )?(?:code|repositor(?:y|ies)|repos?|package|method)"
+     r"|gh repo edit\b[^\n]*--visibility"
+     r"|(?:chang(?:e|es|ing)|set(?:s|ting)?|flip(?:s|ping)?|switch(?:es|ing)?) (?:the |our |its )?(?:github |code )?(?:repositor(?:y|ies)|repos?)(?:'s)? visibility)"),
     ("budgets",
      r"\b(exceed(?:s|ed|ing)? (?:the |its |our )?(?:[\w-]+ )?(?:budget|allowance|quota|cap)"
      r"|(?:rais(?:e|es|ing)|increas(?:e|es|ing)|doubl(?:e|es|ing)|extend(?:s|ing)?|lift(?:s|ing)?|remov(?:e|es|ing)) (?:the |its |our )?(?:[\w-]+ )?(?:budget|cap|allowance|quota|usage window)"
@@ -420,7 +430,8 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "",
         "# The line",
         "",
-        "The irreversible list is not yours to decide: deleting or overwriting data; pushing or force-pushing; exceeding "
+        "The irreversible list is not yours to decide: deleting or overwriting data; pushing or force-pushing; making the "
+        "code repository public or changing its visibility; exceeding "
         "or raising a compute or usage budget; spending money; changing the goal or the data; changing the harness "
         "globally; any network write. The human-only classes of this project are: %s. An answer that falls in any of "
         "these, or that cannot be taken back, is the owner's: return `answer: null` with `reversible: false` (or "

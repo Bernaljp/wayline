@@ -1,7 +1,7 @@
 """Keep-if-better under a quantitative goal (Implementation Decisions 5 and 14; ticket 39).
 
-A ticket with `goal_metric` is measured by code, never by the worker's own word: the goal's
-`eval_command` runs once per seed artifact, from the project root, on the held-out split, and the
+A ticket whose `goal` names a goal (`goal: "O2"`, ticket 81) is measured by code, never by the
+worker's own word: the goal's `eval_command` runs once per seed artifact, from the project root, on the held-out split, and the
 change is kept only when the mean of those readings improves on the best kept value, in the goal's
 `direction`, by more than `policy.goal.margin_sd` standard deviations across at least
 `policy.goal.min_seeds` seeds.
@@ -33,7 +33,7 @@ from typing import Optional
 from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
 from wayline.intake import GOAL_JSON
 from wayline.ledger import PROGRESS
-from wayline.objectives import ARTIFACT, metric_value
+from wayline.objectives import ARTIFACT, is_open, metric_value, named, ticket_goal
 
 __all__ = [
     "SPLIT", "ARTIFACT_ENV", "SPLIT_ENV", "Judgment", "read_goal", "applies", "seed_artifacts",
@@ -100,19 +100,32 @@ def read_goal(ledger):
     return goal
 
 
-def applies(ticket, goal):
+def applies(ticket, goal, objectives=()):
     """Why keep-if-better does not run on this ticket, or None when it does.
 
-    It runs on a ticket whose `goal_metric` reports the goal's own metric; a ticket without one is
-    integrated as any other, and so is one reporting another metric, which is said.
+    It runs on a ticket whose `goal` names an open objective whose measure reports the goal's own
+    metric in the goal's own direction (ticket 81: the metric and the direction are read from the
+    measure in `objectives`, the records of `objectives.json`). Until ticket 87 the command, the split,
+    and the judging are still `GOAL.json`'s, so a measure that disagrees with it on the metric or the
+    direction judges nothing, and says why. A ticket without a goal is integrated as any other, and so
+    is one whose goal is closed: nobody pursues it.
     """
-    wanted = ticket.get("goal_metric") or None
-    if wanted is None:
-        return "the ticket reports no goal metric"
+    identifier = ticket.get("goal")
+    if not identifier:
+        return "the ticket names no goal"
+    found = named(objectives, identifier)
+    if found is None or not found.get("measure"):
+        return "the ticket's goal %s has no measure, so nothing measures it" % identifier
+    if not is_open(found):
+        return "the ticket's goal %s is %s, and keep-if-better judges only a goal pursued now" % (identifier, found.get("status"))
+    measure = ticket_goal(ticket, objectives)
     if goal is None:
-        return "the ticket reports %s, and research/GOAL.json states no measurable goal" % wanted.get("reports")
-    if wanted.get("reports") != goal["metric"]:
-        return "the ticket reports %s, and the goal's metric is %s" % (wanted.get("reports"), goal["metric"])
+        return "the ticket's goal %s reports %s, and research/GOAL.json states no measurable goal" % (identifier, measure["metric"])
+    if measure["metric"] != goal["metric"]:
+        return "the ticket's goal %s reports %s, and the goal's metric is %s" % (identifier, measure["metric"], goal["metric"])
+    if measure["direction"] != goal["direction"]:
+        return "the ticket's goal %s wants %s %s, and research/GOAL.json's direction is %s" % (
+            identifier, measure["metric"], measure["direction"], goal["direction"])
     return None
 
 

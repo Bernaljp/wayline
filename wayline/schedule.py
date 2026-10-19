@@ -19,7 +19,7 @@ __all__ = [
     "NORMAL", "CHEAP_ONLY", "STOP", "steps_down",
     "normalize", "is_directory_entry", "entries_collide", "touch_sets_collide", "critical_path_lengths",
     "everything_free", "nothing_held", "awaits_owner", "launchable", "order_key", "pick", "held_back", "holds_model_work",
-    "AUTONOMOUS",
+    "AUTONOMOUS", "objective_class", "WAITED_ON", "OTHER_OPEN", "NO_OBJECTIVE",
 ]
 
 # The pacing actions of decision 5 (`wayline.pacing` computes which one holds). `stop` launches
@@ -31,6 +31,9 @@ CHEAP_ONLY = "cheap_only"
 STOP = "stop"
 # The one autonomy under which a decision ticket that is not human-only is the decider's rather than the owner's.
 AUTONOMOUS = "autonomous"
+# The objective class, the pick order's second key (decision 17, ticket 81): a ticket serving an objective the stopping
+# rule waits on, one serving another open objective, and one serving none (or only closed ones).
+WAITED_ON, OTHER_OPEN, NO_OBJECTIVE = 0, 1, 2
 
 
 def holds_model_work(action):
@@ -165,20 +168,39 @@ def launchable(ready, running=(), root=None, free=everything_free):
 # --- the pick order --------------------------------------------------------------------------
 
 
-def order_key(entry, lengths, action=NORMAL, goal_tickets=()):
+def objective_class(served, pursued, waited_on=None):
+    """The objective class of a ticket that serves the objectives `served`: 0, 1, or 2 (decision 17, ticket 81).
+
+    0 when it serves an objective the stopping rule waits on (`waited_on`), 1 when it serves another
+    objective that is open (`pursued`), 2 when it serves none that is open. `waited_on` None is the
+    rule's default, `objectives`, which waits on every open objective; until ticket 87 lands
+    `stop_when` that is the only rule there is, so class 1 appears only once a rule names a list.
+    """
+    pursued = set(pursued)
+    waited = pursued if waited_on is None else set(waited_on) & pursued
+    named = set(served or ())
+    if named & waited:
+        return WAITED_ON
+    if named & pursued:
+        return OTHER_OPEN
+    return NO_OBJECTIVE
+
+
+def order_key(entry, lengths, action=NORMAL, classes=None):
     """The sort key of wave step 9, smallest first.
 
-    Critical-path length, longest first; then a ticket that reports a goal metric; then, when
-    pacing says `cheap_only`, the cheaper ticket; then difficulty, hardest first; then the lower
-    id. The two difficulty keys are not the same key twice: under `cheap_only` the cheap ticket
-    goes first, because what is left of the window is worth spending on what will close; otherwise
-    the hard one goes first, because it is the longest job in the wave and a wave is shortest when
-    its longest job starts earliest.
+    Critical-path length, longest first; then the objective class (`classes`, by id: 0 for a ticket
+    serving an objective the stopping rule waits on, 1 for another open objective, 2 for none, which
+    a ticket `classes` does not name is); then, when pacing says `cheap_only`, the cheaper ticket;
+    then difficulty, hardest first; then the lower id. The two difficulty keys are not the same key
+    twice: under `cheap_only` the cheap ticket goes first, because what is left of the window is
+    worth spending on what will close; otherwise the hard one goes first, because it is the longest
+    job in the wave and a wave is shortest when its longest job starts earliest.
     """
     difficulty = entry.get("difficulty") or 0
     return (
         -lengths.get(entry["id"], 1),
-        0 if entry["id"] in goal_tickets else 1,
+        (classes or {}).get(entry["id"], NO_OBJECTIVE),
         difficulty if action == CHEAP_ONLY else 0,
         -difficulty,
         entry["id"],
@@ -274,7 +296,7 @@ def nothing_held(entry):
     return False
 
 
-def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_free, goal_tickets=(), held=nothing_held,
+def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_free, classes=None, held=nothing_held,
          autonomy=None, decider=True):
     """The tickets this wave launches, in the order it launches them (wave steps 7 to 9).
 
@@ -298,7 +320,7 @@ def pick(graph, running=(), slots=1, action=NORMAL, root=None, free=everything_f
         options = launchable(ready, taken, root, free)
         if not options:
             break
-        best = min(options, key=lambda entry: order_key(entry, lengths, action, goal_tickets))
+        best = min(options, key=lambda entry: order_key(entry, lengths, action, classes))
         ready = [entry for entry in ready if entry["id"] != best["id"]]
         taken.append(best)
         chosen.append(best)

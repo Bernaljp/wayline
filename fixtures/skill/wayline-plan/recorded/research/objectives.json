@@ -1,0 +1,25 @@
+{
+  "objectives": [
+    {
+      "id": "O1",
+      "text": "Do pairwise interaction terms improve held-out AUROC on the synthetic set?",
+      "measure": {
+        "metric": "auroc",
+        "direction": "up",
+        "target": 0.02,
+        "held_out_split": "split_b",
+        "eval_command": "python3 toy/eval.py {artifact}",
+        "baseline": {
+          "value": null,
+          "source": null
+        },
+        "dataset_or_split": null,
+        "min_seeds": null
+      },
+      "status": "open",
+      "answer": null,
+      "evidence": [],
+      "reframed_as": null
+    }
+  ]
+}
