@@ -1,0 +1,12 @@
+{
+  "id": "P3",
+  "section": "methods",
+  "heading": "Seeds and splits",
+  "text": "Each configuration ran on ten seeds against split B.",
+  "replaces": "P1",
+  "by": "t7-a1",
+  "objectives": ["O1"],
+  "ticket": 7,
+  "wave": "3f2a9c1d/4",
+  "ts": "2026-10-19T08:00:00.000Z"
+}

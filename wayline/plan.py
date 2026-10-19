@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from wayline import HARNESS_ROOT, changes, decider, decisions, gates, objectives, registry, software, specify, worker
+from wayline import HARNESS_ROOT, changes, decider, decisions, gates, objectives, registry, sections, software, specify, worker
 from wayline.cli import parse_args
 from wayline.frontmatter import dump_document
 from wayline.jsonschema import ValidationError, check, load_schema
@@ -375,10 +375,12 @@ def check_tickets(new, graph, project, *, base=True, timeout_s=None, declared=fr
         label = _label(fields, labels)
         if not _one_line(fields.get("demo")):
             failures.append("%s has no demo" % label)
-        if not (fields.get("acceptance") or {}).get("machine"):
+        # A writing ticket changes no file: its passages are its work, and the declared-sections check its machine gate.
+        writing = fields.get("kind") == sections.WRITING
+        if not writing and not (fields.get("acceptance") or {}).get("machine"):
             failures.append("%s has no machine criterion in acceptance.machine" % label)
         touches = fields.get("touches") or []
-        if not touches:
+        if not touches and not writing:
             failures.append("%s has no touch set" % label)
         for touch in touches:
             problem = touch_problem(touch, project, fields.get("kind"))
@@ -574,6 +576,10 @@ def prepare(record, project, existing, index, cut, start=None):
                                 "quality": list(item["acceptance"].get("quality") or [])}
         fields["objectives"] = list(item["objectives"])
         failures.extend(_objective_failures(label, item, recorded))
+        failures.extend(_section_failures(label, item))
+        declared = list(item["sections"]) if item.get("sections") is not None else sections.sections_for_kind(item["kind"])
+        if declared:
+            fields["sections"] = declared
         if item.get("goal") is not None:
             fields["goal"] = item["goal"]
         fields["context_pack"] = list(item["context_pack"])
@@ -635,6 +641,25 @@ def _objective_failures(label, item, recorded):
         refused = objectives.check_goal(label, item["goal"], recorded)
         if refused is not None:
             failures.append(refused)
+    return failures
+
+
+def _section_failures(label, item):
+    """What a planned ticket's `sections` and touch set say against its kind (decision 17, ticket 86).
+
+    A kind declares the sections decision 17 gives it; a `writing` ticket declares the ones it writes, at least one,
+    and its touch set is empty, since code writes the sections from the passages it returns.
+    """
+    failures, kind, given = [], item["kind"], item.get("sections")
+    if kind == sections.WRITING:
+        if item.get("touches"):
+            failures.append("%s is a writing ticket, whose touch set is empty: code writes the sections from its passages, "
+                            "so drop %s" % (label, ", ".join("`%s`" % touch for touch in item["touches"])))
+        if not given:
+            failures.append("%s is a writing ticket and declares no section; name the sections it writes in `sections`" % label)
+    elif given is not None and sorted(set(given)) != sorted(sections.sections_for_kind(kind)):
+        failures.append("%s declares %s; a %s ticket declares %s" % (label, ", ".join(given) or "no section", kind,
+                                                                    ", ".join(sections.sections_for_kind(kind)) or "no section"))
     return failures
 
 

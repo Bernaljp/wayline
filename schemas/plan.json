@@ -19,7 +19,7 @@
           "kind": {"type": "string", "enum": ["dossier", "lit", "code", "docs", "experiment", "analysis", "figure", "writing", "review", "harness"]},
           "difficulty": {"type": "integer", "minimum": 1, "maximum": 5, "description": "by the rubric of BRIEF 8.4, which sets the model, the effort, and the budget"},
           "blocked_by": {"type": "array", "items": {"$ref": "#/$defs/reference"}, "description": "the tickets this one waits on: keys of this plan, or #<id> of tickets the project already holds"},
-          "touches": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the touch set: paths under the project the ticket may write, a directory with a trailing slash; never research/"},
+          "touches": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the touch set: paths under the project the ticket may write, a directory with a trailing slash; never research/, and empty for a writing ticket, whose passages code writes"},
           "resources": {
             "type": ["object", "null"],
             "additionalProperties": false,
@@ -44,6 +44,7 @@
           },
           "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the open objectives (research/OBJECTIVES.md) the ticket serves; empty for one no objective asked for, a plotting ticket or one for an unasked claim"},
           "goal": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "when the ticket reports a goal's metric: the open objective with a measure it reports, whose metric and direction the measure gives"},
+          "sections": {"type": "array", "items": {"type": "string", "enum": ["introduction", "results", "discussion", "methods", "references"]}, "description": "the sections of the paper the ticket adds passages to, set by its kind: code and experiment declare methods, analysis methods and results, lit introduction, writing the ones it writes (required for it), every other kind none; code fills it from the kind when it is absent"},
           "context_pack": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the locators the worker is given, smallest first: a path, path:first-last, or path#heading"},
           "origin": {"type": "string", "pattern": "\\S", "description": "what in the spec the ticket comes from, as a locator: research/SPEC.md#e1-claims-c1"},
           "demo": {"type": "string", "pattern": "\\S", "description": "what a person would watch to believe the ticket is done"},

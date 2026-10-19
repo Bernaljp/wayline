@@ -20,20 +20,20 @@ Not part of this ticket:
 
 It blocks 108 and 119.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#253](https://github.com/Bernaljp/wayline/issues/253) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Methods and the code: "Aligned", `REPRODUCE.md`, `reproduce.json`, the locks, `README.md`; tools, packages, and environments: per-project packages locked in `code/`); milestone M8 criterion 13; user story 152.
 
-- [ ] `code/REPRODUCE.md` and `code/reproduce.json` list, per result, each run its current findings cite. Each run gives its command, its commit of `main`, its inputs, outputs, wall-clock time, and hardware (GPUs held).
-- [ ] The locks in `code/` come from the environment the cited jobs ran in, not from what is installed now. A tool a job called appears with the version and lock digest its job record carries.
-- [ ] `code/README.md` renders from the records and keeps, word for word, a part the owner wrote between its markers.
-- [ ] The files re-render after a wave that changed `code/` or ran a cited job, and only then. They are committed with the wave and pushed with the next push of the code repository.
-- [ ] None of them names a path under `research/`, `jobs/`, or `results/` that the code repository does not hold.
-- [ ] Tests, over a temporary project through the ledger seam, with fixture job records and results:
+- [x] `code/REPRODUCE.md` and `code/reproduce.json` list, per result, each run its current findings cite. Each run gives its command, its commit of `main`, its inputs, outputs, wall-clock time, and hardware (GPUs held).
+- [x] The locks in `code/` come from the environment the cited jobs ran in, not from what is installed now. A tool a job called appears with the version and lock digest its job record carries.
+- [x] `code/README.md` renders from the records and keeps, word for word, a part the owner wrote between its markers.
+- [x] The files re-render after a wave that changed `code/` or ran a cited job, and only then. They are committed with the wave and pushed with the next push of the code repository.
+- [x] None of them names a path under `research/`, `jobs/`, or `results/` that the code repository does not hold.
+- [x] Tests, over a temporary project through the ledger seam, with fixture job records and results:
   - the rendered files;
   - an owner's part surviving a re-render;
   - a finding replaced by another, which changes the runs listed.
-- [ ] The changelog's `## Unreleased` section describes `REPRODUCE.md` and the locks.
-- [ ] `python -m unittest` passes.
+- [x] The changelog's `## Unreleased` section describes `REPRODUCE.md` and the locks.
+- [x] `python -m unittest` passes.

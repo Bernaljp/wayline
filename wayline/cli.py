@@ -71,7 +71,7 @@ VERBS = [
     Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services", lazy("wayline.dashboard", "serve_command")),
     Verb("tick", "tick [--project <path>]", "the recurrent job that relaunches work after windows, answers, and jobs", "services", lazy("wayline.tick", "tick_command")),
     Verb("accept", "accept [--where worktree|rebased|main]", "run the ticket's machine acceptance inside a worktree (called by workers)", "worktree", lazy("wayline.gates", "accept")),
-    Verb("consult", "consult <slug> \"<question>\" [--json]", "ask the consultant one question about one dossier (called by workers; at most policy.consultant.max_questions_per_ticket per ticket)", "worktree", lazy("wayline.consult", "consult_command")),
+    Verb("consult", "consult <slug|document id> \"<question>\" [--json]", "ask the consultant one question about one dossier or one document (called by workers; at most policy.consultant.max_questions_per_ticket per ticket)", "worktree", lazy("wayline.consult", "consult_command")),
     Verb("job", "job add [<file>]", "write a job file for the runner from a JSON spec on stdin (called by experiment workers)", "worktree", lazy("wayline.resources", "job_command")),
     Verb("evolve", "evolve [\"<text>\"] [--apply <id>] [--retrospective] [--tag <tag>]", "turn feedback into change records, harness tickets, and fixtures; tag the global changes main now holds", "evolve",
          lazy("wayline.changes", "evolve_command")),

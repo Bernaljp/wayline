@@ -1,0 +1,12 @@
+{
+  "id": "P3",
+  "section": "results",
+  "heading": "Products",
+  "text": "A Results passage is a finding, kept in findings.jsonl.",
+  "replaces": null,
+  "by": "t7-a1",
+  "objectives": [],
+  "ticket": 7,
+  "wave": null,
+  "ts": "2026-10-19T08:00:00.000Z"
+}
