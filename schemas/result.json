@@ -21,7 +21,8 @@
         "properties": {
           "text": {"type": "string"},
           "provenance": {"type": "string", "description": "a path with a locator the manifest can resolve"},
-          "negative": {"type": "boolean"}
+          "negative": {"type": "boolean"},
+          "replaces": {"type": "string", "description": "the id of an earlier finding this one replaces, which is then no longer current (ticket 106)"}
         }
       }
     },

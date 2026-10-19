@@ -649,6 +649,21 @@ class PushAfterTheWaveTest(ProjectTestCase):
         self.assertEqual(git(self.remote, "show", "main:hello.txt"), "hello")
         self.assertNotIn("research", git(self.remote, "ls-tree", "--name-only", "main").splitlines())
 
+    def test_the_wave_that_changed_code_commits_reproduce_and_pushes_it(self):
+        """Ticket 106: the files render after a wave that changed `code/`, go in with the wave, and out with the push."""
+        self.code_ticket()
+        self.conduct({"code/hello.txt": "hello\n"})
+        self.assertEqual(git(self.project, "status", "--porcelain", "--", "code"), "")
+        for name in ("REPRODUCE.md", "reproduce.json", "README.md", "locks/tools.json"):
+            git(self.project, "cat-file", "-e", "main:code/" + name)
+            git(self.remote, "cat-file", "-e", "main:" + name)
+        self.assertIn("<!-- wayline:owner -->\n# one ticket\n<!-- /wayline:owner -->", git(self.remote, "show", "main:README.md"))
+        self.assertEqual(len(self.run.ran("push")), 1, "the render rides in the wave's one push")
+
+    def test_a_wave_that_neither_changed_code_nor_ran_a_cited_job_renders_nothing(self):
+        self.conduct({"hello.txt": "hello\n"})
+        self.assertFalse((self.project / "code" / "REPRODUCE.md").exists())
+
     def test_the_ticket_launch_carries_the_commit_of_main_it_ran_at(self):
         at = git(self.project, "rev-parse", "main")
         self.conduct({"hello.txt": "hello\n"})
