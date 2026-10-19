@@ -503,6 +503,7 @@ class Ask:
     ticket: Optional[int] = None
     role: str = VERIFIER
     rung: Optional[int] = None  # the rung the judged ticket attempt ran on (decision 16); None off a ticket
+    code_rule: Optional[dict] = None  # the parameters and not_methods this verdict must judge, one by one (ticket 107)
 
 
 @dataclass
@@ -745,7 +746,7 @@ def findings_text(findings, empty="no finding was named"):
 
 def verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
             verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None, ledger=None,
-            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None):
+            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None):
     """One Type-B verdict, journaled: every verdict in the harness comes through here.
 
     A verdict is journaled because its session id and its model are the whole of what makes it
@@ -755,7 +756,7 @@ def verdict(subject_kind, subject, question, paths, scope_limit, *, project, aut
     taken = take_verdict(subject_kind, subject, question, paths, scope_limit, project=project,
                          author_model=author_model, verdict_type=verdict_type, ticket=ticket,
                          harness_root=harness_root, policy=policy, cwd=cwd, memo=memo,
-                         run_dir=run_dir, role=role, fall_back=fall_back, rung=rung)
+                         run_dir=run_dir, role=role, fall_back=fall_back, rung=rung, code_rule=code_rule)
     ledger_for(ledger or Path(project).resolve()).append_event(
         VERDICT, taken.payload, ticket=taken.ticket, session_id=taken.session_id)
     return taken
@@ -770,12 +771,12 @@ def verdict_for(ask, **context):
     """
     return verdict(ask.subject_kind, ask.subject, ask.question, ask.paths, ask.scope_limit,
                    author_model=ask.author_model, verdict_type=ask.verdict_type,
-                   ticket=ask.ticket, role=ask.role, rung=ask.rung, **context)
+                   ticket=ask.ticket, role=ask.role, rung=ask.rung, code_rule=ask.code_rule, **context)
 
 
 def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
                  verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None,
-                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None):
+                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None):
     """One verifier session, validated but not journaled; `verdict` is this plus the journal.
 
     `role` names the judging role, the verifier unless a decision names another; whichever it
@@ -799,6 +800,9 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     first thread: a rejection memo is one thread's case against the work, not a judgment of it,
     and journaling it as a `verdict` would leave a failing Type-B verdict in the ledger against
     a paper the second thread went on to clear.
+
+    `code_rule` is a ticket's parameters and not_methods the question listed (ticket 107): an answer that does not judge
+    every one of them is resumed like any other unusable answer.
     """
     if verdict_type not in VERDICT_TYPES:
         raise GateError("verdict_type is one of %s, got %r" % (", ".join(VERDICT_TYPES), verdict_type))
@@ -837,12 +841,12 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     envelope = worker.launch(request)
     raise_if_refused(envelope, model, what)
     heard = list(envelope.rate_limit_events)
-    problem = _unusable(envelope)
+    problem = _unusable(envelope, code_rule)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_VERDICT % problem)
         raise_if_refused(envelope, model, what)
         heard += envelope.rate_limit_events
-        problem = _unusable(envelope)
+        problem = _unusable(envelope, code_rule)
     if problem is not None:
         raise GateError("%s could not be taken: %s" % (what, problem))
     returned = envelope.structured_output
@@ -876,7 +880,7 @@ def raise_if_refused(envelope, model, what):
     raise UsageLimited("%s was refused by the usage limit on %s until %s" % (what, window, until), limit)
 
 
-def _unusable(envelope):
+def _unusable(envelope, code_rule=None):
     """Why this envelope is not a verdict the harness can act on, or None when it is one.
 
     The launcher already validated the structured output against the schema it passed; it is
@@ -899,6 +903,15 @@ def _unusable(envelope):
     if not returned["pass"] and not returned.get("findings"):
         return "the verdict failed and named no finding, so nothing says what to fix"
     rule = returned.get("code_rule") or {}
+    if code_rule:
+        judged = {(entry.get("method"), entry.get("name")) for entry in rule.get("parameters") or []}
+        judged |= {(None, entry.get("name")) for entry in rule.get("not_methods") or []}
+        asked = [(entry.get("method"), entry.get("name")) for entry in code_rule.get("parameters") or []]
+        asked += [(None, entry.get("name")) for entry in code_rule.get("not_methods") or []]
+        missing = [name if method is None else "%s %s" % (method, name) for method, name in asked if (method, name) not in judged]
+        if missing:
+            return ("the question listed the ticket's reasons and not_methods to judge, and `code_rule` does not judge %s"
+                    % ", ".join(missing))
     unheld = [entry for entry in (rule.get("parameters") or []) + (rule.get("not_methods") or []) if entry.get("holds") is False]
     if returned["pass"] and unheld:
         return ("the verdict passed and judges %d of the ticket's reasons or not_methods not to hold (`code_rule`); one that "
@@ -957,6 +970,7 @@ def code_rule_text(rule):
 
 def _with_code_rule(ask, rule):
     ask.question = "%s\n\n%s" % (ask.question.rstrip(), code_rule_text(rule))
+    ask.code_rule = rule
     return ask
 
 

@@ -3467,8 +3467,8 @@ class Conductor:
 
         A developed method with no `code` tag in a current Methods passage, a used method no Methods passage names, or a
         parameter with no reason fails it, and the worker is sent back with the list. Code fills each `parameters` entry's
-        value and default into the result, and keeps the entries and `not_methods` beside the attempt's session for the
-        verdict that judges them.
+        value and default into the result, which `_close` keeps beside the attempt's session for the verdict that judges
+        them. A reading a usage window refused fails the check and pauses the run.
         """
         try:
             outcome = methods.check(self.ledger, attempt.worktree, attempt.result, run=self.methods_run, tools=self.methods_tools,
@@ -3478,9 +3478,11 @@ class Conductor:
             return []
         if outcome is None:
             return []
+        if outcome.refused is not None:
+            # A closed window, not a verdict on the work: the run pauses, and the files are read on the resume after it.
+            self._pause(outcome.refused.limit, "ticket %d's code reading" % attempt.id)
         if outcome.parameters:  # entries come only from a result that gave some, so it is the envelope's own mapping
             attempt.result["parameters"] = outcome.parameters
-        methods.write_code_rule(self._attempt_dir(attempt), outcome.code_rule())
         return [outcome.acceptance_result()]
 
     def _timeout(self):
@@ -3795,6 +3797,10 @@ class Conductor:
             notes.append(waits_for_owner)
         if notes:
             attempt.body = tickets.with_result_note(attempt.body, notes)
+        rule = methods.code_rule(attempt.result)
+        if rule is not None and discarded is None and waits_for_owner is None:
+            # What the verdict judges, kept beside the session so a restarted conductor asks the same (ticket 107).
+            methods.write_code_rule(self._attempt_dir(attempt), rule)
         self._write_ticket(attempt, "done", attempt.result)
         self.ledger.append_event(TICKET_DONE, {"ticket": attempt.id}, ticket=attempt.id)
         if discarded is not None:

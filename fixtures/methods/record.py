@@ -3,7 +3,7 @@
 `python3 fixtures/methods/record.py [PYTHON]` runs, live:
 
 - tree-sitter-matlab (`converters/matlab_parse.py` in the tools venv `wayline tools install` made) on the
-  start-midway fixture's `phaselock.m` and on `phaselock_sweep.m` here, each kept as
+  start-midway fixture's `phaselock.m` and on each of `FILES` here, each kept as
   `recorded/matlab_parse/<first 16 hex of the file's sha256>.json`;
 - `inspect.signature` (`wayline.methods.SIGNATURE_PROBE`) under PYTHON, a Python with scipy and numpy
   (`python3` by default), for each name in `NAMES`, kept as `recorded/signatures/<name>.json`.
@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 from wayline.methods import MATLAB_PARSER, SIGNATURE_PROBE  # noqa: E402
 from wayline.tools import Tools  # noqa: E402
 
+FILES = ("phaselock_sweep.m", "phaselock_drift.m", "phaselock_defaults.m", "phaselock_broken.m")
 NAMES = ("scipy.signal.hilbert", "numpy.random.default_rng", "scipy.integrate.solve_ivp")
 
 
@@ -43,7 +44,7 @@ def record_matlab(folder):
     out.mkdir(parents=True, exist_ok=True)
     midway = Path(folder) / "phaselock.m"
     midway.write_text(midway_matlab(), encoding="utf-8")
-    for path in (midway, HERE / "phaselock_sweep.m"):
+    for path in [midway] + [HERE / name for name in FILES]:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
         printed = subprocess.run([python, str(MATLAB_PARSER), str(path)], capture_output=True, check=True).stdout
         (out / ("%s.json" % digest)).write_bytes(printed)

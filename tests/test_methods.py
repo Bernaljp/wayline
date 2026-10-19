@@ -40,6 +40,7 @@ def _midway():
 MIDWAY_CODE = _midway()
 PY_FIRST, PY_SECOND, MATLAB = MIDWAY_CODE.PY_FIRST, MIDWAY_CODE.PY_SECOND, MIDWAY_CODE.MATLAB
 SWEEP = (OWN / "phaselock_sweep.m").read_text(encoding="utf-8")
+DRIFT = (OWN / "phaselock_drift.m").read_text(encoding="utf-8")
 
 
 def git(cwd, *args):
@@ -240,6 +241,42 @@ class ParametersTest(MethodsCase):
         self.assertEqual(seeded.problems, [])
         self.assertEqual((seeded.parameters[1]["value"], seeded.parameters[1]["default"]), (methods.UNSET, methods.UNSEEDED))
 
+    def test_a_generator_seeded_by_its_first_argument_is_seeded_and_one_seeded_with_none_is_not(self):
+        reason = {"method": "order_parameter", "name": "window", "reason": "Two wingbeats."}
+        for call, unseeded in (("np.random.default_rng(42)", False), ("np.random.default_rng(seed=7)", False),
+                               ("np.random.default_rng(None)", True)):
+            with self.subTest(call=call):
+                git(self.project, "checkout", "-q", "main")
+                text =PY_SECOND + "\n\ndef jittered(traces):\n    rng = %s\n    return traces + rng.normal(size=traces.shape)\n" % call
+                git(self.project, "checkout", "-q", "-B", "ticket-1")
+                (self.project / "code" / "phaselock.py").write_text(text)
+                git(self.project, "commit", "-q", "-am", "jitter")
+                outcome = self.check(parameters=[reason])
+                self.assertEqual(any("random state no seed fixes" in problem for problem in outcome.problems), unseeded,
+                                 outcome.problems)
+
+    def test_a_value_passed_through_a_variable_is_set_all_the_same_unless_it_forwards_the_callers(self):
+        ode = PY_SECOND + ("\n\nfrom scipy.integrate import solve_ivp\n\n\ndef drift(rate, settings, rtol=1e-3):\n"
+                           "    tight = settings.tight\n"
+                           "    a = solve_ivp(lambda t, y: -rate * y, (0, 10), [1.0], rtol=tight, atol=1e-6)\n"
+                           "    b = solve_ivp(lambda t, y: -rate * y, (0, 10), [1.0], rtol=rtol, atol=1e-6)\n"
+                           "    return a, b\n")
+        self.methods_passage("The drift is integrated numerically {code:code/phaselock.py#drift}.")
+        self.ticket({"phaselock.py": ode})
+        outcome = self.check(parameters=[{"method": "order_parameter", "name": "window", "reason": "Two wingbeats."},
+                                         {"method": "drift", "name": "rtol", "reason": "The solver's default."}])
+        self.assertProblem(outcome, "scipy.integrate.solve_ivp", "code/phaselock.py:21", "`rtol` to settings.tight")
+        self.assertFalse([problem for problem in outcome.problems if "code/phaselock.py:22" in problem], outcome.problems)
+
+    def test_the_last_assignment_by_line_is_the_value(self):
+        ode = PY_SECOND + ("\n\nfrom scipy.integrate import solve_ivp\n\n\ndef drift(rate, y=None):\n"
+                           "    if y is None:\n        tol = 1e-3\n    tol = 1e-9\n"
+                           "    return solve_ivp(lambda t, y: -rate * y, (0, 10), [1.0], rtol=tol, atol=1e-6)\n")
+        self.methods_passage("The drift is integrated numerically {code:code/phaselock.py#drift}.")
+        self.ticket({"phaselock.py": ode})
+        outcome = self.check(parameters=[{"method": "order_parameter", "name": "window", "reason": "Two wingbeats."}])
+        self.assertProblem(outcome, "scipy.integrate.solve_ivp", "`rtol` to 1e-09")
+
     def test_a_global_random_draw_with_no_seed_needs_a_reason(self):
         noisy = PY_SECOND + "\n\ndef noisy(traces):\n    return traces + np.random.randn(*traces.shape)\n"
         self.methods_passage("Noise is added {code:code/phaselock.py#noisy}.")
@@ -337,6 +374,31 @@ class MatlabTest(MethodsCase):
         self.assertProblem(outcome, "`ode45` (code/phaselock_sweep.m:9)", "leaves `RelTol` at its default (1e-3)")
         self.assertProblem(outcome, "`ode45` (code/phaselock_sweep.m:9)", "leaves `AbsTol` at its default (1e-6)")
 
+    def test_an_options_structure_is_traced_back_to_the_tolerance_it_sets_and_the_one_it_leaves(self):
+        self.methods_passage("The drift is integrated numerically {code:code/phaselock_drift.m#phaselock_drift}.")
+        self.ticket({"phaselock_drift.m": DRIFT})
+        outcome = self.check()
+        self.assertProblem(outcome, "`odeset` (code/phaselock_drift.m:3)", "`RelTol` to 1e-8", "default is 1e-3")
+        self.assertProblem(outcome, "`ode45` (code/phaselock_drift.m:4)", "leaves `AbsTol` at its default (1e-6)")
+        self.assertFalse(self.problems(outcome, "`ode45`", "RelTol"), "the tolerance odeset sets is not asked for twice")
+
+    def test_a_default_written_another_way_is_still_the_default(self):
+        self.methods_passage("The drift is integrated numerically {code:code/phaselock_defaults.m#phaselock_defaults}.")
+        self.ticket({"phaselock_defaults.m": (OWN / "phaselock_defaults.m").read_text()})
+        self.assertEqual(self.check().problems, [], "0.001 is 1e-3 and 1.0e-6 is 1e-6")
+
+    def test_a_file_tree_sitter_reads_only_in_part_goes_to_the_reading(self):
+        self.ticket({"phaselock_broken.m": (OWN / "phaselock_broken.m").read_text()})
+        answer = {"files": [{"path": "code/phaselock_broken.m", "developed": [{"name": "phaselock_broken", "line": 1}],
+                             "used": [], "parameters": []}]}
+        with worker.use_fake() as fake:
+            fake.script(worker.Envelope(structured_output=answer, session_id="read-2", num_turns=1))
+            outcome = self.check()
+            calls = list(fake.calls)
+        self.assertEqual(len(calls), 1, "the partial parse is not trusted; the reading is")
+        self.assertTrue(any("syntax error" in note for note in outcome.notes), outcome.notes)
+        self.assertProblem(outcome, "`phaselock_broken`", "no `code` tag")
+
     def test_the_parse_fills_the_code_dossiers_methods_for_a_matlab_repository(self):
         from wayline import code_dossier
         dest = self.temp / "inherited"
@@ -352,6 +414,27 @@ class MatlabTest(MethodsCase):
         self.assertIn({"kind": "developed", "name": "phaselock", "path": "phaselock.m", "line": 1}, dossier["methods"])
         self.assertIn({"kind": "used", "name": "hilbert", "path": "phaselock.m", "line": 4, "method": "Hilbert transform"},
                       dossier["methods"])
+
+    def test_a_matlab_repository_with_a_python_helper_is_still_matlab_and_objective_c_is_not(self):
+        from wayline import code_dossier
+        dest = self.temp / "mixed"
+        dest.mkdir()
+        (dest / "phaselock.m").write_text(MATLAB)
+        (dest / "phaselock_sweep.m").write_text(SWEEP)
+        (dest / "plot_results.py").write_text("print('plots')\n")
+        self.assertEqual(code_dossier.detect_language(dest), "matlab")
+        apple = self.temp / "apple"
+        apple.mkdir()
+        (apple / "AppDelegate.m").write_text("#import <Cocoa/Cocoa.h>\n@implementation AppDelegate\n@end\n")
+        self.assertEqual(code_dossier.detect_language(apple), "unknown")
+
+    def test_the_inventory_skips_vendored_code(self):
+        dest = self.temp / "vendored"
+        (dest / "venv" / "lib").mkdir(parents=True)
+        (dest / "venv" / "lib" / "scipy_copy.py").write_text("def welch(x):\n    return x\n")
+        (dest / "phaselock.py").write_text(PY_FIRST)
+        _, found, _ = methods.inventory(dest, "python")
+        self.assertEqual(sorted({entry["path"] for entry in found}), ["phaselock.py"])
 
 
 class ReadingTest(MethodsCase):
@@ -408,6 +491,18 @@ class ReadingTest(MethodsCase):
             outcome = self.check()
         self.assertEqual(outcome.problems, [])
         self.assertTrue(any("could not be taken" in note and methods.NOT_CHECKED in note for note in outcome.notes), outcome.notes)
+
+    def test_a_reading_the_usage_limit_refuses_fails_the_check_rather_than_passing_it(self):
+        self.on_main({"README.md": "the lantern moths\n"})
+        self.ticket({"phaselock.jl": self.JULIA})
+        resets = 4102444800
+        event = worker.RateLimitEvent("rejected", resets, "five_hour", worker.Window(1.0, resets), worker.Window(0.5, resets), None)
+        with worker.use_fake() as fake:
+            fake.script(worker.Envelope(structured_output=None, session_id="read-1", is_error=True, exit_code=1,
+                                        api_error_status=429, rate_limit_events=[event], result_text="You've hit your limit"))
+            outcome = self.check()
+        self.assertIsNotNone(outcome.refused)
+        self.assertProblem(outcome, "refused by the usage limit", "code/phaselock.jl")
 
     def test_a_tagged_and_explained_file_passes_the_reading(self):
         self.methods_passage("The phase is taken from the analytic signal {code:code/phaselock.jl#order_parameter}.")
@@ -467,6 +562,25 @@ class VerdictTest(GateCase):
         self.assertEqual(taken.code_rule, judged)
         self.assertEqual(len(self.calls), 2, "a pass carrying a reason that does not hold is sent back once")
         self.assertIn("does not hold", self.calls[1].message)
+
+    def test_a_verdict_that_leaves_an_item_unjudged_is_sent_back(self):
+        ask = self.asks(3)[0]
+        partial = {"parameters": [{"method": "order_parameter", "name": "window", "holds": True, "why": "Two wingbeats."}],
+                   "not_methods": []}
+        whole = dict(partial, not_methods=[{"name": "colony_synchrony", "holds": True, "why": "A wrapper."}])
+        with worker.use_fake() as fake:
+            fake.script(passing())
+            fake.script(passing())
+            with self.assertRaises(gates.GateError):
+                gates.verdict_for(ask, project=self.project)
+            self.assertIn("does not judge order_parameter window, colony_synchrony", fake.calls[1].message)
+        with worker.use_fake() as fake:
+            fake.script(passing(code_rule=partial))
+            fake.script(passing(code_rule=whole))
+            taken = gates.verdict_for(ask, project=self.project)
+            self.assertIn("does not judge colony_synchrony", fake.calls[1].message)
+        self.assertTrue(taken.passed)
+        self.assertEqual(taken.code_rule, whole)
 
 
 class AtAcceptanceTest(ConductorCase):

@@ -1,5 +1,5 @@
 {
-  "description": "The documented defaults of the rule from code to Methods (Implementation Decision 17; ticket 107). `python` names the sensitive parameters a call may leave unset (solver tolerances with their documented defaults, which a signature behind **options does not show; the seed of a generator) and the functions that draw from a global random state with the call that seeds it. Python's other defaults come from `inspect.signature` in the project's environment. `matlab` is the documented-defaults table: each function's positional arguments in order, which of them are data rather than parameters, the documented default of each parameter, its name-value options with their defaults, `options` naming the argument an options structure goes in, `tolerances` the options a solver uses when it is given none, and `random` a function that draws from the global random state `rng` seeds. Grow it by a harness ticket.",
+  "description": "The documented defaults of the rule from code to Methods (Implementation Decision 17; ticket 107). `python` names the sensitive parameters a call may leave unset (solver tolerances with their documented defaults, which a signature behind **options does not show; the seed of a generator, and `seeds_first` the generators whose first positional argument is the seed) and the functions that draw from a global random state with the call that seeds it. Python's other defaults come from `inspect.signature` in the project's environment. `matlab` is the documented-defaults table: each function's positional arguments in order, which of them are data rather than parameters, the documented default of each parameter, its name-value options with their defaults, `options` naming the argument an options structure goes in, `tolerances` the options a solver uses when it is given none, and `random` a function that draws from the global random state `rng` seeds. Grow it by a harness ticket.",
   "python": {
     "tolerances": {
       "scipy.integrate.solve_ivp": {"rtol": "1e-3", "atol": "1e-6"},
@@ -19,6 +19,7 @@
       "sklearn.ensemble.RandomForestRegressor": "random_state",
       "umap.UMAP": "random_state"
     },
+    "seeds_first": ["numpy.random.default_rng", "numpy.random.RandomState", "random.Random"],
     "seed_names": ["random_state", "seed", "rng"],
     "global_random": {
       "numpy.random": {"seeded_by": "numpy.random.seed", "draws": ["rand", "randn", "randint", "random", "random_sample", "normal", "uniform", "choice", "shuffle", "permutation", "poisson", "binomial", "exponential", "standard_normal"]},

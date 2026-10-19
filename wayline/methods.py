@@ -141,6 +141,7 @@ class Outcome:
     notes: list = field(default_factory=list)
     items: list = field(default_factory=list)
     reading: dict = None                              # the Sonnet reading's session, model, usage, and lines, when one ran
+    refused: object = None                            # the `UsageLimited` a usage window refused the reading with
 
     @property
     def passed(self):
@@ -402,18 +403,27 @@ def project_functions(worktree):
 
 
 def _enclosing_assignments(tree, call):
-    """`{name: value node}` of the single-name assignments before `call` in its function (or module): a backward slice."""
+    """A backward slice: `({name: value node}, parameter names)` before `call` in its innermost function (or the module).
+
+    Each name keeps its last single-name assignment by line before the call; the parameter names are the enclosing
+    function's own, which a call that passes one on forwards rather than sets.
+    """
     scope = tree
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.lineno <= call.lineno <= (node.end_lineno or node.lineno):
-            scope = node
+            if scope is tree or node.lineno >= scope.lineno:
+                scope = node
     found = {}
     for node in ast.walk(scope):
         if isinstance(node, ast.Assign) and node.lineno < call.lineno:
             for target in node.targets:
-                if isinstance(target, ast.Name):
-                    found[target.id] = node.value
-    return found
+                if isinstance(target, ast.Name) and (target.id not in found or found[target.id][0] <= node.lineno):
+                    found[target.id] = (node.lineno, node.value)
+    params = set()
+    if scope is not tree:
+        arguments = scope.args
+        params = {arg.arg for arg in arguments.posonlyargs + arguments.args + arguments.kwonlyargs}
+    return {name: value for name, (_, value) in found.items()}, params
 
 
 def _value_of(node, assigned, depth=0):
@@ -424,6 +434,11 @@ def _value_of(node, assigned, depth=0):
     if isinstance(node, ast.Name) and node.id in assigned and depth < 5:
         return _value_of(assigned[node.id], assigned, depth + 1)
     return ast.unparse(node), None, False
+
+
+def _forwarded(node, assigned, params):
+    """Whether an argument passes on the enclosing function's own parameter, unchanged: its value is the caller's."""
+    return isinstance(node, ast.Name) and node.id in params and node.id not in assigned
 
 
 def _differs(value_text, value, default_text):
@@ -448,6 +463,7 @@ def python_items(path, text, lines, functions=None, roots=(), tables=None, signa
     python = tables["defaults"]["python"]
     tolerances, seeds = python.get("tolerances") or {}, python.get("seeds") or {}
     seed_names = set(python.get("seed_names") or ())
+    seeds_first = set(python.get("seeds_first") or ())
     global_random = python.get("global_random") or {}
     try:
         tree = ast.parse(text)
@@ -513,7 +529,7 @@ def python_items(path, text, lines, functions=None, roots=(), tables=None, signa
                 items.append(Item("parameter", path, "seed", node.lineno, method=callee, value=UNSET, default=UNSEEDED,
                                   what=UNSEEDED))
             continue
-        assigned = _enclosing_assignments(tree, node)
+        assigned, enclosing = _enclosing_assignments(tree, node)
         by_name = {param["name"]: param for param in params}
         given = {}
         positional = [param for param in params if param.get("kind") in ("POSITIONAL_ONLY", "POSITIONAL_OR_KEYWORD")]
@@ -527,26 +543,32 @@ def python_items(path, text, lines, functions=None, roots=(), tables=None, signa
         documented = tolerances.get(callee) or {}
         for name, argument in given.items():
             param = by_name.get(name)
+            if _forwarded(argument, assigned, enclosing):
+                continue  # the enclosing method's own parameter passed on: its default is checked where it is defined
             value_text, value, known = _value_of(argument, assigned)
             if name in documented:
                 default_shown = documented[name]
-                differs, compared = _differs(value_text, value, default_shown), known
             elif not checked:
-                differs, compared, default_shown = True, False, NOT_CHECKED
+                items.append(Item("parameter", path, name, argument.lineno, method=callee, value=value_text, default=NOT_CHECKED,
+                                  needs_reason=False))
+                continue
             elif param is None or not param.get("has_default"):
                 continue  # a required argument is the method's data; a keyword the signature does not name goes to **kwargs
             else:
                 default_shown = param.get("default")
-                differs, compared = _differs(value_text, value, default_shown), known
-            if not differs:
+            # A value the slice cannot resolve is set all the same: only the worker can say what it is and why.
+            if known and not _differs(value_text, value, default_shown):
                 continue
-            items.append(Item("parameter", path, name, argument.lineno, method=callee, value=value_text, default=default_shown,
-                              needs_reason=compared))
+            items.append(Item("parameter", path, name, argument.lineno, method=callee, value=value_text, default=default_shown))
         for name, default_text in documented.items():
             if name not in given:
                 items.append(Item("parameter", path, name, node.lineno, method=callee, value=UNSET, default=default_text,
                                   what="tolerance"))
         seed = seeds.get(callee)
+        if seed and callee in seeds_first and node.args and not isinstance(node.args[0], ast.Starred):
+            given.setdefault(seed, node.args[0])  # a generator seeded by its first positional argument, with no signature to say so
+        if seed in given and _literal(given[seed]) == (True, None):
+            del given[seed]  # `seed=None` draws fresh entropy: unseeded
         names = {seed} if seed else set()
         names |= {param["name"] for param in params
                   if param["name"] in seed_names and param.get("has_default") and param.get("default") == "None"}
@@ -570,6 +592,8 @@ def matlab_parse(path, run=run_tool, tools=None):
         raise ToolsError("tree-sitter-matlab printed no parse for %s" % path) from None
     if not isinstance(parsed, dict) or not isinstance(parsed.get("functions"), list):
         raise ToolsError("tree-sitter-matlab printed no parse for %s" % path)
+    if parsed.get("has_error"):
+        raise ToolsError("tree-sitter-matlab read %s only in part: it has a syntax error" % path)
     return parsed
 
 
@@ -594,6 +618,16 @@ def _slice(name, function, line, parsed, depth=0):
 def _unquote(text):
     text = str(text or "").strip()
     return text[1:-1] if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"" else text
+
+
+def _same(value, default):
+    """Whether a MATLAB value is its default as written: equal numbers (`0.001` and `1e-3`), or equal text unquoted."""
+    if value is None or default is None:
+        return False
+    try:
+        return float(str(value).strip()) == float(str(default).strip())
+    except ValueError:
+        return " ".join(_unquote(value).lower().split()) == " ".join(_unquote(default).lower().split())
 
 
 def matlab_items(path, parsed, lines, tables=None):
@@ -645,7 +679,7 @@ def matlab_items(path, parsed, lines, tables=None):
             if argument.get("kind") == "string" and _unquote(text) in name_values and index + 1 < len(arguments):
                 option = _unquote(text)
                 value, known = _value_at(arguments[index + 1], where, line, parsed)
-                if value != name_values[option]:
+                if value is not None and not _same(value, name_values[option]):
                     items.append(Item("parameter", path, option, line, method=name, value=value, default=name_values[option],
                                       needs_reason=True))
                 index += 2
@@ -657,25 +691,29 @@ def matlab_items(path, parsed, lines, tables=None):
                 elif param not in (spec.get("data") or ()) and text.strip() != "[]":
                     value, known = _value_at(argument, where, line, parsed)
                     default = (spec.get("defaults") or {}).get(param)
-                    if default is None or value != default:
+                    if value is not None and not _same(value, default):
                         items.append(Item("parameter", path, param, line, method=name, value=value,
                                           default=default if default is not None else "none (required)", needs_reason=True))
             index += 1
         tolerances = spec.get("tolerances") or {}
         if tolerances:
+            # A tolerance the options structure sets is the `odeset` call's own parameter, read where that call is; one
+            # it leaves out runs at the solver's default.
             set_options = _options_set(options_given, where, line, parsed, by_line)
             for option, default in tolerances.items():
-                if option in set_options:
-                    if set_options[option] != default:
-                        items.append(Item("parameter", path, option, line, method=name, value=set_options[option], default=default))
-                else:
+                if option not in set_options:
                     items.append(Item("parameter", path, option, line, method=name, value=UNSET, default=default, what="tolerance"))
     return items
 
 
 def _value_at(argument, function, line, parsed):
+    """`(text, known)` of a MATLAB argument; `(None, False)` for the enclosing function's own argument passed on."""
     if argument.get("kind") == "identifier":
-        return _slice(argument.get("text"), function, line, parsed)
+        text, known = _slice(argument.get("text"), function, line, parsed)
+        params = next((entry.get("params") or [] for entry in parsed.get("functions") or [] if entry.get("name") == function), [])
+        if not known and text == argument.get("text") and text in params:
+            return None, False
+        return text, known
     return argument.get("text"), argument.get("kind") in ("number", "string")
 
 
@@ -903,6 +941,13 @@ def _read_others(outcome, project, worktree, paths, changed, policy, harness_roo
     try:
         policy = policy if policy is not None else projects.policy_for(project, harness_root)
         answer, accounting = _reading(project, files, policy=policy, harness_root=harness_root, ticket=ticket, attempt=attempt)
+    except gates.UsageLimited as refused:
+        # A closed window is not a reading: the files stay unread and the acceptance fails until they are read.
+        outcome.refused = refused
+        outcome.problems.append("the code reading of %s was refused by the usage limit (%s); nothing here is wrong with the "
+                                "work: return the same result, and the files are read once the window allows"
+                                % (", ".join(path for path, _, _ in files), refused))
+        return
     except (MethodsError, gates.GateError, ValueError, OSError) as failure:
         outcome.notes.append("the reading of %s could not be taken, so they are %s: %s"
                              % (", ".join(path for path, _, _ in files), NOT_CHECKED, failure))
@@ -1012,13 +1057,15 @@ def inventory(dest, language, run=run_tool, tools=None):
     repository's developed methods, and each call the alias table lists a used method. Python's methods are read with
     `ast` the same way. A file the parser cannot read is named in the note.
     """
+    from wayline.code_dossier import _is_vendored
+
     dest = Path(dest)
     tables = {"aliases": aliases(), "defaults": defaults()}
     modules, found, unread = [], [], []
     suffix = {"matlab": ".m", "python": ".py"}[language]
     for path in sorted(dest.rglob("*" + suffix)):
         relative = path.relative_to(dest).as_posix()
-        if any(part.startswith(".") for part in path.relative_to(dest).parts):
+        if _is_vendored(path, dest) or any(part.startswith(".") for part in path.relative_to(dest).parts):
             continue
         if language == "matlab":
             try:

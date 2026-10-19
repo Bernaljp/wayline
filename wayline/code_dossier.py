@@ -194,14 +194,28 @@ def _submodule_urls(dest):
 # --- the inventory -----------------------------------------------------------------------------
 
 
+_OBJECTIVE_C = re.compile(r"^\s*(?:#import|@interface|@implementation)\b", re.MULTILINE)
+
+
 def detect_language(dest):
-    """`"python"` when the clone has a `*.py` file outside vendored directories, else `"matlab"` for a `*.m` file, else `"unknown"`."""
+    """`"python"` or `"matlab"`, whichever has more source files outside vendored directories (Python on a tie), else `"unknown"`.
+
+    A `.m` file that reads as Objective-C (`#import`, `@interface`, `@implementation`) is not counted as MATLAB.
+    """
     dest = Path(dest)
-    for suffix, language in (("*.py", "python"), ("*.m", "matlab")):
-        for path in dest.rglob(suffix):
-            if not _is_vendored(path, dest):
-                return language
-    return "unknown"
+    python = sum(1 for path in dest.rglob("*.py") if not _is_vendored(path, dest))
+    matlab = 0
+    for path in dest.rglob("*.m"):
+        if _is_vendored(path, dest):
+            continue
+        try:
+            head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            continue
+        matlab += 0 if _OBJECTIVE_C.search(head) else 1
+    if matlab > python:
+        return "matlab"
+    return "python" if python else "unknown"
 
 
 def _is_vendored(path, root):
