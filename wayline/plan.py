@@ -2,7 +2,7 @@
 
 The spec becomes an executable graph. `wayline plan` launches the `planner` role in its plan protocol
 through the worker launcher (seam 1), on `policy.roles.planner`, with `plan.json` as its schema and,
-in its prompt, `research/SPEC.md` whole, `GOAL.json`, the query pack, the registry (rebuilt at every
+in its prompt, `research/SPEC.md` whole, `OBJECTIVES.md`, `GOAL.json`, the query pack, the registry (rebuilt at every
 launch), and what the journal says already failed. The session writes nothing: it returns a `plan`
 record, tickets keyed `T1`, `T2`, ... with `blocked_by` among the keys or `#<id>` for a ticket the
 project holds, and the decision tickets to open, each with what it pauses. Code numbers the tickets
@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from wayline import HARNESS_ROOT, changes, decider, decisions, gates, registry, specify, worker
+from wayline import HARNESS_ROOT, changes, decider, decisions, gates, objectives, registry, specify, worker
 from wayline.cli import parse_args
 from wayline.frontmatter import dump_document
 from wayline.jsonschema import ValidationError, check, load_schema
@@ -488,11 +488,16 @@ def prepare(record, project, existing, index, cut, start=None):
     `existing` is `read_all(project)`; `index` the registry; `start` the id the first ticket takes
     (`next_id` when None). What cannot be resolved is a failure the planner is returned; nothing here
     writes. A split's pieces inherit the split ticket's blockers, and its dependents are re-pointed at
-    all of them.
+    all of them. A ticket's `objectives` and `goal` are checked against `objectives.json` (ticket 81): an
+    objective named must be open, and a goal must carry a measure.
     """
     project = Path(project).resolve()
     prepared = Prepared()
     failures = prepared.failures
+    try:
+        recorded = objectives.read_objectives(project)
+    except objectives.ObjectivesUnreadable as failure:
+        raise PlanError("%s, so no ticket can be held to the objectives; nothing was written" % failure) from None
     start = next_id(project) if start is None else start
     tickets = record.get("tickets") or []
     ids, seen = {}, set()
@@ -563,8 +568,10 @@ def prepare(record, project, existing, index, cut, start=None):
                 fields[name] = list(item[name])
         fields["acceptance"] = {"machine": list(item["acceptance"].get("machine") or []),
                                 "quality": list(item["acceptance"].get("quality") or [])}
-        if item.get("goal_metric") is not None:
-            fields["goal_metric"] = dict(item["goal_metric"])
+        fields["objectives"] = list(item["objectives"])
+        failures.extend(_objective_failures(label, item, recorded))
+        if item.get("goal") is not None:
+            fields["goal"] = item["goal"]
         fields["context_pack"] = list(item["context_pack"])
         fields["origin"] = _one_line(item["origin"])
         fields["proposed_by"] = PLANNER
@@ -610,6 +617,19 @@ def prepare(record, project, existing, index, cut, start=None):
         graph[placeholder["id"]] = placeholder
     prepared.graph = [graph[identifier] for identifier in sorted(graph)]
     return prepared
+
+
+def _objective_failures(label, item, recorded):
+    """What a planned ticket's `objectives` and `goal` name that the project's objectives refuse (decision 17, ticket 81).
+
+    Every objective named must be open; a goal must also carry a measure, since its metric and direction are read from it.
+    """
+    failures = objectives.check_named(label, item["objectives"], recorded, "ticket")
+    if item.get("goal") is not None:
+        refused = objectives.check_goal(label, item["goal"], recorded)
+        if refused is not None:
+            failures.append(refused)
+    return failures
 
 
 def check_plan(record, project, existing, index, cut, start=None, base=True, timeout_s=None):
@@ -827,7 +847,7 @@ def plan_prompt(role, cut, harness, project, policy, records, index, journal, gr
 
 
 def _records(project, max_chars):
-    """The records the plan reads, inlined: the spec whole, the goal, the query pack; `(text, cut short)`."""
+    """The records the plan reads, inlined: the spec whole, the objectives, the goal, the query pack; `(text, cut short)`."""
     ledger = Ledger(project)
 
     def read(relative):
@@ -838,6 +858,7 @@ def _records(project, max_chars):
 
     entries = [
         ("research/SPEC.md", read(specify.SPEC_MD), "[wayline: there is no SPEC.md; run wayline specify]"),
+        ("research/OBJECTIVES.md", read(objectives.OBJECTIVES_MD), "[wayline: no objective is recorded]"),
         ("research/GOAL.json", read("GOAL.json"), "[wayline: no goal is stated]"),
         ("research/kb/query_pack.md", read("kb/query_pack.md"), "[wayline: there is no query pack; no reference was absorbed]"),
     ]
@@ -1140,7 +1161,9 @@ def cut_graph(project, cut, *, harness_root=HARNESS_ROOT, policy=None, fall_back
         state = specify.spec_state(project, events)
         if state["state"] != "confirmed":
             raise PlanError("the spec is %s, and the graph is cut from a confirmed spec; run wayline specify first" % state["state"])
-        problems = specify.check_spec(project)
+        # The claims were held to the objectives when the spec was drafted; what changed since is the amendment's
+        # (ticket 92), and the tickets are held to the objectives open now in `prepare`.
+        problems = specify.check_spec(project, against_objectives=False)
         if problems:
             raise PlanError("research/SPEC.md fails its checks, so it cannot be cut: %s" % "; ".join(problems), problems)
     if cut.kind == "split":

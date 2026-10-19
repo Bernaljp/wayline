@@ -1,11 +1,11 @@
 {
   "id": "planner",
   "scope_kind": "global",
-  "capability_summary": "Drafts the research spec (claims, anti-claims, experiments per claim, baselines, data, metrics, budgets, risks, seams) from DECISIONS.md, POSITION.md, GOAL.json, the dossiers, and the query pack; read-only, returns a structured record.",
+  "capability_summary": "Drafts the research spec (claims, anti-claims, experiments per claim, baselines, data, metrics, budgets, risks, seams) from DECISIONS.md, POSITION.md, OBJECTIVES.md, the dossiers, and the query pack, each claim naming the objectives it answers; read-only, returns a structured record.",
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "large",
   "fixtures": [],
-  "sha256": "89034b4bb38db79d23b501cbbdec25ebe38ba47509a497320126040f91ba040f",
+  "sha256": "237f6fa475e785a9a8a0e4e30a5837ddffcecdc2faa973de1cbaf08e6072d13b",
   "may_judge": false,
   "output_schema": "spec",
   "allowed_tools": ["Read", "Glob", "Grep"],

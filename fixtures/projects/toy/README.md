@@ -79,7 +79,7 @@ An overnight run of this project, with `autonomous` autonomy and `moderate` radi
 2. A planner graph with at least the baseline experiment (`toy.train` at the default batch size)
    and a follow-up that adds the interaction term explicitly to the ticket's own feature list if
    the plan does not already fold it into the one experiment ticket -- either way, a ticket whose
-   `goal_metric` is `auroc`.
+   `goal` names the objective whose measure's metric is `auroc`.
 3. The experiment ticket launching a real GPU job, the fake-jobs path already covered by the
    suite (`tests/test_toy_project.py`'s `RetryLadderTest`) and the live path by
    `docs/verification/m5.md`.

@@ -15,6 +15,7 @@ import statistics
 import unittest
 
 from tests import machine
+from tests.projects import open_goal
 from tests.test_conductor import ConductorCase, done, drive, patch
 from tests.test_sweep import RATES, SweepCase
 from wayline import goal as goals
@@ -59,6 +60,40 @@ class Recorder:
 
 
 # --- the Type-A half -------------------------------------------------------------------------
+
+
+def goal_objective(identifier="O1", metric="auroc", status="open", direction="up"):
+    return {"id": identifier, "text": "Does it improve?", "status": status, "answer": None, "evidence": [], "reframed_as": None,
+            "measure": None if metric is None else dict(goal_record(metric=metric, direction=direction), min_seeds=None)}
+
+
+class AppliesTest(unittest.TestCase):
+    """Ticket 81: a ticket names its goal by objective (`goal: "O1"`), and the metric is read from that goal's measure."""
+
+    def test_a_ticket_whose_goal_measures_the_goal_json_metric_is_judged(self):
+        self.assertIsNone(goals.applies({"goal": "O1"}, goal_record(), [goal_objective()]))
+
+    def test_why_it_is_not_judged(self):
+        self.assertEqual(goals.applies({"objectives": ["O1"]}, goal_record(), [goal_objective()]), "the ticket names no goal")
+        self.assertEqual(goals.applies({"goal": "O1"}, goal_record(), [goal_objective(metric=None)]),
+                         "the ticket's goal O1 has no measure, so nothing measures it")
+        self.assertEqual(goals.applies({"goal": "O2"}, goal_record(), [goal_objective()]),
+                         "the ticket's goal O2 has no measure, so nothing measures it")
+        self.assertEqual(goals.applies({"goal": "O1"}, None, [goal_objective()]),
+                         "the ticket's goal O1 reports auroc, and research/GOAL.json states no measurable goal")
+        self.assertEqual(goals.applies({"goal": "O1"}, goal_record(metric="loss"), [goal_objective()]),
+                         "the ticket's goal O1 reports auroc, and the goal's metric is loss")
+
+    def test_a_goal_whose_direction_is_not_goal_json_s_is_not_judged(self):
+        """The direction is the goal's measure's; until ticket 87 the judging is GOAL.json's, so a disagreement judges nothing."""
+        self.assertEqual(goals.applies({"goal": "O1"}, goal_record(direction="down"), [goal_objective()]),
+                         "the ticket's goal O1 wants auroc up, and research/GOAL.json's direction is down")
+
+    def test_a_closed_goal_is_not_judged(self):
+        for status in ("answered", "parked", "dropped"):
+            with self.subTest(status=status):
+                self.assertEqual(goals.applies({"goal": "O1"}, goal_record(), [goal_objective(status=status)]),
+                                 "the ticket's goal O1 is %s, and keep-if-better judges only a goal pursued now" % status)
 
 
 class JudgeTest(unittest.TestCase):
@@ -167,10 +202,11 @@ class GoalTicketCase(ConductorCase):
         super().setUp()
         ticket, body = self.ticket_and_body()
         ticket.update(title=TITLE, touches=["metrics/"], outputs=["metrics/seed-*.txt"],
-                      goal_metric={"reports": "auroc", "expected_direction": "up"},
+                      objectives=["O1"], goal="O1",
                       acceptance={"machine": ["test -f metrics/seed-1.txt"], "quality": []})
         tickets.write_ticket(self.ledger, ticket, body)
         (tickets.tickets_dir(self.project) / "01-write-the-hello-file.md").unlink()  # the new title names a new file
+        open_goal(self.project, metric="auroc")  # O1: the goal the ticket names, whose measure gives the metric
         self.recorder = Recorder()
 
     def ticket_and_body(self):
@@ -208,6 +244,11 @@ class GoalTicketCase(ConductorCase):
     def said(self):
         return self.conductor.out.getvalue()
 
+    def aim_at(self, objective):
+        """Point the ticket's `goal` at `objective`."""
+        ticket, body = self.ticket_and_body()
+        tickets.write_ticket(self.ledger, dict(ticket, objectives=[objective["id"]], goal=objective["id"]), body)
+
     def on_main(self, path):
         return path in self.git("ls-tree", "-r", "--name-only", "main").split("\n")
 
@@ -241,6 +282,7 @@ class KeptTest(GoalTicketCase):
 
     def test_down_keeps_a_lower_mean(self):
         self.set_goal(direction="down", target=0.01)
+        self.aim_at(open_goal(self.project, "Does the change lower the held-out AUROC?", direction="down"))
         self.prior(0.50)
         self.conduct((finding_result(), seeds(0.40, 0.41, 0.42)))
         self.assertTrue(self.payload("progress")["kept"])
@@ -256,6 +298,14 @@ class KeptTest(GoalTicketCase):
         self.conduct((finding_result(goal_progress={"metric": "auroc", "value": 0.99}), seeds(0.70, 0.71, 0.72)))
         self.assertFalse(self.payload("progress")["kept"])
         self.assertAlmostEqual(self.payload("progress")["value"], 0.71)
+
+    def test_an_objectives_json_that_cannot_be_read_is_said_and_the_ticket_integrated_unjudged(self):
+        self.set_goal()
+        self.ledger.write_json("objectives.json", {"objectives": 3})
+        self.conduct((finding_result(), seeds(0.1, 0.1, 0.1)))
+        self.assertIn("integrated", self.sequence())
+        self.assertNotIn("progress", self.sequence())
+        self.assertIn("research/objectives.json cannot be read", self.said())
 
     def test_a_ticket_reporting_another_metric_is_integrated_unjudged(self):
         self.set_goal(metric="loss")
@@ -442,8 +492,9 @@ class JobsGoalCase(SweepCase):
         super().setUp()
         path = tickets.tickets_dir(self.project) / "01-sweep-the-learning-rate.md"
         ticket, body = tickets.read_ticket(path)
-        ticket["goal_metric"] = {"reports": "auroc", "expected_direction": "up"}
+        ticket.update(objectives=["O1"], goal="O1")
         tickets.write_ticket(self.ledger, ticket, body)
+        open_goal(self.project, metric="auroc")
         self.ledger.write_json("GOAL.json", goal_record(), schema="goal")
 
     def plain_jobs(self, jobs):

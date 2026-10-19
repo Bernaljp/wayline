@@ -168,6 +168,29 @@ lists it read-only, marked with its tag.
   `GOAL.json` (keep-if-better, position, specify, plan, the decider, the report) still reads it, and tickets 80, 81,
   and 87 move them to objectives.
 
+- Specify and the plan name objectives (ticket 81; Implementation Decisions 17, 10, and 5). `wayline specify`
+  drafts once one objective is open, which may be the question to answer first rather than the project's end, and
+  no longer needs `GOAL.json`; with none open it refuses and names the question the conversation asks, "what should
+  the project answer first?". The planner's specify prompt lists the open objectives with their measures, and the
+  verifier reads `OBJECTIVES.md` in place of `GOAL.json`. The spec gains `summary`, about 120 words on what the
+  project is, rendered as the first section of `SPEC.md`, and every claim `objectives`, the open objectives it
+  answers (empty for a claim no objective asked for). The Type-A checks refuse a claim naming an objective the
+  project does not hold or one that is not open, an open objective no claim answers, and a goal whose metric is not
+  among the spec's metrics, each by name; the check of `GOAL.json`'s metric goes. Tickets and the plan schema gain
+  `objectives` (the planner states them, empty for a ticket that serves none) and `goal: "O2"` in place of
+  `goal_metric`: the metric and direction are read from that goal's measure (`objectives.ticket_goal`). The plan
+  returns a ticket naming a closed or unknown objective, or a `goal` with no measure, to the planner, and its prompt
+  inlines `OBJECTIVES.md`. A confirmed spec is not checked against the objectives again when the plan cuts it: what
+  changed since is the amendment's (ticket 92), and the tickets are held to the objectives open then. Keep-if-better
+  runs on a ticket whose goal is open and whose measure has `GOAL.json`'s metric and direction, with `GOAL.json`'s
+  command until ticket 87; a closed goal, or a measure that disagrees, is integrated unjudged with the reason said.
+  The pick order's second key is the objective class: 0 for a ticket serving an objective the stopping rule waits
+  on, 1 for another open objective, 2 for none; until ticket 87 lands `stop_when` the rule is its default,
+  `objectives`, every open objective. Which are open is `objectives.json`'s, the one record specify, the plan, and
+  keep-if-better read. An `objectives.json` that cannot be read stops `wayline specify` and `wayline plan` with its
+  reason, and the conductor says it and judges and orders as if no objective were open, never ending a wave on it.
+  The fixtures that carried `goal_metric` carry `goal`.
+
 ## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts

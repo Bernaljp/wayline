@@ -38,7 +38,8 @@ from wayline.project import ProjectError, find_project, policy_for
 __all__ = [
     "OBJECTIVES_JSON", "OBJECTIVES_MD", "STATUSES", "BY", "ARTIFACT", "ObjectiveError", "MeasureCheck", "metric_value",
     "run_on_sample", "normalize_measure", "check_measure", "read_objectives", "open_objectives", "add_objective",
-    "add_measure", "change_objective", "render_objectives", "describe_measure", "objective_command",
+    "add_measure", "change_objective", "render_objectives", "describe_measure", "objective_command", "ticket_goal", "served",
+    "OPEN", "is_open", "named", "check_named", "check_goal", "ObjectivesUnreadable",
 ]
 
 OBJECTIVES_JSON = "objectives.json"
@@ -46,10 +47,15 @@ OBJECTIVES_MD = "OBJECTIVES.md"
 STATUSES = PAYLOAD_ENUMS[(OBJECTIVE, K_STATUS)]
 BY = PAYLOAD_ENUMS[(OBJECTIVE, K_BY)]
 ARTIFACT = "{artifact}"
+OPEN = "open"  # the status of an objective pursued now: the only one a claim, a ticket, or the pick order counts
 MEASURE_OPTIONAL = ("target", "held_out_split", "baseline", "dataset_or_split", "min_seeds")
 
 _NUMBER = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
 _ID = re.compile(r"^O([1-9][0-9]*)\Z")
+
+
+class ObjectivesUnreadable(ValueError):
+    """`research/objectives.json` is there and is not the record code writes: not JSON, or not in the `objectives` shape."""
 
 
 class ObjectiveError(ValueError):
@@ -209,19 +215,88 @@ def _number(value):
 
 
 def read_objectives(project):
-    """The objectives of `research/objectives.json` in id order; empty when the project has none yet."""
+    """The objectives of `research/objectives.json` in id order; empty when the project has none yet.
+
+    Raises `ObjectivesUnreadable` (a `ValueError`) when the file is not JSON or not in the schema's shape, so a
+    reader can say so rather than act on a half-read record.
+    """
     ledger = Ledger(project)
     if not ledger.path(OBJECTIVES_JSON).is_file():
         return []
-    record = ledger.read_json(OBJECTIVES_JSON)
-    if not isinstance(record, dict) or not isinstance(record.get("objectives"), list):
-        raise ValueError("research/%s is not an object holding an `objectives` list" % OBJECTIVES_JSON)
+    try:
+        record = ledger.read_json(OBJECTIVES_JSON)
+    except (OSError, ValueError) as failure:
+        raise ObjectivesUnreadable("research/%s cannot be read: %s" % (OBJECTIVES_JSON, failure)) from None
+    problems = validate(record, load_schema("objectives"))
+    if problems:
+        raise ObjectivesUnreadable("research/%s cannot be read: %s" % (
+            OBJECTIVES_JSON, "; ".join("%s: %s" % (error.path, error.message) for error in problems[:3])))
     return list(record["objectives"])
+
+
+def is_open(objective):
+    """Whether an objective record is pursued now."""
+    return (objective or {}).get("status") == OPEN
 
 
 def open_objectives(project):
     """The objectives pursued now."""
-    return [objective for objective in read_objectives(project) if objective.get("status") == "open"]
+    return [objective for objective in read_objectives(project) if is_open(objective)]
+
+
+def named(objectives, identifier):
+    """The record of the objective `identifier` among `objectives`, or None."""
+    for objective in objectives or ():
+        if identifier and objective.get("id") == identifier:
+            return objective
+    return None
+
+
+def check_named(subject, identifiers, objectives, kind):
+    """Why the objectives a claim or a ticket names are refused: one line each for an unknown and a closed one.
+
+    `subject` names the claim or the ticket in the line ("claim C2", "T3 (ticket 3)"), and `kind` is what it is
+    ("claim", "ticket"): a claim and a ticket name only open objectives (decision 17).
+    """
+    failures = []
+    for identifier in identifiers or ():
+        found = named(objectives, identifier)
+        if found is None:
+            failures.append("%s names the objective %s, which the project does not hold" % (subject, identifier))
+        elif not is_open(found):
+            failures.append("%s names the objective %s, which is %s; a %s names only open objectives"
+                            % (subject, identifier, found.get("status"), kind))
+    return failures
+
+
+def check_goal(subject, identifier, objectives):
+    """Why a ticket's `goal` is refused, or None: it names an open objective with a measure, which gives the metric and direction."""
+    found = named(objectives, identifier)
+    if found is None:
+        return "%s's goal %s is no objective the project holds" % (subject, identifier)
+    if not is_open(found):
+        return "%s's goal %s is %s; a ticket's goal is an open objective" % (subject, identifier, found.get("status"))
+    if not found.get("measure"):
+        return ("%s's goal %s has no measure, so it is an objective and not a goal: name it among `objectives` and leave "
+                "`goal` null" % (subject, identifier))
+    return None
+
+
+def ticket_goal(ticket, objectives):
+    """The measure of the open goal a ticket's `goal` names (`goal: "O2"`), or None: no goal, no measure, or not open.
+
+    The ticket carries the objective's id alone: the metric and the direction it reports are the measure's. A goal
+    answered, parked, dropped, or reframed is pursued by nobody, so it gives nothing to measure.
+    """
+    found = named(objectives, (ticket or {}).get("goal"))
+    return found.get("measure") if is_open(found) else None
+
+
+def served(ticket):
+    """The objectives a ticket serves: those it names, and the goal it reports."""
+    named = [identifier for identifier in (ticket or {}).get("objectives") or () if identifier]
+    goal = (ticket or {}).get("goal")
+    return named + ([goal] if goal and goal not in named else [])
 
 
 def _next_id(objectives):
@@ -259,7 +334,7 @@ def add_objective(project, text, measure=None, sample=None, by="owner", timeout_
     with ledger.lock():
         objectives = read_objectives(project)
         objective = {"id": _next_id(objectives), "text": text, "measure": check.measure if check and check.accepted else None,
-                     "status": "open", "answer": None, "evidence": [], "reframed_as": None}
+                     "status": OPEN, "answer": None, "evidence": [], "reframed_as": None}
         objectives.append(objective)
         _write(ledger, objectives, objective, by)
     return objective, check
@@ -315,7 +390,7 @@ def change_objective(project, identifier, status, by, answer=None, evidence=None
             if reframed_as == identifier:
                 raise ObjectiveError("%s cannot be reframed as itself" % identifier)
             _find(objectives, reframed_as)
-        objective.update(status=status, answer=None if status == "open" else answer, reframed_as=reframed_as if status == "reframed" else None)
+        objective.update(status=status, answer=None if status == OPEN else answer, reframed_as=reframed_as if status == "reframed" else None)
         if evidence is not None:
             objective["evidence"] = list(evidence)
         _write(ledger, objectives, objective, by)
@@ -373,7 +448,7 @@ def objective_command(args):
     except ObjectiveError as failure:
         print("wayline objective: %s" % failure, file=sys.stderr)
         return 2
-    except (ProjectError, OSError, ValidationError) as failure:
+    except (ProjectError, OSError, ValidationError, ObjectivesUnreadable) as failure:
         print("wayline objective: %s" % failure, file=sys.stderr)
         return 1
     print("%s  open  %s" % (objective["id"], objective["text"]))
