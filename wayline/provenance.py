@@ -39,7 +39,7 @@ from wayline.project import NEEDS_HUMAN_NOTES, ProjectError, fable_falls_back, f
 __all__ = [
     "ProvenanceError", "MANIFEST", "FINDINGS", "FINDINGS_MD", "RUN_ID_RE",
     "sha256_of", "read_manifest", "manifest_paths", "register_artifact",
-    "read_findings", "add_finding", "render_findings",
+    "read_findings", "current_findings", "add_finding", "render_findings",
     "commit_threshold_bytes", "oversized_tracked_files",
     "TAG_RE", "RES_TAG_RE", "REF_TAG_RE", "Sentence", "sentences", "parse_tag", "strip_tags",
     "REPORT", "CLAIMS_CACHE", "PROSE_CACHE", "SECTIONS", "SENTENCE_CLASSES", "RECORDS_BEGIN", "RECORDS_END",
@@ -167,6 +167,13 @@ def read_findings(project_or_ledger):
     return findings
 
 
+def current_findings(project_or_ledger):
+    """The findings no later finding replaces, in file order (ticket 106)."""
+    findings = read_findings(project_or_ledger)
+    replaced = {finding.get("replaces") for finding in findings if finding.get("replaces")}
+    return [finding for finding in findings if finding.get("id") not in replaced]
+
+
 def _next_finding_id(findings):
     highest = 0
     for finding in findings:
@@ -191,8 +198,11 @@ def _cited(finding):
     return list(provenance or [])
 
 
-def add_finding(project_or_ledger, text, provenance, ticket, negative=False):
+def add_finding(project_or_ledger, text, provenance, ticket, negative=False, replaces=None):
     """Append one finding to `findings.jsonl`, journal `finding`, and re-render `findings.md`.
+
+    `replaces` names the id of an earlier finding this one replaces: that one is no longer current,
+    and `current_findings` leaves it out (ticket 106).
 
     `provenance` is one locator or a list of them, each `<manifested path>#<locator>`. Refused
     (raises `ProvenanceError`, without writing anything) when a locator carries no `#<locator>`
@@ -218,6 +228,10 @@ def add_finding(project_or_ledger, text, provenance, ticket, negative=False):
             "negative": bool(negative),
             "ts": now_ts(),
         }
+        if replaces is not None:
+            if replaces not in {known.get("id") for known in findings}:
+                raise ProvenanceError("finding %r replaces %r, which is not a finding" % (finding["id"], replaces))
+            finding["replaces"] = replaces
         book.append_line(FINDINGS, json.dumps(finding, ensure_ascii=False))
         book.append_event(
             "finding",

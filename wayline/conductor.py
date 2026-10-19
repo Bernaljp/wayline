@@ -143,7 +143,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, resources, schedule, software, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, software, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -855,7 +855,7 @@ class Conductor:
         self._journal_wave(result)
         self._check_stall(result)
         self._end(result)
-        result.ledger_commit = self._commit_ledger()
+        result.ledger_commit = self._commit_ledger(self._render_reproduce())
         self._push_code()
         self._tail()
         self._beat()
@@ -3775,7 +3775,10 @@ class Conductor:
             }
             if record["id"] in self.view.findings:
                 continue  # filed before a restart
-            self.ledger.append_record(FINDINGS, record)
+            line = dict(record)
+            if isinstance(finding.get("replaces"), str) and finding["replaces"] in self.view.findings:
+                line["replaces"] = finding["replaces"]  # the earlier finding is no longer current (ticket 106)
+            self.ledger.append_record(FINDINGS, line)
             self.ledger.append_event(FINDING, record, ticket=attempt.id)
             attempt.findings += 1
         return refused
@@ -4895,7 +4898,20 @@ class Conductor:
         if branch:
             self._git(self.project, "branch", "-D", BRANCH % identifier, ok=None)
 
-    def _commit_ledger(self):
+    def _render_reproduce(self):
+        """Re-render `REPRODUCE.md`, `reproduce.json`, the locks, and `README.md` in `code/` (decision 17, ticket 106).
+
+        Only after a wave that changed `code/` or ran a job a current finding cites (or changed which runs the findings
+        cite); the paths written are committed with the wave, and the next push of the code repository carries them.
+        A render that fails is said and tried again by the next wave.
+        """
+        try:
+            return reproduce.render_if_changed(self.project)
+        except (OSError, ValueError) as failure:
+            self.say("  REPRODUCE.md was not rendered: %s; the next wave tries again" % failure)
+            return []
+
+    def _commit_ledger(self, rendered=()):
         """Commit what the wave wrote under `research/`, so `main` stays clean for the next fast-forward.
 
         The session directories of the attempts still in flight are left for a later wave. Their
@@ -4905,14 +4921,15 @@ class Conductor:
         """
         busy = [":(exclude)" + self._attempt_dir(attempt).relative_to(self.project).as_posix()
                 for attempt in self.flight.values()]
+        rendered = list(rendered)
         with self.ledger.lock():  # a commit to `main`, like the fast-forward of an integration
-            self._git(self.project, "add", "--", RESEARCH, *busy)
+            self._git(self.project, "add", "--", RESEARCH, *busy, *rendered)
             if self._git(self.project, "diff", "--cached", "--name-only", "--", HEARTBEAT_PATH).stdout.strip():
                 # A project laid out before the heartbeat was ignored: keep the file out of the commit.
                 self._git(self.project, "reset", "-q", "--", HEARTBEAT_PATH)
-            if self._git(self.project, "diff", "--cached", "--quiet", "--", RESEARCH, ok=None).returncode == 0:
+            if self._git(self.project, "diff", "--cached", "--quiet", "--", RESEARCH, *rendered, ok=None).returncode == 0:
                 return None
-            self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH, *busy)
+            self._git(self.project, "commit", "-q", "-m", LEDGER_COMMIT % self.number, "--", RESEARCH, *busy, *rendered)
             return self._head(self.project)
 
     def _head(self, path):

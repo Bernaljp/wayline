@@ -44,6 +44,19 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- `REPRODUCE.md` and the locks (ticket 106; Implementation Decision 17). After a wave that changed `code/` or ran a job a
+  current finding cites (or changed which runs the findings cite), and only then, code renders into `code/`:
+  `REPRODUCE.md` and `reproduce.json`, which list per result each run its current findings cite with its command, the
+  commit of `main` it ran at, its inputs, outputs (with SHA-256), wall-clock time, and hardware (the GPUs it held);
+  `locks/<commit>/`, the package locks (`requirements.lock`, `renv.lock`, the Julia `Project.toml` and `Manifest.toml`,
+  `octave-packages.lock`) as they stood at each commit a cited run ran at, not as installed now, and `locks/tools.json`,
+  every tool a cited job called with the version and lock digest its job record carries; and `README.md`, rendered from
+  the records, keeping word for word the owner's part between `<!-- wayline:owner -->` and `<!-- /wayline:owner -->`
+  (a README with no markers, such as an absorbed clone's, becomes that part whole). The files are committed with the
+  wave and go out with the code repository's next push; none names a path under `research/`, `jobs/`, or `results/`.
+  A finding may name the finding it `replaces` (the worker result schema and `provenance.add_finding`); a replaced
+  finding is no longer current, so its runs drop out.
+
 - `code/` and the code repository (ticket 85; Implementation Decision 17). Everything a project publishes lives
   under `code/`: the package or scripts, the tests, the environment locks, `README.md`, and `LICENSE`. The new
   module `wayline/code_repository.py` cuts the code repository from it with `git subtree split --prefix=code`, so
