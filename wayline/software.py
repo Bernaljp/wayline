@@ -1068,7 +1068,8 @@ def _launch(project, runner, spec):
     """Write one job file of a `software` decision and launch it now; the conductor polls it like any job."""
     from wayline import resources
 
-    [record] = resources.add_jobs(project, spec, ticket=spec["ticket"], tools=Tools(record={}))
+    # The harness's own job: it installs on the host, whatever environment the project's jobs run in (ticket 83).
+    [record] = resources.add_jobs(project, spec, ticket=spec["ticket"], tools=Tools(record={}), environment="shared")
     return runner.launch(resources.spec_from_record(record))
 
 

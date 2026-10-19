@@ -39,6 +39,11 @@
     "attempts": {"type": "array", "items": {"$ref": "#/$defs/attempt"}},
     "status": {"type": "string", "enum": ["pending", "running", "exited", "oom_host", "oom_gpu", "failed", "killed", "gone"]},
     "wallclock_minutes": {"type": "integer", "minimum": 1},
+    "environment": {
+      "type": "string",
+      "enum": ["shared", "conda", "venv", "container"],
+      "description": "the project's environment the job was resolved in when it was added (decision 17; ticket 83): a later move never changes where it runs; a job file written before it has none"
+    },
     "tools": {
       "type": "array",
       "description": "every tool the job calls, by name, version, and lock digest (decision 17; ticket 82); a job file written before it has none",

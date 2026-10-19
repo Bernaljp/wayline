@@ -238,6 +238,7 @@ K_CONVERTER = "converter"  # `document`: the converters and their versions, null
 K_REMOTE = "remote"  # `code_pushed`: the code repository's `owner/name` on GitHub
 K_MAIN = "main"  # `code_pushed`: the commit of `main` the split was cut from, where the next split's walk starts
 K_TOOLS = "tools"  # `job_launched`: the name, version, and lock digest of every tool the job calls (ticket 82)
+K_ENVIRONMENT = "environment"  # `job_launched`: the environment the job runs in, shared, conda, venv, or container (ticket 83)
 K_NAME = "name"
 K_OUTCOME = "outcome"
 K_SECTION = "section"  # `passage`: the section it is part of
@@ -278,7 +279,7 @@ EVENTS = {
     PROPOSAL_PARKED: (K_ID, K_FROM, K_KIND, K_REASON),
     DECISION_OPENED: (K_TICKET, K_BLOCKING, K_HUMAN_ONLY),
     DECISION: (K_TICKET, K_ANSWER, K_DECIDED_BY, K_RATIONALE, K_CONFIDENCE, K_MODEL, K_FALLBACK_FROM),
-    JOB_LAUNCHED: (K_JOB, K_TICKET, K_UNIT, K_GPU_UUIDS, K_CORES, K_RAM_GB, K_ATTEMPT, K_TOOLS, K_COMMIT),
+    JOB_LAUNCHED: (K_JOB, K_TICKET, K_UNIT, K_GPU_UUIDS, K_CORES, K_RAM_GB, K_ATTEMPT, K_TOOLS, K_ENVIRONMENT, K_COMMIT),
     JOB_FINISHED: (K_JOB, K_EXIT_CODE, K_SECONDS, K_OUTPUTS_OK),
     JOB_RETRIED: (K_JOB, K_ATTEMPT, K_OOM, K_OVERRIDES),
     JOB_FAILED: (K_JOB, K_REASON, K_LOG_TAIL),
@@ -330,7 +331,7 @@ PAYLOAD_ENUMS = {
     (JOB_RETRIED, K_OOM): ("host", "gpu"),
     (STALL, K_ACTION): ("replan", "stop"),
     (NOTIFIED, K_CHANNEL): ("notify-send", "hermes", "none"),
-    (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes"),
+    (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes", "environment"),
     # `retrospective` is the one code files after a run ended (ticket 45), read by the evolver like the owner's.
     # `figure` is the figure role's, carrying the traps a figure result would promote into the plot index (ticket 50).
     (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective", "figure"),

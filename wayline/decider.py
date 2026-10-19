@@ -130,6 +130,14 @@ IRREVERSIBLE = (
      r"\b((?:edit(?:s|ing)?|chang(?:e|es|ing)|modif(?:y|ies|ying)|patch(?:es|ing)?|rewrit(?:e|es|ing)|updat(?:e|es|ing)|bump(?:s|ing)?|promot(?:e|es|ing))"
      r" (?:the |a |an )?(?:global |harness |shipped )?(?:harness|policy\.json|global policy|~/\.wayline|wayline itself|wayline's (?:code|policy|roles?|skills?|hooks?)|shipped (?:roles?|skills?|policy))"
      r"|harness[- ]wide|in the harness itself|for every project)\b"),
+    # Decision 17: moving a project between the shared tools, a conda prefix, a venv, and a container is the owner's word
+    # alone; no decision class names it, and an answer that would move it is refused (ticket 83).
+    ("environment",
+     r"\b(switch --environment"
+     r"|(?:mov(?:e|es|ing)|switch(?:es|ing)?|chang(?:e|es|ing)|set(?:s|ting)?|migrat(?:e|es|ing)|rebuild(?:s|ing)?|run(?:s|ning)?|put(?:s|ting)?)"
+     r" (?:the |our |its |this )?(?:project(?:'s)? |it |everything |(?:the )?jobs? |(?:project's |run's )?environment )?"
+     r"(?:to|into|in|inside|as) (?:a |an |the )?"
+     r"(?:conda\b|venv|virtual ?env(?:ironment)?|container|singularity|docker (?:image|container)|shared(?: tools| environment)?\b))"),
     ("network write",
      r"\b(upload(?:s|ed|ing)?|post(?:s|ed|ing)? (?:it |them |the \w+ )?to|submit(?:s|ted|ting)? (?:it |them |the \w+ )?to"
      r"|send(?:s|ing)? (?:it |them |the \w+ )?to (?:a |the |an )?(?:server|api|service|endpoint|slack|telegram|e-?mail|webhook|channel)"
@@ -454,6 +462,9 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "Go without: installing free software through the harness's routes is neither irreversible nor a global harness "
         "change. Changing a tool already installed, the tools venv, and licensed software (MATLAB) are the owner's alone, "
         "and their decisions never reach you.",
+        "",
+        "Moving the project's environment (`wayline switch --environment`: the shared tools, a conda prefix, a venv, or a "
+        "container) is the owner's word alone, and no decision class names it: never answer with a move, and never set it.",
         "",
         "# The radius",
         "",
