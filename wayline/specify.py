@@ -538,7 +538,8 @@ def seed_gap(project_or_ledger):
     except (OSError, ValueError):
         return []
     items = [(item.get("heading"), item.get("text")) for item in (draft or {}).get("gap") or [] if isinstance(item, dict)]
-    return sections.seed_passages(ledger, "introduction", items, by=GAP_BY) if items else []
+    # Keyed by heading: an amended spec's gap passage replaces the one it rewords under the same heading.
+    return sections.seed_passages(ledger, "introduction", items, by=GAP_BY, key=lambda heading, text: heading) if items else []
 
 
 # --- the prompt -----------------------------------------------------------------------------------------

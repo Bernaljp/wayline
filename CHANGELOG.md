@@ -333,7 +333,14 @@ lists it read-only, marked with its tag.
   headings with each passage's id and first sentence, and the owner's passages in full. The Introduction is seeded
   by code from the position memo's verified prior work (`step:position`, one passage per row, each tagged
   `{ref:<slug>#<locator>}`) and, once the spec is confirmed, from the spec's new `gap` passages (`step:specify`).
-  The planner no longer cuts a `writing` ticket after each analysis.
+  The planner no longer cuts a `writing` ticket after each analysis. A review pass fixed these before the ticket
+  landed: a `running` result's passages are written when its jobs close and its change is kept, never at its
+  integration (a discarded or failed run adds none); a discarded change's negative findings replace nothing; a
+  later replacement of a passage replaced twice over replaces what renders now, and a same-wave note leaves once the
+  passages it names no longer both render; a memo taken again or an amended spec rewords its seeded passage (keyed by
+  the reference, or by the heading) rather than adding one beside it; the sections part of a prompt keeps to the
+  tier's context cap; the ticket file's `## Result` lists the passages, which is what a verdict on a `writing` ticket
+  reads; and Results is re-rendered when a discarded run's findings are filed.
 
 ## v1.0.0 (2026-09-27)
 

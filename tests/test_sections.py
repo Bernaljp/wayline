@@ -12,7 +12,7 @@ from tests import machine
 from tests.projects import ProjectTestCase
 from tests.test_conductor import ConductorCase, done, drive, hold_the_ladder, patch
 from wayline import project as projects
-from wayline import sections, tickets, worker
+from wayline import resources, sections, tickets, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger, LedgerError
 
@@ -103,6 +103,10 @@ class TwoTicketsInOneSectionTest(TwoTicketsCase):
         journal = [(event["event"], event["ticket"]) for event in self.events() if event["event"] in ("integrated", "passage")]
         self.assertEqual(journal, [("integrated", 1), ("passage", 1), ("integrated", 2), ("passage", 2)])
 
+    def test_the_ticket_file_carries_its_passages_for_a_verdict_to_read(self):
+        body = (tickets.tickets_dir(self.project) / "02-write-the-world-file.md").read_text(encoding="utf-8")
+        self.assertIn("Passages:\n\n- methods, The files: The world file holds one line, `world`.", body)
+
     def test_the_sections_ride_in_the_ledger_commit(self):
         self.assertIn("research/sections/methods.md", self.git("show", "--name-only", "--format=", "main").split("\n"))
 
@@ -142,6 +146,80 @@ class DeclaredSectionsAtAcceptanceTest(TwoTicketsCase):
         self.assertIn("declares Methods and returned no passage", resumed[0].message)
         self.assertEqual(self.ticket(1)["status"], "done")
         self.assertEqual([item["by"] for item in self.passages()], ["t2-a1", "t1-a1"])
+
+
+class RunningResultTest(ConductorCase):
+    """A running result's passages wait for its jobs: written when they close and the change stands, never before."""
+
+    def test_the_passages_are_written_when_the_jobs_close(self):
+        path = tickets.tickets_dir(self.project) / "01-write-the-hello-file.md"
+        fields, body = tickets.read_ticket(path)
+        tickets.write_ticket(self.ledger, dict(fields, sections=["methods"]), body)
+        resources.add_jobs(self.project, {"command": ["/bin/true"]}, ticket=1, backend="fake")
+        envelope = done(passages=[TwoTicketsCase.passage("One job runs `/bin/true`.")])
+        envelope.structured_output.update({"status": "running", "jobs": ["t1-1"]})
+        with resources.use_fake_jobs() as jobs:
+            jobs.script(["running", "running", "exited"], job_id="t1-1")
+            self.conduct((envelope, patch()), waves=1)
+            self.conductor.settle()
+            self.conductor.wave()
+            self.assertEqual(self.ticket()["status"], "running")
+            self.assertEqual(sections.read_passages(self.project), [], "nothing is written before the jobs close")
+            for _ in range(4):
+                if self.conductor.wave().ended:
+                    break
+        self.assertEqual(self.ticket()["status"], "done")
+        self.assertEqual([(item["id"], item["by"]) for item in sections.read_passages(self.project)], [("P1", "t1-a1")])
+        order = [event["event"] for event in self.events() if event["event"] in ("job_finished", "passage")]
+        self.assertEqual(order, ["job_finished", "passage"])
+
+
+class ArrangeTest(SectionsCase):
+    """The rendering rules on chains of replacements, read through the rendered file."""
+
+    def add(self, text, **extra):
+        return sections.add_passage(self.ledger, "methods", "Data", text, by=extra.pop("by", "t3-a1"), **extra)
+
+    def body(self, section="methods"):
+        return super().body(section)
+
+    def test_a_later_replacement_of_a_twice_replaced_passage_replaces_what_renders_now(self):
+        self.add("One.")
+        self.add("Two.")
+        self.add("One, again.", replaces="P1", wave="r/1")
+        self.add("One, a third time.", replaces="P3", wave="r/2")
+        self.add("One, from an old pack.", replaces="P1", wave="r/3")
+        body = self.body()
+        for gone in ("One.", "One, again.", "One, a third time."):
+            self.assertNotIn(gone + "\n", body)
+        self.assertLess(body.index("One, from an old pack."), body.index("Two."))
+
+    def test_a_note_leaves_once_the_passages_kept_side_by_side_are_no_longer_both_there(self):
+        self.add("Old.")
+        self.add("New by four.", replaces="P1", wave="r/1")
+        self.add("New by five.", replaces="P1", wave="r/1")
+        self.assertIn("P2 and P3 each replace P1", self.body())
+        self.add("Settled.", replaces="P2", wave="r/2")
+        body = self.body()
+        self.assertIn("Settled.", body)
+        self.assertIn("New by five.", body)
+        self.assertNotIn("each replace", body)
+
+    def test_seeding_again_rewords_by_key_rather_than_adding_beside(self):
+        key = lambda heading, text: heading
+        sections.seed_passages(self.ledger, "introduction", [("The gap", "No work does this.")], by="step:specify", key=key)
+        sections.seed_passages(self.ledger, "introduction", [("The gap", "No work does this on real data.")], by="step:specify", key=key)
+        body = self.body("introduction")
+        self.assertNotIn("No work does this.\n", body)
+        self.assertIn("No work does this on real data.", body)
+        self.assertEqual(sections.read_passages(self.ledger)[-1]["replaces"], "P1")
+
+    def test_the_sections_part_of_the_pack_keeps_to_the_cap(self):
+        for index in range(40):
+            self.add("Passage number %d says something long enough to fill the pack quickly." % index)
+        text = sections.pack_text(self.ledger, ["methods"], max_chars=600)
+        self.assertLessEqual(len(text.split("\n\n[wayline:")[0]), 600)
+        self.assertIn("reached the context cap of 600 characters", text)
 
 
 class ContextPackTest(TwoTicketsCase):

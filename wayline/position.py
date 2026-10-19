@@ -617,7 +617,7 @@ def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None
               "session_id": session_id, "model": model, "fallback_from": fallback_from}
     ledger.write_json(POSITION_JSON, record)
     ledger.write_markdown(POSITION_MD, render_position(record))
-    sections.seed_passages(ledger, "introduction", prior_work_passages(record), by=SEED_BY)
+    sections.seed_passages(ledger, "introduction", prior_work_passages(record), by=SEED_BY, key=_cited_slug)
     events, _ = ledger.read_events()
     specify.move_phase(ledger, events, PHASE, session_id=session_id)
     return record
@@ -635,6 +635,12 @@ def ref_locator(row):
     locator = _one_line(row.get("locator"))
     anchor = locator.partition("#")[2] or locator.rsplit("/", 1)[-1] if locator else ""
     return re.sub(r"\s+", "-", anchor.strip()) or "dossier"
+
+
+def _cited_slug(heading, text):
+    """What a seeded prior-work passage is about: the reference its tag names, so a memo taken again rewords that row."""
+    found = re.search(r"\{ref:([^#{}]+)#", text)
+    return found.group(1) if found else text
 
 
 def prior_work_passages(record):

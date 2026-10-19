@@ -217,20 +217,29 @@ def file_finding(project_or_ledger, record, wave=None, render=True):
     return line
 
 
-def seed_passages(project_or_ledger, section, items, by, objectives=()):
-    """Code's own passages (`items`: `(heading, text)`), each written once: a text the section already holds from `by` is skipped.
+def seed_passages(project_or_ledger, section, items, by, objectives=(), key=None):
+    """Code's own passages (`items`: `(heading, text)`), each written once, through the same ledger call as a ticket's.
 
-    What setup seeds the Introduction with, and what code writes for an answered objective (ticket 91). Returns the
-    records written.
+    A text the section already holds from `by` is skipped. `key(heading, text)` names what a passage is about (a
+    reference's slug, a heading): a new text whose key matches a current passage of `by` replaces that passage, so a
+    memo taken again or a spec amended rewords what it seeded rather than standing beside it. What setup seeds the
+    Introduction with, and what code writes for an answered objective (ticket 91). Returns the records written.
     """
     book = ledger_for(project_or_ledger)
+    key = key or (lambda heading, text: (heading, text))
     written = []
     with book.lock():
-        held = {_one_line(item.get("text")) for item in read_passages(book) if item.get("section") == section and item.get("by") == by}
+        ours = [item for item in read_passages(book) if item.get("section") == section and item.get("by") == by]
+        held = {_one_line(item.get("text")) for item in ours}
+        current = {item.get("id") for item in arrange(_items(book, section)).current()}
+        keyed = {key(_one_line(item.get("heading")), _one_line(item.get("text"))): item.get("id")
+                 for item in ours if item.get("id") in current}
         for heading, text in items:
-            if _one_line(text) in held or not _one_line(text) or not _one_line(heading):
+            heading, text = _one_line(heading), str(text or "").strip()
+            if _one_line(text) in held or not text or not heading:
                 continue
-            written.append(add_passage(book, section, heading, text, by=by, objectives=objectives, render=False))
+            replaces = keyed.pop(key(heading, _one_line(text)), None)
+            written.append(add_passage(book, section, heading, text, by=by, replaces=replaces, objectives=objectives, render=False))
             held.add(_one_line(text))
         if written:
             render_section(book, section)
@@ -247,9 +256,12 @@ def first_sentence(text):
     return text[:found.end()] if found else text
 
 
-def pack_text(project_or_ledger, declared_sections):
+def pack_text(project_or_ledger, declared_sections, max_chars=None):
     """The context pack's part on the paper (decision 17): per declared section, its headings with each current
     passage's id and first sentence, and the owner's passages in full; empty when the ticket declares none.
+
+    `max_chars` is the tier's context cap, which this part keeps to on its own: what does not fit is cut with the cut
+    announced, as the planner's pack is.
     """
     book = ledger_for(project_or_ledger)
     wanted = [name for name in SECTIONS if name in set(declared_sections or ())]
@@ -272,7 +284,12 @@ def pack_text(project_or_ledger, declared_sections):
                     lines.append("  - %s (the owner's, in full): %s" % (item.get("id"), " ".join(str(item.get("text") or "").split())))
                 else:
                     lines.append("  - %s: %s" % (item.get("id"), first_sentence(item.get("text"))))
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    if max_chars is not None and len(text) > max(0, int(max_chars)):
+        cut = text[:max(0, int(max_chars))].rsplit("\n", 1)[0]
+        text = cut + ("\n\n[wayline: this part reached the context cap of %d characters; the rest of the declared sections "
+                      "is in research/sections/.]" % int(max_chars))
+    return text
 
 
 # --- the Type-A check at acceptance ---------------------------------------------------------------------
@@ -283,7 +300,8 @@ def check_result(project_or_ledger, fields, result):
 
     A section the ticket declares that got no passage fails, and Results fails when it got no finding; a passage or a
     finding whose `replaces` names nothing its section holds fails too.
-    A ticket without `sections` is held to none.
+    A ticket without `sections` is held to none. A `running` result (its jobs not yet run) is not held to Results: it
+    can have no finding before its jobs have written anything.
     """
     book = ledger_for(project_or_ledger)
     result = result if isinstance(result, dict) else {}
@@ -292,7 +310,7 @@ def check_result(project_or_ledger, fields, result):
     problems = []
     for section in declared(fields):
         if section == RESULTS:
-            if not findings:
+            if not findings and result.get("status") != "running":
                 problems.append("ticket %s declares Results and returned no finding: a Results passage is a finding, in "
                                 "`findings`, with its heading" % fields.get("id"))
         elif not any(item.get("section") == section for item in passages):
@@ -332,48 +350,60 @@ def arrange(items):
     slots = {}            # heading -> [item]
     order = []            # headings, first appearance
     where = {}            # id -> heading of a current item
-    successors = {}       # id -> [(item, wave)] that replaced it
+    successors = {}       # id -> [(item, wave)] that replaced it, in arrival order
     by_id = {}
+    kept = {}             # id replaced twice in one wave -> the ids kept side by side
+
+    def standing(target):
+        """The current items that stand where `target` stood, following its replacements down to what renders now."""
+        found, queue = [], list(successors.get(target, []))
+        while queue:
+            child, _ = queue.pop(0)
+            if child.get("id") in where:
+                found.append(child)
+            else:
+                queue.extend(successors.get(child.get("id"), []))
+        return found
+
     for item in items:
         identifier = item.get("id")
         by_id[identifier] = item
         arranged.last = identifier
         heading = _one_line(item.get("heading")) or "Findings"
         target = item.get("replaces")
-        if target is not None and target in by_id:
-            wave = item.get("wave")
-            earlier = successors.setdefault(target, [])
-            same_wave = [found for found, found_wave in earlier if wave is not None and found_wave == wave]
-            if target in where:
-                place_heading = where.pop(target)
-                _put(slots, order, where, item, heading, place_heading, slots[place_heading].index(by_id[target]), remove=by_id[target])
-            elif same_wave:
-                anchor = same_wave[-1]
-                if anchor.get("id") in where:
-                    place_heading = where[anchor["id"]]
-                    _put(slots, order, where, item, heading, place_heading, slots[place_heading].index(anchor) + 1)
-                else:
-                    _append(slots, order, where, item, heading)
-                arranged.notes.append((target, [found.get("id") for found in same_wave] + [identifier]))
-            else:
-                standing = [found for found, _ in earlier if found.get("id") in where]
-                if standing:
-                    first = standing[0]
-                    place_heading = where.pop(first["id"])
-                    _put(slots, order, where, item, heading, place_heading, slots[place_heading].index(first), remove=first)
-                    for other in standing[1:]:
-                        slots[where.pop(other["id"])].remove(other)
-                else:
-                    _append(slots, order, where, item, heading)
-            earlier.append((item, wave))
+        if target is None or target not in by_id:
+            _append(slots, order, where, item, heading)
             continue
-        _append(slots, order, where, item, heading)
+        wave = item.get("wave")
+        earlier = successors.setdefault(target, [])
+        same_wave = [found for found, found_wave in earlier
+                     if wave is not None and found_wave == wave and found.get("id") in where]
+        if target in where:
+            place_heading = where.pop(target)
+            _put(slots, order, where, item, heading, place_heading, slots[place_heading].index(by_id[target]), remove=by_id[target])
+        elif same_wave:
+            anchor = same_wave[-1]
+            place_heading = where[anchor["id"]]
+            _put(slots, order, where, item, heading, place_heading, slots[place_heading].index(anchor) + 1)
+            ids = kept.setdefault(target, [found.get("id") for found in same_wave])
+            ids.append(identifier)
+        else:
+            now = standing(target)
+            if now:
+                first = now[0]
+                place_heading = where.pop(first["id"])
+                _put(slots, order, where, item, heading, place_heading, slots[place_heading].index(first), remove=first)
+                for other in now[1:]:
+                    slots[where.pop(other["id"])].remove(other)
+            else:
+                _append(slots, order, where, item, heading)
+        earlier.append((item, wave))
     arranged.headings = [(heading, list(slots[heading])) for heading in order if slots.get(heading)]
-    merged = {}
-    for target, ids in arranged.notes:
-        merged.setdefault(target, [])
-        merged[target] += [identifier for identifier in ids if identifier not in merged[target]]
-    arranged.notes = list(merged.items())
+    # A note stands while at least two of the passages kept side by side still render; one replaced since resolves it.
+    for target, ids in kept.items():
+        current = [identifier for identifier in dict.fromkeys(ids) if identifier in where]
+        if len(current) > 1:
+            arranged.notes.append((target, current))
     return arranged
 
 

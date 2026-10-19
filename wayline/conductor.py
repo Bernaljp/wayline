@@ -1861,7 +1861,7 @@ class Conductor:
             consult_max=(self.policy.get("consultant") or {}).get("max_questions_per_ticket", worker.CONSULT_MAX),
             notes=notes,
             failure=self._last_failure(attempt),
-            sections=sections.pack_text(self.ledger, sections.declared(attempt.ticket)),
+            sections=sections.pack_text(self.ledger, sections.declared(attempt.ticket), attempt.tier.context_chars),
         )
 
     def _keep_last_failure(self, attempt):
@@ -2199,6 +2199,8 @@ class Conductor:
         # A goal ticket's worktree was kept for its judgment; kept, or no longer judged since GOAL.json changed, it goes.
         if (self._worktree(identifier) / ".git").exists():
             self._remove_worktree(identifier)
+        # The passages its worker returned with the jobs it left (decision 17): its change stands on `main` now.
+        note += self._file_passages(attempt, self._running_output(attempt, known).get("passages"))
         self._set_status(identifier, "done", note)
         self.ledger.append_event(TICKET_DONE, {"ticket": identifier}, ticket=identifier)
         self._tail()
@@ -2360,17 +2362,22 @@ class Conductor:
         result.done.append(identifier)
         self.say("  ticket %d done and discarded: its change is reverted on main" % identifier)
 
-    def _running_findings(self, attempt, known):
-        """The findings of the `running` result an experiment ticket's worker returned, read from its session."""
+    def _running_output(self, attempt, known):
+        """The `running` result a job-bearing ticket's worker returned, read from its session; empty when it cannot be read."""
         session = known.sessions[-1] if known is not None and known.sessions else None
         run_dir = self._session_path(attempt, session) if session is not None else None
         try:
             returned = json.loads((run_dir / "result.json").read_text(encoding="utf-8")) if run_dir else {}
         except (OSError, ValueError):
-            return []
+            return {}
         if not isinstance(returned, dict):
-            return []
+            return {}
         output = returned.get("structured_output") if isinstance(returned.get("structured_output"), dict) else returned
+        return output if isinstance(output, dict) else {}
+
+    def _running_findings(self, attempt, known):
+        """The findings of the `running` result an experiment ticket's worker returned, read from its session."""
+        output = self._running_output(attempt, known)
         findings = output.get("findings") if isinstance(output.get("findings"), list) else []
         return [finding for finding in findings
                 if isinstance(finding, dict) and isinstance(finding.get("text"), str) and isinstance(finding.get("provenance"), str)]
@@ -2587,10 +2594,7 @@ class Conductor:
             from wayline import changes
             changes.set_status(self.project, record["id"], "applied")
         if outcome == "done" and running:
-            refused = self._file_passages(attempt)  # its jobs' findings come later; its Methods are on `main` now
-            if refused:
-                attempt.body = tickets.with_result_note(attempt.body, refused)
-            self._leave_running(attempt)
+            self._leave_running(attempt)  # its passages wait for its jobs: written when they close and the change is kept
             return "running"
         if judgment is not None and outcome in ("done", "failed"):
             # A change judged better is kept only once it is on `main`; one whose integration failed was not kept.
@@ -3761,8 +3765,6 @@ class Conductor:
         notes = self._file_findings(attempt, attempt.result.get("findings") or [], discarded is not None, attempt.worktree)
         if discarded is None and waits_for_owner is None:
             notes += self._file_passages(attempt)  # its work is on `main` now; a change not integrated adds no passage
-        else:
-            sections.render_sections(self.ledger, only=[sections.RESULTS])
         if discarded is not None:
             notes.append(self._discard_note(attempt, discarded))
         if waits_for_owner is not None:
@@ -3802,7 +3804,8 @@ class Conductor:
                 # A finding is a Results passage (decision 17): its heading (the ticket's title when it named none),
                 # the finding a scope-down narrows, and the ticket's objectives.
                 "heading": finding.get("heading") or attempt.ticket["title"],
-                "replaces": finding.get("replaces"),
+                # A discarded change displaces nothing: its findings stand beside what they would have replaced.
+                "replaces": None if negative else finding.get("replaces"),
                 "objectives": list(attempt.ticket.get("objectives") or []),
             }
             if record["id"] in self.view.findings:
@@ -3814,25 +3817,30 @@ class Conductor:
                 self.say("  ticket %d: a finding was refused: %s" % (attempt.id, failure))
                 continue
             attempt.findings += 1
+        if attempt.findings:
+            sections.render_section(self.ledger, sections.RESULTS)
         return refused
 
     def _wave_key(self):
         """The wave a passage or a finding lands in, unique across runs: `<run>/<number>`."""
         return "%s/%d" % (self._run_key, self.number)
 
-    def _file_passages(self, attempt):
-        """Write the passages the attempt returned, through the ledger, and render the sections; the notes on those refused.
+    def _file_passages(self, attempt, passages=None):
+        """Write the passages the attempt returned (or `passages`), through the ledger, and render the sections they
+        touched; the notes on those refused.
 
-        Called once the ticket's work is on `main`, under the ledger lock, so tickets adding to one section are
-        written one at a time in the order the wave carries them, which is id order. A passage filed before a restart
-        (the same `by`, section, heading, and text) is not filed again.
+        Called once the ticket's work is on `main` (for a running result, once its jobs closed and its change was
+        kept), under the ledger lock, so tickets adding to one section are written one at a time in the order the wave
+        carries them, which is id order. A passage filed before a restart (the same `by`, section, heading, and text)
+        is not filed again.
         """
-        refused = []
+        refused, touched = [], set()
+        passages = attempt.result.get("passages") if passages is None else passages
         by = sections.by_ticket(attempt.id, attempt.number)
         with self.ledger.lock():
             filed = {(item.get("section"), item.get("heading"), item.get("text")) for item in sections.read_passages(self.ledger)
                      if item.get("by") == by}
-            for item in attempt.result.get("passages") or []:
+            for item in [entry for entry in passages or [] if isinstance(entry, dict)]:
                 key = (item.get("section"), " ".join(str(item.get("heading") or "").split()), str(item.get("text") or "").strip())
                 if key in filed:
                     continue
@@ -3840,10 +3848,11 @@ class Conductor:
                     sections.add_passage(self.ledger, item.get("section"), item.get("heading"), item.get("text"), by=by,
                                          replaces=item.get("replaces"), objectives=attempt.ticket.get("objectives") or [],
                                          ticket=attempt.id, wave=self._wave_key(), render=False)
+                    touched.add(item.get("section"))
                 except sections.SectionError as failure:
                     refused.append("A passage was refused: %s (%s)" % (failure, item.get("heading")))
                     self.say("  ticket %d: a passage was refused: %s" % (attempt.id, failure))
-            sections.render_sections(self.ledger)
+            sections.render_sections(self.ledger, only=[name for name in sections.SECTIONS if name in touched])
         return refused
 
     def _in_worktree(self, provenance, worktree):
