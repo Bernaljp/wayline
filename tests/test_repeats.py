@@ -286,6 +286,38 @@ class MergeTest(SetupCase):
         no_loss = [prompt for prompt in self.confirmer.prompts if "## Merge 1" in prompt]
         self.assertTrue(no_loss, "the confirmer still checked what the merge would lose")
 
+    def test_a_group_of_three_is_every_pair_of_it_and_a_pair_left_waiting_is_taken_with_the_merged_passage(self):
+        group = {"kind": "repeat", "passages": ["P8", "P12", "P4"], "why": "all say synchrony rises with colony size"}
+        report = self.check([group], {("P8", "P12"): same("combined", "Synchrony rises with colony size.")})
+        labelled = {frozenset((entry[1], entry[5])) for entry in PAIR.findall(self.confirmer.prompts[0])}
+        self.assertTrue({frozenset(("P4", "P8")), frozenset(("P4", "P12")), frozenset(("P8", "P12"))} <= labelled)
+        self.assertEqual(report["merged"], ["P15"])
+        self.assertEqual(self.record()["pending"], [{"a": "P4", "b": "P15", "found_by": ["consistency"]}])
+        report = self.check([], {("P4", "P15"): {"label": "different", "why": "colony size against phase"}})
+        labelled = {frozenset((entry[1], entry[5])) for prompt in self.confirmer.prompts for entry in PAIR.findall(prompt)}
+        self.assertIn(frozenset(("P4", "P15")), labelled, "the read's pair, taken with the merged passage")
+        self.assertEqual(self.pair("P4", "P15")["found_by"], ["consistency", "embedding"])
+        self.assertEqual(self.record()["pending"], [])
+
+    def test_a_refused_no_loss_check_keeps_every_other_label_and_the_read(self):
+        resets = 4102444800
+        event = worker.RateLimitEvent("rejected", resets, "seven_day", worker.Window(0.5, resets), worker.Window(1.0, resets), None)
+        refused = worker.Envelope(structured_output=None, session_id="cover-1", is_error=True, exit_code=1, api_error_status=429,
+                                  rate_limit_events=[event], result_text="You've hit your limit")
+        self.reader, self.confirmer = Reader([REPEAT, CONTRADICTION]), Confirmer({("P1", "P14"): same(), ("P5", "P11"): {"label": "contradicting"}})
+        with worker.use_fake() as fake:
+            fake.script(respond=self.reader, role="consistency-reader")
+            fake.script(respond=self.confirmer, role="confirmer")
+            fake.script(refused, role="confirmer")
+            report = repeats.check_setup(self.project, run=self.embedder, tools=self.model_tools)
+        self.assertEqual(report["merged"], [])
+        self.assertIn("P1+P14", report["waiting"])
+        self.assertEqual(report["contradictions"], ["P5+P11"])
+        self.assertTrue(any("usage limit" in note for note in report["notes"]), report["notes"])
+        self.assertIn("P14", self.record()["read"])
+        self.assertNotIn(frozenset(("P1", "P14")), {frozenset((entry["a"], entry["b"])) for entry in self.record()["pairs"]},
+                         "the pair waits to be labelled again, not decided")
+
     def test_a_citation_or_symbol_neither_occurrence_has_is_an_addition(self):
         self.assertEqual(repeats.additions("Synchrony rises with colony size [@Okafor2017] by $\\alpha$.",
                                            ["Synchrony grows with the size of the colony.", "Our finding is that synchrony rises."]),
@@ -365,6 +397,44 @@ class BatchTest(SetupCase):
         self.assertEqual(repeats.take_marks(self.project), [], "taken once")
         self.assertEqual(len([item for item in sections.read_passages(self.project) if item["text"] == self.text_of("P14")]), 3,
                          "P14, its withdrawal, and its restoration: nothing written twice")
+
+    def test_a_merge_the_owner_split_is_not_merged_again_by_the_next_check(self):
+        batches.mark(self.project, self.merges["id"], 1, "split")
+        report = self.check([], {("P16", "P17"): same("first")})
+        self.assertEqual(report["merged"], [])
+        self.assertFalse(report["read"], "the restored claims were read before they were merged")
+        labelled = {frozenset((entry[1], entry[5])) for prompt in self.confirmer.prompts for entry in PAIR.findall(prompt)}
+        self.assertNotIn(frozenset(("P16", "P17")), labelled, "the owner's split is the answer on that pair")
+        self.assertEqual(self.merged(), [item for item in self.merged() if item["id"] == "P15"])
+
+    def test_a_split_marked_after_the_merge_was_replaced_is_said_once_and_leaves_the_account(self):
+        sections.add_passage(self.project, "introduction", "Introduction", "Moths swarm.{ref:title:Invented reference Okafor2017}",
+                             by="owner", replaces="P15")
+        batches.mark(self.project, self.merges["id"], 1, "split")
+        [problem] = repeats.take_marks(self.project)
+        self.assertIn("replaced since", problem)
+        self.assertEqual(repeats.take_marks(self.project), [], "said once")
+        self.assertEqual(repeats.account_lines(self.project), [])
+
+    def test_the_grills_read_only_view_takes_no_mark_and_writes_nothing(self):
+        from wayline import grill
+
+        batches.mark(self.project, self.merges["id"], 1, "split")
+        before = (self.project / "research" / "passages.jsonl").read_text(encoding="utf-8")
+        grill.grill_view(self.project, stamp=False)
+        self.assertEqual((self.project / "research" / "passages.jsonl").read_text(encoding="utf-8"), before)
+        self.assertEqual(self.pair("P1", "P14")["outcome"], "merged")
+
+    def test_a_contradiction_marked_not_one_settles_the_grills_question_on_it(self):
+        from wayline import grill
+
+        grill.grill_view(self.project)
+        batches.mark(self.project, self.contradicting["id"], 1, "not a contradiction")
+        grill.grill_view(self.project)
+        [record] = [record for record in grill.read_records(self.project) if "contradict" in record["question"]]
+        self.assertEqual(record["answer"], "not a contradiction")
+        self.assertEqual(record["decided_by"], "human")
+        self.assertIn(self.contradicting["id"], record["rationale"])
 
     def test_a_right_mark_leaves_the_merge(self):
         batches.mark(self.project, self.merges["id"], 1, "right")
@@ -446,6 +516,26 @@ class AcceptanceTest(RepeatsCase):
         self.assertEqual(outcome["exit_code"], 0)
         self.assertIn("not checked", outcome["tail"])
         self.assertEqual(self.calls, [])
+
+    def test_the_worker_is_told_the_findings_own_number(self):
+        passages = [{"section": "discussion", "heading": "Discussion", "text": text, "replaces": None}
+                    for text in ("Dusk light may be the cue.", "Phase locking has been measured in other insects.")]
+        checked = self.accept({"passages": passages, "findings": [finding("Synchrony rises with colony size.")]},
+                              {("N3", "P12"): same()})
+        [problem] = checked.problems
+        self.assertTrue(problem.startswith("finding 1 (Results"), problem)
+
+    def test_a_confirmer_the_usage_limit_refuses_fails_the_check_and_carries_the_refusal(self):
+        resets = 4102444800
+        event = worker.RateLimitEvent("rejected", resets, "five_hour", worker.Window(1.0, resets), worker.Window(0.5, resets), None)
+        with worker.use_fake() as fake:
+            fake.script(worker.Envelope(structured_output=None, session_id="confirm-1", is_error=True, exit_code=1,
+                                        api_error_status=429, rate_limit_events=[event], result_text="You've hit your limit"))
+            checked = repeats.check_result(self.project, {"findings": [finding("Synchrony rises with colony size.")]},
+                                           run=self.embedder, tools=self.model_tools)
+        self.assertIsNotNone(checked.refused)
+        self.assertEqual(checked.acceptance_result()["exit_code"], 1)
+        self.assertIn("usage limit", checked.problems[0])
 
     def test_a_result_with_no_passage_and_no_finding_has_no_check(self):
         self.assertIsNone(repeats.check_result(self.project, {"summary": "nothing written"}, run=self.embedder, tools=self.model_tools))

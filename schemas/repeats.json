@@ -7,6 +7,20 @@
   "additionalProperties": false,
   "properties": {
     "read": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "the inherited claims a consistency read has read; a set holding a claim outside it is read again"},
+    "pending": {
+      "type": "array",
+      "description": "pairs the consistency read named that waited because this check merged one of their claims, with the merged passage in its place: the next check proposes them",
+      "items": {
+        "type": "object",
+        "required": ["a", "b", "found_by"],
+        "additionalProperties": false,
+        "properties": {
+          "a": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+          "b": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+          "found_by": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["consistency"]}}
+        }
+      }
+    },
     "pairs": {
       "type": "array",
       "items": {
@@ -20,8 +34,9 @@
           "found_by": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["consistency", "embedding", "acceptance"]}},
           "similarity": {"type": ["number", "null"], "description": "the embedding model's cosine of the two, when the net proposed the pair"},
           "label": {"type": "string", "enum": ["same", "contradicting", "different"], "description": "the confirmer's label"},
-          "outcome": {"type": "string", "enum": ["merged", "apart", "contradiction", "different", "split", "dismissed"],
-                      "description": "merged into one passage; apart, a repeat a check refused to merge; contradiction, both kept and listed; different; split, a merge the owner undid; dismissed, a contradiction the owner marked not one"},
+          "outcome": {"type": "string", "enum": ["merged", "apart", "contradiction", "different", "split", "split_late", "dismissed"],
+                      "description": "merged into one passage; apart, a repeat a check refused to merge; contradiction, both kept and listed; different; split, a merge the owner undid; split_late, a split marked after a later passage replaced the merged one, so nothing was restored; dismissed, a contradiction the owner marked not one"},
+          "restored": {"type": "array", "maxItems": 2, "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "on a merge the owner split: the passages that restored its two occurrences, a pair the split answers, so no later check merges them again"},
           "kept": {"type": ["string", "null"], "enum": ["first", "second", "combined", null]},
           "text": {"type": ["string", "null"], "description": "the kept text of a merge, without tags"},
           "passage": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the merged passage"},

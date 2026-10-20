@@ -3791,7 +3791,8 @@ class Conductor:
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
             results = (list(results) + self._sections_check(attempt) + self._lint_check(attempt) + self._references_check(attempt)
-                       + self._methods_check(attempt) + self._repeats_check(attempt))
+                       + self._methods_check(attempt))
+            results = results + self._repeats_check(attempt, results)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
             results = list(results) + [simulated]
@@ -3897,16 +3898,20 @@ class Conductor:
             attempt.result["parameters"] = outcome.parameters
         return [outcome.acceptance_result()]
 
-    def _repeats_check(self, attempt):
+    def _repeats_check(self, attempt, results=()):
         """The repeated-claims check (decision 17; ticket 95) as one acceptance result; none when nothing could be repeated.
 
         A new passage or finding that repeats a current passage without naming it in `replaces` sends the worker back with
         the passage it repeats. The embedding model runs with no tokens; the confirmer is a session on Opus, so a pacing
-        stop leaves the check listed rather than run, and so does a model or a confirmer that cannot answer.
+        stop leaves the check listed rather than run, and so does a model or a confirmer that cannot answer. A confirmer a
+        usage window refused fails the check and pauses the run, as the code reading does. It is not run when an earlier
+        result already sends the worker back: the text it would read is about to change.
         """
         from wayline import repeats  # the repeated-claims check reads every section
         result = attempt.result or {}
         if not result.get("passages") and not result.get("findings"):
+            return []
+        if any(item.get("exit_code") != 0 for item in results):
             return []
         if schedule.holds_model_work(self.action):
             return [{"cmd": repeats.REPEATS_CHECK, "exit_code": 0, "seconds": 0.0,
@@ -3917,7 +3922,12 @@ class Conductor:
         except (repeats.RepeatsError, ValueError, OSError) as failure:
             return [{"cmd": repeats.REPEATS_CHECK, "exit_code": 0, "seconds": 0.0,
                      "tail": "listed, not failed: repeats not checked: %s" % failure}]
-        return [] if checked is None else [checked.acceptance_result()]
+        if checked is None:
+            return []
+        if checked.refused is not None:
+            # A closed window, not a verdict on the text: the run pauses, and the check runs again on the resume after it.
+            self._pause(checked.refused.limit, "ticket %d's repeated-claims check" % attempt.id)
+        return [checked.acceptance_result()]
 
     def _timeout(self):
         timeout = self.policy.get("acceptance_timeout_s", 600)

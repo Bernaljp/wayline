@@ -22,15 +22,17 @@ nothing is lost, and code checks that nothing is added (`additions`: no number, 
 has). When either check fails the occurrences stay apart, with no fallback to one of them, and the pair is flagged for
 the grill. A merge writes one passage in the place of the first occurrence, `by` its document, naming both in `merges`,
 its text the kept text with every `ref` tag of either occurrence and both `doc` tags; the second occurrence is
-withdrawn. A pair one of whose claims this check already merged waits for the next check, which sees the merged passage.
+withdrawn. A pair one of whose claims this check already merged waits for the next check, which sees the merged passage
+(a pair the read named is kept in the record's `pending` until then).
 Contradicting pairs both stay, listed for the grill (`grill_items`) and for the verification of the result they touch
 (`contradictions`). A different pair the confirmer flags is listed for the grill too.
 
 **The record** is `research/repeats.json` (schema `repeats`), written only here through the ledger. The setup's merges
 form one `merges` batch of ticket 79 (marks right or split, default right) and its contradictions one `contradictions`
 batch (marks real or not a contradiction, default real). `take_marks` acts on them: a split undoes the merge and
-restores both passages, and a contradiction marked not one leaves the lists. Each merge standing is listed for the owner
-in the account under "Changed without asking you" (`account_lines`).
+restores both passages, which no later check merges again, and a contradiction marked not one leaves the lists and
+settles the grill's question on it. The account's render and the setup check take the marks; the grill only reads them.
+Each merge standing is listed for the owner in the account under "Changed without asking you" (`account_lines`).
 
 **At each ticket's acceptance** (`check_result`, the conductor's `repeats` result) the embedding net and the same
 confirmer run on the ticket's new passages and findings against every current passage: one that repeats a current
@@ -38,20 +40,20 @@ passage without naming it in `replaces` sends the worker back with the passage i
 checked: what the harness writes from inherited passages (a combined merge, a later replacement) is allowed.
 """
 
+import itertools
 import json
-import math
 import re
 import sys
 import tempfile
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, batches, sections
+from wayline import HARNESS_ROOT, batches, gates, provenance, sections
 from wayline.ledger import Ledger, ledger_for, now_ts
 from wayline.tools import ToolsError, failure_line, run_recorded, run_tool
 
 __all__ = [
     "RepeatsError", "EMBED_TOOL", "EMBED_SCRIPT", "READER", "CONFIRMER", "RECORD", "REPEATS_CHECK", "plain", "embed",
-    "near_pairs", "additions", "read_record", "check_setup", "take_marks", "contradictions", "grill_items", "account_lines",
+    "near_pairs", "additions", "read_record", "check_setup", "take_marks", "contradictions", "dismissed", "grill_items", "account_lines",
     "check_result", "Checked", "repeats_command",
 ]
 
@@ -71,13 +73,11 @@ MAX_PAIRS = 100
 
 SAME, CONTRADICTING, DIFFERENT = "same", "contradicting", "different"
 MERGED, APART, CONTRADICTION, SPLIT, DISMISSED = "merged", "apart", "contradiction", "split", "dismissed"
+SPLIT_LATE = "split_late"  # a split marked after a later passage replaced the merged one: nothing restored
 FIRST, SECOND, COMBINED = "first", "second", "combined"
 RIGHT, SPLIT_MARK = batches.KINDS["merges"]
 REAL, NOT_ONE = batches.KINDS["contradictions"]
 
-_TAG = re.compile(r"\{(?:res|ref|code|doc):[^{}]+\}")
-_REF_TAG = re.compile(r"\{ref:[^{}]+\}")
-_DOC_TAG = re.compile(r"\{doc:[^{}]+\}")
 # What the no-addition check reads in a kept text: numbers, citations, LaTeX commands, and mathematical symbols.
 _NUMBER = re.compile(r"(?<![A-Za-z])\d+(?:[.,]\d+)*")
 _CITATION = re.compile(r"@[A-Za-z0-9_][A-Za-z0-9_:.#$%&+?<>~/-]*[A-Za-z0-9_]|\{(?:ref|res|code):[^{}]+\}")
@@ -94,7 +94,12 @@ class RepeatsError(ValueError):
 
 def plain(text):
     """A passage's text as the embedding model and the confirmer read it: its provenance tags taken off, on one line."""
-    return " ".join(_TAG.sub("", str(text or "")).split())
+    return " ".join(provenance.ANY_TAG_RE.sub("", str(text or "")).split())
+
+
+def _tags(text, kind):
+    """The provenance tags of one kind a text carries, as written, in order."""
+    return ["{%s:%s}" % found for found in provenance.ANY_TAG_RE.findall(str(text or "")) if found[0] == kind]
 
 
 def embed(texts, run=run_tool, tools=None):
@@ -126,25 +131,21 @@ def embed(texts, run=run_tool, tools=None):
     return vectors
 
 
-def _cosine(one, other):
-    dot = sum(a * b for a, b in zip(one, other))
-    norms = math.sqrt(sum(a * a for a in one)) * math.sqrt(sum(b * b for b in other))
-    return dot / norms if norms else 0.0
-
-
-def near_pairs(vectors, threshold, among=None):
+def near_pairs(vectors, threshold, split=None):
     """`[(i, j, similarity)]` for every pair of vectors at or above `threshold`, i < j, the most similar first.
 
-    `among(i, j)`, when given, says which pairs to consider at all.
+    The vectors are unit length (`embed`), so the cosine is the dot product. With `split`, only the pairs of one vector
+    before it and one at or after it are considered: the new texts against the current ones at an acceptance.
     """
+    if split is None:
+        indices = itertools.combinations(range(len(vectors)), 2)
+    else:
+        indices = itertools.product(range(split), range(split, len(vectors)))
     found = []
-    for first in range(len(vectors)):
-        for second in range(first + 1, len(vectors)):
-            if among is not None and not among(first, second):
-                continue
-            similarity = _cosine(vectors[first], vectors[second])
-            if similarity >= threshold:
-                found.append((first, second, round(similarity, 4)))
+    for first, second in indices:
+        similarity = sum(a * b for a, b in zip(vectors[first], vectors[second]))
+        if similarity >= threshold:
+            found.append((first, second, round(similarity, 4)))
     return sorted(found, key=lambda pair: (-pair[2], pair[0], pair[1]))
 
 
@@ -181,7 +182,7 @@ def read_record(project_or_ledger):
     try:
         record = book.read_json(RECORD)
     except FileNotFoundError:
-        return {"read": [], "pairs": []}
+        return {"read": [], "pairs": [], "pending": []}
     except (OSError, ValueError) as failure:
         raise RepeatsError("research/%s cannot be read: %s" % (RECORD, failure)) from None
     from wayline.jsonschema import ValidationError, check, load_schema
@@ -189,7 +190,15 @@ def read_record(project_or_ledger):
         check(record, load_schema(RECORD_SCHEMA), name="research/%s" % RECORD)
     except ValidationError as failure:
         raise RepeatsError(str(failure)) from None
+    record.setdefault("pending", [])
     return record
+
+
+def _decided(record):
+    """The pairs already answered: each labelled pair, and the two passages a split restored, which the owner's mark answers."""
+    found = {_key(entry["a"], entry["b"]) for entry in record["pairs"]}
+    found |= {_key(*entry["restored"]) for entry in record["pairs"] if len(entry.get("restored") or []) == 2}
+    return found
 
 
 def _save(book, record):
@@ -353,8 +362,8 @@ def _kept(answer, first, second):
 
 def _merged_text(kept, first, second):
     """The kept text with every `ref` tag of either occurrence and every `doc` tag of both, in that order, after it."""
-    refs = list(dict.fromkeys(_REF_TAG.findall(str(first.get("text") or "")) + _REF_TAG.findall(str(second.get("text") or ""))))
-    docs = list(dict.fromkeys(_DOC_TAG.findall(str(first.get("text") or "")) + _DOC_TAG.findall(str(second.get("text") or ""))))
+    refs = list(dict.fromkeys(_tags(first.get("text"), "ref") + _tags(second.get("text"), "ref")))
+    docs = list(dict.fromkeys(_tags(first.get("text"), "doc") + _tags(second.get("text"), "doc")))
     return kept + "".join(refs) + "".join(docs)
 
 
@@ -393,7 +402,12 @@ def check_setup(project, run=run_tool, tools=None, policy=None, harness_root=Non
     The result is `{read, pairs, merged, apart, contradictions, flagged, waiting, batches, notes}`: whether the consistency
     read ran, how many pairs the confirmer labelled, the merged passages written, and the pairs kept apart, listed as
     contradictions, flagged for the grill, or left for the next check, each as `"Pa+Pb"`; the batches opened; and what
-    could not be done (an embedding model that did not run is said, and the read's pairs are still confirmed).
+    could not be done (an embedding model that did not run is said, and the read's pairs are still confirmed; a no-loss
+    check the usage limit refused leaves its pairs for the next check, and everything else is kept).
+
+    Every pair of a group the read names is proposed. A pair one of whose claims this check merged is kept in the record's
+    `pending`, with the merged passage in that claim's place, and proposed by the next check; a pair the owner's split
+    restored is answered by the split and never proposed again.
     """
     from wayline.project import policy_for
 
@@ -410,14 +424,16 @@ def check_setup(project, run=run_tool, tools=None, policy=None, harness_root=Non
     if len(claims) < 2:
         return report
     order = {item["id"]: index for index, item in enumerate(claims)}
-    decided = {_key(entry["a"], entry["b"]) for entry in record["pairs"]}
+    decided = _decided(record)
     merged_passages = {entry["passage"] for entry in record["pairs"] if entry.get("passage")}
     candidates = {}
 
     def propose(first, second, by, similarity=None):
+        if first not in by_id or second not in by_id or first == second:
+            return
         first, second = sorted((first, second), key=order.get)
         key = _key(first, second)
-        if key in decided or first == second:
+        if key in decided:
             return
         found = candidates.setdefault(key, {"pair": (first, second), "found_by": [], "similarity": None})
         if by not in found["found_by"]:
@@ -425,11 +441,15 @@ def check_setup(project, run=run_tool, tools=None, policy=None, harness_root=Non
         if similarity is not None:
             found["similarity"] = similarity
 
+    for waiting in record["pending"]:
+        for by in waiting["found_by"]:
+            propose(waiting["a"], waiting["b"], by)
+    read = set()
     if any(item["id"] not in record["read"] and item["id"] not in merged_passages for item in claims):
         for _, ids, _ in _read(project, claims, policy, harness_root):
-            for other in ids[1:]:
-                propose(ids[0], other, "consistency")
-        record["read"] = sorted(set(record["read"]) | set(by_id), key=_number)
+            for first, second in itertools.combinations(ids, 2):
+                propose(first, second, "consistency")
+        read = set(by_id)
         report["read"] = True
     threshold, most = _settings(policy)
     try:
@@ -444,43 +464,50 @@ def check_setup(project, run=run_tool, tools=None, policy=None, harness_root=Non
         for first, second, similarity in near[:most]:
             propose(claims[first]["id"], claims[second]["id"], "embedding", similarity)
     pairs = [found["pair"] for found in candidates.values()]
-    if not pairs:
-        _save_record(book, record)
-        return report
-    labels = _confirm(project, pairs, by_id, policy, harness_root)
-    report["pairs"] = len(pairs)
-    proposed = []
-    for first, second in pairs:
-        answer = labels[_key(first, second)]
-        if answer.get("label") == SAME:
-            kept = _kept(answer, by_id[first], by_id[second])
-            if kept is not None:
-                proposed.append((first, second, kept))
-    covers = _covers(project, proposed, by_id, policy, harness_root) if proposed else {}
-    kept_by = {_key(first, second): kept for first, second, kept in proposed}
+    labels, covers, kept_by = {}, {}, {}
+    if pairs:
+        labels = _confirm(project, pairs, by_id, policy, harness_root)
+        report["pairs"] = len(pairs)
+        proposed = []
+        for first, second in pairs:
+            answer = labels[_key(first, second)]
+            if answer.get("label") == SAME:
+                kept = _kept(answer, by_id[first], by_id[second])
+                if kept is not None:
+                    proposed.append((first, second, kept))
+        kept_by = {_key(first, second): kept for first, second, kept in proposed}
+        try:
+            covers = _covers(project, proposed, by_id, policy, harness_root) if proposed else {}
+        except (gates.UsageLimited, RepeatsError) as failure:
+            covers = None  # the labels are kept; the pairs a merge needs the check for wait for the next check
+            report["notes"].append("the no-loss check was not made (%s): the pairs labelled the same wait for the next check" % failure)
     with book.lock():
-        read = record["read"]
-        record = read_record(book)  # what another check wrote while this one's sessions ran
-        record["read"] = sorted(set(record["read"]) | set(read), key=_number)
-        decided = {_key(entry["a"], entry["b"]) for entry in record["pairs"]}
+        record = read_record(book)  # what a mark or another check wrote while this one's sessions ran
+        record["read"] = sorted(set(record["read"]) | read, key=_number)
+        decided = _decided(record)
         still = _current(book)
-        used = set()
+        merged_into = {}
         entries = []
         for first, second in pairs:
             key = _key(first, second)
             name = "%s+%s" % (first, second)
             if key in decided:
                 continue
-            if first in used or second in used or first not in still or second not in still:
-                report["waiting"].append(name)  # a claim of it was merged, or replaced, since: the next check sees what stands
-                continue
             answer = labels[key]
+            if first in merged_into or second in merged_into or first not in still or second not in still:
+                report["waiting"].append(name)  # a claim of it was merged, or replaced, since: the next check sees what stands
+                _pend(record, merged_into.get(first, first), merged_into.get(second, second), candidates[key]["found_by"], still,
+                      merged_into)
+                continue
+            if answer.get("label") == SAME and covers is None and key in kept_by:
+                report["waiting"].append(name)
+                continue
             found = candidates[key]
             entry = _entry(first, second, found["found_by"], found["similarity"], answer)
             if entry["label"] == SAME:
-                _take_same(book, entry, answer, kept_by.get(key), covers.get(key), by_id)
+                _take_same(book, entry, answer, kept_by.get(key), (covers or {}).get(key), by_id)
                 if entry["outcome"] == MERGED:
-                    used.update((first, second))
+                    merged_into.update({first: entry["passage"], second: entry["passage"]})
                     report["merged"].append(entry["passage"])
                 else:
                     report["apart"].append(name)
@@ -491,12 +518,30 @@ def check_setup(project, run=run_tool, tools=None, policy=None, harness_root=Non
                 report["flagged"].append(name)
             entries.append(entry)
         record["pairs"].extend(entries)
+        answered, standing = _decided(record), _current(book)  # what stands now, the merged passages included
+        record["pending"] = [waiting for waiting in record["pending"] if _key(waiting["a"], waiting["b"]) not in answered
+                             and waiting["a"] in standing and waiting["b"] in standing]
         report["batches"] = _open_batches(book, entries, by_id)
-        _save_record(book, record)
+        _save(book, record)
         touched = {by_id[entry[side]]["section"] for entry in entries if entry["outcome"] == MERGED for side in ("a", "b")}
         if touched:
             sections.render_sections(book, only=sorted(touched))
     return report
+
+
+def _pend(record, first, second, found_by, still, merged_into):
+    """Keep a pair that waits for the merged passage in the record, so the next check proposes it; the read's pairs only.
+
+    The embedding net finds its own pairs again at every check, so only a pair the consistency read named is kept.
+    """
+    if "consistency" not in found_by or first == second:
+        return
+    if (first not in still and first not in merged_into.values()) or (second not in still and second not in merged_into.values()):
+        return
+    first, second = sorted((first, second), key=_number)
+    if any(_key(waiting["a"], waiting["b"]) == _key(first, second) for waiting in record["pending"]):
+        return
+    record["pending"].append({"a": first, "b": second, "found_by": ["consistency"]})
 
 
 def _take_same(book, entry, answer, kept, covered, by_id):
@@ -538,11 +583,6 @@ def _open_batches(book, entries, by_id):
     return opened
 
 
-def _save_record(book, record):
-    record["pairs"] = list(record["pairs"])
-    _save(book, record)
-
-
 # --- the marks ----------------------------------------------------------------------------------------------------
 
 
@@ -550,32 +590,23 @@ def take_marks(project):
     """Act on the marks given on the merges and contradictions batches; returns a line for each mark that could not be taken.
 
     A `split` restores both occurrences as they stood and takes the merged passage out; a contradiction marked `not a
-    contradiction` leaves the grill's and the verification's lists. `right` and `real` leave things as they are.
+    contradiction` leaves the grill's and the verification's lists. `right` and `real` leave things as they are. A split
+    marked after a later passage replaced the merged one restores nothing, and is said once.
     """
     book = ledger_for(project)
     problems = []
     with book.lock():
         record = read_record(book)
         changed, touched = False, set()
-        marks = {}
-        for entry in record["pairs"]:
-            if entry.get("batch") and entry["outcome"] in (MERGED, CONTRADICTION):
-                if entry["batch"] not in marks:
-                    try:
-                        marks[entry["batch"]] = {mark["item"]: mark["mark"] for mark in batches.marks(book, entry["batch"])}
-                    except batches.BatchError as failure:
-                        marks[entry["batch"]] = {}
-                        problems.append("the marks of %s could not be read: %s" % (entry["batch"], failure))
-                given = marks[entry["batch"]].get(entry["item"])
-                if entry["outcome"] == CONTRADICTION and given == NOT_ONE:
-                    entry.update(outcome=DISMISSED, flag=False)
-                    changed = True
-                elif entry["outcome"] == MERGED and given == SPLIT_MARK:
-                    problem = _split(book, entry, touched)
-                    if problem is None:
-                        changed = True
-                    else:
-                        problems.append(problem)
+        for entry, given in _given(book, record, problems):
+            if entry["outcome"] == CONTRADICTION and given == NOT_ONE:
+                entry.update(outcome=DISMISSED, flag=False)
+                changed = True
+            elif entry["outcome"] == MERGED and given == SPLIT_MARK:
+                changed = True
+                problem = _split(book, record, entry, touched)
+                if problem is not None:
+                    problems.append(problem)
         if changed:
             _save(book, record)
         if touched:
@@ -583,20 +614,49 @@ def take_marks(project):
     return problems
 
 
-def _split(book, entry, touched):
-    """Undo one merge: both occurrences written again as they stood, the merged passage replaced by the first."""
+def _given(book, record, problems=None):
+    """`[(entry, mark)]` for every merge and contradiction still open to a mark, with the mark its item carries, or None."""
+    found, marks = [], {}
+    for entry in record["pairs"]:
+        if not entry.get("batch") or entry["outcome"] not in (MERGED, CONTRADICTION):
+            continue
+        if entry["batch"] not in marks:
+            try:
+                marks[entry["batch"]] = {mark["item"]: mark["mark"] for mark in batches.marks(book, entry["batch"])}
+            except batches.BatchError as failure:
+                marks[entry["batch"]] = {}
+                if problems is not None:
+                    problems.append("the marks of %s could not be read: %s" % (entry["batch"], failure))
+        found.append((entry, marks[entry["batch"]].get(entry["item"])))
+    return found
+
+
+def _split(book, record, entry, touched):
+    """Undo one merge: both occurrences written again as they stood, the merged passage replaced by the first.
+
+    The entry is settled first, so a write that fails half-way is never tried again over what it already wrote; the two
+    passages restored are recorded as read and as answered by the split, so no later check merges them again.
+    """
     passages = {item.get("id"): item for item in sections.read_passages(book)}
     merged = passages.get(entry["passage"])
     if merged is None or merged.get("id") not in sections.current_ids(book, merged["section"]):
-        return ("the merge of %s and %s was marked split, but %s was replaced since, so it is left as the later passage has it"
-                % (entry["a"], entry["b"], entry["passage"]))
+        entry.update(outcome=SPLIT_LATE)
+        return ("the merge of %s and %s was marked split, but %s was replaced since, so nothing was restored: the later "
+                "passage stands" % (entry["a"], entry["b"], entry["passage"]))
     first, second = passages[entry["a"]], passages[entry["b"]]
     withdrawal = next((item for item in passages.values() if item.get("replaces") == second["id"] and item.get("withdrawn")), None)
-    for original, replaces in ((first, merged["id"]), (second, withdrawal["id"] if withdrawal else None)):
-        sections.add_passage(book, original["section"], original["heading"], original["text"], by=original["by"], replaces=replaces,
-                             doc=original.get("doc"), standing=original.get("standing"), reason=original.get("reason"), render=False)
-        touched.add(original["section"])
-    entry.update(outcome=SPLIT)
+    entry.update(outcome=SPLIT, restored=[])
+    try:
+        for original, replaces in ((first, merged["id"]), (second, withdrawal["id"] if withdrawal else None)):
+            written = sections.add_passage(book, original["section"], original["heading"], original["text"], by=original["by"],
+                                           replaces=replaces, doc=original.get("doc"), standing=original.get("standing"),
+                                           reason=original.get("reason"), render=False)
+            entry["restored"].append(written["id"])
+            touched.add(original["section"])
+    except (sections.SectionError, ValueError, OSError) as failure:
+        return "the split of %s and %s restored only %s: %s" % (entry["a"], entry["b"], ", ".join(entry["restored"]) or "nothing", failure)
+    finally:
+        record["read"] = sorted(set(record["read"]) | set(entry["restored"]), key=_number)
     return None
 
 
@@ -618,16 +678,36 @@ def contradictions(project, heading=None):
     return found
 
 
+def _evidence(entry):
+    return "research/repeats.json, the pair %s+%s" % (entry["a"], entry["b"])
+
+
+def dismissed(project):
+    """The contradictions the owner marked not one, taken or not yet: `[(evidence, why)]`, what settles the grill's question.
+
+    Read only: the marks are read as their batches hold them, and nothing is written.
+    """
+    book = ledger_for(project)
+    record = read_record(book)
+    found = [entry for entry in record["pairs"] if entry["outcome"] == DISMISSED]
+    found += [entry for entry, given in _given(book, record) if entry["outcome"] == CONTRADICTION and given == NOT_ONE]
+    return [(_evidence(entry), "the owner marked it not a contradiction in the marks view (%s, item %s)" % (entry["batch"], entry["item"]))
+            for entry in found]
+
+
 def grill_items(project):
     """What the grill lists: every contradiction standing and every pair flagged, each as one question's spec.
 
-    Each is `{pair, question, options, recommended, evidence}`; a pair the owner already dismissed is not listed.
+    Each is `{pair, question, options, recommended, evidence}`; a pair the owner already dismissed, by a mark taken or
+    not yet taken, is not listed. Read only.
     """
-    record = read_record(project)
-    passages = {item.get("id"): item for item in sections.read_passages(project)}
+    book = ledger_for(project)
+    record = read_record(book)
+    passages = {item.get("id"): item for item in sections.read_passages(book)}
+    marked = {id(entry) for entry, given in _given(book, record) if given in (NOT_ONE, SPLIT_MARK)}
     items = []
     for entry in record["pairs"]:
-        if not entry["flag"] or entry["outcome"] in (DISMISSED, SPLIT, MERGED):
+        if not entry["flag"] or entry["outcome"] in (DISMISSED, SPLIT, SPLIT_LATE, MERGED) or id(entry) in marked:
             continue
         first, second = passages.get(entry["a"]) or {}, passages.get(entry["b"]) or {}
         said = '%s ("%s") and %s ("%s")' % (entry["a"], plain(first.get("text")), entry["b"], plain(second.get("text")))
@@ -641,7 +721,7 @@ def grill_items(project):
             options = ["keep them apart", "I will rewrite them as one passage"]
             recommended = options[0]
         items.append({"pair": "%s+%s" % (entry["a"], entry["b"]), "question": question, "options": options,
-                      "recommended": recommended, "evidence": ["research/repeats.json, the pair %s+%s" % (entry["a"], entry["b"])]})
+                      "recommended": recommended, "evidence": [_evidence(entry)]})
     return items
 
 
@@ -651,8 +731,9 @@ def grill_items(project):
 class Checked:
     """The acceptance check of one result: the problems that send the worker back, and what was listed, not failed."""
 
-    def __init__(self, problems=(), notes=(), pairs=0):
+    def __init__(self, problems=(), notes=(), pairs=0, refused=None):
         self.problems, self.notes, self.pairs = list(problems), list(notes), pairs
+        self.refused = refused  # the `UsageLimited` a usage window refused the confirmer with: the run pauses on it
 
     @property
     def passed(self):
@@ -677,8 +758,10 @@ def _new_items(result):
         if isinstance(found, dict) and plain(found.get("text")):
             items.append({"section": sections.RESULTS, "heading": found.get("heading") or sections.TITLES[sections.RESULTS],
                           "text": found.get("text"), "replaces": found.get("replaces"), "what": "finding"})
+    counted = {}
     for number, item in enumerate(items, start=1):
-        item["id"] = "N%d" % number
+        counted[item["what"]] = counted.get(item["what"], 0) + 1
+        item["id"], item["number"] = "N%d" % number, counted[item["what"]]  # the worker's own count, per passages and findings
     return items
 
 
@@ -735,13 +818,17 @@ def check_result(project, result, run=run_tool, tools=None, policy=None, harness
     except RepeatsError as failure:
         return Checked(notes=["repeats not checked: %s" % failure])
     count = len(new)
-    near = near_pairs(vectors, threshold, among=lambda first, second: first < count <= second)
+    near = near_pairs(vectors, threshold, split=count)
     pairs = [(new[first], current[second - count]) for first, second, _ in near if not named(new[first], current[second - count])][:most]
     if not pairs:
         return Checked()
     by_id = {item["id"]: item for pair in pairs for item in pair}
     try:
         labels = _confirm(project, [(first["id"], second["id"]) for first, second in pairs], by_id, policy, harness_root)
+    except gates.UsageLimited as refused:
+        # A closed window, not a verdict on the text: the check fails so the run pauses, and it runs again on the resume.
+        return Checked(problems=["the confirmer was refused by the usage limit (%s); nothing here is wrong with the text, and "
+                                 "the check runs again once the window opens" % refused], refused=refused)
     except (RepeatsError, provenance.ProvenanceError, worker.LaunchError, OSError) as failure:
         return Checked(notes=["repeats not checked: the confirmer did not answer (%s)" % failure])
     problems = []
@@ -750,7 +837,7 @@ def check_result(project, result, run=run_tool, tools=None, policy=None, harness
             continue
         problems.append("%s %s (%s, \"%s\"): \"%s\" repeats %s (%s, \"%s\"): \"%s\", without naming it in `replaces`: name %s in "
                         "`replaces` when it says the same thing better, or leave the repeat out" % (
-                            first["what"], first["id"][1:], sections.TITLES.get(first["section"], first["section"]),
+                            first["what"], first["number"], sections.TITLES.get(first["section"], first["section"]),
                             sections._one_line(first["heading"]), plain(first["text"]), second["id"],
                             sections.TITLES.get(second["section"], second["section"]), sections._one_line(second.get("heading")),
                             plain(second.get("text")), second["id"]))
@@ -758,15 +845,20 @@ def check_result(project, result, run=run_tool, tools=None, policy=None, harness
 
 
 def account_lines(project):
-    """The account's lines under "Changed without asking you": every merge made at setup that still stands."""
+    """The account's lines under "Changed without asking you": every merge made at setup that still stands.
+
+    A merge whose item is marked split is left out even before the mark is taken. Read only.
+    """
     try:
-        record = read_record(project)
-        passages = {item.get("id"): item for item in sections.read_passages(project)}
+        book = ledger_for(project)
+        record = read_record(book)
+        passages = {item.get("id"): item for item in sections.read_passages(book)}
+        split = {id(entry) for entry, given in _given(book, record) if given == SPLIT_MARK}
     except (RepeatsError, OSError, ValueError):
         return []
     lines = []
     for entry in record["pairs"]:
-        if entry["outcome"] != MERGED:
+        if entry["outcome"] != MERGED or id(entry) in split:
             continue
         first, second = passages.get(entry["a"]) or {}, passages.get(entry["b"]) or {}
         lines.append("- The inherited claims %s (%s) and %s (%s) were merged at setup into %s, keeping %s: \"%s\"%s." % (
