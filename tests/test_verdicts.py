@@ -391,7 +391,7 @@ class VerdictGateTest(GateCase):
         self.assertIn("notebook", str(caught.exception))
         self.assertEqual(self.calls, [])
         self.assertEqual(gates.SUBJECT_KINDS,
-                         ("ticket", "claim", "figure", "spec", "dossier", "paper"))
+                         ("ticket", "claim", "figure", "spec", "dossier", "paper", "report"))
 
     def test_a_verdict_with_no_question_is_refused_before_a_session_is_spent(self):
         for empty in ({"question": "  "}, {"scope_limit": ""}, {"subject": ""}):

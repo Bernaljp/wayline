@@ -1290,16 +1290,27 @@ def relaunch_decision(project, ledger, policy, reading, now):
     if switched.get("from") == str(project) and switched.get("to") != str(project):
         return None, "the project was switched away from, to %s" % switched.get("to")
     ended = ended_for_good(project, events, now)
+    continuing = []
     if ended is not None:
-        return None, ended
+        # A run resting at its end, which journaled no end yet, still owes its drawings, its run-end gates, or their
+        # scope-downs: relaunched, it takes them as its own run and then ends (decision 17; ticket 103).
+        from wayline import run_end  # the gates read the report, which only a run resting at its end needs here
+        continuing = run_end.owed(project, events) if view.run.get("ended") is None else []
+        if not continuing:
+            return None, ended
     if answered_since(events):
         return "a decision ticket was answered since the conductor last ran", None
     if view.stop is not None:
         return None, "a stop (by %s) waits for a conductor to take it; only an answer or the owner undoes it" % (view.stop.get("by") or "someone")
     if view.run.get("ended") in FINAL_ENDS:
         return None, "the last run ended %s, which only an answer or the owner undoes" % view.run["ended"]
-    graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     stop_at, _ = thresholds_for(project, policy, view)
+    if continuing:
+        closed = window_closed(view, reading, stop_at, now)
+        if closed is not None:
+            return None, "the run rests at its end on %s, but %s" % (", ".join(continuing), closed)
+        return "the run rests at its end on %s, and the window is open" % ", ".join(continuing), None
+    graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     # The autonomy the relaunched run starts from, which is `harness.json`'s and not the last run's.
     autonomy = _harness(project).get("autonomy")
     # Under `auto`, or `ask` answered `fall back` for the window, a conductor takes a verdict on Fable on Opus, and so it does

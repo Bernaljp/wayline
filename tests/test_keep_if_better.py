@@ -428,7 +428,8 @@ class DiscardedTest(GoalTicketCase):
     def test_a_restart_keeps_the_worktree_and_journals_nothing_twice(self):
         again = Conductor(self.project, out=io.StringIO())
         again.readings, again.notify = machine.recorded, self.recorder
-        again.wave()
+        with worker.use_fake():  # nothing scripted: the run-end gates (ticket 103) reach no real backend
+            again.wave()
         self.assertTrue((self.project / ".worktrees" / "1-a1").exists())
         self.assertIn("ticket/1-a1", self.branches())
         self.assertEqual([len(self.events(name)) for name in ("progress", "discarded")], [2, 1])

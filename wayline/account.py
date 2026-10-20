@@ -654,11 +654,23 @@ def _peaks(span):
     return peaks
 
 
+_GATED = "research/REPORT.md#"  # the subjects and the origins of the run-end gates on the general report (ticket 103)
+
+
 def _gates(run, context):
-    """The verdicts taken after the run ended and before the next one started, and the tickets they filed."""
+    """The run-end gates of a run that ended and the scope-downs they filed: the verdicts on the general report's claims
+    and its kill argument, taken before the run's end (ticket 103), and every verdict and ticket after it until the next
+    run started."""
     if run.end is None:
         return []
-    after = context.events[run.end + 1:run.after]
+    def gated(event):
+        payload = event.get("payload") or {}
+        if event.get("event") == VERDICT:
+            return str(payload.get("subject") or "").startswith(_GATED)
+        return (event.get("event") == TICKET_CREATED and payload.get("proposed_by") == "verifier"
+                and str(payload.get("origin") or "").startswith(_GATED))
+
+    after = [event for event in context.events[run.start:run.end] if gated(event)] + context.events[run.end + 1:run.after]
     verdicts = [event for event in after if event.get("event") == VERDICT]
     filed = [event for event in after if event.get("event") == TICKET_CREATED]
     if not verdicts and not filed:

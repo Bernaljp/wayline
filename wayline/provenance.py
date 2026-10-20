@@ -1070,8 +1070,12 @@ def claim_paths(claim, index=None):
     return paths
 
 
-def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None, document=REPORT_PATH, prose_author=None):
+def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None, document=REPORT_PATH, prose_author=None,
+                  chosen=None):
     """Sample the tagged claims of `research/REPORT.md`, or of `document`, and take one Type-B verdict on each.
+
+    `chosen` is the claims to judge when the caller drew them itself: the run-end gates draw from the claims never
+    sampled (`wayline.run_end`, ticket 103) rather than from all of them.
 
     `document` is the paper's `research/paper/paper.md` when `wayline paper --verify` samples it (decision 11: every
     claim in the report and the paper, by sampling), with `prose_author` the model the paper's writer ran on.
@@ -1097,10 +1101,12 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
     claims = tagged_claims(restore_tags(text), read_claims_cache(book))
     difficulties = {number: fields.get("pinned_difficulty") or fields.get("difficulty")
                     for number, fields in context.tickets.items()}
-    chosen = sample_claims(claims, policy, difficulties, seed)
+    if chosen is None:
+        chosen = sample_claims(claims, policy, difficulties, seed)
     verdicted = {(event.get("payload") or {}).get("subject") for event in context.events
                  if event.get("event") == ledger.VERDICT and (event.get("payload") or {}).get("subject_kind") == CLAIM}
     authors = _finding_authors(context)
+    narrowed = _finding_ids(context) if document == REPORT_PATH else {}
     writer_model = prose_author or _role_tier(policy, WRITER)[0]  # the paper's writer; every claim of the report is a finding's
     outcome = {"claims": len(claims), "sampled": len(chosen), "already_verdicted": 0, "passed": [], "failed": [], "tickets": [],
                "waiting": [], "fell_back": []}
@@ -1132,7 +1138,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
             outcome["passed"].append(subject)
             continue
         outcome["failed"].append(subject)
-        filed = _claim_ticket(project, book, claim, subject, taken, from_finding, document)
+        filed = _claim_ticket(project, book, claim, subject, taken, from_finding, document, narrowed.get(claim.digest, ()))
         if filed is not None:
             outcome["tickets"].append(filed)
     return outcome
@@ -1152,10 +1158,47 @@ def _finding_authors(context):
     return authors
 
 
-def _claim_ticket(project, book, claim, subject, taken, from_finding, document=REPORT_PATH):
+def _finding_ids(context):
+    """`{sentence hash: [finding ids]}` for every sentence the general report renders from a current finding."""
+    replaced = {finding.get("replaces") for finding in context.findings if finding.get("replaces")}
+    found = {}
+    for finding in context.findings:
+        if finding.get("id") in replaced:
+            continue
+        for sentence in prose_sentences(finding_line(finding, context.manifest)):
+            found.setdefault(sentence_hash(sentence.text), []).append(finding.get("id"))
+    return found
+
+
+def _claim_ticket(project, book, claim, subject, taken, from_finding, document=REPORT_PATH, narrowed=()):
+    """The scope-down of one claim its artifacts do not support. On the general report it declares Results and names the
+    findings the sentence was rendered from (`research/findings.jsonl#<id>` among its inputs): each finding it returns
+    names one of them in `replaces`, which its acceptance checks (`run_end.check_scope_down`, ticket 103)."""
     if gates.open_writing_ticket(project, subject) is not None:
         return None
     paths = claim_paths(claim, identifier_index(project))
+    narrowed = [identifier for identifier in narrowed if identifier]
+    if narrowed:
+        named = ", ".join("`%s`" % identifier for identifier in narrowed)
+        return gates.file_writing_ticket(
+            project, book, title=CLAIM_TITLE, touches=[],
+            inputs=[document] + ["research/%s#%s" % (FINDINGS, identifier) for identifier in narrowed] + paths,
+            quality=["Does every claim sentence the verifier could not support now say only what its cited artifacts do?"],
+            origin=subject, sections=[sections.RESULTS],
+            demo="The general report renders the narrowed finding in place of %s, and the next run end samples it." % named,
+            body="\n".join([
+                "## The claim the verifier could not support", "",
+                "> %s" % one_line(claim.text), "",
+                "Verifier session `%s` (%s) opened the cited artifacts and found:" % (taken.session_id, taken.model), "",
+                gates.findings_text(taken.findings), "",
+                "The sentence is a finding as its ticket recorded it (%s), and the report renders findings as recorded. "
+                "Return in the result the finding narrowed to what the artifacts support, with its provenance, naming the "
+                "finding it narrows in its `replaces` (%s); the ledger records it in that finding's place and the next "
+                "render reads it." % (named, named), "",
+                PROVENANCE_FORM, "",
+                "## The artifacts the verifier opened", "",
+            ] + ["- `%s`" % path for path in paths]),
+        )
     remedy = ("The sentence is a finding as its ticket recorded it, and the report renders findings as "
               "recorded. Return in the result a finding that says only what the artifact supports, with its "
               "provenance; the ledger records it and the next render reads it."
@@ -1560,7 +1603,7 @@ def _body(context):
     return "\n".join(lines)
 
 
-def _banner(context, result, notes, edited):
+def _banner(context, result, notes, edited, marks=()):
     lines = [
         "# Report: %s" % context.project.name,
         "",
@@ -1586,6 +1629,9 @@ def _banner(context, result, notes, edited):
         lines.extend("- `%s` %s (%s%s)" % (problem["problem"], one_line(strip_tags(problem["sentence"])),
                                            "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
                      for problem in result.problems)
+    if marks:
+        # The claims a run-end gate failed, whose scope-down waits (ticket 103): marked until it narrows them.
+        lines.extend([""] + list(marks))
     if context.notes or notes:
         lines.append("")
         lines.extend("- note: %s" % note for note in context.notes + list(notes))
@@ -1670,7 +1716,9 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
         edited = account.take_edit(project, REPORT, None, context.events)
         stamp = now_ts()  # the edit is noticed at the time its render is journaled, which later banners read back
         noticed = (stamp, edited) if edited is not None else _last_edit(context.events)
-        path = book.write_markdown(REPORT, render_citations(_banner(context, result, notes, noticed) + body))
+        from wayline import run_end  # the run-end gates read this module
+        marks = run_end.failed_marks(context.events, context.tickets, body)
+        path = book.write_markdown(REPORT, render_citations(_banner(context, result, notes, noticed, marks) + body))
         digest = sha256_of(path)
         payload = {"sha256": digest, "claims": result.claims, "tagged": result.tagged, "linter_pass": result.passed}
         if edited is not None:
