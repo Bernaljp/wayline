@@ -1,0 +1,76 @@
+{
+ "assignments": [
+  {
+   "function": "phaselock_drift",
+   "kind": "function_call",
+   "line": 3,
+   "name": "opts",
+   "value": "odeset('RelTol', 1e-8)"
+  },
+  {
+   "function": "phaselock_drift",
+   "kind": "function_call",
+   "line": 4,
+   "name": "drift",
+   "value": "ode45(@(t, y) -0.1 * y, [0 10], y0, opts)"
+  }
+ ],
+ "calls": [
+  {
+   "args": [
+    {
+     "kind": "string",
+     "text": "'RelTol'"
+    },
+    {
+     "kind": "number",
+     "text": "1e-8"
+    }
+   ],
+   "end": 3,
+   "function": "phaselock_drift",
+   "line": 3,
+   "name": "odeset",
+   "text": "odeset('RelTol', 1e-8)"
+  },
+  {
+   "args": [
+    {
+     "kind": "lambda",
+     "text": "@(t, y) -0.1 * y"
+    },
+    {
+     "kind": "matrix",
+     "text": "[0 10]"
+    },
+    {
+     "kind": "identifier",
+     "text": "y0"
+    },
+    {
+     "kind": "identifier",
+     "text": "opts"
+    }
+   ],
+   "end": 4,
+   "function": "phaselock_drift",
+   "line": 4,
+   "name": "ode45",
+   "text": "ode45(@(t, y) -0.1 * y, [0 10], y0, opts)"
+  }
+ ],
+ "functions": [
+  {
+   "end": 5,
+   "name": "phaselock_drift",
+   "outputs": "drift",
+   "params": [
+    "y0"
+   ],
+   "parent": null,
+   "start": 1
+  }
+ ],
+ "has_error": false,
+ "nargin_defaults": []
+}

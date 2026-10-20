@@ -230,3 +230,13 @@ wave, steps the ticket's `retry` ladder on an out-of-memory job, and closes the 
 job exited 0 and its outputs parsed and were manifested (ticket 19). `analyst` takes `analysis`
 tickets: it reads the manifested results in the project's `results/` and files findings whose
 provenance the manifest resolves; `wayline job add` is on its removal list.
+
+## The code reader is launched by the code-to-Methods check
+
+`code-reader` is not assigned to tickets either (`kinds` empty). At a ticket's acceptance, the rule
+from code to Methods (`wayline/methods.py`, ticket 107) reads Python and MATLAB with parsers that
+spend no tokens; a changed file in any other language, or a MATLAB file tree-sitter-matlab could not
+parse, gets one session of this role on `policy.roles.code-reader` (Sonnet at medium effort), with no
+tools and the files in its prompt. It returns `code_reading`: what the changed lines develop, use,
+and set. Code keeps an item only when grep finds it in the file and applies the same rule to it, so
+the reader names things and never judges them.

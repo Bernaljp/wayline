@@ -1,0 +1,54 @@
+{
+  "description": "The documented defaults of the rule from code to Methods (Implementation Decision 17; ticket 107). `python` names the sensitive parameters a call may leave unset (solver tolerances with their documented defaults, which a signature behind **options does not show; the seed of a generator, and `seeds_first` the generators whose first positional argument is the seed) and the functions that draw from a global random state with the call that seeds it. Python's other defaults come from `inspect.signature` in the project's environment. `matlab` is the documented-defaults table: each function's positional arguments in order, which of them are data rather than parameters, the documented default of each parameter, its name-value options with their defaults, `options` naming the argument an options structure goes in, `tolerances` the options a solver uses when it is given none, and `random` a function that draws from the global random state `rng` seeds. Grow it by a harness ticket.",
+  "python": {
+    "tolerances": {
+      "scipy.integrate.solve_ivp": {"rtol": "1e-3", "atol": "1e-6"},
+      "scipy.integrate.odeint": {"rtol": "1.49012e-8", "atol": "1.49012e-8"},
+      "scipy.optimize.minimize": {"tol": "method-specific"},
+      "scipy.optimize.root": {"tol": "method-specific"},
+      "scipy.optimize.least_squares": {"ftol": "1e-8", "xtol": "1e-8", "gtol": "1e-8"}
+    },
+    "seeds": {
+      "numpy.random.default_rng": "seed",
+      "numpy.random.RandomState": "seed",
+      "random.Random": "x",
+      "sklearn.cluster.KMeans": "random_state",
+      "sklearn.manifold.TSNE": "random_state",
+      "sklearn.model_selection.train_test_split": "random_state",
+      "sklearn.ensemble.RandomForestClassifier": "random_state",
+      "sklearn.ensemble.RandomForestRegressor": "random_state",
+      "umap.UMAP": "random_state"
+    },
+    "seeds_first": ["numpy.random.default_rng", "numpy.random.RandomState", "random.Random"],
+    "seed_names": ["random_state", "seed", "rng"],
+    "global_random": {
+      "numpy.random": {"seeded_by": "numpy.random.seed", "draws": ["rand", "randn", "randint", "random", "random_sample", "normal", "uniform", "choice", "shuffle", "permutation", "poisson", "binomial", "exponential", "standard_normal"]},
+      "random": {"seeded_by": "random.seed", "draws": ["random", "randint", "uniform", "gauss", "normalvariate", "choice", "choices", "shuffle", "sample"]}
+    }
+  },
+  "matlab": {
+    "hilbert": {"args": ["x", "n"], "data": ["x"], "defaults": {"n": "size(x, 1)"}},
+    "pwelch": {"args": ["x", "window", "noverlap", "nfft", "fs"], "data": ["x"], "defaults": {"window": "eight segments, Hamming", "noverlap": "50%", "nfft": "max(256, 2^nextpow2(segment length))", "fs": "2*pi"}},
+    "butter": {"args": ["n", "Wn", "ftype"], "data": [], "defaults": {"ftype": "'low'"}},
+    "filtfilt": {"args": ["b", "a", "x"], "data": ["b", "a", "x"], "defaults": {}},
+    "findpeaks": {"args": ["data"], "data": ["data"], "defaults": {}, "name_values": {"MinPeakHeight": "-Inf", "MinPeakProminence": "0", "MinPeakDistance": "0"}},
+    "fft": {"args": ["X", "n", "dim"], "data": ["X"], "defaults": {"n": "size(X, dim)", "dim": "first non-singleton"}},
+    "ode45": {"args": ["odefun", "tspan", "y0", "options"], "data": ["odefun", "tspan", "y0"], "defaults": {}, "options": "options", "tolerances": {"RelTol": "1e-3", "AbsTol": "1e-6"}},
+    "ode23": {"args": ["odefun", "tspan", "y0", "options"], "data": ["odefun", "tspan", "y0"], "defaults": {}, "options": "options", "tolerances": {"RelTol": "1e-3", "AbsTol": "1e-6"}},
+    "ode15s": {"args": ["odefun", "tspan", "y0", "options"], "data": ["odefun", "tspan", "y0"], "defaults": {}, "options": "options", "tolerances": {"RelTol": "1e-3", "AbsTol": "1e-6"}},
+    "fminsearch": {"args": ["fun", "x0", "options"], "data": ["fun", "x0"], "defaults": {}, "options": "options", "tolerances": {"TolX": "1e-4", "TolFun": "1e-4"}},
+    "fmincon": {"args": ["fun", "x0", "A", "b", "Aeq", "beq", "lb", "ub", "nonlcon", "options"], "data": ["fun", "x0", "A", "b", "Aeq", "beq", "lb", "ub", "nonlcon"], "defaults": {}, "options": "options", "tolerances": {"OptimalityTolerance": "1e-6", "StepTolerance": "1e-10"}},
+    "lsqcurvefit": {"args": ["fun", "x0", "xdata", "ydata", "lb", "ub", "options"], "data": ["fun", "x0", "xdata", "ydata", "lb", "ub"], "defaults": {}, "options": "options", "tolerances": {"FunctionTolerance": "1e-6", "StepTolerance": "1e-6"}},
+    "odeset": {"args": [], "data": [], "defaults": {}, "name_values": {"RelTol": "1e-3", "AbsTol": "1e-6", "MaxStep": "0.1*abs(t0 - tf)", "InitialStep": "automatic"}},
+    "optimset": {"args": [], "data": [], "defaults": {}, "name_values": {"TolX": "1e-4", "TolFun": "1e-4", "MaxIter": "200*numberOfVariables", "MaxFunEvals": "200*numberOfVariables"}},
+    "pca": {"args": ["X"], "data": ["X"], "defaults": {}, "name_values": {"NumComponents": "all", "Algorithm": "'svd'", "Centered": "true"}},
+    "kmeans": {"args": ["X", "k"], "data": ["X"], "defaults": {}, "name_values": {"Replicates": "1", "MaxIter": "100", "Distance": "'sqeuclidean'"}, "random": true},
+    "ttest2": {"args": ["x", "y"], "data": ["x", "y"], "defaults": {}, "name_values": {"Alpha": "0.05", "Tail": "'both'", "Vartype": "'equal'"}},
+    "ranksum": {"args": ["x", "y"], "data": ["x", "y"], "defaults": {}, "name_values": {"Alpha": "0.05", "Tail": "'both'"}},
+    "corr": {"args": ["X", "Y"], "data": ["X", "Y"], "defaults": {}, "name_values": {"Type": "'Pearson'"}},
+    "rand": {"args": [], "data": [], "defaults": {}, "random": true},
+    "randn": {"args": [], "data": [], "defaults": {}, "random": true},
+    "randi": {"args": [], "data": [], "defaults": {}, "random": true},
+    "randperm": {"args": [], "data": [], "defaults": {}, "random": true}
+  }
+}

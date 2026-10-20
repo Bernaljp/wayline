@@ -36,6 +36,26 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The rule from code to Methods (ticket 107; Implementation Decision 17). At each acceptance in the worktree, a
+  Type-A check (`wayline/methods.py`) reads the ticket's diff in `code/` with parsers that spend no tokens and
+  sends the worker back with the list when Methods and the code disagree: every developed method the diff adds or
+  changes needs a `code` tag (`{code:code/<path>#<symbol>}` or `#L10-L42`) in a current Methods passage, the
+  ticket's own included (plumbing such as private names, `load_`/`save_`/`plot_` helpers, and tests is excluded by
+  code; anything else the worker lists in the new result field `not_methods`); every used method the diff adds
+  that the alias table (`methods/aliases.json`) lists, such as `scipy.signal.hilbert`, must be named in a Methods
+  passage by one of its aliases; and every non-default parameter it sets, every numeric default a new method gives
+  itself, and every sensitive default left unset (an unseeded random state, default solver tolerances) needs a
+  one-sentence reason in the new result field `parameters`, whose value and default code fills. Python is read
+  with `ast`, its library defaults from `inspect.signature` run in the project's environment ("not checked", and
+  not failed, until that environment is installed); MATLAB with tree-sitter-matlab in the tools venv
+  (`converters/matlab_parse.py`), the documented-defaults table (`methods/defaults.json`), and backward slices,
+  and the same parse fills the code dossier's new `methods` entries and a MATLAB repository's inventory; another
+  language gets one Sonnet reading (the `code-reader` role, `sonnet medium`, schema `code_reading`) whose items are
+  kept only when grep finds them, its usage carried on the acceptance result. The reasons and `not_methods` reach
+  the ticket's `## Result` section and the verifier's existing verdict, whose schema gains `code_rule`, the
+  judgment of each; one that does not hold fails the verdict, and a ticket that earned no verdict earns a read of
+  its diff for them.
+
 - References during a ticket (ticket 98; Implementation Decision 17). `wayline scout <identifier>` checks one work
   from inside a worker by its DOI, arXiv id, or exact title (a URL is refused): it files the L0 dossier at once and
   prints the slug, the details, and the abstract; on a service failure it files an unresolved dossier with the

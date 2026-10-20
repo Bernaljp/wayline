@@ -74,7 +74,7 @@ __all__ = [
     "findings_text",
     "kill_argument",
     "take_verdict",
-    "ticket_asks", "owed_asks",
+    "ticket_asks", "owed_asks", "code_rule_text",
     "UsageLimited",
     "FableHeld",
     "fallback_now",
@@ -503,6 +503,7 @@ class Ask:
     ticket: Optional[int] = None
     role: str = VERIFIER
     rung: Optional[int] = None  # the rung the judged ticket attempt ran on (decision 16); None off a ticket
+    code_rule: Optional[dict] = None  # the parameters and not_methods this verdict must judge, one by one (ticket 107)
 
 
 @dataclass
@@ -530,6 +531,8 @@ class Verdict:
     # The model the verdict's own session ran on, when its result named another than the one it was launched
     # with (decision 16); None when it ran as asked, which is every recorded verdict.
     model_ran: Optional[str] = None
+    # The judgment of a ticket's parameter reasons and `not_methods` (ticket 107), when the question listed them.
+    code_rule: Optional[dict] = None
     # Every `rate_limit_event` the verdict's sessions wrote, for the conductor to fold into its readings as it
     # does a worker's: a refusal can ride a session that still answered (decision 15). Never journaled.
     rate_limit_events: list = field(default_factory=list, compare=False, repr=False)
@@ -743,7 +746,7 @@ def findings_text(findings, empty="no finding was named"):
 
 def verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
             verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None, ledger=None,
-            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None):
+            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None):
     """One Type-B verdict, journaled: every verdict in the harness comes through here.
 
     A verdict is journaled because its session id and its model are the whole of what makes it
@@ -753,7 +756,7 @@ def verdict(subject_kind, subject, question, paths, scope_limit, *, project, aut
     taken = take_verdict(subject_kind, subject, question, paths, scope_limit, project=project,
                          author_model=author_model, verdict_type=verdict_type, ticket=ticket,
                          harness_root=harness_root, policy=policy, cwd=cwd, memo=memo,
-                         run_dir=run_dir, role=role, fall_back=fall_back, rung=rung)
+                         run_dir=run_dir, role=role, fall_back=fall_back, rung=rung, code_rule=code_rule)
     ledger_for(ledger or Path(project).resolve()).append_event(
         VERDICT, taken.payload, ticket=taken.ticket, session_id=taken.session_id)
     return taken
@@ -768,12 +771,12 @@ def verdict_for(ask, **context):
     """
     return verdict(ask.subject_kind, ask.subject, ask.question, ask.paths, ask.scope_limit,
                    author_model=ask.author_model, verdict_type=ask.verdict_type,
-                   ticket=ask.ticket, role=ask.role, rung=ask.rung, **context)
+                   ticket=ask.ticket, role=ask.role, rung=ask.rung, code_rule=ask.code_rule, **context)
 
 
 def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
                  verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None,
-                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None):
+                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None):
     """One verifier session, validated but not journaled; `verdict` is this plus the journal.
 
     `role` names the judging role, the verifier unless a decision names another; whichever it
@@ -797,6 +800,9 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     first thread: a rejection memo is one thread's case against the work, not a judgment of it,
     and journaling it as a `verdict` would leave a failing Type-B verdict in the ledger against
     a paper the second thread went on to clear.
+
+    `code_rule` is a ticket's parameters and not_methods the question listed (ticket 107): an answer that does not judge
+    every one of them is resumed like any other unusable answer.
     """
     if verdict_type not in VERDICT_TYPES:
         raise GateError("verdict_type is one of %s, got %r" % (", ".join(VERDICT_TYPES), verdict_type))
@@ -835,12 +841,12 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     envelope = worker.launch(request)
     raise_if_refused(envelope, model, what)
     heard = list(envelope.rate_limit_events)
-    problem = _unusable(envelope)
+    problem = _unusable(envelope, code_rule)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_VERDICT % problem)
         raise_if_refused(envelope, model, what)
         heard += envelope.rate_limit_events
-        problem = _unusable(envelope)
+        problem = _unusable(envelope, code_rule)
     if problem is not None:
         raise GateError("%s could not be taken: %s" % (what, problem))
     returned = envelope.structured_output
@@ -849,7 +855,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         passed=bool(returned["pass"]), question_limit=returned["question_limit"],
         findings=list(returned.get("findings") or []),
         session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
-        proposals=list(returned.get("proposals") or []), rung=rung,
+        proposals=list(returned.get("proposals") or []), rung=rung, code_rule=returned.get("code_rule"),
         # What the verifier's own session ran on, when the result named another model than it was launched with
         # (decision 16): a verdict stands or falls on who read the work, so the journal says which model did.
         model_ran=None if worker.ran_as_asked(model, envelope) else worker.model_ran(envelope),
@@ -874,7 +880,7 @@ def raise_if_refused(envelope, model, what):
     raise UsageLimited("%s was refused by the usage limit on %s until %s" % (what, window, until), limit)
 
 
-def _unusable(envelope):
+def _unusable(envelope, code_rule=None):
     """Why this envelope is not a verdict the harness can act on, or None when it is one.
 
     The launcher already validated the structured output against the schema it passed; it is
@@ -896,6 +902,20 @@ def _unusable(envelope):
                 % len(blockers))
     if not returned["pass"] and not returned.get("findings"):
         return "the verdict failed and named no finding, so nothing says what to fix"
+    rule = returned.get("code_rule") or {}
+    if code_rule:
+        judged = {(entry.get("method"), entry.get("name")) for entry in rule.get("parameters") or []}
+        judged |= {(None, entry.get("name")) for entry in rule.get("not_methods") or []}
+        asked = [(entry.get("method"), entry.get("name")) for entry in code_rule.get("parameters") or []]
+        asked += [(None, entry.get("name")) for entry in code_rule.get("not_methods") or []]
+        missing = [name if method is None else "%s %s" % (method, name) for method, name in asked if (method, name) not in judged]
+        if missing:
+            return ("the question listed the ticket's reasons and not_methods to judge, and `code_rule` does not judge %s"
+                    % ", ".join(missing))
+    unheld = [entry for entry in (rule.get("parameters") or []) + (rule.get("not_methods") or []) if entry.get("holds") is False]
+    if returned["pass"] and unheld:
+        return ("the verdict passed and judges %d of the ticket's reasons or not_methods not to hold (`code_rule`); one that "
+                "does not hold fails the verdict, with a finding that says so" % len(unheld))
     return None
 
 
@@ -920,7 +940,41 @@ DOCS_READ_PATHS = ("docs/", ".readthedocs.yaml", "research/INTAKE.md", "research
                    "research/.cache/docs/checks.json")
 
 
-def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False):
+CODE_RULE_QUESTION = (
+    "Besides, the rule from code to Methods (ticket 107) left these for you to judge. For each parameter, does its "
+    "one-sentence reason justify its value to a reader of the paper's Methods? For each function the worker says is not "
+    "a method, is it indeed not a method the Methods should describe? Give your judgment of every item in `code_rule`; "
+    "an item that does not hold fails this verdict, with a finding that says why."
+)
+
+
+def code_rule_text(rule):
+    """The parameters' reasons and the `not_methods` of one ticket, as the lines a verdict's question lists."""
+    lines = [CODE_RULE_QUESTION]
+    parameters = (rule or {}).get("parameters") or []
+    if parameters:
+        lines.append("Parameters:")
+        for entry in parameters:
+            value = entry.get("value")
+            default = entry.get("default")
+            said = " = %s" % value if value is not None else ""
+            said += " (default %s)" % default if default is not None else (" (its own default)" if value is not None else "")
+            where = " at %s:%s" % (entry["path"], entry["line"]) if entry.get("path") and entry.get("line") else ""
+            lines.append("- `%s` `%s`%s%s: %s" % (entry.get("method"), entry.get("name"), said, where, entry.get("reason")))
+    not_methods = (rule or {}).get("not_methods") or []
+    if not_methods:
+        lines.append("Not methods:")
+        lines.extend("- `%s`: %s" % (entry.get("name"), entry.get("why")) for entry in not_methods)
+    return "\n".join(lines)
+
+
+def _with_code_rule(ask, rule):
+    ask.question = "%s\n\n%s" % (ask.question.rstrip(), code_rule_text(rule))
+    ask.code_rule = rule
+    return ask
+
+
+def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False, code_rule=None):
     """The verdicts one done ticket earns: its own quality criteria, and an independent read.
 
     `rung` is the rung the attempt that wrote the work ran on, carried into each verdict's journal event
@@ -934,6 +988,10 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
     difficulty, one read of the site for clarity and completeness (decision 13). `no_diff` is a ticket whose integration added no commit of its
     own (its work is findings, say): its commit would be whatever `main` stood at, so it is read as
     its result instead of as a diff that is not its own.
+
+    `code_rule` is the ticket's `parameters` reasons and `not_methods` (ticket 107), which the verifier's existing verdict
+    judges: the independent read carries them, else the quality verdict; a ticket that earns neither earns a read of its
+    diff for them, since nobody else would judge the reasons.
     """
     identifier = ticket["id"]
     subject = str(ticket_path)
@@ -989,10 +1047,23 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
                         "you looked for it.",
             verdict_type=RESULT, author_model=author_model, ticket=identifier, rung=rung,
         ))
+    if code_rule and ((code_rule.get("parameters") or []) or (code_rule.get("not_methods") or [])):
+        carrier = next((ask for ask in asks if ask.verdict_type in (DIFF, RESULT)), None) or (asks[0] if asks else None)
+        if carrier is None:
+            carrier = Ask(
+                subject_kind="ticket", subject=subject,
+                question="Do the reasons ticket %d's result gives for its parameters and its not_methods hold against "
+                         "its diff, commit %s?" % (identifier, (commit or "HEAD")[:12]),
+                paths=paths,
+                scope_limit="Only the items listed below, read against the diff with `git show %s`." % (commit or "HEAD"),
+                verdict_type=RESULT if no_diff else DIFF, author_model=author_model, ticket=identifier, rung=rung,
+            )
+            asks.append(carrier)
+        _with_code_rule(carrier, code_rule)
     return asks
 
 
-def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False):
+def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False, code_rule=None):
     """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
 
     `passed` is the verdict types the journal holds as passed since the ticket was last done
@@ -1006,7 +1077,7 @@ def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_di
     if works_in_the_harness(ticket):
         return [], []
     earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
-                         outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff)
+                         outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff, code_rule=code_rule)
     passed = set(passed or ())
     return earned, [ask for ask in earned if ask.verdict_type not in passed]
 

@@ -57,6 +57,37 @@
         }
       }
     },
+    "parameters": {
+      "type": "array",
+      "description": "the rule from code to Methods: a one-sentence reason for every parameter your change to code/ sets away from its default, every default a method you add or change gives itself, and every sensitive default you leave unset (a random draw no seed fixes, a solver at its default tolerances); also any value the code does not show (read from a config file, say), with its value. Code fills each value and default it can see; the verifier judges the reasons",
+      "items": {
+        "type": "object",
+        "required": ["method", "name", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "method": {"type": "string", "pattern": "\\S", "description": "the method the parameter belongs to: the function or the library call, as the code names it"},
+          "name": {"type": "string", "pattern": "\\S", "description": "the parameter's name as the code or the library spells it"},
+          "reason": {"type": "string", "pattern": "\\S", "description": "one sentence: why this value"},
+          "value": {"type": ["string", "null"], "description": "the value, only for one the code does not show; code fills the rest"},
+          "default": {"type": ["string", "null"], "description": "filled by code: the default, \"not checked\" until the project's environment is installed, \"unseeded\", or null for a method's own default"},
+          "path": {"type": "string", "description": "filled by code: the file the parameter is set in"},
+          "line": {"type": "integer", "minimum": 1, "description": "filled by code: the line it is set on"}
+        }
+      }
+    },
+    "not_methods": {
+      "type": "array",
+      "description": "the rule from code to Methods: functions your change to code/ adds or changes that are not methods the paper should describe and that code does not already take for plumbing; the verifier judges each",
+      "items": {
+        "type": "object",
+        "required": ["name", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "pattern": "\\S", "description": "the function as the code names it, or code/<path>#<function>"},
+          "why": {"type": "string", "pattern": "\\S", "description": "one sentence: why it is not a method"}
+        }
+      }
+    },
     "goal_progress": {
       "type": ["object", "null"],
       "required": ["metric", "value"],
