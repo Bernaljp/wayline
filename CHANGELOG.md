@@ -36,6 +36,21 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Repeated claims (ticket 95; Implementation Decisions 17, 14, and 2). A claim made in several places of a project's
+  inherited writing becomes one passage citing every occurrence's `doc` tag and every work any cites.
+  `wayline document repeats` runs the setup's check: one consistency read (`consistency-reader`, Opus high) over the
+  inherited claims, and the embedding model (BAAI/bge-base-en-v1.5, `converters/embed.py` through the tool runner,
+  no tokens) proposing pairs at `policy.repeats.similarity` (0.70); a `confirmer` session on Opus labels each pair
+  the same, contradicting, or different with each sentence's heading. A merge is written only when a fresh confirmer
+  session finds its kept text loses nothing and code finds it adds no number, symbol, or citation; otherwise the
+  occurrences stay apart, flagged for the grill. Contradicting pairs both stay, listed for the grill and for the
+  verification of the Results heading they touch (`repeats.contradictions`). The merges and the contradictions are
+  `merges` and `contradictions` batches (right or split, real or not a contradiction); a split restores both
+  passages, and every merge standing is in the account under "Changed without asking you". `research/repeats.json`
+  (schema `repeats`) records it all, and a merged passage names its occurrences in `merges`. At each ticket's
+  acceptance a new passage or finding that repeats a current passage without naming it in `replaces` sends the
+  worker back with the passage it repeats.
+
 - Critiques and concerns (ticket 96; Implementation Decisions 17, 2, and 10). A critique's points, an open Word
   comment thread, and an objection of the position memo's hostile review the owner accepts at the grill become
   concerns: `research/concerns.json` (schema `concern`, ids K1 onward, never reused), written only by

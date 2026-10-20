@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "consistency_read",
+  "description": "What the one consistency read of a project's inherited claims returns at setup (Implementation Decision 17; ticket 95): the groups of claims that make the same claim, and the groups that contradict each other, each by the passage ids the prompt listed. Code keeps only ids it listed, and the confirmer labels every pair a group yields before anything is merged or listed.",
+  "type": "object",
+  "required": ["groups"],
+  "additionalProperties": false,
+  "properties": {
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "passages", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {"type": "string", "enum": ["repeat", "contradiction"], "description": "repeat: the claims say the same thing; contradiction: they cannot all hold"},
+          "passages": {"type": "array", "minItems": 2, "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "the passage ids of the group, as the prompt listed them"},
+          "why": {"type": "string", "pattern": "\\S", "description": "one sentence on what they share or where they disagree"}
+        }
+      }
+    }
+  }
+}

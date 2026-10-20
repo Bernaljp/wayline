@@ -21,7 +21,8 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
 - **Changed without asking you**: every passage and finding journaled with `replaces_owner` (ticket 88), each with
   the owner's passage (or the consolidation made from the owner's text) it replaced, its reason, and its evidence; a
   consolidation the owner asked for is not listed (ticket 90).
-  The merges made at setup join it once the repeated-claims check makes them (ticket 95).
+  Every merge of a repeated inherited claim made at setup that still stands follows (ticket 95, `wayline.repeats`);
+  the render takes the marks on the merges and contradictions batches first, so a merge marked split has left it.
 - **Runs**: the latest run in full, earlier runs one table row each. Tokens, turns, and minutes come from
   `ticket_result`; no dollar figure is journaled, so none is shown.
 - **Not pursued**: the parked proposals with their reason and the parked tickets. Objective proposals not upheld
@@ -404,7 +405,8 @@ def _changed(context):
             _one_line(replaced.get("text")) or "no longer in the log", payload.get("id"), by,
             _one_line(payload.get("reason") or "no reason was given"),
             "; the evidence %s it" % payload["evidence"] if payload.get("evidence") else ""))
-    return lines
+    from wayline import repeats  # the repeated-claims check reads the sections and the batches
+    return lines + repeats.account_lines(context.project)
 
 
 def _owners_passage(log, replaces, replacing, before):
@@ -971,6 +973,11 @@ def _render(project, book, now, told):
     """`render_account` under the ledger's lock; the notices a reversal owes are put in `told`."""
     problems = []
     settle_marks(project, told, problems)
+    from wayline import repeats
+    try:
+        problems.extend(repeats.take_marks(project))  # a merge the owner split leaves "Changed without asking you"
+    except (repeats.RepeatsError, ValueError, OSError) as failure:
+        problems.append("the marks on the merges and contradictions could not be taken: %s" % failure)
     context = _context(project, now)
     context.notes.extend(problems)
     edited = take_edit(project, ACCOUNT, REPORT_KIND, context.events)

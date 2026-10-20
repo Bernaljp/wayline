@@ -252,3 +252,16 @@ its prompt. It returns `concern_split`: each point verbatim with every critique 
 and summary left out, a two-point item split, and the inherited claims it targets. Code keeps a source
 only when its words are in that critique, locates it at its block, keeps a target only when it is an
 inherited claim standing now, and merges near-identical points from different critiques.
+
+## The consistency reader and the confirmer check repeated claims
+
+`consistency-reader` and `confirmer` are not assigned to tickets either (`kinds` empty); `wayline/repeats.py`
+launches them (ticket 95), with no tools, everything they read in the prompt. At setup, `wayline document
+repeats` launches one session of `consistency-reader` on `policy.roles.consistency-reader` (Opus at high
+effort) over every inherited claim at once, which returns `consistency_read`: the repeat groups and the
+contradictions. The pairs those groups yield, and the pairs the embedding model proposes with no tokens, go
+to one session of `confirmer` (Opus at medium effort), which sees each sentence with its heading and returns
+`repeat_labels`: same, contradicting, or different, and for a pair that is the same the text a merge keeps.
+A second, fresh `confirmer` session, which did not write the kept texts, returns `merge_check`: whether each
+merge loses anything. Code checks that nothing is added. At each ticket's acceptance the same confirmer labels
+the pairs the embedding net finds between the ticket's new passages and findings and the current ones.

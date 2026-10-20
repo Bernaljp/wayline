@@ -1,0 +1,14 @@
+{
+  "merges": [
+    {
+      "merge": 1,
+      "covers": true,
+      "lost": null
+    },
+    {
+      "merge": 2,
+      "covers": false,
+      "lost": "it drops that this is the central finding"
+    }
+  ]
+}

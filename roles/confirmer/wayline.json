@@ -1,0 +1,19 @@
+{
+  "id": "confirmer",
+  "scope_kind": "global",
+  "capability_summary": "Labels pairs of claims the same, contradicting, or different with each sentence's heading, proposes a merge's kept text, and in a fresh session checks that a merge loses nothing, for the repeated-claims check at setup and at acceptance.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "685262309852d70088733c8114806a63208e6be0da983279e7cdde77f51c677c",
+  "may_judge": false,
+  "output_schema": "repeat_labels",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}
