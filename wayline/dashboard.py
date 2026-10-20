@@ -74,7 +74,7 @@ from wayline.project import (
     read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing,
     old_project_problem, research_version, status_view, steer_ticket, switch_project,
 )
-from wayline.provenance import FINDINGS_MD, MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
+from wayline.provenance import MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
 from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
 
 __all__ = [
@@ -871,10 +871,14 @@ def _manifest_entries(project):
     ]
 
 
+# The findings as the Results section renders them (tickets 86 and 90): the one rendered view of `findings.jsonl`.
+RESULTS_SECTION = "sections/results.md"
+
+
 def _findings_entries(project):
     return [entry for entry in (
         _file_entry(project, project / RESEARCH / FINDINGS),
-        _file_entry(project, project / RESEARCH / FINDINGS_MD),
+        _file_entry(project, project / RESEARCH / RESULTS_SECTION),
     ) if entry is not None]
 
 
@@ -977,7 +981,7 @@ def _outputs_snapshot(project):
     values = {}
     _stat_into(values, project / RESEARCH / MANIFEST_JSON, RESEARCH + "/" + MANIFEST_JSON)
     _stat_into(values, project / RESEARCH / FINDINGS, RESEARCH + "/" + FINDINGS)
-    _stat_into(values, project / RESEARCH / FINDINGS_MD, RESEARCH + "/" + FINDINGS_MD)
+    _stat_into(values, project / RESEARCH / RESULTS_SECTION, RESEARCH + "/" + RESULTS_SECTION)
     _stat_into(values, project / RESEARCH / "REPORT.md", RESEARCH + "/REPORT.md")
     from wayline.docs import CHECKS_JSON  # the docs module reads the code dossier's inventory; keep the server's import light
     _stat_into(values, project / CHECKS_JSON, CHECKS_JSON.as_posix())

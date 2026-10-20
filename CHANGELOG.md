@@ -168,6 +168,40 @@ lists it read-only, marked with its tag.
   login's expiry. `wayline status` lists only the decisions not yet reviewed and prints "Account: N decided for you,
   M waiting on you: research/ACCOUNT.md".
 
+- Results and the general report (ticket 90; Implementation Decisions 17, 1, 2, and 11). A **result** is one
+  Results heading with its current findings: code clusters every finding at its acceptance, with no session of its
+  own, into the result of the finding it replaces, else the result its heading names (spacing and case aside), else
+  a new one with the next id, R1 onward. `research/results.json` holds them, the finding carries the `result` it
+  joined, and each result created, merged, or renamed is journaled as the new `result` event, so the clustering
+  replays from the journal (`wayline.results.replay`). A result's objectives are the union of its current
+  findings'. The owner merges or renames results by saying so: the conversation calls `wayline result merge <id>
+  <into>` or `wayline result rename <id> "<heading>"`, recorded through the ledger with `by: owner`, and the Results
+  section and the report render again; the Results section shows each finding under its result's current heading.
+
+  `research/REPORT.md` is now the **general report**: about the research, always current, and written by code alone,
+  after every wave that integrated a ticket and from the tick, both launching nothing. In order: what the project is
+  (the spec's `summary`, else its question and data), one headline per result, a table of the results with their
+  objectives, standing (supported, negative, or mixed; a negative one flagged), counts, current report, and last
+  change, each objective in id order (open and answered first, then parked, dropped and reframed one line each with
+  their lineage) with its status, answer and evidence, a goal's kept values, its concerns, and its results, the
+  results beyond the objectives, the inherited claims not yet checked counted per section, and what can and cannot
+  be inferred with the open questions. Only current findings show, a replacement with a one-line note ("replaces
+  `t2-a1-f1`"), a negative one marked in place. The report is read-only: an edit is noticed by its hash against the
+  last `report_rendered`, committed as it stood (`edited`), listed in the banner from then on, and never taken in.
+  `findings.md`, `add_finding`, and `render_findings` retire with the writer's report session, its prose cache,
+  the `report_prose` schema, and `wayline report --no-draft`; the dashboard's findings outputs list
+  `research/sections/results.md` beside `findings.jsonl`.
+
+  **The numbers check** runs at every acceptance in the worktree (`wayline.numbers`): every number in a finding must
+  match a value at one of its sentence's `res` locators (a JSON key, a CSV column, a text line range or the lines
+  holding a key), allowing for rounding, percents, and the scales 100 and 1000; counts in words, digits that name
+  things (`R2`, `split_2`), and the numbers the spec's methods, experiments, baselines, and data name are exempt.
+  Each sentence code cannot match goes to a fresh verifier, journaled as a `numbers_match` verdict on the claim; a
+  failing verdict sends the ticket back with the sentence, and a verdict nobody could take lists it and fails
+  nothing. The account's "Changed without asking you" now lists every passage and finding journaled with
+  `replaces_owner`: a finding replacing an owner's Results passage and a passage replacing a consolidation of the
+  owner's text join it, and a consolidation the owner asked for leaves it.
+
 - The rule from code to Methods (ticket 107; Implementation Decision 17). At each acceptance in the worktree, a
   Type-A check (`wayline/methods.py`) reads the ticket's diff in `code/` with parsers that spend no tokens and
   sends the worker back with the list when Methods and the code disagree: every developed method the diff adds or

@@ -184,7 +184,8 @@ class WholePathTest(ConductorCase):
         self.assertEqual(self.sequence(), [
             "ticket_launched", "ticket_session", "ticket_result",
             "acceptance", "acceptance", "acceptance",
-            "integrated", "manifest", "finding", "ticket_done", "wave", "run_ended",
+            # The finding's heading appears for the first time, so code creates its result first (ticket 90).
+            "integrated", "manifest", "result", "finding", "ticket_done", "wave", "run_ended",
         ])
 
     def test_the_acceptance_ran_in_all_three_places_and_passed(self):
@@ -192,8 +193,10 @@ class WholePathTest(ConductorCase):
         self.assertEqual(wheres, ["worktree", "rebased", "main"])
         for event in self.events("acceptance"):
             self.assertTrue(event["payload"]["pass"])
+            # The numbers check reads a result's findings in the worktree only (ticket 90).
+            checks = ["wayline numbers check"] if event["payload"]["where"] == "worktree" else []
             self.assertEqual([result["cmd"] for result in event["payload"]["results"]],
-                             ["test -f hello.txt", "grep -qx hello hello.txt"])
+                             ["test -f hello.txt", "grep -qx hello hello.txt"] + checks)
 
     def test_main_carries_the_worker_commit_under_the_ledger_commit(self):
         # The wave that carried the outcome commits the ledger on top of the fast-forward.
@@ -222,7 +225,7 @@ class WholePathTest(ConductorCase):
         # It carries when it was filed, which orders it against the inherited Results passages (ticket 93).
         self.assertRegex(written[0].pop("ts"), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
         self.assertEqual(written, [{"id": "t1-a1-f1", "ticket": 1, "text": "a finding", "provenance": "hello.txt#L1", "negative": False,
-                                    "heading": "Write the hello file", "replaces": None, "objectives": []}])
+                                    "heading": "Write the hello file", "replaces": None, "objectives": [], "result": "R1"}])
         self.assertEqual(self.payload("finding"), written[0])
         results = (self.project / "research" / "sections" / "results.md").read_text(encoding="utf-8")
         self.assertIn("## Write the hello file\n\n<!-- wayline:passage t1-a1-f1 -->\na finding{res:t1-a1/hello.txt#L1}", results)

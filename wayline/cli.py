@@ -74,6 +74,9 @@ VERBS = [
     Verb("passage", "passage add --section <s> --heading <h> [--replaces <id>] \"<text>\"",
          "record an owner's passage in one of the paper's five sections, by: owner, journaled as passage (the conversation calls it)", "views",
          lazy("wayline.sections", "passage_command")),
+    Verb("result", "result merge <id> <into> | rename <id> \"<heading>\"",
+         "merge one result into another, or give a result a new heading, on the owner's word (the conversation calls it)", "views",
+         lazy("wayline.results", "result_command")),
     Verb("consolidate", "consolidate <section> [--yes]",
          "rewrite one section's current passages into fewer that keep their tags, in one read-only writer session the owner asks for and confirms with its cost",
          "views", lazy("wayline.consolidation", "consolidate_command")),
@@ -102,7 +105,7 @@ VERBS = [
          lazy("wayline.docs", "docs_command")),
     Verb("paper", "paper [--venue <slug>] [--continue] [--verify]", "draft research/paper/ under a venue's guidelines, build it with the linter and the seven checks, and gate it with the kill argument and one independent read; nothing is submitted", "builders",
          lazy("wayline.paper", "paper_command")),
-    Verb("report", "report [--offline] [--no-draft] [--verify]", "render REPORT.md from the ledger, lint every claim, and sample the claims for the verifier", "builders", lazy("wayline.provenance", "report_command")),
+    Verb("report", "report [--offline] [--verify]", "render REPORT.md, the general report, from the ledger by code alone, lint every claim, and sample the claims for the verifier", "builders", lazy("wayline.provenance", "report_command")),
     Verb("tools", "tools install [<name>] [--marker] [--mineru] [--grobid] [--dry-run] [--yes | --decision <id>] [--change] [--at <path>] | show [--json] | run <name> -- <args> | package <python|r|julia|octave> <name>... | needs [--json]", "install the harness's tools under ~/.wayline/tools/ and record each in tools.json, a project's tool after a yes, or licensed software where the owner put it; show the record; run a recorded tool by its absolute path and environment; install a project's packages with no ask; print the setup question of the tools the planned work lacks", "tools",
          lazy("wayline.tools", "tools_command")),
     Verb("launch", "launch --smoke [--dir <path>] [--model <alias>] [--effort <effort>]", "one real cheap session through the launcher; prints the envelope and the usage windows", "tools",
@@ -116,7 +119,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern",
+    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern", "result",
 ))
 
 

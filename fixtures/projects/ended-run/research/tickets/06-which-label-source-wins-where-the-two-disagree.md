@@ -12,7 +12,7 @@ outputs: []
 acceptance:
   machine: []
   quality: []
-origin: research/findings.md#ticket-1
+origin: research/findings.jsonl#f-0001
 proposed_by: planner
 demo: null
 blocking: subgraph

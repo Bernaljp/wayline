@@ -323,12 +323,19 @@ class PassageTest(SectionsCase):
     def test_a_finding_is_a_results_passage_and_a_scope_down_replaces_the_one_it_narrows(self):
         (self.project / "results").mkdir(exist_ok=True)
         (self.project / "results" / "summary.json").write_text('{"auroc": 0.71}\n', encoding="utf-8")
-        from wayline.provenance import add_finding, register_artifact
+        from wayline.provenance import register_artifact
+
+        def filed(ledger, text, locator, ticket, heading=None, replaces=None, objectives=()):
+            count = len(sections.read_findings(ledger)) + 1
+            return sections.file_finding(ledger, {"id": "t%d-a1-f%d" % (ticket, count), "ticket": ticket, "text": text,
+                                                  "provenance": [locator], "negative": False, "heading": heading,
+                                                  "replaces": replaces, "objectives": list(objectives)})
+
         register_artifact(self.ledger, "results/summary.json", None, "t2-a1", 2)
-        first = add_finding(self.ledger, "The products raise the AUROC on every split.", "results/summary.json#auroc", 2,
+        first = filed(self.ledger, "The products raise the AUROC on every split.", "results/summary.json#auroc", 2,
                             heading="Products and AUROC", objectives=["O1"])
-        add_finding(self.ledger, "The baseline holds on split A.", "results/summary.json#auroc", 2, heading="Baseline")
-        narrowed = add_finding(self.ledger, "The products raise the AUROC on split B only.", "results/summary.json#auroc", 5,
+        filed(self.ledger, "The baseline holds on split A.", "results/summary.json#auroc", 2, heading="Baseline")
+        narrowed = filed(self.ledger, "The products raise the AUROC on split B only.", "results/summary.json#auroc", 5,
                                heading="Products and AUROC", replaces=first["id"], objectives=["O1"])
         written = [json.loads(line) for line in (self.project / "research" / "findings.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertEqual([(item["id"], item["heading"], item["replaces"], item["objectives"]) for item in written],
@@ -340,7 +347,7 @@ class PassageTest(SectionsCase):
         self.assertIn("The products raise the AUROC on split B only.{res:t2-a1/results/summary.json#auroc}", body)
         self.assertLess(body.index("## Products and AUROC"), body.index("## Baseline"))
         with self.assertRaises(LedgerError):
-            add_finding(self.ledger, "text", "results/summary.json#auroc", 2, heading="Baseline", replaces="P1")
+            filed(self.ledger, "text", "results/summary.json#auroc", 2, heading="Baseline", replaces="P1")
 
     def test_a_render_that_changes_nothing_keeps_the_file(self):
         self.add("Data", "One.")

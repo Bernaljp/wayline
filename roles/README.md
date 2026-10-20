@@ -193,17 +193,18 @@ the list, and a done `docs` ticket earns one read of the site's clarity and comp
 package's purpose (`gates.DOCS_READ`) in place of the read its difficulty would give it. Its Bash
 rules are the coder's with `wayline docs *` added and no `Agent`: a site is written in one session.
 
-## The writer is launched by code twice, and takes the `writing` tickets
+## The writer is launched by code, and takes the `writing` tickets
 
-`writer` takes every `writing` ticket as a ticket worker, and code launches it twice more, read-only
-and on `policy.roles.writer` rather than a rung: `wayline report` asks it for the report's paragraphs
-(`report_prose`), and `wayline paper` for the whole manuscript (`paper_draft`, ticket 53). In both
-the ledger writes what it returns, since nothing under `research/` is a session's to write. The
-paper's session is resumed with each failed build's list (the linter, the venue's seven checks, a
+`writer` takes every `writing` ticket as a ticket worker, and code launches it read-only and on
+`policy.roles.writer` rather than a rung for `wayline paper`, the whole manuscript (`paper_draft`,
+ticket 53), and for `wayline consolidate`, a section the owner asked to have rewritten (ticket 88).
+The ledger writes what it returns, since nothing under `research/` is a session's to write. The
+general report, `REPORT.md`, is rendered by code alone since ticket 90: no writer drafts any of it.
+The paper's session is resumed with each failed build's list (the linter, the venue's seven checks, a
 figure the figure role could not place), and it is given the open `writing` tickets a failed kill
 argument or the independent read filed against the paper. The prompt carries the venue's `guidelines.json`, the
-findings with their tags, and the references a `ref` tag can name; `agent.md` stays the C8 rule both
-launches share.
+findings with their tags, and the references a `ref` tag can name; `agent.md` stays the C8 rule every
+launch shares.
 
 ## Why `disallowed_tools` names tools the harness never asked for
 

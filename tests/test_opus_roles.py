@@ -19,7 +19,7 @@ from tests.test_fallback import FallbackCase
 from tests.test_pacing import HOUR
 from tests.test_plan import PlanCase, cut
 from tests.test_plan import planned as planned_graph
-from tests.test_report import GOOD_PROSE, Classifier, RunCase, prose, verdict
+from tests.test_report import Classifier, RunCase, verdict
 from tests.test_specify import SpecifyCase, draft
 from tests.test_specify import planned as planned_spec
 from tests.test_verdict_fallback import KINDS
@@ -162,38 +162,37 @@ class DeciderTest(SpentWindowCase, RecordedGrillCase):
 
 
 class ReportVerifyTest(SpentWindowCase, RunCase):
-    """Criterion 4: `wayline report --verify` drafts on `opus xhigh` and samples its claims with Fable spent."""
+    """Criterion 4: `wayline report --verify` samples its claims with Fable spent; code alone writes the report (ticket 90)."""
 
     def launched(self):
         return self.calls
 
-    def test_the_writer_and_the_sampled_verdicts_launch_without_a_hold_or_a_fallback(self):
+    def test_the_sampled_verdicts_launch_without_a_hold_or_a_fallback(self):
         spend_fable(self.book)
         spent = len(self.book.read_events()[0])  # the ended run's own journal already lists what fell back that night
         out = io.StringIO()
         with worker.use_fake() as fake:
             for _ in range(3):
                 fake.script(respond=Classifier(), role="classifier")
-            fake.script(prose(GOOD_PROSE), role="writer")
-            for _ in range(7):
+            for _ in range(5):
                 fake.script(respond=lambda request, message: verdict(), role="verifier")
             with redirect_stdout(out), redirect_stderr(io.StringIO()):
                 code = cli.main(["report", "--project", str(self.project), "--verify"])
             self.calls = list(fake.calls)
         self.assertEqual(code, 0, out.getvalue())
-        self.assertIn("7 of 7 tagged claims sampled: 7 passed", out.getvalue())
+        self.assertIn("5 of 5 tagged claims sampled: 5 passed", out.getvalue())
         self.assertNotIn("in place of Fable", out.getvalue())
-        self.assertLaunchedOnOpus("writer", "xhigh")
+        self.assertNotIn("writer", [call.request.role for call in self.calls])
         verifiers = [call for call in self.calls if call.request.role == "verifier"]
-        self.assertEqual(len(verifiers), 7)
+        self.assertEqual(len(verifiers), 5)
         self.assertEqual({call.request.model for call in verifiers}, {"opus"})
         read_at = {}
         for call in verifiers:
-            for marker in ("`f-0001`", "`f-0002`", "Interaction terms carry"):
+            for marker in ("`f-0001`", "`f-0002`"):
                 if marker in call.request.prompt:
                     read_at[marker] = (call.request.model, call.request.effort)
-        self.assertEqual(read_at, {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "max"), "Interaction terms carry": ("opus", "max")},
-                         "Sonnet's finding at opus high; Opus's finding and the writer's prose keep opus max")
+        self.assertEqual(read_at, {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "max")},
+                         "Sonnet's finding at opus high; Opus's finding keeps opus max")
         self.assertEqual(fallbacks(self.book.read_events()[0][spent:]), [])
 
 

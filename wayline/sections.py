@@ -49,6 +49,7 @@ import hashlib
 import json
 import re
 
+from wayline import results
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import LedgerError, ledger_for, make_event, now_ts
 
@@ -109,7 +110,6 @@ _PASSAGE_MARK = re.compile(r"^<!-- wayline:passage ([^<>]+?) -->$")
 _RENDER_MARK = re.compile(r"\s*\[(?:unchecked|unverifiable: [^\[\]]*)\]")
 # A tag that is evidence for a passage replacing an owner's: a result, a reference, or the code, never a `doc` tag.
 _EVIDENCE_TAG = re.compile(r"\{(?:res|ref|code):[^{}]+\}")
-_TAG = re.compile(r"\{(?:res|ref|doc):[^{}]+\}")
 _SENTENCE_END = re.compile(r"[.!?](?:\{(?:res|ref|doc):[^{}]+\})*(?=\s|$)")
 
 
@@ -374,11 +374,14 @@ def file_finding(project_or_ledger, record, wave=None, render=True):
             raise SectionError("the finding %s" % problem)
         if _owners(book, RESULTS, record["replaces"]):
             record["replaces_owner"] = True  # journaled for the account: changed without asking the owner (ticket 88)
+        # The result it joins, clustered by code at its acceptance (ticket 90): written only once the finding is.
+        record["result"], created, clusters = results.assign(book, record)
         payload = {key: record[key] for key in ("id", "ticket", "text", "provenance", "negative", "heading", "replaces", "objectives",
-                                                "evidence", "reason", "replaces_owner") if key in record}
+                                                "evidence", "reason", "replaces_owner", "result") if key in record}
         make_event(FINDING, payload, ticket=record.get("ticket"))
         line = dict(record, wave=wave) if wave is not None else record
         book.append_record(FINDINGS, line)
+        results.commit(book, clusters, created, ticket=record.get("ticket"))  # a result only once its first finding is filed
         book.append_event(FINDING, payload, ticket=record.get("ticket"))
         if render:
             render_section(book, RESULTS)
@@ -446,7 +449,7 @@ def pack_text(project_or_ledger, declared_sections, max_chars=None):
              "project's own earlier writing, stands unchecked until a passage or finding of yours replaces it and says in "
              "`evidence` whether this project's evidence `supports`, `narrows`, or `contradicts` it."]
     for section in wanted:
-        arranged = arrange(_items(book, section))
+        arranged = arrange(_shown(book, section, _items(book, section)))
         lines += ["", "## %s" % TITLES[section], ""]
         if not arranged.headings:
             lines.append("Nothing yet.")
@@ -621,12 +624,9 @@ def _put(slots, order, where, item, heading, place_heading, index, remove=None):
 
 
 def _finding_text(item, manifest):
-    """A finding as Results prints it: its text, with its provenance as `res` tags when the text carries none."""
-    text = str(item.get("text") or "").strip()
-    if _TAG.search(text):
-        return text
+    """A finding as Results prints it: the general report's own reading (`provenance.finding_text`), so the two agree."""
     from wayline import provenance  # the provenance module pulls in the gates and the report
-    return provenance.tagged_text(text, provenance.finding_tags(item, manifest))
+    return provenance.finding_text(item, manifest)
 
 
 def _paragraphs(current, by_id):
@@ -654,8 +654,19 @@ def is_finding(item):
     return "by" not in (item or {})
 
 
+def _shown(book, section, items):
+    """One section's log as it renders: in Results, each finding under its result's current heading (ticket 90), so a
+    merged or renamed result renders as one heading and a scope-down stays where what it narrows stood."""
+    if section != RESULTS:
+        return items
+    headings = results.result_headings(book)
+    return [dict(item, heading=headings[item.get("id")]) if is_finding(item) and item.get("id") in headings else item
+            for item in items]
+
+
 def _groups(book, section, items):
     """What a render prints of `items`, one section's log: `(arranged, [(heading, ids, text)])`, a paragraph each."""
+    items = _shown(book, section, items)
     arranged = arrange(items)
     manifest = None
     if section == RESULTS:

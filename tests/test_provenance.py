@@ -9,8 +9,7 @@ from pathlib import Path
 from wayline.jsonschema import ValidationError
 from wayline.ledger import Ledger
 from wayline.provenance import (
-    ProvenanceError, add_finding, commit_threshold_bytes, oversized_tracked_files,
-    read_findings, read_manifest, register_artifact, render_findings, sha256_of,
+    ProvenanceError, commit_threshold_bytes, oversized_tracked_files, read_manifest, register_artifact, sha256_of,
 )
 
 
@@ -95,108 +94,6 @@ class RegisterArtifactTest(ProvenanceCase):
         with self.assertRaises(ValidationError):
             register_artifact(self.book, "results/summary.json", None, "t0-a1", 0)
         self.assertEqual(read_manifest(self.book), {"entries": []})
-
-
-class AddFindingTest(ProvenanceCase):
-    def register(self, relative="results/summary.json", run_id="t2-a1", ticket=2):
-        self.write_result(relative)
-        return register_artifact(self.book, relative, None, run_id, ticket)
-
-    def test_an_accepted_finding_gets_a_sequential_id_and_is_journaled(self):
-        self.register()
-        finding = add_finding(self.book, "The metric improved.", "results/summary.json#auroc", 2, negative=False)
-        self.assertEqual(finding["id"], "f-0001")
-        self.assertEqual(finding["provenance"], ["results/summary.json#auroc"])
-        self.assertFalse(finding["negative"])
-
-        second = add_finding(self.book, "A second finding.", ["results/summary.json#loss"], 2)
-        self.assertEqual(second["id"], "f-0002")
-
-        stored = read_findings(self.book)
-        self.assertEqual([entry["id"] for entry in stored], ["f-0001", "f-0002"])
-
-        events, _ = self.book.read_events()
-        finding_events = [event for event in events if event["event"] == "finding"]
-        self.assertEqual(len(finding_events), 2)
-        self.assertEqual(finding_events[0]["payload"]["id"], "f-0001")
-        self.assertEqual(finding_events[0]["ticket"], 2)
-
-    def test_negative_findings_are_accepted_and_marked(self):
-        self.register()
-        finding = add_finding(self.book, "No improvement over baseline.", "results/summary.json#auroc", 2, negative=True)
-        self.assertTrue(finding["negative"])
-
-    def test_refuses_a_provenance_locator_with_no_hash(self):
-        self.register()
-        with self.assertRaises(ProvenanceError):
-            add_finding(self.book, "text", "results/summary.json", 2)
-
-    def test_refuses_an_empty_locator_half(self):
-        self.register()
-        with self.assertRaises(ProvenanceError):
-            add_finding(self.book, "text", "results/summary.json#", 2)
-
-    def test_refuses_an_unmanifested_artifact(self):
-        with self.assertRaises(ProvenanceError):
-            add_finding(self.book, "text", "results/ghost.json#auroc", 2)
-
-    def test_refuses_an_empty_provenance_list(self):
-        self.register()
-        with self.assertRaises(ProvenanceError):
-            add_finding(self.book, "text", [], 2)
-
-    def test_a_refused_finding_writes_nothing(self):
-        with self.assertRaises(ProvenanceError):
-            add_finding(self.book, "text", "results/ghost.json#auroc", 2)
-        self.assertEqual(read_findings(self.book), [])
-        events, _ = self.book.read_events()
-        self.assertEqual(events, [])
-
-    def test_one_finding_may_cite_more_than_one_artifact(self):
-        self.register("results/a.json", "t2-a1", 2)
-        self.register("results/b.json", "t2-a1", 2)
-        finding = add_finding(self.book, "text", ["results/a.json#x", "results/b.json#y"], 2)
-        self.assertEqual(finding["provenance"], ["results/a.json#x", "results/b.json#y"])
-
-    def test_refuses_when_any_of_several_locators_is_unmanifested(self):
-        self.register("results/a.json", "t2-a1", 2)
-        with self.assertRaises(ProvenanceError):
-            add_finding(self.book, "text", ["results/a.json#x", "results/ghost.json#y"], 2)
-        self.assertEqual(read_findings(self.book), [])
-
-
-class RenderFindingsTest(ProvenanceCase):
-    def test_renders_none_yet_for_an_empty_ledger(self):
-        render_findings(self.book)
-        text = (self.book.research / "findings.md").read_text(encoding="utf-8")
-        self.assertIn("None yet.", text)
-
-    def test_is_grouped_by_ticket_and_marks_negative_results(self):
-        self.write_result("results/a.json")
-        register_artifact(self.book, "results/a.json", None, "t2-a1", 2)
-        self.write_result("results/b.json")
-        register_artifact(self.book, "results/b.json", None, "t5-a1", 5)
-        add_finding(self.book, "Ticket 2's finding.", "results/a.json#x", 2)
-        add_finding(self.book, "Ticket 5's finding, discarded.", "results/b.json#y", 5, negative=True)
-
-        text = (self.book.research / "findings.md").read_text(encoding="utf-8")
-        self.assertLess(text.index("Ticket 2"), text.index("Ticket 5"))
-        self.assertIn("f-0001", text)
-        self.assertIn("Ticket 2's finding.", text)
-        self.assertIn("(negative)", text)
-        self.assertIn("Ticket 5's finding, discarded.", text)
-
-    def test_add_finding_keeps_findings_md_in_step_with_findings_jsonl(self):
-        self.write_result("results/a.json")
-        register_artifact(self.book, "results/a.json", None, "t2-a1", 2)
-        add_finding(self.book, "First.", "results/a.json#x", 2)
-        first_text = (self.book.research / "findings.md").read_text(encoding="utf-8")
-        add_finding(self.book, "Second.", "results/a.json#y", 2)
-        second_text = (self.book.research / "findings.md").read_text(encoding="utf-8")
-        self.assertIn("First.", first_text)
-        self.assertNotIn("Second.", first_text)
-        self.assertIn("First.", second_text)
-        self.assertIn("Second.", second_text)
 
 
 class CommitThresholdTest(ProvenanceCase):
