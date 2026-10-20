@@ -66,7 +66,7 @@
     }
   },
   "$defs": {
-    "kind": {"type": "string", "enum": ["dossier", "lit", "code", "docs", "experiment", "analysis", "figure", "writing", "review", "decision", "harness"]},
+    "kind": {"type": "string", "enum": ["dossier", "lit", "code", "docs", "experiment", "analysis", "figure", "writing", "review", "decision", "harness", "drawing"], "description": "drawing: one result explored in every useful plot at a rest point, created by code alone and never by the planner (decision 17; ticket 100)"},
     "difficulty": {"type": "integer", "minimum": 1, "maximum": 5}
   }
 }

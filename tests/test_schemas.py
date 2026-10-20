@@ -18,7 +18,7 @@ SHIPPED = ["journal_event", "ticket", "result", "harness", "policy", "job", "man
            "dossier_entry", "dossier_entry_list", "dossier_sections", "absorb_result", "fixture", "fixture_verdict",
            "dedup_verdict", "spec", "consultant_answer", "plan", "position", "change", "change_list",
            "figure_drafts", "figure_ranking", "figure_finish", "paper_draft", "objectives", "batch", "index_shape", "document", "passage", "consolidation", "concern", "concern_split",
-           "consistency_read", "repeat_labels", "merge_check", "repeats", "verification", "outline"]
+           "consistency_read", "repeat_labels", "merge_check", "repeats", "verification", "plots", "drawing", "outline"]
 
 
 def load(path):
@@ -120,6 +120,9 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(policy["figures"], {"candidates": {"max": 5}, "margin_threshold": 2, "ssim_min": 0.99, "crops_dpi": 600})
         self.assertEqual(policy["plot_index"], {"crawl_rate_per_s": 1, "liveness": "monthly", "recrawl": "quarterly"})
         self.assertEqual(policy["plot_checks"], {"axis_label_max_chars": 40, "heatmap_label_max_cells": 36})
+        self.assertEqual(policy["roles"]["plotter"], {"model": "opus", "effort": "medium"})
+        self.assertEqual(policy["drawings"], {"budget": "small", "step_down": {"model": "sonnet", "effort": "medium"},
+                                              "max_plots": 20, "max_tables": 4, "max_headline": 4})
         self.assertIsNone(policy["quiet_hours"])
         self.assertIsNone(policy["per_window_worker_budget"])
 

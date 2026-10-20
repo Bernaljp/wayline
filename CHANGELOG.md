@@ -36,6 +36,65 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Drawings and plots (ticket 100; Implementation Decisions 17, 14, 13, and 2). Each changed result is explored in
+  every useful plot at rest points: before a run ends (on an empty frontier, the stopping rule, or a budget), before
+  it comes to rest on the owner's answer under `checkpoints`, and on the owner's word (`wayline result draw R4`).
+  Code opens one ticket of the new kind `drawing` per result whose current findings changed since its last drawing
+  and hold one from the project's own evidence, the stopping rule's results first; the planner never writes one.
+  It runs on the new `plotter` role at `opus medium` on the small budget (`policy.roles.plotter`,
+  `policy.drawings`), stepping down to `sonnet medium` when pacing steps Opus work down, read-only on the research
+  (its own `drawings/R<n>-<v>/`, no job, no GPU, never the project's code), with a brief rendered by code at each
+  launch: the result's findings and their artifacts, the objectives, the project summary, the plot index by data
+  shape, the house style, the previous drawing with the owner's marks and notes, and the earlier figures of the
+  project's documents whose claims the result replaces. Its one script draws every plot (PNG and SVG) and table
+  (CSV) and writes every quoted number into `numbers.json`; at most 20 plots, 4 tables, and 4 headline plots, each
+  plot explained by its Purpose, Data, and What it shows, then the synthesis, headline, inferences, and open
+  questions. Acceptance (`wayline.drawing_checks`) reruns the script in a clean room in the tools venv and compares
+  the plots and `numbers.json`, then runs six figure checks (`min_font_pt`, `text_overlap`, `palette`,
+  `generator_clean`, `regenerates`, `provenance`) and the five readability checks on each plot's SVG and the numbers
+  check against `numbers.json`; a check that cannot run is listed as not run. A failing plot gets one repair resume
+  and is then left out and listed; a drawing that still fails journals `ticket_failed` with `next: none` and keeps
+  its result's last accepted drawing, listed in the account's Runs, with no tier up, split, or ask. Plots keep their
+  ids across drawings (`R4.3`, tables `R4.T1`), retire when left out, and are never reused; `research/plots.json`
+  (schema `plots`) and one record per drawing, `research/drawings/R<n>-<v>.json` (schema `drawing`), are written
+  through the ledger, and each drawing opened, accepted, or failed is journaled as `drawing`. Every accepted drawing
+  puts its plots before the owner as a `plots` batch: drop retires a plot at its next drawing, a note reaches that
+  drawing's brief, keep is never retired by a drawing alone, and no mark starts one. Sections cite a plot as
+  `{plot:R4.3}`, which the linter checks against `plots.json`. With no matplotlib recorded in the tools venv, a rest
+  point draws nothing and says so once.
+
+- How objectives change as results come in (ticket 91; Implementation Decisions 17, 2, 4, 10, and 11). A ticket result
+  and a verdict carry `objective_proposals[]`: add a question, answer, park, drop, or reframe an open objective, or
+  reopen a closed one, each with its reason, its evidence, and, for an add or a reframe, the position memo's
+  feasibility row. Whoever proposes never makes the change. Each is journaled as `objective_proposed`; one code cannot
+  act on (an objective the project does not hold, a status the kind does not fit) is journaled not upheld with why.
+  - A ticket that carries a proposal always gets its Type-B verdict, a read of its result even at difficulty 1 and 2,
+    and that verdict judges each proposal upheld or not in `objective_judgments`. The verifier that upholds an
+    `answer` writes the answer, which must cite a `res:` or `ref:` tag that resolves and pass the numbers check, or the
+    verdict is resumed with why. A proposal the verifier makes in its own verdict goes straight on. One not upheld is
+    listed in the account under "Not pursued".
+  - Code gathers the upheld proposals into one open "Objective changes" decision ticket whose items are a batch
+    (marks approve and decline), which takes new proposals until it is answered and pauses only the unstarted tickets
+    serving solely an objective an upheld answer, park, drop, or reframe names. A declined proposal resumes what it
+    paused. The owner answers `approve all`, `decline all`, or `1: approve; 2: decline`, or marks the items, and an
+    answer that leaves items open asks again about those.
+  - Under `autonomous` the decider takes the batch in one session: it answers, parks, and drops, never parking or
+    dropping an objective the stopping rule names; it adds, reframes, or reopens only once the owner took `objective`
+    off the human-only classes, adds nothing under `strict`, a `(prerequisite)` under `moderate`, and once a wave also a
+    `(new question)` under `exploratory`; it reopens a parked objective at any radius and never an answered or dropped
+    one. What it may not take waits on the owner in a human-only ticket that pauses nothing.
+  - An approved change parks the unstarted tickets serving only closed objectives (`ticket_cancelled` with `reason`),
+    shows the claims tied only to closed objectives as set aside in `SPEC.md` (back when one reopens), re-ties a
+    reframe's tickets and the stopping rule to its successor, writes an answer or a reframe as a Discussion passage by
+    code, keeps a reopened answer as superseded in `objectives.json`, brings back what a park parked, and has the
+    planner cut fresh tickets for an answered or dropped objective the owner reopened. A dropped objective's concerns
+    are placed in the same answer (`K3: tie it to O1`).
+  - "Answer it as it stands", at an empty frontier or for an approved answer no verifier wrote, is one fresh verifier
+    session per objective on `opus high` (schema `objective_answer`), held to the same checks.
+  - `wayline objective answer|park|drop|reframe|reopen` apply the owner's word directly, with no proposal and no
+    verdict. Decision 4's "change the goal or the data" is "change a goal's measure, or the data": the code check no
+    longer refuses the decider an answer that drops, adds, or reframes an objective.
+
 - The outline of the paper (ticket 104; Implementation Decisions 17, 1, and 2). Code alone builds `research/OUTLINE.md`
   at every render (with the general report and the account, at the end of every wave, at `init`), with no model
   tokens: a storyline of the objectives, the gaps (what holds nothing yet; an empty main-text list is the paper

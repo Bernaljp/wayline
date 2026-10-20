@@ -25,8 +25,8 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
   the render takes the marks on the merges and contradictions batches first, so a merge marked split has left it.
 - **Runs**: the latest run in full, earlier runs one table row each. Tokens, turns, and minutes come from
   `ticket_result`; no dollar figure is journaled, so none is shown.
-- **Not pursued**: the parked proposals with their reason and the parked tickets. Objective proposals not upheld
-  join it with ticket 91.
+- **Not pursued**: the parked proposals with their reason, the parked tickets, and the objective proposals not upheld
+  with the verdict's reason (ticket 91).
 - **Library**: papers by dossier level, promotions not read in full, and dossiers that now resolve to another work.
 
 **The edit rule.** The account is read-only, as the reports are: an edit is noticed by its hash against the last
@@ -589,11 +589,38 @@ def _latest_run(run, context):
     drawings = [ticket for ticket in sorted(per) if (context.tickets.get(ticket) or {}).get("kind") == "drawing"]
     if drawings:
         lines.extend(["", "Drawings:", ""])
-        lines.extend("- Ticket %d: %s tokens, %d turns, %.1f minutes" % (
-            ticket, _tokens_text(per[ticket]["tokens"]), per[ticket]["turns"], per[ticket]["ms"] / 60000.0) for ticket in drawings)
+        lines.extend("- Ticket %d%s: %s tokens, %d turns, %.1f minutes" % (
+            ticket, _drawing_outcome(ticket, span, context.events), _tokens_text(per[ticket]["tokens"]), per[ticket]["turns"],
+            per[ticket]["ms"] / 60000.0) for ticket in drawings)
     lines.extend(_gates(run, context))
     lines.extend(_fell_back(context.events[run.start:run.after], context))  # the run-end gates are the run's too
     return lines
+
+
+def _drawing_outcome(ticket, span, events):
+    """What a drawing ticket came to in this run, from its `drawing` events (ticket 100): accepted with what it drew and
+    what it left out, or failed, its result keeping its last accepted drawing; empty while it is still open."""
+    closed = [event.get("payload") or {} for event in span if event.get("event") == "drawing"
+              and (event.get("payload") or {}).get("ticket") == ticket and (event.get("payload") or {}).get("outcome") in ("accepted", "failed")]
+    if not closed:
+        return ""
+    last = closed[-1]
+    name = "%s-%s" % (last.get("result"), last.get("version"))
+    if last["outcome"] == "accepted":
+        words = ", %s accepted: %s" % (name, ", ".join(last.get("plots") or []) or "no plot")
+        left = ["%s (%s)" % (entry.get("what"), entry.get("reason")) for entry in last.get("left_out") or [] if isinstance(entry, dict)]
+        if left:
+            words += "; left out %s" % "; ".join(left)
+        if last.get("retired"):
+            words += "; retired %s" % ", ".join(last["retired"])
+        return words
+    earlier = [(event.get("payload") or {}).get("version") for event in events if event.get("event") == "drawing"
+               and (event.get("payload") or {}).get("result") == last.get("result")
+               and (event.get("payload") or {}).get("outcome") == "accepted"
+               and int((event.get("payload") or {}).get("version") or 0) < int(last.get("version") or 0)]
+    kept = ("%s keeps its last accepted drawing, %s-%s" % (last.get("result"), last.get("result"), earlier[-1]) if earlier
+            else "%s keeps no accepted drawing yet" % last.get("result"))
+    return ", %s failed (%s): %s, with no tier up, split, or ask" % (name, last.get("reason") or "no reason was journaled", kept)
 
 
 def _pauses(span):
@@ -760,6 +787,10 @@ def _not_pursued(context):
         for identifier, (name, payload) in last.items() if name == PROPOSAL_PARKED]
     lines.extend("- Ticket %d, *%s* (%s): parked" % (number, context.tickets[number]["title"], context.tickets[number]["kind"])
                  for number in sorted(context.tickets) if context.tickets[number]["status"] == "parked")
+    from wayline import objective_changes  # the objective changes module reads the batches and the concerns
+    lines.extend("- Objective proposal `%s` from ticket %s, %s %s: not upheld, %s" % (
+        record["id"], record["ticket"], record["kind"], record["objective"], record["why"] or "no reason was given")
+        for record in objective_changes.read_proposals(context.events) if record["upheld"] is False)
     return lines
 
 

@@ -1,0 +1,27 @@
+{
+  "result": "R1", "version": 2, "ticket": 9, "rest": "checkpoint", "status": "accepted",
+  "findings": ["t2-a1-f1", "t4-a1-f1"], "signature": "fedcba9876543210", "opened": "2026-10-20T10:00:00.000Z",
+  "closed": "2026-10-20T10:20:00.000Z", "reason": null,
+  "script": "drawings/R1-2/draw.py", "numbers": "drawings/R1-2/numbers.json", "inputs": ["results/summary.json"],
+  "plots": [
+    {"id": "R1.1", "chart_type": "box plot", "index_entries": ["box-py"], "data_view": "AUROC by seed",
+     "png": "drawings/R1-2/auroc_box.png", "svg": "drawings/R1-2/auroc_box.svg",
+     "purpose": "Does the AUROC hold across seeds?", "data": "The held-out AUROC of each seed, from results/summary.json.",
+     "shows": "The AUROC sits at 0.71 across 3 seeds.", "headline": true,
+     "checks": [
+       {"id": "regenerates", "type": "A", "pass": true, "tool": "clean-room", "detail": "the rerun wrote the same PNG, byte for byte"},
+       {"id": "generator_clean", "type": "A", "pass": null, "not_run": true, "tool": "ruff+python -I", "detail": "ruff is not installed, so the lint did not run"}
+     ]}
+  ],
+  "tables": [
+    {"id": "R1.T1", "csv": "drawings/R1-2/auroc_table.csv", "data_view": "AUROC per seed", "purpose": "The values behind the box.",
+     "data": "One row per seed.", "shows": "The seed reaches 0.71.", "checks": []}
+  ],
+  "carried": ["R1.3"], "retired": ["R1.2"],
+  "left_out": [{"what": "seed_bars.png (new)", "reason": "rotated_text: 1 rotated text other than the y-axis label"}],
+  "synthesis": "The AUROC holds at 0.71 across 3 seeds.", "headline": "The rise holds.",
+  "can_infer": ["The products help on this split."], "cannot_infer": ["Whether it holds on other species."],
+  "open_questions": ["Does the loss track the AUROC?"],
+  "earlier_figures": [{"figure": "D1#p7", "plot": "R1.1", "agrees": "disagrees", "note": "The rise holds only at dusk."}],
+  "batch": "B3"
+}

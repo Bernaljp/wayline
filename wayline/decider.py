@@ -122,11 +122,14 @@ IRREVERSIBLE = (
      r"|buy(?:s|ing)? (?:a |an |the |more )?(?:credits?|licen[cs]es?|subscriptions?|gpus?|instances?|api keys?|compute|time)"
      r"|paid (?:tier|plan|api|account)|credit card|rent(?:s|ing)? (?:a |an |the |more )?(?:gpus?|instances?|servers?|machines?)"
      r"|cloud (?:instances?|credits))\b"),
+    # Decision 17 (ticket 91): changing a goal's measure; adding, answering, parking, dropping, reframing, and reopening an
+    # objective left the list, so "drop the goal" and "a new goal" are not caught.
     ("goal",
-     r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|redefin(?:e|es|ing)|relax(?:es|ing)?|lower(?:s|ing)?|rais(?:e|es|ing)|drop(?:s|ping)?"
+     r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|redefin(?:e|es|ing)|relax(?:es|ing)?|lower(?:s|ing)?|rais(?:e|es|ing)"
      r"|swap(?:s|ping)?|revis(?:e|es|ing)|rewrit(?:e|es|ing)|switch(?:es|ing)?|set(?:s|ting)?|mov(?:e|es|ing)|loosen(?:s|ing)?|tighten(?:s|ing)?)"
-     r" (?:the |our |its |a |an )?(?:new )?(?:goal|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
-     r"|the goal becomes|a new goal|a new target)\b"),
+     r" (?:the |our |its |a |an )?(?:new )?(?:goal|measure|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
+     r"|drop(?:s|ping)? (?:the |our |its |a |an )?(?:goal's )?(?:measure|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
+     r"|the goal becomes|a new target)\b"),
     ("data",
      r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|swap(?:s|ping)?|drop(?:s|ping)?|re-?split(?:s|ting)?|redefin(?:e|es|ing)|regenerat(?:e|es|ing)"
      r"|augment(?:s|ing)?|relabel(?:s|l?ing)?|mov(?:e|es|ing)|switch(?:es|ing)?|shrink(?:s|ing)?|subsampl(?:e|es|ing)|filter(?:s|ing)?|clean(?:s|ing)?)"
@@ -493,6 +496,15 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "the owner named the class human-only: answer `rebuild it` (or, for licensed software, `port to Octave` or `port to "
         "Python`) wherever a rebuild can work, else `leave it unverified`, which makes the result unverifiable and releases "
         "what its verification blocked. `I'll provide it` is the owner's alone, and an answer giving it is refused.",
+        "",
+        "An `Objective changes` decision (changes to the objectives a verifier upheld, decision 17) is yours to take in one "
+        "answer: `<n>: approve` or `<n>: decline` for each item you may take, separated by semicolons. You answer, park, and "
+        "drop objectives, never parking or dropping one the stopping rule names; you add, reframe, or reopen one only as the "
+        "objective line below says, and never reopen an answered or dropped one. An item marked the owner's to take is not "
+        "yours: leave it out, and it waits for the owner. An add you approve says why it is within the radius: "
+        "`(prerequisite)` for one an open objective's own work raises, or under `exploratory`, once a wave, `(new "
+        "question)`. When you approve a drop, place each of the dropped objective's concerns in the same answer: `K3: tie "
+        "it to O<n>`, `K3: for the order`, or `K3: decline: <the reason>`.",
         "",
         "Moving the project's environment (`wayline switch --environment`: the shared tools, a conda prefix, a venv, or a "
         "container) is the owner's word alone, and no decision class names it: never answer with a move, and never set it.",

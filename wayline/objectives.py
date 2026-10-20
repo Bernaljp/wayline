@@ -33,14 +33,15 @@ from typing import Optional
 from wayline.cli import parse_args
 from wayline.gates import TIMEOUT_EXIT_CODE, run_shell
 from wayline.jsonschema import ValidationError, load_schema, validate
-from wayline.ledger import K_BY, K_ID, K_MEASURE, K_STATUS, K_TEXT, OBJECTIVE, PAYLOAD_ENUMS, Ledger
+from wayline.ledger import K_BY, K_ID, K_MEASURE, K_PROPOSAL, K_STATUS, K_TEXT, OBJECTIVE, PAYLOAD_ENUMS, Ledger
 from wayline.project import ProjectError, find_project, policy_for
 
 __all__ = [
     "OBJECTIVES_JSON", "OBJECTIVES_MD", "STATUSES", "BY", "ARTIFACT", "ObjectiveError", "MeasureCheck", "metric_value",
     "run_on_sample", "normalize_measure", "check_measure", "read_objectives", "open_objectives", "add_objective",
     "add_measure", "change_objective", "render_objectives", "describe_measure", "objective_command", "ticket_goal", "served",
-    "OPEN", "is_open", "named", "check_named", "check_goal", "ObjectivesUnreadable",
+    "OPEN", "is_open", "named", "check_named", "check_goal", "ObjectivesUnreadable", "reframe_objective", "following",
+    "set_aside",
 ]
 
 OBJECTIVES_JSON = "objectives.json"
@@ -305,18 +306,26 @@ def _next_id(objectives):
     return "O%d" % (max(numbers, default=0) + 1)
 
 
-def _write(ledger, objectives, objective, by):
-    """Write the record, journal the change to `objective`, and render OBJECTIVES.md; the caller holds the lock."""
+def _write(ledger, objectives, objective, by, proposal=None):
+    """Write the record, journal the change to `objective`, and render OBJECTIVES.md; the caller holds the lock.
+
+    `proposal` is the objective proposal an approved change applies (ticket 91), absent on the owner's word.
+    """
     if by not in BY:
         raise ObjectiveError("an objective is changed by one of %s, got %r" % (", ".join(BY), by))
     ledger.write_json(OBJECTIVES_JSON, {"objectives": objectives}, schema="objectives")
     measure = objective["measure"]
-    ledger.append_event(OBJECTIVE, {K_ID: objective["id"], K_TEXT: objective["text"], K_STATUS: objective["status"],
-                                    K_MEASURE: measure["metric"] if measure else None, K_BY: by})
+    payload = {K_ID: objective["id"], K_TEXT: objective["text"], K_STATUS: objective["status"],
+               K_MEASURE: measure["metric"] if measure else None, K_BY: by}
+    if proposal is not None:
+        payload[K_PROPOSAL] = proposal
+    ledger.append_event(OBJECTIVE, payload)
     ledger.write_markdown(OBJECTIVES_MD, render_objectives(objectives))
+    from wayline import specify  # the specify module reads this one
+    specify.render_set_aside(ledger.project)  # the claims set aside by any change, whoever made it (ticket 91)
 
 
-def add_objective(project, text, measure=None, sample=None, by="owner", timeout_s=None, status=OPEN, answer=None):
+def add_objective(project, text, measure=None, sample=None, by="owner", timeout_s=None, status=OPEN, answer=None, proposal=None):
     """`wayline objective add`: record an open objective, a goal when its measure printed the metric on the sample.
 
     Returns `(objective, check)`: `check` is None without a measure, else the `MeasureCheck`. A measure whose
@@ -326,7 +335,8 @@ def add_objective(project, text, measure=None, sample=None, by="owner", timeout_
     the lock is taken, since it may take as long as the acceptance timeout.
 
     `status` is `open`, or `parked` for an objective the owner takes up only later (the grill's first tier,
-    ticket 80), with `answer` saying why; one `objective` event records it either way.
+    ticket 80), with `answer` saying why; one `objective` event records it either way. `proposal` is the objective
+    proposal an approved `add` applies (ticket 91).
     """
     text = " ".join(str(text or "").split())
     if not text:
@@ -342,7 +352,7 @@ def add_objective(project, text, measure=None, sample=None, by="owner", timeout_
         objective = {"id": _next_id(objectives), "text": text, "measure": check.measure if check and check.accepted else None,
                      "status": status, "answer": None if status == OPEN else answer, "evidence": [], "reframed_as": None}
         objectives.append(objective)
-        _write(ledger, objectives, objective, by)
+        _write(ledger, objectives, objective, by, proposal)
     return objective, check
 
 
@@ -379,10 +389,12 @@ def add_measure(project, identifier, measure, sample=None, by="owner", timeout_s
     return objective, check
 
 
-def change_objective(project, identifier, status, by, answer=None, evidence=None, reframed_as=None):
+def change_objective(project, identifier, status, by, answer=None, evidence=None, reframed_as=None, proposal=None):
     """Move an objective to `status` (with its answer, evidence, and successor), journal it, and render; returns it.
 
-    Nothing is deleted: a dropped objective keeps its id, so no later objective takes it.
+    Nothing is deleted: a dropped objective keeps its id, so no later objective takes it, and an answered or dropped
+    objective reopened keeps its old answer under `superseded` (ticket 91). `proposal` is the objective proposal an
+    approved change applies, absent on the owner's word.
     """
     if status not in STATUSES:
         raise ObjectiveError("an objective's status is one of %s, got %r" % (", ".join(STATUSES), status))
@@ -396,11 +408,66 @@ def change_objective(project, identifier, status, by, answer=None, evidence=None
             if reframed_as == identifier:
                 raise ObjectiveError("%s cannot be reframed as itself" % identifier)
             _find(objectives, reframed_as)
+        if status == OPEN and objective.get("status") in ("answered", "dropped"):
+            objective["superseded"] = list(objective.get("superseded") or []) + [
+                {"status": objective["status"], "answer": objective.get("answer"), "evidence": list(objective.get("evidence") or [])}]
+            objective["evidence"] = []
         objective.update(status=status, answer=None if status == OPEN else answer, reframed_as=reframed_as if status == "reframed" else None)
         if evidence is not None:
             objective["evidence"] = list(evidence)
-        _write(ledger, objectives, objective, by)
+        _write(ledger, objectives, objective, by, proposal)
     return objective
+
+
+def reframe_objective(project, identifier, question, by, reason=None, proposal=None):
+    """Reframe an open objective as a successor question; returns `(old, successor)`, both journaled.
+
+    The successor is a new objective, open, with the next id and the measure the old one had (a reframe asks the
+    question again, and changing a goal's measure is the owner's alone, decision 4); the old one is `reframed` with
+    `reframed_as` naming it and `reason` as its answer.
+    """
+    question = " ".join(str(question or "").split())
+    if not question:
+        raise ObjectiveError("a reframe names the question that replaces the objective, and none was given")
+    ledger = Ledger(project)
+    with ledger.lock():
+        objectives = read_objectives(project)
+        old = _find(objectives, identifier)
+        if not is_open(old):
+            raise ObjectiveError("%s is %s; only an open objective is reframed" % (identifier, old.get("status")))
+        successor = {"id": _next_id(objectives), "text": question, "measure": old.get("measure"), "status": OPEN,
+                     "answer": None, "evidence": [], "reframed_as": None}
+        objectives.append(successor)
+        _write(ledger, objectives, successor, by, proposal)
+        old.update(status="reframed", answer=reason or "reframed as %s" % successor["id"], reframed_as=successor["id"])
+        _write(ledger, objectives, old, by, proposal)
+    return old, successor
+
+
+def following(identifier, objectives):
+    """The objective that asks `identifier`'s question now: itself, or its successor through every reframe."""
+    held = {objective.get("id"): objective for objective in objectives or ()}
+    seen = set()
+    while identifier in held and held[identifier].get("status") == "reframed" and held[identifier].get("reframed_as") \
+            and identifier not in seen:
+        seen.add(identifier)
+        identifier = held[identifier]["reframed_as"]
+    return identifier
+
+
+def set_aside(claims, objectives):
+    """`{claim id: the objectives it is tied to}` for every claim set aside: tied to objectives, each closed (decision 17).
+
+    A claim follows its objectives through their reframes, so a reframed objective's successor answers it still. A claim
+    no objective asked for is never set aside; one tied to an objective that reopens comes back.
+    """
+    held = {objective.get("id"): objective for objective in objectives or ()}
+    aside = {}
+    for claim in claims or ():
+        tied = [following(identifier, objectives) for identifier in claim.get("objectives") or []]
+        if tied and all(identifier in held and not is_open(held[identifier]) for identifier in tied):
+            aside[claim["id"]] = list(dict.fromkeys(tied))
+    return aside
 
 
 def render_objectives(objectives):
@@ -422,6 +489,8 @@ def render_objectives(objectives):
                   "- Evidence: %s" % (", ".join("`%s`" % locator for locator in objective.get("evidence") or []) or "none")]
         if objective.get("reframed_as"):
             lines.append("- Reframed as: %s" % objective["reframed_as"])
+        for earlier in objective.get("superseded") or []:
+            lines.append("- Superseded answer (%s before it was reopened): %s" % (earlier["status"], earlier.get("answer") or "none"))
         lines.append("")
     return "\n".join(lines)
 
@@ -433,7 +502,8 @@ def objective_command(args):
     parser = argparse.ArgumentParser(
         prog="wayline objective",
         description="record an objective, a question the research answers; with --measure and --sample, a goal, once its "
-                    "eval_command printed the metric on the sample artifact")
+                    "eval_command printed the metric on the sample artifact; or change one on the owner's word: answer, "
+                    "park, drop, reframe, or reopen it, with no proposal and no verdict (decision 17)")
     subparsers = parser.add_subparsers(dest="action", required=True)
     add = subparsers.add_parser("add", help="record an open objective")
     add.add_argument("question", help="the question, in the owner's words")
@@ -441,9 +511,22 @@ def objective_command(args):
                                                        "held_out_split, eval_command, baseline, dataset_or_split, min_seeds")
     add.add_argument("--sample", help="the artifact the measure's eval_command is run on")
     add.add_argument("--project", help="the project; the active one by default")
+    for action, words in (("answer", "answer an open objective"), ("park", "park an open objective for later"),
+                          ("drop", "drop an open objective"), ("reframe", "reframe an open objective as a successor question"),
+                          ("reopen", "reopen a parked, answered, or dropped objective")):
+        verb = subparsers.add_parser(action, help=words)
+        verb.add_argument("objective", help="the objective, O1 onward")
+        if action == "answer":
+            verb.add_argument("answer", help="the answer, in the owner's words")
+        if action == "reframe":
+            verb.add_argument("successor", help="the question that replaces it")
+        verb.add_argument("--reason", help="why, kept as the objective's answer for a park or a drop")
+        verb.add_argument("--project", help="the project; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.action != "add":
+        return _owners_word(options)
     if options.sample and not options.measure:
         print("wayline objective: --sample is the artifact a measure is checked on; give --measure with it", file=sys.stderr)
         return 2
@@ -464,6 +547,38 @@ def objective_command(args):
         print("  a goal: %s (printed %s on %s)" % (describe_measure(objective["measure"]), _number(check.value), check.sample))
     else:
         print("  recorded as an objective without a measure, because the measure's command is not ready: %s" % check.reason)
+    return 0
+
+
+def _owners_word(options):
+    """`wayline objective answer|park|drop|reframe|reopen`: the owner's word, applied with all that follows (ticket 91)."""
+    from wayline import objective_changes  # the objective changes module reads this one
+
+    change = {"kind": options.action, "objective": options.objective, "reason": options.reason,
+              "successor": getattr(options, "successor", None), "answer": getattr(options, "answer", None),
+              "feasibility": None}
+    try:
+        project = find_project(options.project)
+        problem = objective_changes.check_proposal(change, read_objectives(project), owners_word=True)
+        if problem is not None:
+            raise ObjectiveError(problem)
+        report = objective_changes.apply_change(project, change, "owner")
+    except (ObjectiveError, objective_changes.ProposalError) as failure:
+        print("wayline objective: %s" % failure, file=sys.stderr)
+        return 2
+    except (ProjectError, OSError, ValidationError, ObjectivesUnreadable) as failure:
+        print("wayline objective: %s" % failure, file=sys.stderr)
+        return 1
+    found = named(read_objectives(project), report["objective"])
+    print("%s  %s  %s" % (found["id"], found["status"], found["text"]))
+    if report["successor"]:
+        print("  reframed as %s" % report["successor"])
+    if report["cancelled"]:
+        print("  ticket(s) %s parked: they served only closed objectives" % ", ".join(str(number) for number in report["cancelled"]))
+    if report["reopened"]:
+        print("  ticket(s) %s open again" % ", ".join(str(number) for number in report["reopened"]))
+    if report["passage"]:
+        print("  written in the Discussion as %s" % report["passage"])
     return 0
 
 

@@ -127,6 +127,16 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   open ticket, so a replay rebuilds it and the owner's answer lifts it.
 - The Type-B gate of decision 11 (ticket 32): a done ticket's verdicts are queued and drained
   later in the same wave, and the ticket is `accepted` when every one of them passed.
+- Drawings at rest points (decision 17; ticket 100, `wayline.drawings`). Before a run ends on an empty frontier, and
+  before it comes to rest on a decision ticket the owner answers under `checkpoints` (a checkpoint pause), code opens
+  one `drawing` ticket per result changed since its last drawing, and the run goes on until they are done. At an end
+  of the stopping rule or a budget the run goes on too, launching only its drawings, and ends with that reason once
+  none is owed. A drawing runs on the plotter's own tier (`opus medium`, `sonnet medium` while pacing steps Opus work
+  down), never on a rung, with the drawing's brief as its paper pack. Its acceptance in the worktree adds the drawing
+  check (the clean-room rerun and every plot's checks); a failing plot gets the one acceptance resume and is then left
+  out and listed; a drawing that still fails after its resume journals `ticket_failed` with `next: none` and keeps its
+  result's last accepted drawing: no tier up, no split, no ask. An accepted drawing writes `plots.json` and its record
+  at its close, and earns no verdict.
 
 The conductor never trusts the worker's own acceptance file. It runs the ticket's commands itself,
 three times, and the ticket is `done` only once they passed on `main`. Nor does it trust the
@@ -149,7 +159,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, gates, methods, notify, numbers, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, verification, worker
+from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, drawings, gates, methods, notify, numbers, objective_changes, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, verification, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -172,6 +182,7 @@ __all__ = [
 
 MAIN = "main"
 INTERACTIVE = "interactive"  # the autonomy under which a passage replacing an owner's is a notice (ticket 88)
+CHECKPOINTS = "checkpoints"  # the autonomy under which a run coming to rest on the owner is a checkpoint pause (ticket 100)
 RESEARCH = "research"
 WORKTREES = ".worktrees"
 BRANCH = "ticket/%s"
@@ -273,6 +284,9 @@ REVERT_MESSAGE = "ticket %d: discarded by keep-if-better\n\n" + REVERT_TRAILER
 # The steps of the escalation chain (decision 5; ticket 38), as `ticket_failed` names them in `next`.
 # A step is not a rung: a rung is a rung of the rung ladder, `policy.tiers` (decision 16).
 RESUME, TIER_UP, SPLIT, NEEDS_HUMAN = "resume", "tier_up", "split", "needs_human"
+# The step of a drawing that failed after its one resume (decision 17; ticket 100): none. Its result keeps its last
+# accepted drawing, with no tier up, split, or ask.
+NO_STEP = "none"
 # Why a `ticket_needs_human` was journaled, when the chain ran out on the ladder's top rung (decision 16).
 TOP_RUNG = "top_rung"
 # How `status`, the dashboard, and `REPORT.md` say that a ticket ended with nowhere left to climb.
@@ -819,11 +833,20 @@ class Conductor:
         self.dossier_inventory = None
         self.reporter = self._render_report
         self._integrated_now = False  # a ticket was integrated in this wave, so the general report renders at its end
+        # The end the stopping rule or a budget reached while drawings are still owed (ticket 100): the run goes on,
+        # launching only drawings, and ends with this reason once none is. The clean room's interpreter for a drawing's
+        # acceptance: the tools venv's by default; a test hands in its own.
+        self._resting = self._said_resting = None
+        self.drawing_python = drawings.TOOLS_PYTHON
+        self._closed_without_step = False  # a drawing closed failed in this wave: progress, as a closed ticket is
+        self._said_no_plotting = False  # the rest point that drew nothing for want of the tools venv's matplotlib was said
         self._replanned = None
         self._objectives_trouble = None
         self._harness_trouble = None
         self._objective_replans = set()
         self._answer_stamps = {}
+        self._answers_tried = set()  # the objectives the answering verifier was launched on in this run (ticket 91)
+        self._reopen_replans = set()  # the owner's reopens of answered or dropped objectives a cut was launched for (ticket 91)
         # The evolve loop (ticket 45, decision 12). A policy nobody handed in is read again every wave, so a local change
         # to `harness.json` is used from the next one. `evolver(fall_back)` is the evolver's session over the pending
         # feedback, `prover` runs a change's fixture on the old and the new subject, and `global_checks` runs the harness
@@ -877,15 +900,24 @@ class Conductor:
         self._poll(result)
         self._place_jobs(result)
         self._software(result)
+        self._objective_changes()
         self._concerns()
         self._verifications()
         self._pace()
-        if not self._rule_ends(result) and not self._holds_launches() and not self._stops_at_stall(result):
+        if self._resting_on_rule_end(result):
+            # An end of the rule or a budget holds and drawings are owed: they alone run before the run ends (ticket 100).
+            if not self._holds_launches():
+                self._escalate(result, only=self._drawing_ids())
+                picks = self._picks(self._drawing_graph())
+                if picks:
+                    self._start(picks, result)
+        elif not result.ended and not self._holds_launches() and not self._stops_at_stall(result):
             self._escalate(result)
             self._replan(result)
             self._decide(result)
             self._read_cited()
             self._replan_objectives(result)
+            self._answer_objectives(result)
             self._evolve(result)
             self._fold_answered_refusals()  # the decider, the planner, and the evolver answer in this wave
             picks = self._picks(self._graph())
@@ -1099,9 +1131,11 @@ class Conductor:
 
     def _journal_wave(self, result):
         """The `wave` event of a settling wave, which is what lets a restart rebuild the stall counter."""
+        closed, self._closed_without_step = self._closed_without_step, False
         if result.outcomes:
+            # A drawing that failed with no step closed its ticket, which is progress as much as one done (ticket 100).
             self.ledger.append_event(WAVE, {"number": self.number, "outcomes": result.outcomes,
-                                            "progressed": bool(result.done or result.findings or result.jobs_finished or result.kept)})
+                                            "progressed": bool(result.done or result.findings or result.jobs_finished or result.kept or closed)})
 
     def _end(self, result):
         """`run_ended`: once a stop has been applied, or once the frontier is empty, nothing runs, and no verdict is queued.
@@ -1143,6 +1177,8 @@ class Conductor:
         # tool nobody is installing keeps none going either: it waits on its software decision (ticket 82).
         if not [entry for entry in tickets.frontier(graph)
                 if not schedule.awaits_owner(entry, autonomy, decider) and not self._needs_tools(entry)] and not running:
+            if not self._decider_takes_the_frontier(autonomy, decider) and self._draws_before_the_end(self._rest_point(autonomy, decider)):
+                return  # the changed results are drawn before the run ends or pauses (ticket 100)
             takes, notice = self._empty_frontier(autonomy, decider)
             if takes:
                 return  # the decider takes this empty frontier's tickets at the next wave
@@ -1192,6 +1228,53 @@ class Conductor:
             self.say("  the software step could not run: %s" % failure)
             self.software = software.Settled()
         self._tail()
+
+    def _objective_changes(self):
+        """Wave step 2's objective-changes part (decision 17; ticket 91): answers and marks applied, upheld proposals gathered.
+
+        Code alone: `objective_changes.settle` turns the answer to an "Objective changes" ticket into marks on its batch,
+        makes each approved change with all that follows (tickets parked, claims set aside, Discussion passages), opens or
+        joins the one open ticket for the upheld proposals, and keeps what it pauses exactly what its open items pause. It
+        runs before the concerns' part, so a dropped objective's concerns placed in the same answer are not asked about on
+        their own. An unreadable record is said, and fails no wave.
+        """
+        try:
+            objective_changes.settle(self.project, notify=self.notify, say=self.say)
+        except (objective_changes.ProposalError, objectives.ObjectivesUnreadable, tickets.TicketError, ValueError, OSError) as failure:
+            self.say("  the objective changes could not be settled: %s" % failure)
+        self._tail()
+
+    def _answer_objectives(self, result):
+        """The answering verifier (decision 17; ticket 91): one fresh `opus high` session per objective owed an answer as it stands.
+
+        Owed when an empty frontier's ticket was answered "answer it as it stands", or an `answer` proposal was approved
+        with no verifier's text. Model work, so it waits while pacing or the hold allows none; one that could not answer is
+        said and the owner told, and is not tried again in this run.
+        """
+        try:
+            owed = [entry for entry in objective_changes.owed_answers(self.project) if entry[0] not in self._answers_tried]
+        except (objectives.ObjectivesUnreadable, tickets.TicketError, ValueError, OSError) as failure:
+            self.say("  the objectives owed an answer could not be read: %s" % failure)
+            return
+        for identifier, by, why, proposal_id in owed:
+            if self._holds_launches() or self.action != schedule.NORMAL:
+                return
+            self._answers_tried.add(identifier)
+            try:
+                report = objective_changes.answer_as_it_stands(self.project, identifier, by, why, proposal_id,
+                                                               harness_root=self.harness_root, policy=self.policy)
+            except gates.UsageLimited as refused:
+                self._answers_tried.discard(identifier)
+                self._pause(refused.limit, "the answering verifier on %s" % identifier)
+                return
+            except (objective_changes.ProposalError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
+                words = "%s could not be answered as it stands: %s" % (identifier, failure)
+                self.say("  " + words)
+                self.notify(decisions.DECISION, "%s: %s; answer it with wayline objective answer %s \"<answer>\"" % (
+                    self.project.name, words, identifier), self.project, None)
+                continue
+            self._tail()
+            self.say("  %s answered as it stands by a fresh verifier; the answer is in the Discussion as %s" % (identifier, report["passage"]))
 
     def _concerns(self):
         """Wave step 2's concerns part (decision 17; ticket 96): marks taken, objectives followed, a decision per concern to sort.
@@ -1320,13 +1403,23 @@ class Conductor:
             return rung
         return stepped_down(self.policy, rung)
 
-    def _tier_ran(self, rung, difficulty, budget=None):
+    def _drawing_tier(self, cheap=False, model=None, effort=None):
+        """A drawing's tier, `(Tier, stepped_from)`: the plotter's, stepped down while pacing steps Opus work down (ticket 100)."""
+        plotter = drawings.tier(self.policy, cheap=cheap, model=model, effort=effort)
+        family = pacing.family(plotter.model)
+        return Tier(model=plotter.model, effort=plotter.effort, max_turns=plotter.max_turns, max_minutes=plotter.max_minutes,
+                    context_chars=_context_cap(self.policy, family), family=family), plotter.stepped_from
+
+    def _tier_ran(self, rung, difficulty, budget=None, ticket=None, replayed=None):
         """The tier of a session already under way: the rung `ticket_launched` named, else its difficulty's.
 
         A session is resumed and re-adopted on the model it was launched on, and a launch stepped down
         one rung at `cheap_at` (decision 16) ran below its level's rung. A journal written before the
-        rung ladder carries no rung, and a rung this policy no longer has is read as its level's.
+        rung ladder carries no rung, and a rung this policy no longer has is read as its level's. A drawing
+        (`ticket`) runs on the plotter's tier, the model and effort its launch (`replayed`) named.
         """
+        if ticket is not None and _is_drawing(ticket):
+            return self._drawing_tier(model=getattr(replayed, "model", None), effort=getattr(replayed, "effort", None))[0]
         if rung is not None:
             try:
                 return rung_tier(self.policy, rung, budget)
@@ -1535,6 +1628,21 @@ class Conductor:
         records = self._objective_records() or []
         still = [record["id"] for record in records if objectives.is_open(record)]
         waiting = stopping.waited(rule, records)
+        try:
+            folded = objective_changes.waiting_batches(self.project) if waiting else {}
+        except (objectives.ObjectivesUnreadable, ValueError, OSError):
+            folded = {}
+        # An "Objective changes" ticket still waiting is the ask about the objectives it names (decision 17; ticket 91).
+        batched = sorted({folded[record["id"]] for record in waiting if record["id"] in folded})
+        waiting = [record for record in waiting if record["id"] not in folded]
+        if batched and not waiting:
+            takable = {fields["id"] for fields in tickets.read_tickets(self.project)
+                       if fields["status"] == "open" and not fields.get("human_only")}
+            if set(batched) & takable and autonomy == schedule.AUTONOMOUS and decider_ready:
+                return True, None
+            return False, self._frontier_notice(
+                "the frontier is empty and the stopping rule %s waits on objectives the Objective changes ticket(s) %s settle, "
+                "which wait for the owner" % (stopping.describe_rule(rule), ", ".join(str(identifier) for identifier in batched)))
         if rule == stopping.FRONTIER or not waiting:
             if not still:
                 return False, None
@@ -1550,7 +1658,7 @@ class Conductor:
         self._tail()
         for identifier in opened:
             self.say("  the frontier is empty with an objective the stopping rule waits on: decision ticket %d asks what to do" % identifier)
-        asked = opened + standing
+        asked = opened + standing + batched  # a waiting Objective changes ticket asks about the objectives it names
         # The decider takes an open one that is not human-only: one it was refused is the owner's now, and one it could not
         # answer (`needs_human`) waits for a person, so neither keeps the run going.
         takable = {fields["id"] for fields in tickets.read_tickets(self.project)
@@ -1611,33 +1719,64 @@ class Conductor:
                     self._answer_stamps[payload["ticket"]] = event.get("ts") or ""
         return {identifier: fields for identifier, fields in found.items() if self._answer_stamps.get(identifier, "") > cut_at}
 
+    def _owed_reopen_replans(self):
+        """The owner's reopens of answered or dropped objectives the planner still owes fresh tickets for (ticket 91).
+
+        Owed until this run cut for it, or until a revise was written after the reopen (`plan.json`'s `cut_at`), while the
+        objective is still open.
+        """
+        from wayline import plan
+        events, _ = self.ledger.read_events()
+        found = [(identifier, ts) for identifier, ts in objective_changes.reopened(events) if (identifier, ts) not in self._reopen_replans]
+        if not found:
+            return []
+        record = plan.read_plan(self.project) or {}
+        cut_at = str(record.get("cut_at") or "") if record.get("cut") == "revise" else ""
+        records = self._objective_records() or []
+        return [(identifier, ts) for identifier, ts in found
+                if (ts or "") > cut_at and objectives.is_open(objectives.named(records, identifier))]
+
     def _replan_objectives(self, result):
-        """The planner's re-cut for the objectives an empty frontier's tickets were answered `replan for it` about (ticket 87).
+        """The planner's re-cut for the objectives an empty frontier's tickets were answered `replan for it` about (ticket 87),
+        and for the answered or dropped objectives the owner reopened, which get fresh tickets (decision 17; ticket 91).
 
         One cut covers every objective owed, a revise that cuts new tickets serving each within the spec; it waits,
         like any model work, while pacing or the hold allows none.
         """
         owed = self._owed_objective_replans()
-        if not owed or self._holds_launches() or self.action != schedule.NORMAL:
+        reopened = self._owed_reopen_replans()
+        if (not owed and not reopened) or self._holds_launches() or self.action != schedule.NORMAL:
             return
         from wayline import plan
         named = sorted({stopping.frontier_objective(fields.get("origin")) for fields in owed.values()})
+        again = sorted({identifier for identifier, _ in reopened} - set(named))
         records = self._objective_records() or []
-        about = "; ".join("%s, \"%s\"" % (identifier, (objectives.named(records, identifier) or {}).get("text", "")) for identifier in named)
-        change = ("Replan for the open objective(s) %s: the frontier emptied with them open and the stopping rule waits on them. "
-                  "Cut new tickets that serve them within the spec; work already done stands." % about)
+
+        def about(identifiers):
+            return "; ".join("%s, \"%s\"" % (identifier, (objectives.named(records, identifier) or {}).get("text", "")) for identifier in identifiers)
+        parts = []
+        if named:
+            parts.append("Replan for the open objective(s) %s: the frontier emptied with them open and the stopping rule waits on "
+                         "them." % about(named))
+        if again:
+            parts.append("The owner reopened the objective(s) %s, which were answered or dropped: their old answers are kept as "
+                         "superseded." % about(again))
+        change = " ".join(parts) + " Cut new tickets that serve them within the spec; work already done stands."
+        named = sorted(set(named) | set(again))
         outcome = self._launch_cut(plan.Cut("revise", change=change), "the planner's replan for %s" % ", ".join(named))
         if outcome is None:
             return
         self._objective_replans.update(owed)
+        self._reopen_replans.update(reopened)
         self._tail()
         if isinstance(outcome, BaseException):
             words = "the planner could not replan for %s: %s" % (", ".join(named), outcome)
             self.say("  " + words)
             # Not tried again every wave: the owner is told, and answers again (wayline rerun on the ticket) once it is mended.
             # A notice about the decision answered, never a run's end, which has its one notice (ticket 89).
-            self.notify(decisions.DECISION, "%s: %s; wayline rerun %s asks again" % (
-                self.project.name, words, " / ".join(str(identifier) for identifier in sorted(owed))), self.project, None)
+            self.notify(decisions.DECISION, "%s: %s; %s" % (
+                self.project.name, words, "wayline rerun %s asks again" % " / ".join(str(identifier) for identifier in sorted(owed))
+                if owed else "wayline plan --replan cuts the fresh tickets once it is mended"), self.project, None)
             return
         result.escalated.append((None, REPLAN))
         self.say("  the planner replanned for %s: ticket(s) %s written" % (
@@ -1943,7 +2082,8 @@ class Conductor:
                                            self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung,
                                            no_diff=identifier in self.view.integrated_empty,
                                            code_rule=methods.read_code_rule(worker.session_dir(self.project, identifier, launched.number)),
-                                           inherited=self._inherited_items(identifier, launched.number))
+                                           inherited=self._inherited_items(identifier, launched.number),
+                                           objectives=objective_changes.awaiting(self.project, identifier))
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -1959,7 +2099,7 @@ class Conductor:
         # The difficulty it launched at: a raise journaled since does not move an attempt already under way.
         attempt.difficulty = replayed.difficulty if replayed.difficulty is not None else entry.get("difficulty", attempt.ticket["difficulty"])
         # The rung it launched on, which a step down at `cheap_at` (decision 16) may have put below its level's.
-        attempt.tier = self._tier_ran(replayed.rung, attempt.difficulty, attempt.ticket.get("budget"))
+        attempt.tier = self._tier_ran(replayed.rung, attempt.difficulty, attempt.ticket.get("budget"), attempt.ticket, replayed)
         if replayed.fallback_from:
             # Its session runs on Opus and is resumed there, whatever the hold and the consent say now.
             attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), replayed.fallback_from
@@ -2202,9 +2342,14 @@ class Conductor:
         # and a tier up has moved the second without moving the first (decision 16).
         attempt.difficulty = entry.get("difficulty", attempt.ticket["difficulty"])
         rung = self._effective_rung(attempt.ticket)
-        running = self._launch_rung(attempt.id, rung)
-        attempt.stepped_from = rung_tier(self.policy, rung, attempt.ticket.get("budget")).label if running != rung else None
-        attempt.tier = rung_tier(self.policy, running, attempt.ticket.get("budget"))
+        if _is_drawing(attempt.ticket):
+            # A drawing runs on the plotter's own tier, never on a rung (decision 17; ticket 100).
+            attempt.tier, attempt.stepped_from = self._drawing_tier(cheap=schedule.steps_down(self.action))
+            running = rung
+        else:
+            running = self._launch_rung(attempt.id, rung)
+            attempt.stepped_from = rung_tier(self.policy, rung, attempt.ticket.get("budget")).label if running != rung else None
+            attempt.tier = rung_tier(self.policy, running, attempt.ticket.get("budget"))
         if attempt.tier.family == pacing.FABLE and self._falls_back():
             attempt.fallback_from, attempt.tier = attempt.tier.label, fallback_tier(self.policy, attempt.tier)
         self._add_worktree(attempt)
@@ -2213,7 +2358,7 @@ class Conductor:
         attempt.prompt = self._prompt(attempt)
         attempt.request = self._request(attempt, attempt.prompt)
         own = attempt.ticket.get("pinned_difficulty") or attempt.ticket["difficulty"]
-        climbed = rung != rung_of(self.policy, attempt.difficulty)
+        climbed = rung != rung_of(self.policy, attempt.difficulty) and not _is_drawing(attempt.ticket)
         self.say("wave %d: ticket %d %s (%s, %s, attempt %d)%s%s%s%s" % (
             self.number, attempt.id, attempt.ticket["title"], attempt.role.name,
             attempt.tier.label, attempt.number,
@@ -2242,6 +2387,9 @@ class Conductor:
         context cap."""
         from wayline import outline  # the outline reads every part of the ledger
         cap = attempt.tier.context_chars
+        if _is_drawing(attempt.ticket):
+            # A drawing's brief, rendered by code at each launch (ticket 100): the owner's latest marks and notes are in it.
+            return drawings.brief(self.project, attempt.ticket, self.policy)
         parts = [sections.pack_text(self.ledger, sections.declared(attempt.ticket), cap)]
         served = objectives.served(attempt.ticket)
         for build in (lambda left: verification.pack_text(self.ledger, attempt.ticket, left),
@@ -2865,6 +3013,12 @@ class Conductor:
             if not found:
                 return False
             reason, words = stopping.BUDGET_SPENT, stopping.describe_spent(found)
+        if self._draws_before_the_end(drawings.RUN_END):
+            # The rest point of a run end (ticket 100): the changed results are drawn first, and the run ends after them.
+            if self._said_resting != reason:
+                self.say("  %s; the run ends once its drawings are done" % words)
+            self._resting = self._said_resting = reason
+            return False
         self.ledger.append_event(RUN_ENDED, {"reason": reason})
         result.ended, result.reason = True, reason
         words = "%s; the run ended (%s)" % (words, reason)
@@ -2874,6 +3028,93 @@ class Conductor:
             self.say("  ticket(s) %s still have a worker running; it finishes on its own and the next run re-adopts it"
                      % ", ".join(str(identifier) for identifier in left))
         return True  # the end notice follows the wave (`_end_notice`)
+
+    # --- drawings at rest points (decision 17; ticket 100) ---
+
+    def _resting_on_rule_end(self, result):
+        """Whether this wave runs only the drawings owed before an end of the rule or a budget: `_rule_ends` decides."""
+        self._resting = None
+        if self._rule_ends(result):
+            return False
+        return self._resting is not None
+
+    def _drawing_ids(self):
+        return {fields["id"] for fields in tickets.read_tickets(self.project) if _is_drawing(fields)}
+
+    def _drawing_graph(self):
+        """The graph with only its drawing tickets and what runs: what a wave resting on an end launches from."""
+        graph = self._graph()
+        graph["tickets"] = [entry for entry in graph["tickets"] if entry.get("kind") == drawings.KIND or entry["status"] == "running"]
+        return graph
+
+    def _drawings_owed(self):
+        """The drawing tickets this run still finishes: running, in flight, failed and waiting on their resume, or open
+        on the frontier. An open one a decision holds off the frontier (one blocking all) waits for the owner's answer
+        and keeps no run going, or the run would neither end nor pause."""
+        frontier = {entry["id"] for entry in tickets.frontier(self._graph())}
+        owed = []
+        for fields in tickets.read_tickets(self.project):
+            if not _is_drawing(fields):
+                continue
+            known = self.view.tickets.get(fields["id"])
+            if fields["status"] == "running" or fields["id"] in self.flight \
+                    or (fields["status"] == "open" and fields["id"] in frontier) \
+                    or (fields["status"] == "failed" and known is not None and known.step == RESUME):
+                owed.append(fields["id"])
+        return owed
+
+    def _plotting_python(self):
+        """The interpreter a drawing is drawn and reran in: the tools venv's (`matplotlib` in `tools.json`), or a test's."""
+        if self.drawing_python is drawings.TOOLS_PYTHON:
+            from wayline import drawing_checks
+            return drawing_checks.interpreter()
+        return self.drawing_python
+
+    def _draws_before_the_end(self, rest):
+        """At a rest point, open the drawings of every changed result; whether any drawing is owed now (ticket 100).
+
+        A drawing is drawn and accepted in the tools venv's Python, so with no `matplotlib` recorded none is opened, and
+        that is said once. A drawing that fails to open is said and passed over: the rest point is no reason to hold the
+        run's end.
+        """
+        opened = []
+        if self._plotting_python() is None:
+            if not self._said_no_plotting:
+                self.say("  the results are not drawn at this rest point: the tools venv records no matplotlib "
+                         "(wayline tools install), and a drawing is drawn and rerun there")
+                self._said_no_plotting = True
+        else:
+            try:
+                opened = drawings.open_drawings(self.project, rest)
+            except (drawings.DrawingError, tickets.TicketError, ValueError, OSError) as failure:
+                self.say("  the drawings of this rest point could not be opened: %s" % failure)
+        if opened:
+            self._tail()
+            self.say("  a rest point (%s): drawing ticket(s) %s opened" % (rest, ", ".join(str(identifier) for identifier in opened)))
+        return bool(self._drawings_owed())
+
+    def _decider_takes_the_frontier(self, autonomy, decider):
+        """Whether the decider will take this empty frontier's asks and the run go on: then it is no rest point (ticket 100).
+
+        Under `autonomous` with a decider, an objective the stopping rule waits on is asked about (`_empty_frontier`), and
+        the decider answers in the run; the results are drawn when the run truly comes to rest.
+        """
+        if autonomy != schedule.AUTONOMOUS or not decider:
+            return False
+        harness = self._harness_for_rule()
+        if harness is None:
+            return False
+        rule = stopping.rule_of(harness)
+        return rule != stopping.FRONTIER and bool(stopping.waited(rule, self._objective_records() or []))
+
+    def _rest_point(self, autonomy, decider):
+        """The rest point an empty frontier is: a checkpoint pause under `checkpoints` when a decision ticket waits for
+        the owner, else a run end."""
+        if autonomy == CHECKPOINTS:
+            graph = self._graph()
+            if any(schedule.awaits_owner(entry, autonomy, decider) for entry in tickets.frontier(graph)):
+                return drawings.CHECKPOINT
+        return drawings.RUN_END
 
     def _place_jobs(self, result):
         """Launch as many pending jobs of the owed tickets as the free-slot rule places; journal why the others wait."""
@@ -2982,8 +3223,12 @@ class Conductor:
             carried = self._act_on(attempt)
             if carried not in ("done", RUNNING):
                 return carried
-            if not self._accept(attempt, "worktree", attempt.worktree)["pass"]:
-                self._fail(attempt, "the machine acceptance still failed in the worktree after one resume", self._step_from(attempt.id))
+            record = self._accept(attempt, "worktree", attempt.worktree)
+            if not record["pass"]:
+                reason = "the machine acceptance still failed in the worktree after one resume"
+                if _is_drawing(attempt.ticket):
+                    reason += ":\n" + _failures(record["results"])  # what the account lists of a drawing that failed (ticket 100)
+                self._fail(attempt, reason, self._step_from(attempt.id))
                 return "failed"
         else:
             if problem is not None:
@@ -3093,7 +3338,8 @@ class Conductor:
             return None
         refused = worker.not_served(envelope)
         if refused is not None:
-            held = self._hold_rung(attempt, refused)
+            # A drawing runs on the plotter's tier, no rung of the ladder, so there is no rung to hold: it fails with no step.
+            held = None if _is_drawing(attempt.ticket) else self._hold_rung(attempt, refused)
             self._fail(attempt, "model_not_served: the subscription does not serve %s, the model this launch named%s; "
                                 "the attempt is not retried and launches at that rung are held%s"
                        % (refused, "" if attempt.tier is None else " at rung %s" % attempt.tier.rung,
@@ -3799,7 +4045,7 @@ class Conductor:
         written = journal_written_answers(self.project, self.ledger)
         for identifier in sorted(written):
             self.say("  ticket %d: the answer written in its file is journaled as the owner's" % identifier)
-        placed = False
+        placed = changes = False
         for ticket in tickets.read_tickets(self.project):
             if ticket["kind"] != tickets.DECISION:
                 continue
@@ -3810,6 +4056,9 @@ class Conductor:
                 self._answered_ask(ticket["id"], known)
                 self._answered_frontier(ticket, known)
                 placed = placed or concerns.concern_of(ticket.get("origin")) is not None
+                changes = changes or objective_changes.is_changes_ticket(ticket.get("origin"))
+        if changes:
+            self._objective_changes()  # the answer changes the objectives now, so what it parks never launches
         if placed:
             self._concerns()  # the answer places its concern now, even when the run ends with this wave
 
@@ -3893,7 +4142,8 @@ class Conductor:
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
             results = (list(results) + self._sections_check(attempt) + self._lint_check(attempt) + self._numbers_check(attempt)
-                       + self._references_check(attempt) + self._methods_check(attempt) + self._verification_check(attempt))
+                       + self._references_check(attempt) + self._methods_check(attempt) + self._verification_check(attempt)
+                       + self._drawing_check(attempt))
             results = results + self._repeats_check(attempt, results)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
@@ -3917,6 +4167,23 @@ class Conductor:
         problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
         return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
                  "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
+
+    def _drawing_check(self, attempt):
+        """A drawing's acceptance (decision 17; ticket 100) as one result, or none for any other ticket.
+
+        The clean-room rerun and every plot's checks. Answering the one acceptance resume (`ACCEPTANCE_FAILED`), a plot
+        that still fails is left out and listed rather than failing the drawing; a problem of the drawing as a whole
+        fails it. What it found is kept beside the session (`drawing.json`), which the close records.
+        """
+        if not _is_drawing(attempt.ticket):
+            return []
+        try:
+            checked = drawings.check(self.project, attempt.ticket, attempt.worktree, final=attempt.stage == ACCEPTANCE_FAILED,
+                                     policy=self.policy, python=self._plotting_python())
+        except (drawings.DrawingError, ValueError, OSError) as failure:
+            return [{"cmd": drawings.DRAWING_CHECK, "exit_code": 1, "seconds": 0.0, "tail": "the drawing could not be checked: %s" % failure}]
+        self.ledger.write_json(self._attempt_dir(attempt).relative_to(self.ledger.research) / DRAWING_CHECKED, checked.to_json())
+        return [checked.acceptance_result()]
 
     def _verification_check(self, attempt):
         """A verification ticket's verdict (decision 17; ticket 97) as one acceptance result, or none for any other ticket.
@@ -4398,13 +4665,35 @@ class Conductor:
         if waits_for_owner is not None:
             self.say("  ticket %d done and not integrated: its branch waits for the owner" % attempt.id)
             return
-        self._queue_verdicts(attempt)
+        if _is_drawing(attempt.ticket):
+            self._accept_drawing(attempt)  # a drawing's acceptance is its checks: it earns no verdict (ticket 100)
+        else:
+            self._queue_verdicts(attempt)
         self._remove_worktree(attempt.id)
         self.say("  ticket %d done" % attempt.id)
+
+    def _accept_drawing(self, attempt):
+        """Record an accepted drawing from what its last acceptance in the worktree found (ticket 100)."""
+        try:
+            value = json.loads((self._attempt_dir(attempt) / DRAWING_CHECKED).read_text(encoding="utf-8"))
+            checked = drawings.Checked.from_json(value)
+        except (OSError, ValueError, AttributeError):
+            checked = drawings.check(self.project, attempt.ticket, self.project, final=True, policy=self.policy, python=self._plotting_python())
+        try:
+            record = drawings.accept(self.project, attempt.ticket, checked)
+        except (drawings.DrawingError, ValueError, OSError) as failure:
+            self.say("  ticket %d: its drawing could not be recorded: %s" % (attempt.id, failure))
+            return
+        drawn = [entry["id"] for entry in record["plots"] + record["tables"]]
+        self.say("  ticket %d: drawing %s-%d accepted: %s%s" % (
+            attempt.id, record["result"], record["version"], ", ".join(drawn) or "no plot",
+            "; left out %s" % ", ".join(entry["what"] for entry in record["left_out"]) if record["left_out"] else ""))
 
     def _file_findings(self, attempt, findings, negative, worktree):
         """File each finding whose provenance resolves, negative when `negative`; the notes on those refused."""
         refused = []
+        # An inference a drawing makes about the research is a finding under its result's heading (ticket 100).
+        drawn = drawings.result_heading(self.project, attempt.ticket) if _is_drawing(attempt.ticket) else None
         for index, finding in enumerate(findings, start=1):
             provenance = finding["provenance"]
             if negative:
@@ -4422,14 +4711,15 @@ class Conductor:
                 "negative": bool(negative or finding.get("negative", False)),
                 # A finding is a Results passage (decision 17): its heading (the ticket's title when it named none),
                 # the finding a scope-down narrows, and the ticket's objectives.
-                "heading": finding.get("heading") or attempt.ticket["title"],
-                # A discarded change displaces nothing: its findings stand beside what they would have replaced.
-                "replaces": None if negative else finding.get("replaces"),
+                "heading": drawn or finding.get("heading") or attempt.ticket["title"],
+                # A discarded change displaces nothing: its findings stand beside what they would have replaced. Nor does a
+                # drawing, which is read-only on the research (ticket 100).
+                "replaces": None if negative or drawn else finding.get("replaces"),
                 "objectives": list(attempt.ticket.get("objectives") or []),
                 # What this project's evidence says of the inherited claim it replaces (ticket 93).
-                "evidence": None if negative else finding.get("evidence"),
+                "evidence": None if negative or drawn else finding.get("evidence"),
                 # Why its evidence overrides the owner's passage it replaces (ticket 88).
-                "reason": None if negative else finding.get("reason"),
+                "reason": None if negative or drawn else finding.get("reason"),
             }
             if record["id"] in self.view.findings:
                 continue  # filed before a restart
@@ -4731,11 +5021,16 @@ class Conductor:
         hold the integration of the tickets behind it.
         """
         outputs = attempt.result.get("outputs_written") or attempt.ticket.get("outputs") or []
+        try:
+            waiting = objective_changes.take_result(self.project, attempt.id, attempt.number, attempt.result.get("objective_proposals"))
+        except (objective_changes.ProposalError, ValueError, OSError) as failure:
+            self.say("  ticket %d's objective proposals could not be journaled: %s" % (attempt.id, failure))
+            waiting = []
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
             tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
             no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty, code_rule=methods.code_rule(attempt.result),
-            inherited=self._inherited_items(attempt.id, attempt.number),
+            inherited=self._inherited_items(attempt.id, attempt.number), objectives=waiting,
         )
         if not asks:
             return
@@ -4830,6 +5125,7 @@ class Conductor:
                         ", falling back from %s" % verdict.fallback_from if verdict.fallback_from else ""))
             self._heard_verdict(verdict, "ticket %d's %s verdict" % (entry.ticket, ask.verdict_type))
             self._admit_verdict_proposals(entry.ticket, ask, verdict)
+            self._take_objective_judgments(entry, ask, verdict)
             if not verdict.passed:
                 self._reject(entry, verdict)
                 result.rejected.append(entry.ticket)
@@ -4875,6 +5171,34 @@ class Conductor:
                 self.say("  ticket %d's %s verdict proposed a ticket: admitted as ticket %d" % (ticket, ask.verdict_type, outcome["ticket"]))
             else:
                 self.say("  ticket %d's %s verdict proposed a ticket: parked (%s)" % (ticket, ask.verdict_type, outcome["reason"]))
+
+    def _take_objective_judgments(self, entry, ask, verdict):
+        """The verdict's judgment of the ticket's objective proposals, and the ones it made itself, journaled (ticket 91).
+
+        Gathered into the "Objective changes" ticket at once, so what an upheld change pauses is paused before the next pick.
+        """
+        if not ask.objective_proposals and not verdict.objective_proposals:
+            return
+        judgments = verdict.objective_judgments
+        if not verdict.passed:
+            # The attempt that proposed them is redone: its proposals rest on work the verdict rejected (ticket 91).
+            judgments = [{"proposal": number, "upheld": False, "why": "ticket %d's %s verdict failed, so the attempt that "
+                          "proposed it is redone" % (entry.ticket, ask.verdict_type)}
+                         for number in range(1, len(ask.objective_proposals or []) + 1)]
+        try:
+            if ask.objective_proposals:
+                objective_changes.take_judgments(self.project, ask.objective_proposals, judgments)
+            if verdict.objective_proposals:
+                objective_changes.take_verdict(self.project, entry.ticket, entry.attempt, ask.verdict_type, verdict.objective_proposals)
+        except (objective_changes.ProposalError, ValueError, OSError) as failure:
+            self.say("  ticket %d's %s verdict judged objective proposals that could not be recorded: %s"
+                     % (entry.ticket, ask.verdict_type, failure))
+            return
+        upheld = sum(1 for judgment in judgments if judgment.get("upheld"))
+        self.say("  ticket %d's %s verdict upheld %d of %d objective proposal(s)%s" % (
+            entry.ticket, ask.verdict_type, upheld, len(ask.objective_proposals or []),
+            " and proposed %d itself" % len(verdict.objective_proposals) if verdict.objective_proposals else ""))
+        self._objective_changes()
 
     def _accept_ticket(self, entry, verdict):
         """`done` to `accepted`: the one transition a passing quality verdict makes (decision 2)."""
@@ -4925,8 +5249,11 @@ class Conductor:
     def _fail(self, attempt, reason, next_step):
         """Journal the failure and leave the worktree and the branch for the attempt that follows.
 
-        A failure whose step is `needs_human` hands the ticket to a person at once (`_after_failure`).
+        A failure whose step is `needs_human` hands the ticket to a person at once (`_after_failure`). A drawing takes
+        its one resume and then no step (`NO_STEP`, ticket 100).
         """
+        if _is_drawing(attempt.ticket) and next_step != RESUME:
+            next_step = NO_STEP
         self.ledger.append_event(TICKET_FAILED, {
             "ticket": attempt.id, "attempt": attempt.number, "reason": reason, "next": next_step,
         }, ticket=attempt.id, session_id=attempt.session_id)
@@ -4937,6 +5264,10 @@ class Conductor:
             attempt.ticket = dict(attempt.ticket, status="needs_human")
 
     def _needs_human(self, attempt, question):
+        if _is_drawing(attempt.ticket):
+            # A drawing asks nobody (ticket 100): the plotter's question is its failure, which takes its resume or no step.
+            self._fail(attempt, "the plotter asked for a person: %s" % question, self._next_step(attempt))
+            return
         self.ledger.append_event(TICKET_NEEDS_HUMAN, {"ticket": attempt.id, "question": question},
                                  ticket=attempt.id)
         self._write_ticket(attempt, "needs_human", attempt.result)
@@ -5080,6 +5411,8 @@ class Conductor:
         ladder, known, fields = self._ladder(), self.view.tickets.get(identifier), self._fields(identifier)
         if fields is None:
             return NEEDS_HUMAN
+        if _is_drawing(fields):
+            return NO_STEP  # a drawing past its resume takes no step (ticket 100)
         taken = known.taken if known is not None else (lambda name: 0)
         order = self._step_order(identifier)
         if start in order:
@@ -5115,6 +5448,8 @@ class Conductor:
 
     def _climb(self, identifier, number, step, reason, note=(), session_id=None, said="failed"):
         """Journal `ticket_failed` with `step` for a ticket no attempt object is carrying, and act on it as `_fail` does."""
+        if step != RESUME and _is_drawing(self._fields(identifier)):
+            step = NO_STEP
         self.ledger.append_event(TICKET_FAILED, {"ticket": identifier, "attempt": number, "reason": reason, "next": step},
                                  ticket=identifier, session_id=session_id)
         self._set_status(identifier, "failed", list(note))
@@ -5129,6 +5464,17 @@ class Conductor:
         rung" (decision 16).
         """
         self._tail()
+        if step == NO_STEP:
+            # A drawing that still fails (ticket 100): its result keeps its last accepted drawing, listed in the account.
+            fields = self._fields(identifier)
+            try:
+                drawings.fail(self.project, fields, reason)
+            except (drawings.DrawingError, ValueError, OSError) as failure:
+                self.say("  ticket %d: its failed drawing could not be recorded: %s" % (identifier, failure))
+            self.say("  ticket %d: the drawing failed; its result keeps its last accepted drawing" % identifier)
+            self._closed_without_step = True
+            self._remove_worktree(identifier)  # no later attempt will use it: the drawing is closed for good
+            return
         self._adjust_difficulty(identifier)
         if step != NEEDS_HUMAN:
             return
@@ -5202,8 +5548,10 @@ class Conductor:
                 if known.step in (RESUME, TIER_UP, SPLIT) and identifier not in self.flight
                 and (found.get(identifier) or {}).get("status") == "failed"]
 
-    def _escalate(self, result):
+    def _escalate(self, result, only=None):
         """Take every failed ticket up the step its last `ticket_failed` names; model work, so only while launches are allowed.
+
+        `only` names the tickets to take, every one when None: while the run rests on an end, its drawings alone.
 
         A step that sends the ticket on to another (a split that fails goes to the tier up) is followed in the same
         wave, so the tier up it lands on launches now rather than a wave later. Each step is looked at once a wave
@@ -5211,7 +5559,8 @@ class Conductor:
         """
         seen = set()
         while True:
-            owed = [(identifier, self.view.tickets[identifier].step) for identifier in self._owed_steps()]
+            owed = [(identifier, self.view.tickets[identifier].step) for identifier in self._owed_steps()
+                    if only is None or identifier in only]
             owed = [item for item in owed if item not in seen]
             if not owed or self._holds_launches():
                 return
@@ -5264,7 +5613,7 @@ class Conductor:
         attempt = _Attempt(ticket, body, latest.number, self._worktree(identifier))
         attempt.role = worker.read_role(ticket["role"], self.harness_root, self.project)
         attempt.difficulty = latest.difficulty if latest.difficulty is not None else self._effective_difficulty(ticket)
-        attempt.tier = self._tier_ran(latest.rung, attempt.difficulty, ticket.get("budget"))
+        attempt.tier = self._tier_ran(latest.rung, attempt.difficulty, ticket.get("budget"), ticket, latest)
         if latest.fallback_from:
             attempt.tier, attempt.fallback_from = fallback_tier(self.policy, attempt.tier), latest.fallback_from
         attempt.session_id, attempt.session_journaled = latest.session_id, True
@@ -5732,6 +6081,15 @@ class Conductor:
 
 
 # --- the resume message and the touch set ---------------------------------------------------
+
+
+# What a drawing's last acceptance in its worktree found, kept beside its session for the close (ticket 100).
+DRAWING_CHECKED = "drawing_check.json"
+
+
+def _is_drawing(fields):
+    """Whether a ticket is a drawing, which code alone creates (decision 17; ticket 100)."""
+    return (fields or {}).get("kind") == drawings.KIND
 
 
 def _job_seconds(record):

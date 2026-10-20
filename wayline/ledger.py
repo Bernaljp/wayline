@@ -115,6 +115,8 @@ CONCERN = "concern"  # one concern recorded or changed in research/concerns.json
 REVIEWED = "reviewed"  # the owner let a decision made for them stand, or reversed it (decision 17; ticket 89)
 RESULT = "result"  # one result created at an acceptance, or merged or renamed on the owner's word (decision 17; ticket 90)
 VERIFICATION = "verification"  # one inherited result's standing recorded or changed in research/verifications.json (decision 17; ticket 97)
+DRAWING = "drawing"  # one drawing of a result opened at a rest point, accepted, or failed (decision 17; ticket 100)
+OBJECTIVE_PROPOSED = "objective_proposed"  # one objective proposal of a result or a verdict, or its judgment (decision 17; ticket 91)
 OUTLINE = "outline"  # one change the owner (or the decider, or code dropping a gone placement) made to research/outline.json (decision 17; ticket 104)
 
 # --- payload keys ----------------------------------------------------------------------------
@@ -273,6 +275,14 @@ K_RESULT = "result"  # `finding`: the result, R1 onward, the finding joined at i
 K_INTO = "into"  # `result`: the result a merged one went into
 K_ROUTE = "route"  # `verification`: the route of the verdict that changed it, reproduced, ported, reimplemented, or read
 K_RELEASED = "released"  # `verification`: the tickets an unverifiable result stopped blocking
+K_REST = "rest"  # `drawing`: the rest point it was opened at, run_end, checkpoint, or owner
+K_PLOTS = "plots"  # `drawing`: the plot and table ids an accepted drawing drew
+K_LEFT_OUT = "left_out"  # `drawing`: what acceptance left out, each with why
+K_RETIRED = "retired"  # `drawing`: the plots an accepted drawing retired
+K_PROPOSAL = "proposal"  # `objective`: the objective proposal a change applies, absent on the owner's word; `objective_proposed`: the proposal
+K_OBJECTIVE = "objective"  # `objective_proposed`: the objective it names, or the new question's text for an add
+K_UPHELD = "upheld"  # `objective_proposed`: true or false once judged, null while it waits for its verdict
+K_WHY = "why"  # `objective_proposed`: the judgment's reason
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -296,7 +306,7 @@ EVENTS = {
     TICKET_FAILED: (K_TICKET, K_ATTEMPT, K_REASON, K_NEXT),
     TICKET_BLOCKED: (K_TICKET, K_PATH),
     TICKET_NEEDS_HUMAN: (K_TICKET, K_QUESTION, K_REASON),
-    TICKET_CANCELLED: (K_TICKET, K_BY),
+    TICKET_CANCELLED: (K_TICKET, K_BY, K_REASON),
     TICKET_RERUN: (K_TICKET, K_BY),
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
     VERDICT: (K_SUBJECT_KIND, K_SUBJECT, K_VERDICT_TYPE, K_PASS, K_SESSION_ID, K_MODEL, K_FINDINGS, K_RUNG, K_FALLBACK_FROM, K_MODEL_RAN),
@@ -331,7 +341,7 @@ EVENTS = {
     REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS, K_REPORT, K_EDITED),
     PAPER_STARTED: (K_VENUE,),
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
-    OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY),
+    OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY, K_PROPOSAL),
     MARKED: (K_BATCH, K_ITEM, K_MARK, K_NOTE, K_BY),
     DOCUMENT: (K_ID, K_TITLE, K_KIND, K_VERSION, K_CONVERTER, K_BY),
     CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
@@ -344,6 +354,8 @@ EVENTS = {
     REVIEWED: (K_DECISION, K_REVIEW, K_ANSWER, K_BY),
     RESULT: (K_ID, K_HEADING, K_ACTION, K_INTO, K_FROM, K_BY),
     VERIFICATION: (K_HEADING, K_STANDING, K_ROUTE, K_BY, K_RELEASED),
+    DRAWING: (K_RESULT, K_VERSION, K_TICKET, K_REST, K_OUTCOME, K_PLOTS, K_LEFT_OUT, K_RETIRED, K_REASON),
+    OBJECTIVE_PROPOSED: (K_ID, K_KIND, K_OBJECTIVE, K_TICKET, K_BY, K_UPHELD, K_WHY, K_ANSWER, K_PROPOSAL),
     OUTLINE: (K_ACTION, K_ITEM, K_TO, K_NOTE, K_BY),
 }
 
@@ -359,7 +371,8 @@ PAYLOAD_ENUMS = {
     (TICKET_RESUMED, K_REASON): ("invalid_result", "acceptance_failed", "worker_died", "timeout", "readopted"),
     (ACCEPTANCE, K_WHERE): ("worktree", "rebased", "main"),
     (INTEGRATED, K_RESOLVED_BY): ("none", "integrator"),
-    (TICKET_FAILED, K_NEXT): ("resume", "tier_up", "split", "needs_human"),
+    # `none`: a drawing that still fails takes no step; its result keeps its last accepted drawing (decision 17; ticket 100).
+    (TICKET_FAILED, K_NEXT): ("resume", "tier_up", "split", "needs_human", "none"),
     # Why a ticket was handed to a person when the escalation chain named it (decision 16); absent for any other hand-off.
     (TICKET_NEEDS_HUMAN, K_REASON): ("top_rung",),
     (VERDICT, K_SUBJECT_KIND): ("ticket", "claim", "figure", "spec", "dossier", "paper"),
@@ -406,6 +419,11 @@ PAYLOAD_ENUMS = {
     # Code (a result found or followed, a verdict taken, a needs_human under autonomous), or the owner's or the decider's
     # reply leaving a result unverified.
     (VERIFICATION, K_BY): ("code", "owner", "decider"),
+    (DRAWING, K_REST): ("run_end", "checkpoint", "owner"),
+    (DRAWING, K_OUTCOME): ("opened", "accepted", "failed"),
+    (OBJECTIVE_PROPOSED, K_KIND): ("add", "answer", "park", "drop", "reframe", "reopen"),
+    # A ticket result's proposal, or one a verdict made itself, which goes on without a further judgment.
+    (OBJECTIVE_PROPOSED, K_BY): ("worker", "verifier"),
     # A line moved in its part, placed in or out of Supplement or Cut, a note kept or taken away, a heading the owner added,
     # or a placement whose item is gone, dropped by code.
     (OUTLINE, K_ACTION): ("moved", "placed", "noted", "added", "gone"),

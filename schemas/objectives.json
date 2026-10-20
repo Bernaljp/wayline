@@ -26,7 +26,21 @@
           "type": "array",
           "items": {"type": "string", "pattern": "^(res|ref):\\S", "description": "a locator in the provenance linter's res: or ref: form"}
         },
-        "reframed_as": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "the objective that replaced this one, when reframed"}
+        "reframed_as": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "the objective that replaced this one, when reframed"},
+        "superseded": {
+          "type": "array",
+          "description": "the answers an owner's reopen set aside (decision 17; ticket 91), oldest first: kept, never deleted",
+          "items": {
+            "type": "object",
+            "required": ["status", "answer", "evidence"],
+            "additionalProperties": false,
+            "properties": {
+              "status": {"type": "string", "enum": ["answered", "dropped"]},
+              "answer": {"type": ["string", "null"]},
+              "evidence": {"type": "array", "items": {"type": "string", "pattern": "^(res|ref):\\S"}}
+            }
+          }
+        }
       }
     },
     "measure": {

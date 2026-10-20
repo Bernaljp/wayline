@@ -34,21 +34,21 @@ Not part of this ticket:
 
 **Blocked by:** 75 - The harness's tools; 77 - Plot index data shapes and the five readability checks; 79 - Batches and marks; 90 - Results and the general report. It blocks 101, 102, 103, 112, and 116.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#247](https://github.com/Bernaljp/wayline/issues/247) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Drawings and plots; Sections and passages: the `plot` tag; Results and the reports: the numbers check); Implementation Decision 13 (figures, the figure checks); Implementation Decision 14 (the policy table: the plotter role at `opus medium`, the drawing's limits of 20 plots, 4 tables, and 4 headline plots, the plot checks' thresholds of 40 characters and 36 cells); Implementation Decision 2 (the event table: `marked`, the drawing's acceptance); the schemas list (`plots`, `drawing`, the kind `drawing`); M8 criterion 6; user stories 127, 128, and 129.
 
-- [ ] Code creates one `drawing` ticket per result at each rest point (run end, before a checkpoint pause, the owner's word), only for results changed since their last accepted drawing that hold a finding from the project's own evidence, the stopping rule's results first. The planner refuses to write the kind.
-- [ ] `roles/plotter` runs on `opus medium` with budget `small`, steps down to `sonnet medium` with pacing, and has a read-only touch set with no job and CPU only. Its prompt carries the inputs above, the limits, the leave-out rules, the own-term rule, and the explanation of every mark.
-- [ ] The drawing's one script writes every plot as PNG and SVG, every table as CSV, and every quoted number into `numbers.json`. Acceptance reruns it in the clean room and compares outputs.
-- [ ] Acceptance runs the six figure checks, the five readability checks, the numbers check, and provenance on the SVG. A check that cannot run is listed as not run, and `generator_clean` lints Python only. A failing plot gets one repair resume and is then left out and listed. A still-failing drawing keeps the last accepted one, listed in the account, with no escalation.
-- [ ] Plot ids `R<n>.<k>` and `R<n>.T<k>` persist across drawings, retire when left out, and are never reused. `{plot:R4.3}` is a linter tag checked against `plots.json`.
-- [ ] `research/plots.json` and `research/drawings/R<n>-<v>.json` are written through the ledger, with at most four headline plots.
-- [ ] The owner's marks are a batch of ticket 79. Drop retires at the next drawing, a note reaches the next drawing's prompt, keep is never retired by a drawing alone, and no mark starts one.
-- [ ] An earlier figure from an inherited document is handed to the drawing of the result that replaces its claim, which says whether it agrees.
-- [ ] Tests: the fake launcher scripting the plotter, sample generators for the clean-room rerun and the checks, the ledger seam over a temporary project for plots and drawings, and journal replay for the rest points under each autonomy, the repair resume, and a left-out plot.
-- [ ] Decision 14's policy table gains the plotter role, the drawing's limits, and the checks' thresholds; decision 2's event table gains the drawing's acceptance and `marked` as this ticket uses it; and the schemas list gains `plots`, `drawing`, and the kind `drawing`, each in the same commit as its code.
-- [ ] The CHANGELOG's `## Unreleased` entry describes drawings and plots.
-- [ ] `python -m unittest` passes.
+- [x] Code creates one `drawing` ticket per result at each rest point (run end, before a checkpoint pause, the owner's word), only for results changed since their last accepted drawing that hold a finding from the project's own evidence, the stopping rule's results first. The planner refuses to write the kind.
+- [x] `roles/plotter` runs on `opus medium` with budget `small`, steps down to `sonnet medium` with pacing, and has a read-only touch set with no job and CPU only. Its prompt carries the inputs above, the limits, the leave-out rules, the own-term rule, and the explanation of every mark.
+- [x] The drawing's one script writes every plot as PNG and SVG, every table as CSV, and every quoted number into `numbers.json`. Acceptance reruns it in the clean room and compares outputs.
+- [x] Acceptance runs the six figure checks, the five readability checks, the numbers check, and provenance on the SVG. A check that cannot run is listed as not run, and `generator_clean` lints Python only. A failing plot gets one repair resume and is then left out and listed. A still-failing drawing keeps the last accepted one, listed in the account, with no escalation.
+- [x] Plot ids `R<n>.<k>` and `R<n>.T<k>` persist across drawings, retire when left out, and are never reused. `{plot:R4.3}` is a linter tag checked against `plots.json`.
+- [x] `research/plots.json` and `research/drawings/R<n>-<v>.json` are written through the ledger, with at most four headline plots.
+- [x] The owner's marks are a batch of ticket 79. Drop retires at the next drawing, a note reaches the next drawing's prompt, keep is never retired by a drawing alone, and no mark starts one.
+- [x] An earlier figure from an inherited document is handed to the drawing of the result that replaces its claim, which says whether it agrees.
+- [x] Tests: the fake launcher scripting the plotter, sample generators for the clean-room rerun and the checks, the ledger seam over a temporary project for plots and drawings, and journal replay for the rest points under each autonomy, the repair resume, and a left-out plot.
+- [x] Decision 14's policy table gains the plotter role, the drawing's limits, and the checks' thresholds; decision 2's event table gains the drawing's acceptance and `marked` as this ticket uses it; and the schemas list gains `plots`, `drawing`, and the kind `drawing`, each in the same commit as its code.
+- [x] The CHANGELOG's `## Unreleased` entry describes drawings and plots.
+- [x] `python -m unittest` passes.

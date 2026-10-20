@@ -29,7 +29,7 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_BATCH, K_BY, K_ITEM, K_MARK, K_NOTE, MARKED, LedgerError, ledger_for, now_ts
 from wayline.project import ProjectError, find_project
 
-__all__ = ["KINDS", "WHOLE_AT", "BatchError", "open_batch", "read_batch", "read_batches", "mark", "take_defaults", "marks", "link", "render",
+__all__ = ["KINDS", "WHOLE_AT", "BatchError", "open_batch", "extend", "read_batch", "read_batches", "mark", "take_defaults", "marks", "link", "render",
            "mark_command"]
 
 SCHEMA = "batch"
@@ -123,6 +123,37 @@ def open_batch(project, kind, title, items, decision=None):
         record = {"id": _next_id(ledger), "kind": kind, "title": title, "decision": decision, "status": OPEN, "items": built}
         ledger.write_json(_path(record["id"]), record, schema=SCHEMA)
     return record
+
+
+def extend(project, batch_id, items=(), decision=None):
+    """Add `items` (each `{ref, text, default?}`) to an open batch, and with `decision` link it to that decision ticket instead.
+
+    What takes new items until it is answered (the "Objective changes" ticket of ticket 91) adds them here; a batch whose
+    ticket was answered with items left open is linked to the ticket that asks about those again. A closed batch takes
+    nothing, and an item whose `ref` the batch holds already is not added twice. Returns the batch as written.
+    """
+    ledger = ledger_for(project)
+    with ledger.lock():
+        batch = read_batch(ledger, batch_id)
+        if batch["status"] != OPEN:
+            raise BatchError("%s is closed and takes no new item" % batch["id"])
+        allowed = list(KINDS[batch["kind"]])
+        held = {item["ref"] for item in batch["items"]}
+        for item in items:
+            if _blank(item.get("ref")) or _blank(item.get("text")):
+                raise BatchError("an item names what it is about (`ref`) and says it (`text`)")
+            if item["ref"] in held:
+                continue
+            default = item.get("default")
+            if default is not None and default not in allowed:
+                raise BatchError("a %s item's default is one of %s, got %r" % (batch["kind"], ", ".join(allowed), default))
+            batch["items"].append({"id": len(batch["items"]) + 1, "ref": item["ref"], "text": item["text"], "marks": allowed,
+                                   "default": default, "note": None, "mark": None, "by": None, "at": None})
+            held.add(item["ref"])
+        if decision is not None:
+            batch["decision"] = decision
+        ledger.write_json(_path(batch["id"]), batch, schema=SCHEMA)
+    return batch
 
 
 def read_batch(project, identifier):
