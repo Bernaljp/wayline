@@ -156,45 +156,84 @@ def _save(ledger, record, changed, by, route=None, released=None):
 # --- following the passages ------------------------------------------------------------------------------
 
 
-def _claim_states(ledger, claims):
-    """`{claim: (current id, state)}` for each claim followed through its document's rewrites and moves: `settled` once the
-    work replaced it, `unverifiable` while it stands so, `unchecked` otherwise."""
-    from wayline import concerns, sections
-
-    replaced, moved = concerns._successors(ledger)
-    by_id = {item["id"]: item for item in sections.read_passages(ledger)}
-    states = {}
-    for claim in claims:
-        current, done = concerns._follow_target(claim, replaced, moved)
-        if done:
-            states[claim] = (current, "settled")
-        elif (by_id.get(current) or {}).get("standing") == sections.UNVERIFIABLE:
-            states[claim] = (current, UNVERIFIABLE)
-        else:
-            states[claim] = (current, UNCHECKED)
-    return states
+SETTLED, WITHDRAWN = "settled", "withdrawn"
 
 
-def _standing(ledger, result):
-    """`(standing, reason)` of one result from where its claims stand now."""
-    from wayline import sections
+class _View:
+    """The passages and findings read once: each id's record, what replaced it, and where a move took it."""
 
-    states = _claim_states(ledger, result["claims"])
-    if not states or any(state == UNCHECKED for _, state in states.values()):
+    def __init__(self, ledger):
+        from wayline import sections
+
+        passages = sections.read_passages(ledger)
+        self.by_id = {item["id"]: item for item in passages}
+        self.replaced, self.moved = {}, {}
+        for item in list(passages) + list(sections.read_findings(ledger)):
+            if item.get("replaces"):
+                self.replaced.setdefault(item["replaces"], []).append(item)
+            if item.get("moved_from"):
+                self.moved[item["moved_from"]] = item
+
+    def follow(self, claim):
+        """`(ids, current, state)`: every id the claim held through its document's rewrites and moves, the one that holds it
+        now, and its state: `settled` once the work replaced it, `withdrawn` once its document withdrew it, `unverifiable`
+        while it stands so, `unchecked` otherwise."""
+        from wayline import sections
+
+        ids, current = [], claim
+        while current not in ids:
+            ids.append(current)
+            if current in self.moved:
+                current = self.moved[current]["id"]
+                continue
+            later = self.replaced.get(current) or []
+            if any(not sections.is_inherited(item) for item in later):
+                return ids, current, SETTLED  # a ticket's finding, a read's, or a passage replaced it: a verdict
+            if any(item.get("withdrawn") for item in later):
+                return ids, current, WITHDRAWN  # a newer version of its document no longer makes it
+            if not later:
+                break
+            current = later[-1]["id"]  # its document said it again, newer or marked unverifiable
+        standing = (self.by_id.get(current) or {}).get("standing")
+        return ids, current, UNVERIFIABLE if standing == sections.UNVERIFIABLE else UNCHECKED
+
+
+def _claim_states(ledger, claims, view=None):
+    """`{claim: (current id, state)}` for each claim followed through its document's rewrites and moves (`_View.follow`)."""
+    view = view or _View(ledger)
+    return {claim: view.follow(claim)[1:] for claim in claims}
+
+
+def _standing(ledger, result, view=None):
+    """`(standing, reason)` of one result from where its claims stand now; `(None, None)` when its document withdrew them all.
+
+    Unchecked while any claim is; once every claim has a verdict or stands unverifiable, unverifiable when any does (with
+    the reasons), else verified.
+    """
+    view = view or _View(ledger)
+    states = [state for state in _claim_states(ledger, result["claims"], view).values() if state[1] != WITHDRAWN]
+    if not states:
+        return None, None
+    if any(state == UNCHECKED for _, state in states):
         return UNCHECKED, None
-    if any(state == UNVERIFIABLE for _, state in states.values()):
-        by_id = {item["id"]: item for item in sections.read_passages(ledger)}
-        reasons = list(dict.fromkeys(_one_line(by_id[current].get("reason")) for current, _ in states.values() if current in by_id))
+    if any(state == UNVERIFIABLE for _, state in states):
+        reasons = list(dict.fromkeys(_one_line(view.by_id[current].get("reason")) for current, state in states
+                                     if state == UNVERIFIABLE and current in view.by_id))
         return UNVERIFIABLE, result.get("reason") or "; ".join(reason for reason in reasons if reason) or "no reason given"
     return VERIFIED, None
 
 
 def _refresh(ledger, record):
-    """Take in the results the passages hold now and each one's standing; returns the results changed."""
+    """Take in the results the passages hold now and each one's standing; returns the results changed.
+
+    A result whose document withdrew every claim (a newer version without it) is no longer an inherited result, and leaves
+    the record.
+    """
+    view = _View(ledger)
     changed = []
     known = {}
     for result in record["results"]:
-        for current, _ in _claim_states(ledger, result["claims"]).values():
+        for current, _ in _claim_states(ledger, result["claims"], view).values():
             known[current] = result["heading"]
     for found in inherited_results(ledger):
         new = [claim for claim in found["claims"] if claim not in known]
@@ -208,8 +247,11 @@ def _refresh(ledger, record):
             record["results"].append(result)
         result["claims"] = result["claims"] + new
         changed.append(result)
-    for result in record["results"]:
-        standing, reason = _standing(ledger, result)
+    for result in list(record["results"]):
+        standing, reason = _standing(ledger, result, view)
+        if standing is None:
+            record["results"].remove(result)
+            continue
         if (standing, reason) != (result["standing"], result["reason"]):
             result.update(standing=standing, reason=reason)
             if result not in changed:
@@ -229,14 +271,16 @@ def follow(project):
     """Code's part, after any change to the passages: the results changed, journaled `by: code`.
 
     New inherited results are recorded unchecked; a result whose claims all have a verdict is verified, and one whose
-    claims stand unverifiable once the rest have one is unverifiable, with their reasons. The objective "Do the inherited results hold?", while
-    open, is answered by code once every inherited result has a verdict or is unverifiable.
+    claims stand unverifiable once the rest have one is unverifiable, with their reasons; one its document withdrew leaves.
+    The objective "Do the inherited results hold?", while open, is answered by code once every inherited result has a
+    verdict or is unverifiable.
     """
     ledger = ledger_for(project)
     with ledger.lock():
         record = read_record(ledger)
+        before = len(record["results"])
         changed = _refresh(ledger, record)
-        if changed:
+        if changed or len(record["results"]) != before:
             _save(ledger, record, changed, "code")
         _answer_objective(ledger.project, record)
     return changed
@@ -362,6 +406,18 @@ def replies_for(item):
     return LICENSED_REPLIES if item["licensed"] else REPLIES
 
 
+def reply_for(item, reply):
+    """`reply` as `item` takes it, or None when it takes none such: a licensed item's `rebuild it` is its recommended port
+    (Octave), a port named for an item that is not licensed is a rebuild, and `leave it unverified` is every item's."""
+    if reply is None:
+        return None
+    if item["licensed"] and reply == REBUILD:
+        return OCTAVE
+    if not item["licensed"] and reply in (OCTAVE, PYTHON):
+        return REBUILD
+    return reply if reply in replies_for(item) or reply == LEAVE else None
+
+
 def recommended(item):
     """An item's recommended reply: a rebuild (a port, for licensed software) wherever a rebuild can work."""
     if item["licensed"]:
@@ -391,9 +447,8 @@ def _reply(text):
 def parse_replies(text, items):
     """`{item id: reply}` for every one of `items` from one answer, or raises `VerificationError` with why.
 
-    `as recommended` takes each item's recommendation; one reply alone is every item's (a licensed item takes `rebuild it`
-    as its recommended port); `M1: <reply>; M2: <reply>` names items, and an item it does not name takes its
-    recommendation. A reply an item does not take is refused.
+    `as recommended` takes each item's recommendation; one reply alone is every item's; `M1: <reply>; M2: <reply>` names
+    items, and an item it does not name takes its recommendation. Each reply is read as the item takes it (`reply_for`).
     """
     items = list(items)
     by_id = {item["id"]: item for item in items}
@@ -408,9 +463,9 @@ def parse_replies(text, items):
         for identifier, said in named:
             if identifier not in by_id:
                 raise VerificationError("%s is no missing item this question asks about" % identifier)
-            reply = _reply(said)
             item = by_id[identifier]
-            if reply is None or (reply not in replies_for(item) and reply != LEAVE):
+            reply = reply_for(item, _reply(said))
+            if reply is None:
                 raise VerificationError("%s takes %s; got %r" % (identifier, _choices(item), _one_line(said)))
             replies[identifier] = reply
         return replies
@@ -418,21 +473,13 @@ def parse_replies(text, items):
     if reply is None:
         raise VerificationError("answer %s, one reply for every item, or name each item (M1: <reply>; M2: <reply>); got %r"
                                 % (AS_RECOMMENDED, words))
-    replies = {}
-    for item in items:
-        if item["licensed"] and reply == REBUILD:
-            replies[item["id"]] = recommended(item) if recommended(item) != PROVIDE else OCTAVE
-        elif not item["licensed"] and reply in (OCTAVE, PYTHON):
-            replies[item["id"]] = REBUILD
-        else:
-            replies[item["id"]] = reply
-    return replies
+    return {item["id"]: reply_for(item, reply) for item in items}
 
 
 def _choices(item):
     replies = replies_for(item)
     if item["licensed"]:
-        return "licensed software: %s, or %s (port to Octave or port to Python in place of a rebuild)" % (", ".join(replies[:-1]), replies[-1])
+        return "licensed software: %s, or %s (port to Octave or port to Python is its rebuild)" % (", ".join(replies[:-1]), replies[-1])
     return "%s, or %s" % (", ".join(replies[:-1]), replies[-1])
 
 
@@ -611,9 +658,10 @@ def ties(project):
     except concerns.ConcernsUnreadable:
         held = []
     by_id = {item["id"]: item for item in sections.read_passages(ledger)}
+    index = _claim_index(ledger, record)
     found = {}
     for result in record["results"]:
-        ids = set(result["claims"]) | {current for current, _ in _claim_states(ledger, result["claims"]).values()}
+        ids = _claim_ids(ledger, result["heading"], index)
         tied = set()
         for concern in held:
             if concern.get("place") == concerns.OBJECTIVES and ids & set(concern.get("targets") or []):
@@ -637,7 +685,8 @@ def wire(project, prepared, existing, kind):
 
     Every ticket's `verifies` names an inherited result waiting for its verdict; a first plan, a re-cut, or a revise leaves
     none waiting without a verification ticket (a split asks nothing). Each verification ticket, new or kept, blocks every
-    new ticket that serves an objective its result is tied to (`ties`), never another verification or a decision.
+    ticket that serves an objective its result is tied to (`ties`), never another verification or a decision: each new
+    one, and each kept one not yet run or stopped short (re-pointed in `prepared.repointed`).
     """
     waiting, objective = waiting_headings(project)
     failures = []
@@ -660,15 +709,26 @@ def wire(project, prepared, existing, kind):
                 failures.append("the inherited result %s waits for its verdict and no ticket verifies it: add one with `verifies` "
                                 "naming it, under %s" % (heading, objective))
     tied = ties(project) if verifying else {}
-    for _, fields, _, _ in prepared.tickets:
-        if fields.get("verifies") or fields.get("kind") == "decision":
-            continue
+
+    def wired(fields):
         served = set(fields.get("objectives") or [])
         blockers = set(fields["blocked_by"])
         for heading, ids in verifying.items():
             if served & tied.get(heading, set()):
-                blockers |= ids
-        fields["blocked_by"] = sorted(blockers)
+                blockers |= ids - {fields["id"]}
+        return sorted(blockers)
+
+    for _, fields, _, _ in prepared.tickets:
+        if not fields.get("verifies") and fields.get("kind") != "decision":
+            fields["blocked_by"] = wired(fields)
+    for identifier, (fields, _) in existing.items():
+        kept = prepared.repointed.get(identifier, fields)
+        if (identifier in prepared.superseded or kept.get("verifies") or kept.get("kind") == "decision"
+                or kept["status"] not in PAUSABLE):
+            continue
+        blockers = wired(kept)
+        if blockers != sorted(kept["blocked_by"]):
+            prepared.repointed[identifier] = dict(kept, blocked_by=blockers)
     return failures
 
 
@@ -690,30 +750,24 @@ def _same_commit(given, recorded):
     return len(given) >= 7 and recorded.startswith(given)
 
 
-def _claim_ids(ledger, heading):
-    """Every id an inherited claim of `heading` has held: as first deconstructed, and as its document rewrote or moved it."""
-    record = current_record(ledger)
-    try:
-        result = _find(record, heading)
-    except VerificationError:
-        return set()
-    from wayline import concerns
+def _claim_index(ledger, record=None, view=None):
+    """`{id: (heading, ids)}`: every id an inherited claim has held (as first deconstructed, and as its document rewrote or
+    moved it), with its result's heading and the claim's whole chain of ids; built once for a caller's every lookup."""
+    view = view or _View(ledger)
+    record = record if record is not None else current_record(ledger)
+    index = {}
+    for result in record["results"]:
+        for claim in result["claims"]:
+            chain = set(view.follow(claim)[0])
+            for identifier in chain:
+                index[identifier] = (result["heading"], chain)
+    return index
 
-    replaced, moved = concerns._successors(ledger)
-    ids = set()
-    for claim in result["claims"]:
-        current, seen = claim, set()
-        while current not in seen:
-            seen.add(current)
-            ids.add(current)
-            if current in moved:
-                current = moved[current]["id"]
-                continue
-            later = [item for item in replaced.get(current) or [] if "by" in item and str(item["by"]).startswith("document:")]
-            if not later:
-                break
-            current = later[-1]["id"]
-    return ids
+
+def _claim_ids(ledger, heading, index=None):
+    """Every id an inherited claim of `heading` has held."""
+    index = index if index is not None else _claim_index(ledger)
+    return {identifier for identifier, (found, _) in index.items() if found == heading}
 
 
 def check_result(project, fields, result):
@@ -721,11 +775,12 @@ def check_result(project, fields, result):
 
     A ticket that `verifies` a result names its route in `verification`; `reproduced` runs at the commit intake recorded,
     `read` is the consultant's alone, and a verdict on substitute data narrows each claim it replaces to that data. A
-    ticket that verifies nothing, and a result not done, are held to none of it.
+    `running` result (its jobs re-run the result) is held to the same, since its route is chosen when the jobs launch; a
+    ticket that verifies nothing, and a result neither done nor running, are held to none of it.
     """
     heading = (fields or {}).get("verifies")
     result = result if isinstance(result, dict) else {}
-    if not heading or result.get("status") != "done":
+    if not heading or result.get("status") not in ("done", "running"):
         return []
     ticket = fields.get("id")
     said = result.get("verification")
@@ -777,7 +832,7 @@ def take_result(project, fields, result):
         except VerificationError:
             return None  # a result the record does not hold, such as one a newer version of its document withdrew
         ours = _claim_ids(ledger, heading)
-        settled =[{"claim": item["replaces"], "evidence": item["evidence"], "by": item["id"]}
+        settled = [{"claim": item["replaces"], "evidence": item["evidence"], "by": item["id"]}
                    for item in sections.read_findings(ledger)
                    if item.get("ticket") == fields["id"] and item.get("replaces") in ours and item.get("evidence")]
         verdict = {"ticket": fields["id"], "route": said["route"], "commit": said.get("commit"),
@@ -794,13 +849,10 @@ def take_result(project, fields, result):
 # --- the contradictions and the verifier ------------------------------------------------------------------------
 
 
-def _heading_of(ledger, claim):
+def _heading_of(ledger, claim, index=None):
     """The inherited result an inherited claim belongs to, by any id it held, or None."""
-    record = current_record(ledger)
-    for result in record["results"]:
-        if claim in _claim_ids(ledger, result["heading"]):
-            return result["heading"]
-    return None
+    index = index if index is not None else _claim_index(ledger)
+    return index[claim][0] if claim in index else None
 
 
 def attach_contradiction(project, claims, text):
@@ -814,8 +866,9 @@ def attach_contradiction(project, claims, text):
     with ledger.lock():
         record = read_record(ledger)
         _refresh(ledger, record)
+        index = _claim_index(ledger, record)
         for claim in claims:
-            heading = _heading_of(ledger, claim)
+            heading = _heading_of(ledger, claim, index)
             if heading is None:
                 continue
             result = _find(record, heading)
@@ -843,6 +896,7 @@ def verdict_items(project, fields, result):
     by_id = {item["id"]: item for item in sections.read_passages(ledger)}
     said = result.get("verification") if isinstance(result.get("verification"), dict) else {}
     record = current_record(ledger)
+    index = _claim_index(ledger, record)
     items = []
     for finding in result.get("findings") or []:
         if not isinstance(finding, dict) or not finding.get("evidence") or finding.get("replaces") not in by_id:
@@ -850,11 +904,10 @@ def verdict_items(project, fields, result):
         claim = by_id[finding["replaces"]]
         if not sections.is_inherited(claim) or claim.get("standing") not in sections.STANDINGS:
             continue
-        heading = _heading_of(ledger, claim["id"])
+        heading, chain = index.get(claim["id"], (None, set()))
         contradictions = []
         if heading is not None:
-            ids = _claim_ids(ledger, heading)
-            contradictions = [entry["text"] for entry in _find(record, heading)["contradictions"] if ids & set(entry["claims"])]
+            contradictions = [entry["text"] for entry in _find(record, heading)["contradictions"] if chain & set(entry["claims"])]
         items.append({"claim": claim["id"], "said": _plain_claim(claim["text"]), "evidence": finding["evidence"],
                       "finding": _one_line(finding.get("text")), "route": said.get("route"), "commit": said.get("commit"),
                       "substitute": _one_line(said.get("substitute")) or None, "contradictions": contradictions})
@@ -983,30 +1036,38 @@ def read(project, ticket=None):
     A claim the answer settles is replaced by a finding saying whether the reference supports, narrows, or contradicts it,
     with the reference as its tag; one it cannot settle stays unchecked, and is read again only once the dossier was
     promoted (the consultant asks for the promotion, which the budget allows or a decision ticket asks about). Returns
-    `{asked, settled}`: the references asked about, and the claims settled.
+    `{asked, settled}`: the references asked about, and the claims settled. A claim citing two references is settled by
+    the first read that settles it, and not asked about again. A question the consultant could not answer usably is
+    recorded as a failed read at that level and not asked again until a promotion; one a usage window refused is asked
+    again at a later wave.
     """
-    from wayline import consult, sections
+    from wayline import consult
     from wayline.dossier import DossierError, read_dossier
     from wayline.provenance import identifier_index
 
     ledger = ledger_for(project)
     report = {"asked": [], "settled": []}
     record = current_record(ledger)
-    by_id = {item["id"]: item for item in sections.read_passages(ledger)}
+    view = _View(ledger)
+    by_id = view.by_id
     index = identifier_index(ledger.project)
     batches = {}
     for result in record["results"]:
         if result["standing"] != UNCHECKED:
             continue
-        for claim, (current, state) in _claim_states(ledger, result["claims"]).items():
+        for claim, (current, state) in _claim_states(ledger, result["claims"], view).items():
             if state != UNCHECKED:
                 continue
             for slug in _cited_slugs((by_id.get(current) or {}).get("text"), index):
                 batches.setdefault(slug, []).append((result["heading"], current))
+    settled_now = set()
     for slug, claims in batches.items():
         try:
             level = read_dossier(ledger, slug).get("level", 0)
         except DossierError:
+            continue
+        claims = [(heading, current) for heading, current in claims if current not in settled_now]
+        if not claims:
             continue
         ids = [current for _, current in claims]
         done = [entry for entry in record["reads"] if entry["slug"] == slug and entry["level"] >= level]
@@ -1016,7 +1077,9 @@ def read(project, ticket=None):
                                                        for number, current in enumerate(ids, 1))
         try:
             asked = consult.ask(ledger.project, slug, question, ticket=ticket)
-        except consult.ConsultError:
+        except consult.ConsultError as failure:
+            if "usage limit" not in str(failure):
+                _take_reads(ledger, slug, level, claims, {}, None, failed=_one_line(failure))
             continue
         report["asked"].append(slug)
         answer = asked["answer"]
@@ -1028,19 +1091,27 @@ def read(project, ticket=None):
                     verdicts[ids[int(number) - 1]] = (said, _one_line(why))
         locator = next((str(found).split(":", 1)[1] for found in answer.get("locators") or [] if ":" in str(found)), None) or "abstract"
         settled = _take_reads(ledger, slug, level, claims, verdicts, locator)
+        settled_now.update(settled)
         report["settled"] += settled
     return report
 
 
-def _take_reads(ledger, slug, level, claims, verdicts, locator):
-    """File a finding for each claim a read settled, record the read and its verdicts; returns the claims settled."""
+def _take_reads(ledger, slug, level, claims, verdicts, locator, failed=None):
+    """File a finding for each claim a read settled, record the read and its verdicts (or why it failed); returns the claims
+    settled. A claim the work replaced while the consultant read is left as it stands."""
     from wayline import sections
 
     with ledger.lock():
-        by_id = {item["id"]: item for item in sections.read_passages(ledger)}
+        record = read_record(ledger)
+        found = _refresh(ledger, record)  # a result read before code recorded it is recorded first, unchecked
+        if found:
+            _save(ledger, record, found, "code")
+        before = {result["heading"]: result["standing"] for result in record["results"]}
+        view = _View(ledger)
+        by_id = view.by_id
         settled = {}
         for heading, current in claims:
-            if current not in verdicts:
+            if current not in verdicts or view.follow(current)[1:] != (current, UNCHECKED):
                 continue
             evidence, why = verdicts[current]
             text = _plain_claim(by_id[current]["text"]) if evidence == "supports" else (why or _plain_claim(by_id[current]["text"]))
@@ -1049,14 +1120,15 @@ def _take_reads(ledger, slug, level, claims, verdicts, locator):
                                            "provenance": "research/refs/%s/qa_log.md" % slug, "negative": False, "heading": heading,
                                            "replaces": current, "evidence": evidence, "objectives": []})
             settled.setdefault(heading, []).append({"claim": current, "evidence": evidence, "by": "read-%s" % current})
-        record = read_record(ledger)
-        before = {result["heading"]: result["standing"] for result in record["results"]}
         _refresh(ledger, record)
         for heading, entries in settled.items():
             _find(record, heading)["verdicts"].append({"ticket": None, "route": READ, "commit": None, "substitute": None,
                                                        "claims": entries})
-        record["reads"].append({"slug": slug, "level": level, "claims": [current for _, current in claims],
-                                "settled": [entry["claim"] for entries in settled.values() for entry in entries]})
+        entry = {"slug": slug, "level": level, "claims": [current for _, current in claims],
+                 "settled": [entry["claim"] for entries in settled.values() for entry in entries]}
+        if failed:
+            entry["failed"] = failed
+        record["reads"].append(entry)
         _save(ledger, record, [result for result in record["results"] if result["standing"] != before.get(result["heading"])],
               "code", route=READ)
     return [entry["claim"] for entries in settled.values() for entry in entries]
@@ -1145,8 +1217,11 @@ def open_gap(project, ticket, blocked_on, notify=None):
         if not new and item["reply"] is not None:
             item.update(reply=None, by=None)
         _save(ledger, record, [], "code")
-        asked = len(_asked(project).get(item["id"], []))
-    return _ask(project, item, asked + 1, why="ticket %d reported: %s" % (ticket, _one_line(blocked_on)), notify=notify)
+        mine = _asked(project).get(item["id"], [])
+        answered = _answers(ledger.read_events()[0])
+        if mine and mine[-1]["status"] == "open" and mine[-1]["id"] not in answered:
+            return _ask(project, item, len(mine), notify=notify)  # the same ask, which now pauses this verification too
+    return _ask(project, item, len(mine) + 1, why="ticket %d reported: %s" % (ticket, _one_line(blocked_on)), notify=notify)
 
 
 def _asked(project):
@@ -1247,7 +1322,8 @@ def settle(project, notify=None, say=None):
     unverifiable results of verifications that ended `needs_human` under `autonomous`. Returns
     `{opened, applied, waiting, unverifiable}`.
 
-    Everything is read back from the journal and the files, so a second call, or a restarted conductor, asks nothing twice.
+    Nothing is asked while the objective "Do the inherited results hold?" is not open. Everything is read back from the
+    journal and the files, so a second call, or a restarted conductor, asks nothing twice.
     """
     from wayline import decider, decisions, stopping, tickets
     from wayline.ledger import TICKET_NEEDS_HUMAN
@@ -1262,6 +1338,9 @@ def settle(project, notify=None, say=None):
         return report
     record = read_record(ledger)
     standing = {result["heading"]: result["standing"] for result in record["results"]}
+    objective = _objective(ledger.project)
+    if objective is None or objective["status"] != "open":
+        return report  # the owner parked or dropped the verification, or never took it: nothing to verify, nothing to ask
     if read_harness(ledger.project).get("autonomy") == "autonomous":
         questions = {}
         for event in events:
@@ -1299,9 +1378,9 @@ def settle(project, notify=None, say=None):
                     options = (decisions.decision_record(body) or {}).get("options") or []
                 except ValueError:
                     options = []
-                reply = _reply(decider.chosen_option(payload.get("answer"), options))
+                reply = reply_for(item, _reply(decider.chosen_option(payload.get("answer"), options)))
                 refused = decider_refusal(reply or payload.get("answer")) if by == "decider" else None
-                if reply is not None and refused is None and (reply in replies_for(item) or reply == LEAVE):
+                if reply is not None and refused is None:
                     _take_reply(ledger.project, item, reply, by, say)
                     report["applied"].append(item["id"])
                     say("  %s: the %s's answer to ticket %d: %s" % (item["id"], by, latest["id"], reply))

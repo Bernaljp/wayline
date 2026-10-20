@@ -264,17 +264,22 @@ class MaterialQuestionTest(SetupCase):
         self.assertEqual(set(standing.values()), {"unverifiable"})
         self.assertEqual(self.journaled()[-1], {"heading": "Results", "standing": "unverifiable", "route": None, "by": "owner"})
 
-    def test_a_licensed_item_takes_no_plain_rebuild_and_a_reply_outside_the_set_is_refused(self):
+    def test_a_reply_outside_the_set_is_refused_and_records_nothing(self):
         from wayline.grill import GrillError
 
         self.first_tier()
         identifier = self.material_question()["id"]
         with self.assertRaises(GrillError) as refused:
-            self.answer(identifier, "M2: rebuild it")
+            self.answer(identifier, "M2: maybe later")
         self.assertIn("port to Octave or port to Python", str(refused.exception))
         with self.assertRaises(GrillError):
             self.answer(identifier, "maybe later")
         self.assertEqual(self.item("M1")["reply"], None, "nothing recorded from a refused answer")
+
+    def test_a_licensed_items_rebuild_is_its_port_to_octave(self):
+        self.first_tier()
+        self.answer(self.material_question()["id"], "M1: I'll provide it; M2: rebuild it")
+        self.assertEqual(self.item("M2")["reply"], "port to Octave")
 
 
 def finding(identifier, ticket, replaces, evidence, text="R is lowest at dusk in 38 of 40 colonies.", heading="Results"):
@@ -319,6 +324,16 @@ class AnsweringTest(AnsweringCase):
         verification.leave_unverifiable(self.project, "Results", "the 2021 recordings are gone", "owner")
         verification.follow(self.project)
         self.assertEqual(self.objective()["status"], "parked")
+
+    def test_a_result_its_document_withdrew_leaves_the_record_and_counts_as_no_verdict(self):
+        verification.follow(self.project)
+        for doc in ("D1#p4.s1", "D1#p4.s2", "D1#p5.s1"):
+            item = next(passage for passage in self.ours() if passage["id"] == self.claims[doc])
+            sections.add_passage(self.project, "results", item["heading"], item["text"], by="document:D1", replaces=item["id"],
+                                 doc=item["doc"], withdrawn=True)
+        verification.follow(self.project)
+        self.assertEqual(verification.read_results(self.project), [], "a withdrawn result is no inherited result")
+        self.assertEqual(self.objective()["status"], "open", "nothing was verified, so code answers nothing")
 
 
 class SpecifyTest(AnsweringCase):
@@ -435,6 +450,18 @@ class PlanWiringTest(PlanCase):
         prepared = self.prepare(planned("T1", "Rule out lamp flicker", ["O1"]))
         self.assertEqual(prepared.failures, [])
 
+    def test_a_recut_wires_a_kept_ticket_built_on_the_result_too(self):
+        from wayline import tickets
+
+        kept = {"id": 1, "title": "Rule out lamp flicker", "kind": "experiment", "difficulty": 2, "status": "failed", "blocked_by": [],
+                "touches": ["results/flicker/"], "role": "experimenter", "skills": [], "objectives": ["O1"],
+                "acceptance": {"machine": ["test -d results/flicker"], "quality": []}, "context_pack": ["research/SPEC.md"],
+                "origin": "research/SPEC.md#claims", "proposed_by": "planner", "demo": "flicker ruled out"}
+        tickets.write_ticket(Ledger(self.project), kept, "## Demo\n\nflicker ruled out\n")
+        prepared = self.prepare(planned("T1", "Re-run the dusk series", [self.verify], verifies="Results"), kind="replan")
+        self.assertEqual(prepared.failures, [])
+        self.assertEqual(prepared.repointed[1]["blocked_by"], [self.by_key(prepared)["T1"]["id"]])
+
 
 INTAKE_COMMIT = "4f2c9a1b7d3e8f60c5a2b9d1e7f3c8a6b2d4e9f1"
 
@@ -511,6 +538,11 @@ class ResultCheckTest(VerdictCase):
         problems = verification.check_result(self.project, self.fields("T1"), dict(self.returned(), verification={"route": "read", "commit": None,
                                                                                                                   "substitute": None}))
         self.assertTrue(any("read is the consultant's route" in problem for problem in problems), problems)
+
+    def test_a_running_result_is_held_to_its_route_too(self):
+        problems = self.problems(dict(self.returned(commit="0123456789abcdef"), status="running", findings=[]))
+        self.assertTrue(any("reproduced runs the project's own code" in problem for problem in problems), problems)
+        self.assertEqual(self.problems(dict(self.returned(), status="blocked")), [], "a blocked result is held to none of it")
 
 
 class FreshVerifierTest(VerdictCase):
@@ -710,6 +742,14 @@ class NewGapTest(AfterSetupCase):
         reruns = [event["payload"] for event in Ledger(self.project).read_events()[0] if event["event"] == "ticket_rerun"]
         self.assertEqual(reruns, [{"ticket": self.ids["T1"], "by": "code"}])
 
+    def test_the_same_gap_reported_again_before_an_answer_is_the_same_ask(self):
+        self.block("T1", "material data: the lamp spectra of 2021")
+        first = verification.open_gap(self.project, self.ids["T1"], "material data: the lamp spectra of 2021", notify=self.notify)
+        again = verification.open_gap(self.project, self.ids["T1"], "material data: the lamp spectra of 2021", notify=self.notify)
+        self.assertEqual(again["ticket"], first["ticket"])
+        self.assertFalse(again["opened"])
+        self.assertEqual(len(self.material_tickets()), 1)
+
     def test_blocked_on_another_thing_is_no_gap(self):
         self.assertIsNone(verification.gap_of("software octave: the signal package"))
         self.assertEqual(verification.gap_of("material software: MATLAB R2021a"), ("software", "MATLAB R2021a"))
@@ -756,6 +796,21 @@ class PendingGapTest(AfterSetupCase):
         self.settle()
         self.assertEqual((self.item("M2")["reply"], self.item("M2")["by"]), ("port to Python", "decider"))
         self.assertEqual(self.item("M1")["reply"], None)
+
+    def test_nothing_is_asked_while_the_objective_is_parked(self):
+        from wayline import objectives
+
+        objectives.change_objective(self.project, self.verify, "parked", "owner", answer="the owner will verify it later")
+        self.assertEqual(self.settle()["opened"], [])
+        self.assertEqual(self.material_tickets(), [])
+
+    def test_a_licensed_items_rebuild_from_the_decider_is_taken_as_its_port(self):
+        self.autonomy("autonomous")
+        self.settle()
+        self.assertEqual(self.decide(self.material_tickets()[1], "rebuild it").status, "decided")
+        self.assertEqual(self.settle()["applied"], ["M2"])
+        self.assertEqual(self.item("M2")["reply"], "port to Octave")
+        self.assertEqual(len(self.material_tickets()), 2, "asked once")
 
     def test_leave_it_unverified_makes_the_result_unverifiable_and_releases_what_its_verification_blocked(self):
         from wayline import project, tickets
@@ -878,6 +933,33 @@ class ReadTest(VerificationCase):
         self.assertNotIn("Attention alone carries", self.calls[0].request.prompt, "a settled claim is not asked again")
         self.assertEqual(self.result("The cited rates")["standing"], "verified")
         self.assertEqual(self.journaled()[-1], {"heading": "The cited rates", "standing": "verified", "route": "read", "by": "code"})
+
+    def test_a_claim_citing_two_references_is_settled_by_the_first_read_and_not_asked_again(self):
+        from wayline.dossier import read_dossier, write_l0
+
+        copy = dict(read_dossier(Ledger(self.project), SLUG), slug="vaswani-copy")
+        write_l0(Ledger(self.project), copy)
+        (self.temp / "more.md").write_text("# Results\n\n## The twice cited claim\n\nAttention needs no recurrence "
+                                           "{ref:arxiv:1706.03762}{ref:vaswani-copy#abstract}.\n", encoding="utf-8")
+        self.add(self.temp / "more.md")
+        self.deconstruct("D3")
+        twice = next(item["id"] for item in self.ours("D3") if item.get("standing"))
+        first = "\n".join("%d: supports - the abstract says so" % number for number in (1, 2, 3))
+        report = self.read(consulted(first))
+        self.assertEqual(len(self.calls), 1, "the second reference's read had nothing left to ask")
+        self.assertIn(twice, report["settled"])
+        self.assertEqual(len([item for item in sections.read_findings(self.project) if item.get("replaces") == twice]), 1)
+
+    def test_an_unusable_answer_is_recorded_as_a_failed_read_and_not_asked_again_at_that_level(self):
+        from wayline.worker import Envelope
+
+        unusable = Envelope(structured_output={"answer": "yes"}, session_id="consult-1", num_turns=1)
+        report = self.read(unusable, unusable)
+        self.assertEqual(report, {"asked": [], "settled": []})
+        (failed,) = self.record()["reads"]
+        self.assertIn("no usable answer", failed["failed"])
+        self.assertEqual(self.read(), {"asked": [], "settled": []})
+        self.assertEqual(self.calls, [], "not launched again")
 
     def test_a_question_the_abstract_cannot_answer_asks_for_the_promotion(self):
         self.read(consulted("The abstract is silent on both.", not_in_source=True, promote=True))

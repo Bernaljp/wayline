@@ -84,7 +84,8 @@
         "slug": {"type": "string", "pattern": "\\S"},
         "level": {"type": "integer", "minimum": 0, "maximum": 2, "description": "the dossier's level when it was read; a promotion reads it again"},
         "claims": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}},
-        "settled": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}}
+        "settled": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}},
+        "failed": {"type": "string", "pattern": "\\S", "description": "why the consultant gave no usable answer; the claims are not asked about again at this level"}
       }
     }
   }

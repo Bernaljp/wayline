@@ -595,11 +595,6 @@ def prepare(record, project, existing, index, cut, start=None):
         if item.get("adds_public_api") and item["kind"] == "code":
             prepared.declared.add(identifier)
         prepared.tickets.append((key, fields, ticket_body(item, cut.of), item.get("tags")))
-    from wayline import verification  # the verification module reads the sections and the concerns
-    try:
-        failures.extend(verification.wire(project, prepared, existing, cut.kind))
-    except (verification.VerificationUnreadable, objectives.ObjectivesUnreadable) as failure:
-        failures.append("the verifications cannot be read, so no ticket can be wired to them: %s" % failure)
     first_decision = start + len(tickets)
     placeholders = []
     for position, item in enumerate(record.get("decisions") or []):
@@ -621,6 +616,11 @@ def prepare(record, project, existing, index, cut, start=None):
         for identifier, (fields, _) in existing.items():
             if cut.of in fields["blocked_by"] and fields["status"] not in CLOSED:
                 prepared.repointed[identifier] = dict(fields, blocked_by=sorted((set(fields["blocked_by"]) - {cut.of}) | set(pieces)))
+    from wayline import verification  # the verification module reads the sections and the concerns
+    try:
+        failures.extend(verification.wire(project, prepared, existing, cut.kind))
+    except (verification.VerificationUnreadable, objectives.ObjectivesUnreadable) as failure:
+        failures.append("the verifications cannot be read, so no ticket can be wired to them: %s" % failure)
     graph = {}
     for identifier, (fields, body) in existing.items():
         graph[identifier] = dict(prepared.repointed.get(identifier, fields), status="parked" if identifier in superseded else fields["status"])
