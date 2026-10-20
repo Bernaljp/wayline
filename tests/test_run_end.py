@@ -11,6 +11,7 @@ import io
 import json
 import sys
 import time
+import unittest
 from unittest import mock
 
 from tests import machine
@@ -365,6 +366,16 @@ class RuleEndEdgeTest(GatesRunCase):
         last = run_end.scope_downs(self.project)[-1]
         self.assertEqual((last["status"], last["origin"]), ("open", run_end.KILL_ORIGIN), "the last waits for the next run")
         self.assertIn("scope-down ticket %d" % last["id"], self.report().split("## 1.")[0])
+
+
+class EndKindTest(unittest.TestCase):
+    def test_what_each_end_kind_does_with_the_gates(self):
+        for reason in ("objectives_closed", "goal_reached", "frontier_empty"):
+            self.assertEqual((run_end.runs_gates(reason), run_end.continues(reason)), (True, True), reason)
+        for reason in ("budget_spent", "stall_strict"):
+            self.assertEqual((run_end.runs_gates(reason), run_end.continues(reason)), (True, False), reason)
+        for reason in ("stopped", "switched"):
+            self.assertEqual((run_end.runs_gates(reason), run_end.continues(reason)), (False, False), reason)
 
 
 class OwedTest(SampleCase):
