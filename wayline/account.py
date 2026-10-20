@@ -25,8 +25,8 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
   the render takes the marks on the merges and contradictions batches first, so a merge marked split has left it.
 - **Runs**: the latest run in full, earlier runs one table row each. Tokens, turns, and minutes come from
   `ticket_result`; no dollar figure is journaled, so none is shown.
-- **Not pursued**: the parked proposals with their reason and the parked tickets. Objective proposals not upheld
-  join it with ticket 91.
+- **Not pursued**: the parked proposals with their reason, the parked tickets, and the objective proposals not upheld
+  with the verdict's reason (ticket 91).
 - **Library**: papers by dossier level, promotions not read in full, and dossiers that now resolve to another work.
 
 **The edit rule.** The account is read-only, as the reports are: an edit is noticed by its hash against the last
@@ -744,6 +744,10 @@ def _not_pursued(context):
         for identifier, (name, payload) in last.items() if name == PROPOSAL_PARKED]
     lines.extend("- Ticket %d, *%s* (%s): parked" % (number, context.tickets[number]["title"], context.tickets[number]["kind"])
                  for number in sorted(context.tickets) if context.tickets[number]["status"] == "parked")
+    from wayline import objective_changes  # the objective changes module reads the batches and the concerns
+    lines.extend("- Objective proposal `%s` from ticket %s, %s %s: not upheld, %s" % (
+        record["id"], record["ticket"], record["kind"], record["objective"], record["why"] or "no reason was given")
+        for record in objective_changes.read_proposals(context.events) if record["upheld"] is False)
     return lines
 
 

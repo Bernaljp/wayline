@@ -63,7 +63,7 @@ from wayline.worker import protocol_for  # the planner's cut, first written here
 
 __all__ = [
     "PLANNER", "SPEC_SCHEMA", "SPEC_MD", "SPEC_JSON", "SECTIONS", "SpecifyError", "planner_tier", "protocol_for",
-    "check_draft", "render_spec", "check_spec", "spec_sha", "spec_state", "specify_prompt", "draft_spec", "judge_spec", "specify",
+    "check_draft", "render_spec", "render_set_aside", "check_spec", "spec_sha", "spec_state", "specify_prompt", "draft_spec", "judge_spec", "specify",
     "confirm", "advance", "render_report", "specify_command", "confirms", "what_to_change", "move_phase", "context_cap", "current_phase",
     "PlannerSession", "falls_back_now", "session_dir",
 ]
@@ -323,18 +323,28 @@ def _number(value, unit):
     return "not set" if value is None else "%g %s" % (value, unit)
 
 
-def render_spec(draft):
-    """`SPEC.md` from a spec record: the sections of decision 10 in order, one line per item."""
+def _aside_words(tied):
+    return "set aside: its objective%s %s %s closed" % ("" if len(tied) == 1 else "s", ", ".join(tied), "is" if len(tied) == 1 else "are")
+
+
+def render_spec(draft, aside=None):
+    """`SPEC.md` from a spec record: the sections of decision 10 in order, one line per item.
+
+    `aside` is `objectives.set_aside` of the claims (decision 17; ticket 91): a claim whose objectives are all closed is
+    kept and shown set aside, and comes back when one of them reopens.
+    """
+    aside = aside or {}
     lines = ["# Spec: %s" % _one_line(draft["title"]), "",
              "Rendered by `wayline specify` from `research/spec.json`; change the spec by answering its confirmation "
              "with what to change, never by editing here.", ""]
     body = {
         "summary": [_one_line(draft["summary"])],
         "question": [_one_line(draft["question"])],
-        "claims": ["- **%s.** %s (experiments: %s%s%s)" % (item["id"], _one_line(item["text"]), _list(item["experiments"]),
-                                                            "; objectives: %s" % _list(item["objectives"]) if item["objectives"] else "",
-                                                            "; verifies the inherited result %s" % item["inherited"]
-                                                            if item.get("inherited") else "")
+        "claims": ["- **%s.** %s (experiments: %s%s%s%s)" % (item["id"], _one_line(item["text"]), _list(item["experiments"]),
+                                                              "; objectives: %s" % _list(item["objectives"]) if item["objectives"] else "",
+                                                              "; verifies the inherited result %s" % item["inherited"]
+                                                              if item.get("inherited") else "",
+                                                              "; %s" % _aside_words(aside[item["id"]]) if item["id"] in aside else "")
                    for item in draft["claims"]],
         "anti_claims": ["- **%s.** %s (confirmed by: %s)" % (item["id"], _one_line(item["text"]), item["confirmed_by"] or "none")
                         for item in draft["anti_claims"]],
@@ -413,7 +423,7 @@ def check_spec(project, against_objectives=True):
     missing = [heading for _, heading in SECTIONS if heading not in headings]
     if missing:
         failures.append("research/%s lacks the section(s) %s" % (SPEC_MD, ", ".join(missing)))
-    if not failures and text != render_spec(draft):
+    if not failures and text != render_spec(draft, _set_aside(project, draft)):
         failures.append("research/%s is not what research/%s renders to; it was edited by hand" % (SPEC_MD, SPEC_JSON))
     return failures
 
@@ -765,8 +775,37 @@ class _Session(PlannerSession):
 
 def _write(ledger, draft):
     ledger.write_json(SPEC_JSON, draft, schema=SPEC_SCHEMA)
-    ledger.write_markdown(SPEC_MD, render_spec(draft))
+    ledger.write_markdown(SPEC_MD, render_spec(draft, _set_aside(ledger.project, draft)))
     return spec_sha(ledger.project)
+
+
+def _set_aside(project, draft):
+    """The claims of `draft` set aside by the objectives as they stand; none when `objectives.json` cannot be read."""
+    try:
+        return objectives.set_aside(draft.get("claims"), objectives.read_objectives(project))
+    except objectives.ObjectivesUnreadable:
+        return {}
+
+
+def render_set_aside(project):
+    """Render `SPEC.md` again after the objectives changed, so it shows the claims set aside now (decision 17; ticket 91).
+
+    `spec.json` is left as it is, so the spec's version (its hash), its verdicts, and its confirmation stand. Returns
+    whether the file changed; a project with no spec, or a spec that cannot be read, is left alone.
+    """
+    ledger = Ledger(project)
+    try:
+        draft = _read_json(ledger, SPEC_JSON)
+    except ValueError:
+        return False
+    if not isinstance(draft, dict) or not isinstance(draft.get("claims"), list):
+        return False
+    text = render_spec(draft, _set_aside(project, draft))
+    path = ledger.path(SPEC_MD)
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return False
+    ledger.write_markdown(SPEC_MD, text)
+    return True
 
 
 def _judge(project, sha, author_model, harness_root, policy, fall_back):

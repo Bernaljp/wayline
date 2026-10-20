@@ -36,6 +36,38 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- How objectives change as results come in (ticket 91; Implementation Decisions 17, 2, 4, 10, and 11). A ticket result
+  and a verdict carry `objective_proposals[]`: add a question, answer, park, drop, or reframe an open objective, or
+  reopen a closed one, each with its reason, its evidence, and, for an add or a reframe, the position memo's
+  feasibility row. Whoever proposes never makes the change. Each is journaled as `objective_proposed`; one code cannot
+  act on (an objective the project does not hold, a status the kind does not fit) is journaled not upheld with why.
+  - A ticket that carries a proposal always gets its Type-B verdict, a read of its result even at difficulty 1 and 2,
+    and that verdict judges each proposal upheld or not in `objective_judgments`. The verifier that upholds an
+    `answer` writes the answer, which must cite a `res:` or `ref:` tag that resolves and pass the numbers check, or the
+    verdict is resumed with why. A proposal the verifier makes in its own verdict goes straight on. One not upheld is
+    listed in the account under "Not pursued".
+  - Code gathers the upheld proposals into one open "Objective changes" decision ticket whose items are a batch
+    (marks approve and decline), which takes new proposals until it is answered and pauses only the unstarted tickets
+    serving solely an objective an upheld answer, park, drop, or reframe names. A declined proposal resumes what it
+    paused. The owner answers `approve all`, `decline all`, or `1: approve; 2: decline`, or marks the items, and an
+    answer that leaves items open asks again about those.
+  - Under `autonomous` the decider takes the batch in one session: it answers, parks, and drops, never parking or
+    dropping an objective the stopping rule names; it adds, reframes, or reopens only once the owner took `objective`
+    off the human-only classes, adds nothing under `strict`, a `(prerequisite)` under `moderate`, and once a wave also a
+    `(new question)` under `exploratory`; it reopens a parked objective at any radius and never an answered or dropped
+    one. What it may not take waits on the owner in a human-only ticket that pauses nothing.
+  - An approved change parks the unstarted tickets serving only closed objectives (`ticket_cancelled` with `reason`),
+    shows the claims tied only to closed objectives as set aside in `SPEC.md` (back when one reopens), re-ties a
+    reframe's tickets and the stopping rule to its successor, writes an answer or a reframe as a Discussion passage by
+    code, keeps a reopened answer as superseded in `objectives.json`, brings back what a park parked, and has the
+    planner cut fresh tickets for an answered or dropped objective the owner reopened. A dropped objective's concerns
+    are placed in the same answer (`K3: tie it to O1`).
+  - "Answer it as it stands", at an empty frontier or for an approved answer no verifier wrote, is one fresh verifier
+    session per objective on `opus high` (schema `objective_answer`), held to the same checks.
+  - `wayline objective answer|park|drop|reframe|reopen` apply the owner's word directly, with no proposal and no
+    verdict. Decision 4's "change the goal or the data" is "change a goal's measure, or the data": the code check no
+    longer refuses the decider an answer that drops, adds, or reframes an objective.
+
 - Repeated claims (ticket 95; Implementation Decisions 17, 14, and 2). A claim made in several places of a project's
   inherited writing becomes one passage citing every occurrence's `doc` tag and every work any cites.
   `wayline document repeats` runs the setup's check: one consistency read (`consistency-reader`, Opus high) over the

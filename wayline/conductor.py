@@ -149,7 +149,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, gates, methods, notify, numbers, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, verification, worker
+from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, gates, methods, notify, numbers, objective_changes, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, verification, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -824,6 +824,8 @@ class Conductor:
         self._harness_trouble = None
         self._objective_replans = set()
         self._answer_stamps = {}
+        self._answers_tried = set()  # the objectives the answering verifier was launched on in this run (ticket 91)
+        self._reopen_replans = set()  # the owner's reopens of answered or dropped objectives a cut was launched for (ticket 91)
         # The evolve loop (ticket 45, decision 12). A policy nobody handed in is read again every wave, so a local change
         # to `harness.json` is used from the next one. `evolver(fall_back)` is the evolver's session over the pending
         # feedback, `prover` runs a change's fixture on the old and the new subject, and `global_checks` runs the harness
@@ -877,6 +879,7 @@ class Conductor:
         self._poll(result)
         self._place_jobs(result)
         self._software(result)
+        self._objective_changes()
         self._concerns()
         self._verifications()
         self._pace()
@@ -886,6 +889,7 @@ class Conductor:
             self._decide(result)
             self._read_cited()
             self._replan_objectives(result)
+            self._answer_objectives(result)
             self._evolve(result)
             self._fold_answered_refusals()  # the decider, the planner, and the evolver answer in this wave
             picks = self._picks(self._graph())
@@ -1163,6 +1167,53 @@ class Conductor:
             self.say("  the software step could not run: %s" % failure)
             self.software = software.Settled()
         self._tail()
+
+    def _objective_changes(self):
+        """Wave step 2's objective-changes part (decision 17; ticket 91): answers and marks applied, upheld proposals gathered.
+
+        Code alone: `objective_changes.settle` turns the answer to an "Objective changes" ticket into marks on its batch,
+        makes each approved change with all that follows (tickets parked, claims set aside, Discussion passages), opens or
+        joins the one open ticket for the upheld proposals, and keeps what it pauses exactly what its open items pause. It
+        runs before the concerns' part, so a dropped objective's concerns placed in the same answer are not asked about on
+        their own. An unreadable record is said, and fails no wave.
+        """
+        try:
+            objective_changes.settle(self.project, notify=self.notify, say=self.say)
+        except (objective_changes.ProposalError, objectives.ObjectivesUnreadable, tickets.TicketError, ValueError, OSError) as failure:
+            self.say("  the objective changes could not be settled: %s" % failure)
+        self._tail()
+
+    def _answer_objectives(self, result):
+        """The answering verifier (decision 17; ticket 91): one fresh `opus high` session per objective owed an answer as it stands.
+
+        Owed when an empty frontier's ticket was answered "answer it as it stands", or an `answer` proposal was approved
+        with no verifier's text. Model work, so it waits while pacing or the hold allows none; one that could not answer is
+        said and the owner told, and is not tried again in this run.
+        """
+        try:
+            owed = [entry for entry in objective_changes.owed_answers(self.project) if entry[0] not in self._answers_tried]
+        except (objectives.ObjectivesUnreadable, tickets.TicketError, ValueError, OSError) as failure:
+            self.say("  the objectives owed an answer could not be read: %s" % failure)
+            return
+        for identifier, by, why, proposal_id in owed:
+            if self._holds_launches() or self.action != schedule.NORMAL:
+                return
+            self._answers_tried.add(identifier)
+            try:
+                report = objective_changes.answer_as_it_stands(self.project, identifier, by, why, proposal_id,
+                                                               harness_root=self.harness_root, policy=self.policy)
+            except gates.UsageLimited as refused:
+                self._answers_tried.discard(identifier)
+                self._pause(refused.limit, "the answering verifier on %s" % identifier)
+                return
+            except (objective_changes.ProposalError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
+                words = "%s could not be answered as it stands: %s" % (identifier, failure)
+                self.say("  " + words)
+                self.notify(decisions.DECISION, "%s: %s; answer it with wayline objective answer %s \"<answer>\"" % (
+                    self.project.name, words, identifier), self.project, None)
+                continue
+            self._tail()
+            self.say("  %s answered as it stands by a fresh verifier; the answer is in the Discussion as %s" % (identifier, report["passage"]))
 
     def _concerns(self):
         """Wave step 2's concerns part (decision 17; ticket 96): marks taken, objectives followed, a decision per concern to sort.
@@ -1582,33 +1633,64 @@ class Conductor:
                     self._answer_stamps[payload["ticket"]] = event.get("ts") or ""
         return {identifier: fields for identifier, fields in found.items() if self._answer_stamps.get(identifier, "") > cut_at}
 
+    def _owed_reopen_replans(self):
+        """The owner's reopens of answered or dropped objectives the planner still owes fresh tickets for (ticket 91).
+
+        Owed until this run cut for it, or until a revise was written after the reopen (`plan.json`'s `cut_at`), while the
+        objective is still open.
+        """
+        from wayline import plan
+        events, _ = self.ledger.read_events()
+        found = [(identifier, ts) for identifier, ts in objective_changes.reopened(events) if (identifier, ts) not in self._reopen_replans]
+        if not found:
+            return []
+        record = plan.read_plan(self.project) or {}
+        cut_at = str(record.get("cut_at") or "") if record.get("cut") == "revise" else ""
+        records = self._objective_records() or []
+        return [(identifier, ts) for identifier, ts in found
+                if (ts or "") > cut_at and objectives.is_open(objectives.named(records, identifier))]
+
     def _replan_objectives(self, result):
-        """The planner's re-cut for the objectives an empty frontier's tickets were answered `replan for it` about (ticket 87).
+        """The planner's re-cut for the objectives an empty frontier's tickets were answered `replan for it` about (ticket 87),
+        and for the answered or dropped objectives the owner reopened, which get fresh tickets (decision 17; ticket 91).
 
         One cut covers every objective owed, a revise that cuts new tickets serving each within the spec; it waits,
         like any model work, while pacing or the hold allows none.
         """
         owed = self._owed_objective_replans()
-        if not owed or self._holds_launches() or self.action != schedule.NORMAL:
+        reopened = self._owed_reopen_replans()
+        if (not owed and not reopened) or self._holds_launches() or self.action != schedule.NORMAL:
             return
         from wayline import plan
         named = sorted({stopping.frontier_objective(fields.get("origin")) for fields in owed.values()})
+        again = sorted({identifier for identifier, _ in reopened} - set(named))
         records = self._objective_records() or []
-        about = "; ".join("%s, \"%s\"" % (identifier, (objectives.named(records, identifier) or {}).get("text", "")) for identifier in named)
-        change = ("Replan for the open objective(s) %s: the frontier emptied with them open and the stopping rule waits on them. "
-                  "Cut new tickets that serve them within the spec; work already done stands." % about)
+
+        def about(identifiers):
+            return "; ".join("%s, \"%s\"" % (identifier, (objectives.named(records, identifier) or {}).get("text", "")) for identifier in identifiers)
+        parts = []
+        if named:
+            parts.append("Replan for the open objective(s) %s: the frontier emptied with them open and the stopping rule waits on "
+                         "them." % about(named))
+        if again:
+            parts.append("The owner reopened the objective(s) %s, which were answered or dropped: their old answers are kept as "
+                         "superseded." % about(again))
+        change = " ".join(parts) + " Cut new tickets that serve them within the spec; work already done stands."
+        named = sorted(set(named) | set(again))
         outcome = self._launch_cut(plan.Cut("revise", change=change), "the planner's replan for %s" % ", ".join(named))
         if outcome is None:
             return
         self._objective_replans.update(owed)
+        self._reopen_replans.update(reopened)
         self._tail()
         if isinstance(outcome, BaseException):
             words = "the planner could not replan for %s: %s" % (", ".join(named), outcome)
             self.say("  " + words)
             # Not tried again every wave: the owner is told, and answers again (wayline rerun on the ticket) once it is mended.
             # A notice about the decision answered, never a run's end, which has its one notice (ticket 89).
-            self.notify(decisions.DECISION, "%s: %s; wayline rerun %s asks again" % (
-                self.project.name, words, " / ".join(str(identifier) for identifier in sorted(owed))), self.project, None)
+            self.notify(decisions.DECISION, "%s: %s; %s" % (
+                self.project.name, words, "wayline rerun %s asks again" % " / ".join(str(identifier) for identifier in sorted(owed))
+                if owed else "wayline plan --replan cuts the fresh tickets once it is mended"), self.project, None)
             return
         result.escalated.append((None, REPLAN))
         self.say("  the planner replanned for %s: ticket(s) %s written" % (
@@ -1914,7 +1996,8 @@ class Conductor:
                                            self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung,
                                            no_diff=identifier in self.view.integrated_empty,
                                            code_rule=methods.read_code_rule(worker.session_dir(self.project, identifier, launched.number)),
-                                           inherited=self._inherited_items(identifier, launched.number))
+                                           inherited=self._inherited_items(identifier, launched.number),
+                                           objectives=objective_changes.awaiting(self.project, identifier))
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -3766,7 +3849,7 @@ class Conductor:
         written = journal_written_answers(self.project, self.ledger)
         for identifier in sorted(written):
             self.say("  ticket %d: the answer written in its file is journaled as the owner's" % identifier)
-        placed = False
+        placed = changes = False
         for ticket in tickets.read_tickets(self.project):
             if ticket["kind"] != tickets.DECISION:
                 continue
@@ -3777,6 +3860,9 @@ class Conductor:
                 self._answered_ask(ticket["id"], known)
                 self._answered_frontier(ticket, known)
                 placed = placed or concerns.concern_of(ticket.get("origin")) is not None
+                changes = changes or objective_changes.is_changes_ticket(ticket.get("origin"))
+        if changes:
+            self._objective_changes()  # the answer changes the objectives now, so what it parks never launches
         if placed:
             self._concerns()  # the answer places its concern now, even when the run ends with this wave
 
@@ -4698,11 +4784,16 @@ class Conductor:
         hold the integration of the tickets behind it.
         """
         outputs = attempt.result.get("outputs_written") or attempt.ticket.get("outputs") or []
+        try:
+            waiting = objective_changes.take_result(self.project, attempt.id, attempt.number, attempt.result.get("objective_proposals"))
+        except (objective_changes.ProposalError, ValueError, OSError) as failure:
+            self.say("  ticket %d's objective proposals could not be journaled: %s" % (attempt.id, failure))
+            waiting = []
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
             tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
             no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty, code_rule=methods.code_rule(attempt.result),
-            inherited=self._inherited_items(attempt.id, attempt.number),
+            inherited=self._inherited_items(attempt.id, attempt.number), objectives=waiting,
         )
         if not asks:
             return
@@ -4797,6 +4888,7 @@ class Conductor:
                         ", falling back from %s" % verdict.fallback_from if verdict.fallback_from else ""))
             self._heard_verdict(verdict, "ticket %d's %s verdict" % (entry.ticket, ask.verdict_type))
             self._admit_verdict_proposals(entry.ticket, ask, verdict)
+            self._take_objective_judgments(entry, ask, verdict)
             if not verdict.passed:
                 self._reject(entry, verdict)
                 result.rejected.append(entry.ticket)
@@ -4842,6 +4934,28 @@ class Conductor:
                 self.say("  ticket %d's %s verdict proposed a ticket: admitted as ticket %d" % (ticket, ask.verdict_type, outcome["ticket"]))
             else:
                 self.say("  ticket %d's %s verdict proposed a ticket: parked (%s)" % (ticket, ask.verdict_type, outcome["reason"]))
+
+    def _take_objective_judgments(self, entry, ask, verdict):
+        """The verdict's judgment of the ticket's objective proposals, and the ones it made itself, journaled (ticket 91).
+
+        Gathered into the "Objective changes" ticket at once, so what an upheld change pauses is paused before the next pick.
+        """
+        if not ask.objective_proposals and not verdict.objective_proposals:
+            return
+        try:
+            if ask.objective_proposals:
+                objective_changes.take_judgments(self.project, ask.objective_proposals, verdict.objective_judgments)
+            if verdict.objective_proposals:
+                objective_changes.take_verdict(self.project, entry.ticket, entry.attempt, ask.verdict_type, verdict.objective_proposals)
+        except (objective_changes.ProposalError, ValueError, OSError) as failure:
+            self.say("  ticket %d's %s verdict judged objective proposals that could not be recorded: %s"
+                     % (entry.ticket, ask.verdict_type, failure))
+            return
+        upheld = sum(1 for judgment in verdict.objective_judgments if judgment.get("upheld"))
+        self.say("  ticket %d's %s verdict upheld %d of %d objective proposal(s)%s" % (
+            entry.ticket, ask.verdict_type, upheld, len(ask.objective_proposals or []),
+            " and proposed %d itself" % len(verdict.objective_proposals) if verdict.objective_proposals else ""))
+        self._objective_changes()
 
     def _accept_ticket(self, entry, verdict):
         """`done` to `accepted`: the one transition a passing quality verdict makes (decision 2)."""

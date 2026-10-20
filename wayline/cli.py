@@ -57,7 +57,7 @@ VERBS = [
     Verb("status", "status [--project <path>] [--json]", "print the frontier, running tickets and jobs, open decisions, the window, the goal, the last events", "views", lazy("wayline.project", "status_command")),
     Verb("answer", "answer <id> \"<text>\" [--rationale \"<why>\"]", "answer a decision ticket from the command line or a session", "views", lazy("wayline.project", "answer_command")),
     Verb("switch", "switch <path> | --autonomy <level> | --fallback auto|ask|wait | --ladder auto|ask | --environment shared|conda|venv|container | --stop-at f --cheap-at f", "make another project the active one, or set its autonomy, its fallback consent, its ladder consent, its environment, or its pacing thresholds", "views", lazy("wayline.project", "switch_command")),
-    Verb("objective", "objective add \"<question>\" [--measure <file> --sample <artifact>]", "record an objective, a question the research answers; a goal when its measure's eval_command printed the metric on the sample artifact", "views",
+    Verb("objective", "objective add \"<question>\" [--measure <file> --sample <artifact>] | answer|park|drop|reframe|reopen <O> ...", "record an objective, a question the research answers, a goal when its measure's eval_command printed the metric on the sample artifact; or change one on the owner's word", "views",
          lazy("wayline.objectives", "objective_command")),
     Verb("feedback", "feedback \"<text>\"", "file feedback for the evolve loop", "views", lazy("wayline.changes", "feedback_command")),
     Verb("mark", "mark <batch> [<item> [<mark>] [--note \"<text>\"] | --defaults] [--by owner|decider]",

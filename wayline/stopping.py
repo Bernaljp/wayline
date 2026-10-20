@@ -32,7 +32,7 @@ from wayline.jsonschema import check, load_schema
 from wayline.ledger import (
     JOB_CANCELLED, JOB_FAILED, JOB_FINISHED, JOB_LAUNCHED, RUN_STARTED, Ledger, atomic_write,
 )
-from wayline.objectives import OPEN, is_open
+from wayline.objectives import OPEN, following, is_open
 from wayline.pacing import epoch
 from wayline.jsonschema import ValidationError
 from wayline.project import HARNESS_JSON, ProjectError, control, find_project, read_harness
@@ -74,19 +74,26 @@ def describe_rule(rule):
     return "objectives (the run ends when no objective is open)"
 
 
+def _named(rule, records):
+    """The objectives a list rule names, each followed through its reframes to the one that asks its question now (ticket 91)."""
+    return {following(identifier, records) for identifier in rule}
+
+
 def waited(rule, records):
     """The open objectives the rule waits on: every open one under `objectives`, the open ones it names under a list."""
     if rule == FRONTIER:
         return []
     if isinstance(rule, list):
-        return [record for record in records if record.get("id") in rule and is_open(record)]
+        named = _named(rule, records)
+        return [record for record in records if record.get("id") in named and is_open(record)]
     return [record for record in records if is_open(record)]
 
 
 def covered(rule, records):
-    """The objectives whose closing ends a run under the rule."""
+    """The objectives whose closing ends a run under the rule: a reframed one's successor in its place."""
     if isinstance(rule, list):
-        return [record for record in records if record.get("id") in rule]
+        named = _named(rule, records)
+        return [record for record in records if record.get("id") in named]
     return list(records)
 
 
