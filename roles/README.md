@@ -240,3 +240,14 @@ parse, gets one session of this role on `policy.roles.code-reader` (Sonnet at me
 tools and the files in its prompt. It returns `code_reading`: what the changed lines develop, use,
 and set. Code keeps an item only when grep finds it in the file and applies the same rule to it, so
 the reader names things and never judges them.
+
+## The critique splitter is launched at setup, one session per batch of critiques
+
+`critique-splitter` is not assigned to tickets either (`kinds` empty). Once the owner's documents are
+sorted, `wayline concern split` and `wayline position` (before the critic reads the concerns) launch
+one session of it on `policy.roles.critique-splitter` (Sonnet at medium effort) for every critique not
+split yet (`wayline/concerns.py`, ticket 96), with no tools and the critiques and the inherited claims in
+its prompt. It returns `concern_split`: each point verbatim with every critique that raised it, praise
+and summary left out, a two-point item split, and the inherited claims it targets. Code keeps a source
+only when its words are in that critique, locates it at its block, keeps a target only when it is an
+inherited claim standing now, and merges near-identical points from different critiques.

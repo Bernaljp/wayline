@@ -617,6 +617,21 @@ def _guideline_summary(record):
     return json.dumps(summary, ensure_ascii=False, indent=1)
 
 
+def _documents_and_concerns(project):
+    """The project's documents index and its concerns, inlined for the writer when it has them (decision 17; ticket 96),
+    through the records inliner the decider and the planner read them with."""
+    from wayline import decider  # the decider imports the gates and the grill, as this module's callers do
+
+    entries = decider.documents_and_concerns(project)
+    if not entries:
+        return []
+    text, _ = decider.inline_records(entries, None, "The project's own writing and the points the work must answer. Each "
+                                     "concern for the paper order is yours to answer in the text; a concern tied to an "
+                                     "objective is answered by its findings; a declined one keeps its reason.",
+                                     heading="# The project's documents and concerns")
+    return [""] + text.rstrip("\n").split("\n")
+
+
 def writer_prompt(role, project, record, harness_root=HARNESS_ROOT):
     """The writer's prompt for a paper: the venue, the evidence, the references, the results, the form, the schema."""
     context = provenance.report_context(project)
@@ -677,6 +692,7 @@ def writer_prompt(role, project, record, harness_root=HARNESS_ROOT):
     lines.extend("- `%s` (run %s)" % (entry.get("path"), entry.get("run_id")) for entry in entries[:200])
     if len(entries) > 200:
         lines.append("- [wayline: %d more in research/manifest.json]" % (len(entries) - 200))
+    lines.extend(_documents_and_concerns(project))
     scope_downs = _open_scope_downs(project)
     if scope_downs:
         lines.extend(["", "# What the last gate left standing", "",

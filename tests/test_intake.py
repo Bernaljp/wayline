@@ -255,6 +255,13 @@ class IntakeTakesInformationOnlyTest(IntakeTestCase):
         self.assertIn("`objective`", classes)
         self.assertNotIn("`goal`", classes)
 
+    def test_concern_is_a_human_only_class_setup_may_name_and_intake_says_what_it_covers(self):
+        code, _, err = run("--project", str(self.project), "--intent", "find out whether it works", "--human-only", "concern")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(read_harness(self.project)["human_only"], ["objective", "data", "concern"])
+        classes = self.section("Decisions that stay human-only")
+        self.assertIn("`concern`", classes)
+        self.assertIn("sorts a concern", classes)
 
 
 class SpecOnStdinTest(IntakeTestCase):

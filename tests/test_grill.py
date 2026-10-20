@@ -201,7 +201,8 @@ class ObjectivesFirstTierTest(GrillCase):
         self.assertNotIn("How many seeds does a comparison use?", [record["question"] for record in view["ask"]])
         self.ok("--from", "-", stdin=json.dumps(self.batch))
         view = self.tier()
-        self.assertEqual((view["tier"], [record["question"] for record in view["ask"]]),
+        # Ticket 96: once the objectives are taken, the hostile review's objections are asked beside the rest.
+        self.assertEqual((view["tier"], [record["question"] for record in view["ask"] if not record.get("objection")]),
                          (2, ["How many seeds does a comparison use?"]))
 
     def test_each_answer_is_recorded_through_the_objectives_ledger_as_an_objective_event(self):

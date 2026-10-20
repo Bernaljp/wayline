@@ -1,0 +1,19 @@
+{
+  "id": "critique-splitter",
+  "scope_kind": "global",
+  "capability_summary": "Splits a batch of critiques into the points the work must answer, each copied verbatim from every critique that raised it, praise and summary left out, a two-point item split, with the inherited claims it targets, for the project's concerns.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "f52d8d05621ebdd0c6bc1d80b3199f952498591f957592248b9d3103138c0252",
+  "may_judge": false,
+  "output_schema": "concern_split",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}

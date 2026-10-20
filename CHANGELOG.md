@@ -36,6 +36,31 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Critiques and concerns (ticket 96; Implementation Decisions 17, 2, and 10). A critique's points, an open Word
+  comment thread, and an objection of the position memo's hostile review the owner accepts at the grill become
+  concerns: `research/concerns.json` (schema `concern`, ids K1 onward, never reused), written only by
+  `wayline.concerns` through the ledger, journaled as `concern`, and rendered as `research/CONCERNS.md`. Each records
+  its sources (the critique, the locator, the verbatim words), the inherited claims it targets, its place (tied to
+  objectives, for the paper order, or declined), and its status (`open`, `answered`, or `declined`, with the answer or
+  the reason). `wayline concern split`, and `wayline position` before the critic runs, launch one
+  `critique-splitter` session (Sonnet at medium, no tools, schema `concern_split`) per batch of critiques not split
+  yet: code keeps a source only when its words are in that critique and locates it at its block, keeps only targets
+  among the inherited claims standing now, and merges near-identical points from different critiques with every
+  source. The critic reads `DOCUMENTS.md` and every concern, its tools reach `research/documents/`, and its memo
+  proposes a place for each concern waiting (`position` gains `concerns`); the proposals form one
+  `concern_placements` batch, and the grill asks, each human-only, one question per proposed objective with its
+  concerns, one for the order, one for the declines (`take it` or `another place`), and one per objection of the
+  hostile review (`reject`, or an accept with where it goes), then one for each concern no question placed. Specify
+  refuses to draft during setup while a concern is unsorted;
+  `wayline concern place <id> --objective <O> | --order | --decline "<reason>"` sorts one as the owner. Code answers
+  a concern once its tied objectives are answered and its targets replaced or withdrawn, follows a reframe to the
+  successor, and sends a concern back to be sorted when its objective drops. After setup, each concern that needs
+  sorting is a decision ticket of class `concern` (pausing no work): the owner's, or under `autonomous` the
+  decider's, which ties it, keeps it for the order, or declines it with a reason, and adds a new objective only once
+  the owner took `objective` off the human-only classes; `concern` may be named human-only at intake. Specify, the
+  decider, the planner, and the writer read `DOCUMENTS.md` and `CONCERNS.md`, and a worker's context pack carries the
+  open concerns of its ticket's objectives.
+
 - The stopping rule, the budgets, and keep-if-better per goal; `GOAL.json` retires (ticket 87; Implementation
   Decision 17). `stop_when` in `harness.json` is `objectives` (the default: the run ends when no objective is open),
   a list of objective ids (when those are closed), or `frontier` (when no work is left); the conductor reads it every

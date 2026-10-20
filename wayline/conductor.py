@@ -149,7 +149,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, methods, notify, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, gates, methods, notify, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -869,6 +869,7 @@ class Conductor:
         self._poll(result)
         self._place_jobs(result)
         self._software(result)
+        self._concerns()
         self._pace()
         if not self._rule_ends(result) and not self._holds_launches() and not self._stops_at_stall(result):
             self._escalate(result)
@@ -1110,6 +1111,20 @@ class Conductor:
         except (ValueError, OSError, RuntimeError) as failure:  # a refused job launch (`resources.JobError`) or a tools error fails no wave
             self.say("  the software step could not run: %s" % failure)
             self.software = software.Settled()
+        self._tail()
+
+    def _concerns(self):
+        """Wave step 2's concerns part (decision 17; ticket 96): marks taken, objectives followed, a decision per concern to sort.
+
+        Code alone: `concerns.settle` answers a concern whose objectives are answered, follows a reframe, sends one
+        whose objective dropped back to be sorted, and past setup opens one decision ticket of class `concern` for each
+        concern that waits, placing it once the owner or the decider answers. An unreadable record is said, and fails
+        no wave.
+        """
+        try:
+            concerns.settle(self.project, notify=self.notify, say=self.say)
+        except (concerns.ConcernError, concerns.ConcernsUnreadable, tickets.TicketError, ValueError, OSError) as failure:
+            self.say("  the concerns could not be settled: %s" % failure)
         self._tail()
 
     def _needs_tools(self, entry):
@@ -2106,8 +2121,16 @@ class Conductor:
             scout_max=(self.policy.get("scout") or {}).get("calls_per_ticket", worker.SCOUT_MAX),
             notes=notes,
             failure=self._last_failure(attempt),
-            sections=sections.pack_text(self.ledger, sections.declared(attempt.ticket), attempt.tier.context_chars),
+            sections=self._paper_pack(attempt),
         )
+
+    def _paper_pack(self, attempt):
+        """The context pack's part on the paper: the declared sections, then the concerns of the ticket's objectives (ticket 96),
+        the two together kept to the tier's context cap."""
+        cap = attempt.tier.context_chars
+        paper = sections.pack_text(self.ledger, sections.declared(attempt.ticket), cap)
+        left = None if cap is None else max(0, int(cap) - len(paper))
+        return "\n\n".join(part for part in (paper, concerns.pack_text(self.ledger, objectives.served(attempt.ticket), left)) if part)
 
     def _keep_last_failure(self, attempt):
         """Write `failure.json` for an attempt a tier up launches: the failure output of the attempt before it (ticket 68).
@@ -3646,6 +3669,7 @@ class Conductor:
         written = journal_written_answers(self.project, self.ledger)
         for identifier in sorted(written):
             self.say("  ticket %d: the answer written in its file is journaled as the owner's" % identifier)
+        placed = False
         for ticket in tickets.read_tickets(self.project):
             if ticket["kind"] != tickets.DECISION:
                 continue
@@ -3655,6 +3679,9 @@ class Conductor:
                 self.say("  ticket %d answered by the %s: %s" % (ticket["id"], known.get("decided_by"), known.get("answer")))
                 self._answered_ask(ticket["id"], known)
                 self._answered_frontier(ticket, known)
+                placed = placed or concerns.concern_of(ticket.get("origin")) is not None
+        if placed:
+            self._concerns()  # the answer places its concern now, even when the run ends with this wave
 
     def _say_arrival(self, event):
         payload = event.get("payload") or {}

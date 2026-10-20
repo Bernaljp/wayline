@@ -23,6 +23,27 @@
         "text": {"type": "string", "pattern": "\\S"}
       }
     },
+    "concerns": {
+      "type": ["object", "null"],
+      "required": ["place", "objective", "ids"],
+      "additionalProperties": false,
+      "description": "a question of the grill on concerns (decision 17; ticket 96): whether these concerns go where the critic proposes (place set, answered take it or another place), or where one concern the groups left goes (place null, answered with its place: tie it to O<n>, for the order, decline: <the reason>)",
+      "properties": {
+        "place": {"enum": ["objectives", "order", "declined", null]},
+        "objective": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$"},
+        "ids": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^K[1-9][0-9]*$"}}
+      }
+    },
+    "objection": {
+      "type": ["object", "null"],
+      "required": ["index", "text"],
+      "additionalProperties": false,
+      "description": "a question of the grill on one objection of the position memo's hostile review (decision 17; ticket 96): accepted, it becomes a concern with the memo as its source",
+      "properties": {
+        "index": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "pattern": "\\S"}
+      }
+    },
     "blocking": {"enum": ["subgraph", "all", null]},
     "human_only": {"type": "boolean"},
     "tier": {"type": ["integer", "null"], "minimum": 1, "description": "the grill tier that first asked it; null until a tier does"},

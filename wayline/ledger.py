@@ -111,6 +111,7 @@ TOOL_INSTALLED = "tool_installed"  # a project's tool installed, licensed softwa
 PASSAGE = "passage"  # one passage of a section written to research/passages.jsonl (decision 17; ticket 86)
 SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted against its ticket (decision 17; ticket 98)
 CONSOLIDATED = "consolidated"  # one consolidation of a section the owner asked for (decision 17; ticket 88)
+CONCERN = "concern"  # one concern recorded or changed in research/concerns.json (decision 17; ticket 96)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -258,6 +259,7 @@ K_REPLACES_OWNER = "replaces_owner"  # `passage`, `finding`: true when it replac
 K_REPLACED = "replaced"  # `consolidated`: the ids of the passages the consolidation replaced
 K_CONSOLIDATES = "consolidates"  # `passage`: on a consolidation's passage, every passage it rewrote (ticket 88)
 K_WRITTEN = "written"  # `consolidated`: the ids of the fewer passages it wrote in their place
+K_PLACE = "place"  # `concern`: where the concern was sorted, tied to objectives, for the order, or declined; null while unsorted
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -325,6 +327,7 @@ EVENTS = {
               K_WITHDRAWN, K_MOVED_FROM, K_REPLACES_OWNER, K_CONSOLIDATES),
     SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
     CONSOLIDATED: (K_SECTION, K_REPLACED, K_WRITTEN, K_MODEL),
+    CONCERN: (K_ID, K_STATUS, K_PLACE, K_OBJECTIVES, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -370,6 +373,11 @@ PAYLOAD_ENUMS = {
     (PASSAGE, K_EVIDENCE): ("supports", "narrows", "contradicts"),
     (FINDING, K_EVIDENCE): ("supports", "narrows", "contradicts"),
     (SCOUTED, K_OUTCOME): ("found", "no such work", "failed"),
+    (CONCERN, K_STATUS): ("open", "answered", "declined"),
+    (CONCERN, K_PLACE): ("objectives", "order", "declined"),
+    # The critique splitter's session, code (a comment thread, a reframe or a drop followed, an answer), the critic's
+    # proposal, or the owner's or the decider's placement.
+    (CONCERN, K_BY): ("session", "code", "critic", "owner", "decider"),
 }
 
 

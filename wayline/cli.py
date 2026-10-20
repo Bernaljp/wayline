@@ -74,6 +74,9 @@ VERBS = [
     Verb("consolidate", "consolidate <section> [--yes]",
          "rewrite one section's current passages into fewer that keep their tags, in one read-only writer session the owner asks for and confirms with its cost",
          "views", lazy("wayline.consolidation", "consolidate_command")),
+    Verb("concern", "concern split | place <id>... --objective <O> | --order | --decline \"<reason>\" | show",
+         "the project's concerns: split its critiques and open comment threads into concerns (one splitter session per batch), "
+         "place one as the owner, or show CONCERNS.md", "views", lazy("wayline.concerns", "concern_command")),
     Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services", lazy("wayline.dashboard", "serve_command")),
     Verb("tick", "tick [--project <path>]", "the recurrent job that relaunches work after windows, answers, and jobs", "services", lazy("wayline.tick", "tick_command")),
     Verb("accept", "accept [--where worktree|rebased|main]", "run the ticket's machine acceptance inside a worktree (called by workers)", "worktree", lazy("wayline.gates", "accept")),
@@ -110,7 +113,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "reference", "document", "passage", "consolidate",
+    "objective", "mark", "reference", "document", "passage", "consolidate", "concern",
 ))
 
 
