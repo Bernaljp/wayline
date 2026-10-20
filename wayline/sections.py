@@ -294,14 +294,15 @@ def owner_replacement_problem(project_or_ledger, section, replaces, text, reason
 
 def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None, objectives=(), ticket=None, wave=None,
                 render=True, evidence=None, doc=None, standing=None, reason=None, withdrawn=False, moved_from=None,
-                consolidates=None):
+                consolidates=None, merges=None):
     """Write one passage through the ledger: `passages.jsonl` with the next P id, the `passage` event, and the section re-rendered.
 
     `by` names who contributed it (`BY_RE`); `objectives` are the ticket's; `wave` is the wave it was integrated in,
     which is what tells two replacements of one passage in the same wave from a later word on it. Results is written
     as findings, never here, except an inherited passage (`by` a document). `evidence` is what a passage replacing an
     inherited claim says of it; `doc`, `standing`, `reason`, `withdrawn`, and `moved_from` are an inherited passage's
-    (the module's docstring). Returns the record written.
+    (the module's docstring); `merges` names every occurrence a merged inherited passage merges (ticket 95). Returns the
+    record written.
     """
     book = ledger_for(project_or_ledger)
     if evidence is not None and (evidence not in EVIDENCE or replaces is None):
@@ -329,6 +330,7 @@ def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None,
         # A passage replacing an owner's is journaled for the account, "Changed without asking you" (ticket 88).
         extra = {"evidence": evidence, "doc": doc, "standing": standing, "reason": reason, "withdrawn": True if withdrawn else None,
                  "moved_from": moved_from, "consolidates": list(consolidates) if consolidates else None,
+                 "merges": list(merges) if merges else None,
                  "replaces_owner": True if by not in RESULTS_BY and _owners(book, section, replaces) else None}
         record.update({key: value for key, value in extra.items() if value is not None})
         try:

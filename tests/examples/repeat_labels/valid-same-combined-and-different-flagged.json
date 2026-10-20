@@ -1,0 +1,20 @@
+{
+  "pairs": [
+    {
+      "pair": 1,
+      "label": "same",
+      "kept": "combined",
+      "text": "Synchrony rises with colony size.",
+      "flag": false,
+      "why": "the same claim"
+    },
+    {
+      "pair": 2,
+      "label": "different",
+      "kept": null,
+      "text": null,
+      "flag": true,
+      "why": "close, but one is the central finding"
+    }
+  ]
+}

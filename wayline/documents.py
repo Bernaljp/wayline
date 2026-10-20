@@ -1411,11 +1411,20 @@ def document_command(args):
     move.add_argument("--heading", help="the heading it stands under there; its own by default")
     move.add_argument("--project", help="the project; the active one by default")
     move.add_argument("--json", action="store_true", help="print the passage written as JSON")
+    repeated = subparsers.add_parser(
+        "repeats", help="the setup's repeated-claims check over the inherited claims (ticket 95): one consistency read on Opus, "
+                        "the embedding net, and the confirmer; merges what covers every occurrence, lists contradictions, and "
+                        "puts both before the owner as batches")
+    repeated.add_argument("--project", help="the project; the active one by default")
+    repeated.add_argument("--json", action="store_true", help="print what the check did as JSON")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     if options.action in ("deconstruct", "move"):
         return _inherited_command(options)
+    if options.action == "repeats":
+        from wayline import repeats  # it reads the sections, which read this module
+        return repeats.repeats_command(options)
     from wayline.intake import IntakeError
 
     try:

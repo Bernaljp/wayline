@@ -1,0 +1,57 @@
+{
+  "read": [
+    "P1",
+    "P4",
+    "P5",
+    "P8",
+    "P11",
+    "P14"
+  ],
+  "pairs": [
+    {
+      "a": "P1",
+      "b": "P14",
+      "found_by": [
+        "consistency",
+        "embedding"
+      ],
+      "similarity": 0.9925,
+      "label": "same",
+      "outcome": "merged",
+      "kept": "first",
+      "text": "Lantern moths gather in dusk swarms whose wingbeats lock together.",
+      "passage": "P15",
+      "why": "the same claim",
+      "lost": null,
+      "added": [],
+      "flag": false,
+      "results": [],
+      "batch": "B1",
+      "item": 1,
+      "at": "2026-10-20T10:00:00.000Z"
+    },
+    {
+      "a": "P5",
+      "b": "P11",
+      "found_by": [
+        "consistency"
+      ],
+      "similarity": null,
+      "label": "contradicting",
+      "outcome": "contradiction",
+      "kept": null,
+      "text": null,
+      "passage": null,
+      "why": "lowest against peaks at dusk",
+      "lost": null,
+      "added": [],
+      "flag": true,
+      "results": [
+        "Results"
+      ],
+      "batch": "B2",
+      "item": 1,
+      "at": "2026-10-20T10:00:00.000Z"
+    }
+  ]
+}
