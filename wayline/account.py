@@ -381,25 +381,49 @@ def _private_repository(context):
 
 def _changed(context):
     """Every passage and finding the journal carries with `replaces_owner` (ticket 88): each replaced an owner's passage, or a
-    consolidation made from the owner's text, without asking. A consolidation the owner asked for is never flagged."""
+    consolidation made from the owner's text, without asking. A consolidation the owner asked for is never flagged.
+
+    The id a replacement names may be one the owner's passage had already replaced (the ledger follows it to what
+    stood in its place), so the passage named is the owner's one standing there when the replacement came.
+    """
     from wayline import sections
     try:
-        known = {item.get("id"): item for item in sections.read_passages(context.project)}
+        log = sections.read_passages(context.project) + sections.read_findings(context.project)
     except (OSError, ValueError, LedgerError):
-        known = {}
+        log = []
     lines = []
     for event in context.events:
         name, payload = event.get("event"), event.get("payload") or {}
         if name not in (PASSAGE, FINDING) or not payload.get("replaces_owner"):
             continue
-        replaced = known.get(payload.get("replaces")) or {}
-        section = payload.get("section") if name == PASSAGE else "results"
+        replaced = _owners_passage(log, payload.get("replaces"), payload.get("id"), str(event.get("ts") or ""))
+        section = replaced.get("section") or (payload.get("section") if name == PASSAGE else "results")
         by = payload.get("by") if name == PASSAGE else "a finding of ticket %s" % payload.get("ticket")
         lines.append("- Your passage %s in %s, \"%s\", was replaced by %s (%s): %s%s." % (
-            payload.get("replaces"), sections.TITLES.get(section, section), _one_line(replaced.get("text")) or "no longer in the log",
-            payload.get("id"), by, _one_line(payload.get("reason") or "no reason was given"),
+            replaced.get("id") or payload.get("replaces"), sections.TITLES.get(section, section),
+            _one_line(replaced.get("text")) or "no longer in the log", payload.get("id"), by,
+            _one_line(payload.get("reason") or "no reason was given"),
             "; the evidence %s it" % payload["evidence"] if payload.get("evidence") else ""))
     return lines
+
+
+def _owners_passage(log, replaces, replacing, before):
+    """The owner's passage (or consolidation of the owner's text) at `replaces` or standing in its place by the time
+    `replacing` came (`before`, its event's time); `{}` when the log holds none."""
+    children = {}
+    for item in log:
+        if item.get("replaces") and item.get("id") != replacing and str(item.get("ts") or "") <= before:
+            children.setdefault(item["replaces"], []).append(item)
+    queue, seen = [item for item in log if item.get("id") == replaces], set()
+    while queue:
+        item = queue.pop(0)
+        if item.get("id") in seen:
+            continue
+        seen.add(item.get("id"))
+        if item.get("by") in (OWNER, "consolidation"):
+            return item
+        queue.extend(children.get(item.get("id"), []))
+    return {}
 
 
 # --- runs -------------------------------------------------------------------------------------------------

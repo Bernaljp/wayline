@@ -174,15 +174,16 @@ class Clusters:
         return {"schema_version": 1, "results": [dict(item, headings=list(item["headings"])) for item in self.results.values()]}
 
 
-def load(project_or_ledger):
-    """The clustering as the ledger holds it now: `results.json` and the `result` of every filed finding."""
+def load(project_or_ledger, findings=None):
+    """The clustering as the ledger holds it now: `results.json` and the `result` of every filed finding (`findings`,
+    when the caller has read them already)."""
     from wayline.sections import read_findings  # sections calls `assign` from inside its ledger call
     book = ledger_for(project_or_ledger)
     try:
         record = book.read_json(RESULTS_JSON)
     except (OSError, ValueError):
         record = None
-    return Clusters.from_record(record if isinstance(record, dict) else None, read_findings(book))
+    return Clusters.from_record(record if isinstance(record, dict) else None, read_findings(book) if findings is None else findings)
 
 
 def assign(project_or_ledger, finding):
@@ -256,8 +257,8 @@ def read_results(project_or_ledger):
     """Every live result with a current finding, in id order (the module's docstring)."""
     from wayline import sections  # sections calls `assign` from inside its ledger call
     book = ledger_for(project_or_ledger)
-    clusters = load(book)
     findings = sections.read_findings(book)
+    clusters = load(book, findings)
     current = sections.current_ids(book, sections.RESULTS)
     found = {item["id"]: Result(item["id"], item["heading"], changed=item.get("changed")) for item in clusters.live()}
     for finding in findings:

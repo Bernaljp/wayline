@@ -80,6 +80,22 @@ class MatchTest(NumbersCase):
         self.assertEqual(self.unmatched(finding("The AUROC is 0.81.", "results/ghost.json#auroc")), [("The AUROC is 0.81.", ["0.81"])])
         self.assertEqual(self.unmatched(finding("The AUROC is 0.81.", "results/summary.json#nothing")), [("The AUROC is 0.81.", ["0.81"])])
 
+    def test_a_tag_naming_a_run_whose_file_the_manifest_no_longer_holds_is_not_read(self):
+        tagged = finding("The AUROC is 0.81.{res:t2-a1/results/summary.json#auroc_mean}")
+        runs = {"results/summary.json": "t5-a1"}
+        self.assertEqual([sentence.unmatched for sentence in numbers.check([tagged], self.read, runs=runs).unmatched], [["0.81"]])
+        self.assertEqual(numbers.check([tagged], self.read, runs=runs, own_run="t2-a1").unmatched, [], "the attempt's own run is read")
+        self.assertEqual(numbers.check([tagged], self.read, runs={"results/summary.json": "t2-a1"}).unmatched, [])
+
+    def test_a_sentence_tagged_only_with_a_reference_is_not_read_against_the_runs(self):
+        cited = finding("Smith reports 0.80 {ref:smith-2020#p3}. Ours is 0.81.{res:t2-a1/results/summary.json#auroc_mean}")
+        self.assertEqual([sentence.text for sentence in numbers.check([cited], self.read).sentences],
+                         ["Ours is 0.81.{res:t2-a1/results/summary.json#auroc_mean}"])
+
+    def test_the_verifier_is_shown_the_file_code_read(self):
+        sentence = numbers.check([finding("The AUROC is 0.9.")], self.read).sentences[0]
+        self.assertEqual(sentence.locators, ["%s#auroc_mean" % (self.root / "results" / "summary.json")])
+
     def test_a_sentence_without_a_number_is_not_read(self):
         self.assertEqual(numbers.check([finding("Interaction terms lift the AUROC.")], self.read).sentences, [])
 
@@ -121,6 +137,23 @@ class VerifierTest(NumbersCase):
         verdicts = [event["payload"] for event in Ledger(self.project).read_events()[0] if event["event"] == "verdict"]
         self.assertEqual([payload["verdict_type"] for payload in verdicts], ["numbers_match", "numbers_match"])
 
+    def test_a_sentence_passed_at_an_earlier_acceptance_is_not_judged_again(self):
+        self.judge(verdict(True), verdict(True))
+        outcome, calls = self.judge()
+        self.assertEqual(calls, [])
+        self.assertEqual(numbers.acceptance_result(outcome)["exit_code"], 0)
+
+    def test_a_verdict_the_gate_refuses_fails_the_check_and_a_closed_window_lists_it(self):
+        from unittest import mock
+        from wayline import gates
+        check = numbers.check([finding("The AUROC is 0.9.")], self.read)
+        for raised, code in ((gates.GateError("policy.verifier has no row for sonnet"), 1),
+                             (gates.UsageLimited("refused until noon", None), 0)):
+            with self.subTest(raised=type(raised).__name__), mock.patch.object(gates, "verdict", side_effect=raised):
+                result = numbers.acceptance_result(numbers.judge(self.project, check, ticket=7, author_model="sonnet"))
+                self.assertEqual(result["exit_code"], code, result["tail"])
+                self.assertIn(str(raised), result["tail"])
+
     def test_a_failing_verdict_fails_the_check_with_the_sentence_and_why(self):
         outcome, _ = self.judge(verdict(False), verdict(True))
         result = numbers.acceptance_result(outcome)
@@ -153,6 +186,19 @@ class AcceptanceTest(ConductorCase):
         self.assertTrue(accepted[0]["pass"], accepted)
         self.assertIn(numbers.NUMBERS_CHECK, [entry["cmd"] for entry in accepted[0]["results"]])
         self.assertEqual([event for event in self.events("verdict") if event["payload"]["verdict_type"] == "numbers_match"], [])
+
+    def test_under_cheap_only_no_verifier_launches_and_the_sentence_is_listed(self):
+        from types import SimpleNamespace
+        from wayline import schedule
+        (self.project / "hello.txt").write_text("auroc: 0.8123\n", encoding="utf-8")
+        attempt = SimpleNamespace(id=1, number=1, worktree=self.project, tier=SimpleNamespace(model="sonnet"),
+                                  result={"findings": [{"text": "The AUROC is 0.9.", "provenance": "hello.txt#auroc"}]})
+        self.conductor.action = schedule.CHEAP_ONLY
+        with worker.use_fake() as fake:
+            (result,) = self.conductor._numbers_check(attempt)
+            self.assertEqual(fake.calls, [], "a verdict waits under cheap_only like every other")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("listed, not failed", result["tail"])
 
     def test_a_number_the_verifier_does_not_support_sends_the_ticket_back(self):
         accepted = self.run_ticket("The AUROC is 0.9.", verdicts=[verdict(False)])

@@ -3858,16 +3858,20 @@ class Conductor:
         """The numbers check (decision 17; ticket 90) over the result's findings as one acceptance result; none without a finding.
 
         Every number in a finding must match a value at its sentence's `res` locators, read in the ticket's worktree and
-        then the project. Each sentence code cannot match goes to a fresh verifier through `self.numbers_verifier`; a
-        failing verdict sends the worker back with the sentence. While the run holds model work no verifier launches,
-        and the sentences are listed, never failed.
+        then the project, a tag naming another run only while the manifest still holds that run's file at its path. Each
+        sentence code cannot match goes to a fresh verifier through `self.numbers_verifier`; a failing verdict sends the
+        worker back with the sentence. A verifier launches only when every other verdict would (pacing `normal` and no
+        hold on launches); otherwise the sentences are listed, never failed.
         """
         findings = [item for item in (attempt.result or {}).get("findings") or [] if isinstance(item, dict)]
         if not findings:
             return []
-        outcome = numbers.check(findings, numbers.reader(attempt.worktree, self.project), numbers.spec_parameters(self.project))
-        if outcome.unmatched and schedule.holds_model_work(self.action):
-            judged = numbers.Judged(outcome, [(sentence, None, "the run holds model work, so no verifier was launched")
+        from wayline import provenance  # the provenance module pulls in the gates and the report
+        runs = {entry.get("path"): entry.get("run_id") for entry in provenance.read_manifest(self.ledger).get("entries", [])}
+        outcome = numbers.check(findings, numbers.reader(attempt.worktree, self.project), numbers.spec_parameters(self.project),
+                                runs=runs, own_run="t%d-a%d" % (attempt.id, attempt.number))
+        if outcome.unmatched and (self.action != schedule.NORMAL or self._holds_launches()):
+            judged = numbers.Judged(outcome, [(sentence, None, "the run holds its verdicts now, so no verifier was launched")
                                               for sentence in outcome.unmatched])
         else:
             judged = self.numbers_verifier(attempt, outcome) if outcome.unmatched else numbers.Judged(outcome)
@@ -3876,7 +3880,7 @@ class Conductor:
     def _verify_numbers(self, attempt, outcome):
         """One fresh verifier per sentence whose numbers code could not match, on the verifier the table gives for its author."""
         return numbers.judge(self.project, outcome, ticket=attempt.id, author_model=attempt.tier.model, fall_back=self._falls_back(),
-                             policy=self.policy, harness_root=self.harness_root, ledger=self.ledger)
+                             policy=self.policy, harness_root=self.harness_root, ledger=self.ledger, cwd=attempt.worktree)
 
     def _classify(self, texts):
         """The classifier's classes for `texts`, one haiku batch through the launcher for what the cache does not hold.

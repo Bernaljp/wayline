@@ -316,6 +316,18 @@ class ChangedWithoutAskingTest(AccountCase):
         self.assertIn("t9-a1-f1", section)
         self.assertIn("the per-split runs show no gain on split_a", section)
 
+    def test_a_finding_naming_what_the_owners_passage_replaced_lists_the_owners_passage(self):
+        from wayline import sections
+        record = {"provenance": ["results/interactions/summary.json#auroc_mean"], "negative": False, "heading": "Gain",
+                  "objectives": [], "ticket": 9}
+        sections.file_finding(self.project, dict(record, id="t9-a1-f1", text="The gain holds everywhere.", replaces=None))
+        mine = sections.add_passage(self.project, "results", "Gain", "The gain holds on split_b.", by="owner", replaces="t9-a1-f1")
+        sections.file_finding(self.project, dict(record, id="t10-a1-f1", text="The gain holds on split_b only.", replaces="t9-a1-f1",
+                                                 reason="split_a shows none", ticket=10))
+        self.render()
+        section = self.section("Changed without asking you")
+        self.assertIn("Your passage %s in Results, \"The gain holds on split_b.\", was replaced by t10-a1-f1" % mine["id"], section)
+
     def test_a_passage_replacing_a_consolidation_of_the_owners_text_is_listed_and_the_consolidation_is_not(self):
         from wayline import sections
         mine = sections.add_passage(self.project, "discussion", "Scope", "The gain holds on every split.", by="owner")

@@ -1620,16 +1620,18 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
     book = Ledger(project)
     from wayline import account  # the account reads the decisions module, which imports this one through the gates
     notes = []
+    if not offline:
+        # The classifier is a session: it runs before the lock, so no other writer of the ledger waits on it, and the
+        # render under the lock reads what it cached.
+        texts = [sentence.text for sentence in prose_sentences(_body(report_context(project)))]
+        try:
+            classify(project, texts, harness_root=harness_root, policy=policy)
+        except UsageLimited as refused:
+            notes.append("%s; the sentences it did not reach are unclassified" % refused)
     with book.lock():
         context = report_context(project)
         body = _body(context)
-        texts = [sentence.text for sentence in prose_sentences(body)]
-        try:
-            classes = classify(project, texts, harness_root=harness_root, policy=policy, offline=offline)
-        except UsageLimited as refused:
-            classes = read_claims_cache(book)
-            notes.append("%s; the sentences it did not reach are unclassified" % refused)
-        result = lint(project, body, classes)
+        result = lint(project, body, read_claims_cache(book))
         edited = account.take_edit(project, REPORT, None, context.events)
         stamp = now_ts()  # the edit is noticed at the time its render is journaled, which later banners read back
         noticed = (stamp, edited) if edited is not None else _last_edit(context.events)

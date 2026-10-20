@@ -110,7 +110,6 @@ _PASSAGE_MARK = re.compile(r"^<!-- wayline:passage ([^<>]+?) -->$")
 _RENDER_MARK = re.compile(r"\s*\[(?:unchecked|unverifiable: [^\[\]]*)\]")
 # A tag that is evidence for a passage replacing an owner's: a result, a reference, or the code, never a `doc` tag.
 _EVIDENCE_TAG = re.compile(r"\{(?:res|ref|code):[^{}]+\}")
-_TAG = re.compile(r"\{(?:res|ref|doc):[^{}]+\}")
 _SENTENCE_END = re.compile(r"[.!?](?:\{(?:res|ref|doc):[^{}]+\})*(?=\s|$)")
 
 
@@ -379,8 +378,8 @@ def file_finding(project_or_ledger, record, wave=None, render=True):
                                                 "evidence", "reason", "replaces_owner", "result") if key in record}
         make_event(FINDING, payload, ticket=record.get("ticket"))
         line = dict(record, wave=wave) if wave is not None else record
-        results.commit(book, clusters, created, ticket=record.get("ticket"))
         book.append_record(FINDINGS, line)
+        results.commit(book, clusters, created, ticket=record.get("ticket"))  # a result only once its first finding is filed
         book.append_event(FINDING, payload, ticket=record.get("ticket"))
         if render:
             render_section(book, RESULTS)
@@ -623,12 +622,9 @@ def _put(slots, order, where, item, heading, place_heading, index, remove=None):
 
 
 def _finding_text(item, manifest):
-    """A finding as Results prints it: its text, with its provenance as `res` tags when the text carries none."""
-    text = str(item.get("text") or "").strip()
-    if _TAG.search(text):
-        return text
+    """A finding as Results prints it: the general report's own reading (`provenance.finding_text`), so the two agree."""
     from wayline import provenance  # the provenance module pulls in the gates and the report
-    return provenance.tagged_text(text, provenance.finding_tags(item, manifest))
+    return provenance.finding_text(item, manifest)
 
 
 def _paragraphs(current, by_id):

@@ -20,7 +20,12 @@ lines that contain it. A locator code cannot resolve holds nothing, so its numbe
 Each sentence code cannot match goes to a fresh verifier (`judge`), every such sentence, as a `numbers_match` verdict on
 the claim; a failing verdict fails the check and the ticket is sent back with the sentence and the verifier's findings.
 A verifier that could not be taken (a usage window, a held Fable window under the consent `wait`, a launch that
-failed) lists the sentence in the tail and fails nothing: a closed window is no verdict on the worker's numbers.
+failed) lists the sentence in the tail and fails nothing: a closed window is no verdict on the worker's numbers. A verdict
+the gate refuses outright fails it, so the refusal is seen; a sentence a verifier already passed is not judged again.
+
+A `res` tag names a run: its file is read only while the manifest still holds that run's file at its path (or it is the
+attempt's own run, whose files are in its worktree), and a sentence ending with only `ref`, `code`, or `doc` tags names
+no run artifact, so its numbers are not read here.
 """
 
 import csv
@@ -43,8 +48,7 @@ SCALES = (1, 100, 1000)  # the value as written, as a percent, or in thousandths
 # Digits that stand alone: not after a letter, digit, underscore, or point, nor after a letter and a hyphen (`CIFAR-10`),
 # and not before a letter, digit, or underscore. A thousands-separated form, a decimal, and an exponent are one number.
 _NUMBER = re.compile(r"(?<![\w.])(?<![A-Za-z]-)(?P<number>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|\.\d+)(?![\w])")
-_TAG = re.compile(r"\{(?:res|ref|code|doc):[^{}]+\}")
-_RES = re.compile(r"\{res:(?:t[0-9]+-a[0-9]+)/([^{}#]+)#([^{}]+)\}")
+_RES = re.compile(r"\{res:(t[0-9]+-a[0-9]+)/([^{}#]+)#([^{}]+)\}")
 _LINES = re.compile(r"^L([1-9][0-9]*)(?:-L?([1-9][0-9]*))?$")
 
 
@@ -59,8 +63,9 @@ class Number:
 
 def numbers_in(text, exempt=()):
     """The numbers of `text` the check reads, its tags taken off; a number equal to one in `exempt` is left out."""
+    from wayline.provenance import ANY_TAG_RE  # what a tag is, the linter's own pattern
     found = []
-    for match in _NUMBER.finditer(_TAG.sub(" ", str(text or ""))):
+    for match in _NUMBER.finditer(ANY_TAG_RE.sub(" ", str(text or ""))):
         raw = match.group("number")
         plain = raw.replace(",", "")
         try:
@@ -159,17 +164,27 @@ def values_at(text, path, locator):
 
 
 def reader(*roots):
-    """`path -> text or None`: the file at `path` under the first of `roots` that holds it (a worktree, then the project)."""
-    def read(path):
+    """`path -> text or None`: the file at `path` under the first of `roots` that holds it (a worktree, then the project).
+
+    `read.locate(path)` is that file's absolute path, or None: what the verifier is given, so it opens the file code read.
+    """
+    def locate(path):
         relative = Path(path)
         if relative.is_absolute() or ".." in relative.parts or not relative.parts:
             return None
         for root in roots:
-            try:
-                return (Path(root) / relative).read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
+            if (Path(root) / relative).is_file():
+                return Path(root) / relative
         return None
+
+    def read(path):
+        found = locate(path)
+        try:
+            return found.read_text(encoding="utf-8", errors="replace") if found is not None else None
+        except OSError:
+            return None
+
+    read.locate = locate
     return read
 
 
@@ -209,36 +224,48 @@ class NumbersCheck:
         return [sentence for sentence in self.sentences if sentence.unmatched]
 
 
-def _locators(sentence_text, finding):
-    """A sentence's `res` locators as `(path, locator)`: the tags it ends with, else its finding's provenance."""
-    tagged = [(path, locator) for path, locator in _RES.findall(sentence_text)]
-    if tagged:
+def _locators(sentence_text, finding, own_tags):
+    """A sentence's `res` locators as `(run, path, locator)`: the `res` tags it ends with; for a finding with no tag of its
+    own, its provenance (no run named), which tags every sentence of it; none for any other sentence."""
+    from wayline.provenance import _cited  # a finding's provenance as a list, however it was written
+    tagged = _RES.findall(sentence_text)
+    if tagged or own_tags:
         return tagged
-    provenance = finding.get("provenance")
-    provenance = [provenance] if isinstance(provenance, str) else list(provenance or [])
-    return [tuple(str(item).partition("#")[::2]) for item in provenance if "#" in str(item)]
+    return [(None,) + tuple(str(item).partition("#")[::2]) for item in _cited(finding) if "#" in str(item)]
 
 
-def check(findings, read, exempt=()):
-    """The Type-A numbers check over a result's findings: every sentence holding a number, and which numbers match."""
-    from wayline.provenance import prose_sentences  # the provenance module pulls in the gates
+def check(findings, read, exempt=(), runs=None, own_run=None):
+    """The Type-A numbers check over a result's findings: every sentence holding a number, and which numbers match.
+
+    `runs` maps a manifested path to the run whose file it holds now; a `res` tag naming another run (not `own_run`, the
+    attempt's own, whose files are in its worktree) is not read, since the file at its path is no longer that run's.
+    A sentence of a finding that carries tags of its own and ends with no `res` tag (a reference's number, `ref` tagged)
+    names no run artifact, so the check does not read it.
+    """
+    from wayline.provenance import ANY_TAG_RE, prose_sentences  # the provenance module pulls in the gates
+    runs = runs or {}
+    locate = getattr(read, "locate", lambda path: None)
     outcome = NumbersCheck()
     for index, finding in enumerate(findings or [], start=1):
         if not isinstance(finding, dict):
             continue
+        own_tags = bool(ANY_TAG_RE.search(str(finding.get("text") or "")))
         for sentence in prose_sentences(str(finding.get("text") or "")):
             written = numbers_in(sentence.text, exempt)
-            if not written:
+            locators = _locators(sentence.text, finding, own_tags)
+            if not written or not locators:
                 continue
-            locators = _locators(sentence.text, finding)
-            values = []
-            for path, locator in locators:
+            values, shown = [], []
+            for run, path, locator in locators:
+                found = locate(path)
+                shown.append("%s#%s" % (found if found is not None else path, locator))
+                if run is not None and run != own_run and runs.get(path) not in (None, run):
+                    continue  # the file at that path is another run's now
                 text = read(path)
                 held = values_at(text, path, locator) if text is not None else None
                 values.extend(held or [])
             outcome.sentences.append(Sentence(index, sentence.text, [number.raw for number in written],
-                                              [number.raw for number in written if not matches(number, values)],
-                                              ["%s#%s" % pair for pair in locators]))
+                                              [number.raw for number in written if not matches(number, values)], shown))
     return outcome
 
 
@@ -262,23 +289,44 @@ class Judged:
     judged: list = field(default_factory=list)
 
 
+def _passed_before(project, ledger):
+    """The subjects of every passing `numbers_match` verdict the journal holds."""
+    from wayline.gates import NUMBERS_MATCH
+    from wayline.ledger import VERDICT, ledger_for
+    events, _ = ledger_for(ledger or project).read_events()
+    return {(event.get("payload") or {}).get("subject") for event in events if event.get("event") == VERDICT
+            and (event.get("payload") or {}).get("verdict_type") == NUMBERS_MATCH and (event.get("payload") or {}).get("pass")}
+
+
 def judge(project, outcome, *, ticket, author_model, fall_back=None, policy=None, harness_root=None, ledger=None, cwd=None):
-    """One fresh verifier per sentence code could not match, each journaled as a `numbers_match` verdict on the claim."""
+    """One fresh verifier per sentence code could not match, each journaled as a `numbers_match` verdict on the claim.
+
+    A sentence of this ticket a verifier already passed, word for word, is not judged again when the acceptance runs
+    again. A verdict a usage window, a held Fable window, or a failed launch kept from being taken lists the sentence;
+    one the gate refuses outright (a verifier table it cannot read) fails it, so the refusal is seen.
+    """
     from wayline import gates, worker
     from wayline.provenance import ProvenanceError, one_line
     options = {"policy": policy, "ledger": ledger, "cwd": cwd}
     if harness_root is not None:
         options["harness_root"] = harness_root
     judged = Judged(outcome)
+    passed = _passed_before(project, ledger) if outcome.unmatched else set()
     for sentence in outcome.unmatched:
         digest = hashlib.sha256(sentence.text.encode("utf-8")).hexdigest()[:16]
         subject = "ticket %s#numbers-%s" % (ticket, digest)
+        if subject in passed:
+            judged.judged.append((sentence, True, "a verifier passed it at an earlier acceptance"))
+            continue
         try:
             taken = gates.verdict("claim", subject, QUESTION % (one_line(sentence.text), ", ".join(sentence.unmatched)),
                                   sentence.locators or ["the finding's provenance"], SCOPE, project=project, author_model=author_model,
                                   verdict_type=gates.NUMBERS_MATCH, ticket=ticket, fall_back=fall_back, **options)
-        except (gates.GateError, gates.FableHeld, gates.UsageLimited, worker.LaunchError, ProvenanceError, OSError) as failure:
+        except (gates.FableHeld, gates.UsageLimited, worker.LaunchError, OSError) as failure:
             judged.judged.append((sentence, None, "no verdict could be taken: %s" % failure))
+            continue
+        except (gates.GateError, ProvenanceError) as failure:
+            judged.judged.append((sentence, False, "the verdict was refused: %s" % failure))
             continue
         detail = "; ".join(one_line(item.get("text")) for item in taken.findings or [] if isinstance(item, dict))
         judged.judged.append((sentence, bool(taken.passed), detail))
