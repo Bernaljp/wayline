@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "repeat_labels",
+  "description": "What the confirmer returns for the pairs of claims it was shown (Implementation Decision 17; ticket 95): each pair, by its number, labelled the same claim, contradicting, or different. For a pair that is the same, the text a merge would keep: the first or the second occurrence verbatim, or one sentence combined from both. A pair kept apart may carry a flag that lists it for the grill.",
+  "type": "object",
+  "required": ["pairs"],
+  "additionalProperties": false,
+  "properties": {
+    "pairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pair", "label", "kept", "text", "flag", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "pair": {"type": "integer", "minimum": 1, "description": "the pair's number in the prompt"},
+          "label": {"type": "string", "enum": ["same", "contradicting", "different"]},
+          "kept": {"type": ["string", "null"], "enum": ["first", "second", "combined", null], "description": "on a pair that is the same: the occurrence a merge keeps verbatim (the fuller one), or combined; null otherwise"},
+          "text": {"type": ["string", "null"], "description": "the combined sentence when kept is combined, with no provenance tag; null otherwise"},
+          "flag": {"type": "boolean", "description": "list the pair for the grill: different but close enough that the owner should see them side by side"},
+          "why": {"type": "string", "pattern": "\\S", "description": "one sentence on the label"}
+        }
+      }
+    }
+  }
+}

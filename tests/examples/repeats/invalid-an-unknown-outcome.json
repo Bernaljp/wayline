@@ -1,0 +1,26 @@
+{
+  "read": [],
+  "pairs": [
+    {
+      "a": "P1",
+      "b": "P14",
+      "found_by": [
+        "embedding"
+      ],
+      "similarity": 0.99,
+      "label": "same",
+      "outcome": "fused",
+      "kept": "first",
+      "text": "x",
+      "passage": "P15",
+      "why": null,
+      "lost": null,
+      "added": [],
+      "flag": false,
+      "results": [],
+      "batch": null,
+      "item": null,
+      "at": "2026-10-20T10:00:00.000Z"
+    }
+  ]
+}

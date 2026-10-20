@@ -30,6 +30,10 @@ takes; the decider's share is as it was. The owner's answer is recorded through 
 as an `objective` event: a recorded objective moves to the status chosen (refused when it was answered,
 dropped, or reframed since it was asked), and a proposed one is recorded with it, its new id kept on
 the settled record and on any revision of it.
+
+**The repeated claims of a start midway** (decision 17; ticket 95). While the project is in its setup, each pair
+of inherited claims the repeated-claims check lists for the grill (a contradiction standing, a pair a check kept
+apart, a pair the confirmer flagged) is one human-only question, asked once (`with_repeat_questions`).
 """
 
 import argparse
@@ -521,6 +525,7 @@ def _seeded(project, records, events):
     except (OSError, ValueError, AttributeError):
         memo = None
     records = with_objective_questions(records, objective_questions(objectives, memo))
+    records = with_repeat_questions(project, records)
     if memo is None or any(record.get("objective") and not _settled(record) for record in records):
         return records  # the concerns' questions name the objectives taken, so they wait for the first tier's answers
     return with_concern_questions(project, records, memo, objectives)
@@ -559,6 +564,28 @@ def with_concern_questions(project, records, memo, objectives):
             continue
         records, _ = with_question(records, spec["question"], options=spec["options"], recommended=spec["recommended"],
                                    evidence=spec["evidence"], human_only=True, concerns=spec["concerns"])
+    return records
+
+
+def with_repeat_questions(project, records):
+    """`records` with one human-only question per pair the repeated-claims check lists for the grill (ticket 95).
+
+    Each contradicting pair of inherited claims standing, and each pair kept apart or flagged by the confirmer, is asked
+    once: a question the tree already asks, in any spelling, is not asked again, and a contradiction the owner marked
+    not one is no longer listed.
+    """
+    from wayline import repeats  # the repeated-claims check reads the sections and the batches
+
+    try:
+        repeats.take_marks(project)  # a contradiction marked not one, or a merge split, before what is listed is read
+        listed = repeats.grill_items(project)
+    except repeats.RepeatsError as failure:
+        raise ProjectError(str(failure)) from None
+    for spec in listed:
+        if _normal(spec["question"]) in {_normal(record["question"]) for record in records}:
+            continue
+        records, _ = with_question(records, spec["question"], options=spec["options"], recommended=spec["recommended"],
+                                   evidence=spec["evidence"], human_only=True)
     return records
 
 

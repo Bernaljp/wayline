@@ -1,0 +1,12 @@
+{
+  "pairs": [
+    {
+      "pair": 1,
+      "label": "similar",
+      "kept": null,
+      "text": null,
+      "flag": false,
+      "why": "close"
+    }
+  ]
+}

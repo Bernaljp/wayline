@@ -18,8 +18,9 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
   harness changes (one wording: `wayline evolve --apply <id>`), the important unresolved references, the reports
   edited and not yet turned into passages, and a code repository still private at the order. The outline's open
   proposals join this list as one line with their count once the outline proposes (ticket 104).
-- **Changed without asking you**: the owner's passages a later passage replaced, with its reason and evidence.
-  The merges made at setup join it once the repeated-claims check makes them (ticket 95).
+- **Changed without asking you**: the owner's passages a later passage replaced, with its reason and evidence, and
+  every merge of a repeated inherited claim made at setup that still stands (ticket 95, `wayline.repeats`); the render
+  takes the marks on the merges and contradictions batches first, so a merge marked split has left it.
 - **Runs**: the latest run in full, earlier runs one table row each. Tokens, turns, and minutes come from
   `ticket_result`; no dollar figure is journaled, so none is shown.
 - **Not pursued**: the parked proposals with their reason and the parked tickets. Objective proposals not upheld
@@ -393,7 +394,8 @@ def _changed(context):
             replaced["id"], sections.TITLES.get(replaced.get("section"), replaced.get("section")), _one_line(replaced.get("text")),
             item.get("id"), item.get("by"), _one_line(item.get("reason") or "no reason was given"),
             "; the evidence %s it" % item["evidence"] if item.get("evidence") else ""))
-    return lines
+    from wayline import repeats  # the repeated-claims check reads the sections and the batches
+    return lines + repeats.account_lines(context.project)
 
 
 # --- runs -------------------------------------------------------------------------------------------------
@@ -941,6 +943,11 @@ def _render(project, book, now, told):
     """`render_account` under the ledger's lock; the notices a reversal owes are put in `told`."""
     problems = []
     settle_marks(project, told, problems)
+    from wayline import repeats
+    try:
+        problems.extend(repeats.take_marks(project))  # a merge the owner split leaves "Changed without asking you"
+    except (repeats.RepeatsError, ValueError, OSError) as failure:
+        problems.append("the marks on the merges and contradictions could not be taken: %s" % failure)
     context = _context(project, now)
     context.notes.extend(problems)
     edited = take_edit(project, ACCOUNT, REPORT_KIND, context.events)

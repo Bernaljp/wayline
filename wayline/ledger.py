@@ -259,6 +259,7 @@ K_IDENTIFIER = "identifier"  # `scouted`: the DOI, arXiv id, or exact title the 
 K_REPLACES_OWNER = "replaces_owner"  # `passage`, `finding`: true when it replaces an owner's passage, for the account (ticket 88)
 K_REPLACED = "replaced"  # `consolidated`: the ids of the passages the consolidation replaced
 K_CONSOLIDATES = "consolidates"  # `passage`: on a consolidation's passage, every passage it rewrote (ticket 88)
+K_MERGES = "merges"  # `passage`: on a merged inherited passage, every occurrence of the claim it merges (ticket 95)
 K_WRITTEN = "written"  # `consolidated`: the ids of the fewer passages it wrote in their place
 K_PLACE = "place"  # `concern`: where the concern was sorted, tied to objectives, for the order, or declined; null while unsorted
 K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for research/ACCOUNT.md (ticket 89); absent for REPORT.md
@@ -329,7 +330,7 @@ EVENTS = {
     CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
     TOOL_INSTALLED: (K_TICKET, K_NAME, K_OUTCOME, K_VERSION, K_ATTEMPT, K_REASON),
     PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES, K_EVIDENCE, K_DOC, K_STANDING, K_REASON,
-              K_WITHDRAWN, K_MOVED_FROM, K_REPLACES_OWNER, K_CONSOLIDATES),
+              K_WITHDRAWN, K_MOVED_FROM, K_REPLACES_OWNER, K_CONSOLIDATES, K_MERGES),
     SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
     CONSOLIDATED: (K_SECTION, K_REPLACED, K_WRITTEN, K_MODEL),
     CONCERN: (K_ID, K_STATUS, K_PLACE, K_OBJECTIVES, K_BY),

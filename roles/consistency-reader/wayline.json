@@ -1,0 +1,19 @@
+{
+  "id": "consistency-reader",
+  "scope_kind": "global",
+  "capability_summary": "Reads every inherited claim of a project at once and returns the groups that repeat one claim and the groups that contradict each other, by passage id, for the repeated-claims check at setup.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "51fce08e6f7941d978d239e481814d430b07e77fa7f81bf3f08a5e5d534989ed",
+  "may_judge": false,
+  "output_schema": "consistency_read",
+  "allowed_tools": [],
+  "disallowed_tools": [
+    "Read", "Edit", "Write", "NotebookEdit", "Bash", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+    "CronList", "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+    "ReportFindings", "DesignSync", "EnterPlanMode", "ExitPlanMode"
+  ]
+}

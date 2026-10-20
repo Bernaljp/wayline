@@ -776,6 +776,9 @@ class Conductor:
         self.code_run = run_tool
         self.methods_run = run_tool    # the parsers of the rule from code to Methods (ticket 107); tests replay recordings
         self.methods_tools = None      # `tools.json` as the machine records it, unless a test hands one in
+        # The embedding model the repeated-claims check at acceptance runs through (ticket 95); tests replay recordings.
+        self.repeats_run = run_tool
+        self.repeats_tools = None
         # The split the remote last refused, which this run does not push again (it is told to the owner once).
         self._code_rejected = None
         # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
@@ -3788,7 +3791,7 @@ class Conductor:
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
             results = (list(results) + self._sections_check(attempt) + self._lint_check(attempt) + self._references_check(attempt)
-                       + self._methods_check(attempt))
+                       + self._methods_check(attempt) + self._repeats_check(attempt))
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
             results = list(results) + [simulated]
@@ -3893,6 +3896,28 @@ class Conductor:
         if outcome.parameters:  # entries come only from a result that gave some, so it is the envelope's own mapping
             attempt.result["parameters"] = outcome.parameters
         return [outcome.acceptance_result()]
+
+    def _repeats_check(self, attempt):
+        """The repeated-claims check (decision 17; ticket 95) as one acceptance result; none when nothing could be repeated.
+
+        A new passage or finding that repeats a current passage without naming it in `replaces` sends the worker back with
+        the passage it repeats. The embedding model runs with no tokens; the confirmer is a session on Opus, so a pacing
+        stop leaves the check listed rather than run, and so does a model or a confirmer that cannot answer.
+        """
+        from wayline import repeats  # the repeated-claims check reads every section
+        result = attempt.result or {}
+        if not result.get("passages") and not result.get("findings"):
+            return []
+        if schedule.holds_model_work(self.action):
+            return [{"cmd": repeats.REPEATS_CHECK, "exit_code": 0, "seconds": 0.0,
+                     "tail": "listed, not failed: repeats not checked: a pacing stop launches no model"}]
+        try:
+            checked = repeats.check_result(self.project, result, run=self.repeats_run, tools=self.repeats_tools, policy=self.policy,
+                                           harness_root=self.harness_root)
+        except (repeats.RepeatsError, ValueError, OSError) as failure:
+            return [{"cmd": repeats.REPEATS_CHECK, "exit_code": 0, "seconds": 0.0,
+                     "tail": "listed, not failed: repeats not checked: %s" % failure}]
+        return [] if checked is None else [checked.acceptance_result()]
 
     def _timeout(self):
         timeout = self.policy.get("acceptance_timeout_s", 600)
