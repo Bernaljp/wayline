@@ -14,7 +14,8 @@ memo reaches it. It writes nothing.
 (`check_memo`): three directions nearest first, none farther than the project's radius, each naming
 objectives the project holds or proposing new ones; one row per open or parked objective, with a
 revised target when a goal is out of reach, none when it is reachable, and none for an objective
-without a measure; no reference named twice. A memo that fails is returned to the same session once
+without a measure; at most one row marking an open objective `first`, the question the others wait
+on, which leads the outline's Results (ticket 104); no reference named twice. A memo that fails is returned to the same session once
 with the failures; a second failure writes nothing. A project with no goal, or with no objective yet,
 is positioned all the same: its directions propose the objectives, and the grill's first tier puts
 them to the owner.
@@ -329,6 +330,15 @@ def _row_failures(rows, held):
             failures.append("the objective %s has no row in objectives" % objective["id"])
         elif counted[objective["id"]] > 1:
             failures.append("the objective %s has more than one row in objectives" % objective["id"])
+    # The question the others wait on, which leads the outline's Results (ticket 104): one open objective at most.
+    first = [row["id"] for row in rows if row.get("first")]
+    if len(first) > 1:
+        failures.append("the objectives %s are both marked first; mark at most one" % " and ".join(first)
+                        if len(first) == 2 else "the objectives %s are all marked first; mark at most one" % ", ".join(first))
+    for identifier in first:
+        objective = held.get(identifier)
+        if objective is not None and objective.get("status") != "open":
+            failures.append("%s is %s, and only an open objective is marked first" % (identifier, objective.get("status")))
     return failures
 
 

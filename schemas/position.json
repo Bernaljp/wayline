@@ -51,6 +51,7 @@
         "properties": {
           "id": {"type": "string", "pattern": "^O[1-9][0-9]*$", "description": "the objective's id in OBJECTIVES.md"},
           "verdict": {"type": "string", "enum": ["reachable", "uncertain", "out_of_reach"]},
+          "first": {"type": "boolean", "description": "true on at most one open objective: the question to answer before the others make sense, which the paper's outline leads its Results with; leave it out, or false, on every other row"},
           "reasoning": {"type": "string", "pattern": "\\S", "description": "why, with the numbers you read and where; for a goal with no measured baseline, the path to a defensible target instead of a number; for an objective without a measure, what would answer it"},
           "revised_target": {
             "type": ["object", "null"],

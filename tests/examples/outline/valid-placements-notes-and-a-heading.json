@@ -1,0 +1,11 @@
+{
+  "groups": {
+    "objectives": ["O2", "O1"],
+    "results:O1": ["R2", "results:Earlier noise study", "R1"],
+    "supplement": ["R4", "methods:Old fit"],
+    "introduction": ["introduction:The gap", "introduction:Why now", "introduction:State of the art"]
+  },
+  "notes": {"R1": "lead with this result.", "O2": "the question the paper opens with."},
+  "added": [{"section": "introduction", "heading": "Why now"}, {"section": "results", "heading": "Transfer to field data"}],
+  "gone": [{"item": "R5", "group": "cut", "why": "merged into R3"}]
+}

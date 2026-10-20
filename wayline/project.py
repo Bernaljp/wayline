@@ -634,6 +634,10 @@ def _write_research(project, harness_root, harness_tag):
         for name in sections.SECTIONS:
             if not (project / RESEARCH / sections.section_path(name)).exists() and sections.render_section(ledger, name):
                 changes.append("%s/%s" % (RESEARCH, sections.section_path(name)))
+        # And the outline of the paper, built by code from them and the objectives (ticket 104).
+        from wayline import outline  # the outline reads every part of the ledger
+        if not (project / RESEARCH / outline.OUTLINE_MD).exists() and outline.render_outline(ledger):
+            changes.append("%s/%s" % (RESEARCH, outline.OUTLINE_MD))
     return changes
 
 

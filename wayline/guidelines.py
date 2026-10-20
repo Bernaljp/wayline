@@ -57,7 +57,7 @@ __all__ = [
     "GuidelinesError", "GUIDELINES_DIR", "GUIDELINES_JSON", "SOURCE_MD", "CHECKLIST_DIR",
     "NOTE", "NOTE_DATE", "VENUES", "VERIFIED_FIELDS", "STUDY_TYPES", "CHECKS",
     "venue_seed", "build", "build_venue", "read_guidelines", "render_source",
-    "Manuscript", "Finding", "run_checks", "worst", "check_length", "check_structure", "check_figures",
+    "Manuscript", "Finding", "run_checks", "worst", "check_length", "check_structure", "heading_matches", "check_figures",
     "check_references", "check_reporting_checklists", "check_template", "check_provenance",
     "image_facts", "page_text", "build_command",
 ]
@@ -2000,13 +2000,14 @@ def _fold(word):
     return _SPELLINGS.get(word, word)
 
 
-def _heading_matches(required, heading):
+def heading_matches(required, heading):
     """Whether a heading is the section a venue asked for, comparing words rather than substrings.
 
     Word by word, because a substring test makes "Authors" present in a draft whose only such
     heading is "Author summary". One list being a run of the other is a match in both directions:
     a venue asking for "Materials and Methods" is satisfied by a draft that calls it "Methods",
-    and a venue asking for "Methods" by a draft that spells it out.
+    and a venue asking for "Methods" by a draft that spells it out. The outline maps a venue's
+    parts to the five sections by the same matching (ticket 104).
     """
     wanted = [_fold(word) for word in re.findall(r"[a-z0-9]+", required.lower())]
     found = [_fold(word) for word in re.findall(r"[a-z0-9]+", heading.lower())]
@@ -2025,7 +2026,7 @@ def check_structure(manuscript, guidelines):
     title = manuscript.title()
     missing = [
         name for name in required
-        if not any(_heading_matches(name, heading) for heading in headings)
+        if not any(heading_matches(name, heading) for heading in headings)
         and not (title and _normalize(name) in ("title", "titlepage"))
     ]
     if not missing:

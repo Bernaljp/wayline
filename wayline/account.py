@@ -16,8 +16,8 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
   decision leaves the list.
 - **Waiting on you**: the decision tickets for the owner, the tickets needing a person, the proposed global
   harness changes (one wording: `wayline evolve --apply <id>`), the important unresolved references, the reports
-  edited and not yet turned into passages, and a code repository still private at the order. The outline's open
-  proposals join this list as one line with their count once the outline proposes (ticket 104).
+  edited and not yet turned into passages, a code repository still private at the order, and the outline's open
+  proposals as one line with their count (ticket 104).
 - **Changed without asking you**: every passage and finding journaled with `replaces_owner` (ticket 88), each with
   the owner's passage (or the consolidation made from the owner's text) it replaced, its reason, and its evidence; a
   consolidation the owner asked for is not listed (ticket 90).
@@ -291,7 +291,23 @@ def _waiting(context):
     lines.extend(_unresolved_references(context))
     lines.extend(_edited_reports(context))
     lines.extend(_private_repository(context))
+    lines.extend(_outline_proposals(context))
     return lines
+
+
+def _outline_proposals(context):
+    """The outline's open proposals as one line with their count (ticket 104): what "Proposed, not settled" lists."""
+    from wayline import outline  # the outline reads every part of the ledger
+    try:
+        proposals = outline.open_proposals(context.project)
+    except (LedgerError, OSError, ValueError) as failure:
+        context.notes.append("the outline's proposals could not be read: %s" % failure)
+        return []
+    if not proposals:
+        return []
+    return ["- The outline has %d open proposal%s (merges of results to take or decline, inherited headings no objective "
+            "checks, subsections to open as objectives): research/OUTLINE.md, under \"Proposed, not settled\"." % (
+                len(proposals), "" if len(proposals) == 1 else "s")]
 
 
 def _global_changes(context):

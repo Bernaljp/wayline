@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "outline",
+  "description": "research/outline.json (Implementation Decision 17; ticket 104): what the owner set in the outline of the paper, written only by wayline/outline.py through the ledger and journaled as `outline`; code builds the rest of research/OUTLINE.md at every render and the owner's settings always win. `groups` holds each part the owner ordered, every line in it in the owner's order (a line is R3, O2, or <section>:<heading>); the parts are `objectives` (the order of the Results subsections), `introduction`, `discussion`, `methods`, `results:O<n>` (an objective's subsection), `results:beyond`, `results:inherited`, `supplement`, and `cut`. `notes` are the owner's notes by line, `added` the headings the owner added (a Results one is a new question, offered as an objective), and `gone` the placements whose item went since, each listed once until the owner's next change.",
+  "type": "object",
+  "required": ["groups", "notes", "added", "gone"],
+  "additionalProperties": false,
+  "properties": {
+    "groups": {
+      "type": "object",
+      "description": "part -> the lines the owner ordered there, in order; a line that arrives later goes after them, marked new",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string", "pattern": "^(R[1-9][0-9]*|O[1-9][0-9]*|(introduction|results|discussion|methods):\\S.*)$"}
+      }
+    },
+    "notes": {
+      "type": "object",
+      "description": "line -> the owner's note under it, an instruction; it follows a merged result and a reframed objective",
+      "additionalProperties": {"type": "string", "pattern": "\\S"}
+    },
+    "added": {
+      "type": "array",
+      "description": "the headings the owner added, which the writer fills at the order; one in Results is offered as an objective",
+      "items": {
+        "type": "object",
+        "required": ["section", "heading"],
+        "additionalProperties": false,
+        "properties": {
+          "section": {"type": "string", "enum": ["introduction", "results", "discussion", "methods"]},
+          "heading": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    },
+    "gone": {
+      "type": "array",
+      "description": "placements whose item is gone (merged, withdrawn, its objective dropped), dropped by code and listed once",
+      "items": {
+        "type": "object",
+        "required": ["item", "group", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "item": {"type": "string", "pattern": "\\S"},
+          "group": {"type": "string", "pattern": "\\S"},
+          "why": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    }
+  }
+}

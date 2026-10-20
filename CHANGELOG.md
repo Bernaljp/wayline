@@ -36,6 +36,27 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The outline of the paper (ticket 104; Implementation Decisions 17, 1, and 2). Code alone builds `research/OUTLINE.md`
+  at every render (with the general report and the account, at the end of every wave, at `init`), with no model
+  tokens: a storyline of the objectives, the gaps (what holds nothing yet; an empty main-text list is the paper
+  order's test of complete), Introduction's headings and the paper's questions, Results with one subsection per
+  objective (the critic's `first` leading, a new optional field of the position memo's objective rows), each result
+  with its standing, findings and headline plots counted, concerns, the inherited claims it decides, the
+  contradictions it resolves, and its measure, then "Beyond the objectives" and "Inherited, checked by no objective",
+  Discussion with the parked objectives as future work, Methods, the venue's structure once a venue is named,
+  Supplement and Cut, "Proposed, not settled", and the concerns for the order. The owner changes it by talking
+  (`wayline outline move|place|note|heading`, which the conversation calls) or by editing the file: moving a line,
+  placing one under Supplement or Cut, adding a `Note:` line, or adding a heading to Introduction, Discussion, or
+  Methods. Code takes the edit in before the next render by the file's render stamp, so a line that arrived since is
+  never read as removed. `research/outline.json` (schema `outline`) holds only what the owner set and always wins:
+  placed lines never move, later lines follow them marked new, a placed line whose item went is listed once, and a
+  note follows a merge or a reframe; each change is journaled as `outline`. The sections render their headings in the
+  outline's order, with what is placed under Supplement or Cut at the end under a marker; a worker's context pack
+  gains its objectives' outline entries with the owner's notes; a consolidation reads the section in the outline's
+  order with its notes. Merges of results whose headings sit close under one objective are proposed by the local
+  embedding model (no tokens) as an `outline_proposals` batch, take or decline, default decline; a take merges the two
+  at the next render. The account's "Waiting on you" counts the open proposals in one line.
+
 - Repeated claims (ticket 95; Implementation Decisions 17, 14, and 2). A claim made in several places of a project's
   inherited writing becomes one passage citing every occurrence's `doc` tag and every work any cites.
   `wayline document repeats` runs the setup's check: one consistency read (`consistency-reader`, Opus high) over the

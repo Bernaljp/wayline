@@ -289,8 +289,11 @@ def result_headings(project_or_ledger):
 # --- the owner's word: merge and rename ----------------------------------------------------------------------------
 
 
-def _record(project, action, change):
-    """Apply `change(clusters, stamp)` under the lock, write the record, journal it, and re-render; returns the payload."""
+def _record(project, action, change, by=OWNER, render=True):
+    """Apply `change(clusters, stamp)` under the lock, write the record, journal it, and re-render; returns the payload.
+
+    `by` is the owner, or the decider taking a merge the outline proposed (ticket 104); `render` False leaves the renders
+    to a caller that is already in a render pass."""
     from wayline import sections  # sections calls `assign` from inside its ledger call
     book = ledger_for(project)
     with book.lock():
@@ -300,11 +303,12 @@ def _record(project, action, change):
         clusters = load(book)
         stamp = now_ts()
         payload = change(clusters, stamp)
-        payload = dict(payload, action=action, by=OWNER)
+        payload = dict(payload, action=action, by=by)
         make_event(RESULT, payload)
         book.write_json(RESULTS_JSON, clusters.record())
         book.append_event(RESULT, payload, ts=stamp)
-    _render(book)
+    if render:
+        _render(book)
     return payload
 
 
@@ -315,12 +319,13 @@ def _render(book):
     provenance.render_report(book.project, offline=True)
 
 
-def merge(project, source, into):
-    """Merge result `source` into `into` on the owner's word: journaled as `result` `merged`, then re-rendered."""
+def merge(project, source, into, by=OWNER, render=True):
+    """Merge result `source` into `into` on the owner's word (or the decider's, taking the outline's proposal): journaled as
+    `result` `merged`, then re-rendered unless `render` is False."""
     def change(clusters, stamp):
         clusters.merge(source, into, ts=stamp)
         return {"id": source, "heading": clusters.results[source]["heading"], "into": into}
-    return _record(project, MERGED, change)
+    return _record(project, MERGED, change, by=by, render=render)
 
 
 def rename(project, identifier, heading):
