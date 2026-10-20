@@ -51,7 +51,7 @@ from wayline import HARNESS_ROOT
 from wayline.cli import parse_args
 from wayline.fetch import FetchError, Fetcher, recording_fetcher
 from wayline.jsonschema import check, load_schema
-from wayline.provenance import manifest_paths, parse_tag, read_manifest, sentences, strip_tags
+from wayline.provenance import identifier_index, manifest_paths, parse_tag, read_manifest, ref_slug, sentences, strip_tags
 
 __all__ = [
     "GuidelinesError", "GUIDELINES_DIR", "GUIDELINES_JSON", "SOURCE_MD", "CHECKLIST_DIR",
@@ -2212,8 +2212,9 @@ def check_provenance(manuscript, guidelines, project=None):
     findings, malformed, unresolved = [], [], []
     pass_ = manuscript.sentence_pass()
     tagged = [sentence for sentence in pass_ if sentence.tags]
-    known_artifacts, known_refs = set(), set()
+    known_artifacts, known_refs, index = set(), set(), {}
     if project is not None:
+        index = identifier_index(project)  # a `ref` tag may name its work by `doi:` or `arxiv:` (ticket 98)
         known_artifacts = manifest_paths(read_manifest(project))
         known_refs = {path.name for path in (Path(project) / "research" / "refs").glob("*")} | {
             path.stem for path in (Path(project) / "research" / "kb" / "nodes").glob("*.json")}
@@ -2224,7 +2225,7 @@ def check_provenance(manuscript, guidelines, project=None):
                 malformed.append(tag)
             elif project is not None and kind == "res" and parts["artifact"] not in known_artifacts:
                 unresolved.append(tag)
-            elif project is not None and kind == "ref" and parts["slug"] not in known_refs:
+            elif project is not None and kind == "ref" and ref_slug(parts, index) not in known_refs:
                 unresolved.append(tag)
     if malformed:
         findings.append(Finding("provenance", "fail", "malformed provenance tag(s): %s." % ", ".join(sorted(set(malformed)))))

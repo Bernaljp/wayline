@@ -1,0 +1,18 @@
+{
+  "ticket_id": 9,
+  "status": "done",
+  "summary": "Wrote the Introduction's prior work on UMAP.",
+  "passages": [
+    {
+      "section": "introduction",
+      "heading": "Prior work",
+      "text": "UMAP builds a fuzzy topological representation of the data {ref:arxiv:1802.03426#abstract}.",
+      "replaces": null
+    }
+  ],
+  "references": [
+    {"identifier": "arXiv:1802.03426", "note": "The embedding the project compares against."},
+    {"identifier": "10.1038/s41586-020-2649-2", "note": ""},
+    {"identifier": "Array programming with NumPy", "note": "Named by its exact title."}
+  ]
+}

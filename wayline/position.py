@@ -54,6 +54,7 @@ __all__ = [
     "rowed",
     "scoped_tools", "inputs_text", "position_prompt", "check_memo", "verify_citations", "render_position", "read_position", "take_memo",
     "write_memo", "position", "position_view", "render_report", "position_command", "SEED_BY", "ref_locator", "prior_work_passages",
+    "identifier_index", "slug_for_identifier",
 ]
 
 CRITIC = "critic"
@@ -324,6 +325,29 @@ def _identifier_keys(dossier):
     return keys
 
 
+def identifier_index(project_or_ledger):
+    """`{(kind, value): slug}` over every dossier: its DOI, its arXiv id without the version, and its titles.
+
+    The index the memo's citations are matched against, and the one a `ref` tag that names a work by
+    `doi:` or `arxiv:` is mapped through to its slug (decision 17; ticket 98); passages are never rewritten.
+    """
+    ledger = project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
+    index = {}
+    for slug, dossier in _dossiers(ledger).items():
+        for key in _identifier_keys(dossier):
+            index.setdefault(key, slug)
+    return index
+
+
+def slug_for_identifier(index, identifier):
+    """The slug `index` files a `doi:<doi>` or `arxiv:<id>` under, or None."""
+    kind, _, value = str(identifier or "").partition(":")
+    kind, value = kind.strip().lower(), value.strip()
+    if not value or kind not in ("doi", "arxiv"):
+        return None
+    return index.get((kind, value.lower() if kind == "doi" else _bare_arxiv(value)))
+
+
 def _bare_arxiv(identifier):
     """An arXiv id without its version, lowercased: two spellings of one preprint compare equal."""
     text = str(identifier or "").strip().lower()
@@ -374,10 +398,7 @@ def verify_citations(project, memo, scout=None, say=lambda text: None):
     project = Path(project).resolve()
     ledger = Ledger(project)
     dossiers = _dossiers(ledger)
-    index = {}
-    for slug, dossier in dossiers.items():
-        for key in _identifier_keys(dossier):
-            index.setdefault(key, slug)
+    index = identifier_index(ledger)
     kept, dropped, written = [], [], []
     for row in memo["prior_work"]:
         text = _one_line(row["reference"])

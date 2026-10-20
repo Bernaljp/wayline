@@ -64,7 +64,7 @@ __all__ = [
     "NO_LEGACY_REMAP", "NO_BYTECODE", "MAX_OUTPUT_TOKENS", "OUTPUT_TOKENS", "NOT_SERVED_STATUS", "same_model", "model_ran", "ran_as_asked", "not_served",
     "session_dir", "session_env", "STAGED", "staged_path", "with_staged", "place_staged", "use_fake", "ClaudeCli", "FakeLauncher", "CLAUDE_CLI", "FAKE",
     "describe_windows", "launch_verb", "MODEL_ALIASES", "EFFORTS", "setup_token", "setup_token_command", "login_command", "auth_status_command",
-    "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX",
+    "Role", "RoleError", "Prompt", "Pack", "read_role", "assemble_prompt", "integrator_prompt", "read_locator", "CONSULT_MAX", "SCOUT_MAX", "has_scout",
     "schema_bullets", "schema_section", "protocol_for",
 ]
 
@@ -395,6 +395,8 @@ ROLE_SETTINGS = registry.SIDECAR_FIELDS + registry.ROLE_FIELDS
 
 # `policy.consultant.max_questions_per_ticket`, restated in the contract lines.
 CONSULT_MAX = 5
+# `policy.scout.calls_per_ticket`, restated in the contract lines of a role that has `wayline scout` (ticket 98).
+SCOUT_MAX = 20
 
 _ROLE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*\Z")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*\Z")
@@ -611,7 +613,7 @@ class Prompt:
 
 
 def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult_max=CONSULT_MAX, notes=(), failure=None,
-                    sections=""):
+                    sections="", scout_max=SCOUT_MAX):
     """The worker's prompt, assembled in the order of decision 3.
 
     One `/wayline-<skill>` line per assigned skill, the body of every skill after the first
@@ -624,7 +626,8 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
     `failure` is the last failure output of the attempt before this one, which a tier up carries into
     its fresh session (ticket 68), set under a heading of its own after the notes. `sections` is the context pack's
     part on the paper (`wayline.sections.pack_text`: the declared sections' headings, passage ids, and first
-    sentences, and the owner's passages in full; decision 17), set after the planner's pack.
+    sentences, and the owner's passages in full; decision 17), set after the planner's pack. `scout_max` is
+    `policy.scout.calls_per_ticket`, restated in the contract of a role whose tools hold `wayline scout` (ticket 98).
     """
     pack = _context_section(ticket.get("context_pack") or [], roots, max_chars)
     skills = _skill_section(ticket.get("skills") or [], roots, max_chars)
@@ -639,7 +642,7 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         # A role with more than one job (the critic) keeps the section named after the result it returns here.
         protocol_for(role.protocol, role.output_schema or "result"),
         _result_section(ticket, role),
-        _contract_section(ticket, consult_max),
+        _contract_section(ticket, consult_max, scout_max if has_scout(role) else None),
     ]
     text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
     return Prompt(text, pack.chars, pack.cut or skills.cut, pack.dropped + skills.dropped,
@@ -886,7 +889,12 @@ def _type_phrase(definition):
     return kind or "any"
 
 
-def _contract_section(ticket, consult_max):
+def has_scout(role):
+    """Whether a role's allowed tools hold `wayline scout` (decision 17: the coder, analyst, experimenter, writer, and surveyor)."""
+    return any(str(rule).startswith("Bash(wayline scout") for rule in getattr(role, "allowed_tools", None) or [])
+
+
+def _contract_section(ticket, consult_max, scout_max=None):
     return "\n".join([
         "# The contract",
         "",
@@ -901,7 +909,13 @@ def _contract_section(ticket, consult_max):
         "- Commit your work on the branch `ticket/%s`. The conductor integrates that branch, so anything uncommitted is lost." % ticket["id"],
         "- Never integrate, never close the ticket, never edit `research/`: the conductor does all three.",
         "- Ask the consultant with `wayline consult <slug> \"<question>\"`, at most %s in this ticket." % ("once" if consult_max == 1 else "%d times" % consult_max),
-    ])
+    ] + ([
+        "- Cite only works that exist, for what they say. Check a work with `wayline scout <identifier>` (its DOI, arXiv id, or exact "
+        "title; never a URL), at most %d times in this ticket: it files the work's dossier and prints its slug and abstract, and no such "
+        "work means it is most likely invented. List every work the ticket drew on in the result's `references` as `{identifier, note}`. "
+        "Cite a work as `{ref:<slug>#abstract}` or `{ref:<slug>#metadata.<field>}` (or by `doi:` or `arxiv:` in place of the slug); "
+        "a claim beyond the abstract says only what the abstract says, or proposes the work's promotion." % scout_max,
+    ] if scout_max is not None else []))
 
 
 def integrator_prompt(ticket, role, conflicts, touches=None, max_chars=None, budget=None):

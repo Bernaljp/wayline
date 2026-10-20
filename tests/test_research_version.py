@@ -87,7 +87,7 @@ class ResearchVersionTest(UpgradeCase):
         # `cli.WRITING_VERBS` would write into a project of another `research_version` unrefused.
         not_writing = {
             "init", "status", "serve", "upgrade",  # lay out a new project, read, list read-only, or take the way back
-            "accept", "consult", "job", "launch",  # run inside a worktree the conductor launched, which `run` refuses
+            "accept", "consult", "scout", "job", "launch",  # run inside a worktree the conductor launched, which `run` refuses
             "figures", "guidelines", "registry", "tools",  # write only to the harness or ~/.wayline/
         }
         verbs = {verb.name for verb in cli.VERBS}

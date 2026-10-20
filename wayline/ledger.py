@@ -109,6 +109,7 @@ DOCUMENT = "document"  # one document kept, or a newer version of it, in researc
 CODE_PUSHED = "code_pushed"  # code pushed `code/`'s split to the code repository's remote (decision 17; ticket 85)
 TOOL_INSTALLED = "tool_installed"  # a project's tool installed, licensed software recorded, or either failing (decision 17; ticket 82)
 PASSAGE = "passage"  # one passage of a section written to research/passages.jsonl (decision 17; ticket 86)
+SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted against its ticket (decision 17; ticket 98)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -250,6 +251,7 @@ K_DOC = "doc"  # `passage`: an inherited passage's locator in its document, `D1#
 K_STANDING = "standing"  # `passage`: an inherited claim's standing, unchecked or unverifiable (ticket 93)
 K_WITHDRAWN = "withdrawn"  # `passage`: true on a withdrawal, which takes the passage it replaces out of the section (ticket 93)
 K_MOVED_FROM = "moved_from"  # `passage`: the inherited passage this one was moved from, in another section (ticket 93)
+K_IDENTIFIER = "identifier"  # `scouted`: the DOI, arXiv id, or exact title the worker asked about
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -314,6 +316,7 @@ EVENTS = {
     TOOL_INSTALLED: (K_TICKET, K_NAME, K_OUTCOME, K_VERSION, K_ATTEMPT, K_REASON),
     PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES, K_EVIDENCE, K_DOC, K_STANDING, K_REASON,
               K_WITHDRAWN, K_MOVED_FROM),
+    SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -356,6 +359,7 @@ PAYLOAD_ENUMS = {
     (PASSAGE, K_STANDING): ("unchecked", "unverifiable"),
     (PASSAGE, K_EVIDENCE): ("supports", "narrows", "contradicts"),
     (FINDING, K_EVIDENCE): ("supports", "narrows", "contradicts"),
+    (SCOUTED, K_OUTCOME): ("found", "no such work", "failed"),
 }
 
 
@@ -599,6 +603,11 @@ class Ledger:
         return record
 
     # --- reads (anyone may read; these are conveniences for replay) ---
+
+    def count_events(self, event, ticket):
+        """How many `event` records the journal holds for `ticket`: what a per-ticket cap counts (the consultant's, the scout's)."""
+        events, _ = self.read_events()
+        return sum(1 for record in events if record.get("event") == event and record.get("ticket") == ticket)
 
     def read_events(self, offset=0):
         """The journal events from byte `offset` on, and the offset after the last whole line.
