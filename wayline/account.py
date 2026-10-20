@@ -15,7 +15,8 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
   "on Opus while Fable was spent" where it applies, and a link to where its rationale already lives. A superseded
   decision leaves the list.
 - **Waiting on you**: the decision tickets for the owner, the tickets needing a person, the proposed global
-  harness changes (one wording: `wayline evolve --apply <id>`), the important unresolved references, the reports
+  harness changes (one wording: `wayline evolve --apply <id>`), the important unresolved references whose failure is
+  final (ticket 105: the owner named it, or a standing passage, a concern, or an objective cites it), the reports
   edited and not yet turned into passages, a code repository still private at the order, and the outline's open
   proposals as one line with their count (ticket 104).
 - **Changed without asking you**: every passage and finding journaled with `replaces_owner` (ticket 88), each with
@@ -27,7 +28,8 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
   `ticket_result`; no dollar figure is journaled, so none is shown.
 - **Not pursued**: the parked proposals with their reason, the parked tickets, and the objective proposals not upheld
   with the verdict's reason (ticket 91).
-- **Library**: papers by dossier level, promotions not read in full, and dossiers that now resolve to another work.
+- **Library**: how many cited references are not yet resolved, with a pointer to References' "Not yet resolved" list
+  (ticket 105), then papers by dossier level, promotions not read in full, and dossiers that now resolve to another work.
 
 **The edit rule.** The account is read-only, as the reports are: an edit is noticed by its hash against the last
 `report_rendered` of the account, committed as it stood (`edited` on the next `report_rendered`), listed in the
@@ -324,47 +326,18 @@ def _global_changes(context):
 
 
 def _unresolved_references(context):
-    """The important references that did not resolve, once their failure is final.
+    """The important unresolved references whose failure is final, one line each (ticket 105, `references.final`).
 
-    Important: a current passage or finding cites it. Final: no flag to retry it, or its flag gave up; one still
-    retrying is not raised. A reference the owner named, a concern, or an objective citing one join with ticket 96.
+    Important: the owner named it, or a standing passage, a concern, or an objective cites it. Final: no service knows it,
+    its `retry` flag gave up, or nothing can look it up; one still retrying is not listed, and one the owner left ("leave
+    it") is settled until the paper order. Under every autonomy it is listed here; under `autonomous` it is never raised.
     """
-    from wayline import dossier as dossiers  # the dossier module pulls in the fetch seam
-    from wayline import sections
-    from wayline.provenance import TAG_RE, identifier_index, parse_tag, ref_slug
-    book = Ledger(context.project)
-    cited = set()
+    from wayline import references  # the references module reads every section and the dossiers
     try:
-        index = identifier_index(context.project)
-    except (OSError, ValueError):
-        index = {}
-    for section in sections.SECTIONS:
-        try:
-            current = sections.arrange(sections.section_items(book, section)).current()  # a replaced passage cites nothing now
-        except (OSError, ValueError, LedgerError):
-            continue
-        for item in current:
-            for kind, body in TAG_RE.findall(str(item.get("text") or "")):
-                if kind != "ref":
-                    continue
-                _, parts = parse_tag("ref:" + body)
-                slug = ref_slug(parts, index) if parts else None
-                if slug:
-                    cited.add(slug)
-    lines = []
-    for slug in sorted(cited):
-        try:
-            record = dossiers.read_dossier(book, slug)
-        except (dossiers.DossierError, OSError, ValueError):
-            continue
-        if record.get("existence") == "verified":
-            continue
-        flag = record.get("retry")
-        if flag and not flag.get("gave_up"):
-            continue
-        lines.append("- Reference `%s` did not resolve%s and a current passage cites it: `wayline reference %s <doi|title|file.pdf|\"leave it\">`." % (
-            slug, " (the scout gave up)" if flag else "", slug))
-    return lines
+        return [references.waiting_line(item) for item in references.final(context.project)]
+    except (OSError, ValueError, LedgerError) as failure:
+        context.notes.append("the unresolved references could not be read: %s" % failure)
+        return []
 
 
 def _edited_reports(context):
@@ -796,14 +769,22 @@ def _not_pursued(context):
 
 def _library(context):
     from wayline import dossier as dossiers  # the dossier module pulls in the fetch seam
+    from wayline import references  # the references module reads every section and the dossiers
     try:
         levels = dossiers.render_levels_report(context.project)
     except (OSError, ValueError) as failure:
         context.notes.append("the dossiers could not be read: %s" % failure)
         return []
-    if not any(levels["by_level"].values()):
+    try:
+        unresolved = references.unresolved_count(context.project)
+    except (OSError, ValueError, LedgerError) as failure:
+        context.notes.append("References could not be read: %s" % failure)
+        unresolved = 0
+    if not any(levels["by_level"].values()) and not unresolved:
         return []
-    lines = []
+    # The pointer to References' Not yet resolved list (ticket 105), with its count.
+    lines = ["- %d cited reference(s) not yet resolved: %s, under Not yet resolved." % (
+        unresolved, "[References](sections/references.md#not-yet-resolved)")]
     book = Ledger(context.project)
 
     def named(slug):
@@ -1047,9 +1028,27 @@ def _render(project, book, now, told):
 
 
 def end_notice(project, now=None):
-    """The one notice a run end sends: the account's first paragraph, then the counts and the path (decision 17)."""
+    """The one notice a run end sends: the account's first paragraph, then the counts and the path (decision 17).
+
+    Under `checkpoints` it also names the references raised and still waiting on the owner (ticket 105), which no notice
+    of their own told of.
+    """
     view = account_view(project, now, full=False)
-    return "%s: %s %s" % (view["name"], view["stands"], counts_line(view))
+    return "%s: %s %s%s" % (view["name"], view["stands"], _references_waiting(project), counts_line(view))
+
+
+def _references_waiting(project):
+    """"References waiting on you: ..." for the end notice under `checkpoints`, or "" when none waits or the autonomy is another."""
+    from wayline import references  # the references module reads every section and the dossiers
+    try:
+        if read_harness(project).get("autonomy") != references.CHECKPOINTS:
+            return ""
+        waiting = references.waiting(project)
+    except (ProjectError, OSError, ValueError, LedgerError):
+        return ""
+    if not waiting:
+        return ""
+    return "References waiting on you: %s. " % ", ".join("`%s`" % item["slug"] for item in waiting)
 
 
 # --- reviews --------------------------------------------------------------------------------------------------

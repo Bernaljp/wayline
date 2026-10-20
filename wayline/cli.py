@@ -66,7 +66,7 @@ VERBS = [
     Verb("review", "review [<id> stand|reverse [--answer \"<text>\"]]",
          "let a decision made for you stand, or reverse it with your own answer or none (reopened for you); with no id, list the ones not yet reviewed",
          "views", lazy("wayline.account", "review_command")),
-    Verb("reference", "reference <slug> <doi|title|file.pdf|\"leave it\">", "hand over an unresolved reference: a DOI or exact title back to the scout, a PDF as its source, or leave it until the paper order", "views",
+    Verb("reference", "reference [<slug> <doi|title|file.pdf|\"leave it\">]", "hand over an unresolved reference: a DOI or exact title back to the scout, a PDF as its source, or leave it until the paper order; with no slug, list those waiting on the owner", "views",
          lazy("wayline.dossier", "reference_command")),
     Verb("document", "document add <file|folder|file.zip> [--kind inherited|critique|other|reference]",
          "keep the project's own writing as documents: converted by code, sorted, recorded in research/documents.json, and indexed in DOCUMENTS.md",

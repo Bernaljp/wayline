@@ -280,7 +280,13 @@ class WaitingOnYouTest(AccountCase):
         dossier = self.book.read_json("refs/paper-d/dossier.json")
         self.assertNotEqual(dossier.get("existence"), "verified")
         self.render()
-        self.assertIn("Reference `paper-d` did not resolve", self.section("Waiting on you"))
+        self.assertNotIn("paper-d", self.section("Waiting on you"), "never looked up, it is still to the scout (ticket 105)")
+        dossier["attempts"] = [{"source": "crossref", "url": "https://api.crossref.org/works", "status": 200, "outcome": "no match"}]
+        self.book.write_json("refs/paper-d/dossier.json", dossier, schema="dossier")
+        self.render()
+        self.assertIn("Reference `paper-d`", self.section("Waiting on you"))
+        self.assertIn("did not resolve (every service asked answered no match), and a standing passage cites it",
+                      self.section("Waiting on you"))
 
     def test_an_edited_report_waits_until_the_owner_writes_a_passage(self):
         self.append("report_rendered", {"sha256": "0" * 64, "report": "general", "edited": "abc123def4567"})

@@ -903,6 +903,7 @@ class Conductor:
         self._objective_changes()
         self._concerns()
         self._verifications()
+        self._references()
         self._pace()
         if self._resting_on_rule_end(result):
             # An end of the rule or a budget holds and drawings are owed: they alone run before the run ends (ticket 100).
@@ -933,6 +934,7 @@ class Conductor:
         if self._integrated_now or result.findings:
             self._propose_outline_merges()
             reported = self._render_general_report()  # it renders the account and the outline in the same pass
+        self._render_references()
         self._render_account()
         if not reported:
             self._render_outline()
@@ -970,6 +972,17 @@ class Conductor:
             account.render_account(self.project)
         except (ValueError, OSError) as failure:
             self.say("  ACCOUNT.md was not rendered: %s; the next wave renders it again" % failure)
+
+    def _render_references(self):
+        """`research/sections/references.md` and `research/references.json` rendered by code at the end of every wave (ticket
+        105), since a dossier's state moves with no section changing: a retry that found the work, or a flag that gave up.
+
+        A render that would leave both as they are writes nothing; one that fails is said, and the next wave renders again.
+        """
+        try:
+            references.render_references(self.ledger, now=self.clock())
+        except (ValueError, OSError) as failure:
+            self.say("  References was not rendered: %s; the next wave renders it again" % failure)
 
     def _render_outline(self):
         """`research/OUTLINE.md` rendered by code at the end of every wave, taking the owner's edit of it in first (ticket 104).
@@ -1303,6 +1316,19 @@ class Conductor:
         except (verification.VerificationError, verification.VerificationUnreadable, tickets.TicketError, ValueError,
                 OSError) as failure:
             self.say("  the verifications could not be settled: %s" % failure)
+        self._tail()
+
+    def _references(self):
+        """Wave step 2's references part (decision 17; ticket 105): each important unresolved reference whose failure became
+        final, raised once, never while it is still retrying.
+
+        Code alone: `references.raise_final` journals `reference_raised` past setup, under `interactive` with a notice
+        linking to it; under `autonomous` setup asked and the account lists it. A failure to read is said, and fails no wave.
+        """
+        try:
+            references.raise_final(self.project, notify=self.notify, say=self.say, now=self.clock())
+        except (ValueError, OSError) as failure:
+            self.say("  the unresolved references could not be read: %s" % failure)
         self._tail()
 
     def _read_cited(self):
