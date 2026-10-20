@@ -6,6 +6,7 @@
 
 - `{code:<path>#<symbol>}` or `{code:<path>#L10-L42}`, for a sentence stating what the project's code does. It is resolved against `main` and flagged when it no longer resolves.
 - `{doc:<document>#<locator>}`, for inherited text. It is provenance, never a citation.
+- `{ref:title:<exact title>}`, the identifier tag ticket 93 writes for an inherited citation with neither a DOI nor an arXiv id. Ticket 98 parses only the `doi:` and `arxiv:` forms (`provenance.REF_IDENTIFIER_TAG_RE`, `position.slug_for_identifier`), so today this one reads as malformed. It parses and resolves through the identifier index's titles like the other two, wherever 98 reads them: the linter, the claim verifier's paths, the guidelines check, and the acceptance check, which scouts it when no dossier holds it.
 
 The linter runs on a ticket's passages and findings at its acceptance, and a failing sentence sends the worker back. It also runs on every render. Before the order, a claim tagged only `doc` and an untagged claim in an owner's passage are listed, never failed.
 
@@ -35,6 +36,7 @@ Not part of this ticket:
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Sections and passages": tags, the linter at acceptance and render, the owner's edits and passages, consolidation; "Vocabulary the build adds": the conversation's verb for passages); decisions 1 (the verb table: `passage add`, `consolidate`), 2 (the event table: `passage` with `by`), 11 (the provenance linter's tags); M8 criterion 4; user stories 119, 120, 121.
 
 - [ ] The linter accepts `{code:<path>#<symbol>}` and `{code:<path>#L<a>-L<b>}`, resolves them against `main`, and flags one that no longer resolves. It accepts `{doc:<document>#<locator>}` as provenance only.
+- [ ] An identifier `ref` tag by exact title, `{ref:title:<exact title>}`, parses and resolves through the identifier index's titles like the `doi:` and `arxiv:` forms, so an inherited citation by title is never linted as malformed.
 - [ ] At acceptance the linter runs on the ticket's passages and findings, and a failing sentence sends the worker back. On every render it runs over the sections. A `doc`-only claim and an untagged claim in an owner's passage are listed, not failed.
 - [ ] `wayline passage add` records an owner's passage with `by: owner` and journals `passage`.
 - [ ] An edit to a section file is taken in before the next render: new text becomes owner's passages, changed text an owner's replacement, removed text a withdrawal. The render stamp keeps passages that arrived since from being read as deletions.
