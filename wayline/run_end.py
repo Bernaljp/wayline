@@ -30,7 +30,7 @@ import hashlib
 from pathlib import Path
 
 from wayline import HARNESS_ROOT, gates, provenance, sections, tickets
-from wayline.ledger import RUN_ENDED, VERDICT, Ledger, ledger_for
+from wayline.ledger import RUN_ENDED, RUN_STARTED, TICKET_CREATED, VERDICT, Ledger, ledger_for
 from wayline.project import policy_for
 from wayline.stopping import BUDGET_SPENT, FRONTIER_EMPTY, GOAL_REACHED, OBJECTIVES_CLOSED
 
@@ -38,7 +38,7 @@ __all__ = [
     "RULE_ENDS", "ONCE_ENDS", "NO_GATE_ENDS", "STALL_STRICT", "SAMPLED_CACHE", "REPORT_SUBJECT", "KILL_ORIGIN",
     "runs_gates", "continues", "report_text", "report_digest", "kill_subject", "last_kill", "read_sampled",
     "candidate_sentences", "sampled_verdicts", "kill_owed", "kill_argument", "is_scope_down", "scope_downs", "targets",
-    "check_scope_down", "pending", "owed", "failed_marks",
+    "check_scope_down", "pending", "owed", "failed_marks", "MAX_ROUNDS", "rounds", "is_gate_event",
 ]
 
 STALL_STRICT = "stall_strict"
@@ -55,7 +55,9 @@ _FINDINGS_INPUT = "research/" + provenance.FINDINGS + "#"
 
 KILL_TITLE = "Scope down the general report's claims the kill argument left standing"
 SCOPE_CHECK = "wayline: a scope-down's findings name in replaces the finding they narrow"
-_OPEN = ("open", "running", "failed", "blocked")
+# The kill arguments one run takes at most: each scope-down that lands changes the report and owes another, so a memo that
+# always finds a point would keep a run at its end forever. After the last, the scope-down waits for the next run.
+MAX_ROUNDS = 3
 
 
 def runs_gates(reason):
@@ -66,6 +68,29 @@ def runs_gates(reason):
 def continues(reason):
     """Whether the gates' scope-downs continue the run (the stopping rule's own ends) or wait for the next run."""
     return reason in RULE_ENDS
+
+
+def rounds(events):
+    """The kill arguments on the general report taken in the current run: since the last `run_ended`, or the last run
+    the owner started afresh (a relaunch by the tick resumes the run, and counts on)."""
+    count = 0
+    for event in events:
+        name, payload = event.get("event"), event.get("payload") or {}
+        if name == RUN_ENDED or (name == RUN_STARTED and not payload.get("resume")):
+            count = 0
+        elif name == VERDICT and payload.get("subject_kind") == REPORT_SUBJECT and payload.get("verdict_type") == gates.KILL_ARGUMENT:
+            count += 1
+    return count
+
+
+def is_gate_event(event):
+    """Whether a journal event is a run-end gate's: a verdict on the general report's claims or its kill argument, or the
+    `ticket_created` of a scope-down the verifier filed on it."""
+    payload = event.get("payload") or {}
+    if event.get("event") == VERDICT:
+        return str(payload.get("subject") or "").startswith(_SCOPE_PREFIX)
+    return (event.get("event") == TICKET_CREATED and payload.get("proposed_by") == gates.VERIFIER
+            and str(payload.get("origin") or "").startswith(_SCOPE_PREFIX))
 
 
 # --- the report ---------------------------------------------------------------------------------------------
@@ -120,7 +145,9 @@ def candidate_sentences(text):
 
 
 def read_sampled(project_or_ledger):
-    """`research/.cache/sampled.json` as `{sentence hash: {"subject", "drawn"}}`; empty when absent or unreadable."""
+    """`research/.cache/sampled.json` as `{sentence hash: {"drawn": [subjects]}}`, every claim a pass considered by its
+    sentence hash with the subjects it drew under that hash (the same words twice, tagged apart, are two subjects); empty
+    when absent or unreadable."""
     book = ledger_for(project_or_ledger)
     try:
         data = book.read_json(SAMPLED_CACHE)
@@ -128,6 +155,17 @@ def read_sampled(project_or_ledger):
         return {}
     claims = data.get("claims") if isinstance(data, dict) else None
     return {digest: entry for digest, entry in (claims or {}).items() if isinstance(entry, dict)} if isinstance(claims, dict) else {}
+
+
+def _drawn(entry):
+    drawn = (entry or {}).get("drawn")
+    return drawn if isinstance(drawn, list) else []
+
+
+def _judged(events):
+    """The subjects of every claim verdict the journal holds."""
+    return {(event.get("payload") or {}).get("subject") for event in events
+            if event.get("event") == VERDICT and (event.get("payload") or {}).get("subject_kind") == provenance.CLAIM}
 
 
 def _difficulties(project):
@@ -161,12 +199,16 @@ def sampled_verdicts(project, *, harness_root=HARNESS_ROOT, policy=None, classif
         new = [claim for claim in claims if claim.digest not in cache]
         drawn = provenance.sample_claims(new, policy, _difficulties(project)) if new else []
         for claim in new:
-            cache[claim.digest] = {"subject": provenance.claim_subject(claim), "drawn": claim in drawn}
+            entry = cache.setdefault(claim.digest, {"drawn": []})
+            if claim in drawn:
+                entry["drawn"].append(provenance.claim_subject(claim))
         if new:
             book.write_json(SAMPLED_CACHE, {"schema_version": 1, "claims": dict(sorted(cache.items()))})
     outcome["new"], outcome["sampled"] = len(new), len(drawn)
-    owed = [claim for claim in claims if (cache.get(claim.digest) or {}).get("drawn")
-            and cache[claim.digest].get("subject") == provenance.claim_subject(claim)]
+    events, _ = book.read_events()
+    judged = _judged(events)
+    owed = [claim for claim in claims if provenance.claim_subject(claim) in _drawn(cache.get(claim.digest))
+            and provenance.claim_subject(claim) not in judged]
     if not owed:
         return outcome
     judged = provenance.verify_claims(project, harness_root=harness_root, policy=policy, chosen=owed)
@@ -234,13 +276,16 @@ def targets(fields):
 
 def check_scope_down(fields, result):
     """The problems of a scope-down's result, each one line, empty when it passes: it returns findings, and each names
-    in `replaces` a finding it narrows, one of its targets when it has them. Whether that finding is in Results now is
-    the declared-sections check's (`sections.check_result`)."""
+    in `replaces` a finding it narrows, one of its targets when it has them. A claim's scope-down that names no finding
+    (a sentence the report rendered from none) returns what the artifacts support with nothing to replace. Whether a
+    finding named is in Results now is the declared-sections check's (`sections.check_result`)."""
     result = result if isinstance(result, dict) else {}
     if result.get("status") == "running":
         return []
     findings = [item for item in result.get("findings") or [] if isinstance(item, dict)]
     wanted = targets(fields)
+    if not wanted and (fields or {}).get("origin") != KILL_ORIGIN:
+        return [] if findings else ["a scope-down returns, as findings with their provenance, what the artifacts support"]
     if not findings:
         return ["a scope-down returns the narrowed finding(s), each naming in `replaces` the finding it narrows%s"
                 % (" (%s)" % ", ".join(wanted) if wanted else "")]
@@ -272,8 +317,7 @@ def pending(project, events=None):
     if events is None:
         events, _ = Ledger(project).read_events()
     classes, cache = provenance.read_claims_cache(project), read_sampled(project)
-    verdicted = {(event.get("payload") or {}).get("subject") for event in events
-                 if event.get("event") == VERDICT and (event.get("payload") or {}).get("subject_kind") == provenance.CLAIM}
+    verdicted = _judged(events)
     unread = new = owed = claims = 0
     for sentence in candidate_sentences(text):
         digest = provenance.sentence_hash(sentence.text)
@@ -286,9 +330,10 @@ def pending(project, events=None):
         claims += 1
         if entry is None:
             new += 1
-        elif entry.get("drawn") and entry.get("subject") not in verdicted \
-                and entry.get("subject") == provenance.claim_subject(provenance.Claim(sentence.text, sentence.tags, digest)):
-            owed += 1
+        else:
+            subject = provenance.claim_subject(provenance.Claim(sentence.text, sentence.tags, digest))
+            if subject in _drawn(entry) and subject not in verdicted:
+                owed += 1
     found = []
     if unread:
         found.append("%d tagged sentence(s) of REPORT.md not yet classified" % unread)
@@ -303,13 +348,23 @@ def pending(project, events=None):
 
 def owed(project, events=None):
     """What a run resting at its end still owes before it ends, as phrases, by code alone: the gates' scope-downs and the
-    drawings open or running, and the verdict gates `pending` finds. What the tick relaunches a run for that did not end."""
+    drawings open, running, or failed and waiting on a step, and the verdict gates `pending` finds. What the tick
+    relaunches a run for that did not end."""
+    from wayline import replay  # the journal's view, for a failed ticket's step
+    if events is None:
+        events, _ = Ledger(project).read_events()
+    steps = {identifier: known.step for identifier, known in replay.replay(events).tickets.items()}
+
+    def under_way(fields):
+        return fields["status"] in ("open", "running") or (
+            fields["status"] == "failed" and steps.get(fields["id"]) in ("resume", "split", "tier_up"))
+
     found = []
     every = tickets.read_tickets(project)
-    downs = [fields for fields in every if is_scope_down(fields) and fields["status"] in ("open", "running")]
+    downs = [fields for fields in every if is_scope_down(fields) and under_way(fields)]
     if downs:
         found.append("%d scope-down(s) of the run-end gates" % len(downs))
-    drawn = [fields for fields in every if fields.get("kind") == "drawing" and fields["status"] in ("open", "running")]
+    drawn = [fields for fields in every if fields.get("kind") == "drawing" and under_way(fields)]
     if drawn:
         found.append("%d drawing(s)" % len(drawn))
     return found + pending(project, events)

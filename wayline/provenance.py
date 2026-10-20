@@ -1106,7 +1106,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
     verdicted = {(event.get("payload") or {}).get("subject") for event in context.events
                  if event.get("event") == ledger.VERDICT and (event.get("payload") or {}).get("subject_kind") == CLAIM}
     authors = _finding_authors(context)
-    narrowed = _finding_ids(context) if document == REPORT_PATH else {}
+    narrowed = None  # `{sentence hash: finding ids}`, built at the first failing claim of the general report
     writer_model = prose_author or _role_tier(policy, WRITER)[0]  # the paper's writer; every claim of the report is a finding's
     outcome = {"claims": len(claims), "sampled": len(chosen), "already_verdicted": 0, "passed": [], "failed": [], "tickets": [],
                "waiting": [], "fell_back": []}
@@ -1138,6 +1138,8 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
             outcome["passed"].append(subject)
             continue
         outcome["failed"].append(subject)
+        if narrowed is None:
+            narrowed = _finding_ids(context) if document == REPORT_PATH else {}
         filed = _claim_ticket(project, book, claim, subject, taken, from_finding, document, narrowed.get(claim.digest, ()))
         if filed is not None:
             outcome["tickets"].append(filed)

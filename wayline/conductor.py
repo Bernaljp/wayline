@@ -845,6 +845,8 @@ class Conductor:
         # launching only drawings, and ends with this reason once none is. The clean room's interpreter for a drawing's
         # acceptance: the tools venv's by default; a test hands in its own.
         self._resting = self._said_resting = None
+        # The run-end gates (ticket 103): what was said of them once, and whether a gate waits on Fable's held window.
+        self._said_gates, self._gates_held = None, False
         self.drawing_python = drawings.TOOLS_PYTHON
         self._closed_without_step = False  # a drawing closed failed in this wave: progress, as a closed ticket is
         self._said_no_plotting = False  # the rest point that drew nothing for want of the tools venv's matplotlib was said
@@ -1172,6 +1174,8 @@ class Conductor:
             self.ledger.append_event(RUN_ENDED, {"reason": requested.reason})
             result.ended, result.reason = True, requested.reason
             return
+        if self._resting is not None:
+            return  # the run rests on an end that holds (the rule, a budget, a strict stall): that end, not this one, ends it
         if self.flight or self.verdicts:
             # Queued verdicts wait on pacing or on the hold on Fable's weekly window, and are taken once it allows.
             return
@@ -3091,38 +3095,58 @@ class Conductor:
         verdicts before the kill argument, and the scope-downs they file continue the run. After `budget_spent` or
         `stall_strict` the gates run once and their scope-downs wait for the next run. After a stop or a switch none runs.
         The gates wait while the run holds model work, as a verdict does, and at an end of the rule while a verdict on
-        Fable waits on the hold. A gate nobody could take is said and passed over: it is no reason to hold the run's end.
+        Fable waits on the hold, which this run does not take the gates again for until it ends. A gate nobody could take
+        is said and passed over: it is no reason to hold the run's end. At most `run_end.MAX_ROUNDS` kill arguments are
+        taken in one run: after the last, its scope-downs wait for the next run, as after `budget_spent`.
         """
         from wayline import run_end
         if not run_end.runs_gates(reason):
             return False
-        scoped = run_end.continues(reason)
+        events, _ = self.ledger.read_events()
+        rounds = run_end.rounds(events)
+        scoped = run_end.continues(reason) and rounds < run_end.MAX_ROUNDS
         if scoped and self._scope_downs_owed():
             return True
+        if rounds >= run_end.MAX_ROUNDS:
+            if self._said_gates != "rounds":
+                self.say("  the kill argument ran %d times in this run; the run ends, and what it left standing is marked and "
+                         "waits for the next run" % rounds)
+                self._said_gates = "rounds"
+            return False
+        if self._gates_held and self.view.hold is not None and not self._falls_back():
+            return scoped  # a gate waits on Fable's held window: nothing to take again until it lifts
+        self._gates_held = False
         self._render_general_report()  # the gates read the report as the ledger stands now, this wave's work included
         if not run_end.pending(self.project):
             return False
         if self._holds_launches() or self.action != schedule.NORMAL:
             return True  # model work waits on the pause, the stop, or pacing; the gates are taken once it allows
         try:
-            waiting = self._take_gates(run_end, self._falls_back())
+            self._gates_held = self._take_gates(run_end, self._falls_back())
         except gates.UsageLimited as refused:
             self._pause(refused.limit, "the run-end gates")
             return True
-        except (ValueError, OSError) as failure:
-            self.say("  the run-end gates could not be taken: %s; the run ends without them" % failure)
+        if not run_end.continues(reason) or run_end.rounds(self.ledger.read_events()[0]) >= run_end.MAX_ROUNDS:
             return False
-        if scoped and (waiting or self._scope_downs_owed()):
-            return True
-        return False
+        return self._gates_held or bool(self._scope_downs_owed())
 
     def _take_gates(self, run_end, fall_back):
         """Sampled verdicts, then the kill argument, said; whether a gate waits on Fable's weekly window.
 
         The claim sampler decides the fallback once for its pass from the journal, as `wayline report --verify` does; the
-        kill argument is told this wave's answer when it falls back, and otherwise has the journal decide."""
-        sampled = run_end.sampled_verdicts(self.project, harness_root=self.harness_root, policy=self.policy,
-                                           classifier=self.classifier)
+        kill argument is told this wave's answer when it falls back, and otherwise has the journal decide. A gate that
+        cannot be taken is said and the other is still taken; a claim drawn and not judged is owed at the next end.
+        """
+        empty = {"new": 0, "sampled": 0, "passed": [], "failed": [], "tickets": [], "waiting": []}
+        try:
+            sampled = run_end.sampled_verdicts(self.project, harness_root=self.harness_root, policy=self.policy,
+                                               classifier=self.classifier)
+        except gates.UsageLimited:
+            raise
+        except (ValueError, OSError) as failure:
+            self.say("  the run-end gates: the sampled verdicts could not be taken: %s; the claims drawn are owed at the "
+                     "next end" % failure)
+            sampled = empty
         if sampled["new"] or sampled["passed"] or sampled["failed"]:
             self.say("  the run-end gates: %d claim(s) never sampled, %d drawn; %d verdict(s) passed, %d failed%s%s" % (
                 sampled["new"], sampled["sampled"], len(sampled["passed"]), len(sampled["failed"]),
@@ -3135,6 +3159,11 @@ class Conductor:
         except gates.FableHeld as refused:
             self.say("  the kill argument on REPORT.md waits: %s" % refused)
             kill, waiting = None, True
+        except gates.UsageLimited:
+            raise
+        except (ValueError, OSError) as failure:
+            self.say("  the run-end gates: the kill argument on REPORT.md could not be taken: %s" % failure)
+            kill = None
         if kill is not None:
             self.say("  the run-end gates: the kill argument on REPORT.md %s on %s (session %s)" % (
                 "passed" if kill.passed else "failed", kill.model or "an unnamed model", kill.session_id or "unknown"))
@@ -4402,7 +4431,7 @@ class Conductor:
         try:
             return provenance.classify(self.project, texts, harness_root=self.harness_root, policy=self.policy)
         except (provenance.ProvenanceError, worker.LaunchError, OSError) as failure:
-            self.say("  the sentence classifier did not answer at acceptance: %s" % failure)
+            self.say("  the sentence classifier did not answer: %s" % failure)
             return provenance.read_claims_cache(self.ledger)
 
     def _references_check(self, attempt):

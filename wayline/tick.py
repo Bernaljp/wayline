@@ -1290,14 +1290,14 @@ def relaunch_decision(project, ledger, policy, reading, now):
     if switched.get("from") == str(project) and switched.get("to") != str(project):
         return None, "the project was switched away from, to %s" % switched.get("to")
     ended = ended_for_good(project, events, now)
+    # A run that journaled no end yet and still owes its drawings, its run-end gates, or their scope-downs, as a run
+    # resting at an end does: relaunched, it takes them as its own run and then ends (decision 17; ticket 103).
     continuing = []
-    if ended is not None:
-        # A run resting at its end, which journaled no end yet, still owes its drawings, its run-end gates, or their
-        # scope-downs: relaunched, it takes them as its own run and then ends (decision 17; ticket 103).
-        from wayline import run_end  # the gates read the report, which only a run resting at its end needs here
-        continuing = run_end.owed(project, events) if view.run.get("ended") is None else []
-        if not continuing:
-            return None, ended
+    if view.run.get("ended") is None:
+        from wayline import run_end  # the gates read the report, which only a run with no end needs here
+        continuing = run_end.owed(project, events)
+    if ended is not None and not continuing:
+        return None, ended
     if answered_since(events):
         return "a decision ticket was answered since the conductor last ran", None
     if view.stop is not None:
@@ -1308,8 +1308,8 @@ def relaunch_decision(project, ledger, policy, reading, now):
     if continuing:
         closed = window_closed(view, reading, stop_at, now)
         if closed is not None:
-            return None, "the run rests at its end on %s, but %s" % (", ".join(continuing), closed)
-        return "the run rests at its end on %s, and the window is open" % ", ".join(continuing), None
+            return None, "the run did not end and owes %s, but %s" % (", ".join(continuing), closed)
+        return "the run did not end and owes %s, and the window is open" % ", ".join(continuing), None
     graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     # The autonomy the relaunched run starts from, which is `harness.json`'s and not the last run's.
     autonomy = _harness(project).get("autonomy")

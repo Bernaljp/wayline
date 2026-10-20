@@ -19,7 +19,7 @@ from tests.test_drawings import DrawingRunCase
 from tests.test_report import Classifier, RunCase, verdict
 from tests.test_results import file
 from wayline import project as projects
-from wayline import drawings, provenance, run_end, tick, tickets, worker
+from wayline import drawings, gates, provenance, run_end, tick, tickets, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
 from wayline.objectives import add_objective, change_objective
@@ -196,11 +196,12 @@ class GatesRunCase(ConductorCase):
         self.git("add", "-A")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message)
 
-    def close_the_objective(self):
+    def close_the_objective(self, other=True):
         add_objective(self.project, R1)
         change_objective(self.project, "O1", "answered", "owner", answer="Yes.", evidence=["res:t1-a1/results/summary.json#auroc"])
-        other = dict(self.ticket(1), id=2, status="open", title="Write another file", touches=["other.txt"], outputs=["other.txt"])
-        tickets.write_ticket(self.ledger, other, "\nAnother.\n")
+        if other:
+            other = dict(self.ticket(1), id=2, status="open", title="Write another file", touches=["other.txt"], outputs=["other.txt"])
+            tickets.write_ticket(self.ledger, other, "\nAnother.\n")
         self.commit("an objective answered")
 
     def started(self):
@@ -346,6 +347,41 @@ class OnceEndTest(GatesRunCase):
         self.assertEqual(fields["status"], "open")
         self.assertEqual(self.events("ticket_launched"), [])
         self.assertTrue(self.verdicts("kill_argument"))
+
+
+class RuleEndEdgeTest(GatesRunCase):
+    def test_a_rule_end_resting_on_a_scope_down_with_the_frontier_empty_ends_with_the_rules_reason(self):
+        self.close_the_objective(other=False)
+        self.conduct(verifier=failing_on(ORIGINAL), writer=[narrowed(2)])
+        self.assertEqual(self.ended(), ["objectives_closed"], "never frontier_empty while the rule's end holds")
+
+    def test_the_kill_argument_runs_at_most_max_rounds_times_in_a_run_and_its_last_scope_down_waits(self):
+        self.close_the_objective()
+        standing = lambda request, message: verdict(passed=not any(question in request.prompt for question in (
+            gates.MEMO_QUESTION, gates.ADJUDICATION_QUESTION)), text="The gain is one seed's.", locator="results/summary.json#auroc")
+        self.conduct(verifier=standing, writer=[narrowed(3), narrowed(4, replaces="t3-a1-f1")], waves=24)
+        self.assertEqual(self.ended(), ["objectives_closed"])
+        self.assertEqual(len(self.verdicts("kill_argument")), run_end.MAX_ROUNDS)
+        last = run_end.scope_downs(self.project)[-1]
+        self.assertEqual((last["status"], last["origin"]), ("open", run_end.KILL_ORIGIN), "the last waits for the next run")
+        self.assertIn("scope-down ticket %d" % last["id"], self.report().split("## 1.")[0])
+
+
+class OwedTest(SampleCase):
+    def test_a_scope_down_failed_and_waiting_on_its_step_is_still_owed(self):
+        outcome = self.sample(lambda request, message: verdict(passed="`f-0002`" not in request.prompt))
+        [identifier] = outcome["tickets"]
+        fields = {entry["id"]: entry for entry in tickets.read_tickets(self.project)}[identifier]
+        body = tickets.read_ticket(tickets.tickets_dir(self.project) / tickets.filename(fields))[1]
+        tickets.write_ticket(self.book, dict(fields, status="failed"), body)
+        self.book.append_event("ticket_failed", {"ticket": identifier, "attempt": 1, "reason": "x", "next": "resume"}, ticket=identifier)
+        self.assertIn("1 scope-down(s) of the run-end gates", run_end.owed(self.project))
+
+    def test_a_claims_scope_down_that_names_no_finding_wants_findings_without_replaces(self):
+        fields = {"kind": "writing", "proposed_by": "verifier", "origin": "research/REPORT.md#claim-0123456789abcdef", "inputs": []}
+        finding = {"text": "It holds on one seed.", "provenance": "results/x.json#k", "heading": "H", "replaces": None}
+        self.assertEqual(run_end.check_scope_down(fields, {"findings": [finding]}), [])
+        self.assertTrue(run_end.check_scope_down(dict(fields, origin=run_end.KILL_ORIGIN), {"findings": [finding]}))
 
 
 class NoGateTest(GatesRunCase):
