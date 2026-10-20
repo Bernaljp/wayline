@@ -50,7 +50,8 @@ lists it read-only, marked with its tag.
   proposes a place for each concern waiting (`position` gains `concerns`); the proposals form one
   `concern_placements` batch, and the grill asks, each human-only, one question per proposed objective with its
   concerns, one for the order, one for the declines (`take it` or `another place`), and one per objection of the
-  hostile review (`reject`, or an accept with where it goes). Specify refuses to draft while a concern is unsorted;
+  hostile review (`reject`, or an accept with where it goes), then one for each concern no question placed. Specify
+  refuses to draft during setup while a concern is unsorted;
   `wayline concern place <id> --objective <O> | --order | --decline "<reason>"` sorts one as the owner. Code answers
   a concern once its tied objectives are answered and its targets replaced or withdrawn, follows a reframe to the
   successor, and sends a concern back to be sorted when its objective drops. After setup, each concern that needs

@@ -9,7 +9,9 @@ the journal, `DECISIONS.md`, the decision tickets, and the prompts the readers a
 """
 
 import json
+import unittest
 
+from tests.paths import HARNESS_ROOT
 from tests.test_conductor import done, patch
 from tests.test_documents import MIDWAY
 from tests.test_inherited import InheritedCase
@@ -148,6 +150,28 @@ class SplitterTest(SplitterCase):
         dropped = "\n".join(report["dropped"])
         self.assertIn("The authors fabricated the colonies.", dropped)
         self.assertIn(self.not_a_claim, dropped)
+
+    def test_critiques_past_the_splitters_cap_go_in_several_sessions_each_whole(self):
+        long = "# Referee report 3\n\n" + "\n\n".join("%d. Report the colony count for sweep %d." % (number, number)
+                                                      for number in range(1, 700)) + "\n"
+        (self.temp / "referee-3.md").write_text(long, encoding="utf-8")
+        self.add(self.temp / "referee-3.md", kind="critique")
+        self.assertGreater(len(long), concerns.SPLIT_MIN)
+        with worker.use_fake() as fake:
+            fake.script(Envelope(structured_output={"concerns": []}, session_id="split-1", num_turns=1), role=concerns.SPLITTER)
+            fake.script(Envelope(structured_output={"concerns": [{"sources": [{"critique": "D4", "text": "Report the colony count for "
+                                                                                                    "sweep 7."}], "targets": []}]},
+                                 session_id="split-2", num_turns=1), role=concerns.SPLITTER)
+            policy = json.loads((HARNESS_ROOT / "policy.json").read_text(encoding="utf-8"))
+            policy["context_pack"]["max_chars"]["sonnet"] = 30000
+            report = concerns.split_critiques(self.project, policy=policy)
+            prompts = [call.request.prompt for call in fake.calls]
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("# D2:", prompts[0])
+        self.assertNotIn("# D4:", prompts[0])
+        self.assertIn("# D4:", prompts[1])
+        self.assertEqual(report["added"], ["K1"])
+        self.assertEqual([entry["document"] for entry in self.record_file()["split"]], ["D2", "D3", "D4"])
 
     def test_a_critique_is_split_once(self):
         self.split()
@@ -675,11 +699,9 @@ class ReadersTest(SetupCase):
 
     def test_a_project_with_no_documents_reads_neither(self):
         from wayline import decider
+        from wayline.project import init_project
 
         bare = self.temp / "bare"
-        from wayline.project import init_project
-        from tests.paths import HARNESS_ROOT
-
         init_project(bare, harness_root=HARNESS_ROOT, git=False, hermes_python=None, owner_email=None)
         text, _ = decider.records_text(bare)
         self.assertNotIn("CONCERNS.md", text)
@@ -694,8 +716,6 @@ class ReadersTest(SetupCase):
         self.assertEqual(concerns.pack_text(self.project, []), "")
 
     def test_the_grill_skill_reads_them(self):
-        from tests.paths import HARNESS_ROOT
-
         skill = (HARNESS_ROOT / "skills" / "wayline-grill" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("research/DOCUMENTS.md", skill)
         self.assertIn("research/CONCERNS.md", skill)
@@ -738,6 +758,121 @@ class VerbTest(SplitterCase):
         self.assertEqual(code, 0)
         self.assertIn("K1", out)
         self.assertIn("not sorted yet", out)
+
+
+class ParsePlaceTest(unittest.TestCase):
+    """How an answer, a rationale, or a note names a place: said first, never picked out of a sentence that excludes it."""
+
+    def test_the_places(self):
+        cases = {
+            "tie it to O2": ("objectives", ["O2"]), "O1 and O3": ("objectives", ["O1", "O3"]),
+            "accept: tie it to O1": ("objectives", ["O1"]), "for the order": ("order", None),
+            "accept: for the order": ("order", None), "keep it for the paper order": ("order", None),
+            "decline: the data are lost": ("declined", "the data are lost"), "decline": ("declined", None),
+            "decline: <the reason>": ("declined", None), "new objective: Does flicker drive it?": ("new", "Does flicker drive it?"),
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(concerns.parse_place(text), expected)
+
+    def test_no_place_is_read_out_of_a_sentence_that_names_none_first(self):
+        for text in ("Not O2; keep it for the paper order", "These do not belong with O3",
+                     "out of scope, wrong order of priorities", "accept", "hmm", "new objective: <the question>"):
+            with self.subTest(text=text):
+                self.assertIsNone(concerns.parse_place(text))
+
+
+class ReviewFixesTest(SetupCase):
+    """What the review of ticket 96 found: answers recorded whole, every unsorted concern asked about, nothing orphaned."""
+
+    def setUp(self):
+        super().setUp()
+        self.position()
+
+    def test_a_grill_batch_whose_concern_answer_is_refused_records_nothing(self):
+        from wayline import grill
+
+        self.first_tier()
+        group = next(record for record in self.records() if (record.get("concerns") or {}).get("place") == "order")
+        before = (self.records(), self.concerns())
+        with self.assertRaises(grill.GrillError):
+            grill.apply_batch(self.project, {"answers": [{"id": group["id"], "answer": "another place",
+                                                           "rationale": "tie them to O9"}]})
+        self.assertEqual((self.records(), self.concerns()), before)
+
+    def test_a_concern_a_group_left_unplaced_is_asked_about_alone_and_its_answer_places_it(self):
+        from wayline import grill
+
+        self.first_tier()
+        group = next(record for record in self.records() if (record.get("concerns") or {}).get("place") == "order")
+        grill.answer(self.project, group["id"], "another place", "not for the order")
+        grill.grill_view(self.project)
+        alone = [record for record in self.records() if record.get("concerns") and record["concerns"]["place"] is None]
+        self.assertEqual([record["concerns"]["ids"] for record in alone], [["K4"], ["K7"]])
+        self.assertTrue(all(record["human_only"] for record in alone))
+        with self.assertRaises(grill.GrillError):
+            grill.answer(self.project, alone[0]["id"], "no idea", "the owner is unsure")
+        grill.answer(self.project, alone[0]["id"], "decline", "the code was fixed before submission")
+        self.assertEqual((self.concern("K4")["status"], self.concern("K4")["reason"]),
+                         ("declined", "the code was fixed before submission"))
+
+    def test_an_objection_accepted_with_no_place_is_asked_about_alone(self):
+        from wayline import grill
+
+        self.first_tier()
+        objection = next(record for record in self.records() if record.get("objection"))
+        grill.answer(self.project, objection["id"], "accept", "a fair point")
+        grill.grill_view(self.project)
+        self.assertTrue(any(record.get("concerns") and record["concerns"]["ids"] == ["K10"] for record in self.records()))
+
+    def test_after_setup_specify_does_not_wait_on_a_concern_its_ticket_asks_about(self):
+        from wayline import specify
+
+        Ledger(self.project).append_event("phase", {"from": "P4", "to": "P5"})
+        with worker.use_fake():
+            with self.assertRaises(Exception) as raised:
+                specify.draft_spec(self.project)
+        self.assertNotIn("wait to be sorted", str(raised.exception))
+
+    def test_a_new_objective_for_a_concern_that_cannot_take_it_is_not_recorded(self):
+        from wayline import objectives
+
+        before = objectives.read_objectives(self.project)
+        with self.assertRaises(concerns.ConcernError):
+            concerns.place(self.project, ["K99"], ("new", "Does flicker drive it?"), "owner")
+        concerns.place(self.project, ["K1"], ("objectives", ["O1"]), "owner")
+        self.assertEqual(concerns.place(self.project, ["K1"], ("new", "Does flicker drive it?"), "owner", only_unsorted=True), [])
+        self.assertEqual(objectives.read_objectives(self.project), before)
+
+    def test_a_workers_pack_keeps_to_what_the_cap_leaves_it(self):
+        concerns.place(self.project, ["K1", "K5", "K8"], ("objectives", ["O1"]), "owner")
+        pack = concerns.pack_text(self.project, ["O1"], max_chars=200)
+        self.assertLessEqual(len(pack.split("\n\n[wayline")[0]), 200)
+        self.assertIn("reached the context cap", pack)
+
+    def test_a_concern_tied_to_an_objective_the_record_no_longer_holds_does_not_stop_the_step(self):
+        concerns.place(self.project, ["K1"], ("objectives", ["O2"]), "owner")
+        path = self.project / "research" / "objectives.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["objectives"] = [objective for objective in record["objectives"] if objective["id"] != "O2"]
+        path.write_text(json.dumps(record), encoding="utf-8")
+        concerns.follow(self.project)
+        self.assertEqual(self.concern("K1")["objectives"], ["O2"])
+
+
+class ClosedTicketTest(AfterSetupCase):
+    def test_a_ticket_closed_with_no_answer_asks_again(self):
+        from wayline import tickets
+
+        self.settle()
+        first = self.concern_tickets()[0]
+        fields, body = tickets.read_ticket(tickets.tickets_dir(self.project) / tickets.filename(first))
+        tickets.write_ticket(Ledger(self.project), dict(fields, status="parked"), body)  # a cancel parks it
+        report = self.settle()
+        again = [fields for fields in self.concern_tickets() if concerns.concern_of(fields["origin"]) == "K2"]
+        self.assertEqual(len(again), 2)
+        self.assertEqual(report["opened"], [again[1]["id"]])
+        self.assertEqual(self.settle()["opened"], [], "asked once more, not every wave")
 
 
 class ObjectionTest(SetupCase):

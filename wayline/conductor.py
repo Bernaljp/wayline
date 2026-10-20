@@ -2115,10 +2115,16 @@ class Conductor:
             scout_max=(self.policy.get("scout") or {}).get("calls_per_ticket", worker.SCOUT_MAX),
             notes=notes,
             failure=self._last_failure(attempt),
-            sections="\n\n".join(part for part in (
-                sections.pack_text(self.ledger, sections.declared(attempt.ticket), attempt.tier.context_chars),
-                concerns.pack_text(self.ledger, objectives.served(attempt.ticket))) if part),
+            sections=self._paper_pack(attempt),
         )
+
+    def _paper_pack(self, attempt):
+        """The context pack's part on the paper: the declared sections, then the concerns of the ticket's objectives (ticket 96),
+        the two together kept to the tier's context cap."""
+        cap = attempt.tier.context_chars
+        paper = sections.pack_text(self.ledger, sections.declared(attempt.ticket), cap)
+        left = None if cap is None else max(0, int(cap) - len(paper))
+        return "\n\n".join(part for part in (paper, concerns.pack_text(self.ledger, objectives.served(attempt.ticket), left)) if part)
 
     def _keep_last_failure(self, attempt):
         """Write `failure.json` for an attempt a tier up launches: the failure output of the attempt before it (ticket 68).

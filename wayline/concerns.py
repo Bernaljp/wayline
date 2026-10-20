@@ -60,6 +60,8 @@ OBJECTIVES, ORDER = "objectives", "order"
 SPLITTER = "critique-splitter"   # the role one session per batch of critiques runs on (Sonnet at medium)
 SPLIT_SCHEMA = "concern_split"
 NEAR = 0.8                      # how alike two points' words are, as difflib reads them, for code to merge them
+SPLIT_ROOM = 20000              # what a splitter prompt keeps under the context cap for the claims, the rules, and the schema
+SPLIT_MIN = 20000               # the least critique text one splitter session takes, however small the cap
 
 _ID = re.compile(r"^K([1-9][0-9]*)\Z")
 
@@ -307,25 +309,43 @@ def splitter_prompt(batch, claims):
     return "\n".join(parts) + "\n"
 
 
+def _splitter_cap(policy):
+    """The characters of critique one splitter session takes: its model's context cap less the room the rest of the prompt needs."""
+    model = ((policy.get("roles") or {}).get(SPLITTER) or {}).get("model")
+    caps = (policy.get("context_pack") or {}).get("max_chars") or {}
+    cap = caps.get(model, min(caps.values()) if caps else None)
+    return None if cap is None else max(SPLIT_MIN, int(cap) - SPLIT_ROOM)
+
+
+def _batches(found, cap):
+    """The critiques in batches, each whole and in order, a batch's text under `cap` unless one critique alone is longer."""
+    batches, current, used = [], [], 0
+    for document, blocks in found:
+        size = sum(len(block) for _, block in blocks)
+        if current and cap is not None and used + size > cap:
+            batches.append(current)
+            current, used = [], 0
+        current.append((document, blocks))
+        used += size
+    if current:
+        batches.append(current)
+    return batches
+
+
 def _launch_splitter(project, prompt, policy, harness_root):
     """One splitter session, its answer checked against the schema and asked for once more; returns the answer."""
     from wayline import HARNESS_ROOT, provenance, worker
-    from wayline.project import policy_for
 
-    harness_root = harness_root or HARNESS_ROOT
-    policy = policy_for(project, harness_root) if policy is None else policy
-    role = worker.read_role(SPLITTER, harness_root, project)
-    request = provenance.structured_request(project, role, policy, harness_root, prompt, SPLIT_SCHEMA, "small",
-                                            provenance.session_dir(project, SPLITTER))
-    envelope = worker.launch(request)
-    provenance.raise_if_refused(envelope, "the critique splitter", request.model)
-    problem = provenance.schema_problem(envelope, SPLIT_SCHEMA)
-    if problem is not None and envelope.session_id:
-        envelope = worker.resume(request, envelope.session_id, provenance.RESUME_STRUCTURED % problem)
-        provenance.raise_if_refused(envelope, "the critique splitter", request.model)
-        problem = provenance.schema_problem(envelope, SPLIT_SCHEMA)
-    if problem is not None:
-        raise ConcernError("the critique splitter's answer could not be used: %s" % problem)
+    role = worker.read_role(SPLITTER, harness_root or HARNESS_ROOT, project)
+    try:
+        request = provenance.structured_request(project, role, policy, harness_root or HARNESS_ROOT, prompt, SPLIT_SCHEMA, "small",
+                                                provenance.session_dir(project, SPLITTER))
+        envelope = provenance._launch_structured(request, lambda answer: provenance.schema_problem(answer, SPLIT_SCHEMA),
+                                                 "critique splitter")
+    except provenance.UsageLimited:
+        raise
+    except provenance.ProvenanceError as failure:
+        raise ConcernError(str(failure)) from None
     return envelope.structured_output
 
 
@@ -383,20 +403,33 @@ def _match(record, sources):
 
 
 def split_critiques(project, *, policy=None, harness_root=None):
-    """Split every critique not split yet in one splitter session; returns `{added, joined, dropped, critiques}`.
+    """Split every critique not split yet, one splitter session per batch; returns `{added, joined, dropped, critiques}`.
 
-    Nothing is launched when every critique was split at its current version. A point code keeps becomes a concern by
-    `session`, or joins the recorded concern of another critique it nearly repeats, which gains the source.
+    Nothing is launched when every critique was split at its current version. The critiques go in one batch, or in
+    several when together they pass the splitter's context cap, each critique whole. A point code keeps becomes a
+    concern by `session`, or joins the recorded concern of another critique it nearly repeats, which gains the source.
+    Each batch is recorded as it comes back, so a later one that fails leaves the earlier ones split.
     """
+    from wayline import HARNESS_ROOT
+    from wayline.project import policy_for
+
     ledger = ledger_for(project)
-    record = read_record(ledger)
-    batch = _critiques(ledger, record)
-    report = {"added": [], "joined": [], "dropped": [], "critiques": [document["id"] for document, _ in batch]}
-    if not batch:
+    found = _critiques(ledger, read_record(ledger))
+    report = {"added": [], "joined": [], "dropped": [], "critiques": [document["id"] for document, _ in found]}
+    if not found:
         return report
+    policy = policy_for(ledger.project, harness_root or HARNESS_ROOT) if policy is None else policy
     claims = inherited_claims(ledger)
-    answer = _launch_splitter(ledger.project, splitter_prompt(batch, claims), policy, harness_root)
-    kept, report["dropped"] = _checked(answer, batch, claims)
+    for batch in _batches(found, _splitter_cap(policy)):
+        answer = _launch_splitter(ledger.project, splitter_prompt(batch, claims), policy, harness_root)
+        kept, dropped = _checked(answer, batch, claims)
+        report["dropped"] += dropped
+        _take_batch(ledger, batch, kept, report)
+    return report
+
+
+def _take_batch(ledger, batch, kept, report):
+    """Record one batch's points as concerns, or join them to the concerns they nearly repeat, and mark its critiques split."""
     with ledger.lock():
         record = read_record(ledger)
         changed = []
@@ -420,7 +453,6 @@ def split_critiques(project, *, policy=None, harness_root=None):
             if entry not in record["split"]:
                 record["split"].append(entry)
         _save(ledger, record, changed, "session")
-    return report
 
 
 def gather(project, *, policy=None, harness_root=None):
@@ -464,13 +496,8 @@ def parse_place(text):
             return (ORDER, None)
         found = _IDS.match(candidate)
         if found:
-            return (OBJECTIVES, ["O%s" % number for number in _OBJECTIVE_ID.findall(found.group(1))])
-    named = ["O%s" % number for number in _OBJECTIVE_ID.findall(said)]
-    if named:
-        return (OBJECTIVES, list(dict.fromkeys(named)))
-    if re.search(r"\border\b", said, re.IGNORECASE):
-        return (ORDER, None)
-    return None
+            return (OBJECTIVES, list(dict.fromkeys("O%s" % number for number in _OBJECTIVE_ID.findall(found.group(1)))))
+    return None  # a place is said first: "Not O2; keep it for the order" names none, rather than the O2 it excludes
 
 
 def _proposed_place(proposed):
@@ -520,51 +547,75 @@ def _apply(concern, place, value, by):
         concern.update(place=None, objectives=[], status=OPEN, reason=None)
 
 
+def check_place(project, parsed, reason=None):
+    """Why a parsed place cannot be taken, or None, with nothing written: a decline with no reason (in `parsed`, else
+    `reason`), a tie to an objective the project does not hold open or parked, a new objective with no question."""
+    if parsed is None:
+        return None
+    where, value = parsed
+    if where == "new" and not _one_line(value):
+        return "a new objective is a question, and none was given"
+    if where == DECLINED and not (value or _one_line(reason)):
+        return "a concern is declined with a reason, and none was given"
+    if where == OBJECTIVES:
+        return _check_objectives(project, value)
+    return None
+
+
 def _resolved(project, parsed, reason, by):
-    """`(place, value)` for a parsed place, a new objective recorded first; a decline takes `reason` when it gave none."""
-    place, value = parsed
-    if place == "new":
+    """`(place, value)` for a checked place, a new objective recorded here; a decline takes `reason` when it gave none."""
+    where, value = parsed
+    if where == "new":
         from wayline.objectives import ObjectiveError, add_objective  # the objectives module imports the gates
         try:
             objective, _ = add_objective(project, value, by=by)
         except ObjectiveError as failure:
             raise ConcernError("the new objective could not be recorded: %s" % failure) from None
         return OBJECTIVES, [objective["id"]]
-    if place == DECLINED:
-        value = value or _one_line(reason)
-        if not value:
-            raise ConcernError("a concern is declined with a reason, and none was given")
-    if place == OBJECTIVES:
-        problem = _check_objectives(project, value)
-        if problem is not None:
-            raise ConcernError(problem)
-    return place, value
+    if where == DECLINED:
+        return where, value or _one_line(reason)
+    return where, value
 
 
-def place(project, identifiers, parsed, by, reason=None, only_unsorted=False):
-    """Sort concerns: `parsed` is what `parse_place` returns, or None to send them back to be sorted. Returns the changed.
+def place_each(project, placements, by, only_unsorted=False):
+    """Sort several concerns at once, each `(id, parsed, reason)` in its own place; returns the concerns changed.
 
-    A decline needs a reason (in `parsed`, else `reason`); a tie names objectives the project holds, open or parked; a
-    new objective is recorded first, `by` the same hand. `only_unsorted` leaves a concern sorted already as it is.
+    `parsed` is what `parse_place` returns, or None to send the concern back to be sorted. Every concern and every place
+    is checked before anything is written, so a refused one sorts none, and a new objective is recorded only once all
+    pass, once for the concerns that share it, `by` the same hand. An answered concern is left as it is, and so, with
+    `only_unsorted`, is a sorted one.
     """
     if by not in ("owner", "decider"):
         raise ConcernError("a concern is sorted by the owner or the decider, got %r" % (by,))
-    where, value = _resolved(project, parsed, reason, by) if parsed is not None else (None, None)
     ledger = ledger_for(project)
     with ledger.lock():
         record = read_record(ledger)
-        changed = []
-        for identifier in identifiers:
+        todo = []
+        for identifier, parsed, reason in placements:
             concern = _find(record, identifier)
             if concern["status"] == ANSWERED or (only_unsorted and is_sorted(concern)):
                 continue
+            problem = check_place(ledger.project, parsed, reason)
+            if problem is not None:
+                raise ConcernError("%s: %s" % (identifier, problem))
+            todo.append((concern, parsed, reason))
+        resolved, changed = {}, []
+        for concern, parsed, reason in todo:
+            key = json.dumps([parsed, reason if parsed and parsed[0] == DECLINED else None])
+            if key not in resolved:
+                resolved[key] = _resolved(ledger.project, parsed, reason, by) if parsed is not None else (None, None)
             before = dict(concern)
-            _apply(concern, where, value, by)
+            _apply(concern, resolved[key][0], resolved[key][1], by)
             if concern != before:
                 changed.append(concern)
         if changed:
             _save(ledger, record, changed, by)
     return changed
+
+
+def place(project, identifiers, parsed, by, reason=None, only_unsorted=False):
+    """Sort concerns into one place: `place_each` with the same place for each. Returns the concerns changed."""
+    return place_each(project, [(identifier, parsed, reason) for identifier in identifiers], by, only_unsorted=only_unsorted)
 
 
 def propose(project, rows):
@@ -710,7 +761,8 @@ def _follow_objectives(identifiers, held):
 
 
 def _answer_of(objectives, held, targets):
-    said = "; ".join("%s: %s" % (identifier, _one_line(held[identifier].get("answer")) or "answered") for identifier in objectives)
+    said = "; ".join("%s: %s" % (identifier, _one_line((held.get(identifier) or {}).get("answer")) or "answered")
+                     for identifier in objectives)
     if targets:
         said += "; %s %s replaced or withdrawn" % (", ".join(targets), "is" if len(targets) == 1 else "are")
     return said
@@ -749,7 +801,8 @@ def follow(project):
                     concern["returned"] = "%s was dropped" % " and ".join(dropped) if dropped else "its objectives are gone"
                 else:
                     concern["objectives"] = kept
-                    if all(held[identifier].get("status") == ANSWERED for identifier in kept) and all(done for _, done in followed):
+                    if all((held.get(identifier) or {}).get("status") == ANSWERED for identifier in kept) \
+                            and all(done for _, done in followed):
                         concern.update(status=ANSWERED, answer=_answer_of(kept, held, concern["targets"]))
             if json.dumps(concern, sort_keys=True) != before:
                 changed.append(concern)
@@ -814,7 +867,7 @@ def _ticket_fields(concern, objectives, why=None):
 def _askings(events):
     """`(returns, created, answered)` read from the journal: when each concern last came to need sorting (its first record
     or a return to sorting), when each concern's decision ticket was opened, and the last answer to each ticket."""
-    from wayline.ledger import DECISION, TICKET_CREATED
+    from wayline.ledger import DECISION, TICKET_CREATED, TICKET_RERUN
 
     returns, places, created, answered = {}, {}, {}, {}
     for index, event in enumerate(events):
@@ -828,6 +881,8 @@ def _askings(events):
             created[payload.get("ticket")] = (index, payload.get("origin"))
         elif name == DECISION and payload.get("ticket") is not None:
             answered[payload["ticket"]] = (index, payload)
+        elif name == TICKET_RERUN and payload.get("ticket") in answered:
+            answered.pop(payload["ticket"])  # asked again: the answer it had stopped being its answer
     return returns, created, answered
 
 
@@ -854,8 +909,9 @@ def settle(project, notify=None, say=None):
     earlier asking is not taken again. Everything is read back from the journal and the files, so a second call, or a
     restarted conductor, asks nothing twice.
     """
-    from wayline import decisions, stopping
+    from wayline import decisions, stopping, tickets
     from wayline.objectives import ObjectivesUnreadable, read_objectives
+    from wayline.project import read_harness
 
     say = say or (lambda line: None)
     report = {"opened": [], "applied": [], "waiting": []}
@@ -873,6 +929,7 @@ def settle(project, notify=None, say=None):
     except ObjectivesUnreadable as failure:
         raise ConcernError(str(failure)) from None
     returns, created, answered = _askings(events)
+    statuses = {fields["id"]: fields["status"] for fields in tickets.read_tickets(ledger.project) if concern_of(fields.get("origin"))}
     for concern in waiting:
         identifier = concern["id"]
         mine = sorted((index, origin, ticket) for ticket, (index, origin) in created.items() if concern_of(origin) == identifier)
@@ -882,13 +939,21 @@ def settle(project, notify=None, say=None):
         if current:
             _, ticket = current[-1]
             given = answered.get(ticket)
-            if given is None or given[0] < current[-1][0]:
+            if (given is None or given[0] < current[-1][0]) and statuses.get(ticket, "open") == "open":
                 report["waiting"].append(ticket)
                 continue
+            if given is None or given[0] < current[-1][0]:
+                why = "ticket %d was closed with no answer" % ticket
+                given = None
+        if current and given is not None:
             payload = given[1]
             by = "decider" if payload.get("decided_by") == "decider" else "owner"
-            parsed = parse_place(_worded(ledger.project, ticket, payload.get("answer")))
-            if parsed is not None:
+            worded = _worded(ledger.project, ticket, payload.get("answer"))
+            parsed = parse_place(worded)
+            refused = decider_refusal(worded, read_harness(ledger.project)) if by == "decider" and parsed is not None else None
+            if refused is not None:
+                why = "the decider's answer to ticket %d is not taken: %s" % (ticket, refused)
+            elif parsed is not None:
                 try:
                     place(ledger.project, [identifier], parsed, by, reason=payload.get("rationale"))
                     report["applied"].append(identifier)
@@ -947,20 +1012,76 @@ def group_questions(items):
     return specs
 
 
-def take_group(project, group, answer, rationale, revise=False):
-    """The owner's answer to a grill question on a group: `take it` places each as proposed, `another place` takes the
-    place the rationale names, or with none leaves them to be sorted. Their `concern_placements` items are marked too."""
+def _group_placements(project, group, answer, rationale):
+    """`[(id, parsed, reason)]` an answer to a grill question on concerns places: a group's `take it` each as proposed,
+    its `another place` (or a lone concern's answer) where the words name, or nothing when they name no place."""
+    record = read_record(project)
+    if group.get("place") is None:  # one concern the groups left: the answer itself names its place
+        return [(identifier, parse_place(answer), rationale) for identifier in group["ids"]]
     if answer == TAKE_IT:
-        changed = []
-        for identifier in group["ids"]:
-            concern = _find(read_record(project), identifier)
-            if concern.get("proposed"):
-                changed += place(project, [identifier], _proposed_place(concern["proposed"]), "owner", only_unsorted=not revise)
-    else:
-        parsed = parse_place(rationale)
-        changed = place(project, group["ids"], parsed, "owner", reason=rationale, only_unsorted=not revise) if parsed else []
-    mark_items(project, group["ids"], answer, "owner", note=None if answer == TAKE_IT else rationale)
+        found = [_find(record, identifier) for identifier in group["ids"]]
+        return [(concern["id"], _proposed_place(concern["proposed"]), None) for concern in found if concern.get("proposed")]
+    parsed = parse_place(rationale)
+    return [(identifier, parsed, rationale) for identifier in group["ids"]] if parsed is not None else []
+
+
+def check_group(project, group, answer, rationale, revise=False):
+    """Why an answer to a grill question on concerns cannot be recorded, or None, with nothing written."""
+    try:
+        placements = _group_placements(project, group, answer, rationale)
+        record = read_record(project)
+        for identifier, parsed, reason in placements:
+            concern = _find(record, identifier)
+            if concern["status"] == ANSWERED or (not revise and is_sorted(concern)):
+                continue
+            if group.get("place") is None and parsed is None:
+                return "%s: the answer names no place (tie it to O<n>, for the order, or decline: <the reason>)" % identifier
+            problem = check_place(project, parsed, reason)
+            if problem is not None:
+                return "%s: %s" % (identifier, problem)
+    except (ConcernError, ConcernsUnreadable) as failure:
+        return str(failure)
+    return None
+
+
+def take_group(project, group, answer, rationale, revise=False):
+    """The owner's answer to a grill question on concerns, recorded whole or not at all.
+
+    A group's `take it` places each concern as the critic proposed, its `another place` where the rationale says, or
+    with no place named leaves them to be sorted (the grill then asks about each); a lone concern's answer names its
+    place. The group's `concern_placements` items are marked alike.
+    """
+    problem = check_group(project, group, answer, rationale, revise)
+    if problem is not None:
+        raise ConcernError(problem)
+    changed = place_each(project, [entry for entry in _group_placements(project, group, answer, rationale) if entry[1] is not None],
+                         "owner", only_unsorted=not revise)
+    if group.get("place") is not None:
+        mark_items(project, group["ids"], answer, "owner", note=None if answer == TAKE_IT else rationale)
     return changed
+
+
+def sort_questions(items, objectives=(), records=()):
+    """One question for each open concern waiting to be sorted that no open question of the grill covers: those no proposal
+    reached, and those a group's `another place` left; as `{question, concerns, options, recommended, evidence}`."""
+    covered = {identifier for record in records or () if record.get("concerns") and record.get("answer") is None
+               for identifier in record["concerns"]["ids"]}
+    asked = {}
+    for record in records or ():
+        if record.get("concerns") and record["concerns"].get("place") is None:
+            for identifier in record["concerns"]["ids"]:
+                asked[identifier] = asked.get(identifier, 0) + 1
+    ties = ["tie it to %s" % objective["id"] for objective in objectives or () if objective.get("status") in ("open", "parked")]
+    specs = []
+    for concern in sorted(items, key=lambda item: _number(item["id"])):
+        if concern["status"] != OPEN or is_sorted(concern) or concern["id"] in covered:
+            continue
+        question, _, recommended, evidence = _ticket_fields(concern, objectives)
+        if asked.get(concern["id"]):
+            question += " (asked again)" if asked[concern["id"]] == 1 else " (asked %d times before)" % asked[concern["id"]]
+        specs.append({"question": question, "concerns": {"place": None, "objective": None, "ids": [concern["id"]]},
+                      "options": ties + ["for the order", "decline: <the reason>"], "recommended": recommended, "evidence": evidence})
+    return specs
 
 
 def objection_questions(memo, objectives=()):
@@ -983,8 +1104,10 @@ def from_objection(project, objection, answer, rationale=None):
     for the order"), or left to be sorted when it names no place. Taken once: a second accept of the same objection
     places the concern it made. Returns the concern, or None.
     """
-    said = _one_line(answer).casefold()
-    if said.startswith("reject"):
+    problem = check_objection(project, answer, rationale)
+    if problem is not None:
+        raise ConcernError(problem)
+    if _one_line(answer).casefold().startswith("reject"):
         return None
     source = {"critique": MEMO, "locator": OBJECTION_LOCATOR % objection["index"], "text": _one_line(objection["text"])}
     ledger = ledger_for(project)
@@ -1002,11 +1125,23 @@ def from_objection(project, objection, answer, rationale=None):
     return _find(read_record(project), concern["id"])
 
 
+def check_objection(project, answer, rationale=None):
+    """Why an answer to an objection's question cannot be recorded, or None, with nothing written: a place it names that
+    cannot be taken. An accept that names no place is taken, and the concern it makes is asked about on its own."""
+    if _one_line(answer).casefold().startswith("reject"):
+        return None
+    return check_place(project, parse_place(answer), rationale)
+
+
 # --- a worker's context pack ------------------------------------------------------------------------------------
 
 
-def pack_text(project_or_ledger, objectives):
-    """The context pack's part on the concerns: the open concerns tied to one of the ticket's objectives, whole; empty with none."""
+def pack_text(project_or_ledger, objectives, max_chars=None):
+    """The context pack's part on the concerns: the open concerns tied to one of the ticket's objectives; empty with none.
+
+    `max_chars` is what the tier's context cap leaves this part: what does not fit is cut with the cut announced, as the
+    sections' part is, and a part with no room left is only the line that says where the concerns are.
+    """
     wanted = set(objectives or ())
     if not wanted:
         return ""
@@ -1026,7 +1161,12 @@ def pack_text(project_or_ledger, objectives):
         lines += ["- %s: \"%s\"" % (source["locator"], _one_line(source["text"])) for source in concern["sources"]]
         if concern["targets"]:
             lines.append("- targets the inherited claims %s" % ", ".join(concern["targets"]))
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    if max_chars is not None and len(text) > max(0, int(max_chars)):
+        cut = text[:max(0, int(max_chars))].rsplit("\n", 1)[0]
+        text = cut + ("\n\n" if cut else "") + ("[wayline: the concerns of this ticket's objectives reached the context cap; "
+                                                "the rest are in research/CONCERNS.md.]")
+    return text
 
 
 # --- the verb ---------------------------------------------------------------------------------------------------

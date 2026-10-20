@@ -324,6 +324,11 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
         if taken not in TAKE:
             raise GrillError("%s asks whether the project takes an objective: answer open or parked, got %r" % (identifier, text))
         text = taken
+    elif record.get("concerns") and record["concerns"].get("place") is None:
+        from wayline.concerns import parse_place  # the concerns module reads the documents and the sections
+        if parse_place(text) is None:
+            raise GrillError("%s asks where a concern goes: answer tie it to O<n>, for the order, or decline: <the reason>, "
+                             "got %r" % (identifier, text))
     elif record.get("concerns"):
         taken = text.casefold().rstrip(".")
         if taken not in CONCERN_ANSWERS:
@@ -542,11 +547,17 @@ def with_concern_questions(project, records, memo, objectives):
         records, _ = with_question(records, spec["question"], options=spec["options"], human_only=True,
                                    evidence=["research/POSITION.md, the hostile reviewer, objection %d" % spec["objection"]["index"]],
                                    objection=spec["objection"])
-    named = {tuple(record["concerns"]["ids"]) for record in records if record.get("concerns")}
+    named = {tuple(record["concerns"]["ids"]) for record in records if record.get("concerns") and record["concerns"].get("place")}
     for spec in concerns.group_questions(held):
         if tuple(spec["concerns"]["ids"]) in named or _normal(spec["question"]) in asked:
             continue
         records, _ = with_question(records, spec["question"], options=list(CONCERN_ANSWERS), recommended=CONCERN_ANSWERS[0],
+                                   evidence=spec["evidence"], human_only=True, concerns=spec["concerns"])
+    # A concern no open question covers (no proposal reached it, or a group's answer named no place) is asked about alone.
+    for spec in concerns.sort_questions(held, objectives, records):
+        if _normal(spec["question"]) in {_normal(record["question"]) for record in records}:
+            continue
+        records, _ = with_question(records, spec["question"], options=spec["options"], recommended=spec["recommended"],
                                    evidence=spec["evidence"], human_only=True, concerns=spec["concerns"])
     return records
 
@@ -612,6 +623,7 @@ def _with_taken(project, records, identifiers):
     Every answer is checked before any is recorded, so a refused one leaves the objectives as they were.
     """
     _check_takes(project, records, identifiers)
+    _check_concern_takes(project, records, identifiers)
     for identifier in identifiers:
         record = _questions(records)[identifier]
         kept = _take_objective(project, record, records)
@@ -619,6 +631,28 @@ def _with_taken(project, records, identifiers):
             records = [kept if other is record else other for other in records]
         _take_concerns(project, kept)
     return records
+
+
+def _check_concern_takes(project, records, identifiers):
+    """Why the answers on concerns in `identifiers` cannot be recorded, before any answer is (ticket 96): a place that
+    cannot be taken, such as a tie to an objective closed since the question was asked or a decline with no reason."""
+    from wayline import concerns  # the concerns module reads the documents and the sections
+
+    questions = _questions(records)
+    for identifier in identifiers:
+        record = questions[identifier]
+        if not _settled(record) or not (record.get("concerns") or record.get("objection")):
+            continue
+        try:
+            if record.get("concerns"):
+                problem = concerns.check_group(project, record["concerns"], record["answer"], record.get("rationale"),
+                                               revise=bool(record.get("supersedes")))
+            else:
+                problem = concerns.check_objection(project, record["answer"], record.get("rationale"))
+        except concerns.ConcernsUnreadable as failure:
+            problem = str(failure)
+        if problem is not None:
+            raise GrillError("%s could not be recorded in the concerns: %s" % (identifier, problem))
 
 
 def _take_concerns(project, record):

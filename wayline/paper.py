@@ -618,24 +618,18 @@ def _guideline_summary(record):
 
 
 def _documents_and_concerns(project):
-    """The project's documents index and its concerns, inlined for the writer when it has them (decision 17; ticket 96)."""
-    from wayline.concerns import CONCERNS_MD  # the concerns module reads the sections
-    from wayline.documents import DOCUMENTS_MD  # the documents module imports the tools record
+    """The project's documents index and its concerns, inlined for the writer when it has them (decision 17; ticket 96),
+    through the records inliner the decider and the planner read them with."""
+    from wayline import decider  # the decider imports the gates and the grill, as this module's callers do
 
-    lines = []
-    for name, lead in ((DOCUMENTS_MD, "The project's own earlier writing, critiques, and other documents, as kept."),
-                       (CONCERNS_MD, "The points the work must answer. Each concern for the paper order is yours to answer in "
-                                     "the text; a concern tied to an objective is answered by its findings; a declined one "
-                                     "keeps its reason.")):
-        path = Path(project) / "research" / name
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8").rstrip("\n")
-        fence = "```"
-        while fence in text:
-            fence += "`"
-        lines.extend(["", "# research/%s" % name, "", lead, "", fence, text, fence])
-    return lines
+    entries = decider.documents_and_concerns(project)
+    if not entries:
+        return []
+    text, _ = decider.inline_records(entries, None, "The project's own writing and the points the work must answer. Each "
+                                     "concern for the paper order is yours to answer in the text; a concern tied to an "
+                                     "objective is answered by its findings; a declined one keeps its reason.",
+                                     heading="# The project's documents and concerns")
+    return [""] + text.rstrip("\n").split("\n")
 
 
 def writer_prompt(role, project, record, harness_root=HARNESS_ROOT):

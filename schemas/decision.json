@@ -27,9 +27,9 @@
       "type": ["object", "null"],
       "required": ["place", "objective", "ids"],
       "additionalProperties": false,
-      "description": "a question of the grill on the critic's proposed places (decision 17; ticket 96): whether these concerns go where the critic proposes, answered take it or another place",
+      "description": "a question of the grill on concerns (decision 17; ticket 96): whether these concerns go where the critic proposes (place set, answered take it or another place), or where one concern the groups left goes (place null, answered with its place: tie it to O<n>, for the order, decline: <the reason>)",
       "properties": {
-        "place": {"enum": ["objectives", "order", "declined"]},
+        "place": {"enum": ["objectives", "order", "declined", null]},
         "objective": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$"},
         "ids": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^K[1-9][0-9]*$"}}
       }

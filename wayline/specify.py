@@ -132,8 +132,14 @@ UNSORTED = ("the concerns %s wait to be sorted, so the spec cannot say what answ
 
 
 def _unsorted_concerns(project):
-    """The concerns that still wait to be sorted once the marks given are taken and the objectives followed (ticket 96)."""
-    from wayline import concerns  # the concerns module reads the documents and the sections
+    """The concerns that still wait to be sorted once the marks given are taken and the objectives followed (ticket 96).
+
+    Only during setup: after it, a concern that needs sorting is a decision ticket that pauses no work, so a redraft
+    does not wait on it either.
+    """
+    from wayline import concerns, stopping  # the concerns module reads the documents and the sections
+    if stopping.after_setup(Ledger(project).read_events()[0]):
+        return []
     try:
         concerns.take_marks(project)
         concerns.follow(project)
