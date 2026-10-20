@@ -44,6 +44,22 @@ converts each file, keeps it under `research/documents/<id>/`, and lists it in
 version per text is current, the newest in its source format: hand an older or a newer version over
 the same way, and the verb records it as such.
 
+Deconstruct each inherited document into the sections, and again after a newer version of it is
+kept, which then comes in like a section edit:
+
+```bash
+wayline document deconstruct <id> [--place "<heading or locator>=<section>"]
+```
+
+Code cuts the text under Introduction, Results, Discussion, and Methods headings verbatim into
+inherited passages, one per claim, each unchecked until this project's evidence answers it; the
+title, abstract, captions, back matter, availability statements, and reference list are kept and
+never deconstructed. Read the document's headings in `DOCUMENTS.md` first and place each heading the
+fixed table does not map with `--place` (`introduction`, `results`, `discussion`, `methods`, or
+`kept`); one you leave lands under Results as written and is listed for the owner. Then read the
+passages of a separate Methods or supplement in the sections, and move each that reports or
+interprets an outcome to where it belongs: `wayline document move <passage> results|discussion`.
+
 ## What the intake holds
 
 `research/INTAKE.md` gets these sections, in this order, every one present even when it is short:

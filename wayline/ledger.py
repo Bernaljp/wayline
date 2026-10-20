@@ -246,6 +246,11 @@ K_SECTION = "section"  # `passage`: the section it is part of
 K_HEADING = "heading"  # `passage`, `finding`: the heading it stands under
 K_REPLACES = "replaces"  # `passage`, `finding`: the id of the one it replaces, or null
 K_OBJECTIVES = "objectives"  # `passage`, `finding`: the objectives of the ticket that wrote it
+K_EVIDENCE = "evidence"  # `passage`, `finding`: what this project's evidence says of the inherited claim it replaces (ticket 93)
+K_DOC = "doc"  # `passage`: an inherited passage's locator in its document, `D1#p4.s2` (ticket 93)
+K_STANDING = "standing"  # `passage`: an inherited claim's standing, unchecked or unverifiable (ticket 93)
+K_WITHDRAWN = "withdrawn"  # `passage`: true on a withdrawal, which takes the passage it replaces out of the section (ticket 93)
+K_MOVED_FROM = "moved_from"  # `passage`: the inherited passage this one was moved from, in another section (ticket 93)
 K_IDENTIFIER = "identifier"  # `scouted`: the DOI, arXiv id, or exact title the worker asked about
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
@@ -274,7 +279,7 @@ EVENTS = {
     TICKET_RERUN: (K_TICKET, K_BY),
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
     VERDICT: (K_SUBJECT_KIND, K_SUBJECT, K_VERDICT_TYPE, K_PASS, K_SESSION_ID, K_MODEL, K_FINDINGS, K_RUNG, K_FALLBACK_FROM, K_MODEL_RAN),
-    FINDING: (K_ID, K_TICKET, K_TEXT, K_PROVENANCE, K_NEGATIVE, K_HEADING, K_REPLACES, K_OBJECTIVES),
+    FINDING: (K_ID, K_TICKET, K_TEXT, K_PROVENANCE, K_NEGATIVE, K_HEADING, K_REPLACES, K_OBJECTIVES, K_EVIDENCE),
     PROGRESS: (K_METRIC, K_VALUE, K_TICKET, K_RUN_ID, K_KEPT),
     DISCARDED: (K_TICKET, K_METRIC, K_BEST, K_SD, K_SEEDS),
     PROPOSAL_ADMITTED: (K_ID, K_FROM, K_KIND, K_TICKET),
@@ -309,7 +314,8 @@ EVENTS = {
     DOCUMENT: (K_ID, K_TITLE, K_KIND, K_VERSION, K_CONVERTER, K_BY),
     CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
     TOOL_INSTALLED: (K_TICKET, K_NAME, K_OUTCOME, K_VERSION, K_ATTEMPT, K_REASON),
-    PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES),
+    PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES, K_EVIDENCE, K_DOC, K_STANDING, K_REASON,
+              K_WITHDRAWN, K_MOVED_FROM),
     SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
 }
 
@@ -348,7 +354,11 @@ PAYLOAD_ENUMS = {
     # The session's sort (`wayline document add --kind`), or code's cautious guess at a file dropped with no session.
     (DOCUMENT, K_BY): ("session", "code"),
     (TOOL_INSTALLED, K_OUTCOME): ("installed", "recorded", "failed"),
-    (PASSAGE, K_SECTION): ("introduction", "discussion", "methods", "references"),
+    # Results only for an inherited passage (`by: document:<id>`); a ticket's Results passage is a finding.
+    (PASSAGE, K_SECTION): ("introduction", "results", "discussion", "methods", "references"),
+    (PASSAGE, K_STANDING): ("unchecked", "unverifiable"),
+    (PASSAGE, K_EVIDENCE): ("supports", "narrows", "contradicts"),
+    (FINDING, K_EVIDENCE): ("supports", "narrows", "contradicts"),
     (SCOUTED, K_OUTCOME): ("found", "no such work", "failed"),
 }
 

@@ -34,7 +34,7 @@ Per text, one version is current: the newest, in its source format. Two files ar
 when their names are the same once a version mark (`-v2`, `_final`, a date) is taken off; the
 newest is read from the package's own timestamps for an Office file and the file's time otherwise.
 A newer version handed over later is recorded as the document's next version, the earlier one's
-files moving under `source/v<n>/`; taking its text in like a section edit is ticket 93's. A folder
+files moving under `source/v<n>/`; `wayline.inherited` takes its text in like a section edit. A folder
 is sorted file by file, and a `.zip` is unpacked first.
 """
 
@@ -64,7 +64,7 @@ __all__ = [
     "Conversion", "convert", "guess_kind", "text_key", "read_documents", "add_document", "add_documents",
     "drop_document", "render_documents", "anchor_blocks", "CHUNKS_JSON", "CHUNKS_DIR", "CHUNK_MAX_CHARS", "is_document_id",
     "chunk_document", "strip_line_numbers", "recording_runner", "recorded_runner",
-    "document_command",
+    "document_command", "text_blocks", "heading_of", "save_documents",
 ]
 
 DOCUMENTS_JSON = "documents.json"
@@ -721,6 +721,25 @@ def is_document_id(text):
     return isinstance(text, str) and _ID.match(text) is not None
 
 
+def text_blocks(text):
+    """`text.md` as `(locator, block text)` pairs, the front matter first as `front`: what a deconstruction walks (ticket 93)."""
+    return _anchored(text)
+
+
+def heading_of(block):
+    """`(level, text)` of a block that is one Markdown heading, or None."""
+    block = str(block or "").strip()
+    found = _HEADING.match(block) if "\n" not in block else None
+    return (len(found.group(1)), found.group(2).strip()) if found else None
+
+
+def save_documents(ledger, documents):
+    """Write `documents.json` and re-render `DOCUMENTS.md` with no `document` event: what a deconstruction records on a
+    document it already holds (ticket 93). The caller holds the ledger's lock."""
+    ledger.write_json(DOCUMENTS_JSON, {"documents": documents}, schema="document")
+    ledger.write_markdown(DOCUMENTS_MD, render_documents(documents))
+
+
 def _anchored(text):
     """`text.md` as `(locator, block text)` pairs: the blocks after each `<a id="pN"></a>` line, the front matter first as `front`."""
     blocks, locator, lines = [], FRONT, []
@@ -1162,6 +1181,31 @@ def _damage_line(damage):
     return ("lost in conversion: " + ", ".join(shown)) if shown else "none counted"
 
 
+_PARTS = {"title": "the title", "abstract": "the abstract", "front_matter": "front matter", "caption": "captions",
+          "back_matter": "back matter", "availability": "availability statements", "references": "the reference list"}
+
+
+def _deconstructed_lines(document, sentence):
+    """What an inherited document's deconstruction lists for the owner (ticket 93): what it became, what was kept and
+    never deconstructed, the headings no session placed, the moves, or why nothing was deconstructed."""
+    done = document.get("deconstructed")
+    if not done:
+        return ["- Not deconstructed yet: `wayline document deconstruct %s`" % document["id"]] if document["kind"] == "inherited" else []
+    if done.get("reason"):
+        return ["- Not deconstructed (version %d): %s" % (done["version"], done["reason"])]
+    parts = list(dict.fromkeys(_PARTS[entry["part"]] for entry in done.get("kept") or []))
+    lines = ["- Deconstructed (version %d) into %d inherited passages, %d of them claims; kept, never deconstructed: %s"
+             % (done["version"], done.get("passages", 0), done.get("claims", 0), ", ".join(parts) or "nothing")]
+    unplaced = [heading for heading in done.get("headings") or [] if heading["by"] == "default"]
+    if unplaced:
+        lines.append("- Placed under Results as written, no session placed them: %s" % "; ".join(
+            "`%s#%s` %s" % (document["id"], heading["locator"], _clip(heading["text"], max(sentence, 60))) for heading in unplaced))
+    for move in done.get("moves") or []:
+        lines.append("- Moved %s from %s to %s, now %s" % (move["passage"], move["from"].capitalize(), move["to"].capitalize(),
+                                                          move["to_passage"]))
+    return lines
+
+
 def _document_lines(document, sentence, abstract, depth):
     earlier = ["v%d %s" % (entry["version"], entry["origin"]) for entry in document.get("history") or []]
     copies = [entry["path"][len("source/"):] for entry in document.get("files") or [] if entry.get("copy")]
@@ -1177,6 +1221,7 @@ def _document_lines(document, sentence, abstract, depth):
         lines.append("- Also kept: %s (not converted: the source format is)" % ", ".join(copies))
     if document["kind"] == "inherited" and abstract and document.get("abstract"):
         lines.append("- Abstract: %s" % _clip(document["abstract"], abstract))
+    lines += _deconstructed_lines(document, sentence)
     headings = [heading for heading in document.get("headings") or [] if heading["level"] <= depth]
     if headings:
         lines.append("- Headings:")
@@ -1302,6 +1347,38 @@ def recorded_runner(root, missing=()):
 # --- the verb -----------------------------------------------------------------------------------------
 
 
+def _inherited_command(options):
+    """`document deconstruct` and `document move`, the inherited passages' half of the verb (ticket 93)."""
+    from wayline import inherited, sections  # inherited imports this module
+    from wayline.provenance import ProvenanceError
+
+    places = {}
+    for place in getattr(options, "place", []):
+        heading, sep, section = place.rpartition("=")
+        if not sep or not heading.strip() or not section.strip():
+            print("wayline document: --place takes <heading or locator>=<section>, got %r" % place, file=sys.stderr)
+            return 2
+        places[heading.strip()] = section.strip()
+    try:
+        project = find_project(options.project)
+        if options.action == "deconstruct":
+            result = inherited.deconstruct(project, options.document, places=places)
+            said = result["said"]
+        else:
+            source = next((item.get("section") for item in sections.read_passages(project) if item.get("id") == options.passage), None)
+            result = inherited.move_passage(project, options.passage, options.section, heading=options.heading)
+            said = "moved %s from %s to %s, now %s" % (options.passage, sections.TITLES.get(source, source),
+                                                       sections.TITLES[result["section"]], result["id"])
+    except DocumentError as failure:
+        print("wayline document: %s" % failure, file=sys.stderr)
+        return 2
+    except (ProjectError, ProvenanceError, OSError, ValueError) as failure:
+        print("wayline document: %s" % failure, file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2) if options.json else said)
+    return 0
+
+
 def document_command(args):
     parser = argparse.ArgumentParser(
         prog="wayline document",
@@ -1317,9 +1394,28 @@ def document_command(args):
                           "code's cautious guess, which is never inherited")
     add.add_argument("--project", help="the project; the active one by default")
     add.add_argument("--json", action="store_true", help="print the results as JSON")
+    deconstruct = subparsers.add_parser(
+        "deconstruct", help="deconstruct an inherited document verbatim into inherited passages in the sections, or take in "
+                            "its newer version like a section edit (ticket 93)")
+    deconstruct.add_argument("document", help="the document's id, D1")
+    deconstruct.add_argument("--place", action="append", default=[], metavar="<heading or locator>=<section>",
+                             help="the setup session's placement of a heading the table does not map: introduction, results, "
+                                  "discussion, methods, or kept (never deconstructed); repeat it for each")
+    deconstruct.add_argument("--project", help="the project; the active one by default")
+    deconstruct.add_argument("--json", action="store_true", help="print the result as JSON")
+    move = subparsers.add_parser(
+        "move", help="move an inherited passage to another section on the setup session's proposal, listed for the owner: a "
+                     "separate Methods' or supplement's passage that reports or interprets an outcome goes to Results or Discussion")
+    move.add_argument("passage", help="the passage's id, P12")
+    move.add_argument("section", help="introduction, results, discussion, or methods")
+    move.add_argument("--heading", help="the heading it stands under there; its own by default")
+    move.add_argument("--project", help="the project; the active one by default")
+    move.add_argument("--json", action="store_true", help="print the passage written as JSON")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.action in ("deconstruct", "move"):
+        return _inherited_command(options)
     from wayline.intake import IntakeError
 
     try:

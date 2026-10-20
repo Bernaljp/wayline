@@ -72,7 +72,11 @@ REF_IDENTIFIER_TAG_RE = re.compile(r"^(?P<identifier>(?:[Dd][Oo][Ii]|[Aa][Rr][Xx
 # it is a heuristic, and a draft that opens a sentence with a lowercase symbol name joins the one
 # before it. The linter classifies sentences and this decides what a sentence is, so both halves
 # of the provenance work see exactly the same units.
-_BOUNDARY = re.compile(r"""[.!?]["')\]]*(?:\s*\{(?:res|ref):[^{}]+\})*(?=\s+["'(\[A-Z]|\s*$)""")
+# An inherited passage's `{doc:...}` tag (ticket 93) ends its sentence too, though it is no `res` or `ref` tag, and so
+# does the mark a section's render writes after an inherited claim (`[unchecked]`, `[unverifiable: <reason>]`).
+_MARK = r"(?:\s*\[(?:unchecked|unverifiable: [^\[\]]*)\])"
+_BOUNDARY = re.compile(r"""[.!?]["')\]]*(?:\s*\{(?:res|ref|doc):[^{}]+\})*""" + _MARK + r"""?(?=\s+["'(\[A-Z]|\s*$)""")
+_ANY_TAG = re.compile(r"\{(?:res|ref|doc):[^{}]+\}|" + _MARK)
 
 Sentence = namedtuple("Sentence", "text tags")
 
@@ -336,8 +340,8 @@ def identifier_index(project):
 
 
 def strip_tags(text):
-    """`text` with its provenance tags taken off, for a word count that does not count markup."""
-    return TAG_RE.sub("", str(text or "")).strip()
+    """`text` with its provenance tags taken off, `doc` tags too, for a word count that does not count markup."""
+    return _ANY_TAG.sub("", str(text or "")).strip()
 
 
 # --- the commit-threshold check ---------------------------------------------------------------
