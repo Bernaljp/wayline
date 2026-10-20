@@ -68,6 +68,12 @@ VERBS = [
     Verb("document", "document add <file|folder|file.zip> [--kind inherited|critique|other|reference]",
          "keep the project's own writing as documents: converted by code, sorted, recorded in research/documents.json, and indexed in DOCUMENTS.md",
          "views", lazy("wayline.documents", "document_command")),
+    Verb("passage", "passage add --section <s> --heading <h> [--replaces <id>] \"<text>\"",
+         "record an owner's passage in one of the paper's five sections, by: owner, journaled as passage (the conversation calls it)", "views",
+         lazy("wayline.sections", "passage_command")),
+    Verb("consolidate", "consolidate <section> [--yes]",
+         "rewrite one section's current passages into fewer that keep their tags, in one read-only writer session the owner asks for and confirms with its cost",
+         "views", lazy("wayline.consolidation", "consolidate_command")),
     Verb("serve", "serve [--bind 0.0.0.0] [--port n]", "the dashboard server", "services", lazy("wayline.dashboard", "serve_command")),
     Verb("tick", "tick [--project <path>]", "the recurrent job that relaunches work after windows, answers, and jobs", "services", lazy("wayline.tick", "tick_command")),
     Verb("accept", "accept [--where worktree|rebased|main]", "run the ticket's machine acceptance inside a worktree (called by workers)", "worktree", lazy("wayline.gates", "accept")),
@@ -104,7 +110,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "reference", "document",
+    "objective", "mark", "reference", "document", "passage", "consolidate",
 ))
 
 

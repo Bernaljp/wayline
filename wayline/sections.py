@@ -36,6 +36,13 @@ word on the same text.
 the other kinds none. `check_result` is the Type-A check at acceptance: a declared section that got no
 passage (for Results, no finding) sends the worker back, and so does a `replaces` that names nothing the
 section holds. Sections never enter a touch set.
+
+**The owner's passages** (ticket 88). `wayline passage add` writes one `by: owner`, in any section, Results
+included; the owner's edit of a section file is taken in before the next render (`take_in`), by the file's
+render stamp. The owner's passages steer with no lock: a ticket's passage or finding replaces one only with
+evidence and a stated `reason` (`owner_replacement_problem`, part of `check_result`), and is journaled with
+`replaces_owner` for the account. A consolidation (`wayline.consolidation`) writes `by: consolidation`. Every
+render records the linter's reading of the section in `research/sections/lint.json` (`lint_section`).
 """
 
 import hashlib
@@ -50,7 +57,8 @@ __all__ = [
     "section_path", "sections_for_kind", "declared", "read_passages", "read_findings", "add_passage", "file_finding", "seed_passages",
     "arrange", "render_section", "render_sections", "read_stamp", "first_sentence", "pack_text", "check_result",
     "check_replaces", "by_ticket", "INHERITED", "STANDINGS", "EVIDENCE", "UNCHECKED", "UNVERIFIABLE", "is_inherited",
-    "paragraph_of", "mark_of", "section_items", "current_ids",
+    "paragraph_of", "mark_of", "section_items", "current_ids", "OWNER", "CONSOLIDATION", "LINT", "is_finding", "take_in",
+    "lint_section", "owner_replacement_problem", "add_owners_passage", "passage_command",
 ]
 
 SECTIONS = ("introduction", "results", "discussion", "methods", "references")
@@ -83,9 +91,24 @@ WRITING = "writing"
 BY_RE = re.compile(r"^(t[1-9][0-9]*-a[1-9][0-9]*|owner|document:[A-Za-z0-9._-]+|step:[a-z][a-z0-9-]*|"
                    r"objective:O[1-9][0-9]*|consolidation)$")
 OWNER = "owner"
+CONSOLIDATION = "consolidation"
+# Who may write a passage straight into Results besides a document: the owner, and a consolidation the owner asked for.
+RESULTS_BY = (OWNER, CONSOLIDATION)
+# Where code records the linter's reading of each section at every render (ticket 88): what it failed and what it lists.
+LINT = "%s/lint.json" % SECTIONS_DIR
+# The line after a section's passages that opens code's notes; an edit is read up to it and never past it.
+NOTES = "<!-- wayline:notes -->"
+NOTHING_YET = "Nothing yet: code writes this section from the passages tickets return."
+# The heading new text the owner wrote above every heading of a section file stands under.
+OWNER_HEADING = "The owner's notes"
 
 STAMP_RE = re.compile(r"^<!-- wayline:render (\{.*\}) -->$")
 _PASSAGE_ID = re.compile(r"^P([1-9][0-9]*)$")
+_PASSAGE_MARK = re.compile(r"^<!-- wayline:passage ([^<>]+?) -->$")
+# The marks a render writes after an inherited claim, which are the render's and never part of the owner's text.
+_RENDER_MARK = re.compile(r"\s*\[(?:unchecked|unverifiable: [^\[\]]*)\]")
+# A tag that is evidence for a passage replacing an owner's: a result, a reference, or the code, never a `doc` tag.
+_EVIDENCE_TAG = re.compile(r"\{(?:res|ref|code):[^{}]+\}")
 _TAG = re.compile(r"\{(?:res|ref|doc):[^{}]+\}")
 _SENTENCE_END = re.compile(r"[.!?](?:\{(?:res|ref|doc):[^{}]+\})*(?=\s|$)")
 
@@ -211,6 +234,31 @@ def check_replaces(project_or_ledger, section, replaces):
     return None
 
 
+def _owners(book, section, replaces):
+    """Whether `replaces` names an owner's passage of `section`."""
+    if not replaces:
+        return False
+    return any(item.get("id") == replaces and item.get("by") == OWNER for item in _items(book, section))
+
+
+def owner_replacement_problem(project_or_ledger, section, replaces, text, reason, finding=False):
+    """Why a ticket's passage (or finding) may not replace what `replaces` names, or None (decision 17; ticket 88).
+
+    The owner's passages steer with no lock: a later passage replaces one only with evidence (a `res`, `ref`, or
+    `code` tag; a finding's provenance is its evidence) and a stated `reason`. Anything else replaces freely.
+    """
+    if not _owners(ledger_for(project_or_ledger), section, replaces):
+        return None
+    missing = []
+    if not finding and not _EVIDENCE_TAG.search(str(text or "")):
+        missing.append("evidence (a `res`, `ref`, or `code` tag on its claim)")
+    if not str(reason or "").strip():
+        missing.append("a `reason`, one sentence on why the evidence overrides it")
+    if not missing:
+        return None
+    return "replaces %s, the owner's passage, which a later passage replaces only with %s" % (replaces, " and ".join(missing))
+
+
 def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None, objectives=(), ticket=None, wave=None,
                 render=True, evidence=None, doc=None, standing=None, reason=None, withdrawn=False, moved_from=None):
     """Write one passage through the ledger: `passages.jsonl` with the next P id, the `passage` event, and the section re-rendered.
@@ -225,7 +273,7 @@ def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None,
     if evidence is not None and (evidence not in EVIDENCE or replaces is None):
         raise SectionError("a passage's evidence is one of %s, said of the inherited claim it replaces; got %r%s"
                            % (", ".join(EVIDENCE), evidence, "" if replaces else " with nothing replaced"))
-    if section not in WRITTEN and not (section in INHERITED and str(by or "").startswith(DOCUMENT_BY)):
+    if section not in WRITTEN and not (section == RESULTS and (str(by or "").startswith(DOCUMENT_BY) or by in RESULTS_BY)):
         raise SectionError("a passage names one of %s, got %r%s" % (", ".join(WRITTEN), section,
                                                                   "; a Results passage is a finding" if section == RESULTS else ""))
     heading, text = _one_line(heading), str(text or "").strip()
@@ -244,8 +292,10 @@ def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None,
                        if found), default=0)
         record = {"id": "P%d" % (highest + 1), "section": section, "heading": heading, "text": text, "replaces": replaces,
                   "by": by, "objectives": list(objectives or []), "ticket": ticket, "wave": wave, "ts": now_ts()}
+        # A passage replacing an owner's is journaled for the account, "Changed without asking you" (ticket 88).
         extra = {"evidence": evidence, "doc": doc, "standing": standing, "reason": reason, "withdrawn": True if withdrawn else None,
-                 "moved_from": moved_from}
+                 "moved_from": moved_from,
+                 "replaces_owner": True if by not in RESULTS_BY and _owners(book, section, replaces) else None}
         record.update({key: value for key, value in extra.items() if value is not None})
         try:
             check(record, load_schema("passage"), name="passage %s" % record["id"])
@@ -280,12 +330,16 @@ def file_finding(project_or_ledger, record, wave=None, render=True):
     elif record["evidence"] not in EVIDENCE or record["replaces"] is None:
         raise SectionError("a finding's evidence is one of %s, said of the inherited claim it replaces; got %r"
                            % (", ".join(EVIDENCE), record["evidence"]))
-    payload = {key: record[key] for key in ("id", "ticket", "text", "provenance", "negative", "heading", "replaces", "objectives",
-                                            "evidence") if key in record}
+    if not record.get("reason"):
+        record.pop("reason", None)
     with book.lock():
         problem = check_replaces(book, RESULTS, record["replaces"])
         if problem is not None:
             raise SectionError("the finding %s" % problem)
+        if _owners(book, RESULTS, record["replaces"]):
+            record["replaces_owner"] = True  # journaled for the account: changed without asking the owner (ticket 88)
+        payload = {key: record[key] for key in ("id", "ticket", "text", "provenance", "negative", "heading", "replaces", "objectives",
+                                                "evidence", "reason", "replaces_owner") if key in record}
         make_event(FINDING, payload, ticket=record.get("ticket"))
         line = dict(record, wave=wave) if wave is not None else record
         book.append_record(FINDINGS, line)
@@ -348,8 +402,11 @@ def pack_text(project_or_ledger, declared_sections, max_chars=None):
     lines = ["# The paper's sections", "",
              "Code writes `research/sections/` from the passages tickets return; nobody edits the files. Return what this "
              "ticket adds as `passages` (Results as `findings`), each under a heading: reuse a heading below when one fits, "
-             "and name in `replaces` the id of a passage (a finding, for Results) yours narrows or corrects. The owner's "
-             "passages steer the work: replace one only with evidence and a stated reason. An inherited claim, from the "
+             "and name in `replaces` the id of a passage (a finding, for Results) yours narrows or corrects. Every claim "
+             "sentence ends with its provenance tag: `{res:<run-id>/<artifact>#<locator>}`, `{ref:<slug>#<locator>}`, or "
+             "`{code:<path>#<symbol>}` (or `#L10-L42`) for what the project's code does; the linter checks each at "
+             "acceptance. The owner's passages steer the work: replace one only with evidence (such a tag; a finding's "
+             "provenance) and a stated `reason`, or it is sent back. An inherited claim, from the "
              "project's own earlier writing, stands unchecked until a passage or finding of yours replaces it and says in "
              "`evidence` whether this project's evidence `supports`, `narrows`, or `contradicts` it."]
     for section in wanted:
@@ -402,12 +459,15 @@ def check_result(project_or_ledger, fields, result):
         if item.get("section") not in WRITTEN:
             continue  # the result's schema refuses it already
         problem = (check_replaces(book, item["section"], item.get("replaces"))
-                   or _evidence_problem(book, item["section"], item.get("replaces"), item.get("evidence")))
+                   or _evidence_problem(book, item["section"], item.get("replaces"), item.get("evidence"))
+                   or owner_replacement_problem(book, item["section"], item.get("replaces"), item.get("text"), item.get("reason")))
         if problem is not None:
             problems.append("passage %d (%s, %s) %s" % (index, TITLES[item["section"]], _one_line(item.get("heading")), problem))
     for index, item in enumerate(findings, start=1):
         problem = (check_replaces(book, RESULTS, item.get("replaces"))
-                   or (None if item.get("negative") else _evidence_problem(book, RESULTS, item.get("replaces"), item.get("evidence"))))
+                   or (None if item.get("negative") else _evidence_problem(book, RESULTS, item.get("replaces"), item.get("evidence")))
+                   or (None if item.get("negative") else owner_replacement_problem(book, RESULTS, item.get("replaces"), item.get("text"),
+                                                                                    item.get("reason"), finding=True)))
         if problem is not None:
             problems.append("finding %d %s" % (index, problem))
     return problems
@@ -553,8 +613,13 @@ def _paragraphs(current, by_id):
     return groups
 
 
-def _body(book, section):
-    items = _items(book, section)
+def is_finding(item):
+    """Whether a Results item is a finding (from `findings.jsonl`), as against a passage someone contributed."""
+    return "by" not in (item or {})
+
+
+def _groups(book, section, items):
+    """What a render prints of `items`, one section's log: `(arranged, [(heading, ids, text)])`, a paragraph each."""
     arranged = arrange(items)
     manifest = None
     if section == RESULTS:
@@ -562,35 +627,203 @@ def _body(book, section):
             manifest = book.read_json("manifest.json")
         except (OSError, ValueError):
             manifest = {"entries": []}
-    lines = ["# %s" % TITLES[section], ""]
-    if not arranged.headings:
-        lines += ["Nothing yet: code writes this section from the passages tickets return.", ""]
     by_id = {item.get("id"): item for item in items}
+    groups = []
     for heading, current in arranged.headings:
-        lines += ["## %s" % heading, ""]
         for group in _paragraphs(current, by_id):
             texts = []
             for item in group:
-                text = (_finding_text(item, manifest) if section == RESULTS and not is_inherited(item)
+                text = (_finding_text(item, manifest) if section == RESULTS and is_finding(item)
                         else str(item.get("text") or "").strip())
                 mark = mark_of(item)
                 texts.append("%s %s" % (text, mark) if mark else text)
-            lines += ["<!-- wayline:passage %s -->" % " ".join(str(item.get("id")) for item in group), " ".join(texts), ""]
+            groups.append((heading, tuple(str(item.get("id")) for item in group), " ".join(texts)))
+    return arranged, groups
+
+
+def _body(book, section):
+    arranged, groups = _groups(book, section, _items(book, section))
+    lines = ["# %s" % TITLES[section], ""]
+    if not groups:
+        lines += [NOTHING_YET, ""]
+    heading = None
+    for group_heading, ids, text in groups:
+        if group_heading != heading:
+            lines += ["## %s" % group_heading, ""]
+            heading = group_heading
+        lines += ["<!-- wayline:passage %s -->" % " ".join(ids), text, ""]
+    if arranged.notes:
+        lines += [NOTES, ""]
     for target, ids in arranged.notes:
         lines += ["> Note: %s each replace %s, which they did in the same wave, so both are kept until one replaces the other."
                   % (" and ".join(ids), target), ""]
     return "\n".join(lines).rstrip("\n") + "\n", arranged.last
 
 
+# --- the owner's edits ----------------------------------------------------------------------------------
+#
+# The owner may edit a section file instead of telling the session. Before the next render, code takes the edit in
+# (`take_in`): the file's body is read against what the render under its first-line stamp printed, which is the
+# section's log up to the stamp's `last` id. A marked paragraph whose text or heading changed is the owner's
+# replacement of what it printed, a marked paragraph that is gone is a withdrawal of it, and unmarked text is new owner's
+# passages under the heading it stands under. A passage that arrived since the stamp is not in the file, so it is never
+# read as a deletion; nor is one replaced since, whose place the newer passage now holds.
+
+
+def _edited(body):
+    """A section file's body as `[(heading, ids or None, text)]`, one paragraph each, read up to code's notes."""
+    blocks, state = [], {"heading": None, "ids": None, "lines": []}
+
+    def flush():
+        if state["lines"]:
+            blocks.append((state["heading"], state["ids"], "\n".join(state["lines"]).strip()))
+        elif state["ids"] is not None:
+            blocks.append((state["heading"], state["ids"], ""))  # a mark left with its text deleted
+        state["ids"], state["lines"] = None, []
+
+    for raw in body.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if stripped == NOTES:
+            break
+        mark = _PASSAGE_MARK.match(stripped)
+        if mark:
+            flush()
+            state["ids"] = tuple(mark.group(1).split())
+        elif line.startswith("## "):
+            flush()
+            state["heading"] = _one_line(line[3:]) or None
+        elif line.startswith("# ") and state["heading"] is None and not blocks and not state["lines"]:
+            continue  # the section's title
+        elif not stripped:
+            if state["lines"]:
+                flush()
+        elif stripped != NOTHING_YET:
+            state["lines"].append(line)
+    flush()
+    return blocks
+
+
+def _merge_split(blocks, printed):
+    """A printed paragraph holding a blank line reads back as its marked first part and unmarked rest: rejoin them."""
+    merged, index = [], 0
+    while index < len(blocks):
+        heading, ids, text = blocks[index]
+        index += 1
+        old = printed.get(ids) if ids else None
+        if old is not None and _one_line(text) != _one_line(old[1]):
+            joined, step = text, index
+            while step < len(blocks) and blocks[step][1] is None and blocks[step][0] == heading \
+                    and _one_line(old[1]).startswith(_one_line(joined + " " + blocks[step][2])):
+                joined, step = joined + "\n\n" + blocks[step][2], step + 1
+                if _one_line(joined) == _one_line(old[1]):
+                    text, index = joined, step
+                    break
+        merged.append((heading, ids, text))
+    return merged
+
+
+def take_in(project_or_ledger, section):
+    """Take the owner's edit of `research/sections/<section>.md` in, before it renders: the passages written, by `owner`.
+
+    Nothing is taken in from a file whose body still matches its stamp's digest, or that has no stamp. Each change is a
+    passage through `add_passage`, journaled `passage` like any other.
+    """
+    book = ledger_for(project_or_ledger)
+    with book.lock():
+        stamp = read_stamp(book, section)
+        try:
+            text = (book.research / section_path(section)).read_text(encoding="utf-8")
+        except OSError:
+            return []
+        body = text.partition("\n")[2]
+        if stamp is None or hashlib.sha256(body.encode("utf-8")).hexdigest() == stamp.get("sha256"):
+            return []
+        items = _items(book, section)
+        ids = [item.get("id") for item in items]
+        last = stamp.get("last")
+        seen_then = items[:ids.index(last) + 1] if last in ids else ([] if last is None else items)
+        _, groups = _groups(book, section, seen_then)
+        printed = {group_ids: (heading, group_text) for heading, group_ids, group_text in groups}
+        by_id = {item.get("id"): item for item in items}
+        current = {item.get("id") for item in arrange(items).current()}
+        written, kept = [], set()
+
+        def add(heading, words, **fields):
+            written.append(add_passage(book, section, heading, words, by=OWNER, render=False, **fields))
+
+        def withdraw(identifier):
+            item = by_id[identifier]
+            add(_one_line(item.get("heading")) or "Findings", str(item.get("text") or "").strip(), replaces=identifier, withdrawn=True)
+
+        for heading, group_ids, words in _merge_split(_edited(body), printed):
+            heading = heading or OWNER_HEADING
+            words = _RENDER_MARK.sub("", words).strip()
+            if group_ids in printed and group_ids not in kept and words:
+                kept.add(group_ids)
+                old_heading, old_text = printed[group_ids]
+                if heading == old_heading and _one_line(words) == _one_line(_RENDER_MARK.sub("", old_text)):
+                    continue
+                first, rest = group_ids[0], group_ids[1:]
+                if first in current:
+                    add(heading, words, replaces=first)
+                else:
+                    add(heading, words)  # what it printed was replaced since: the owner's text stands beside the newer word
+                for identifier in rest:
+                    if identifier in current:
+                        withdraw(identifier)
+            elif words:
+                add(heading, words)
+        for group_ids in printed:
+            if group_ids not in kept:
+                for identifier in group_ids:
+                    if identifier in current:
+                        withdraw(identifier)
+        return written
+
+
+def lint_section(project_or_ledger, section):
+    """The linter over a section's current passages, as a render records it: `{problems, listed, unclassified}`.
+
+    The classes are the cache's (a render launches no classifier), so a sentence it has not classified is counted and
+    neither failed nor listed. Before the paper order an untagged claim in an owner's passage and a claim tagged only
+    `doc` are listed, never failed; a `code` tag resolves against `main`.
+    """
+    from wayline import provenance  # the provenance module pulls in the gates and the report
+    book = ledger_for(project_or_ledger)
+    current = arrange(_items(book, section)).current()
+    linted = provenance.lint_passages(book.project, current, provenance.read_claims_cache(book))
+    listed = [item for item in linted.listed if item["problem"] != provenance.UNCLASSIFIED]
+    return {"problems": linted.problems, "listed": listed, "unclassified": linted.unclassified}
+
+
+def _record_lint(book, section):
+    """Keep the linter's reading of `section` in `research/sections/lint.json`, written only when it changed."""
+    reading = lint_section(book, section)
+    try:
+        record = book.read_json(LINT)
+    except (OSError, ValueError):
+        record = None
+    record = record if isinstance(record, dict) and isinstance(record.get("sections"), dict) else {"sections": {}}
+    if record["sections"].get(section) == reading:
+        return reading
+    record["sections"][section] = reading
+    book.write_json(LINT, record)
+    return reading
+
+
 def render_section(project_or_ledger, section):
     """Write `research/sections/<section>.md` from its log; a body that did not change keeps its file and its stamp.
 
-    Returns whether the file was written.
+    The owner's edit of the file is taken in first (`take_in`), and the linter's reading of the section is recorded
+    at every render (`lint_section`). Returns whether the file was written.
     """
     book = ledger_for(project_or_ledger)
     if section not in SECTIONS:
         raise SectionError("there is no section %r; the sections are %s" % (section, ", ".join(SECTIONS)))
     with book.lock():
+        take_in(book, section)
+        _record_lint(book, section)
         body, last = _body(book, section)
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         stamp = read_stamp(book, section)
@@ -623,3 +856,49 @@ def read_stamp(project_or_ledger, section):
     except ValueError:
         return None
     return record if isinstance(record, dict) else None
+
+
+# --- the owner's passage: `wayline passage add` -----------------------------------------------------------
+
+
+def add_owners_passage(project_or_ledger, section, heading, text, replaces=None):
+    """One owner's passage, `by: owner`, through the ledger call, journaled `passage` and rendered (decision 17; ticket 88).
+
+    The conversation calls it, asking the owner only when the section or the place is unclear. The owner's passages
+    steer later work with no lock, and the owner replaces any passage without a reason.
+    """
+    if section not in SECTIONS:
+        raise SectionError("there is no section %r; the sections are %s" % (section, ", ".join(SECTIONS)))
+    return add_passage(project_or_ledger, section, heading, text, by=OWNER, replaces=replaces)
+
+
+def passage_command(args):
+    """`wayline passage add --section <s> --heading <h> [--replaces <id>] "<text>" [--project <path>]`."""
+    import argparse
+    import sys
+    from wayline.cli import parse_args
+    from wayline.project import ProjectError, find_project  # the project module lays the sections out at init
+
+    parser = argparse.ArgumentParser(prog="wayline passage", description="record an owner's passage in one of the paper's five sections")
+    subparsers = parser.add_subparsers(dest="action", required=True)
+    add = subparsers.add_parser("add", help="record an owner's passage, by: owner, journaled as passage")
+    add.add_argument("text", help="the passage: Markdown with LaTeX math, a claim sentence ending with its provenance tag")
+    add.add_argument("--section", required=True, help="one of %s" % ", ".join(SECTIONS))
+    add.add_argument("--heading", required=True, help="the heading it stands under; an existing one when it fits")
+    add.add_argument("--replaces", help="the id of the passage (or finding) it replaces, which leaves the section and stays in the log")
+    add.add_argument("--project", help="the project; the active one by default")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    try:
+        record = add_owners_passage(find_project(options.project), options.section, options.heading, options.text,
+                                    replaces=options.replaces)
+    except SectionError as failure:
+        print("wayline passage: %s" % failure, file=sys.stderr)
+        return 2
+    except (ProjectError, LedgerError, OSError) as failure:
+        print("wayline passage: %s" % failure, file=sys.stderr)
+        return 1
+    print("%s  %s, %s%s" % (record["id"], TITLES[record["section"]], record["heading"],
+                           "  (replaces %s)" % record["replaces"] if record["replaces"] else ""))
+    return 0

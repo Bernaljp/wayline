@@ -329,7 +329,7 @@ def identifier_index(project_or_ledger):
     """`{(kind, value): slug}` over every dossier: its DOI, its arXiv id without the version, and its titles.
 
     The index the memo's citations are matched against, and the one a `ref` tag that names a work by
-    `doi:` or `arxiv:` is mapped through to its slug (decision 17; ticket 98); passages are never rewritten.
+    `doi:`, `arxiv:`, or `title:` is mapped through to its slug (decision 17; tickets 98 and 88); passages are never rewritten.
     """
     ledger = project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
     index = {}
@@ -340,11 +340,14 @@ def identifier_index(project_or_ledger):
 
 
 def slug_for_identifier(index, identifier):
-    """The slug `index` files a `doi:<doi>` or `arxiv:<id>` under, or None."""
+    """The slug `index` files a `doi:<doi>`, an `arxiv:<id>`, or a `title:<exact title>` under, or None."""
     kind, _, value = str(identifier or "").partition(":")
     kind, value = kind.strip().lower(), value.strip()
-    if not value or kind not in ("doi", "arxiv"):
+    if not value or kind not in ("doi", "arxiv", "title"):
         return None
+    if kind == "title":
+        from wayline.scout import normalize_title
+        return index.get(("title", normalize_title(value))) if normalize_title(value) else None
     return index.get((kind, value.lower() if kind == "doi" else _bare_arxiv(value)))
 
 

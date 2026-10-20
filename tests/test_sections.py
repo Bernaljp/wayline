@@ -114,7 +114,7 @@ class TwoTicketsInOneSectionTest(TwoTicketsCase):
 class TwoReplacementsInOneWaveTest(TwoTicketsCase):
     def setUp(self):
         super().setUp()
-        sections.add_passage(self.ledger, "methods", "The files", "The project writes no file yet.", by="owner")
+        sections.add_passage(self.ledger, "methods", "The files", "The project writes no file yet.", by="step:specify")  # an owner's would need evidence and a reason (ticket 88)
         self.conduct_keyed(
             (1, done(1, passages=[self.passage("The project writes hello.txt.", replaces="P1")]), patch()),
             (2, done(2, passages=[self.passage("The project writes world.txt.", replaces="P1")]),
@@ -161,6 +161,7 @@ class RunningResultTest(ConductorCase):
         with resources.use_fake_jobs() as jobs:
             jobs.script(["running", "running", "exited"], job_id="t1-1")
             self.conduct((envelope, patch()), waves=1)
+            self.conductor.classifier = lambda texts: {}  # the linter's classifier (ticket 88): no launcher past the fake
             self.conductor.settle()
             self.conductor.wave()
             self.assertEqual(self.ticket()["status"], "running")

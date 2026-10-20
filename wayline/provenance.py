@@ -48,6 +48,8 @@ __all__ = [
     "read_claims_cache", "classify", "lint", "lint_report", "tagged_claims", "sample_size", "sample_claims",
     "claim_subject", "claim_paths", "verify_claims", "report_evidence", "draft_prose", "finding_tags",
     "tagged_text", "render_report", "report_command",
+    "ANY_TAG_RE", "TAG_KINDS", "REF_TITLE_TAG_RE", "CODE_TAG_RE", "DOC_TAG_RE", "UNRESOLVED_CODE", "UNRESOLVED_DOC", "DOC_ONLY_CLAIM",
+    "code_reader", "main_reader", "code_tag_problem", "end_kinds", "lint_passages", "lint_result", "result_sentences",
 ]
 
 MANIFEST = "manifest.json"
@@ -65,6 +67,18 @@ REF_TAG_RE = re.compile(r"^(?P<slug>[a-z0-9][a-z0-9._-]*)#(?P<locator>.+)$")
 # `{ref:arxiv:1802.03426#abstract}`, mapped to a slug through position's identifier index. An inherited citation is
 # an identifier tag with no locator; a slug always names one.
 REF_IDENTIFIER_TAG_RE = re.compile(r"^(?P<identifier>(?:[Dd][Oo][Ii]|[Aa][Rr][Xx][Ii][Vv]):[^#\s]+)(?:#(?P<locator>.+))?$")
+# The third identifier form (ticket 88): `{ref:title:<exact title>}`, which an inherited citation with neither a DOI nor an
+# arXiv id carries (ticket 93), mapped through the identifier index's titles. The title holds spaces; its locator holds none.
+REF_TITLE_TAG_RE = re.compile(r"^(?P<identifier>[Tt][Ii][Tt][Ll][Ee]:[^#]*\S)(?:#(?P<locator>[^#\s]+))?$")
+# What the project's code does (decision 17; ticket 88): `{code:<path>#<symbol>}` or `{code:<path>#L10-L42}`, the path
+# from the project's root (`code/phase.py`) or from inside `code/` (`phase.py`), resolved against `main` at a render and
+# against the ticket's worktree at its acceptance.
+CODE_TAG_RE = re.compile(r"^(?P<path>[^#\s]+)#(?P<locator>L[1-9][0-9]*(?:-L?[1-9][0-9]*)?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)$")
+# Inherited text (ticket 93): `{doc:<document>#<locator>}`, provenance and never a citation.
+DOC_TAG_RE = re.compile(r"^(?P<document>[A-Za-z0-9._-]+)#(?P<locator>[^#\s]+)$")
+# Every provenance tag a sentence may end with, the two of decision 11 and the two of decision 17.
+ANY_TAG_RE = re.compile(r"\{(res|ref|code|doc):([^{}]+)\}")
+TAG_KINDS = ("res", "ref", "code", "doc")
 
 # Where one sentence ends: a full stop, question mark or exclamation mark, then any closing
 # quotes, then the provenance tags that belong to the sentence just ended, and then either the
@@ -76,8 +90,8 @@ REF_IDENTIFIER_TAG_RE = re.compile(r"^(?P<identifier>(?:[Dd][Oo][Ii]|[Aa][Rr][Xx
 # An inherited passage's `{doc:...}` tag (ticket 93) ends its sentence too, though it is no `res` or `ref` tag, and so
 # does the mark a section's render writes after an inherited claim (`[unchecked]`, `[unverifiable: <reason>]`).
 _MARK = r"(?:\s*\[(?:unchecked|unverifiable: [^\[\]]*)\])"
-_BOUNDARY = re.compile(r"""[.!?]["')\]]*(?:\s*\{(?:res|ref|doc):[^{}]+\})*""" + _MARK + r"""?(?=\s+["'(\[A-Z]|\s*$)""")
-_ANY_TAG = re.compile(r"\{(?:res|ref|doc):[^{}]+\}|" + _MARK)
+_BOUNDARY = re.compile(r"""[.!?]["')\]]*(?:\s*\{(?:res|ref|code|doc):[^{}]+\})*""" + _MARK + r"""?(?=\s+["'(\[A-Z]|\s*$)""")
+_ANY_TAG = re.compile(r"\{(?:res|ref|code|doc):[^{}]+\}|" + _MARK)
 
 Sentence = namedtuple("Sentence", "text tags")
 
@@ -297,7 +311,7 @@ def sentences(text):
     for chunk in found:
         body = chunk.strip()
         if body:
-            result.append(Sentence(body, tuple("%s:%s" % (kind, rest) for kind, rest in TAG_RE.findall(body))))
+            result.append(Sentence(body, tuple("%s:%s" % (kind, rest) for kind, rest in ANY_TAG_RE.findall(body))))
     return result
 
 
@@ -305,18 +319,21 @@ def parse_tag(tag):
     """One tag as `(kind, parts)`, or `(kind, None)` when it is malformed; `(None, None)` for a non-tag.
 
     `parts` is the named groups of the tag's shape: a `res` tag resolves to a run id, an artifact
-    and a locator, a `ref` tag to a slug and a locator. A tag whose halves are there but empty is
-    malformed, which is the case the linter refuses and the guidelines check reports.
+    and a locator, a `ref` tag to a slug (or an `identifier`: `doi:`, `arxiv:`, or `title:`) and a
+    locator, a `code` tag to a path and a symbol or a line range, a `doc` tag to a document and a
+    locator. A tag whose halves are there but empty is malformed, which is the case the linter
+    refuses and the guidelines check reports.
     """
     kind, _, rest = str(tag or "").partition(":")
-    if kind not in ("res", "ref") or not rest:
+    if kind not in TAG_KINDS or not rest:
         return None, None
     if kind == "ref":
-        named = REF_IDENTIFIER_TAG_RE.match(rest)
-        if named is not None:
-            prefix, _, value = named.group("identifier").partition(":")
-            return kind, {"identifier": "%s:%s" % (prefix.lower(), value), "locator": named.group("locator")}
-    pattern = RES_TAG_RE if kind == "res" else REF_TAG_RE
+        for pattern in (REF_IDENTIFIER_TAG_RE, REF_TITLE_TAG_RE):
+            named = pattern.match(rest)
+            if named is not None:
+                prefix, _, value = named.group("identifier").partition(":")
+                return kind, {"identifier": "%s:%s" % (prefix.lower(), value.strip()), "locator": named.group("locator")}
+    pattern = {"res": RES_TAG_RE, "ref": REF_TAG_RE, "code": CODE_TAG_RE, "doc": DOC_TAG_RE}[kind]
     found = pattern.match(rest)
     return kind, (found.groupdict() if found else None)
 
@@ -329,6 +346,102 @@ def ref_slug(parts, index):
         return parts["slug"]
     from wayline.position import slug_for_identifier  # position reaches this module through specify and the decider
     return slug_for_identifier(index or {}, parts.get("identifier"))
+
+
+# --- the `code` tag ---------------------------------------------------------------------------------
+#
+# A `code` tag says what the project's code does, so it resolves only while the code still does it: the file is
+# there and defines the symbol, or holds the lines. A reader is `path -> text or None`, over a checkout's working
+# tree (a ticket's worktree at its acceptance) or over a branch (`main`, at a render), read with `git show`.
+
+CODE_DIR = "code"
+_LINE_RANGE = re.compile(r"^L([1-9][0-9]*)(?:-L?([1-9][0-9]*))?$")
+
+
+def code_reader(root, ref=None):
+    """`path -> text` over `root`'s working tree, or over branch `ref` of the git repository at `root`; None for a file not there."""
+    root = Path(root)
+
+    def read(path):
+        relative = Path(path)
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            return None
+        if ref is None:
+            try:
+                return (root / relative).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return None
+        done = subprocess.run(["git", "-C", str(root), "show", "%s:%s" % (ref, relative.as_posix())], capture_output=True)
+        return done.stdout.decode("utf-8", errors="replace") if done.returncode == 0 else None
+
+    read.where = "on %s" % ref if ref else "in the worktree"
+    return read
+
+
+def main_reader(project):
+    """What a render resolves `code` tags against: the project's `main`, or its working tree when it has no `main`."""
+    done = subprocess.run(["git", "-C", str(project), "rev-parse", "--verify", "-q", "main^{commit}"], capture_output=True)
+    return code_reader(project, "main" if done.returncode == 0 else None)
+
+
+def _python_names(text):
+    """Every name a Python file defines: functions and classes by qualified name (`Model.step`) and module-level names."""
+    import ast
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    names = set()
+
+    def walk(body, prefix):
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(prefix + node.name)
+                walk(node.body, prefix + node.name + ".")
+            elif not prefix and isinstance(node, (ast.Assign, ast.AnnAssign)):
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                    if isinstance(target, ast.Name):
+                        names.add(target.id)
+
+    walk(tree.body, "")
+    return names
+
+
+def code_tag_problem(read, parts):
+    """Why a parsed `code` tag does not resolve through `read` (a `code_reader`), or None when it does.
+
+    The path is the project's (`code/phase.py`) or `code/`'s own (`phase.py`). A line range resolves inside the
+    file; a symbol resolves when a Python file defines it (by its qualified name or its last part) and, in any
+    other language, when the file names it as a word.
+    """
+    path = str(parts["path"])
+    path = path[2:] if path.startswith("./") else path
+    candidates = [path] if path.startswith(CODE_DIR + "/") else [path, "%s/%s" % (CODE_DIR, path)]
+    where = getattr(read, "where", "")
+    text = candidate = None
+    for candidate in candidates:
+        text = read(candidate)
+        if text is not None:
+            break
+    if text is None:
+        return "%s is not a file %s" % (" or ".join(candidates), where)
+    locator = parts["locator"]
+    lines = _LINE_RANGE.match(locator)
+    if lines:
+        start, end = int(lines.group(1)), int(lines.group(2) or lines.group(1))
+        count = len(text.splitlines())
+        if end < start:
+            return "%s names lines %d to %d, which run backwards" % (candidate, start, end)
+        if end > count:
+            return "%s has %d lines %s, so it holds no lines %d to %d" % (candidate, count, where, start, end)
+        return None
+    names = _python_names(text) if candidate.endswith(".py") else None
+    if names is not None:
+        if locator in names or any(name.split(".")[-1] == locator for name in names):
+            return None
+    elif re.search(r"(?<!\w)%s(?!\w)" % re.escape(locator.split(".")[-1]), text):
+        return None
+    return "%s defines no %s %s" % (candidate, locator, where)
 
 
 def identifier_index(project):
@@ -419,6 +532,11 @@ UNCLASSIFIED = "unclassified"
 MALFORMED_TAG = "malformed_tag"
 UNRESOLVED_RES = "unresolved_res"
 UNRESOLVED_REF = "unresolved_ref"
+UNRESOLVED_CODE = "unresolved_code"  # a `code` tag whose file no longer defines its symbol or holds its lines (ticket 88)
+UNRESOLVED_DOC = "unresolved_doc"  # a `doc` tag naming a document the project does not keep (ticket 88)
+# What the linter lists rather than fails before the paper order (ticket 88): a claim whose only tags are `doc` tags,
+# which say where inherited text came from and never what supports it.
+DOC_ONLY_CLAIM = "doc_only_claim"
 
 # One `haiku --effort low` call classifies at most this many sentences.
 CLASSIFY_BATCH = 40
@@ -476,7 +594,9 @@ PROVENANCE_FORM = ("A finding's provenance is the artifact's path in the project
 
 VENUE_PREFIX = "paper venue: "  # the answer a `decision` on the paper's venue opens with (`decider.VENUE_ANSWER`, ticket 53)
 
-_TAGS_AT_END = re.compile(r"(?:\{(?:res|ref):[^{}]+\}\s*)+$")
+# The tags a claim sentence ends with: after its full stop, as code writes a finding's, or just before it, as a worker
+# writes a passage's (`... least squares {code:code/phase.py#fit}.`); a tag with words after it is inside the sentence.
+_TAGS_AT_END = re.compile(r"""(?:\{(?:res|ref|code|doc):[^{}]+\}\s*)+[.!?"')\]]*\s*$""")
 _FOOTNOTE = re.compile(r"^\[\^(\d+)\]:\s*`(res|ref):([^`]+)`\s*$")
 _CITATION = re.compile(r"\[\^(\d+)\](?!:)")
 _LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
@@ -683,10 +803,13 @@ def _classes_problem(envelope, count):
 
 @dataclass
 class Lint:
-    """What the linter found in one document: whether it passes, the counts, and every problem.
+    """What the linter found in one document: whether it passes, the counts, every problem, and what it lists.
 
-    A problem is `{sentence, problem, tag, detail}`, `problem` one of the five kinds above. `claims`
-    counts the sentences classified as claims and `tagged` those of them that end with a tag.
+    A problem is `{sentence, problem, tag, detail}`, `problem` one of the kinds above, with `passage` naming the
+    passage it is in when the linter read passages. `claims` counts the sentences classified as claims and `tagged`
+    those of them that end with a tag. `listed` holds what is shown and never failed (ticket 88): before the paper
+    order, a claim tagged only `doc` and an untagged claim in an owner's passage; at an acceptance, a sentence the
+    classifier has not classified.
     """
 
     passed: bool
@@ -694,35 +817,68 @@ class Lint:
     tagged: int
     unclassified: int
     problems: list = field(default_factory=list)
+    listed: list = field(default_factory=list)
 
 
 class _Resolver:
-    """What a tag resolves against: `manifest.json` for `res`, a verified dossier and a node for `ref`."""
+    """What a tag resolves against: `manifest.json` for `res`, a verified dossier and a node for `ref`, the code for
+    `code` (`code_read`, `main` by default), and the project's documents for `doc`.
 
-    def __init__(self, project):
+    `own_run` is `(run_id, root)` at a ticket's acceptance: a `res` tag of the attempt's own run names a file of its
+    worktree, which the manifest takes in only once the ticket is integrated.
+    """
+
+    def __init__(self, project, code_read=None, own_run=None):
         self.project = Path(project)
         entries = read_manifest(self.project).get("entries", [])
         self.manifested = {(entry.get("run_id"), entry.get("path")) for entry in entries}
         self._index = None
+        self._code_read = code_read
+        self._documents = None
+        self.own_run = own_run
 
     def index(self):
         if self._index is None:
             self._index = identifier_index(self.project)
         return self._index
 
+    def code_read(self):
+        if self._code_read is None:
+            self._code_read = main_reader(self.project)
+        return self._code_read
+
+    def documents(self):
+        if self._documents is None:
+            from wayline.documents import read_documents  # documents imports the ledger's neighbours
+            try:
+                self._documents = {str(document.get("id")) for document in read_documents(self.project) if isinstance(document, dict)}
+            except (OSError, ValueError):
+                self._documents = set()
+        return self._documents
+
     def problem(self, tag):
         if tag.startswith("res:unmanifested/"):
             return UNRESOLVED_RES, "%s is not in manifest.json" % tag[len("res:unmanifested/"):].partition("#")[0]
         kind, parts = parse_tag(tag)
         if kind is None or parts is None:
-            return MALFORMED_TAG, "`%s` is neither `res:<run-id>/<artifact>#<locator>` nor `ref:<slug>#<locator>`" % tag
+            return MALFORMED_TAG, ("`%s` is none of `res:<run-id>/<artifact>#<locator>`, `ref:<slug>#<locator>`, "
+                                   "`code:<path>#<symbol>` (or `#L<a>-L<b>`), and `doc:<document>#<locator>`" % tag)
         if kind == "res":
             if (parts["run_id"], parts["artifact"]) in self.manifested:
+                return None
+            if self.own_run is not None and parts["run_id"] == self.own_run[0] and _inside_file(self.own_run[1], parts["artifact"]):
                 return None
             runs = sorted(run for run, path in self.manifested if path == parts["artifact"])
             if runs:
                 return UNRESOLVED_RES, "manifest.json has %s from run %s, not from run %s" % (parts["artifact"], ", ".join(runs), parts["run_id"])
             return UNRESOLVED_RES, "%s is not in manifest.json" % parts["artifact"]
+        if kind == "code":
+            found = code_tag_problem(self.code_read(), parts)
+            return None if found is None else (UNRESOLVED_CODE, found)
+        if kind == "doc":
+            if parts["document"] in self.documents():
+                return None
+            return UNRESOLVED_DOC, "research/documents.json keeps no document %s" % parts["document"]
         slug = ref_slug(parts, self.index())
         if slug is None:
             return UNRESOLVED_REF, "no dossier is filed under %s; check it with `wayline scout`" % parts.get("identifier")
@@ -740,39 +896,134 @@ class _Resolver:
         return None
 
 
-def lint(project, markdown, classes):
+def _inside_file(root, relative):
+    path = Path(relative)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        return False
+    return (Path(root) / path).is_file()
+
+
+def end_kinds(text):
+    """The kinds of the tags a sentence ends with, in order; empty for a sentence that ends with none."""
+    found = _TAGS_AT_END.search(text)
+    return [kind for kind, _ in ANY_TAG_RE.findall(found.group(0))] if found else []
+
+
+class _Pass:
+    """One linter pass: the problems, the listed sentences, and the counts, over sentences fed in one at a time."""
+
+    def __init__(self, resolver, classes, doc_only_fails, unclassified_fails):
+        self.resolver, self.classes = resolver, classes
+        self.doc_only_fails, self.unclassified_fails = doc_only_fails, unclassified_fails
+        self.problems, self.listed = [], []
+        self.claims = self.tagged = self.unclassified = 0
+
+    def read(self, sentence, extra=None, owner=False, tagged_by_provenance=False):
+        """Lint one sentence. `owner`: an owner's passage, whose untagged claim is listed; `tagged_by_provenance`: a
+        finding with no tag of its own, which its provenance tags when Results renders it."""
+        extra = dict(extra or {})
+        for tag in sentence.tags:
+            found = self.resolver.problem(tag)
+            if found is not None:
+                self.problems.append(dict(extra, sentence=sentence.text, problem=found[0], tag=tag, detail=found[1]))
+        if not strip_tags(sentence.text) or tagged_by_provenance:
+            return
+        kind = self.classes.get(sentence_hash(sentence.text))
+        ends = end_kinds(sentence.text)
+        if kind == CLAIM:
+            self.claims += 1
+            if ends and any(end != "doc" for end in ends):
+                self.tagged += 1
+            elif ends:
+                entry = dict(extra, sentence=sentence.text, problem=DOC_ONLY_CLAIM, tag=None,
+                             detail="its only tags are `doc` tags, which say where inherited text came from and never what supports it")
+                (self.problems if self.doc_only_fails else self.listed).append(entry)
+            else:
+                detail = ("its tags are inside it; a claim sentence ends with them" if sentence.tags
+                          else "a claim sentence ends with at least one provenance tag")
+                entry = dict(extra, sentence=sentence.text, problem=UNTAGGED_CLAIM, tag=None, detail=detail)
+                (self.listed if owner else self.problems).append(entry)
+        elif kind is None and not ends:
+            self.unclassified += 1
+            entry = dict(extra, sentence=sentence.text, problem=UNCLASSIFIED, tag=None,
+                         detail="not classified yet, so nothing says it is not a claim; render without --offline")
+            (self.problems if self.unclassified_fails else self.listed).append(entry)
+
+    def result(self):
+        return Lint(passed=not self.problems, claims=self.claims, tagged=self.tagged, unclassified=self.unclassified,
+                    problems=self.problems, listed=self.listed)
+
+
+def lint(project, markdown, classes, doc_only_fails=False, code_read=None):
     """The Type-A provenance check of one tagged document against a project's ledger.
 
     Every tag in the prose must resolve: a `res` tag to the run and the path of an entry in
     `manifest.json`, a `ref` tag to a reference whose `dossier.json` says `existence: verified` and
-    that has a knowledge-base node. Every sentence `classes` calls a claim must end with at least
-    one tag. An untagged sentence `classes` does not cover fails too, because nothing then says it
-    is not a claim. Records (between `RECORDS_BEGIN` and `RECORDS_END`) are not read.
+    that has a knowledge-base node, a `code` tag to what the project's `main` (or `code_read`) holds,
+    and a `doc` tag to a document the project keeps. Every sentence `classes` calls a claim must end
+    with at least one tag; one whose only tags are `doc` tags is listed, or failed when
+    `doc_only_fails` (the paper, after the order). An untagged sentence `classes` does not cover
+    fails too, because nothing then says it is not a claim. Records (between `RECORDS_BEGIN` and
+    `RECORDS_END`) are not read.
     """
-    resolver = _Resolver(project)
-    problems, claims, tagged, unclassified = [], 0, 0, 0
+    linted = _Pass(_Resolver(project, code_read), classes, doc_only_fails, unclassified_fails=True)
     for sentence in prose_sentences(markdown):
-        for tag in sentence.tags:
-            found = resolver.problem(tag)
-            if found is not None:
-                problems.append({"sentence": sentence.text, "problem": found[0], "tag": tag, "detail": found[1]})
-        if not strip_tags(sentence.text):
+        linted.read(sentence)
+    return linted.result()
+
+
+def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False):
+    """The linter over passages and findings (decision 17; ticket 88): every tag resolves, every claim ends tagged.
+
+    `items` are passages (`{id, by, text}`) or findings (`{id, text, provenance}`); each problem and listed sentence
+    names the `passage` it is in. Before the paper order an untagged claim in an owner's passage and a claim tagged
+    only `doc` are listed, never failed; a finding with no tag of its own is tagged by its provenance. `code` tags
+    resolve against `code_root`'s working tree (a ticket's worktree), or `code_read`, or the project's `main`. An
+    unclassified sentence is listed unless `unclassified_fails`.
+    """
+    read = code_read or (code_reader(code_root) if code_root is not None else None)
+    linted = _Pass(_Resolver(project, read, own_run), classes, doc_only_fails=False, unclassified_fails=unclassified_fails)
+    for item in items:
+        if not isinstance(item, dict):
             continue
-        kind = classes.get(sentence_hash(sentence.text))
-        ends_tagged = bool(_TAGS_AT_END.search(sentence.text))
-        if kind == CLAIM:
-            claims += 1
-            if ends_tagged:
-                tagged += 1
-            else:
-                detail = ("its tags are inside it; a claim sentence ends with them" if sentence.tags
-                          else "a claim sentence ends with at least one provenance tag")
-                problems.append({"sentence": sentence.text, "problem": UNTAGGED_CLAIM, "tag": None, "detail": detail})
-        elif kind is None and not ends_tagged:
-            unclassified += 1
-            problems.append({"sentence": sentence.text, "problem": UNCLASSIFIED, "tag": None,
-                             "detail": "not classified yet, so nothing says it is not a claim; render without --offline"})
-    return Lint(passed=not problems, claims=claims, tagged=tagged, unclassified=unclassified, problems=problems)
+        text = str(item.get("text") or "")
+        finding = "provenance" in item and "by" not in item
+        own_tags = bool(ANY_TAG_RE.search(text))
+        extra = {"passage": item.get("id")}
+        for sentence in prose_sentences(text):
+            linted.read(sentence, extra, owner=item.get("by") == "owner", tagged_by_provenance=finding and not own_tags)
+    return linted.result()
+
+
+def lint_result(project, result, classes, code_root=None, run_id=None):
+    """The linter on one ticket result's passages and findings at its acceptance (decision 17; ticket 88).
+
+    `code_root` is the ticket's worktree, which `code` tags and the attempt's own `res` tags (`run_id`) resolve
+    against. A problem sends the worker back; what is listed does not.
+    """
+    result = result if isinstance(result, dict) else {}
+    items = [dict(item, id="passage %d" % index) for index, item in enumerate(result.get("passages") or [], start=1)
+             if isinstance(item, dict)]
+    items += [dict(item, id="finding %d" % index) for index, item in enumerate(result.get("findings") or [], start=1)
+              if isinstance(item, dict)]
+    own = (run_id, code_root) if run_id and code_root is not None else None
+    return lint_passages(project, items, classes, code_root=code_root, own_run=own)
+
+
+def result_sentences(result):
+    """The sentences of a result's passages and findings the classifier is asked about: those ending with no tag,
+    leaving out a finding with no tag of its own, which its provenance tags."""
+    texts = []
+    for name in ("passages", "findings"):
+        for item in (result or {}).get(name) or []:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "")
+            if name == "findings" and not ANY_TAG_RE.search(text):
+                continue
+            texts.extend(sentence.text for sentence in prose_sentences(text)
+                         if strip_tags(sentence.text) and not end_kinds(sentence.text))
+    return texts
 
 
 # --- the verifier's sample (Type-B) ---------------------------------------------------------------
@@ -793,7 +1044,7 @@ def tagged_claims(markdown, classes):
     found, seen = [], set()
     for sentence in prose_sentences(markdown):
         digest = sentence_hash(sentence.text)
-        if classes.get(digest) != CLAIM or not _TAGS_AT_END.search(sentence.text):
+        if classes.get(digest) != CLAIM or not any(kind != "doc" for kind in end_kinds(sentence.text)):
             continue
         if (digest, sentence.tags) in seen:
             continue
@@ -857,6 +1108,9 @@ def claim_paths(claim, index=None):
         elif kind == "ref" and parts:
             slug = ref_slug(parts, index)
             paths.append("research/refs/%s/#%s" % (slug or parts.get("identifier"), parts["locator"] or "dossier"))
+        elif kind == "code" and parts:
+            path = parts["path"] if parts["path"].startswith(CODE_DIR + "/") else "%s/%s" % (CODE_DIR, parts["path"])
+            paths.append("%s#%s" % (path, parts["locator"]))
     return paths
 
 
