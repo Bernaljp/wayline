@@ -167,7 +167,7 @@ class LadderTest(EscalationCase):
         self.assertIn("the planner could not split it", self.events("ticket_failed")[4]["payload"]["reason"],
                       "a split that fails goes on to the person, the last step left")
         self.assertEqual(self.payload("ticket_needs_human")["ticket"], 1)
-        self.assertEqual([(name, ticket) for name, ticket, _ in self.notified], [("ticket_needs_human", 1)])
+        self.assertEqual([(name, ticket) for name, ticket, _ in self.notified], [("ticket_needs_human", 1), ("run_ended", None)])
         self.assertEqual(self.ticket()["status"], "needs_human")
         self.assertTrue(results[-1].ended)
         self.assertEqual(results[-1].reason, "frontier_empty")

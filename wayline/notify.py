@@ -13,6 +13,12 @@ null when the channel timed out. `channel: none` means no channel could run at a
 wayline does not depend on hermes and ships no Telegram sender: the interpreter is whatever `init`
 detected, and without one the notifier stops at `notify-send`.
 
+**What the autonomy holds back** (decision 17; ticket 89). After setup, under `interactive`, every notice reaches
+the owner as it arises; under `checkpoints`, a decision ticket notifies as it opens and every other notice waits
+for the next conversation or the end notice; under `autonomous`, only the end notice of a run and the login's
+expiry notify. `holds` is that rule, which the tick applies too; a notice it holds is neither sent nor journaled,
+and the end notice's "M waiting on you" carries it.
+
 `WAYLINE_NOTIFY=none` keeps every channel off: both `notified` lines are journaled as always, the
 second with `channel: none`, and nothing reaches a desktop or a phone. The test suite sets it, as it
 sets `WAYLINE_UNITS=none`, because the conductor notifies as it opens a decision ticket (ticket 35)
@@ -28,7 +34,7 @@ from pathlib import Path
 from wayline.ledger import NOTIFIED, Ledger
 from wayline.project import HARNESS_JSON, is_project, read_active
 
-__all__ = ["notify", "notify_send_argv", "hermes_argv", "NOTIFY_SEND", "HERMES", "NO_CHANNEL"]
+__all__ = ["notify", "holds", "held_back", "END_NOTICES", "notify_send_argv", "hermes_argv", "NOTIFY_SEND", "HERMES", "NO_CHANNEL"]
 
 _log = logging.getLogger("wayline.notify")
 
@@ -42,6 +48,49 @@ NOTIFY_SEND_TIMEOUT_S = 15
 HERMES_TIMEOUT_S = 120
 # The variable that turns every channel off (`none`); a `run` passed in is a test's own channel and still runs.
 NOTIFY_ENV = "WAYLINE_NOTIFY"
+
+
+# The notices a run's end sends, one per end: `run_ended`, and `goal_reached` when that was its reason (decision 7).
+END_NOTICES = ("run_ended", "goal_reached")
+DECISION_OPENED = "decision_opened"
+LOGIN_ORIGIN = "tick: the login"  # the origin of the tick's login tickets (`tick.LOGIN_ORIGIN`)
+
+
+def holds(event, autonomy, setup_ended, login=False):
+    """Whether the autonomy holds this notice back rather than sending it as it arises (decision 17).
+
+    Nothing is held before setup ends, and the end notice never is. `login` says a `decision_opened` is the tick's
+    ticket about the login's expiry, which notifies under every autonomy.
+    """
+    if not setup_ended or event in END_NOTICES:
+        return False
+    if autonomy == "autonomous":
+        return not (event == DECISION_OPENED and login)
+    if autonomy == "checkpoints":
+        return event != DECISION_OPENED
+    return False
+
+
+def held_back(project, event, ticket=None, events=None):
+    """`holds` for one notice of a project, read from its `harness.json`, its journal, and the ticket it is about.
+
+    Anything that cannot be read holds nothing back: a notice sent that could have waited costs one message, and one
+    held that should have gone out costs the owner the news.
+    """
+    try:
+        from wayline.stopping import setup_ended_at  # the stopping module imports the goal module, which imports the gates
+        autonomy = json.loads((Path(project) / HARNESS_JSON).read_text(encoding="utf-8")).get("autonomy")
+        if events is None:
+            events, _ = Ledger(project).read_events()
+        login = False
+        if event == DECISION_OPENED and ticket is not None:
+            from wayline.tickets import read_tickets
+            origin = {fields["id"]: fields for fields in read_tickets(project)}.get(ticket, {}).get("origin")
+            login = str(origin or "").startswith(LOGIN_ORIGIN)
+        return holds(event, autonomy, setup_ended_at(events) is not None, login)
+    except Exception:  # the notifier never raises, and neither does what it asks first
+        _log.exception("could not read what holds %r back", event)
+        return False
 
 
 def notify_send_argv(summary, body):
@@ -63,6 +112,9 @@ def notify(event, text, project=None, ticket=None, run=None):
     outcome = {"event": event, "channel": NO_CHANNEL, "ok": False, "exit_code": None, "journaled": False}
     try:
         project = _project(project)
+        if project is not None and held_back(project, event, ticket):
+            outcome["held"] = True  # the autonomy keeps it for the next conversation or the end notice
+            return outcome
         ledger = _ledger(project)
         outcome["journaled"] = _journal(ledger, {"event": event, "channel": None, "ok": None, "exit_code": None}, ticket)
         name = " (%s)" % project.name if project is not None else ""

@@ -63,6 +63,9 @@ VERBS = [
     Verb("mark", "mark <batch> [<item> [<mark>] [--note \"<text>\"] | --defaults] [--by owner|decider]",
          "show a batch of the marks view, settle one of its items with a mark, keep a note on one, or take all defaults", "views",
          lazy("wayline.batches", "mark_command")),
+    Verb("review", "review [<id> stand|reverse [--answer \"<text>\"]]",
+         "let a decision made for you stand, or reverse it with your own answer or none (reopened for you); with no id, list the ones not yet reviewed",
+         "views", lazy("wayline.account", "review_command")),
     Verb("reference", "reference <slug> <doi|title|file.pdf|\"leave it\">", "hand over an unresolved reference: a DOI or exact title back to the scout, a PDF as its source, or leave it until the paper order", "views",
          lazy("wayline.dossier", "reference_command")),
     Verb("document", "document add <file|folder|file.zip> [--kind inherited|critique|other|reference]",
@@ -104,7 +107,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "reference", "document",
+    "objective", "mark", "review", "reference", "document",
 ))
 
 

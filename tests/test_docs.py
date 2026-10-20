@@ -485,7 +485,7 @@ class DocsReadTest(ConductorCase):
 
 
 class ReportTest(RunCase):
-    """REPORT.md's tickets-closed section names the site whenever a code ticket added public API."""
+    """The account's run (REPORT.md's tickets-closed section before ticket 89) names the site whenever a code ticket added public API."""
 
     def add_ticket(self, identifier, title, kind, status, blocked_by, body=""):
         fields = {"id": identifier, "title": title, "kind": kind, "difficulty": 2, "status": status,
@@ -497,7 +497,7 @@ class ReportTest(RunCase):
 
     def fifth(self):
         self.render(draft=False, offline=True)
-        return self.section(5)
+        return self.account("Runs")
 
     def test_a_run_whose_code_added_no_public_api_says_nothing_of_a_site(self):
         self.assertNotIn("documentation site", self.fifth())

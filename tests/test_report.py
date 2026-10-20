@@ -114,6 +114,17 @@ class RunCase(ProjectTestCase):
     def roles_called(self):
         return [call.request.role for call in self.calls]
 
+    def report_events(self):
+        """REPORT.md's renders: the account's, in the same pass (ticket 89), carry `report: account`."""
+        return [event for event in self.events("report_rendered") if "report" not in event["payload"]]
+
+    def account(self, title):
+        """One section of `research/ACCOUNT.md`, which the render wrote beside REPORT.md (ticket 89)."""
+        text = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8")
+        start = text.index("## %s\n" % title)
+        following = re.search(r"^## ", text[start + 3:], re.M)
+        return text[start:start + 3 + following.start()] if following else text[start:]
+
     def text(self):
         return (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
 
@@ -367,32 +378,39 @@ class ReportTest(RunCase):
     def test_the_sections_are_in_the_order_of_decision_11(self):
         headings = re.findall(r"^## (\d+)\. (.*)$", self.text(), re.M)
         self.assertEqual([title for _, title in headings], list(SECTIONS))
-        self.assertEqual(len(SECTIONS), 12)
+        self.assertEqual(SECTIONS, ("Goal trajectory", "Findings by claim", "Negative results"))
 
-    def test_decider_decisions_come_first_with_rationale_and_confidence(self):
-        first = self.section(1)
-        self.assertIn("Ticket 8, *Which held-out split does the goal read?*: **split_b** (confidence 0.8", first)
-        self.assertIn("rationale: split_b holds out whole annotation sources", first)
-        self.assertNotIn("20000 rows", first, "a human's decision is not the decider's")
+    def test_what_wayline_did_is_in_the_account_and_no_longer_in_the_report(self):
+        text = self.text()
+        for gone in ("Decisions by the decider", "Open decision tickets", "Tickets closed", "Judged on Opus", "Papers by level",
+                     "Not pursued", "Proposed global harness changes", "Resources spent", "The run's events"):
+            self.assertNotIn(gone, text)
+        self.assertIn("[ACCOUNT.md](ACCOUNT.md)", text.split("## 1.")[0])
+
+    def test_decider_decisions_are_in_the_account_with_rationale_link_and_confidence(self):
+        decided = self.account("Decided for you")
+        self.assertIn("ticket 8, *Which held-out split does the goal read?*: **split_b** (by the decider, confidence 0.8", decided)
+        self.assertIn("(tickets/08-which-held-out-split-does-the-goal-read.md)", decided)
+        self.assertNotIn("20000 rows", decided, "a human's decision is not the decider's")
 
     def test_a_decider_decision_of_the_grill_is_listed_without_a_ticket(self):
         self.book.append_event("decision", {"ticket": None, "answer": "Q2 How many seeds does a comparison use? Answer: three",
                                             "decided_by": "decider", "rationale": "policy.json says three", "confidence": 0.7})
         self.render()
-        first = self.section(1)
-        self.assertIn("- The grill: **Q2 How many seeds does a comparison use? Answer: three** (confidence 0.7", first)
-        self.assertNotIn("Ticket None", first)
+        decided = self.account("Decided for you")
+        self.assertIn("Q2, *How many seeds does a comparison use?*: **three** (by the decider, confidence 0.7", decided)
+        self.assertNotIn("ticket None", decided)
 
-    def test_open_decision_tickets_and_needs_human_are_listed(self):
-        second = self.section(2)
-        self.assertIn("Decision ticket 6, *Which label source wins where the two disagree?*: blocking `subgraph`, human only", second)
-        self.assertIn("Decision ticket 11", second)
-        self.assertIn("Ticket 7, *Convert the second reference's PDF*, needs a human: Install the converter venv", second)
-        self.assertNotIn("Decision ticket 8", second)
-        self.assertNotIn("at the ladder's top rung", second, "no ticket here ended on the top rung")
+    def test_open_decision_tickets_and_needs_human_are_in_the_account(self):
+        waiting = self.account("Waiting on you")
+        self.assertIn("Decision ticket 6 (human only): Which label source wins where the two disagree?", waiting)
+        self.assertNotIn("Decision ticket 11", waiting, "under autonomous the decider takes it")
+        self.assertIn("Ticket 7, *Convert the second reference's PDF*, needs a person: Install the converter venv", waiting)
+        self.assertNotIn("Decision ticket 8", waiting)
+        self.assertNotIn("at the ladder's top rung", waiting, "no ticket here ended on the top rung")
 
     def test_the_goal_trajectory_is_drawn_with_the_discarded_change(self):
-        third = self.section(3)
+        third = self.section(1)
         self.assertIn("Goal O1 (answered): `auroc`, direction `up`, target 0.85", third)
         self.assertIn("Stopping rule: objectives", third)
         chart = third.split("```")[1]
@@ -406,7 +424,7 @@ class ReportTest(RunCase):
         self.assertIn("- ticket 4: mean 0.815 against the best 0.861, standard deviation 0.011, seeds 3", third)
 
     def test_findings_are_grouped_by_claim_with_citations_that_resolve(self):
-        fourth = self.section(4)
+        fourth = self.section(2)
         self.assertIn("### SPEC.md#c1-interaction-terms", fourth)
         self.assertIn("Interaction terms carry the gain over the baseline.[^", fourth)
         self.assertRegex(fourth, r"`f-0003` \(ticket 3\): Pairwise interaction terms raise the held-out AUROC to 0\.861\.\[\^\d+\]\[\^\d+\] That is")
@@ -414,55 +432,41 @@ class ReportTest(RunCase):
         self.assertIn("`res:t3-a1/results/interactions/summary.json#auroc_mean`", self.text())
         self.assertNotIn("{res:", self.text(), "tags render as citations in the file")
 
-    def test_tickets_closed_are_split_into_done_and_accepted(self):
-        fifth = self.section(5)
-        accepted, done = fifth.split("Done, meaning")
-        self.assertIn("Ticket 1, *Build the feature table* (analysis, difficulty 2): verdict `quality` on claude-opus-5", accepted)
-        self.assertIn("Ticket 3, *Add pairwise interaction terms* (experiment, difficulty 5)", accepted)
-        self.assertIn("Ticket 4, *Try a deeper model without interactions*", done)
-        self.assertNotIn("Ticket 4,", accepted)
+    def test_each_tickets_outcome_with_its_verdict_and_model_is_in_the_accounts_run(self):
+        runs = self.account("Runs")
+        self.assertIn("| 1 | analysis | accepted | quality passed | sonnet | 14 | 10.0 |", runs)
+        self.assertIn("| 3 | experiment | accepted | result passed | fable | 41 | 25.0 |", runs)
+        self.assertIn("| 4 | experiment | done | none | opus | 19 | 10.0 |", runs)
 
     def test_negative_results_are_tagged_claims(self):
-        seventh = self.section(7)
+        seventh = self.section(3)
         self.assertIn("Depth alone does not reach the goal.[^", seventh)
         self.assertRegex(seventh, r"`f-0004` \(ticket 4\): Doubling the model depth .*baseline\.\[\^\d+\]\[\^\d+\]")
 
-    def test_papers_by_level_and_the_promotions_not_read_in_full(self):
-        eighth = self.section(8)
-        self.assertIn("- Level 2 (2): `paper-a`, `paper-b`", eighth)
-        self.assertIn("- Level 0 (1): `paper-d` (unresolved)", eighth)
-        self.assertIn("`paper-b`: promoted to level 2 on `consultant_question`", eighth)
-        self.assertIn("`paper-c`: a promotion beyond the phase's reading budget waits on decision ticket 11", eighth)
-        self.assertNotIn("`paper-a`: promoted", eighth, "paper-a was absorbed at level 2")
+    def test_papers_by_level_and_the_promotions_not_read_in_full_are_the_accounts_library(self):
+        library = self.account("Library")
+        self.assertIn("- Level 2 (2): `paper-a`, `paper-b`", library)
+        self.assertIn("- Level 0 (1): `paper-d` (unresolved)", library)
+        self.assertIn("`paper-b`: promoted to level 2 on `consultant_question`", library)
+        self.assertIn("`paper-c`: a promotion beyond the phase's reading budget waits on decision ticket 11", library)
+        self.assertNotIn("`paper-a`: promoted", library, "paper-a was absorbed at level 2")
 
-    def test_parked_proposals_are_listed_as_not_pursued(self):
-        ninth = self.section(9)
+    def test_parked_proposals_are_listed_as_not_pursued_in_the_account(self):
+        ninth = self.account("Not pursued")
         self.assertIn("Proposal `p-0002` from ticket 3 (analysis): parked, reason `cap`", ninth)
         self.assertIn("Proposal `p-0003` from ticket 4 (experiment): parked, reason `radius`", ninth)
         self.assertIn("Ticket 9, *Probe the calibration of the interaction model* (analysis): parked", ninth)
         self.assertNotIn("p-0001", ninth)
 
-    def test_global_changes_are_proposed_under_autonomous(self):
-        tenth = self.section(10)
-        self.assertIn("none was applied", tenth)
-        self.assertIn("Change record `c-0001`: mechanism `prompt`", tenth)
-        self.assertNotIn("c-0002", tenth, "a local change is not a global proposal")
-
-    def test_resources_spent(self):
-        eleventh = self.section(11)
-        self.assertIn("the run paused 1 time(s)", eleventh)
-        self.assertIn("Fable's weekly window held the launches on Fable 1 time(s), while everything else kept launching.", eleventh)
-        self.assertIn("Highest utilization read: fable 1, five_hour 0.92, seven_day 0.51.", eleventh)
-        self.assertIn("Ticket 3: 41 turns in 1 session(s), 25.0 minutes", eleventh)
-        self.assertIn("Jobs: 3 finished, 2.25 GPU-hours, 18.0 core-hours.", eleventh)
-
-    def test_the_runs_events(self):
-        twelfth = self.section(12)
-        self.assertIn("| `run_ended` | 1 |", twelfth)
-        self.assertRegex(twelfth, r"- 2026-09-11 20:01Z `run_started` resume false")
+    def test_the_resources_spent_are_the_accounts_run(self):
+        runs = self.account("Runs")
+        self.assertIn("Paused at 2026-09-11 22:21Z on the `five_hour` window at 0.92", runs)
+        self.assertIn("Held the launches on Fable at 2026-09-11 20:03Z", runs)
+        self.assertIn("Peak utilization: fable 1, five_hour 0.92, seven_day 0.51.", runs)
+        self.assertIn("GPU 2.25 hours", runs)
 
     def test_report_rendered_is_journaled_with_the_digest_and_the_counts(self):
-        payload = self.events("report_rendered")[-1]["payload"]
+        payload = self.report_events()[-1]["payload"]
         self.assertEqual(payload, {"sha256": provenance.sha256_of(self.rendered.path), "claims": 7, "tagged": 7, "linter_pass": True})
         self.assertTrue(self.rendered.lint.passed)
 
@@ -513,7 +517,7 @@ class LinterFailureTest(RunCase):
         banner = self.text().split("## 1.")[0]
         self.assertIn("The provenance linter FAILED: 7 claim sentence(s), 6 tagged.", banner)
         self.assertIn("`untagged_claim` Interaction terms carry the gain over the baseline.", banner)
-        self.assertEqual(self.events("report_rendered")[-1]["payload"]["linter_pass"], False)
+        self.assertEqual(self.report_events()[-1]["payload"]["linter_pass"], False)
 
     def test_a_refused_tag_is_named_in_the_banner_without_becoming_a_citation_there(self):
         broken = dict(GOOD_PROSE, negative_results="Depth alone does not reach the goal.{res:results/depth.json#x}")
@@ -607,7 +611,7 @@ class UsageLimitTest(RunCase):
         self.assertIn("classifier", " ".join(rendered.notes))
         self.assertFalse(rendered.lint.passed, "an untagged sentence nobody classified cannot pass")
         self.assertEqual({problem["problem"] for problem in rendered.lint.problems}, {"unclassified"})
-        self.assertEqual(self.events("report_rendered")[-1]["payload"]["linter_pass"], False)
+        self.assertEqual(self.report_events()[-1]["payload"]["linter_pass"], False)
 
 
 # --- the verifier's sample -------------------------------------------------------------------------
@@ -740,8 +744,8 @@ class TopRungItemTest(RunCase):
                                {"ticket": 7, "question": "it failed on rung 7, the rung ladder's top rung: no",
                                 "reason": "top_rung"}, ticket=7)
         self.render()
-        second = self.section(2)
-        self.assertIn("Ticket 7, *Convert the second reference's PDF*, needs a human, at the ladder's top rung:", second)
+        waiting = self.account("Waiting on you")
+        self.assertIn("Ticket 7, *Convert the second reference's PDF*, needs a person (at the ladder's top rung):", waiting)
 
 
 if __name__ == "__main__":

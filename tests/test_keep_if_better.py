@@ -536,7 +536,7 @@ class GoalReachedTest(GoalTicketCase):
         self.assertEqual(results[-1].reason, "goal_reached")
         self.assertEqual([event["payload"]["reason"] for event in self.events("run_ended")], ["goal_reached"])
         self.assertEqual([event for event, _, _ in self.recorder.sent], ["goal_reached"])
-        self.assertIn("every goal the stopping rule waits on is reached (O1)", self.recorder.sent[0][1])
+        self.assertIn("every goal the stopping rule waits on was reached", self.recorder.sent[0][1])
         written = [event["payload"] for event in self.events("objective") if event["payload"]["status"] == "answered"]
         self.assertEqual([(payload["id"], payload["by"]) for payload in written], [("O1", "code")])
         record = json.loads((self.project / "research" / "objectives.json").read_text(encoding="utf-8"))["objectives"][0]
@@ -563,7 +563,7 @@ class GoalReachedTest(GoalTicketCase):
         self.set_harness(stop_when="frontier")
         results = self.conduct((finding_result(), seeds(0.90, 0.91, 0.92)))
         self.assertEqual(results[-1].reason, "frontier_empty")
-        self.assertEqual(self.recorder.sent, [])
+        self.assertEqual([event for event, _, _ in self.recorder.sent], ["run_ended"], "the end notice of a frontier emptied, no goal_reached")
 
 
 # --- the conductor: a running result, judged once its jobs wrote the seeds ------------------------

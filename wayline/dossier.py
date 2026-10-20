@@ -56,6 +56,7 @@ from wayline.scout import NO_SUCH_WORK, NOT_LOOKED_UP, Reference, Scout, UNRESOL
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets, write_ticket
 
 __all__ = [
+    "another_work",
     "DossierError", "REFS", "CACHE", "LEVEL_0", "LEVEL_1", "LEVEL_2", "slug_for", "l0_dossier", "write_l0", "all_slugs",
     "intake_references", "read_intake", "absorb_level_0", "absorb_command", "scout_fetcher",
     "read_dossier", "l1_input", "l1_prompt", "l1_request", "absorb_level_1",
@@ -2117,10 +2118,41 @@ def _file_answer(ledger, reference, existing, resolved, taken, now, report, inde
         dossier = _with_name(ledger, dossier, reference)
     if change == DISAGREES:
         report["disagreements"].append(_disagreement(dossier, resolved))
+        _keep_another_work(ledger, dossier["slug"], report["disagreements"][-1])
+    elif change in (NEW, SAME, CHANGED):
+        _keep_another_work(ledger, dossier["slug"], None)
     if index is not None and dossier["existence"] == VERIFIED:
         for key in work_keys(dossier):
             index.setdefault(key, dossier["slug"])
     return dossier, change
+
+
+ANOTHER_WORK = ".cache/another_work.json"
+
+
+def _keep_another_work(ledger, slug, entry):
+    """Record that a found dossier now resolves to another work (`entry`), or that it no longer does (None).
+
+    The account's Library lists these (ticket 89); a lookup that finds the same work again takes the line back.
+    """
+    with ledger.lock():
+        held = another_work(ledger)
+        if entry is None and slug not in held:
+            return
+        if entry is None:
+            held.pop(slug)
+        else:
+            held[slug] = entry
+        ledger.write_json(ANOTHER_WORK, held)
+
+
+def another_work(project_or_ledger):
+    """`{slug: what absorb's report said}` for every found dossier a later lookup resolved to another work."""
+    try:
+        held = ledger_for(project_or_ledger).read_json(ANOTHER_WORK)
+    except (OSError, ValueError):
+        return {}
+    return held if isinstance(held, dict) else {}
 
 
 def _same_name(one, other):

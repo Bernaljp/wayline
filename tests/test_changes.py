@@ -366,7 +366,7 @@ class AutonomousLadderTest(EvolveCase):
         self.assertFalse(self.tickets()[second["decision"]]["human_only"], "the decider may approve it under auto")
         self.assertEqual(second["risk"], "high")
 
-    def test_a_global_change_is_a_proposal_in_the_report_and_nothing_is_applied(self):
+    def test_a_global_change_is_a_proposal_in_the_account_and_nothing_is_applied(self):
         report = self.evolve(answer(record(**GLOBAL)))
         kept = changes.read_changes(self.project)[0]
         self.assertEqual((kept["status"], kept["ticket"], kept["branch"]), ("proposed", None, None))
@@ -377,10 +377,10 @@ class AutonomousLadderTest(EvolveCase):
         self.assertTrue(any("Tell the planner to cut smaller tickets" in line and "prompts/roles/planner.md" in line for line in lines))
         self.assertTrue(any("wayline evolve --apply %s" % kept["id"] in line for line in lines))
         provenance.render_report(self.project, offline=True, draft=False)
-        report = (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
-        self.assertIn("every global change below is a proposal and none was applied", report)
-        self.assertIn("Change record `%s`, *Tell the planner to cut smaller tickets*" % kept["id"], report)
-        self.assertIn("proposed, not applied", report)
+        told = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8").split("## Waiting on you", 1)[1]
+        self.assertIn("Global change `%s`, *Tell the planner to cut smaller tickets*" % kept["id"], told)
+        self.assertIn("proposed, not applied; `wayline evolve --apply %s` applies it" % kept["id"], told)
+        self.assertNotIn("promote", told, "one wording for applying a global change (decision 17)")
         self.assertEqual(len(self.fake.calls), 1, "the report launched nothing, and no harness ticket ran")
 
     def test_the_owner_applies_a_proposal_by_hand(self):

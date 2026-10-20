@@ -700,8 +700,8 @@ class PushAfterTheWaveTest(ProjectTestCase):
             drive(self.conductor)
             self.conductor.wave()
         self.assertEqual(len(self.run.ran("push")), 1, "a rejected split is not pushed again every wave")
-        self.assertEqual([event for event, _ in told], ["code_push_rejected"])
-        self.assertIn("jpbernal/one-ticket", told[0][1])
+        self.assertEqual([event for event, _ in told if event != "run_ended"], ["code_push_rejected"])  # beside each run's end notice
+        self.assertIn("jpbernal/one-ticket", [text for event, text in told if event == "code_push_rejected"][0])
         self.assertEqual(len(self.pushes()), 1)
 
     def test_a_restart_replays_the_last_push_and_pushes_nothing_more(self):

@@ -5,7 +5,8 @@ while a conductor is running, and it is where everything the project knows is ke
 and `OBJECTIVES.md` say what the work is for (a goal is an objective with a measure), `SPEC.md`
 states the claims, `tickets/NN-slug.md` are the units of work, `graph.json` is what the conductor schedules from, `journal.jsonl` is the event log the run
 replays to resume, `findings.jsonl` and `manifest.json` carry the results and the artifacts they
-cite, and `REPORT.md` is the answer.
+cite, `REPORT.md` is the answer, and `ACCOUNT.md` is what wayline did: what it decided for the owner,
+what waits on the owner, and each run.
 
 `wayline status` prints the frontier, the running tickets and jobs, the open decision tickets,
 the window, the objectives, and the last events. `wayline run` is the conductor. Settings are in

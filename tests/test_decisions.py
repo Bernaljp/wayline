@@ -296,7 +296,7 @@ class BackgroundNotifyTest(ConductedCase):
             self.assertEqual(sent, [])
             release.set()
             driven.settle()
-        self.assertEqual(sent, [("decision_opened", 6)])
+        self.assertEqual(sorted(sent), [("decision_opened", 6), ("run_ended", None)])  # the run ended at the empty frontier too
 
 
 class ResumedRequestTest(ConductorCase):
@@ -350,7 +350,7 @@ class RequestedDecisionTest(ConductedCase):
                            "blocked_by": []}])
         self.assertEqual([event["payload"] for event in self.events("decision_opened")],
                          [{"ticket": 6, "blocking": "subgraph", "human_only": False}])
-        self.assertEqual([(event, ticket) for event, ticket, _ in self.notified], [("decision_opened", 6)])
+        self.assertEqual([(event, ticket) for event, ticket, _ in self.notified], [("decision_opened", 6), ("run_ended", None)])
         text = self.notified[0][2]
         self.assertIn("decision ticket 6 asks: Does the alpha note stay one word?", text)
         self.assertIn("It pauses ticket 4.", text)
@@ -363,7 +363,7 @@ class RequestedDecisionTest(ConductedCase):
         reports = decisions.open_requested(self.project, 1, 1, [REQUEST], notify=self.notify)
         self.assertEqual(reports, [{"ticket": 6, "opened": False, "paused": [4]}])
         self.assertEqual(len(self.events("decision_opened")), 1)
-        self.assertEqual(len(self.notified), 1)
+        self.assertEqual([event for event, _, _ in self.notified], ["decision_opened", "run_ended"], "the first run's two notices, and none since")
         self.assertEqual(self.ticket(4)["blocked_by"], [1, 6])
 
     def test_answering_it_releases_the_ticket_it_paused(self):

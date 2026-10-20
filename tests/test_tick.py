@@ -126,6 +126,11 @@ class TickCase(ProjectTestCase):
         fields, body = tickets.read_ticket(path)
         tickets.write_ticket(self.ledger, dict(fields, status=status), body)
 
+    def interactive(self):
+        """Autonomy `interactive`, under which every notice reaches the owner as it arises (decision 17; ticket 89)."""
+        path = self.project / "harness.json"
+        path.write_text(json.dumps(dict(json.loads(path.read_text(encoding="utf-8")), autonomy="interactive")), encoding="utf-8")
+
     def ran(self, ended=None, autonomy="checkpoints"):
         """A run that started, and ended for `ended` when one is given (a conductor killed mid-run writes no end)."""
         self.journal("run_started", {"resume": False, "harness_tag": "v0.0.0", "autonomy": autonomy, "radius": "moderate", "pid": 4242})
@@ -705,6 +710,7 @@ class NotificationTest(TickCase):
         return [(event, ticket) for event, ticket, _ in self.sent]
 
     def test_every_standing_event_is_sent_once(self):
+        self.interactive()
         self.ran()
         self.add_ticket(2, kind="decision")
         self.journal("decision_opened", {"ticket": 2, "blocking": None, "human_only": False}, ticket=2)
@@ -772,12 +778,13 @@ class ReportTest(TickCase):
         first = self.run_tick(render=tick.render_report)
         self.assertEqual(first.report, str(self.project.resolve() / "research" / "REPORT.md"))
         self.assertTrue(Path(first.report).is_file())
-        self.assertEqual(len(self.events("report_rendered")), 1)
+        # REPORT.md's render, then the account's in the same pass (ticket 89).
+        self.assertEqual([event["payload"].get("report") for event in self.events("report_rendered")], [None, "account"])
         self.assertEqual(self.fake.calls, [])  # no session was launched to render it
         self.now += 15 * 60
         second = self.run_tick(render=tick.render_report)
         self.assertIsNone(second.report)
-        self.assertEqual(len(self.events("report_rendered")), 1)
+        self.assertEqual(len(self.events("report_rendered")), 2)
 
     def test_a_report_that_cannot_render_is_a_problem_and_the_relaunch_still_happens(self):
         self.ran()
@@ -792,6 +799,7 @@ class ReportTest(TickCase):
         self.assertIn("report failed", self.out.getvalue())
 
     def test_a_refused_relaunch_is_a_problem_and_the_owner_is_told_once(self):
+        self.interactive()
         self.ran()
         self.add_ticket(1)
         self.refusal = tick.UnitsOff("WAYLINE_UNITS=none: this process does not reach the user manager")

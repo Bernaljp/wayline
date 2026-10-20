@@ -14,7 +14,8 @@ against the manifest and the knowledge base, the verifier's sample of tagged cla
 through the gate of `wayline.gates`), the writer's prose, and `REPORT.md` itself, which
 `render_report` renders from the journal, the findings, the tickets, and the goals of
 `objectives.json` (ticket 87: `GOAL.json` retired). The report lives here because decision 1's module list has no `report` module and BRIEF 10 gives the writer
-"role + provenance.py".
+"role + provenance.py". Since ticket 89 it holds only the research (the goal trajectory, the findings, the negative
+results): what wayline did is `research/ACCOUNT.md`, which `wayline.account` renders in the same pass.
 """
 
 import argparse
@@ -25,7 +26,7 @@ import random
 import re
 import subprocess
 import sys
-from collections import Counter, namedtuple
+from collections import namedtuple
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,7 +35,7 @@ from wayline import HARNESS_ROOT, POLICY_PATH, gates, ledger, pacing, sections, 
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, now_ts
-from wayline.project import NEEDS_HUMAN_NOTES, ProjectError, fable_falls_back, find_project, policy_for, read_harness
+from wayline.project import ProjectError, fable_falls_back, find_project, policy_for, read_harness
 from wayline.objectives import ObjectivesUnreadable, read_objectives
 
 __all__ = [
@@ -429,29 +430,20 @@ CLASSIFY_BATCH = 40
 RECORDS_BEGIN = "<!-- wayline:records -->"
 RECORDS_END = "<!-- /wayline:records -->"
 
-# The sections of Implementation Decisions 11, in its order.
+# The sections of Implementation Decisions 11 about the research, in its order. What wayline did (the decisions made
+# for the owner, what waits on the owner, the tickets closed, the judgments on Opus while Fable was spent, the papers
+# by level, what was not pursued, the global changes proposed, and the resources spent) is the account's
+# (`wayline.account`, ticket 89), and the events table is gone; ticket 90 rewrites the rest as the general report.
 SECTIONS = (
-    "Decisions by the decider",
-    "Open decision tickets and tickets that need a human",
     "Goal trajectory",
     "Findings by claim",
-    "Tickets closed: done and accepted",
-    "Judged on Opus while Fable was spent",
     "Negative results",
-    "Papers by level, and promotions not read in full",
-    "Not pursued",
-    "Proposed global harness changes",
-    "Resources spent",
-    "The run's events",
 )
 SUPPLEMENTARY = "Supplementary references"
 
 # A session that drafts or classifies reads at most; it writes nothing under `research/`.
 READ_ONLY_TOOLS = ("Read", "Glob", "Grep")
 WRITE_TOOLS = ("Edit", "Write", "NotebookEdit", "Bash")
-
-# The events the report lists one by one under "the run's events"; the rest are counted.
-MILESTONES = ("run_started", "run_ended", "phase", "paused", "unpaused", "stall", "switched", "pinned", "tagged")
 
 RESUME_STRUCTURED = (
     "The answer you returned could not be used: %s.\n\n"
@@ -1243,59 +1235,6 @@ def _claim_groups(context):
 # --- the sections ---------------------------------------------------------------------------------
 
 
-def _decider_decisions(context):
-    lines = []
-    for event in context.events:
-        payload = event.get("payload") or {}
-        if event.get("event") != ledger.DECISION or payload.get("decided_by") != "decider":
-            continue
-        ticket = payload.get("ticket")
-        title = (context.tickets.get(ticket) or {}).get("title")
-        # A question of the grill has no ticket; its answer opens with the question it settles. A parked proposal
-        # the decider reconsidered has none either, and its answer opens with `proposal <id>:` (ticket 31).
-        if ticket is not None:
-            subject = "Ticket %s%s" % (ticket, ", *%s*" % title if title else "")
-        elif str(payload.get("answer") or "").startswith("proposal "):
-            subject = "A parked proposal"
-        elif str(payload.get("answer") or "").startswith(VENUE_PREFIX):
-            subject = "The paper's venue"  # `wayline paper` without `--venue` (ticket 53)
-        else:
-            subject = "The grill"
-        lines.append("- %s: **%s** (confidence %s, %s)" % (
-            subject, one_line(payload.get("answer")), _number(payload.get("confidence")), _when(event)))
-        if payload.get("rationale"):
-            lines.append("  - rationale: %s" % one_line(payload["rationale"]))
-    return _records(lines or ["No decision was made by the decider."])
-
-
-def _open_questions(context):
-    """The decision tickets still open and the tickets waiting for a person.
-
-    A ticket the escalation chain left with nowhere to climb carries `reason: top_rung` on its
-    `ticket_needs_human`, and its item says "at the ladder's top rung" (decision 16; ticket 61).
-    """
-    asked, why = {}, {}
-    for event in context.events:
-        if event.get("event") == ledger.TICKET_NEEDS_HUMAN:
-            payload = event.get("payload") or {}
-            asked[payload.get("ticket")] = payload.get("question")
-            why[payload.get("ticket")] = NEEDS_HUMAN_NOTES.get(payload.get("reason"))
-    lines = []
-    for number in sorted(context.tickets):
-        fields = context.tickets[number]
-        if tickets.is_open_decision(fields):
-            lines.append("- Decision ticket %d, *%s*: blocking `%s`%s; origin `%s`" % (
-                number, fields["title"], fields.get("blocking") or "none",
-                ", human only" if fields.get("human_only") else "", fields.get("origin") or "none"))
-    for number in sorted(context.tickets):
-        fields = context.tickets[number]
-        if fields["status"] == "needs_human":
-            lines.append("- Ticket %d, *%s*, needs a human%s: %s" % (
-                number, fields["title"], ", %s" % why[number] if why.get(number) else "",
-                one_line(asked.get(number) or "no question was journaled")))
-    return _records(lines or ["No decision ticket is open and no ticket needs a human."])
-
-
 def _trajectory(context):
     """Each goal's trajectory, from its own `progress` and `discarded` events (ticket 87: keep-if-better runs per goal)."""
     if not context.goals:
@@ -1388,114 +1327,6 @@ def _findings_section(context, prose):
     return lines[:-1]
 
 
-def _closed(context):
-    verdicts = {}
-    for event in context.events:
-        payload = event.get("payload") or {}
-        if event.get("event") == ledger.VERDICT and payload.get("subject_kind") == "ticket" and payload.get("pass"):
-            verdicts[event.get("ticket")] = payload
-    ordered = [context.tickets[number] for number in sorted(context.tickets)]
-    accepted = [fields for fields in ordered if fields["status"] == "accepted"]
-    done = [fields for fields in ordered if fields["status"] == "done"]
-    lines = ["Accepted, meaning the machine checks and a Type-B verdict passed (%d):" % len(accepted)]
-    for fields in accepted:
-        verdict = verdicts.get(fields["id"]) or {}
-        lines.append("- Ticket %d, *%s* (%s, difficulty %s): verdict `%s` on %s" % (
-            fields["id"], fields["title"], fields["kind"], fields.get("difficulty"),
-            verdict.get("verdict_type") or "not journaled", verdict.get("model") or "no journaled model"))
-    lines.extend(["", "Done, meaning the machine checks passed and no verdict has (%d):" % len(done)])
-    lines.extend("- Ticket %d, *%s* (%s, difficulty %s)" % (fields["id"], fields["title"], fields["kind"], fields.get("difficulty"))
-                 for fields in done)
-    return _records(lines + _docs_site(context))
-
-
-def _docs_site(context):
-    """The documentation site, which is part of done whenever a `code` ticket added public API (decisions 11, 13).
-
-    Nothing when no ticket declared public API and none is a `docs` ticket. Otherwise the declaring
-    tickets, the `docs` tickets and their statuses, the last build on `main` (`docs.read_record`), and
-    every declaring ticket no closed `docs` ticket waits on, which is the site still owed.
-    """
-    from wayline import docs  # the docs module reads the code dossier's inventory; keep this module's import light
-    from wayline.plan import adds_public_api
-
-    bodies = {}
-    for path in sorted(tickets.tickets_dir(context.project).glob("*.md")):
-        try:
-            fields, body = tickets.read_ticket(path)
-        except (OSError, tickets.TicketError, ValueError):
-            continue
-        bodies[fields["id"]] = body
-    declared = [context.tickets[number] for number in sorted(context.tickets)
-                if context.tickets[number]["kind"] == "code" and adds_public_api(bodies.get(number, ""))]
-    documenting = [context.tickets[number] for number in sorted(context.tickets) if context.tickets[number]["kind"] == "docs"]
-    if not declared and not documenting:
-        return []
-    lines = ["", "The documentation site, part of done because %s:" % (
-        "ticket(s) %s added public API" % ", ".join(str(fields["id"]) for fields in declared)
-        if declared else "the graph holds docs tickets")]
-    for fields in documenting:
-        lines.append("- Ticket %d, *%s* (docs): %s" % (fields["id"], fields["title"], fields["status"]))
-    record = docs.read_record(context.project)
-    if record is None:
-        lines.append("- The site has not been built on `main` (no `%s`)." % docs.CHECKS_JSON.as_posix())
-    else:
-        failed = [check["check"] for check in record.get("checks") or [] if not check.get("pass")]
-        lines.append("- The site `%s`, built %s: %s." % (
-            record.get("site") or docs.SITE_INDEX.as_posix(), record.get("ran_at") or "at an unrecorded time",
-            "every machine check passed" if not failed else "the %s check(s) failed" % ", ".join(failed)))
-    # A closed docs ticket documents what it waits on, directly or through the tickets it waits on.
-    documented = set()
-    for item in documenting:
-        if item["status"] in tickets.SATISFIED:
-            documented |= _upstream(context.tickets, item["id"])
-    for fields in declared:
-        if fields["id"] not in documented:
-            lines.append("- Owed: ticket %d added public API and no closed docs ticket documents it." % fields["id"])
-    return lines
-
-
-def _upstream(by_id, identifier):
-    """Every ticket `identifier` waits on, through any chain of `blocked_by`."""
-    seen, stack = set(), list((by_id.get(identifier) or {}).get("blocked_by") or [])
-    while stack:
-        number = stack.pop()
-        if number not in seen:
-            seen.add(number)
-            stack.extend((by_id.get(number) or {}).get("blocked_by") or [])
-    return seen
-
-
-def _fell_back(context):
-    """Every verdict and decision taken on Opus in place of Fable while its weekly window was spent (decision 15).
-
-    Nothing is taken again after the reset, so this is where the owner reads which judgments ran by fallback.
-    """
-    lines = []
-    for event in context.events:
-        payload = event.get("payload") or {}
-        if not payload.get("fallback_from"):
-            continue
-        if event.get("event") == ledger.VERDICT:
-            ticket = event.get("ticket")
-            lines.append("- Verdict `%s` on the %s `%s`%s: %s on %s in place of %s, session `%s` (%s)" % (
-                payload.get("verdict_type"), payload.get("subject_kind"), payload.get("subject"),
-                " (ticket %s)" % ticket if ticket is not None else "", "passed" if payload.get("pass") else "failed",
-                payload.get("model") or "an unnamed model", payload["fallback_from"],
-                payload.get("session_id") or event.get("session_id") or "unknown", _when(event)))
-        elif event.get("event") == ledger.DECISION:
-            ticket = payload.get("ticket")
-            title = (context.tickets.get(ticket) or {}).get("title")
-            subject = "the grill" if ticket is None else "ticket %s%s" % (ticket, ", *%s*" % title if title else "")
-            lines.append("- Decision by the %s on %s: **%s** on %s in place of %s (%s)" % (
-                payload.get("decided_by"), subject, one_line(payload.get("answer")), payload.get("model") or "an unnamed model",
-                payload["fallback_from"], _when(event)))
-    if not lines:
-        return _records(["Nothing was judged by fallback: every verdict and decision ran on the model its table gives."])
-    return _records(["Taken on Opus while Fable's weekly window was spent, under the fallback consent. None of them is "
-                     "taken again on Fable after the reset.", ""] + lines)
-
-
 def _negative_section(context, prose):
     negative = [finding for finding in context.findings if finding.get("negative")]
     if not negative:
@@ -1508,142 +1339,8 @@ def _negative_section(context, prose):
     return lines
 
 
-def _papers(context):
-    from wayline.dossier import render_levels_report  # lazy: the dossier module pulls in the fetch seam
-
-    levels = render_levels_report(context.project)
-    lines = []
-    for level in sorted(levels["by_level"]):
-        slugs = levels["by_level"][level]
-        named = ", ".join("`%s`%s" % (slug, "" if _existence(context.project, slug) == "verified" else " (unresolved)")
-                          for slug in slugs)
-        lines.append("- Level %d (%d): %s" % (level, len(slugs), named or "none"))
-    promoted = {}
-    for event in context.events:
-        payload = event.get("payload") or {}
-        name = event.get("event")
-        if name == ledger.PROMOTED and payload.get("to_level") == 2:
-            promoted[payload.get("slug")] = (event, payload)
-        elif (name == ledger.ABSORBED and payload.get("level") == 2) or name == ledger.DEMOTED:
-            promoted.pop(payload.get("slug"), None)
-    unread = ["- `%s`: promoted to level 2 on `%s` (%s), and no level-2 absorb is journaled" % (
-        slug, payload.get("trigger"), _when(event)) for slug, (event, payload) in promoted.items()]
-    unread.extend("- `%s`: a promotion beyond the phase's reading budget waits on decision ticket %s (%s)" % (
-        item["slug"], item["ticket"], item["reason"] or "no reason recorded") for item in levels["not_read_in_full"])
-    lines.extend(["", "Promotions not read in full:"] + (unread or ["- none"]))
-    return _records(lines)
-
-
-def _not_pursued(context):
-    last = {}
-    for event in context.events:
-        if event.get("event") in (ledger.PROPOSAL_ADMITTED, ledger.PROPOSAL_PARKED):
-            payload = event.get("payload") or {}
-            last[payload.get("id")] = (event.get("event"), payload)
-    lines = ["- Proposal `%s` from ticket %s (%s): parked, reason `%s`" % (
-        identifier, payload.get("from"), payload.get("kind"), payload.get("reason"))
-        for identifier, (name, payload) in last.items() if name == ledger.PROPOSAL_PARKED]
-    lines.extend("- Ticket %d, *%s* (%s): parked" % (number, context.tickets[number]["title"], context.tickets[number]["kind"])
-                 for number in sorted(context.tickets) if context.tickets[number]["status"] == "parked")
-    return _records(lines or ["Nothing was parked."])
-
-
-def _global_changes(context):
-    autonomy = context.harness.get("autonomy")
-    if autonomy == "autonomous":
-        lines = ["Autonomy is `autonomous`, so every global change below is a proposal and none was applied."]
-    else:
-        lines = ["Autonomy is `%s`: a global change is applied only by the owner, through `wayline promote`." % autonomy]
-    from wayline import changes as records  # the evolve loop (ticket 45) imports the gates, which import this module
-    # A record the project keeps says what it would change, where it stands, and the command that applies a proposal;
-    # one only the journal names (a record file removed by hand, a journal older than ticket 45) is named from its event.
-    kept = records.proposal_lines(context.project)
-    held = {record["id"] for record in records.read_changes(context.project)}
-    changes = kept + ["- Change record `%s`: mechanism `%s`, fixture `%s`" % (
-        payload.get("id"), payload.get("mechanism"), payload.get("fixture"))
-        for payload in (event.get("payload") or {} for event in context.events if event.get("event") == ledger.CHANGE_RECORD)
-        if payload.get("scope_kind") == "global" and payload.get("id") not in held]
-    return _records(lines + (changes or ["- none"]))
-
-
-def _resources(context):
-    stopped = [event.get("payload") or {} for event in context.events if event.get("event") == ledger.PAUSED]
-    paused = [payload for payload in stopped if payload.get("model") != pacing.FABLE]
-    held = [payload for payload in stopped if payload.get("model") == pacing.FABLE]
-    lines = ["Usage windows: the run paused %d time(s) on a closed window." % len(paused)]
-    lines.extend("- `%s` window at utilization %s, reset at %s" % (
-        payload.get("window"), _number(payload.get("utilization")), payload.get("resets_at")) for payload in paused)
-    if held:
-        # The hold of decision 15 paused nothing: every launch not on Fable went on.
-        lines.append("Fable's weekly window held the launches on Fable %d time(s), while everything else kept launching." % len(held))
-        lines.extend("- held at utilization %s until %s" % (_number(payload.get("utilization")), payload.get("resets_at"))
-                     for payload in held)
-    peaks = {}
-    for event in context.events:
-        payload = event.get("payload") or {}
-        readings = []
-        if event.get("event") == ledger.PACING:
-            readings = [(window, payload.get(window)) for window in pacing.READINGS]
-        elif event.get("event") == ledger.PAUSED:
-            window = pacing.FABLE if payload.get("model") == pacing.FABLE else payload.get("window")
-            readings = [(window, payload.get("utilization"))] if window in pacing.READINGS else []
-        for window, value in readings:
-            if _is_number(value):
-                peaks[window] = max(peaks.get(window, value), value)
-    if peaks:
-        lines.append("Highest utilization read: %s." % ", ".join("%s %s" % (window, _number(value)) for window, value in sorted(peaks.items())))
-    closed = [number for number in sorted(context.tickets) if context.tickets[number]["status"] in tickets.SATISFIED]
-    spent = {}
-    for event in context.events:
-        if event.get("event") == ledger.TICKET_RESULT:
-            payload = event.get("payload") or {}
-            turns, sessions, milliseconds = spent.get(payload.get("ticket"), (0, 0, 0))
-            spent[payload.get("ticket")] = (turns + (payload.get("turns") or 0), sessions + 1, milliseconds + (payload.get("duration_ms") or 0))
-    lines.extend(["", "Turns per closed ticket:"])
-    total = 0
-    for number in closed:
-        turns, sessions, milliseconds = spent.get(number, (0, 0, 0))
-        total += turns
-        lines.append("- Ticket %d: %d turns in %d session(s), %.1f minutes" % (number, turns, sessions, milliseconds / 60000))
-    if closed:
-        lines.append("Total: %d turns over %d closed tickets, %.1f per ticket." % (total, len(closed), total / len(closed)))
-    else:
-        lines.append("- no ticket was closed")
-    launched = {}
-    seconds_by_job = {}
-    for event in context.events:
-        payload = event.get("payload") or {}
-        if event.get("event") == ledger.JOB_LAUNCHED:
-            launched[payload.get("job")] = payload
-        elif event.get("event") == ledger.JOB_FINISHED and _is_number(payload.get("seconds")):
-            seconds_by_job[payload.get("job")] = payload["seconds"]
-    gpu_seconds = core_seconds = 0
-    for job, seconds in seconds_by_job.items():
-        spec = launched.get(job) or {}
-        cores = spec.get("cores")
-        gpu_seconds += seconds * len(spec.get("gpu_uuids") or [])
-        core_seconds += seconds * (len(cores) if isinstance(cores, list) else cores if _is_number(cores) else 0)
-    lines.extend(["", "Jobs: %d finished, %.2f GPU-hours, %.1f core-hours." % (
-        len(seconds_by_job), gpu_seconds / 3600, core_seconds / 3600)])
-    return _records(lines)
-
-
-def _events(context):
-    counts = Counter(event.get("event") for event in context.events)
-    lines = ["%d events in `research/journal.jsonl`." % len(context.events), "", "| Event | Count |", "|---|---|"]
-    lines.extend("| `%s` | %d |" % (name, counts[name]) for name in ledger.EVENTS if counts.get(name))
-    lines.extend(["", "Milestones:"])
-    milestones = ["- %s `%s` %s" % (_when(event), event.get("event"), _payload_text(event.get("payload")))
-                  for event in context.events if event.get("event") in MILESTONES]
-    return _records(lines + (milestones or ["- none"]))
-
-
 def _body(context, prose):
-    sections = (
-        _decider_decisions(context), _open_questions(context), _trajectory(context),
-        _findings_section(context, prose), _closed(context), _fell_back(context), _negative_section(context, prose),
-        _papers(context), _not_pursued(context), _global_changes(context), _resources(context), _events(context),
-    )
+    sections = (_trajectory(context), _findings_section(context, prose), _negative_section(context, prose))
     lines = []
     for number, section in enumerate(sections, start=1):
         lines.extend(["## %d. %s" % (number, SECTIONS[number - 1]), ""] + list(section) + [""])
@@ -1658,6 +1355,7 @@ def _banner(context, result, notes):
         "Rendered by `wayline report` from `research/journal.jsonl` (%d events), `findings.jsonl`, "
         "`manifest.json`, `objectives.json`, and the tickets. The provenance linter %s: %d claim sentence(s), "
         "%d tagged." % (len(context.events), "passed" if result.passed else "FAILED", result.claims, result.tagged),
+        "What wayline did, what it decided for you, and what waits on you are in [ACCOUNT.md](ACCOUNT.md).",
     ]
     if result.problems:
         lines.extend(["", "The linter failed on these sentences; the report does not pass until each one ends with a tag that resolves, or is rewritten:", ""])
@@ -1737,6 +1435,12 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
     digest = sha256_of(path)
     book.append_event(ledger.REPORT_RENDERED, {"sha256": digest, "claims": result.claims, "tagged": result.tagged,
                                                "linter_pass": result.passed})
+    # The account renders in the same pass (decision 17; ticket 89): what wayline did, beside the research.
+    from wayline import account  # the account reads the decisions module, which imports this one through the gates
+    try:
+        account.render_account(project)
+    except (ValueError, OSError) as failure:
+        notes.append("ACCOUNT.md could not be rendered: %s" % failure)
     return Rendered(path, digest, result, notes)
 
 
@@ -1828,22 +1532,6 @@ def _number(value):
     if isinstance(value, float):
         return ("%.4f" % value).rstrip("0").rstrip(".")
     return str(value)
-
-
-def _when(event):
-    stamp = str(event.get("ts") or "")
-    return stamp[:16].replace("T", " ") + "Z" if len(stamp) >= 16 else stamp or "?"
-
-
-def _payload_text(payload):
-    return ", ".join("%s %s" % (key, json.dumps(value, ensure_ascii=False)) for key, value in (payload or {}).items())
-
-
-def _existence(project, slug):
-    try:
-        return json.loads((Path(project) / "research" / "refs" / slug / "dossier.json").read_text(encoding="utf-8")).get("existence")
-    except (OSError, ValueError, AttributeError):
-        return None
 
 
 def joined(*parts):

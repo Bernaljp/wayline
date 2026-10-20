@@ -856,6 +856,16 @@ def status_view(project, refresh=True):
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
     decided, log_problems = project_log(project, events)
     problems.extend(log_problems)
+    # The account (ticket 89): the decisions shown narrow to those made for the owner and not yet reviewed, and one
+    # line counts them with what waits on the owner.
+    from wayline import account  # the account reads every part of the ledger, this module included
+    try:
+        told = account.account_view(project, full=False)
+    except (ValueError, OSError) as failure:
+        told = None
+        problems.append("account: %s" % failure)
+    unreviewed = set(told["unreviewed"]) if told else set()
+    decided = [entry for entry in decided if entry.get("decision") in unreviewed]
     policy = policy_for(project)
     from wayline.position import position_view  # the position module imports this one
     try:
@@ -880,8 +890,10 @@ def status_view(project, refresh=True):
         "decisions": [dict(_ticket_line(entry, tickets), awaits="owner" if awaits_owner(entry, answering, decider) else "decider",
                            falls_back_at=ask_falls_back_at(harness, view, entry["id"], answering, policy))
                       for entry in _open_decisions(graph)],
-        # Every decision made, the decider's first (decision 10), as the dashboard's decision log orders them.
+        # The decisions made for the owner and not yet reviewed, the decider's first (decision 10; ticket 89).
         "decided": decided,
+        "account": {"decided": told["decided"], "waiting": told["waiting"], "path": told["path"],
+                    "line": "Account: " + account.counts_line(told)} if told else None,
         # The tickets waiting for a person, each with the question and, for one the chain left on the ladder's
         # top rung, the note that says so (decision 16; ticket 61).
         "needs_human": needs_human_view(graph, tickets, events),
@@ -1206,6 +1218,8 @@ def render_status(view):
     lines.extend(_render_decisions(view["decisions"]))
     lines.extend(_render_needs_human(view.get("needs_human") or []))
     lines.extend(_render_decided(view.get("decided") or []))
+    if view.get("account"):
+        lines.append(view["account"]["line"])
     lines.append(_render_window(view["window"]))
     if view.get("hold"):
         lines.append(view["hold"]["line"])
@@ -1288,22 +1302,23 @@ def _short_question(question):
 
 
 def _render_decided(decided):
-    """The decisions made, the decider's first, each with its rationale under it when the decider gave one.
+    """The decisions made for the owner and not yet reviewed, the decider's first, each with its rationale under it.
 
-    A superseded answer is left out: `DECISIONS.md` and the dashboard's log keep it, and here it would only
-    say twice what the answer replacing it says.
+    `status_view` has already narrowed them (ticket 89): the owner's own answers, the superseded ones, and the
+    reviewed ones are in `DECISIONS.md`, the dashboard's log, and the account, not here.
     """
     shown = [entry for entry in decided if not entry.get("superseded")]
     if not shown:
         return []
-    lines = ["decisions made (%d)" % len(shown)]
+    lines = ["decided for you, not yet reviewed (%d)" % len(shown)]
     for entry in shown:
         subject = ("ticket %d" % entry["ticket"] if entry.get("ticket") is not None
                    else entry.get("id") or "intake")
         confidence = "  (confidence %s)" % _number(entry["confidence"]) if entry.get("confidence") is not None else ""
-        lines.append("  %-8s %s: %s%s" % (entry.get("decided_by") or "unknown", subject, _one_line(entry.get("answer")), confidence))
+        lines.append("  %-4s %-8s %s: %s%s" % (entry.get("decision") or "", entry.get("decided_by") or "unknown", subject,
+                                              _one_line(entry.get("answer")), confidence))
         if entry.get("decided_by") == "decider" and entry.get("rationale"):
-            lines.append("           rationale: %s" % _one_line(entry["rationale"]))
+            lines.append("                rationale: %s" % _one_line(entry["rationale"]))
     lines.append("")
     return lines
 

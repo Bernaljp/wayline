@@ -110,6 +110,7 @@ CODE_PUSHED = "code_pushed"  # code pushed `code/`'s split to the code repositor
 TOOL_INSTALLED = "tool_installed"  # a project's tool installed, licensed software recorded, or either failing (decision 17; ticket 82)
 PASSAGE = "passage"  # one passage of a section written to research/passages.jsonl (decision 17; ticket 86)
 SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted against its ticket (decision 17; ticket 98)
+REVIEWED = "reviewed"  # the owner let a decision made for them stand, or reversed it (decision 17; ticket 89)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -253,6 +254,10 @@ K_STANDING = "standing"  # `passage`: an inherited claim's standing, unchecked o
 K_WITHDRAWN = "withdrawn"  # `passage`: true on a withdrawal, which takes the passage it replaces out of the section (ticket 93)
 K_MOVED_FROM = "moved_from"  # `passage`: the inherited passage this one was moved from, in another section (ticket 93)
 K_IDENTIFIER = "identifier"  # `scouted`: the DOI, arXiv id, or exact title the worker asked about
+K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for research/ACCOUNT.md (ticket 89); absent for REPORT.md
+K_EDITED = "edited"  # `report_rendered`: the commit an edit by hand was kept in as it stood, null when it could not be committed
+K_DECISION = "decision"  # `reviewed`: the decision reviewed, D1 onward, by its place among the journal's `decision` events
+K_REVIEW = "review"  # `reviewed`: stand or reverse
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -307,7 +312,7 @@ EVENTS = {
     CHANGE_RECORD: (K_ID, K_SCOPE_KIND, K_MECHANISM, K_FIXTURE),
     TAGGED: (K_TAG,),
     PINNED: (K_TAG, K_PREVIOUS),
-    REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS),
+    REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS, K_REPORT, K_EDITED),
     PAPER_STARTED: (K_VENUE,),
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
     OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY),
@@ -318,6 +323,7 @@ EVENTS = {
     PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES, K_EVIDENCE, K_DOC, K_STANDING, K_REASON,
               K_WITHDRAWN, K_MOVED_FROM),
     SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
+    REVIEWED: (K_DECISION, K_REVIEW, K_ANSWER, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -363,6 +369,8 @@ PAYLOAD_ENUMS = {
     (PASSAGE, K_EVIDENCE): ("supports", "narrows", "contradicts"),
     (FINDING, K_EVIDENCE): ("supports", "narrows", "contradicts"),
     (SCOUTED, K_OUTCOME): ("found", "no such work", "failed"),
+    (REVIEWED, K_REVIEW): ("stand", "reverse"),
+    (REVIEWED, K_BY): ("owner",),
 }
 
 

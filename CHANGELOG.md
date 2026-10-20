@@ -57,6 +57,38 @@ lists it read-only, marked with its tag.
   and the rule and budgets in its place, and the toy project's goal is O1 in `research/objectives.json` with
   `stop_when` in `harness.json`.
 
+- The account (ticket 89; Implementation Decision 17). What wayline did leaves `REPORT.md` for
+  `research/ACCOUNT.md`, rendered by code in the same pass as the report and at the end of every wave, so each
+  wave's ledger commit carries it; a render that changes nothing writes and journals nothing, and one that changes it
+  journals `report_rendered` with `report: account`. Its first line says code writes it, the research is in
+  `REPORT.md`, and anything for the project goes to the conversation; then, empty ones left out: where the project
+  stands (one paragraph: running since when or ended and why, each objective's status, the stopping rule, each budget
+  against its limit); **Decided for you** (each decider decision and conductor default not yet reviewed, `D1`
+  onward by its place among the journal's decisions, with when, what, the answer, the confidence, "on Opus while
+  Fable was spent", and a link to its rationale; superseded ones leave); **Waiting on you** (decision tickets for the
+  owner, tickets needing a person, proposed global changes worded `wayline evolve --apply <id>`, important references
+  that did not resolve, edited reports not yet turned into passages, a code repository still private at the order);
+  **Changed without asking you** (the owner's passages a later passage replaced); **Runs** (the latest in full: its
+  start, end, reason, and waves, each ticket's outcome, verdict, and model, the run-end gates and their scope-downs,
+  drawings, judgments on Opus while Fable was spent, wall-clock and GPU hours, pauses and holds, peak utilization,
+  and turns, minutes, and tokens per ticket, with no dollar figure; earlier runs one row each); **Not pursued**; and
+  **Library** (papers by level, promotions not read in full, dossiers that now resolve to another work). The account
+  is read-only: an edit is noticed by its hash, committed as it stood, named in the banner, and never taken in.
+  `REPORT.md` keeps the goal trajectory, the findings, and the negative results until ticket 90; its events table is
+  gone. `wayline review <id> stand|reverse [--answer "<text>"]` reviews a decision made for the owner, journaled as
+  `reviewed`; every unreviewed one is also an item of an `account_review` batch (marks stand and reverse), whose mark
+  is the same review. A reversal is the owner's own answer through the existing verbs (the decision ticket asked
+  again and answered, the grill question revised, the parked proposal admitted), human-only from then on, and never
+  stops the run; one with no answer reopens the decision human-only and asks in one line.
+
+- One end notice per run end (ticket 89; Implementation Decisions 7 and 17). The conductor sends it after the run's
+  end, and the tick when the conductor died before it: the account's first paragraph, then "N decided for you, M
+  waiting on you" and the path, in place of the conductor's and the tick's several end notices. Other notices follow
+  the autonomy after setup: under `interactive` each one as it arises; under `checkpoints` decision tickets as they
+  open, the rest held for the next conversation or the end notice; under `autonomous` only the end notice and the
+  login's expiry. `wayline status` lists only the decisions not yet reviewed and prints "Account: N decided for you,
+  M waiting on you: research/ACCOUNT.md".
+
 - The rule from code to Methods (ticket 107; Implementation Decision 17). At each acceptance in the worktree, a
   Type-A check (`wayline/methods.py`) reads the ticket's diff in `code/` with parsers that spend no tokens and
   sends the worker back with the list when Methods and the code disagree: every developed method the diff adds or

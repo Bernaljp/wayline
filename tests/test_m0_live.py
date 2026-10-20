@@ -156,7 +156,7 @@ class ShellRunTest(ProjectTestCase):
         events = [json.loads(line)["event"]
                   for line in (target / "research" / "journal.jsonl").read_text(encoding="utf-8").split("\n") if line]
         self.assertEqual(events[0], "run_started")
-        self.assertEqual(events[-1], "run_ended")
+        self.assertEqual([event for event in events if event not in ("report_rendered", "notified")][-1], "run_ended")
         self.assertIn("ticket_done", events)
 
         # The refusal the worker was given reaches the owner as a finding, not as a touch-set
