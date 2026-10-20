@@ -52,7 +52,7 @@ from wayline.figure_checks import check_not_run, check_outcome
 
 __all__ = [
     "READABILITY_CHECK_IDS", "READABILITY_CHECKS", "DEFAULT_AXIS_LABEL_MAX_CHARS", "DEFAULT_HEATMAP_LABEL_MAX_CELLS",
-    "PlotSvg", "SvgText", "SvgShape", "read_svg", "run_readability_checks",
+    "PlotSvg", "SvgText", "SvgShape", "read_svg", "run_readability_checks", "drawn_text",
     "check_rotated_text", "check_axis_label_length", "check_stacked_titles", "check_heatmap_cell_labels",
     "check_flat_summary_mark",
 ]
@@ -516,6 +516,11 @@ def _drawn(string):
         return body.replace("\\", "")
 
     return _MATH.sub(shown, string)
+
+
+def drawn_text(string):
+    """A text as it is drawn, a mathtext source read as the characters it draws (what a drawing's text checks measure)."""
+    return _drawn(string)
 
 
 def check_stacked_titles(plot, policy=None):

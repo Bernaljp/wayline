@@ -1,0 +1,26 @@
+{
+  "id": "plotter",
+  "scope_kind": "global",
+  "capability_summary": "Explores one result in every useful plot at a rest point: one script draws every plot and table and computes every quoted number, each plot explained by its Purpose, Data, and What it shows, with a synthesis.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": ["matplotlib", "seaborn"], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "f5b118beb24f5e3da45f93a763c00d8b5cb9ed218e3aa87812e366ffded14494",
+  "may_judge": false,
+  "output_schema": "result",
+  "allowed_tools": [
+    "Read", "Edit", "Write", "Glob", "Grep",
+    "Bash(python *)", "Bash(python3 *)", "Bash(wayline tools run *)",
+    "Bash(git add *)", "Bash(git commit *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)",
+    "Bash(ls *)", "Bash(cat *)",
+    "Bash(wayline accept*)"
+  ],
+  "disallowed_tools": [
+    "WebFetch", "WebSearch", "NotebookEdit",
+    "mcp__*", "Workflow", "Skill", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "Bash(wayline job add*)", "Bash(wayline consult *)", "Bash(wayline scout *)"
+  ]
+}

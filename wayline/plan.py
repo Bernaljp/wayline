@@ -685,9 +685,14 @@ def check_plan(record, project, existing, index, cut, start=None, base=True, tim
 
 # --- the prompt -------------------------------------------------------------------------------------------
 
+# A drawing ticket is created by code at a rest point (`wayline.drawings`), never cut by the planner; the plan schema's
+# kinds leave it out, so a plan naming one fails its schema check.
+DRAWING_KIND = "drawing"
+
 
 def _work_kinds():
-    return [kind for kind in registry.ticket_kinds() if kind != DECISION_KIND]
+    """The kinds the planner may cut: every kind but a decision ticket and a drawing, which code alone creates (decision 17)."""
+    return [kind for kind in registry.ticket_kinds() if kind not in (DECISION_KIND, DRAWING_KIND)]
 
 
 def registry_text(index):

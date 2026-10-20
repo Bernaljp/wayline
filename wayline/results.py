@@ -332,11 +332,11 @@ def rename(project, identifier, heading):
 
 
 def result_command(args):
-    """`wayline result merge <id> <into> | rename <id> "<heading>" [--project <path>]`."""
+    """`wayline result merge <id> <into> | rename <id> "<heading>" | draw <id> [--project <path>]`."""
     from wayline.cli import parse_args
     from wayline.project import ProjectError, find_project
 
-    parser = argparse.ArgumentParser(prog="wayline result", description="merge or rename the project's results on the owner's word")
+    parser = argparse.ArgumentParser(prog="wayline result", description="merge, rename, or draw again the project's results on the owner's word")
     subparsers = parser.add_subparsers(dest="action", required=True)
     merging = subparsers.add_parser("merge", help="merge one result into another: its findings and headings join that one")
     merging.add_argument("source", help="the result merged, R<n>")
@@ -346,12 +346,24 @@ def result_command(args):
     renaming.add_argument("result", help="the result renamed, R<n>")
     renaming.add_argument("heading", help="its new heading")
     renaming.add_argument("--project", help="the project; the active one by default")
+    drawing = subparsers.add_parser("draw", help="draw a result again now, changed or not: one drawing ticket the run launches (ticket 100)")
+    drawing.add_argument("result", help="the result drawn, R<n>")
+    drawing.add_argument("--project", help="the project; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     try:
         project = find_project(options.project)
-        if options.action == "merge":
+        if options.action == "draw":
+            from wayline import drawings  # the drawings module reads the results; this one never needs it otherwise
+            try:
+                ticket = drawings.draw_again(project, options.result)
+            except drawings.DrawingError as failure:
+                print("wayline result: %s" % failure, file=sys.stderr)
+                return 2
+            record = drawings.read_records(project, options.result)[-1]
+            print("%s-%d opened as drawing ticket %d; the run draws it at its next wave" % (options.result, record["version"], ticket))
+        elif options.action == "merge":
             payload = merge(project, options.source, options.into)
             print("%s (%s) merged into %s" % (payload["id"], payload["heading"], payload["into"]))
         else:

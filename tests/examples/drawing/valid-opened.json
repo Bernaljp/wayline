@@ -1,0 +1,7 @@
+{
+  "result": "R1", "version": 1, "ticket": 7, "rest": "run_end", "status": "open",
+  "findings": ["t2-a1-f1"], "signature": "0123456789abcdef", "opened": "2026-10-20T10:00:00.000Z", "closed": null,
+  "reason": null, "script": null, "numbers": null, "inputs": [], "plots": [], "tables": [], "carried": [], "retired": [],
+  "left_out": [], "synthesis": null, "headline": null, "can_infer": [], "cannot_infer": [], "open_questions": [],
+  "earlier_figures": [], "batch": null
+}

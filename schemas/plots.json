@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "plots",
+  "description": "Every plot and table the project's drawings made (Implementation Decision 17; ticket 100): research/plots.json, written only by wayline.drawings through the ledger. A plot keeps its id across drawings (R4.3, tables R4.T1), redrawn while useful, retired when a drawing leaves it out or the owner dropped it, and never reused. The owner's mark and note come from the plots batches of wayline.batches.",
+  "type": "object",
+  "required": ["schema_version", "plots"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "plots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "result", "kind", "chart_type", "index_entries", "data_view", "status", "headline", "mark", "note", "drawings"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^R[1-9][0-9]*\\.T?[1-9][0-9]*$"},
+          "result": {"type": "string", "pattern": "^R[1-9][0-9]*$"},
+          "kind": {"type": "string", "enum": ["plot", "table"]},
+          "chart_type": {"type": ["string", "null"], "description": "the canonical chart type it draws; null for a table"},
+          "index_entries": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the plot index entries it follows"},
+          "data_view": {"type": "string", "pattern": "\\S"},
+          "status": {"type": "string", "enum": ["current", "retired"]},
+          "headline": {"type": "boolean", "description": "one of the at most four headline plots its latest drawing marked"},
+          "mark": {"type": ["string", "null"], "enum": ["keep", "maybe", "drop", null], "description": "the owner's mark"},
+          "note": {"type": ["string", "null"], "description": "the owner's note, an instruction for the plot's next drawing"},
+          "drawings": {"type": "array", "items": {"type": "string", "pattern": "^R[1-9][0-9]*-[1-9][0-9]*$"}, "description": "the drawings that drew it, in order"}
+        }
+      }
+    }
+  }
+}
