@@ -1,0 +1,8 @@
+{
+  "ticket_id": 9,
+  "status": "done",
+  "summary": "Cited a page by its address.",
+  "references": [
+    {"identifier": "https://openreview.net/forum?id=abc", "note": "A URL is never looked up."}
+  ]
+}

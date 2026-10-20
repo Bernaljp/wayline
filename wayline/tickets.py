@@ -25,7 +25,7 @@ from wayline.ledger import Ledger
 
 __all__ = [
     "TicketError", "RESEARCH", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED",
-    "DECISION", "HARNESS", "HARDEST", "RESULT_HEADING", "works_in_the_harness", "DOCS", "DOCS_BUILD", "machine_acceptance",
+    "DECISION", "DOSSIER", "HARNESS", "HARDEST", "RESULT_HEADING", "works_in_the_harness", "DOCS", "DOCS_BUILD", "machine_acceptance",
     "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
@@ -49,6 +49,8 @@ SATISFIED = ("done", "accepted")
 # The kind whose open tickets pause their subgraph, and the difficulty whose blockers need a verdict.
 DECISION = "decision"
 HARNESS = "harness"
+# The kind the conductor runs as a promotion through absorb, with no worker session (decision 17; ticket 98).
+DOSSIER = "dossier"
 HARDEST = 5
 # The kind whose acceptance always includes the documentation site's machine checks (decision 13).
 DOCS = "docs"

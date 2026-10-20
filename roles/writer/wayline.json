@@ -12,7 +12,7 @@
     "Read", "Edit", "Write", "Glob", "Grep",
     "Bash(git add *)", "Bash(git commit *)", "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)",
     "Bash(ls *)", "Bash(cat *)",
-    "Bash(wayline accept*)", "Bash(wayline consult *)"
+    "Bash(wayline accept*)", "Bash(wayline consult *)", "Bash(wayline scout *)"
   ],
   "disallowed_tools": [
     "WebFetch", "WebSearch", "NotebookEdit", "Agent",
