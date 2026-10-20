@@ -47,4 +47,4 @@ It blocks 111, 113, and 115.
   - the gap listing;
   - the setup comparison on the start-midway fixture (78), with the reading through the fake launcher and the parsers through the tool runner's recordings.
 - [x] The changelog's `## Unreleased` section describes the generated Methods.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
