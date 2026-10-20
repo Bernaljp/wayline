@@ -115,6 +115,7 @@ CONCERN = "concern"  # one concern recorded or changed in research/concerns.json
 REVIEWED = "reviewed"  # the owner let a decision made for them stand, or reversed it (decision 17; ticket 89)
 RESULT = "result"  # one result created at an acceptance, or merged or renamed on the owner's word (decision 17; ticket 90)
 VERIFICATION = "verification"  # one inherited result's standing recorded or changed in research/verifications.json (decision 17; ticket 97)
+DRAWING = "drawing"  # one drawing of a result opened at a rest point, accepted, or failed (decision 17; ticket 100)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -272,6 +273,10 @@ K_RESULT = "result"  # `finding`: the result, R1 onward, the finding joined at i
 K_INTO = "into"  # `result`: the result a merged one went into
 K_ROUTE = "route"  # `verification`: the route of the verdict that changed it, reproduced, ported, reimplemented, or read
 K_RELEASED = "released"  # `verification`: the tickets an unverifiable result stopped blocking
+K_REST = "rest"  # `drawing`: the rest point it was opened at, run_end, checkpoint, or owner
+K_PLOTS = "plots"  # `drawing`: the plot and table ids an accepted drawing drew
+K_LEFT_OUT = "left_out"  # `drawing`: what acceptance left out, each with why
+K_RETIRED = "retired"  # `drawing`: the plots an accepted drawing retired
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -343,6 +348,7 @@ EVENTS = {
     REVIEWED: (K_DECISION, K_REVIEW, K_ANSWER, K_BY),
     RESULT: (K_ID, K_HEADING, K_ACTION, K_INTO, K_FROM, K_BY),
     VERIFICATION: (K_HEADING, K_STANDING, K_ROUTE, K_BY, K_RELEASED),
+    DRAWING: (K_RESULT, K_VERSION, K_TICKET, K_REST, K_OUTCOME, K_PLOTS, K_LEFT_OUT, K_RETIRED, K_REASON),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -357,7 +363,8 @@ PAYLOAD_ENUMS = {
     (TICKET_RESUMED, K_REASON): ("invalid_result", "acceptance_failed", "worker_died", "timeout", "readopted"),
     (ACCEPTANCE, K_WHERE): ("worktree", "rebased", "main"),
     (INTEGRATED, K_RESOLVED_BY): ("none", "integrator"),
-    (TICKET_FAILED, K_NEXT): ("resume", "tier_up", "split", "needs_human"),
+    # `none`: a drawing that still fails takes no step; its result keeps its last accepted drawing (decision 17; ticket 100).
+    (TICKET_FAILED, K_NEXT): ("resume", "tier_up", "split", "needs_human", "none"),
     # Why a ticket was handed to a person when the escalation chain named it (decision 16); absent for any other hand-off.
     (TICKET_NEEDS_HUMAN, K_REASON): ("top_rung",),
     (VERDICT, K_SUBJECT_KIND): ("ticket", "claim", "figure", "spec", "dossier", "paper"),
@@ -403,6 +410,8 @@ PAYLOAD_ENUMS = {
     # Code (a result found or followed, a verdict taken, a needs_human under autonomous), or the owner's or the decider's
     # reply leaving a result unverified.
     (VERIFICATION, K_BY): ("code", "owner", "decider"),
+    (DRAWING, K_REST): ("run_end", "checkpoint", "owner"),
+    (DRAWING, K_OUTCOME): ("opened", "accepted", "failed"),
 }
 
 
