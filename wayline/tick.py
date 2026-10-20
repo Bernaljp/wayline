@@ -1030,7 +1030,9 @@ def due_checks(project):
 
 def report_due(events):
     """Whether the journal gained anything since `REPORT.md` was last rendered, beside the notifications and the render itself."""
-    last = max((index for index, event in enumerate(events) if event.get("event") == REPORT_RENDERED), default=-1)
+    # REPORT.md's own renders: the account's (`report: account`, ticket 89), which every wave journals, renders no report.
+    last = max((index for index, event in enumerate(events)
+                if event.get("event") == REPORT_RENDERED and not (event.get("payload") or {}).get("report")), default=-1)
     return any(event.get("event") not in (NOTIFIED, REPORT_RENDERED) for event in events[last + 1:])
 
 
@@ -1052,10 +1054,24 @@ def send_due_notifications(project, ledger, machine, now, say):
     view = replay.replay(events)
     graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
     titles = {ticket["id"]: ticket["title"] for ticket in read_tickets(project)}
+    from wayline import notify  # the notifier reads the project's journal; the tick imports it only to send
     sent = []
     for event, ticket, text in due_notifications(project.name, events, graph, view, titles, now):
+        if notify.held_back(project, event, ticket, events):
+            continue  # the autonomy keeps it for the next conversation or the end notice (decision 17)
+        if event in notify.END_NOTICES:
+            text = _end_notice(project, text)
         sent.append(_send(machine, project, event, ticket, text, say))
     return sent
+
+
+def _end_notice(project, fallback):
+    """The run end's one notice, from the account (ticket 89), sent here when the conductor died before sending it."""
+    from wayline import account  # the account reads every part of the ledger; only a run's end needs it here
+    try:
+        return account.end_notice(project)
+    except (ProjectError, ValueError, OSError):
+        return fallback
 
 
 def _send(machine, project, event, ticket, text, say):
@@ -1134,6 +1150,9 @@ def notify_refused(project, ledger, machine, reason, failure, say):
     the units off), and the conductor it would have started is what sends every other notification.
     """
     events, _ = ledger.read_events()
+    from wayline import notify
+    if notify.held_back(project, RELAUNCH_REFUSED, None, events):
+        return []
     boundary = max((index for index, event in enumerate(events) if event.get("event") in (RUN_STARTED, RUN_ENDED)), default=-1)
     if any(event.get("event") == NOTIFIED and (event.get("payload") or {}).get("event") == RELAUNCH_REFUSED
            for event in events[boundary + 1:]):

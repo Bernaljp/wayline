@@ -599,26 +599,25 @@ class ConductorDecidesTest(ConductedCase):
         self.assertEqual(log[0]["decided_by"], "decider")
         self.assertEqual((log[0]["ticket"], log[0]["answer"], log[0]["question"]), (2, "one line", "Which form does the beta report take?"))
         provenance.render_report(self.project, offline=True, draft=False)
-        text = (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
-        first = text.split("## 1. Decisions by the decider", 1)[1].split("## 2.", 1)[0]
-        self.assertIn("Ticket 2, *Which form does the beta report take?*: **one line** (confidence 0.7", first)
-        self.assertIn("rationale: POSITION.md names it", first)
+        text = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8")
+        first = text.split("## Decided for you", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("ticket 2, *Which form does the beta report take?*: **one line** (by the decider, confidence 0.7", first)
+        self.assertIn("Rationale: [tickets/02-", first)  # where the rationale already lives, under the ticket's answer
 
-    def test_status_lists_the_deciders_decision_before_the_owners(self):
+    def test_status_lists_the_deciders_decision_and_not_the_owners(self):
         self.script()
         Ledger(self.project).append_event("decision", {"ticket": None, "answer": "the goal stays", "decided_by": "human",
                                                        "rationale": None, "confidence": None})
         self.fake.script(envelope("one line"), role=decider.DECIDER)
         self.conduct()
         view = project.status_view(self.project)
-        self.assertEqual([entry["decided_by"] for entry in view["decided"]], ["decider", "human"])
+        self.assertEqual([entry["decided_by"] for entry in view["decided"]], ["decider"])  # the owner's own is no decision for them (ticket 89)
         text = project.render_status(view)
-        made = text.split("decisions made (2)\n", 1)[1].split("\n\n", 1)[0].split("\n")
+        made = text.split("decided for you, not yet reviewed (1)\n", 1)[1].split("\n\n", 1)[0].split("\n")
         self.assertIn("decider", made[0])
         self.assertIn("ticket 2: one line  (confidence 0.7)", made[0])
         self.assertIn("rationale: POSITION.md names it", made[1])
-        self.assertIn("human", made[2])
-        self.assertIn("the goal stays", made[2])
+        self.assertNotIn("the goal stays", text)
 
     def test_a_refused_answer_turns_the_ticket_human_only_and_the_run_waits_for_the_owner(self):
         self.script()
@@ -762,10 +761,10 @@ class ParkedProposalsTest(ConductedCase):
         self.fake.script(respond=answering({"p1": decision("admit"), "p2": decision("keep parked")}), role=decider.DECIDER)
         self.conduct()
         provenance.render_report(self.project, offline=True, draft=False)
-        text = (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
-        first = text.split("## 1. Decisions by the decider", 1)[1].split("## 2.", 1)[0]
-        self.assertIn("- A parked proposal: **proposal p1: admit**", first)
-        self.assertNotIn("The grill: **proposal", first)
+        text = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8")
+        first = text.split("## Decided for you", 1)[1].split("\n## ", 1)[0]
+        self.assertIn(", parked proposal p1: **admit**", first)
+        self.assertNotIn("Q", first.split("parked proposal p1")[0].rsplit("\n", 1)[-1])
 
 
 class NoParkedProposalsTest(unittest.TestCase):

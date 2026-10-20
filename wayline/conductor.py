@@ -887,11 +887,40 @@ class Conductor:
         self._journal_wave(result)
         self._check_stall(result)
         self._end(result)
+        self._render_account()
+        if result.ended:
+            self._end_notice(result)
         result.ledger_commit = self._commit_ledger(self._render_reproduce())
         self._push_code()
         self._tail()
         self._beat()
         return result
+
+    def _render_account(self):
+        """`research/ACCOUNT.md` rendered by code at the end of every wave, so the wave's ledger commit carries it (ticket 89).
+
+        A render that would leave the file as it is writes and journals nothing. One that fails is said, and the next wave
+        renders it again: the account is a view of the journal, and nothing in the run waits on it.
+        """
+        from wayline import account  # the account reads every part of the ledger
+        try:
+            account.render_account(self.project)
+        except (ValueError, OSError) as failure:
+            self.say("  ACCOUNT.md was not rendered: %s; the next wave renders it again" % failure)
+
+    def _end_notice(self, result):
+        """The one notice of this run's end, sent after `run_ended` and the gates (decision 17; ticket 89).
+
+        It opens with the account's first paragraph, then "N decided for you, M waiting on you" and the path. Sent after
+        `run_ended`, its `notified` claim follows the end, so the tick never sends it again; the tick sends it only when
+        this conductor died between the two.
+        """
+        from wayline import account
+        try:
+            text = account.end_notice(self.project)
+        except (ValueError, OSError) as failure:
+            text = "%s: the run ended (%s); research/ACCOUNT.md could not be read: %s" % (self.project.name, result.reason, failure)
+        self.notify(tick.GOAL_REACHED if result.reason == stopping.GOAL_REACHED else RUN_ENDED, text, self.project, None)
 
     def _push_code(self):
         """Push `code/`'s split once a wave changed it (decision 17): code, never a worker, keeps the code repository's remote.
@@ -1066,10 +1095,7 @@ class Conductor:
             for line in schedule.held_back(graph, autonomy, decider):
                 self.say(line)
             self.ledger.append_event(RUN_ENDED, {"reason": stopping.FRONTIER_EMPTY})
-            result.ended, result.reason = True, stopping.FRONTIER_EMPTY
-            if notice:
-                # After `run_ended`, so the notifier's claim follows it and the tick does not send the end again.
-                self.notify(RUN_ENDED, "%s: %s; the run ended (frontier_empty)" % (self.project.name, notice), self.project, None)
+            result.ended, result.reason = True, stopping.FRONTIER_EMPTY  # `notice` was said; the end notice follows the wave
 
     def _graph(self):
         """`graph.json`, regenerated, with what the next attempt launches at: its difficulty and its rung.
@@ -1525,7 +1551,8 @@ class Conductor:
             words = "the planner could not replan for %s: %s" % (", ".join(named), outcome)
             self.say("  " + words)
             # Not tried again every wave: the owner is told, and answers again (wayline rerun on the ticket) once it is mended.
-            self.notify(RUN_ENDED, "%s: %s; wayline rerun %s asks again" % (
+            # A notice about the decision answered, never a run's end, which has its one notice (ticket 89).
+            self.notify(decisions.DECISION, "%s: %s; wayline rerun %s asks again" % (
                 self.project.name, words, " / ".join(str(identifier) for identifier in sorted(owed))), self.project, None)
             return
         result.escalated.append((None, REPLAN))
@@ -2753,9 +2780,7 @@ class Conductor:
         if left:
             self.say("  ticket(s) %s still have a worker running; it finishes on its own and the next run re-adopts it"
                      % ", ".join(str(identifier) for identifier in left))
-        self.notify(tick.GOAL_REACHED if reason == stopping.GOAL_REACHED else RUN_ENDED, "%s: %s" % (self.project.name, words),
-                    self.project, None)
-        return True
+        return True  # the end notice follows the wave (`_end_notice`)
 
     def _place_jobs(self, result):
         """Launch as many pending jobs of the owed tickets as the free-slot rule places; journal why the others wait."""
@@ -5158,8 +5183,7 @@ class Conductor:
         words = ("the run stalled: %d settling wave(s) without a closed ticket, a finding, or goal progress, and the radius is "
                  "strict, so it stopped" % waves)
         self.say("  " + words)
-        self.reporter()
-        self.notify(RUN_ENDED, "%s: %s; REPORT.md says where it stands" % (self.project.name, words), self.project)
+        self.reporter()  # the end notice follows the wave (`_end_notice`)
 
     def _stops_at_stall(self, result):
         """Whether this wave ends the run on a strict stall: then it launches nothing, since nothing would carry what it started."""

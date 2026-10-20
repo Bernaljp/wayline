@@ -8,8 +8,8 @@ becomes a ticket whose `proposed_by` and `origin` name where it came from, and `
 is journaled. Otherwise it is parked under `research/proposals/` (`wayline.decisions.PROPOSALS`),
 one JSON object per file, never deleted, with the reason in `radius`, `duplicate`, `cap`,
 `blockers`, and `proposal_parked` is journaled; `decisions.parked_proposals` reads the park back
-for the decider (ticket 31) and for the report's "not pursued" section
-(`wayline.provenance._not_pursued`).
+for the decider (ticket 31) and for the account's "Not pursued" section
+(`wayline.account`, ticket 89).
 
 **The radius.** Each proposal declares the radius it belongs to (BRIEF 9.5): `strict` for a
 ticket that traces to a spec claim, `moderate` for a follow-up that probes a claim's failure,
@@ -346,13 +346,16 @@ def admit_proposals(project, proposals, *, origin_ticket, origin_prefix, propose
 
 
 def _decided_answers(events):
-    """`{proposal id: "admit" | "keep parked" | ...}` off the journal's `decision` events (`decider.reconsidered`'s vocabulary)."""
+    """`{proposal id: "admit" | "keep parked" | ...}` off the journal's `decision` events (`decider.reconsidered`'s vocabulary).
+
+    The latest answer wins, the decider's or the owner's: an owner reversing the decider's `keep parked` admits it (ticket 89).
+    """
     prefix = decider.PROPOSAL_ANSWER.split("%s")[0]
     answers = {}
     for event in events:
         payload = event.get("payload") or {}
         text = payload.get("answer") or ""
-        if event.get("event") == DECISION and payload.get("decided_by") == decider.DECIDER and payload.get("ticket") is None \
+        if event.get("event") == DECISION and payload.get("decided_by") in (decider.DECIDER, "human") and payload.get("ticket") is None \
                 and text.startswith(prefix):
             identifier, _, answer = text[len(prefix):].partition(":")
             answers[identifier.strip()] = answer.strip()

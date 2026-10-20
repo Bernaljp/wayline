@@ -840,9 +840,9 @@ def reconsidered(project, events):
     for event in events:
         payload = event.get("payload") or {}
         answer = payload.get("answer") or ""
-        if event.get("event") == DECISION and payload.get("decided_by") == DECIDER and payload.get("ticket") is None \
+        if event.get("event") == DECISION and payload.get("decided_by") in (DECIDER, "human") and payload.get("ticket") is None \
                 and answer.startswith(prefix):
-            found.add(answer[len(prefix):].split(":", 1)[0])
+            found.add(answer[len(prefix):].split(":", 1)[0])  # the owner's own answer (ticket 89) is never put to the decider
     try:
         for ticket in read_tickets(project):
             origin = str(ticket.get("origin") or "")

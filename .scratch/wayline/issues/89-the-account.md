@@ -45,26 +45,26 @@ Not part of this ticket:
 
 **Blocked by:** 79 - Batches and marks; 86 - Passages and the five sections; 87 - Keep-if-better per goal, the stopping rule, and budgets; GOAL.json retires. It blocks 90, 91, 105, 109, 110, 112, and 115.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#236](https://github.com/Bernaljp/wayline/issues/236) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("The account"; "Talking with the project": notices per autonomy; "Defects found while charting": one wording for applying a global change; "Vocabulary the build adds": `reviewed`, the `report` field on `report_rendered`); decisions 1 (the verb table: `review`; `status`), 2 (the event table: `reviewed`, `report_rendered`), 7 (the tick's and the conductor's notices), 11 (the report), 12 (global changes proposed in the account), 15 (the verdicts and decisions on Opus while Fable was spent); M8 criterion 7; user stories 45, 78, 131, 132, 133.
 
-- [ ] `research/ACCOUNT.md` renders by code in the same pass as `REPORT.md`, opens with its first line, holds the seven sections in order with empty ones left out, is committed each wave, and is journaled through `report_rendered` with `report: account`.
-- [ ] "Decided for you" lists each unreviewed decider decision and conductor default with when, what, the answer, the confidence, the Fable note where it applies, and the rationale's link. Superseded ones leave.
+- [x] `research/ACCOUNT.md` renders by code in the same pass as `REPORT.md`, opens with its first line, holds the seven sections in order with empty ones left out, is committed each wave, and is journaled through `report_rendered` with `report: account`.
+- [x] "Decided for you" lists each unreviewed decider decision and conductor default with when, what, the answer, the confidence, the Fable note where it applies, and the rationale's link. Superseded ones leave.
 - [ ] "Waiting on you" lists each kind decision 17 names, and every proposed global change reads `wayline evolve --apply <id>`.
-- [ ] "Runs" shows the latest run in full and earlier runs one row each, with turns, minutes, and tokens per ticket from `ticket_result.usage` and no dollar figure.
-- [ ] `wayline review <id> stand|reverse` journals `reviewed`. Each unreviewed decision is an item in an open batch with the marks stand and reverse. A reversal makes that decision human-only and never stops the run, and "undo it" without an instead reopens it human-only and asks.
-- [ ] An edit to `ACCOUNT.md` is noticed by its hash, committed as it stood, listed in the next render's banner, and never taken in.
-- [ ] One end notice per run end opens with the account's first paragraph, "N decided for you, M waiting on you", and the path, sent by the conductor after the gates or by the tick when the conductor died. Notices follow the per-autonomy rules.
-- [ ] `wayline status` narrows decisions to the unreviewed ones and prints the account line.
-- [ ] v1.0's report sections about what wayline did, and its events table, are no longer rendered into `REPORT.md`, and their content is in the account.
-- [ ] Tests:
+- [x] "Runs" shows the latest run in full and earlier runs one row each, with turns, minutes, and tokens per ticket from `ticket_result.usage` and no dollar figure.
+- [x] `wayline review <id> stand|reverse` journals `reviewed`. Each unreviewed decision is an item in an open batch with the marks stand and reverse. A reversal makes that decision human-only and never stops the run, and "undo it" without an instead reopens it human-only and asks.
+- [x] An edit to `ACCOUNT.md` is noticed by its hash, committed as it stood, listed in the next render's banner, and never taken in.
+- [x] One end notice per run end opens with the account's first paragraph, "N decided for you, M waiting on you", and the path, sent by the conductor after the gates or by the tick when the conductor died. Notices follow the per-autonomy rules.
+- [x] `wayline status` narrows decisions to the unreviewed ones and prints the account line.
+- [x] v1.0's report sections about what wayline did, and its events table, are no longer rendered into `REPORT.md`, and their content is in the account.
+- [x] Tests:
   - the ledger seam over a temporary project, asserting on the rendered file;
   - replayed journals for a run ended by each reason, a reviewed and a reversed decision, and a conductor that died before its notice, idempotence included;
   - the notifier fake under each autonomy;
   - `status` rendered from a fixture journal.
-- [ ] The verb table of decision 1 and the event table of decision 2 gain these rows in the same commit as the code.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes the account and the end notice.
-- [ ] `python -m unittest` passes.
+- [x] The verb table of decision 1 and the event table of decision 2 gain these rows in the same commit as the code.
+- [x] `CHANGELOG.md` under `## Unreleased` describes the account and the end notice.
+- [x] `python -m unittest` passes.

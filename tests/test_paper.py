@@ -670,10 +670,11 @@ class VenueTest(PaperCase):
         self.assertEqual(decider.venue_of("option 1", known), "arxiv")
         self.assertIsNone(decider.venue_of("nature or arxiv", known))
 
-    def test_the_report_lists_the_venue_among_the_decider_s_decisions(self):
+    def test_the_account_lists_the_venue_among_the_decider_s_decisions(self):
+        from wayline import account
         self.write(draft(), verifier=PASSING_GATE, deciders=[decision("arxiv")], venue=None)
-        section = "\n".join(provenance._decider_decisions(provenance.report_context(self.project)))
-        self.assertIn("The paper's venue: **paper venue: arxiv**", section)
+        section = "\n".join(account.account_view(self.project)["sections"]["Decided for you"])
+        self.assertIn("the paper's venue: **arxiv** (by the decider", section)
 
 
 class NothingIsSubmittedTest(unittest.TestCase):

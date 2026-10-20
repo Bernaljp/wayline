@@ -398,7 +398,7 @@ class ClaimFallbackTest(RunCase):
     def test_report_verify_lists_the_claims_it_judged_by_fallback_in_the_report_it_leaves(self):
         hold(self.book)
         set_model_fallback(self.project, "auto")
-        renders = len(self.events("report_rendered"))
+        renders = len(self.report_events())
         out = io.StringIO()
         with worker.use_fake() as fake:
             for _ in range(7):
@@ -408,8 +408,8 @@ class ClaimFallbackTest(RunCase):
             roles = {call.request.role for call in fake.calls}
         self.assertEqual(code, 0, out.getvalue())
         self.assertIn("2 judged on Opus in place of Fable", out.getvalue())
-        self.assertEqual(self.section(6).count("- Verdict `claim_support` on the claim"), 2)
-        self.assertEqual(len(self.events("report_rendered")), renders + 2, "rendered once more after the sampling")
+        self.assertEqual(self.account("Runs").count("- Verdict `claim_support` on the claim"), 2)
+        self.assertEqual(len(self.report_events()), renders + 2, "rendered once more after the sampling")
         self.assertEqual(roles, {"verifier"}, "the second render launches nothing")
 
     def test_a_claim_judged_by_fallback_is_not_judged_again_after_the_reset(self):
@@ -470,24 +470,24 @@ class SpotCheckFallbackTest(AbsorbTestCase):
 class ReportSectionTest(RunCase):
     """Criterion 5: the section after the tickets closed, rendered from the ended run's journal."""
 
-    def test_every_verdict_and_decision_taken_by_fallback_is_listed_after_the_tickets_closed(self):
+    def test_every_verdict_and_decision_taken_by_fallback_is_listed_in_the_accounts_run_after_its_tickets(self):
         self.render()
-        text = self.text()
-        self.assertLess(text.index("## 5. Tickets closed: done and accepted"), text.index("## 6. Judged on Opus while Fable was spent"))
-        sixth = self.section(6)
-        self.assertIn("- Verdict `diff` on the ticket `research/tickets/02` (ticket 2): passed on claude-opus-5 in place of fable", sixth)
-        self.assertIn("- Decision by the decider on ticket 8, *Which held-out split does the goal read?*: **split_b** on claude-opus-5 "
-                      "in place of fable", sixth)
-        self.assertIn("None of them is taken again on Fable after the reset.", sixth)
+        runs = self.account("Runs")
+        self.assertLess(runs.index("| Ticket |"), runs.index("On Opus while Fable was spent"))
+        sixth = runs.split("On Opus while Fable was spent", 1)[1]
+        self.assertIn("- Verdict `diff` on the ticket `research/tickets/02`: passed, on claude-opus-5", sixth)
+        self.assertIn("- Decision by the decider on ticket 8: **split_b**, on claude-opus-5", sixth)
+        self.assertIn("none of them is taken again on Fable after the reset", sixth)
         self.assertNotIn("research/tickets/01", sixth, "a verdict on the table's own model is not listed")
         self.assertNotIn("20000 rows", sixth, "an answer no model gave is not listed")
+        self.assertIn("on Opus while Fable was spent", self.account("Decided for you"))
 
-    def test_a_run_that_judged_nothing_by_fallback_says_so(self):
+    def test_a_run_that_judged_nothing_by_fallback_lists_nothing_of_it(self):
         journal = self.project / "research" / "journal.jsonl"
         kept = [line for line in journal.read_text(encoding="utf-8").splitlines(keepends=True) if '"fallback_from"' not in line]
         journal.write_text("".join(kept), encoding="utf-8")
         self.render()
-        self.assertIn("Nothing was judged by fallback", self.section(6))
+        self.assertNotIn("Fable was spent", self.account("Runs"))
 
 
 # --- the decision ----------------------------------------------------------------------------------------------------

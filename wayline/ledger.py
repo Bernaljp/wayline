@@ -112,6 +112,7 @@ PASSAGE = "passage"  # one passage of a section written to research/passages.jso
 SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted against its ticket (decision 17; ticket 98)
 CONSOLIDATED = "consolidated"  # one consolidation of a section the owner asked for (decision 17; ticket 88)
 CONCERN = "concern"  # one concern recorded or changed in research/concerns.json (decision 17; ticket 96)
+REVIEWED = "reviewed"  # the owner let a decision made for them stand, or reversed it (decision 17; ticket 89)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -260,6 +261,10 @@ K_REPLACED = "replaced"  # `consolidated`: the ids of the passages the consolida
 K_CONSOLIDATES = "consolidates"  # `passage`: on a consolidation's passage, every passage it rewrote (ticket 88)
 K_WRITTEN = "written"  # `consolidated`: the ids of the fewer passages it wrote in their place
 K_PLACE = "place"  # `concern`: where the concern was sorted, tied to objectives, for the order, or declined; null while unsorted
+K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for research/ACCOUNT.md (ticket 89); absent for REPORT.md
+K_EDITED = "edited"  # `report_rendered`: the commit an edit by hand was kept in as it stood, null when it could not be committed
+K_DECISION = "decision"  # `reviewed`: the decision reviewed, D1 onward, by its place among the journal's `decision` events
+K_REVIEW = "review"  # `reviewed`: stand or reverse
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -315,7 +320,7 @@ EVENTS = {
     CHANGE_RECORD: (K_ID, K_SCOPE_KIND, K_MECHANISM, K_FIXTURE),
     TAGGED: (K_TAG,),
     PINNED: (K_TAG, K_PREVIOUS),
-    REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS),
+    REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS, K_REPORT, K_EDITED),
     PAPER_STARTED: (K_VENUE,),
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
     OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY),
@@ -328,6 +333,7 @@ EVENTS = {
     SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
     CONSOLIDATED: (K_SECTION, K_REPLACED, K_WRITTEN, K_MODEL),
     CONCERN: (K_ID, K_STATUS, K_PLACE, K_OBJECTIVES, K_BY),
+    REVIEWED: (K_DECISION, K_REVIEW, K_ANSWER, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -378,6 +384,8 @@ PAYLOAD_ENUMS = {
     # The critique splitter's session, code (a comment thread, a reframe or a drop followed, an answer), the critic's
     # proposal, or the owner's or the decider's placement.
     (CONCERN, K_BY): ("session", "code", "critic", "owner", "decider"),
+    (REVIEWED, K_REVIEW): ("stand", "reverse"),
+    (REVIEWED, K_BY): ("owner",),
 }
 
 

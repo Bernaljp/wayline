@@ -53,8 +53,9 @@ For each record tell the owner, from `research/changes/<id>.json`:
   fixture on the subject as it was, where it must fail, and on the change, where it must pass. A
   fixture that passes on both proves nothing and fails the ticket.
 
-Under autonomy `autonomous` a global change is only proposed: no ticket is filed, `REPORT.md` lists
-it, and `wayline evolve --apply <id>` files its harness ticket when the owner says so.
+Under autonomy `autonomous` a global change is only proposed: no ticket is filed, the account
+(`research/ACCOUNT.md`) lists it under "Waiting on you", and `wayline evolve --apply <id>` files its
+harness ticket when the owner says so.
 
 A change to the rung ladder (a `policy` change whose keys include `tiers` or `difficulty`) is always
 high risk and waits on a decision ticket of class `ladder`. The owner answers it with

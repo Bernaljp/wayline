@@ -142,7 +142,7 @@ class OpenAskTest(AskCase):
         self.assertEqual(driven.wave().launched, [1])
         driven.settle()
         driven.wave()
-        self.assertEqual((self.asks(), self.events("decision_opened"), self.notified), ([], [], []))
+        self.assertEqual((self.asks(), self.events("decision_opened"), [item for item in self.notified if item[0] != "run_ended"]), ([], [], []))
 
     def nobody_asked_under(self, consent):
         self.add(1, difficulty=4)

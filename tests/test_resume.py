@@ -18,7 +18,7 @@ from contextlib import redirect_stderr, redirect_stdout
 
 from tests.paths import EXAMPLES_DIR, FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase
-from tests.test_conductor import FIVE_TICKETS, ConductorCase, done, drive, patch, run_verb
+from tests.test_conductor import FIVE_TICKETS, ConductorCase, done, drive, patch, run_verb, steps
 from tests.test_verdicts import passing
 from wayline import cli, project, replay, tickets, worker
 from wayline.conductor import Conductor, ConductorError
@@ -715,7 +715,7 @@ class RecordedKillResumeTest(ProjectTestCase):
                           for event in appended if event["event"] == "ticket_resumed"],
                          [(3, "worker_died", sessions[3]), (4, "worker_died", sessions[4])])
         self.assertEqual(calls, [("resume", "3", sessions[3]), ("resume", "4", sessions[4]), ("launch", "5", None)])
-        self.assertEqual((appended[-1]["event"], appended[-1]["payload"]), ("run_ended", {"reason": "frontier_empty"}))
+        self.assertEqual((steps(appended)[-1]["event"], steps(appended)[-1]["payload"]), ("run_ended", {"reason": "frontier_empty"}))
         self.assertEqual([ticket["status"] for ticket in tickets.read_tickets(target)], ["done"] * 5)
         self.assertEqual((target / "notes" / "alpha.md").read_text(encoding="utf-8"), "alpha\nalpha extended\n")
         self.assertEqual((target / "reports" / "beta.md").read_text(encoding="utf-8"), "beta\nbeta extended\n")
@@ -766,7 +766,7 @@ class KillResumeTest(ProjectTestCase):
         ended = max(index for index, event in enumerate(events) if event["event"] == "run_ended")
         self.assertEqual(events[ended]["payload"], {"reason": "frontier_empty"})
         # A worker that died is rework, so the run earns a retrospective, filed once `run_ended` is journaled (ticket 45).
-        self.assertEqual([(event["event"], event["payload"]["source"]) for event in events[ended + 1:]], [("feedback", "retrospective")])
+        self.assertEqual([(event["event"], event["payload"]["source"]) for event in steps(events[ended + 1:])], [("feedback", "retrospective")])
         self.assertEqual([(event["ticket"], event["payload"]["reason"]) for event in events if event["event"] == "ticket_resumed"],
                          [(2, "worker_died")])
         self.assertEqual([ticket["status"] for ticket in tickets.read_tickets(target)], ["done"] * 5)

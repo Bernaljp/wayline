@@ -29,6 +29,15 @@ from wayline.worker import Envelope, Patch
 ONE_TICKET = FIXTURES_DIR / "projects" / "one-ticket"
 FIVE_TICKETS = FIXTURES_DIR / "projects" / "five-tickets"
 
+# What a run journals of itself beside its steps: the account's renders and the notifier's claims (ticket 89).
+TOLD = ("report_rendered", "notified")
+
+
+def steps(events):
+    """The events that are a run's steps, without what it told of them (`TOLD`)."""
+    return [event for event in events if event["event"] not in TOLD]
+
+
 HELLO = {"hello.txt": "hello\n"}
 WRONG = {"hello.txt": "goodbye\n"}
 
@@ -109,7 +118,8 @@ class ConductorCase(ProjectTestCase):
         return [event for event in events if name is None or event["event"] == name]
 
     def sequence(self):
-        return [event["event"] for event in self.events()]
+        """The run's steps: the account's renders and the notifier's claims (ticket 89) are told of the run, not steps of it."""
+        return [event["event"] for event in self.events() if event["event"] not in TOLD]
 
     def payload(self, name):
         found = self.events(name)
@@ -695,8 +705,8 @@ class FiveTicketsTest(FiveTicketsCase):
     def test_every_ticket_closes_and_the_run_ends_with_an_empty_frontier(self):
         self.assertEqual(self.statuses(), {1: "done", 2: "done", 3: "done", 4: "done", 5: "done"})
         self.assertTrue(self.waves[-1].ended)
-        self.assertEqual(self.journal[-1]["event"], "run_ended")
-        self.assertEqual(self.journal[-1]["payload"], {"reason": "frontier_empty"})
+        self.assertEqual(steps(self.journal)[-1]["event"], "run_ended")
+        self.assertEqual(steps(self.journal)[-1]["payload"], {"reason": "frontier_empty"})
         self.assertEqual(self.read("notes/alpha.md"), "alpha\nalpha extended\n")
         self.assertEqual(self.read("reports/beta.md"), "beta\nbeta extended\n")
         self.assertIn("alpha.md", self.read("notes/INDEX.md"))
@@ -1114,7 +1124,7 @@ class ShellRunTest(ProjectTestCase):
         self.assertEqual(list((target / conductor.WORKTREES).iterdir()), [])
         events = [json.loads(line) for line in (target / "research" / "journal.jsonl").read_text(encoding="utf-8").split("\n") if line]
         self.assertEqual(events[0]["event"], "run_started")
-        self.assertEqual(events[-1]["event"], "run_ended")
+        self.assertEqual(steps(events)[-1]["event"], "run_ended")
         return target, ran, events
 
     def test_the_fixture_runs_end_to_end_with_the_fake_backend(self):

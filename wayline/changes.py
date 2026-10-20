@@ -32,7 +32,7 @@ targets the project's `.claude/skills/wayline-<name>/`, `.claude/agents/<role>.m
 runs like any ticket, on the project's `main`. A global change targets a path in the harness repository and
 works on the branch `evolve/<id>`, checked out as a worktree of the harness repository under
 `~/.wayline/worktrees/`. Under autonomy `autonomous` a global change is never applied: it is kept as
-`proposed`, no ticket is filed, and `REPORT.md` lists it (`proposal_lines`) with the command that applies it,
+`proposed`, no ticket is filed, and the account lists it (`wayline.account`, ticket 89) with the command that applies it,
 `wayline evolve --apply <id>`, which is the owner's.
 
 **The ladder.** A record whose mechanism is `policy` and whose keys include `tiers` or `difficulty` changes
@@ -1118,7 +1118,7 @@ def after_run(project, reason=None, *, harness_root=HARNESS_ROOT, policy=None, n
 
 
 def proposal_lines(project):
-    """`REPORT.md`'s lines for the global changes the run proposed and did not apply, each with the command that applies it."""
+    """The lines for the global changes the run proposed and did not apply, each with the command that applies it."""
     lines = []
     for record in read_changes(project):
         if record["scope_kind"] != GLOBAL:

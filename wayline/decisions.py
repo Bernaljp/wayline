@@ -729,14 +729,15 @@ def decision_log(events, records=(), tickets=None, bodies=None):
     decision of the owner's, such as the intake's goal, which carries its own words in `answer`. A
     ticket's answer is `superseded` once a later answer or a rerun of the ticket replaces it; a grill
     answer, once a later record in `DECISIONS.md` supersedes its question. Within the decider's and the
-    owner's, the order is the journal's.
+    owner's, the order is the journal's. Each entry carries `decision`, its `D` id (ticket 89), and the `model` and
+    `fallback_from` its event journaled.
     """
     tickets, bodies = tickets or {}, bodies or {}
     records = list(records or ())
     by_answer = {grill.record_payload(record)["answer"]: record for record in records
                  if record.get("id") and record.get("answer") is not None}
     replaced = grill.superseded_by(records)
-    entries, latest = [], {}
+    entries, latest, number = [], {}, 0
     for event in events:
         name, payload = event.get("event"), event.get("payload") or {}
         ticket = _ticket_of(payload, event)
@@ -745,9 +746,12 @@ def decision_log(events, records=(), tickets=None, bodies=None):
             continue
         if name != DECISION:
             continue
+        number += 1
         entry = {"ts": event.get("ts"), "ticket": ticket, "id": None, "question": None, "answer": payload.get("answer"),
                  "decided_by": payload.get("decided_by"), "rationale": payload.get("rationale"),
-                 "confidence": payload.get("confidence"), "superseded": False}
+                 "confidence": payload.get("confidence"), "superseded": False,
+                 # `D<n>`, its place among the journal's decisions: how the account and `wayline review` name it (ticket 89).
+                 "decision": "D%d" % number, "model": payload.get("model"), "fallback_from": payload.get("fallback_from")}
         if ticket is not None:
             if ticket in latest:
                 latest[ticket]["superseded"] = True

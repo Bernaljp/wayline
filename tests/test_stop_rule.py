@@ -103,7 +103,7 @@ class RuleTest(StopRuleCase):
         self.assertEqual((results[-1].reason, self.ended()), ("objectives_closed", ["objectives_closed"]))
         self.assertNotIn("ticket_launched", self.sequence())
         self.assertEqual([event for event, _, _ in self.recorder.sent], ["run_ended"])
-        self.assertIn("the objectives the stopping rule waits on are closed (O1)", self.recorder.sent[0][1])
+        self.assertIn("the objectives the stopping rule waits on closed. Objectives: O1 answered.", self.recorder.sent[0][1])
 
     def test_a_list_rule_ends_once_the_objectives_it_names_are_closed(self):
         open_objective(self.project, "First?")
@@ -140,7 +140,8 @@ class RuleTest(StopRuleCase):
         self.assertNotIn("decision_opened", self.sequence())
         notices = [text for event, text, _ in self.recorder.sent if event == "run_ended"]
         self.assertEqual(len(notices), 1)
-        self.assertIn("the objectives still open: O1", notices[0])
+        self.assertIn("Objectives: O1 open, O2 answered.", notices[0])
+        self.assertIn("the objectives still open: O1", self.said())
 
     def test_a_project_that_records_no_objective_runs_to_its_frontier(self):
         self.assertEqual(self.conduct((done(), patch()))[-1].reason, "frontier_empty")
@@ -164,7 +165,7 @@ class BudgetTest(StopRuleCase):
         results = self.conduct((done(), patch()), clock=lambda: time.time() + 2 * HOUR)
         self.assertEqual((results[-1].reason, self.ended()), ("budget_spent", ["budget_spent"]))
         self.assertNotIn("ticket_launched", self.sequence())
-        self.assertIn("the wall-clock budget of 1 hour(s) is spent", self.recorder.sent[0][1])
+        self.assertIn("a budget was spent", self.recorder.sent[0][1])
 
     def test_a_spent_gpu_budget_ends_the_run_budget_spent(self):
         self.ledger.append_event("job_launched", {"job": "t9-1", "ticket": 9, "gpu_uuids": ["GPU-a", "GPU-b"]}, job="t9-1")
@@ -258,7 +259,8 @@ class OwnerAnswersTest(EmptyFrontierCase):
         self.conduct((done(), patch()))
         notices = [(text, journal) for event, text, journal in seen if event == "run_ended"]
         self.assertEqual(len(notices), 1)
-        self.assertIn("the frontier is empty and the stopping rule", notices[0][0])
+        self.assertIn("no work was left on the frontier. Objectives: O1 open, O2 open.", notices[0][0])
+        self.assertTrue(notices[0][0].endswith("0 decided for you, 2 waiting on you: research/ACCOUNT.md"), "the two asks wait on the owner")
         self.assertEqual(notices[0][1][-1], "run_ended")
 
     def test_the_tick_relaunches_after_the_answer(self):
