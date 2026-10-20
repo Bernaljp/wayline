@@ -303,6 +303,33 @@ class ChangedWithoutAskingTest(AccountCase):
         self.assertIn("Your passage %s in Discussion" % mine["id"], section)
         self.assertIn("The gain holds on every split.", section)
 
+    def test_a_finding_replacing_an_owners_results_passage_is_listed(self):
+        from wayline import sections
+        mine = sections.add_passage(self.project, "results", "Where the gain holds", "The gain holds on every split.", by="owner")
+        sections.file_finding(self.project, {"id": "t9-a1-f1", "ticket": 9, "text": "The gain holds on split_b only.",
+                                             "provenance": ["results/interactions/summary.json#auroc_mean"], "negative": False,
+                                             "heading": "Where the gain holds", "replaces": mine["id"], "objectives": [],
+                                             "reason": "the per-split runs show no gain on split_a"})
+        self.render()
+        section = self.section("Changed without asking you")
+        self.assertIn("Your passage %s in Results" % mine["id"], section)
+        self.assertIn("t9-a1-f1", section)
+        self.assertIn("the per-split runs show no gain on split_a", section)
+
+    def test_a_passage_replacing_a_consolidation_of_the_owners_text_is_listed_and_the_consolidation_is_not(self):
+        from wayline import sections
+        mine = sections.add_passage(self.project, "discussion", "Scope", "The gain holds on every split.", by="owner")
+        merged = sections.add_passage(self.project, "discussion", "Scope", "The gain holds on every split we ran.", by="consolidation",
+                                      replaces=mine["id"], consolidates=[mine["id"]])
+        later = sections.add_passage(self.project, "discussion", "Scope", "The gain holds on split_b only {res:t3-a1/results/"
+                                     "interactions/summary.json#auroc_mean}.", by="t3-a1", replaces=merged["id"], ticket=3,
+                                     reason="split_a shows none")
+        self.render()
+        section = self.section("Changed without asking you")
+        self.assertIn("by %s" % later["id"], section)
+        self.assertNotIn("by %s" % merged["id"], section, "a consolidation the owner asked for changed nothing without asking")
+        self.assertEqual(section.count("- "), 1)
+
 
 class EditRuleTest(AccountCase):
     def test_an_edit_is_committed_as_it_stood_listed_in_the_next_banner_and_never_taken_in(self):

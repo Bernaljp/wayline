@@ -598,7 +598,7 @@ class ConductorDecidesTest(ConductedCase):
         log = decisions.decisions_view(self.project)["log"]
         self.assertEqual(log[0]["decided_by"], "decider")
         self.assertEqual((log[0]["ticket"], log[0]["answer"], log[0]["question"]), (2, "one line", "Which form does the beta report take?"))
-        provenance.render_report(self.project, offline=True, draft=False)
+        provenance.render_report(self.project, offline=True)
         text = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8")
         first = text.split("## Decided for you", 1)[1].split("\n## ", 1)[0]
         self.assertIn("ticket 2, *Which form does the beta report take?*: **one line** (by the decider, confidence 0.7", first)
@@ -760,7 +760,7 @@ class ParkedProposalsTest(ConductedCase):
         self.fake.script(respond=answering({"p1": decision("admit"), "p2": decision("keep parked")}), role=decider.DECIDER)
         self.fake.script(respond=answering({"p1": decision("admit"), "p2": decision("keep parked")}), role=decider.DECIDER)
         self.conduct()
-        provenance.render_report(self.project, offline=True, draft=False)
+        provenance.render_report(self.project, offline=True)
         text = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8")
         first = text.split("## Decided for you", 1)[1].split("\n## ", 1)[0]
         self.assertIn(", parked proposal p1: **admit**", first)

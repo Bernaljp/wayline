@@ -18,7 +18,9 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
   harness changes (one wording: `wayline evolve --apply <id>`), the important unresolved references, the reports
   edited and not yet turned into passages, and a code repository still private at the order. The outline's open
   proposals join this list as one line with their count once the outline proposes (ticket 104).
-- **Changed without asking you**: the owner's passages a later passage replaced, with its reason and evidence.
+- **Changed without asking you**: every passage and finding journaled with `replaces_owner` (ticket 88), each with
+  the owner's passage (or the consolidation made from the owner's text) it replaced, its reason, and its evidence; a
+  consolidation the owner asked for is not listed (ticket 90).
   The merges made at setup join it once the repeated-claims check makes them (ticket 95).
 - **Runs**: the latest run in full, earlier runs one table row each. Tokens, turns, and minutes come from
   `ticket_result`; no dollar figure is journaled, so none is shown.
@@ -59,7 +61,7 @@ from pathlib import Path
 from wayline import batches, grill, pacing, replay, tickets
 from wayline.cli import parse_args
 from wayline.ledger import (
-    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, PACING, PAPER_STARTED, PASSAGE, PAUSED,
+    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, FINDING, PACING, PAPER_STARTED, PASSAGE, PAUSED,
     PROMOTED, PROPOSAL_ADMITTED, PROPOSAL_PARKED, REPORT_RENDERED, REVIEWED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
     TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN,
     TICKET_RESULT, VERDICT, WAVE, Ledger, LedgerError, now_ts,
@@ -378,21 +380,25 @@ def _private_repository(context):
 
 
 def _changed(context):
+    """Every passage and finding the journal carries with `replaces_owner` (ticket 88): each replaced an owner's passage, or a
+    consolidation made from the owner's text, without asking. A consolidation the owner asked for is never flagged."""
     from wayline import sections
     try:
-        passages = sections.read_passages(context.project)
+        known = {item.get("id"): item for item in sections.read_passages(context.project)}
     except (OSError, ValueError, LedgerError):
-        return []
-    owners = {item.get("id"): item for item in passages if item.get("by") == OWNER}
+        known = {}
     lines = []
-    for item in passages:
-        replaced = owners.get(item.get("replaces"))
-        if replaced is None or item.get("by") == OWNER:
+    for event in context.events:
+        name, payload = event.get("event"), event.get("payload") or {}
+        if name not in (PASSAGE, FINDING) or not payload.get("replaces_owner"):
             continue
+        replaced = known.get(payload.get("replaces")) or {}
+        section = payload.get("section") if name == PASSAGE else "results"
+        by = payload.get("by") if name == PASSAGE else "a finding of ticket %s" % payload.get("ticket")
         lines.append("- Your passage %s in %s, \"%s\", was replaced by %s (%s): %s%s." % (
-            replaced["id"], sections.TITLES.get(replaced.get("section"), replaced.get("section")), _one_line(replaced.get("text")),
-            item.get("id"), item.get("by"), _one_line(item.get("reason") or "no reason was given"),
-            "; the evidence %s it" % item["evidence"] if item.get("evidence") else ""))
+            payload.get("replaces"), sections.TITLES.get(section, section), _one_line(replaced.get("text")) or "no longer in the log",
+            payload.get("id"), by, _one_line(payload.get("reason") or "no reason was given"),
+            "; the evidence %s it" % payload["evidence"] if payload.get("evidence") else ""))
     return lines
 
 

@@ -433,12 +433,12 @@ class DiscardedTest(GoalTicketCase):
         self.assertIn("ticket/1-a1", self.branches())
         self.assertEqual([len(self.events(name)) for name in ("progress", "discarded")], [2, 1])
 
-    def test_the_report_draws_the_discard_on_the_trajectory(self):
+    def test_the_report_lists_the_discard_under_its_goal(self):
         from wayline import provenance
-        provenance.render_report(self.project, offline=True, draft=False)
+        provenance.render_report(self.project, offline=True)
         text = (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
         self.assertIn("ticket 1: mean 0.85 against the best 0.8, standard deviation 0.05, seeds 3", text)
-        self.assertIn("(ticket 1): Interaction terms lift the held-out AUROC.", text)
+        self.assertIn("(negative) Interaction terms lift the held-out AUROC.", text)
         self.assertNotIn("res:unmanifested/.#", text)
 
     def test_a_rerun_starts_from_main_and_leaves_the_discarded_change_where_it_is(self):

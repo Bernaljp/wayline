@@ -99,11 +99,11 @@
       "difficulty": 3,
       "blocked_by": ["T4", "T5", "T6"],
       "touches": ["analysis/"],
-      "acceptance": {"machine": ["test -f analysis/findings.md"], "quality": ["Does every finding cite the summary it is read from?"]},
+      "acceptance": {"machine": ["test -f analysis/criteria.md"], "quality": ["Does every finding cite the summary it is read from?"]},
       "objectives": [],
       "context_pack": ["research/SPEC.md#success-criteria", "results/e1/summary.json", "results/e2/summary.json", "results/e3/summary.json"],
       "origin": "research/SPEC.md#success-criteria",
-      "demo": "`analysis/findings.md` states for C1, C2, and C3 whether the success criterion held, with the numbers."
+      "demo": "`analysis/criteria.md` states for C1, C2, and C3 whether the success criterion held, with the numbers."
     },
     {
       "key": "T8",

@@ -6,13 +6,16 @@ written through the ledger, the report is rendered, and what is asserted is the 
 editing the rendered file and rendering again.
 """
 
-import json
+import io
 import re
 import subprocess
+from pathlib import Path
 
 from tests.projects import ProjectTestCase, open_goal
+from tests.test_conductor import ConductorCase, done, drive, patch
 from tests.test_results import file
-from wayline import provenance, results, sections, worker
+from wayline import provenance, results, sections, tick, worker
+from wayline.conductor import Conductor
 from wayline import project as projects
 from wayline.ledger import Ledger
 from wayline.objectives import add_objective, change_objective
@@ -233,3 +236,22 @@ class EditRuleTest(GeneralReportCase):
         self.render()
         self.render()
         self.assertFalse(any("edited" in event["payload"] for event in self.events("report_rendered") if not event["payload"].get("report")))
+
+
+class WhenItRendersTest(ConductorCase):
+    """After every integration, by the conductor, and from the tick, both offline."""
+
+    def test_the_conductor_renders_it_after_a_wave_that_integrated_a_ticket(self):
+        conductor = Conductor(self.project, out=io.StringIO())
+        result = done(findings=[{"text": "The file says hello.", "provenance": "hello.txt#L1", "heading": "What does the file say?"}])
+        with worker.use_fake() as fake:
+            fake.script(result, patch=patch())
+            drive(conductor, waves=2)
+            self.assertEqual([call.request.role for call in fake.calls], ["coder"], "the render launches no session")
+        text = (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
+        self.assertIn("## 2. Headlines", text)
+        self.assertIn("R1 What does the file say? (supported): The file says hello.", text)
+
+    def test_the_tick_renders_the_general_report(self):
+        path = tick.render_report(self.project)
+        self.assertIn("## 4. Objectives", Path(path).read_text(encoding="utf-8"))
