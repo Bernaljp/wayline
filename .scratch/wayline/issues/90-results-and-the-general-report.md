@@ -29,26 +29,26 @@ Not part of this ticket:
 
 **Blocked by:** 86 - Passages and the five sections; 87 - Keep-if-better per goal, the stopping rule, and budgets; GOAL.json retires; 89 - The account. It blocks 100, 103, 104, 109, 110, and 115.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#237](https://github.com/Bernaljp/wayline/issues/237) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("Results and the reports": results, the general report, the numbers check, the edit rule; "Vocabulary the build adds": `report` on `report_rendered`, the conversation's verbs for result merges and renames); decisions 1 (the verb table: `result merge`, `result rename`; `report`), 2 (the event table: `report_rendered`), 11 (verification, provenance, and the report); M8 criterion 5; user stories 38, 111, 122, 123, 125.
 
-- [ ] A new Results heading gets an R id at acceptance. A finding reusing a heading or replacing a finding joins that result, and a result's objectives are the union of its findings'.
-- [ ] `wayline result merge` and `wayline result rename` record the owner's merge or rename through the ledger and re-render.
-- [ ] `REPORT.md` renders by code alone in decision 17's order, after every integration and from the tick, with the summary (or its fallback), headlines, the table with standings, objectives in their order with a goal's kept values, results beyond the objectives, inherited claims unchecked per section, and inferences with open questions.
-- [ ] Only current findings show, each replacement with its one-line note, and negative results stay marked and flagged in the table.
-- [ ] The Results section renders from the same findings under the same headings.
-- [ ] `findings.md`, `add_finding`, `render_findings`, and the report's writer session are gone, and no test or module refers to them.
-- [ ] The numbers check at acceptance matches every number in a finding against its `res` locators with rounding, percents, and the scales 100 and 1000, exempts counts in words and spec parameters, sends each unmatched sentence to a fresh verifier, and sends the ticket back on a failure.
-- [ ] An edited `REPORT.md` is committed as it stood, listed in the next banner, and never taken in.
-- [ ] The account's "Changed without asking you" (ticket 89) lists every passage and finding journaled with `replaces_owner` (ticket 88), reading that flag. It now re-derives the list from `passages.jsonl` alone, so it misses a finding that replaces an owner's Results passage and a passage that replaces a consolidation made from the owner's text, and it lists a consolidation's own replacements, which the owner asked for.
-- [ ] Tests:
+- [x] A new Results heading gets an R id at acceptance. A finding reusing a heading or replacing a finding joins that result, and a result's objectives are the union of its findings'.
+- [x] `wayline result merge` and `wayline result rename` record the owner's merge or rename through the ledger and re-render.
+- [x] `REPORT.md` renders by code alone in decision 17's order, after every integration and from the tick, with the summary (or its fallback), headlines, the table with standings, objectives in their order with a goal's kept values, results beyond the objectives, inherited claims unchecked per section, and inferences with open questions.
+- [x] Only current findings show, each replacement with its one-line note, and negative results stay marked and flagged in the table.
+- [x] The Results section renders from the same findings under the same headings.
+- [x] `findings.md`, `add_finding`, `render_findings`, and the report's writer session are gone, and no test or module refers to them.
+- [x] The numbers check at acceptance matches every number in a finding against its `res` locators with rounding, percents, and the scales 100 and 1000, exempts counts in words and spec parameters, sends each unmatched sentence to a fresh verifier, and sends the ticket back on a failure.
+- [x] An edited `REPORT.md` is committed as it stood, listed in the next banner, and never taken in.
+- [x] The account's "Changed without asking you" (ticket 89) lists every passage and finding journaled with `replaces_owner` (ticket 88), reading that flag. It now re-derives the list from `passages.jsonl` alone, so it misses a finding that replaces an owner's Results passage and a passage that replaces a consolidation made from the owner's text, and it lists a consolidation's own replacements, which the owner asked for.
+- [x] Tests:
   - the ledger seam over a temporary project, asserting on the files written;
   - the numbers check as a Type-A function with the fake launcher for the verifier;
   - an edited report tested by editing the rendered file and rendering again;
   - replayed journals for clustering by heading and by `replaces`.
-- [ ] The verb table of decision 1 and the event table of decision 2 gain these rows in the same commit as the code.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes results and the general report.
-- [ ] `python -m unittest` passes.
+- [x] The verb table of decision 1 and the event table of decision 2 gain these rows in the same commit as the code.
+- [x] `CHANGELOG.md` under `## Unreleased` describes results and the general report.
+- [x] `python -m unittest` passes.
