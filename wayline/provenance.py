@@ -41,7 +41,7 @@ __all__ = [
     "sha256_of", "read_manifest", "manifest_paths", "register_artifact",
     "read_findings", "current_findings", "add_finding", "render_findings",
     "commit_threshold_bytes", "oversized_tracked_files",
-    "TAG_RE", "RES_TAG_RE", "REF_TAG_RE", "Sentence", "sentences", "parse_tag", "strip_tags",
+    "TAG_RE", "RES_TAG_RE", "REF_TAG_RE", "REF_IDENTIFIER_TAG_RE", "Sentence", "sentences", "parse_tag", "ref_slug", "identifier_index", "strip_tags",
     "REPORT", "CLAIMS_CACHE", "PROSE_CACHE", "SECTIONS", "SENTENCE_CLASSES", "RECORDS_BEGIN", "RECORDS_END",
     "UsageLimited", "Lint", "Claim", "Rendered", "prose_sentences", "sentence_hash", "render_citations", "restore_tags",
     "read_claims_cache", "classify", "lint", "lint_report", "tagged_claims", "sample_size", "sample_claims",
@@ -60,6 +60,10 @@ RUN_ID_RE = re.compile(r"^t[0-9]+-a[0-9]+$")
 TAG_RE = re.compile(r"\{(res|ref):([^{}]+)\}")
 RES_TAG_RE = re.compile(r"^(?P<run_id>t[0-9]+-a[0-9]+)/(?P<artifact>[^#]+)#(?P<locator>.+)$")
 REF_TAG_RE = re.compile(r"^(?P<slug>[a-z0-9][a-z0-9._-]*)#(?P<locator>.+)$")
+# A `ref` tag may name its work by identifier in place of the slug (decision 17; ticket 98): `{ref:doi:10.1038/x#abstract}`,
+# `{ref:arxiv:1802.03426#abstract}`, mapped to a slug through position's identifier index. An inherited citation is
+# an identifier tag with no locator; a slug always names one.
+REF_IDENTIFIER_TAG_RE = re.compile(r"^(?P<identifier>(?:[Dd][Oo][Ii]|[Aa][Rr][Xx][Ii][Vv]):[^#\s]+)(?:#(?P<locator>.+))?$")
 
 # Where one sentence ends: a full stop, question mark or exclamation mark, then any closing
 # quotes, then the provenance tags that belong to the sentence just ended, and then either the
@@ -302,9 +306,33 @@ def parse_tag(tag):
     kind, _, rest = str(tag or "").partition(":")
     if kind not in ("res", "ref") or not rest:
         return None, None
+    if kind == "ref":
+        named = REF_IDENTIFIER_TAG_RE.match(rest)
+        if named is not None:
+            prefix, _, value = named.group("identifier").partition(":")
+            return kind, {"identifier": "%s:%s" % (prefix.lower(), value), "locator": named.group("locator")}
     pattern = RES_TAG_RE if kind == "res" else REF_TAG_RE
     found = pattern.match(rest)
     return kind, (found.groupdict() if found else None)
+
+
+def ref_slug(parts, index):
+    """The slug a parsed `ref` tag names: its own, or its identifier's through `index` (position's identifier index); None when unknown."""
+    if not parts:
+        return None
+    if parts.get("slug"):
+        return parts["slug"]
+    from wayline.position import slug_for_identifier  # position reaches this module through specify and the decider
+    return slug_for_identifier(index or {}, parts.get("identifier"))
+
+
+def identifier_index(project):
+    """Position's identifier index over the project's dossiers, `{}` when there are none to read."""
+    from wayline.position import identifier_index as index_of
+    try:
+        return index_of(project)
+    except (OSError, ValueError):
+        return {}
 
 
 def strip_tags(text):
@@ -670,6 +698,12 @@ class _Resolver:
         self.project = Path(project)
         entries = read_manifest(self.project).get("entries", [])
         self.manifested = {(entry.get("run_id"), entry.get("path")) for entry in entries}
+        self._index = None
+
+    def index(self):
+        if self._index is None:
+            self._index = identifier_index(self.project)
+        return self._index
 
     def problem(self, tag):
         if tag.startswith("res:unmanifested/"):
@@ -684,7 +718,9 @@ class _Resolver:
             if runs:
                 return UNRESOLVED_RES, "manifest.json has %s from run %s, not from run %s" % (parts["artifact"], ", ".join(runs), parts["run_id"])
             return UNRESOLVED_RES, "%s is not in manifest.json" % parts["artifact"]
-        slug = parts["slug"]
+        slug = ref_slug(parts, self.index())
+        if slug is None:
+            return UNRESOLVED_REF, "no dossier is filed under %s; check it with `wayline scout`" % parts.get("identifier")
         research = self.project / "research"
         try:
             dossier = json.loads((research / "refs" / slug / "dossier.json").read_text(encoding="utf-8"))
@@ -806,7 +842,7 @@ def claim_subject(claim, document=REPORT_PATH):
     return "%s#claim-%s" % (document, digest[:16])
 
 
-def claim_paths(claim):
+def claim_paths(claim, index=None):
     """What the verifier opens for one claim: each tag's artifact, with its locator."""
     paths = []
     for tag in claim.tags:
@@ -814,7 +850,8 @@ def claim_paths(claim):
         if kind == "res" and parts:
             paths.append("%s#%s" % (parts["artifact"], parts["locator"]))
         elif kind == "ref" and parts:
-            paths.append("research/refs/%s/#%s" % (parts["slug"], parts["locator"]))
+            slug = ref_slug(parts, index)
+            paths.append("research/refs/%s/#%s" % (slug or parts.get("identifier"), parts["locator"] or "dossier"))
     return paths
 
 
@@ -857,6 +894,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
         fall_back, held = gates.fallback_now(project, "the claim verdicts"), False
     except gates.FableHeld:
         fall_back, held = False, True
+    index = identifier_index(project)
     for claim in chosen:
         subject = claim_subject(claim, document)
         if subject in verdicted:
@@ -868,7 +906,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
             outcome["waiting"].append(subject)
             continue
         taken = gates.verdict(
-            CLAIM, subject, CLAIM_QUESTION % one_line(claim.text), claim_paths(claim), CLAIM_SCOPE,
+            CLAIM, subject, CLAIM_QUESTION % one_line(claim.text), claim_paths(claim, index), CLAIM_SCOPE,
             project=project, author_model=author, verdict_type=gates.CLAIM_SUPPORT, harness_root=harness_root,
             policy=policy, ledger=book, fall_back=fall_back,
         )
@@ -913,7 +951,7 @@ def _finding_authors(context):
 def _claim_ticket(project, book, claim, subject, taken, from_finding, document=REPORT_PATH):
     if gates.open_writing_ticket(project, subject) is not None:
         return None
-    paths = claim_paths(claim)
+    paths = claim_paths(claim, identifier_index(project))
     remedy = ("The sentence is a finding as its ticket recorded it, and the report renders findings as "
               "recorded. Return in the result a finding that says only what the artifact supports, with its "
               "provenance; the ledger records it and the next render reads it."

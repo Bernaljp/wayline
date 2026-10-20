@@ -144,7 +144,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, sections, software, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -172,6 +172,8 @@ BRANCH = "ticket/%s"
 LEDGER_COMMIT = "ledger: wave %d"
 # The acceptance result the declared-sections check of decision 17 adds in the worktree (ticket 86).
 SECTIONS_CHECK = "wayline: the declared sections got their passages"
+# The acceptance result the check of a ticket's references adds in the worktree (decision 17; ticket 98).
+REFERENCES_CHECK = "wayline: every cited work is a dossier or listed, at a locator its level holds"
 # What the owner is told when the code repository's remote refuses code/'s split (decision 17; the `notified` event's `event`).
 CODE_PUSH_REJECTED = "code_push_rejected"
 # The heartbeat is rewritten every wave; committing it would make every wave a ledger commit.
@@ -789,6 +791,12 @@ class Conductor:
         # this run has taken, so a cut that failed is not launched again at every wave.
         self.planner = self._cut
         self.plan_pre_check = True
+        # The fetcher the check of a ticket's references runs the scout on (ticket 98): None for the project's cache.
+        self.scout_fetcher = None
+        # The level-2 read a `dossier` ticket runs as its promotion, `(project, slug) -> report` (ticket 98): None for
+        # `absorb.absorb_level_2`; and the inventory it builds first when the paper has none, None for `dossier.build_inventory`.
+        self.absorb_dossier = None
+        self.dossier_inventory = None
         self.reporter = self._render_report
         self._replanned = None
         # The evolve loop (ticket 45, decision 12). A policy nobody handed in is read again every wave, so a local change
@@ -1430,9 +1438,12 @@ class Conductor:
         of their own; the wave waits only until each process exists or its launch failed, so
         `launched` names exactly the tickets whose `ticket_launched` was journaled.
         """
-        attempts = []
+        attempts, promotions = [], []
         for entry in picks:
             ticket, body = self._ticket(entry["id"])
+            if ticket["kind"] == tickets.DOSSIER:
+                promotions.append(ticket)  # no worker session: a promotion through absorb, run once the workers started (ticket 98)
+                continue
             attempt = _Attempt(ticket, body, int(entry.get("attempt") or 0) + 1, self._worktree(entry["id"]))
             try:
                 self._begin(attempt, entry)
@@ -1449,6 +1460,49 @@ class Conductor:
                 self.flight[attempt.id] = attempt
             else:
                 self._carry(attempt, result)  # the launcher refused it before a process started
+        for ticket in promotions:
+            self._beat()
+            self._run_dossier(ticket, result)
+            self._beat()
+
+    def _run_dossier(self, ticket, result):
+        """Run a `dossier` ticket as a promotion through absorb, with no worker session (decision 17; ticket 98).
+
+        The level-2 read runs in the wave, as the decider's session does: it is code's and the absorb session's
+        work, not a worker's, so no `ticket_launched` is journaled and nothing is owed a restarted conductor. Its
+        `promoted` and `absorbed` are journaled by the promotion and the read, then `ticket_done`; a read that fails
+        its coverage audit hands the ticket to a person, since no session of its own could be resumed. A promotion
+        beyond the phase's budget opens its decision ticket and the dossier ticket waits on it, blocked by it.
+        """
+        from wayline import absorb
+        identifier = ticket["id"]
+        self.say("wave %d: ticket %d %s (a promotion through absorb, no worker session)" % (self.number, identifier, ticket["title"]))
+        answers = {number: (answer or {}).get("answer") for number, answer in self.view.answers.items()}
+        try:
+            run = absorb.run_dossier_ticket(self.project, ticket, tickets_by_id={fields["id"]: fields for fields in tickets.read_tickets(self.project)},
+                                            answers=answers, absorb=self.absorb_dossier, inventory=self.dossier_inventory, ledger=self.ledger)
+        except (ValueError, OSError) as failure:
+            run = {"outcome": absorb.FAILED, "slug": None, "reason": str(failure), "decision": None}
+        if run["outcome"] == absorb.WAITS:
+            fields, body = self._ticket(identifier)
+            blocked = sorted(set(fields.get("blocked_by") or []) | {run["decision"]})
+            tickets.write_ticket(self.ledger, dict(fields, blocked_by=blocked), body)
+            self.say("  ticket %d waits on decision ticket %d: promoting %s is %s" % (identifier, run["decision"], run["slug"], run["reason"]))
+            return
+        if run["outcome"] == absorb.FAILED:
+            question = "its promotion through absorb did not finish: %s" % run["reason"]
+            self.ledger.append_event(TICKET_NEEDS_HUMAN, {"ticket": identifier, "question": question}, ticket=identifier)
+            self._set_status(identifier, "needs_human", ["**Promotion:** %s." % run["reason"]])
+            self.say("  ticket %d needs a person: %s" % (identifier, question))
+            self._tell_owner(identifier, question)
+            result.failed.append(identifier)
+            return
+        note = ("**Promotion:** the promotion of `%s` was answered no; nothing was read." % run["slug"] if run["outcome"] == absorb.DECLINED
+                else "**Promotion:** `%s` read in full at level 2." % run["slug"])
+        self.ledger.append_event(TICKET_DONE, {"ticket": identifier}, ticket=identifier)
+        self._set_status(identifier, "done", [note])
+        self.say("  ticket %d done: %s" % (identifier, note.split(":** ", 1)[1]))
+        result.done.append(identifier)
 
     def _run_session(self, attempt, kind, message=None):
         """Start one session of an attempt, its launch or a resume, in a thread of its own."""
@@ -1859,6 +1913,7 @@ class Conductor:
             max_chars=attempt.tier.context_chars,
             budget={"max_turns": attempt.tier.max_turns, "max_minutes": attempt.tier.max_minutes},
             consult_max=(self.policy.get("consultant") or {}).get("max_questions_per_ticket", worker.CONSULT_MAX),
+            scout_max=(self.policy.get("scout") or {}).get("calls_per_ticket", worker.SCOUT_MAX),
             notes=notes,
             failure=self._last_failure(attempt),
             sections=sections.pack_text(self.ledger, sections.declared(attempt.ticket), attempt.tier.context_chars),
@@ -3435,7 +3490,7 @@ class Conductor:
         commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
-            results = list(results) + self._sections_check(attempt)
+            results = list(results) + self._sections_check(attempt) + self._references_check(attempt)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
             results = list(results) + [simulated]
@@ -3458,6 +3513,26 @@ class Conductor:
         problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
         return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
                  "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
+
+    def _references_check(self, attempt):
+        """The check of a ticket's references (decision 17; ticket 98) as one acceptance result, or none for a result that cites nothing.
+
+        Every cited work must be a dossier or listed in `references`, the scout runs free on the listed works no
+        dossier holds, and a locator must name what the dossier holds at its level; a problem sends the worker back
+        like any machine criterion that failed in its worktree, and a service failure passes with its flag.
+        """
+        result = attempt.result or {}
+        if not result.get("references") and not references.cited(result):
+            return []
+        try:
+            check = references.check_references(self.project, attempt.id, result, fetcher=self.scout_fetcher, ledger=self.ledger)
+        except (ValueError, OSError) as failure:
+            return [{"cmd": REFERENCES_CHECK, "exit_code": 1, "seconds": 0.0, "tail": "the references could not be checked: %s" % failure}]
+        problems = check["problems"]
+        tail = "\n".join(problems) if problems else "every cited work is a dossier or listed"
+        if check["flagged"]:
+            tail += "\naccepted with the retry flag, a service having failed: %s" % ", ".join(check["flagged"])
+        return [{"cmd": REFERENCES_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0, "tail": tail}]
 
     def _timeout(self):
         timeout = self.policy.get("acceptance_timeout_s", 600)

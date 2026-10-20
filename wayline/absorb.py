@@ -48,7 +48,7 @@ __all__ = [
     "Context", "Fanout", "workflow_args", "session_prompt", "workflow_fanout", "conductor_fanout",
     "claude_projects_dir", "find_run_file", "read_run_file",
     "merge_entries", "audit_coverage", "unresolved_locators", "spot_check_ask", "render_dossier_markdown",
-    "absorb_level_2", "take_spot_check", "level_2_command",
+    "absorb_level_2", "take_spot_check", "level_2_command", "ticket_slug", "promotion_answer", "run_dossier_ticket",
 ]
 
 ABSORB_DIR = "absorb"            # refs/<slug>/absorb/: the manifest and the chunk files
@@ -1182,6 +1182,88 @@ def absorb_level_2(project, slug, launcher=None, harness_root=None, ledger=None,
         "session_ids": list(outcome.session_ids), "run_file": outcome.run_file, "spot_check": ask,
         "consultations": consulted, "pass": coverage["pass"] and sections is not None,
     }
+
+
+# --- a `dossier` ticket, run as a promotion (decision 17; ticket 98) ------------------------------
+
+DONE, WAITS, DECLINED, FAILED = "done", "waits", "declined", "failed"
+_REFS_PATH = re.compile(r"(?:^|/)refs/(?P<slug>[a-z0-9][a-z0-9._-]*)(?:/|$)")
+_AFFIRMATIVE = re.compile(r"^\W*(?:yes|y|promote|approved?|go|ok|okay|read it)\b", re.IGNORECASE)
+
+
+def ticket_slug(ticket, slugs):
+    """The dossier a `dossier` ticket reads: the first `refs/<slug>/` its context pack or inputs name, else a slug its title names."""
+    for path in list(ticket.get("context_pack") or []) + list(ticket.get("inputs") or []):
+        found = _REFS_PATH.search(str(path))
+        if found is not None and found.group("slug") in slugs:
+            return found.group("slug")
+    title = str(ticket.get("title") or "")
+    named = [slug for slug in slugs if re.search(r"(?<![a-z0-9._-])%s(?![a-z0-9._-])" % re.escape(slug), title)]
+    return max(named, key=len) if named else None
+
+
+def promotion_answer(ticket, slug, tickets_by_id, answers):
+    """The answer to the promotion decision a `dossier` ticket waits on (`True` yes, `False` no), or None while none is answered."""
+    title = "Promote %s to level 2?" % slug
+    for blocker in ticket.get("blocked_by") or []:
+        fields = tickets_by_id.get(blocker) or {}
+        answer = (answers or {}).get(blocker)
+        if fields.get("title") == title and answer:
+            return bool(_AFFIRMATIVE.match(str(answer)))
+    return None
+
+
+def run_dossier_ticket(project, ticket, *, tickets_by_id=None, answers=None, absorb=None, inventory=None, ledger=None):
+    """Run one `dossier` ticket as a promotion through absorb, with no worker session: `{outcome, slug, reason, decision, report}`.
+
+    The ticket is the planner's or the decider's call that a paper earns a full read, so it promotes on the
+    `planner_or_decider` trigger inside the phase's level-2 budget. Beyond it, `dossier.promote` opens the
+    decision ticket and the outcome is `waits` with its id; once that decision is answered, a yes promotes past
+    the budget and a no closes the ticket (`declined`) with nothing read. A promoted paper is given its inventory
+    when it has none (`inventory(project, slug)`, `dossier.build_inventory` by default) and read by
+    `absorb(project, slug)` (`absorb_level_2`); `done` when the coverage audit passes, `failed` otherwise. The
+    reader's L1 skim is not this: it stays the reader's.
+    """
+    from wayline import dossier as dossiers  # the dossier module imports this one's neighbours
+    project = Path(project).resolve()
+    ledger = ledger_for(ledger if ledger is not None else project)
+    slug = ticket_slug(ticket, set(dossiers.all_slugs(ledger)))
+    if slug is None:
+        return {"outcome": FAILED, "slug": None, "reason": "the ticket names no dossier: its context pack lists no research/refs/<slug>/ "
+                "that exists, and its title names no slug", "decision": None, "report": None}
+    record = read_dossier(ledger, slug)
+    if record.get("existence") != "verified":
+        return {"outcome": FAILED, "slug": slug, "reason": "refs/%s is unresolved, so there is no paper to read; hand it over with "
+                "`wayline reference %s`" % (slug, slug), "decision": None, "report": None}
+    if record.get("level", 0) < LEVEL_2:
+        answered = promotion_answer(ticket, slug, tickets_by_id or {}, answers)
+        if answered is False:
+            return {"outcome": DECLINED, "slug": slug, "reason": "the promotion of %s beyond the phase's budget was answered no" % slug,
+                    "decision": None, "report": None}
+        promotion = dossiers.promote(ledger, slug, dossiers.PLANNER_OR_DECIDER, ticket=ticket["id"], force=bool(answered),
+                                     detail="dossier ticket %d" % ticket["id"])
+        if promotion.get("decision_ticket"):
+            return {"outcome": WAITS, "slug": slug, "reason": "beyond the phase's level-2 budget", "decision": promotion["decision_ticket"],
+                    "report": None}
+    record = read_dossier(ledger, slug)
+    if record.get("l2") and (record["l2"].get("coverage") or {}).get("pass"):
+        return {"outcome": DONE, "slug": slug, "reason": "already read in full", "decision": None, "report": None}
+    if not ledger.path(_refs(slug, INVENTORY)).is_file():
+        try:
+            (inventory or dossiers.build_inventory)(project, slug)
+        except (ValueError, OSError) as failure:
+            return {"outcome": FAILED, "slug": slug, "reason": "refs/%s has no inventory and none could be built: %s" % (slug, failure),
+                    "decision": None, "report": None}
+    try:
+        report = (absorb or absorb_level_2)(project, slug)
+    except (ValueError, OSError) as failure:
+        return {"outcome": FAILED, "slug": slug, "reason": "the level-2 read of %s did not run: %s" % (slug, failure), "decision": None, "report": None}
+    if not report.get("pass"):
+        coverage = report.get("coverage") or {}
+        missing = coverage.get("missing") or []
+        return {"outcome": FAILED, "slug": slug, "reason": "the level-2 read of %s did not pass its coverage audit%s" % (
+            slug, " (no entry for %s)" % ", ".join(str(item) for item in missing[:10]) if missing else ""), "decision": None, "report": report}
+    return {"outcome": DONE, "slug": slug, "reason": None, "decision": None, "report": report}
 
 
 def _record_consultations(ledger, slug, consultations, session_id, problems):

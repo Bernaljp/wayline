@@ -197,7 +197,7 @@
   "consultant": {
     "max_questions_per_ticket": 5
   },
-  "scout": {"give_up_days": 7},
+  "scout": {"give_up_days": 7, "calls_per_ticket": 20},
   "kb": {
     "query_pack_max_chars": 20000
   },
