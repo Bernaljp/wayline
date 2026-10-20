@@ -101,13 +101,16 @@ def rerun(project, source, folder, script, inputs, python, timeout=RERUN_SECONDS
     """Rerun `script` from the drawing directory `source` in a fresh room, where it stands at `folder/script`.
 
     The room holds the declared `inputs`, copied from the project at their manifest paths, and the script in its
-    drawing directory (`folder`, relative to the project); nothing else. Only a Python script runs, in `python`;
-    anything else is not run.
+    drawing directory (`folder`, relative to the project); nothing else. `python` is the plotting library's
+    interpreter (ticket 102): a Python script runs in it with `-I`, an R script (`.R`) with `--vanilla` as its
+    Rscript; anything else is not run.
     """
-    if not str(script).endswith(".py"):
-        return Room(None, "the clean room reruns a Python script; %s is not one, so it was not rerun" % script, ran=False)
+    suffix = Path(str(script)).suffix
+    if suffix not in (".py", ".R"):
+        return Room(None, "the clean room reruns a Python or an R script; %s is neither, so it was not rerun" % script, ran=False)
     if not python:
-        return Room(None, "no interpreter: the tools venv is not installed (wayline tools install)", ran=False)
+        return Room(None, "no interpreter: the plotting library's tools are not installed (wayline switch --plotting, "
+                          "or wayline tools install)", ran=False)
     project = Path(project)
     root = Path(tempfile.mkdtemp(prefix="wayline-drawing-"))
     for relative in inputs:
@@ -125,7 +128,7 @@ def rerun(project, source, folder, script, inputs, python, timeout=RERUN_SECONDS
            "SOURCE_DATE_EPOCH": "0", "PYTHONHASHSEED": "0", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "CUDA_VISIBLE_DEVICES": "",
            "WAYLINE_PROJECT": str(root), "PYTHONDONTWRITEBYTECODE": "1"}
     try:
-        done = subprocess.run([str(python), "-I", str(target)], cwd=str(root), env=env, capture_output=True, text=True,
+        done = subprocess.run([str(python), "-I" if suffix == ".py" else "--vanilla", str(target)], cwd=str(root), env=env, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return Room(None, "the script did not finish in %d s" % timeout, root)

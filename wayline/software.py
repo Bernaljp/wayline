@@ -79,7 +79,11 @@ JULIA_VERSION = "1.12.7"
 JULIA_RELEASE = "https://julialang-s3.julialang.org/bin/linux/%s/%s/julia-%s-linux-%s.tar.gz"
 JULIA_CHECKSUMS = "https://julialang-s3.julialang.org/bin/checksums/julia-%s.sha256"
 _JULIA_PLATFORMS = {"x86_64": ("x64", "x86_64"), "aarch64": ("aarch64", "aarch64")}
-PROJECT_TOOLS = tuple(CONDA_PROJECT_TOOLS) + (JULIA,)
+# What a plotting setting needs (ticket 102): Altair into the tools venv through uv, and ggplot2 into R's prefix from
+# conda-forge with svglite (its SVG) and jsonlite (numbers.json), recorded as the prefix's Rscript.
+ALTAIR, GGPLOT2 = "altair", "ggplot2"
+GGPLOT2_SPECS = ("r-ggplot2", "r-svglite", "r-jsonlite")
+PROJECT_TOOLS = tuple(CONDA_PROJECT_TOOLS) + (JULIA, ALTAIR, GGPLOT2)
 # Licensed software and the check code runs once the owner says where it is.
 LICENSED = {MATLAB: ("-batch", "ver")}
 LICENSED_CHECK_TIMEOUT_S = 600
@@ -134,6 +138,8 @@ def _known(name):
 
 
 def _conda_specs(name):
+    if name == GGPLOT2:
+        return list(CONDA_PROJECT_TOOLS[R][0]) + list(GGPLOT2_SPECS)
     return list(CONDA_PROJECT_TOOLS[name][0])
 
 
@@ -152,6 +158,9 @@ def dry_run(name, root=None, run=run_tool):
         raise ToolsError("the dry run reads the network, and %s=none keeps this process off it" % BACKENDS_ENV)
     if name in LICENSED:
         return {"route": OWNER_ROUTE, "source": None, "download_bytes": None, "disk_bytes": None, "packages": None, "estimated": False}
+    if name == ALTAIR:
+        return {"route": "uv", "source": toolbox.PYPI, "download_bytes": None, "disk_bytes": None,
+                "packages": len(toolbox.PLOTTING_PACKAGES[ALTAIR][0]), "estimated": False}
     if name == JULIA:
         url = julia_url()
         done = toolbox._ok(run(["curl", "-fsSIL", url], timeout=TOOL_TIMEOUT_S), "reading the size of %s" % url)
@@ -160,7 +169,7 @@ def dry_run(name, root=None, run=run_tool):
         return {"route": TARBALL, "source": url, "download_bytes": size, "disk_bytes": size * UNPACKED if size else None,
                 "packages": 1, "estimated": True}
     micromamba = install_micromamba(root, run)  # a harness tool: it comes with no ask
-    argv = [micromamba["executable"], "create", "--dry-run", "--json", "-y", "-p", str(root / ENVS / name),
+    argv = [micromamba["executable"], "create", "--dry-run", "--json", "-y", "-p", str(root / ENVS / (R if name == GGPLOT2 else name)),
             "-c", CONDA_FORGE, "--override-channels"] + _conda_specs(name)
     done = toolbox._ok(run(argv, timeout=INSTALL_TIMEOUT_S, env=micromamba["env"]), "micromamba's dry run of %s" % name)
     try:
@@ -206,11 +215,23 @@ def install_project_tool(name, root=None, run=run_tool, echo=None, change=False,
     root.mkdir(parents=True, exist_ok=True)
     if name == JULIA:
         return _install_julia(root, run, echo)
+    if name == ALTAIR:
+        return toolbox.install_plotting_package(ALTAIR, root, run, echo)
+    if name == GGPLOT2:
+        entries = _install_conda(R, root, run, echo, change, specs=_conda_specs(GGPLOT2))
+        rscript = entries["rscript"]
+        probe = toolbox._ok(run([rscript["executable"], "-e", "cat(as.character(packageVersion('ggplot2')))"], timeout=TOOL_TIMEOUT_S,
+                                env=rscript.get("env") or None), "reading ggplot2's version")
+        version = toolbox.parse_version(probe.stdout.decode("utf-8", errors="replace")) or rscript.get("version")
+        return record_entry(root, GGPLOT2, tool_entry(rscript["executable"], version, MICROMAMBA, installer=HARNESS, source=CONDA_FORGE,
+                                                      lock=rscript.get("lock"), prefix=rscript.get("prefix"),
+                                                      packages=list(GGPLOT2_SPECS)))
     return _install_conda(name, root, run, echo, change)[name]
 
 
-def _install_conda(name, root, run, echo, change):
-    specs, programs = CONDA_PROJECT_TOOLS[name]
+def _install_conda(name, root, run, echo, change, specs=None):
+    given, programs = CONDA_PROJECT_TOOLS[name]
+    specs = given if specs is None else specs
     micromamba = install_micromamba(root, run, echo)
     prefix = root / ENVS / name
     env = micromamba["env"]
@@ -600,6 +621,11 @@ def _route_line(name):
     if name == JULIA:
         return "route: Julia %s's release tarball (%s) into ~/.wayline/tools/julia-%s, checked against the SHA-256 Julia publishes, no root" \
                % (JULIA_VERSION, julia_url(), JULIA_VERSION)
+    if name == ALTAIR:
+        return "route: PyPI through the harness's uv (%s) into the tools venv, no root" % " ".join(toolbox.PLOTTING_PACKAGES[ALTAIR][0])
+    if name == GGPLOT2:
+        return "route: conda-forge through the harness's micromamba (%s) into ~/.wayline/tools/envs/r, each package checked against " \
+               "its published digest, no root" % " ".join(_conda_specs(name))
     if name in CONDA_PROJECT_TOOLS:
         return "route: conda-forge through the harness's micromamba (%s) into ~/.wayline/tools/envs/%s, each package checked against " \
                "its published digest, no root" % (" ".join(_conda_specs(name)), name)

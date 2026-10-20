@@ -3063,11 +3063,17 @@ class Conductor:
                 owed.append(fields["id"])
         return owed
 
-    def _plotting_python(self):
-        """The interpreter a drawing is drawn and reran in: the tools venv's (`matplotlib` in `tools.json`), or a test's."""
+    def _plotting_python(self, ticket=None):
+        """The interpreter a drawing is drawn and rerun in, or a test's (ticket 102).
+
+        The drawing `ticket`'s own library, the one it was opened in; with no ticket, the library `harness.json` names now,
+        which the next drawings open in.
+        """
         if self.drawing_python is drawings.TOOLS_PYTHON:
-            from wayline import drawing_checks
-            return drawing_checks.interpreter()
+            from wayline import plotting
+            if ticket is not None:
+                return plotting.interpreter(drawings.library_of(self.project, ticket))
+            return plotting.interpreter(plotting.setting(read_harness(self.project)))
         return self.drawing_python
 
     def _draws_before_the_end(self, rest):
@@ -3080,8 +3086,8 @@ class Conductor:
         opened = []
         if self._plotting_python() is None:
             if not self._said_no_plotting:
-                self.say("  the results are not drawn at this rest point: the tools venv records no matplotlib "
-                         "(wayline tools install), and a drawing is drawn and rerun there")
+                self.say("  the results are not drawn at this rest point: tools.json records no tools for the plotting library "
+                         "(wayline switch --plotting, or wayline tools install), and a drawing is drawn and rerun in them")
                 self._said_no_plotting = True
         else:
             try:
@@ -4179,7 +4185,7 @@ class Conductor:
             return []
         try:
             checked = drawings.check(self.project, attempt.ticket, attempt.worktree, final=attempt.stage == ACCEPTANCE_FAILED,
-                                     policy=self.policy, python=self._plotting_python())
+                                     policy=self.policy, python=self._plotting_python(attempt.ticket))
         except (drawings.DrawingError, ValueError, OSError) as failure:
             return [{"cmd": drawings.DRAWING_CHECK, "exit_code": 1, "seconds": 0.0, "tail": "the drawing could not be checked: %s" % failure}]
         self.ledger.write_json(self._attempt_dir(attempt).relative_to(self.ledger.research) / DRAWING_CHECKED, checked.to_json())
@@ -4678,7 +4684,7 @@ class Conductor:
             value = json.loads((self._attempt_dir(attempt) / DRAWING_CHECKED).read_text(encoding="utf-8"))
             checked = drawings.Checked.from_json(value)
         except (OSError, ValueError, AttributeError):
-            checked = drawings.check(self.project, attempt.ticket, self.project, final=True, policy=self.policy, python=self._plotting_python())
+            checked = drawings.check(self.project, attempt.ticket, self.project, final=True, policy=self.policy, python=self._plotting_python(attempt.ticket))
         try:
             record = drawings.accept(self.project, attempt.ticket, checked)
         except (drawings.DrawingError, ValueError, OSError) as failure:
