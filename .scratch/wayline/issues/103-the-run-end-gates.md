@@ -37,4 +37,4 @@ Not part of this ticket:
 - [x] The tick does not relaunch a run that ended with gates done, and it relaunches one that continues for scope-downs as the conductor's own run.
 - [x] Tests by journal replay with the fake launcher scripting the plotter, the verifier, and the kill argument: each end kind, the sample cache across two runs, the difficulty-5 rule, an unchanged report skipping the kill argument, and idempotence of the replayed wave.
 - [x] The CHANGELOG's `## Unreleased` entry describes the run-end gates.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
