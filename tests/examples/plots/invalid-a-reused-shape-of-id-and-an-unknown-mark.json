@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "plots": [
+    {"id": "R1-3", "result": "R1", "kind": "plot", "chart_type": "box plot", "index_entries": [], "data_view": "AUROC by seed",
+     "status": "current", "headline": true, "mark": "love", "note": null, "drawings": ["R1-1"]}
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "plots": [
+    {"id": "R1.1", "result": "R1", "kind": "plot", "chart_type": "box plot", "index_entries": ["box-py"], "data_view": "AUROC by seed",
+     "status": "current", "headline": true, "mark": "keep", "note": null, "drawings": ["R1-1", "R1-2"]},
+    {"id": "R1.2", "result": "R1", "kind": "plot", "chart_type": "violin plot", "index_entries": ["violin-py"], "data_view": "AUROC by seed",
+     "status": "retired", "headline": false, "mark": "drop", "note": "A near duplicate of the box.", "drawings": ["R1-1"]},
+    {"id": "R1.T1", "result": "R1", "kind": "table", "chart_type": null, "index_entries": [], "data_view": "AUROC per seed",
+     "status": "current", "headline": false, "mark": null, "note": null, "drawings": ["R1-2"]}
+  ]
+}

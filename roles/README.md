@@ -265,3 +265,14 @@ to one session of `confirmer` (Opus at medium effort), which sees each sentence 
 A second, fresh `confirmer` session, which did not write the kept texts, returns `merge_check`: whether each
 merge loses anything. Code checks that nothing is added. At each ticket's acceptance the same confirmer labels
 the pairs the embedding net finds between the ticket's new passages and findings and the current ones.
+
+## The plotter takes the `drawing` tickets code opens
+
+`plotter` (ticket 100) is assigned by code, never by the librarian (`kinds` empty): `wayline/drawings.py` opens a
+`drawing` ticket per changed result at a rest point, with `role: plotter`, and the planner's schema has no such kind.
+The conductor launches it on `policy.roles.plotter` (Opus at medium effort) with `policy.drawings.budget`, or on
+`policy.drawings.step_down` (Sonnet at medium) while pacing steps Opus work down, never on a rung of the ladder. Its
+touch set is its own drawing directory, so it is read-only on the research; it may run Python and `wayline tools run`,
+and `wayline job add`, `consult`, and `scout` are removed, since a drawing adds no job and asks nobody. Its brief is
+the paper part of its prompt, rendered by code at each launch (`drawings.brief`). Its acceptance is code's alone: the
+clean-room rerun and every plot's checks (`wayline/drawing_checks.py`), with no verdict.

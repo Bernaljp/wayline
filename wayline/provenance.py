@@ -50,6 +50,7 @@ __all__ = [
     "claim_subject", "claim_paths", "verify_claims", "report_evidence", "finding_tags", "finding_text", "finding_line",
     "tagged_text", "render_report", "report_command",
     "ANY_TAG_RE", "TAG_KINDS", "REF_TITLE_TAG_RE", "CODE_TAG_RE", "DOC_TAG_RE", "UNRESOLVED_CODE", "UNRESOLVED_DOC", "DOC_ONLY_CLAIM",
+    "PLOT_TAG_RE", "UNRESOLVED_PLOT",
     "code_reader", "main_reader", "code_tag_problem", "end_kinds", "lint_passages", "lint_result", "result_sentences", "resolver_for",
 ]
 
@@ -79,6 +80,10 @@ DOC_TAG_RE = re.compile(r"^(?P<document>[A-Za-z0-9._-]+)#(?P<locator>[^#\s]+)$")
 # Every provenance tag a sentence may end with, the two of decision 11 and the two of decision 17.
 ANY_TAG_RE = re.compile(r"\{(res|ref|code|doc):([^{}]+)\}")
 TAG_KINDS = ("res", "ref", "code", "doc")
+# A plot of a drawing (decision 17; ticket 100): `{plot:R4.3}`, a table `{plot:R4.T1}`, which a section cites where the
+# reader should look. It is no provenance tag: it never ends a claim's support, and it resolves against `plots.json`.
+PLOT_TAG_RE = re.compile(r"\{plot:([^{}]*)\}")
+_PLOT_ID = re.compile(r"^R[1-9][0-9]*\.T?[1-9][0-9]*$")
 
 # Where one sentence ends: a full stop, question mark or exclamation mark, then any closing
 # quotes, then the provenance tags that belong to the sentence just ended, and then either the
@@ -454,6 +459,7 @@ UNRESOLVED_RES = "unresolved_res"
 UNRESOLVED_REF = "unresolved_ref"
 UNRESOLVED_CODE = "unresolved_code"  # a `code` tag whose file no longer defines its symbol or holds its lines (ticket 88)
 UNRESOLVED_DOC = "unresolved_doc"  # a `doc` tag naming a document the project does not keep (ticket 88)
+UNRESOLVED_PLOT = "unresolved_plot"  # a `plot` tag naming no current plot of `plots.json` (ticket 100)
 # What the linter lists rather than fails before the paper order (ticket 88): a claim whose only tags are `doc` tags,
 # which say where inherited text came from and never what supports it.
 DOC_ONLY_CLAIM = "doc_only_claim"
@@ -749,6 +755,7 @@ class _Resolver:
         self._index = None
         self._code_read = code_read
         self._documents = None
+        self._plots = None
         self.own_run = own_run
 
     def index(self):
@@ -760,6 +767,26 @@ class _Resolver:
         if self._code_read is None:
             self._code_read = main_reader(self.project)
         return self._code_read
+
+    def plots(self):
+        if self._plots is None:
+            try:
+                record = json.loads((self.project / "research" / "plots.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+            self._plots = {str(plot.get("id")): plot for plot in (record or {}).get("plots") or [] if isinstance(plot, dict)}
+        return self._plots
+
+    def plot_problem(self, identifier):
+        """Why a `{plot:<id>}` tag does not resolve, or None: it names a current plot or table of `plots.json`."""
+        if not _PLOT_ID.match(identifier):
+            return UNRESOLVED_PLOT, "`plot:%s` names no plot: a plot is `R<n>.<k>` and a table `R<n>.T<k>`" % identifier
+        plot = self.plots().get(identifier)
+        if plot is None:
+            return UNRESOLVED_PLOT, "research/plots.json holds no plot %s" % identifier
+        if plot.get("status") != "current":
+            return UNRESOLVED_PLOT, "%s was retired; cite a current plot of %s" % (identifier, plot.get("result"))
+        return None
 
     def documents(self):
         if self._documents is None:
@@ -843,6 +870,10 @@ class _Pass:
             found = self.resolver.problem(tag)
             if found is not None:
                 self.problems.append(dict(extra, sentence=sentence.text, problem=found[0], tag=tag, detail=found[1]))
+        for identifier in PLOT_TAG_RE.findall(sentence.text):
+            found = self.resolver.plot_problem(identifier.strip())
+            if found is not None:
+                self.problems.append(dict(extra, sentence=sentence.text, problem=found[0], tag="plot:%s" % identifier, detail=found[1]))
         if not strip_tags(sentence.text) or tagged_by_provenance:
             return
         kind = self.classes.get(sentence_hash(sentence.text))

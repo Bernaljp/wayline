@@ -274,6 +274,19 @@
         "heatmap_label_max_cells": {"type": "integer", "minimum": 0}
       }
     },
+    "drawings": {
+      "type": "object",
+      "description": "a drawing on the plotter role (Implementation Decision 17; wayline.drawings): the budget it runs under at policy.roles.plotter, the model and effort pacing steps it down to, and its limits of plots, tables, and headline plots, with no minimum",
+      "required": ["budget", "step_down", "max_plots", "max_tables", "max_headline"],
+      "additionalProperties": false,
+      "properties": {
+        "budget": {"type": "string", "enum": ["small", "medium", "large"]},
+        "step_down": {"$ref": "#/$defs/model_effort"},
+        "max_plots": {"type": "integer", "minimum": 0},
+        "max_tables": {"type": "integer", "minimum": 0},
+        "max_headline": {"type": "integer", "minimum": 0}
+      }
+    },
     "repeats": {
       "type": "object",
       "description": "the repeated-claims check (Implementation Decision 17; wayline.repeats): the embedding model's cosine at or above which a pair of claims is proposed to the confirmer, and the most pairs the net proposes in one check, the most similar first",

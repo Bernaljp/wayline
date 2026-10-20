@@ -36,6 +36,33 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Drawings and plots (ticket 100; Implementation Decisions 17, 14, 13, and 2). Each changed result is explored in
+  every useful plot at rest points: before a run ends (on an empty frontier, the stopping rule, or a budget), before
+  it comes to rest on the owner's answer under `checkpoints`, and on the owner's word (`wayline result draw R4`).
+  Code opens one ticket of the new kind `drawing` per result whose current findings changed since its last drawing
+  and hold one from the project's own evidence, the stopping rule's results first; the planner never writes one.
+  It runs on the new `plotter` role at `opus medium` on the small budget (`policy.roles.plotter`,
+  `policy.drawings`), stepping down to `sonnet medium` when pacing steps Opus work down, read-only on the research
+  (its own `drawings/R<n>-<v>/`, no job, no GPU, never the project's code), with a brief rendered by code at each
+  launch: the result's findings and their artifacts, the objectives, the project summary, the plot index by data
+  shape, the house style, the previous drawing with the owner's marks and notes, and the earlier figures of the
+  project's documents whose claims the result replaces. Its one script draws every plot (PNG and SVG) and table
+  (CSV) and writes every quoted number into `numbers.json`; at most 20 plots, 4 tables, and 4 headline plots, each
+  plot explained by its Purpose, Data, and What it shows, then the synthesis, headline, inferences, and open
+  questions. Acceptance (`wayline.drawing_checks`) reruns the script in a clean room in the tools venv and compares
+  the plots and `numbers.json`, then runs six figure checks (`min_font_pt`, `text_overlap`, `palette`,
+  `generator_clean`, `regenerates`, `provenance`) and the five readability checks on each plot's SVG and the numbers
+  check against `numbers.json`; a check that cannot run is listed as not run. A failing plot gets one repair resume
+  and is then left out and listed; a drawing that still fails journals `ticket_failed` with `next: none` and keeps
+  its result's last accepted drawing, listed in the account's Runs, with no tier up, split, or ask. Plots keep their
+  ids across drawings (`R4.3`, tables `R4.T1`), retire when left out, and are never reused; `research/plots.json`
+  (schema `plots`) and one record per drawing, `research/drawings/R<n>-<v>.json` (schema `drawing`), are written
+  through the ledger, and each drawing opened, accepted, or failed is journaled as `drawing`. Every accepted drawing
+  puts its plots before the owner as a `plots` batch: drop retires a plot at its next drawing, a note reaches that
+  drawing's brief, keep is never retired by a drawing alone, and no mark starts one. Sections cite a plot as
+  `{plot:R4.3}`, which the linter checks against `plots.json`. With no matplotlib recorded in the tools venv, a rest
+  point draws nothing and says so once.
+
 - Repeated claims (ticket 95; Implementation Decisions 17, 14, and 2). A claim made in several places of a project's
   inherited writing becomes one passage citing every occurrence's `doc` tag and every work any cites.
   `wayline document repeats` runs the setup's check: one consistency read (`consistency-reader`, Opus high) over the

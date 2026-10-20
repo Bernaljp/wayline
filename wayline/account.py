@@ -573,11 +573,38 @@ def _latest_run(run, context):
     drawings = [ticket for ticket in sorted(per) if (context.tickets.get(ticket) or {}).get("kind") == "drawing"]
     if drawings:
         lines.extend(["", "Drawings:", ""])
-        lines.extend("- Ticket %d: %s tokens, %d turns, %.1f minutes" % (
-            ticket, _tokens_text(per[ticket]["tokens"]), per[ticket]["turns"], per[ticket]["ms"] / 60000.0) for ticket in drawings)
+        lines.extend("- Ticket %d%s: %s tokens, %d turns, %.1f minutes" % (
+            ticket, _drawing_outcome(ticket, span, context.events), _tokens_text(per[ticket]["tokens"]), per[ticket]["turns"],
+            per[ticket]["ms"] / 60000.0) for ticket in drawings)
     lines.extend(_gates(run, context))
     lines.extend(_fell_back(context.events[run.start:run.after], context))  # the run-end gates are the run's too
     return lines
+
+
+def _drawing_outcome(ticket, span, events):
+    """What a drawing ticket came to in this run, from its `drawing` events (ticket 100): accepted with what it drew and
+    what it left out, or failed, its result keeping its last accepted drawing; empty while it is still open."""
+    closed = [event.get("payload") or {} for event in span if event.get("event") == "drawing"
+              and (event.get("payload") or {}).get("ticket") == ticket and (event.get("payload") or {}).get("outcome") in ("accepted", "failed")]
+    if not closed:
+        return ""
+    last = closed[-1]
+    name = "%s-%s" % (last.get("result"), last.get("version"))
+    if last["outcome"] == "accepted":
+        words = ", %s accepted: %s" % (name, ", ".join(last.get("plots") or []) or "no plot")
+        left = ["%s (%s)" % (entry.get("what"), entry.get("reason")) for entry in last.get("left_out") or [] if isinstance(entry, dict)]
+        if left:
+            words += "; left out %s" % "; ".join(left)
+        if last.get("retired"):
+            words += "; retired %s" % ", ".join(last["retired"])
+        return words
+    earlier = [(event.get("payload") or {}).get("version") for event in events if event.get("event") == "drawing"
+               and (event.get("payload") or {}).get("result") == last.get("result")
+               and (event.get("payload") or {}).get("outcome") == "accepted"
+               and int((event.get("payload") or {}).get("version") or 0) < int(last.get("version") or 0)]
+    kept = ("%s keeps its last accepted drawing, %s-%s" % (last.get("result"), last.get("result"), earlier[-1]) if earlier
+            else "%s keeps no accepted drawing yet" % last.get("result"))
+    return ", %s failed (%s): %s, with no tier up, split, or ask" % (name, last.get("reason") or "no reason was journaled", kept)
 
 
 def _pauses(span):

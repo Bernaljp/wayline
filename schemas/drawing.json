@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "drawing",
+  "description": "One drawing of one result (Implementation Decision 17; ticket 100): research/drawings/R<n>-<version>.json, written only by wayline.drawings through the ledger. It is opened by code at a rest point with the findings it is drawn over, and closed accepted, holding what the plotter drew and what acceptance left out, or failed, when its result keeps its last accepted drawing.",
+  "type": "object",
+  "required": ["result", "version", "ticket", "rest", "status", "findings", "signature", "opened", "closed", "reason", "script", "numbers",
+               "inputs", "plots", "tables", "carried", "retired", "left_out", "synthesis", "headline", "can_infer", "cannot_infer",
+               "open_questions", "earlier_figures", "batch"],
+  "additionalProperties": false,
+  "properties": {
+    "result": {"type": "string", "pattern": "^R[1-9][0-9]*$"},
+    "version": {"type": "integer", "minimum": 1, "description": "1 onward per result; R4-2 is R4's second drawing"},
+    "ticket": {"type": "integer", "minimum": 1, "description": "the drawing ticket"},
+    "rest": {"type": "string", "enum": ["run_end", "checkpoint", "owner"], "description": "the rest point it was opened at"},
+    "status": {"type": "string", "enum": ["open", "accepted", "failed"]},
+    "findings": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the result's current findings it was opened over, leaving out those a drawing filed"},
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{16}$", "description": "what `findings` hashes to: a result whose findings still hash to it is not drawn again at a rest point"},
+    "opened": {"type": "string"},
+    "closed": {"type": ["string", "null"]},
+    "reason": {"type": ["string", "null"], "description": "why a failed drawing failed"},
+    "script": {"type": ["string", "null"], "description": "the one script, relative to the project"},
+    "numbers": {"type": ["string", "null"], "description": "numbers.json, relative to the project"},
+    "inputs": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the manifested artifacts the script reads, as the manifest spells their paths"},
+    "plots": {"type": "array", "items": {"$ref": "#/$defs/plot"}},
+    "tables": {"type": "array", "items": {"$ref": "#/$defs/table"}},
+    "carried": {"type": "array", "items": {"type": "string", "pattern": "^R[1-9][0-9]*\\.T?[1-9][0-9]*$"}, "description": "plots the owner marked keep that this drawing did not redraw: carried unchanged, never retired by a drawing alone"},
+    "retired": {"type": "array", "items": {"type": "string", "pattern": "^R[1-9][0-9]*\\.T?[1-9][0-9]*$"}},
+    "left_out": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["what", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "what": {"type": "string", "pattern": "\\S", "description": "a plot's or a table's id, or what the plotter named a view it did not draw"},
+          "reason": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    },
+    "synthesis": {"type": ["string", "null"]},
+    "headline": {"type": ["string", "null"]},
+    "can_infer": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+    "cannot_infer": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+    "open_questions": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+    "earlier_figures": {
+      "type": "array",
+      "description": "an earlier figure in the project's documents whose claim this result's findings replace, and what the drawing made of it",
+      "items": {
+        "type": "object",
+        "required": ["figure", "plot", "agrees", "note"],
+        "additionalProperties": false,
+        "properties": {
+          "figure": {"type": "string", "pattern": "\\S", "description": "the caption's locator in its document, D1#p7"},
+          "plot": {"type": ["string", "null"], "description": "the plot drawing the same view, or null where the data does not allow it"},
+          "agrees": {"type": "string", "enum": ["agrees", "disagrees", "cannot tell"]},
+          "note": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    },
+    "batch": {"type": ["string", "null"], "pattern": "^B[1-9][0-9]*$", "description": "the plots batch the accepted drawing put before the owner"}
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "required": ["id", "type", "pass", "tool", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"const": "A"},
+        "pass": {"type": ["boolean", "null"], "description": "null for a check that could not run, listed as not run"},
+        "not_run": {"type": "boolean"},
+        "tool": {"type": ["string", "null"]},
+        "detail": {"type": "string"}
+      }
+    },
+    "plot": {
+      "type": "object",
+      "required": ["id", "chart_type", "index_entries", "data_view", "png", "svg", "purpose", "data", "shows", "headline", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^R[1-9][0-9]*\\.[1-9][0-9]*$"},
+        "chart_type": {"type": "string", "pattern": "\\S"},
+        "index_entries": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
+        "data_view": {"type": "string", "pattern": "\\S"},
+        "png": {"type": "string", "pattern": "\\S"},
+        "svg": {"type": "string", "pattern": "\\S"},
+        "purpose": {"type": "string", "pattern": "\\S"},
+        "data": {"type": "string", "pattern": "\\S"},
+        "shows": {"type": "string", "pattern": "\\S", "description": "What it shows"},
+        "headline": {"type": "boolean"},
+        "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}}
+      }
+    },
+    "table": {
+      "type": "object",
+      "required": ["id", "csv", "data_view", "purpose", "data", "shows", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^R[1-9][0-9]*\\.T[1-9][0-9]*$"},
+        "csv": {"type": "string", "pattern": "\\S"},
+        "data_view": {"type": "string", "pattern": "\\S"},
+        "purpose": {"type": "string", "pattern": "\\S"},
+        "data": {"type": "string", "pattern": "\\S"},
+        "shows": {"type": "string", "pattern": "\\S"},
+        "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}}
+      }
+    }
+  }
+}
