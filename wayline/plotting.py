@@ -120,14 +120,17 @@ def set_plotting(project, library, by="cli", root=None, run=run_tool, echo=None)
               "conductor": projects.conductor_holder(project), "installed": []}
     if not report["changed"]:
         return report
-    try:
+    try:  # outside the ledger's lock: a download holds nothing else up
         report["installed"] = install(library, project, root=root, run=run, echo=echo)
     except ToolsError as failure:
         raise projects.ProjectError("plotting stays %s: installing what %s needs failed: %s"
                                     % (report["from"], LIBRARIES[library].label, failure)) from None
     ledger = Ledger(project)
     with ledger.lock():
-        harness = projects.read_harness(project)
+        harness = projects.read_harness(project)  # read again: another switch may have landed during the install
+        report["from"], report["changed"] = setting(harness), harness.get("plotting") != library
+        if not report["changed"]:
+            return report
         updated = dict(harness, plotting=library)
         check(updated, load_schema("harness"), name=projects.HARNESS_JSON)
         atomic_write(project / projects.HARNESS_JSON, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")

@@ -161,6 +161,21 @@ class InstallTest(PlottingCase):
         for package in ("r-base", "r-ggplot2", "r-svglite", "r-jsonlite"):
             self.assertIn(package, made[0])
 
+    def test_ggplot2_beside_an_installed_r_names_only_its_own_packages(self):
+        from wayline import software
+        software.install_project_tool("r", root=self.root, run=self.machine)
+        self.machine.calls.clear()
+        self.switch("ggplot2")
+        [made] = [argv for argv, _ in self.machine.ran("micromamba") if argv[1] in ("create", "install")]
+        self.assertEqual(made[1], "install")
+        self.assertNotIn("r-base", made)
+        self.assertEqual(made[-3:], ["r-ggplot2", "r-svglite", "r-jsonlite"])
+
+    def test_the_dashboard_calls_a_project_function(self):
+        self.record("altair")
+        projects.set_plotting(self.project, "altair", by="dashboard", root=self.root, run=self.machine)
+        self.assertEqual(self.controls()[-1]["by"], "dashboard")
+
     def test_recorded_tools_are_not_installed_again(self):
         self.record("altair")
         self.switch("altair")
@@ -211,6 +226,20 @@ class DrawingTest(PlottingCase):
         self.assertEqual(plotting.interpreter("matplotlib", Tools(self.root)), str(self.root / "bin" / "matplotlib"))
         self.assertEqual(plotting.interpreter("altair", Tools(self.root)), str(self.root / "bin" / "altair"))
         self.assertIsNone(plotting.interpreter("ggplot2", Tools(self.root)))
+
+    def test_a_script_in_another_language_than_the_drawings_library_fails_it_unrun(self):
+        self.record("ggplot2")
+        self.switch("ggplot2")
+        [identifier] = drawings.open_drawings(self.project, drawings.RUN_END)
+        worktree = self.temp / "worktree"
+        folder = worktree / "drawings" / "R1-1"
+        folder.mkdir(parents=True)
+        (folder / "draw.py").write_text("print(1)\n", encoding="utf-8")
+        (folder / "numbers.json").write_text("{}\n", encoding="utf-8")
+        (folder / "drawing.json").write_text(json.dumps({"script": "draw.py", "numbers": "numbers.json", "synthesis": "s",
+                                                          "headline": "h", "inputs": ["results/summary.json"]}), encoding="utf-8")
+        checked = drawings.check(self.project, self.ticket(identifier), worktree)
+        self.assertTrue(any("not a .R script" in problem for problem in checked.problems), checked.problems)
 
     def test_a_record_from_before_the_switch_is_matplotlib(self):
         self.assertEqual(plotting.setting({}), drawings.library_of_record({}))

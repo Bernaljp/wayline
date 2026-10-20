@@ -169,8 +169,10 @@ def dry_run(name, root=None, run=run_tool):
         return {"route": TARBALL, "source": url, "download_bytes": size, "disk_bytes": size * UNPACKED if size else None,
                 "packages": 1, "estimated": True}
     micromamba = install_micromamba(root, run)  # a harness tool: it comes with no ask
-    argv = [micromamba["executable"], "create", "--dry-run", "--json", "-y", "-p", str(root / ENVS / (R if name == GGPLOT2 else name)),
-            "-c", CONDA_FORGE, "--override-channels"] + _conda_specs(name)
+    prefix = root / ENVS / (R if name == GGPLOT2 else name)
+    held = name == GGPLOT2 and ((prefix / "conda-meta").is_dir() or (prefix / "bin").is_dir())
+    argv = [micromamba["executable"], "install" if held else "create", "--dry-run", "--json", "-y", "-p", str(prefix),
+            "-c", CONDA_FORGE, "--override-channels"] + (list(GGPLOT2_SPECS) if held else _conda_specs(name))
     done = toolbox._ok(run(argv, timeout=INSTALL_TIMEOUT_S, env=micromamba["env"]), "micromamba's dry run of %s" % name)
     try:
         actions = json.loads(done.stdout.decode("utf-8", errors="replace"))["actions"]
@@ -218,14 +220,17 @@ def install_project_tool(name, root=None, run=run_tool, echo=None, change=False,
     if name == ALTAIR:
         return toolbox.install_plotting_package(ALTAIR, root, run, echo)
     if name == GGPLOT2:
-        entries = _install_conda(R, root, run, echo, change, specs=_conda_specs(GGPLOT2))
+        prefix = root / ENVS / R
+        held = (prefix / "conda-meta").is_dir() or (prefix / "bin").is_dir()
+        # Into R's prefix as it stands: R itself is named only when the prefix is new, so code never moves an installed R.
+        entries = _install_conda(R, root, run, echo, False, specs=list(GGPLOT2_SPECS) if held else _conda_specs(GGPLOT2))
         rscript = entries["rscript"]
         probe = toolbox._ok(run([rscript["executable"], "-e", "cat(as.character(packageVersion('ggplot2')))"], timeout=TOOL_TIMEOUT_S,
                                 env=rscript.get("env") or None), "reading ggplot2's version")
         version = toolbox.parse_version(probe.stdout.decode("utf-8", errors="replace")) or rscript.get("version")
         return record_entry(root, GGPLOT2, tool_entry(rscript["executable"], version, MICROMAMBA, installer=HARNESS, source=CONDA_FORGE,
                                                       lock=rscript.get("lock"), prefix=rscript.get("prefix"),
-                                                      packages=list(GGPLOT2_SPECS)))
+                                                      packages={"r-ggplot2": version}))
     return _install_conda(name, root, run, echo, change)[name]
 
 

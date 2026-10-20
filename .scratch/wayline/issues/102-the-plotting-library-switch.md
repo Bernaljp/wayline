@@ -10,17 +10,17 @@ Not part of this ticket:
 
 **Blocked by:** 82 - Project tools and the software decision; 100 - Drawings on the plotter. It blocks 121.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#249](https://github.com/Bernaljp/wayline/issues/249) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Drawings and plots: `harness.json.plotting`; Tools, packages, and environments: a project's tools after a yes); Implementation Decision 1 (`harness.json`, the verb table: `switch --plotting`); Implementation Decision 2 (the event table: the `control` command); M8 criterion 6; user story 130.
 
-- [ ] `harness.json.plotting` (matplotlib with seaborn by default, Altair, or R with ggplot2) is in the schema, and a project without the key uses the default.
-- [ ] `wayline switch --plotting <library>` writes `harness.json` first and then journals `control`, accepted with a conductor running or not. A `project` function is what the dashboard will call.
-- [ ] Switching to a library whose tools are not recorded installs them through `wayline tools install` as the owner's yes, synchronously in a conversation. A failed install leaves the setting unchanged and says why.
-- [ ] The next drawing of each result runs in the chosen library, and the clean-room rerun and the checks read its SVG. Accepted drawings keep their library.
-- [ ] The decider has no path to change `plotting` under any autonomy.
-- [ ] Tests as plain functions over a temporary project: the schema with each value and without the key; `switch --plotting` writing and journaling in that order; an install through the tool runner's recordings; a drawing prompt naming the library; the decider refused.
-- [ ] Decision 1's verb table gains `switch --plotting` and `harness.json`'s `plotting` key, and decision 2's `control` enumeration the command, in the same commit.
-- [ ] `python -m unittest` passes.
+- [x] `harness.json.plotting` (matplotlib with seaborn by default, Altair, or R with ggplot2) is in the schema, and a project without the key uses the default.
+- [x] `wayline switch --plotting <library>` writes `harness.json` first and then journals `control`, accepted with a conductor running or not. A `project` function is what the dashboard will call.
+- [x] Switching to a library whose tools are not recorded installs them through `wayline tools install` as the owner's yes, synchronously in a conversation. A failed install leaves the setting unchanged and says why.
+- [x] The next drawing of each result runs in the chosen library, and the clean-room rerun and the checks read its SVG. Accepted drawings keep their library.
+- [x] The decider has no path to change `plotting` under any autonomy.
+- [x] Tests as plain functions over a temporary project: the schema with each value and without the key; `switch --plotting` writing and journaling in that order; an install through the tool runner's recordings; a drawing prompt naming the library; the decider refused.
+- [x] Decision 1's verb table gains `switch --plotting` and `harness.json`'s `plotting` key, and decision 2's `control` enumeration the command, in the same commit.
+- [x] `python -m unittest` passes.

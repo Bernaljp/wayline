@@ -40,7 +40,7 @@ from wayline import figure_checks, numbers, plot_checks
 from wayline.figure_checks import check_not_run, check_outcome
 
 __all__ = [
-    "SIX", "CHECK_IDS", "NUMBERS", "RAMP_MIN", "DEFAULT_MIN_FONT_PT", "Room", "interpreter", "rerun", "same_png",
+    "SIX", "CHECK_IDS", "NUMBERS", "RAMP_MIN", "DEFAULT_MIN_FONT_PT", "Room", "rerun", "same_png",
     "plot_checks_for", "numbers_problems", "values_of", "read_numbers", "outcome", "not_run", "generator_clean", "check_provenance",
 ]
 
@@ -87,14 +87,6 @@ class Room:
     def close(self):
         if self.root is not None:
             shutil.rmtree(self.root, ignore_errors=True)
-
-
-def interpreter():
-    """The tools venv's Python as `tools.json` records it (`matplotlib`'s executable), or None when it is not installed."""
-    from wayline.tools import Tools
-    entry = Tools().entry("matplotlib") or {}
-    executable = entry.get("executable")
-    return executable if executable and os.path.exists(executable) else None
 
 
 def rerun(project, source, folder, script, inputs, python, timeout=RERUN_SECONDS):

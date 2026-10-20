@@ -346,10 +346,12 @@ def library_of_record(record):
 def library_of(project, ticket):
     """The plotting library the drawing `ticket` is drawn, rerun, and checked in: the one its record was opened in."""
     result_id, version, _ = drawing_of(ticket)
-    for record in read_records(project, result_id) if result_id else ():
-        if record.get("version") == version:
-            return library_of_record(record)
-    return library_of_record(None)
+    if result_id is None:
+        return library_of_record(None)
+    try:
+        return library_of_record(ledger_for(project).read_json(record_path(_name(result_id, version))))
+    except (OSError, ValueError):
+        return library_of_record(None)
 
 
 def result_heading(project, ticket):
@@ -713,13 +715,20 @@ def check(project, ticket, worktree, final=False, policy=None, python=_DEFAULT):
         + [("what cannot be inferred", text) for text in draft.get("cannot_infer") or []]
         + [("an open question", text) for text in draft.get("open_questions") or []], values, exempt)
     script = str(draft.get("script") or "")
+    from wayline import plotting
+    library = library_of(book, ticket)
     if python is _DEFAULT:
-        from wayline import plotting
-        python = plotting.interpreter(library_of(book, ticket))
+        python = plotting.interpreter(library)
     script_path = _in_folder(folder, script)
-    room = drawing_checks.rerun(project, folder, folder_name, script, [item for item in inputs if item in manifest],
-                                python, policy_timeout(policy)) if script_path is not None and script_path.is_file() else \
-        drawing_checks.Room(None, "there is no script in its drawing directory to rerun", ran=False)
+    expected = Path(plotting.LIBRARIES[library].script).suffix
+    if script_path is not None and script_path.suffix != expected:
+        problems.append("its script %s is not a %s script, and this drawing is drawn in %s"
+                        % (script, expected, plotting.LIBRARIES[library].label))
+        room = drawing_checks.Room(None, "the script is not in the drawing's library, so it was not rerun", ran=False)
+    else:
+        room = drawing_checks.rerun(project, folder, folder_name, script, [item for item in inputs if item in manifest],
+                                    python, policy_timeout(policy)) if script_path is not None and script_path.is_file() else \
+            drawing_checks.Room(None, "there is no script in its drawing directory to rerun", ran=False)
     try:
         if room.failed:
             problems.append("its script did not rerun in the clean room: %s" % (room.error or "exit %s" % room.returncode))

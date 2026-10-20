@@ -1654,6 +1654,12 @@ def set_model_fallback(project, consent, by="cli"):
     return report
 
 
+def set_plotting(project, library, by="cli", **options):
+    """`wayline switch --plotting`, and the dashboard's select (ticket 121): `wayline.plotting.set_plotting` (ticket 102)."""
+    from wayline import plotting
+    return plotting.set_plotting(project, library, by=by, **options)
+
+
 # --- the ladder consent ---------------------------------------------------------------------------------------
 
 
