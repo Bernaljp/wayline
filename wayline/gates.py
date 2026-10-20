@@ -504,6 +504,7 @@ class Ask:
     role: str = VERIFIER
     rung: Optional[int] = None  # the rung the judged ticket attempt ran on (decision 16); None off a ticket
     code_rule: Optional[dict] = None  # the parameters and not_methods this verdict must judge, one by one (ticket 107)
+    inherited: Optional[list] = None  # the verdicts on inherited claims this verdict must check, one by one (ticket 97)
 
 
 @dataclass
@@ -533,6 +534,8 @@ class Verdict:
     model_ran: Optional[str] = None
     # The judgment of a ticket's parameter reasons and `not_methods` (ticket 107), when the question listed them.
     code_rule: Optional[dict] = None
+    # The check of each verdict on an inherited claim (ticket 97), when the question listed them.
+    inherited: Optional[list] = None
     # Every `rate_limit_event` the verdict's sessions wrote, for the conductor to fold into its readings as it
     # does a worker's: a refusal can ride a session that still answered (decision 15). Never journaled.
     rate_limit_events: list = field(default_factory=list, compare=False, repr=False)
@@ -746,7 +749,7 @@ def findings_text(findings, empty="no finding was named"):
 
 def verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
             verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None, ledger=None,
-            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None):
+            cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None, inherited=None):
     """One Type-B verdict, journaled: every verdict in the harness comes through here.
 
     A verdict is journaled because its session id and its model are the whole of what makes it
@@ -756,7 +759,7 @@ def verdict(subject_kind, subject, question, paths, scope_limit, *, project, aut
     taken = take_verdict(subject_kind, subject, question, paths, scope_limit, project=project,
                          author_model=author_model, verdict_type=verdict_type, ticket=ticket,
                          harness_root=harness_root, policy=policy, cwd=cwd, memo=memo,
-                         run_dir=run_dir, role=role, fall_back=fall_back, rung=rung, code_rule=code_rule)
+                         run_dir=run_dir, role=role, fall_back=fall_back, rung=rung, code_rule=code_rule, inherited=inherited)
     ledger_for(ledger or Path(project).resolve()).append_event(
         VERDICT, taken.payload, ticket=taken.ticket, session_id=taken.session_id)
     return taken
@@ -771,12 +774,12 @@ def verdict_for(ask, **context):
     """
     return verdict(ask.subject_kind, ask.subject, ask.question, ask.paths, ask.scope_limit,
                    author_model=ask.author_model, verdict_type=ask.verdict_type,
-                   ticket=ask.ticket, role=ask.role, rung=ask.rung, code_rule=ask.code_rule, **context)
+                   ticket=ask.ticket, role=ask.role, rung=ask.rung, code_rule=ask.code_rule, inherited=ask.inherited, **context)
 
 
 def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
                  verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None,
-                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None):
+                 cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None, inherited=None):
     """One verifier session, validated but not journaled; `verdict` is this plus the journal.
 
     `role` names the judging role, the verifier unless a decision names another; whichever it
@@ -802,7 +805,8 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     a paper the second thread went on to clear.
 
     `code_rule` is a ticket's parameters and not_methods the question listed (ticket 107): an answer that does not judge
-    every one of them is resumed like any other unusable answer.
+    every one of them is resumed like any other unusable answer. `inherited` is the ticket's verdicts on inherited claims
+    (ticket 97), held the same way: each one judged, and one that does not hold fails the verdict.
     """
     if verdict_type not in VERDICT_TYPES:
         raise GateError("verdict_type is one of %s, got %r" % (", ".join(VERDICT_TYPES), verdict_type))
@@ -841,12 +845,12 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
     envelope = worker.launch(request)
     raise_if_refused(envelope, model, what)
     heard = list(envelope.rate_limit_events)
-    problem = _unusable(envelope, code_rule)
+    problem = _unusable(envelope, code_rule, inherited)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, RESUME_VERDICT % problem)
         raise_if_refused(envelope, model, what)
         heard += envelope.rate_limit_events
-        problem = _unusable(envelope, code_rule)
+        problem = _unusable(envelope, code_rule, inherited)
     if problem is not None:
         raise GateError("%s could not be taken: %s" % (what, problem))
     returned = envelope.structured_output
@@ -856,6 +860,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         findings=list(returned.get("findings") or []),
         session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
         proposals=list(returned.get("proposals") or []), rung=rung, code_rule=returned.get("code_rule"),
+        inherited=returned.get("inherited"),
         # What the verifier's own session ran on, when the result named another model than it was launched with
         # (decision 16): a verdict stands or falls on who read the work, so the journal says which model did.
         model_ran=None if worker.ran_as_asked(model, envelope) else worker.model_ran(envelope),
@@ -880,7 +885,7 @@ def raise_if_refused(envelope, model, what):
     raise UsageLimited("%s was refused by the usage limit on %s until %s" % (what, window, until), limit)
 
 
-def _unusable(envelope, code_rule=None):
+def _unusable(envelope, code_rule=None, inherited=None):
     """Why this envelope is not a verdict the harness can act on, or None when it is one.
 
     The launcher already validated the structured output against the schema it passed; it is
@@ -913,6 +918,16 @@ def _unusable(envelope, code_rule=None):
             return ("the question listed the ticket's reasons and not_methods to judge, and `code_rule` does not judge %s"
                     % ", ".join(missing))
     unheld = [entry for entry in (rule.get("parameters") or []) + (rule.get("not_methods") or []) if entry.get("holds") is False]
+    if inherited:
+        judged = {entry.get("claim") for entry in returned.get("inherited") or []}
+        missing = [item["claim"] for item in inherited if item["claim"] not in judged]
+        if missing:
+            return ("the question listed the ticket's verdicts on inherited claims to check, and `inherited` does not judge %s"
+                    % ", ".join(missing))
+        unheld_claims = [entry for entry in returned.get("inherited") or [] if entry.get("holds") is False]
+        if returned["pass"] and unheld_claims:
+            return ("the verdict passed and judges %d of the ticket's verdicts on inherited claims not to hold (`inherited`); "
+                    "one that does not hold fails the verdict, with a finding that says so" % len(unheld_claims))
     if returned["pass"] and unheld:
         return ("the verdict passed and judges %d of the ticket's reasons or not_methods not to hold (`code_rule`); one that "
                 "does not hold fails the verdict, with a finding that says so" % len(unheld))
@@ -974,7 +989,8 @@ def _with_code_rule(ask, rule):
     return ask
 
 
-def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False, code_rule=None):
+def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outputs=(), rung=None, no_diff=False, code_rule=None,
+                inherited=None):
     """The verdicts one done ticket earns: its own quality criteria, and an independent read.
 
     `rung` is the rung the attempt that wrote the work ran on, carried into each verdict's journal event
@@ -991,7 +1007,8 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
 
     `code_rule` is the ticket's `parameters` reasons and `not_methods` (ticket 107), which the verifier's existing verdict
     judges: the independent read carries them, else the quality verdict; a ticket that earns neither earns a read of its
-    diff for them, since nobody else would judge the reasons.
+    diff for them, since nobody else would judge the reasons. `inherited` is the ticket's verdicts on inherited claims
+    (`verification.verdict_items`, ticket 97), carried the same way: the fresh verifier checks each one explicitly.
     """
     identifier = ticket["id"]
     subject = str(ticket_path)
@@ -1060,10 +1077,25 @@ def ticket_asks(ticket, difficulty, author_model, ticket_path, commit=None, outp
             )
             asks.append(carrier)
         _with_code_rule(carrier, code_rule)
+    if inherited:
+        from wayline import verification  # the verification module reads the sections, which import this module
+        carrier = next((ask for ask in asks if ask.verdict_type in (DIFF, RESULT)), None) or (asks[0] if asks else None)
+        if carrier is None:
+            carrier = Ask(
+                subject_kind="ticket", subject=subject,
+                question="Do ticket %d's verdicts on inherited claims hold against its own artifacts?" % identifier,
+                paths=paths,
+                scope_limit="Only the inherited claims listed below, read against the ticket's `## Result` section and the "
+                            "artifacts it wrote.",
+                verdict_type=RESULT, author_model=author_model, ticket=identifier, rung=rung,
+            )
+            asks.append(carrier)
+        carrier.question = "%s\n\n%s" % (carrier.question.rstrip(), verification.verdict_text(inherited))
+        carrier.inherited = list(inherited)
     return asks
 
 
-def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False, code_rule=None):
+def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False, code_rule=None, inherited=None):
     """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
 
     `passed` is the verdict types the journal holds as passed since the ticket was last done
@@ -1077,7 +1109,8 @@ def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_di
     if works_in_the_harness(ticket):
         return [], []
     earned = ticket_asks(ticket, difficulty, author_model, ticket_relative_path(ticket), commit=commit,
-                         outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff, code_rule=code_rule)
+                         outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff, code_rule=code_rule,
+                         inherited=inherited)
     passed = set(passed or ())
     return earned, [ask for ask in earned if ask.verdict_type not in passed]
 

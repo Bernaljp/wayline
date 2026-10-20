@@ -77,6 +77,8 @@ DEFAULT_HUMAN_ONLY = dict(zip(DEFAULT_CLASSES, (
 NAMED_CLASSES = {
     "concern": "a decision that sorts a concern after setup: ties it to an objective, keeps it for the paper order, or "
                "declines it with a reason.",
+    "material": "a decision on material an inherited result's verification lacks after setup: provide it, rebuild it, or "
+                "leave the result unverified.",
 }
 
 SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "materials", "autonomy", "radius",

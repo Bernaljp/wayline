@@ -43,6 +43,7 @@
             }
           },
           "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the open objectives (research/OBJECTIVES.md) the ticket serves; empty for one no objective asked for, a plotting ticket or one for an unasked claim"},
+          "verifies": {"type": ["string", "null"], "pattern": "\\S", "description": "at a start midway (decision 17; ticket 97): the Results heading of the inherited result this ticket verifies, re-running it and judging its wording; every inherited result waiting for its verdict gets one, a large one several; code makes it block every ticket built on that result. Null or absent for any other ticket"},
           "goal": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "when the ticket reports a goal's metric: the open objective with a measure it reports, whose metric and direction the measure gives"},
           "sections": {"type": "array", "items": {"type": "string", "enum": ["introduction", "results", "discussion", "methods", "references"]}, "description": "the sections of the paper the ticket adds passages to, set by its kind: code and experiment declare methods, analysis methods and results, lit introduction, writing the ones it writes (required for it), every other kind none; code fills it from the kind when it is absent"},
           "context_pack": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the locators the worker is given, smallest first: a path, path:first-last, or path#heading"},

@@ -87,6 +87,33 @@
         }
       }
     },
+    "material": {
+      "type": "array",
+      "description": "at a start midway (decision 17; ticket 97), one row for each inherited result (one Results heading of the inherited passages) the prompt names: the code, data, and software it needs to be verified, each present, missing, or fetchable; data a public source serves is fetchable, never missing. Leave it out, or empty, when the project inherited no result",
+      "items": {
+        "type": "object",
+        "required": ["result", "needs"],
+        "additionalProperties": false,
+        "properties": {
+          "result": {"type": "string", "pattern": "\\S", "description": "the inherited result's Results heading, as the prompt names it"},
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["kind", "item", "state", "licensed", "rebuild"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": {"type": "string", "enum": ["code", "data", "software"]},
+                "item": {"type": "string", "pattern": "\\S", "description": "what it is: a file, a script, a dataset, a program with its toolboxes"},
+                "state": {"type": "string", "enum": ["present", "missing", "fetchable"], "description": "present in the project, missing, or fetchable from a public source (data only)"},
+                "licensed": {"type": "boolean", "description": "true for licensed software such as MATLAB and its toolboxes"},
+                "rebuild": {"type": "boolean", "description": "whether a rebuild can work when it is missing: a port of the code, a reimplementation from the inherited Methods, or open software in its place; never for lost recordings"}
+              }
+            }
+          }
+        }
+      }
+    },
     "directions": {
       "type": "array",
       "minItems": 3,

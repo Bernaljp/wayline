@@ -61,7 +61,7 @@ AUTONOMOUS = "autonomous"
 _RECORD = re.compile(r"^<!-- wayline:decision (\{.*\}) -->$")
 _ID = re.compile(r"^Q([1-9][0-9]*)\Z")
 # The order a record's keys are written in, so a diff of DECISIONS.md shows what changed and nothing else.
-FIELDS = ("id", "ticket", "question", "options", "recommended", "evidence", "requires", "objective", "concerns", "objection",
+FIELDS = ("id", "ticket", "question", "options", "recommended", "evidence", "requires", "objective", "concerns", "objection", "material",
           "human_only", "reversible",
           "tier", "supersedes", "answer", "rationale", "confidence", "decided_by", "model", "fallback_from", "session_id",
           "timestamp")
@@ -249,7 +249,7 @@ def _check(record):
 
 
 def with_question(records, question, identifier=None, options=(), recommended=None, requires=(), evidence=(),
-                  human_only=False, reversible=True, objective=None, concerns=None, objection=None):
+                  human_only=False, reversible=True, objective=None, concerns=None, objection=None, material=None):
     """`records` with one open question added to the tree, and that question.
 
     The id is the one given (`Q` and a number nobody holds) or the next free one. A prerequisite must
@@ -258,7 +258,8 @@ def with_question(records, question, identifier=None, options=(), recommended=No
     (`{id, text}`) makes it a question of the first tier, answered `open` or `parked` (ticket 80);
     `concerns` (`{place, objective, ids}`) a question on the critic's proposed places, answered `take it`
     or `another place`, and `objection` (`{index, text}`) one on an objection of the hostile review,
-    answered `reject` or an accept with its place (ticket 96).
+    answered `reject` or an accept with its place (ticket 96); `material` (`{ids}`) the setup's one question on the missing
+    material the inherited results need, answered with a reply per item (ticket 97).
     """
     question = _text(question, "a question")
     identifier = identifier or _next_id(records)
@@ -291,6 +292,8 @@ def with_question(records, question, identifier=None, options=(), recommended=No
         record["concerns"] = concerns
     if objection is not None:
         record["objection"] = objection
+    if material is not None:
+        record["material"] = material
     record = _check(_ordered(record))
     return records + [record], record
 
@@ -425,13 +428,15 @@ def _memo_line(row):
                                           _line(row.get("reasoning") or "no reasoning given"))
 
 
-def objective_questions(objectives, memo=None):
+def objective_questions(objectives, memo=None, midway=False):
     """The first tier's questions, as `with_question` fields: one per objective to take, open or parked.
 
     One for each open or parked objective `objectives` holds, recommended as it stands, with the memo's verdict
     on it and the directions that would pursue it as evidence; then one for each new objective the memo's
     directions propose (`id` null), in the memo's order, a question two directions propose asked once. The
-    proposals of the nearest direction that proposes any are recommended `open`, the rest `parked`.
+    proposals of the nearest direction that proposes any are recommended `open`, the rest `parked`. At a start midway
+    (`midway`, decision 17; ticket 97) the critic also proposes "Do the inherited results hold?", recommended `open`,
+    unless the project records it already.
     """
     memo = memo if isinstance(memo, dict) else {}
     rows = {row.get("id"): row for row in memo.get("objectives") or () if isinstance(row, dict)}
@@ -472,6 +477,15 @@ def objective_questions(objectives, memo=None):
                                          % _line(text),
                              "recommended": "open" if index == nearest else "parked", "evidence": [said]}
             specs.append(proposed[key])
+    from wayline.verification import OBJECTIVE  # the verification module reads the sections and the concerns
+    if midway and memo and _normal(OBJECTIVE) not in recorded and _normal(OBJECTIVE) not in proposed:
+        specs.append({"objective": {"id": None, "text": OBJECTIVE},
+                      "question": "Does the project take the objective the critic proposes at this start midway, \"%s\": open or "
+                                  "parked?" % OBJECTIVE,
+                      "recommended": "open",
+                      "evidence": ["research/POSITION.md, what each inherited result needs: at every start midway the critic "
+                                   "proposes it, open by default, and code answers it once every inherited result has a verdict "
+                                   "or is unverifiable"]})
     return specs
 
 
@@ -520,10 +534,36 @@ def _seeded(project, records, events):
         memo = (Ledger(project).read_json(POSITION_JSON) or {}).get("memo")
     except (OSError, ValueError, AttributeError):
         memo = None
-    records = with_objective_questions(records, objective_questions(objectives, memo))
+    from wayline import verification  # the verification module reads the sections and the concerns
+    records = with_objective_questions(records, objective_questions(objectives, memo, verification.midway(project)))
     if memo is None or any(record.get("objective") and not _settled(record) for record in records):
         return records  # the concerns' questions name the objectives taken, so they wait for the first tier's answers
-    return with_concern_questions(project, records, memo, objectives)
+    return with_material_question(project, with_concern_questions(project, records, memo, objectives))
+
+
+def with_material_question(project, records):
+    """`records` with the setup's one question on the missing material (decision 17; ticket 97), human-only, asked once for
+    the items no open question covers: every missing item the inherited results need, each with its replies."""
+    from wayline import verification  # the verification module reads the sections and the concerns
+
+    try:
+        spec = verification.material_question(project)
+    except verification.VerificationUnreadable as failure:
+        raise ProjectError(str(failure)) from None
+    if spec is None:
+        return records
+    covered = {identifier for record in records if record.get("material") and not _settled(record) for identifier in record["material"]["ids"]}
+    ids = [identifier for identifier in spec["material"]["ids"] if identifier not in covered]
+    if not ids:
+        return records
+    if ids != spec["material"]["ids"]:
+        spec = verification.material_question(project, only=ids)
+    asked = sum(1 for record in records if record.get("material"))
+    question = spec["question"] if not asked else spec["question"].replace("?", " (asked %d time%s before, for the items still "
+                                                                             "waiting)?" % (asked, "" if asked == 1 else "s"), 1)
+    records, _ = with_question(records, question, options=spec["options"], recommended=spec["recommended"],
+                               evidence=spec["evidence"], human_only=True, material=spec["material"])
+    return records
 
 
 def with_concern_questions(project, records, memo, objectives):
@@ -624,13 +664,41 @@ def _with_taken(project, records, identifiers):
     """
     _check_takes(project, records, identifiers)
     _check_concern_takes(project, records, identifiers)
+    _check_material_takes(project, records, identifiers)
     for identifier in identifiers:
         record = _questions(records)[identifier]
         kept = _take_objective(project, record, records)
         if kept is not record:
             records = [kept if other is record else other for other in records]
         _take_concerns(project, kept)
+        _take_material(project, kept)
     return records
+
+
+def _check_material_takes(project, records, identifiers):
+    """Why the answers on the missing material in `identifiers` cannot be recorded, before any answer is (ticket 97): a reply
+    an item does not take, or an answer that names none."""
+    from wayline import verification  # the verification module reads the sections and the concerns
+
+    questions = _questions(records)
+    for identifier in identifiers:
+        record = questions[identifier]
+        if not _settled(record) or not record.get("material"):
+            continue
+        problem = verification.check_replies(project, record["material"]["ids"], record["answer"])
+        if problem is not None:
+            raise GrillError("%s could not be recorded in the verifications: %s" % (identifier, problem))
+
+
+def _take_material(project, record):
+    """Record the owner's replies on the missing material through the verifications' ledger (ticket 97)."""
+    if not _settled(record) or not record.get("material"):
+        return
+    from wayline import verification  # the verification module reads the sections and the concerns
+    try:
+        verification.take_replies(project, record["material"]["ids"], record["answer"], "owner")
+    except (verification.VerificationError, verification.VerificationUnreadable) as failure:
+        raise GrillError("%s could not be recorded in the verifications: %s" % (record["id"], failure)) from None
 
 
 def _check_concern_takes(project, records, identifiers):

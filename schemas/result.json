@@ -134,7 +134,18 @@
     },
     "jobs": {"type": "array", "items": {"type": "string"}, "description": "experiment tickets: the job ids a running result leaves for the poller"},
     "touched_outside_declared": {"type": "array", "items": {"type": "string"}},
-    "blocked_on": {"type": ["string", "null"]},
+    "blocked_on": {"type": ["string", "null"], "description": "what blocks the ticket; a verification that lacks material it needs says `material <code|data|software>: <the item>` (decision 17; ticket 97), and the owner or the decider is asked about it"},
+    "verification": {
+      "type": ["object", "null"],
+      "description": "a verification ticket's verdict on its inherited result (decision 17; ticket 97): the route it took; its findings replace the result's inherited claims, each saying in `evidence` whether this project's evidence supports, narrows, or contradicts it",
+      "required": ["route", "commit", "substitute"],
+      "additionalProperties": false,
+      "properties": {
+        "route": {"type": "string", "enum": ["reproduced", "ported", "reimplemented"], "description": "reproduced: the project's own code at the commit intake recorded, changed only to run here; ported: the same logic in another language or runtime; reimplemented: written from the inherited Methods. A read of a cited claim's reference is code's, through the consultant"},
+        "commit": {"type": ["string", "null"], "description": "for reproduced: the commit intake recorded, which the run used; null otherwise"},
+        "substitute": {"type": ["string", "null"], "description": "the substitute data the verdict was reached on, when the inherited data was not used; every finding then narrows its claim to that data"}
+      }
+    },
     "cost": {
       "type": ["object", "null"],
       "additionalProperties": false,

@@ -1,0 +1,39 @@
+{
+  "results": [
+    {
+      "heading": "Results",
+      "claims": ["P4", "P5", "P6"],
+      "standing": "verified",
+      "reason": null,
+      "verdicts": [
+        {
+          "ticket": 7,
+          "route": "reproduced",
+          "commit": "4f2c9a1b7d3e8f60c5a2b9d1e7f3c8a6b2d4e9f1",
+          "substitute": null,
+          "claims": [
+            {"claim": "P4", "evidence": "supports", "by": "t7-a1-f1"},
+            {"claim": "P5", "evidence": "narrows", "by": "t7-a1-f2"},
+            {"claim": "P6", "evidence": "contradicts", "by": "t7-a1-f3"}
+          ]
+        }
+      ],
+      "contradictions": [{"text": "The abstract says synchrony peaks at dusk.", "claims": ["P5"]}]
+    },
+    {
+      "heading": "The cited rates",
+      "claims": ["P12"],
+      "standing": "unverifiable",
+      "reason": "data/dusk-sweep-2021.csv is missing and the owner left it unverified",
+      "verdicts": [],
+      "contradictions": []
+    }
+  ],
+  "material": [
+    {"id": "M1", "heading": "The cited rates", "kind": "data", "item": "data/dusk-sweep-2021.csv", "licensed": false, "rebuild": false,
+     "reply": "leave it unverified", "by": "owner", "found_by": "critic"},
+    {"id": "M2", "heading": "Results", "kind": "software", "item": "MATLAB", "licensed": true, "rebuild": true,
+     "reply": "port to Python", "by": "decider", "found_by": "ticket 7"}
+  ],
+  "reads": [{"slug": "vaswani-2017-attention", "level": 0, "claims": ["P12"], "settled": []}]
+}

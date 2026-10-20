@@ -575,6 +575,8 @@ def prepare(record, project, existing, index, cut, start=None):
         fields["acceptance"] = {"machine": list(item["acceptance"].get("machine") or []),
                                 "quality": list(item["acceptance"].get("quality") or [])}
         fields["objectives"] = list(item["objectives"])
+        if item.get("verifies"):
+            fields["verifies"] = _one_line(item["verifies"])  # the inherited result it verifies (decision 17; ticket 97)
         failures.extend(_objective_failures(label, item, recorded))
         failures.extend(_section_failures(label, item))
         declared = list(item["sections"]) if item.get("sections") is not None else sections.sections_for_kind(item["kind"])
@@ -593,6 +595,11 @@ def prepare(record, project, existing, index, cut, start=None):
         if item.get("adds_public_api") and item["kind"] == "code":
             prepared.declared.add(identifier)
         prepared.tickets.append((key, fields, ticket_body(item, cut.of), item.get("tags")))
+    from wayline import verification  # the verification module reads the sections and the concerns
+    try:
+        failures.extend(verification.wire(project, prepared, existing, cut.kind))
+    except (verification.VerificationUnreadable, objectives.ObjectivesUnreadable) as failure:
+        failures.append("the verifications cannot be read, so no ticket can be wired to them: %s" % failure)
     first_decision = start + len(tickets)
     placeholders = []
     for position, item in enumerate(record.get("decisions") or []):

@@ -207,9 +207,10 @@ def inputs_text(project, max_chars=None):
     return "\n".join(rendered) + "\n", cut
 
 
-def position_prompt(role, inputs, harness, project, cut=False, objectives=(), concerns=()):
-    """The critic's position prompt: what is asked, the radius, the objectives and the concerns to row, the inputs, the paths,
-    the protocol, the schema."""
+def position_prompt(role, inputs, harness, project, cut=False, objectives=(), concerns=(), results=()):
+    """The critic's position prompt: what is asked, the radius, the objectives, the concerns, and the inherited results to row,
+    the inputs, the paths, the protocol, the schema."""
+    from wayline import verification  # the verification module reads the sections, which this module seeds
     asked = [objective["id"] for objective in rowed(objectives)]
     waiting = [item["id"] for item in waiting_concerns(concerns)]
     head = "\n".join([
@@ -229,6 +230,7 @@ def position_prompt(role, inputs, harness, project, cut=False, objectives=(), co
          "the order (a wording, a detail), or `decline` it with the reason the owner reads; the owner settles each at the "
          "grill" % ", ".join(waiting)) if waiting else
         "- the concerns: none waits to be sorted, so `concerns` is empty",
+        verification.prompt_line(results),
     ])
     parts = [head, inputs]
     if cut:
@@ -258,14 +260,15 @@ def _one_line(text):
     return " ".join(str(text or "").split())
 
 
-def check_memo(memo, radius, objectives=(), concerns=()):
+def check_memo(memo, radius, objectives=(), concerns=(), results=()):
     """The checks on a memo the schema cannot make; returns the failures, each one line, empty when it passes.
 
     `objectives` are the project's records (`objectives.json`): the memo rows each open or parked one once, a
     revised target follows a goal's verdict and is never given for an objective without a measure, and a
     direction names only objectives the project holds, or new ones with no id. `concerns` are the project's
     (`concerns.json`, decision 17; ticket 96): the memo proposes a place for each one waiting to be sorted, once,
-    a tie naming one of its objective rows and nothing else naming an objective.
+    a tie naming one of its objective rows and nothing else naming an objective. `results` are the project's inherited
+    results (`verification.inherited_results`, ticket 97): the memo's `material` holds one row for each, and no other.
     """
     try:
         check(memo, load_schema(POSITION_SCHEMA), name="the memo")
@@ -289,6 +292,8 @@ def check_memo(memo, radius, objectives=(), concerns=()):
                                 % (index, _one_line(direction["title"]), named["id"]))
     failures += _row_failures(memo["objectives"], held)
     failures += _concern_failures(memo.get("concerns") or [], {row["id"] for row in memo["objectives"]}, concerns)
+    from wayline import verification  # the verification module reads the sections, which this module seeds
+    failures += verification.material_failures(memo.get("material") or [], results)
     seen = set()
     for row in memo["prior_work"]:
         key = _one_line(row["reference"]).lower()
@@ -612,6 +617,8 @@ def render_position(record):
         for row in memo["concerns"]:
             where = {"objective": "tied to %s" % row["objective"], "order": "for the paper order", "decline": "declined"}[row["place"]]
             lines += _item("- %s, %s: " % (row["id"], where), row["reason"])
+    from wayline import verification  # the verification module reads the sections, which this module seeds
+    lines += verification.memo_lines(memo.get("material") or [])
     lines += ["", "## Three directions, by distance from the intent", "",
               "Nearest first, none farther than the radius `%s`. The objectives each direction names are proposals: the "
               "grill's first tier asks the owner which the project takes, open or parked." % record.get("radius"), ""]
@@ -734,6 +741,8 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
     harness = read_harness(project)
     objectives = _objectives(project) if objectives is None else objectives
     held = _concerns(project)
+    from wayline import verification  # the verification module reads the sections, which this module seeds
+    results = verification.inherited_results(project)
     what = "the critic's position memo"
     model, effort, fallback_from = critic_tier(policy, _falls_back_now(project, policy, fall_back))
     role = worker.read_role(CRITIC, harness_root, project)
@@ -743,7 +752,7 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
     reading = [refs] + ([project / "research" / DOCUMENTS] if (project / "research" / DOCUMENTS).is_dir() else [])
     run_dir = _session_dir(project)
     request = worker.LaunchRequest(
-        role=role.name, model=model, effort=effort, prompt=position_prompt(role, inputs, harness, project, cut, objectives, held),
+        role=role.name, model=model, effort=effort, prompt=position_prompt(role, inputs, harness, project, cut, objectives, held, results),
         agent_json=role.agent_json(model, effort, _budget(policy, "max_turns")),
         allowed_tools=scoped_tools(role.allowed_tools, *reading), disallowed_tools=list(role.disallowed_tools),
         settings_path=gates.write_worker_settings(run_dir / "settings.json", harness_root),
@@ -772,18 +781,18 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
         problem = _unusable(envelope)
         if problem is not None:
             raise PositionError("the critic returned no memo the schema accepts: %s" % problem)
-        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held)
+        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held, results)
         if failures:
             raise PositionError("the memo failed its checks after it was returned once; nothing was written", failures)
     else:
-        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held)
+        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held, results)
         if failures:
             say("  the memo failed %d check(s); returned to the critic once" % len(failures))
             envelope = again(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
             problem = _unusable(envelope)
             if problem is not None:
                 raise PositionError("the critic's second memo could not be read: %s" % problem, failures)
-            failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held)
+            failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held, results)
             if failures:
                 raise PositionError("the memo failed its checks twice; nothing was written", failures)
     envelope.session_id = envelope.session_id or session_id
@@ -812,6 +821,8 @@ def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None
     ledger.write_markdown(POSITION_MD, render_position(record))
     from wayline import concerns  # the concerns module reads the sections, which this module seeds
     concerns.propose(project, memo.get("concerns") or [])
+    from wayline import verification  # the verification module reads the sections, which this module seeds
+    verification.take_memo(project, memo)
     sections.seed_passages(ledger, "introduction", prior_work_passages(record), by=SEED_BY, key=_cited_slug)
     events, _ = ledger.read_events()
     specify.move_phase(ledger, events, PHASE, session_id=session_id)

@@ -113,6 +113,7 @@ SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted ag
 CONSOLIDATED = "consolidated"  # one consolidation of a section the owner asked for (decision 17; ticket 88)
 CONCERN = "concern"  # one concern recorded or changed in research/concerns.json (decision 17; ticket 96)
 REVIEWED = "reviewed"  # the owner let a decision made for them stand, or reversed it (decision 17; ticket 89)
+VERIFICATION = "verification"  # one inherited result's standing recorded or changed in research/verifications.json (decision 17; ticket 97)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -265,6 +266,8 @@ K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for res
 K_EDITED = "edited"  # `report_rendered`: the commit an edit by hand was kept in as it stood, null when it could not be committed
 K_DECISION = "decision"  # `reviewed`: the decision reviewed, D1 onward, by its place among the journal's `decision` events
 K_REVIEW = "review"  # `reviewed`: stand or reverse
+K_ROUTE = "route"  # `verification`: the route of the verdict that changed it, reproduced, ported, reimplemented, or read
+K_RELEASED = "released"  # `verification`: the tickets an unverifiable result stopped blocking
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -334,6 +337,7 @@ EVENTS = {
     CONSOLIDATED: (K_SECTION, K_REPLACED, K_WRITTEN, K_MODEL),
     CONCERN: (K_ID, K_STATUS, K_PLACE, K_OBJECTIVES, K_BY),
     REVIEWED: (K_DECISION, K_REVIEW, K_ANSWER, K_BY),
+    VERIFICATION: (K_HEADING, K_STANDING, K_ROUTE, K_BY, K_RELEASED),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -386,6 +390,11 @@ PAYLOAD_ENUMS = {
     (CONCERN, K_BY): ("session", "code", "critic", "owner", "decider"),
     (REVIEWED, K_REVIEW): ("stand", "reverse"),
     (REVIEWED, K_BY): ("owner",),
+    (VERIFICATION, K_STANDING): ("unchecked", "verified", "unverifiable"),
+    (VERIFICATION, K_ROUTE): ("reproduced", "ported", "reimplemented", "read"),
+    # Code (a result found or followed, a verdict taken, a needs_human under autonomous), or the owner's or the decider's
+    # reply leaving a result unverified.
+    (VERIFICATION, K_BY): ("code", "owner", "decider"),
 }
 
 

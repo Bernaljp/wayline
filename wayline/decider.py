@@ -489,6 +489,11 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "reason the owner reads; `new objective: <the question>` adds an objective for it, which is yours only as the "
         "objective line below says. An answer that names no place is refused.",
         "",
+        "A `material` decision (code, data, or software an inherited result's verification lacks, decision 17) is yours unless "
+        "the owner named the class human-only: answer `rebuild it` (or, for licensed software, `port to Octave` or `port to "
+        "Python`) wherever a rebuild can work, else `leave it unverified`, which makes the result unverifiable and releases "
+        "what its verification blocked. `I'll provide it` is the owner's alone, and an answer giving it is refused.",
+        "",
         "Moving the project's environment (`wayline switch --environment`: the shared tools, a conda prefix, a venv, or a "
         "container) is the owner's word alone, and no decision class names it: never answer with a move, and never set it.",
         "",
@@ -723,6 +728,14 @@ def decide_ticket(project, fields, body, record=None, *, harness_root=HARNESS_RO
         if why is not None:
             outcome = Outcome(subject, "refused", why=why, session_id=envelope.session_id, model=envelope.model or model,
                               fallback_from=fallback_from)
+    if outcome is None:
+        from wayline import verification  # the verification module reads the sections and the concerns
+        if verification.material_of(fields.get("origin")) is not None:
+            # A gap in an inherited result's verification (ticket 97): the decider rebuilds or leaves it unverified, never provides.
+            why = verification.decider_refusal(chosen_option(returned.get("answer"), subject.options))
+            if why is not None:
+                outcome = Outcome(subject, "refused", why=why, session_id=envelope.session_id, model=envelope.model or model,
+                                  fallback_from=fallback_from)
     if outcome is not None and outcome.status == "refused":
         decisions.turn_over(project, identifier, outcome.why, notify=notify)
         outcome.ticket = identifier
