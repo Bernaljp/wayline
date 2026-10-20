@@ -74,6 +74,9 @@ VERBS = [
     Verb("passage", "passage add --section <s> --heading <h> [--replaces <id>] \"<text>\"",
          "record an owner's passage in one of the paper's five sections, by: owner, journaled as passage (the conversation calls it)", "views",
          lazy("wayline.sections", "passage_command")),
+    Verb("result", "result merge <id> <into> | rename <id> \"<heading>\"",
+         "merge one result into another, or give a result a new heading, on the owner's word (the conversation calls it)", "views",
+         lazy("wayline.results", "result_command")),
     Verb("consolidate", "consolidate <section> [--yes]",
          "rewrite one section's current passages into fewer that keep their tags, in one read-only writer session the owner asks for and confirms with its cost",
          "views", lazy("wayline.consolidation", "consolidate_command")),
@@ -116,7 +119,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern",
+    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern", "result",
 ))
 
 

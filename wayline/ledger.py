@@ -113,6 +113,7 @@ SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted ag
 CONSOLIDATED = "consolidated"  # one consolidation of a section the owner asked for (decision 17; ticket 88)
 CONCERN = "concern"  # one concern recorded or changed in research/concerns.json (decision 17; ticket 96)
 REVIEWED = "reviewed"  # the owner let a decision made for them stand, or reversed it (decision 17; ticket 89)
+RESULT = "result"  # one result created at an acceptance, or merged or renamed on the owner's word (decision 17; ticket 90)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -265,6 +266,8 @@ K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for res
 K_EDITED = "edited"  # `report_rendered`: the commit an edit by hand was kept in as it stood, null when it could not be committed
 K_DECISION = "decision"  # `reviewed`: the decision reviewed, D1 onward, by its place among the journal's `decision` events
 K_REVIEW = "review"  # `reviewed`: stand or reverse
+K_RESULT = "result"  # `finding`: the result, R1 onward, the finding joined at its acceptance (ticket 90)
+K_INTO = "into"  # `result`: the result a merged one went into
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -293,7 +296,7 @@ EVENTS = {
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
     VERDICT: (K_SUBJECT_KIND, K_SUBJECT, K_VERDICT_TYPE, K_PASS, K_SESSION_ID, K_MODEL, K_FINDINGS, K_RUNG, K_FALLBACK_FROM, K_MODEL_RAN),
     FINDING: (K_ID, K_TICKET, K_TEXT, K_PROVENANCE, K_NEGATIVE, K_HEADING, K_REPLACES, K_OBJECTIVES, K_EVIDENCE, K_REASON,
-              K_REPLACES_OWNER),
+              K_REPLACES_OWNER, K_RESULT),
     PROGRESS: (K_METRIC, K_VALUE, K_TICKET, K_RUN_ID, K_KEPT, K_GOAL),
     DISCARDED: (K_TICKET, K_METRIC, K_BEST, K_SD, K_SEEDS, K_GOAL),
     PROPOSAL_ADMITTED: (K_ID, K_FROM, K_KIND, K_TICKET),
@@ -334,6 +337,7 @@ EVENTS = {
     CONSOLIDATED: (K_SECTION, K_REPLACED, K_WRITTEN, K_MODEL),
     CONCERN: (K_ID, K_STATUS, K_PLACE, K_OBJECTIVES, K_BY),
     REVIEWED: (K_DECISION, K_REVIEW, K_ANSWER, K_BY),
+    RESULT: (K_ID, K_HEADING, K_ACTION, K_INTO, K_FROM, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -386,6 +390,9 @@ PAYLOAD_ENUMS = {
     (CONCERN, K_BY): ("session", "code", "critic", "owner", "decider"),
     (REVIEWED, K_REVIEW): ("stand", "reverse"),
     (REVIEWED, K_BY): ("owner",),
+    (RESULT, K_ACTION): ("created", "merged", "renamed"),
+    # Code clusters a finding into a result at its acceptance; only the owner merges or renames one.
+    (RESULT, K_BY): ("code", "owner"),
 }
 
 
