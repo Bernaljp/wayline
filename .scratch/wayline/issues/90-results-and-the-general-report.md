@@ -43,6 +43,7 @@ Not part of this ticket:
 - [ ] `findings.md`, `add_finding`, `render_findings`, and the report's writer session are gone, and no test or module refers to them.
 - [ ] The numbers check at acceptance matches every number in a finding against its `res` locators with rounding, percents, and the scales 100 and 1000, exempts counts in words and spec parameters, sends each unmatched sentence to a fresh verifier, and sends the ticket back on a failure.
 - [ ] An edited `REPORT.md` is committed as it stood, listed in the next banner, and never taken in.
+- [ ] The account's "Changed without asking you" (ticket 89) lists every passage and finding journaled with `replaces_owner` (ticket 88), reading that flag. It now re-derives the list from `passages.jsonl` alone, so it misses a finding that replaces an owner's Results passage and a passage that replaces a consolidation made from the owner's text, and it lists a consolidation's own replacements, which the owner asked for.
 - [ ] Tests:
   - the ledger seam over a temporary project, asserting on the files written;
   - the numbers check as a Type-A function with the fake launcher for the verifier;

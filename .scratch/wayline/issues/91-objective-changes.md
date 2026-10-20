@@ -37,7 +37,7 @@ Decision 4's "change the goal or the data" becomes "change a goal's measure, or 
 Not part of this ticket:
 
 - the spec amendment an added or reframed objective gets (92);
-- a dropped objective's concerns going back to be sorted (96);
+- sorting a dropped objective's concerns again, which 96 built (asking it inside this ticket's answer is this ticket's);
 - the marks view itself (112).
 
 **Blocked by:** 79 - Batches and marks; 80 - The front door reads objectives; 81 - Specify and the plan name objectives; 86 - Passages and the five sections; 89 - The account. It blocks 92, 109, and 112.
@@ -55,6 +55,7 @@ Not part of this ticket:
 - [ ] An objective's answer is written by the upholding verifier, or by one fresh `opus high` verifier per objective for "answer it as it stands". It passes the numbers and locator checks and becomes a Discussion passage written by code.
 - [ ] Approval cancels the unstarted tickets serving only a closed objective with `ticket_cancelled`, sets aside claims tied only to closed objectives (shown in `SPEC.md`, restored on reopen), re-ties claims and tickets on a reframe, and keeps a superseded answer on an owner's reopen.
 - [ ] The owner's word applies directly through the objective verbs with no proposal or verdict. Decision 4's wording and the irreversible list change as decision 17 says.
+- [ ] When the answer drops an objective, its concerns go back to sorting inside the same "Objective changes" answer. Ticket 96 built the re-sort as a `concern` decision ticket of its own after setup, and a grill question during setup; inside this answer it is asked there instead.
 - [ ] Tests:
   - replayed journals for a proposal upheld and batched, one not upheld, a decline resuming paused tickets, the decider's batch under each radius, a reopen, and a set-aside claim restored, idempotence included;
   - the fake launcher for the verdict's judgment, the decider's batch, and the answering verifier.
