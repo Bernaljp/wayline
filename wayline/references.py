@@ -13,7 +13,8 @@ the Type-A check (`check_references`) confirms every cited work (every `ref` tag
 passages and findings) is a dossier or listed, runs the scout free on the listed works no dossier
 holds yet, and keeps each note on its dossier with the ticket's id. "No such work" sends the worker
 back as most likely invented; a service failure accepts with the flag. A `ref` tag names a work by its
-slug or by its identifier (`{ref:doi:10.1038/x#abstract}`, `{ref:arxiv:1802.03426#abstract}`), mapped
+slug or by its identifier (`{ref:doi:10.1038/x#abstract}`, `{ref:arxiv:1802.03426#abstract}`, or by exact title,
+`{ref:title:<exact title>}`, ticket 88), mapped
 through position's identifier index, and its locator must name what the dossier holds at its level:
 `abstract` or `metadata.<field>` at L0 and L1, and at L2 an entry's locator as well. Dossiers stay at
 L0 when cited.
@@ -31,11 +32,11 @@ from wayline.cli import parse_args
 from wayline.ledger import SCOUTED, LedgerError, ledger_for
 from wayline.project import ProjectError, find_project, policy_for
 from wayline.provenance import TAG_RE, identifier_index, parse_tag, ref_slug
-from wayline.scout import FAILED, FOUND, NO_SUCH_WORK, VERIFIED, ScoutError, outcome, parse_reference
+from wayline.scout import FAILED, FOUND, NO_SUCH_WORK, VERIFIED, Reference, ScoutError, normalize_title, outcome, parse_reference
 
 __all__ = [
     "CALLS_PER_TICKET", "LOOKED_UP_KINDS", "ReferenceError_", "ScoutRefused", "call_limit", "calls_made", "looked_up", "scout", "scout_command", "render",
-    "cited", "held_locators", "check_references",
+    "cited", "held_locators", "check_references", "tagged_reference",
 ]
 
 CALLS_PER_TICKET = 20  # the fallback when a policy carries no `scout.calls_per_ticket`
@@ -212,7 +213,7 @@ def check_references(project, ticket, result, fetcher=None, email=None, clock=No
 
     Every cited work (a `ref` tag in the passages or the findings) must be a dossier or listed in
     `result.references` (`{identifier, note}`), and the scout runs free and uncounted on every work that is
-    neither a found dossier nor known yet: each listed one, and each cited by `doi:` or `arxiv:` that no
+    neither a found dossier nor known yet: each listed one, and each cited by `doi:`, `arxiv:`, or `title:` that no
     dossier holds. Found, it is filed; a service failure files it with the `retry` flag and is accepted
     (`flagged`); no such work is a problem, the work most likely invented. A URL is a problem, never looked
     up, and so is a slug no dossier holds. Each note is kept on its dossier as `ticket <id>`. A locator must
@@ -232,7 +233,7 @@ def check_references(project, ticket, result, fetcher=None, email=None, clock=No
 
     def look_up(reference, named_as):
         """The slug the scout filed `reference` under, or None with the problem said; a failure is flagged."""
-        key = (reference.kind, reference.value.lower())
+        key = _key(reference)
         slug = dossiers.filed_slug(ledger, reference, index())
         record = _dossier(ledger, slug) if slug else None
         if record is not None and record.get("existence") == VERIFIED:
@@ -262,20 +263,20 @@ def check_references(project, ticket, result, fetcher=None, email=None, clock=No
             continue
         if note:
             dossiers.keep_ticket_note(ledger, slug, note, ticket, now=dossiers.timestamp(clock()))
-        listed[(reference.kind, reference.value.lower())] = slug
+        listed[_key(reference)] = slug
     for tag, parts in cited(result):
         if parts is None:
-            problems.append("`{%s}` is not a `ref` tag: write `{ref:<slug>#<locator>}`, or `doi:` or `arxiv:` with the identifier in place of the slug" % tag)
+            problems.append("`{%s}` is not a `ref` tag: write `{ref:<slug>#<locator>}`, or `doi:`, `arxiv:`, or `title:` with the identifier in place of the slug" % tag)
             continue
         slug = ref_slug(parts, index())
         if parts.get("identifier"):
-            prefix, _, value = parts["identifier"].partition(":")
-            named = (prefix, value.lower())
+            reference = tagged_reference(parts["identifier"])
+            named = _key(reference)
             if named in invented:
                 continue  # sent back already, as a work no service knows
             slug = slug or listed.get(named)
             if slug is None or (_dossier(ledger, slug) or {}).get("existence") != VERIFIED:
-                slug = look_up(looked_up(parts["identifier"]), "`{%s}`" % tag)
+                slug = look_up(reference, "`{%s}`" % tag)
                 if slug is None:
                     continue
         record = _dossier(ledger, slug)
@@ -305,6 +306,22 @@ def check_references(project, ticket, result, fetcher=None, email=None, clock=No
     if any((_dossier(ledger, slug) or {}).get("existence") == VERIFIED for slug in filed):
         dossiers.finish_lookups(project, ledger, clock)
     return {"problems": problems, "flagged": sorted(set(flagged)), "filed": filed}
+
+
+def tagged_reference(identifier):
+    """The question an identifier `ref` tag asks the scout: `doi:<doi>` and `arxiv:<id>` read as written, and `title:<exact
+    title>` as that title (ticket 88), which the services are asked by its words, never by the prefix."""
+    kind, _, value = str(identifier or "").partition(":")
+    if kind.lower() == "title":
+        return Reference("title", " ".join(value.split()), value.strip())
+    return looked_up(identifier)
+
+
+def _key(reference):
+    """What one work is known by within one check: its kind and its value, a title by its normalized words."""
+    if reference.kind == "title":
+        return ("title", normalize_title(reference.value))
+    return (reference.kind, reference.value.lower())
 
 
 def _dossier(ledger, slug):

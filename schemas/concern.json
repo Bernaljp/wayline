@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "concern",
+  "description": "research/concerns.json (Implementation Decision 17; ticket 96): the points the work must answer, written only by wayline.concerns through the ledger, rendered as research/CONCERNS.md, and journaled as `concern`. Ids run K1 onward and are never reused. A concern comes from a critique's point, kept verbatim with every critique that raised it, from an open Word comment thread, or from an objection of the position memo's hostile review the owner accepted at the grill, with the memo as its source. It is sorted once it is tied to objectives, kept for the paper order, or declined with a reason; code answers it once its objectives are answered and its targets replaced or withdrawn. `split` lists the critiques the splitter took in, each at the version it read.",
+  "type": "object",
+  "required": ["concerns", "split"],
+  "additionalProperties": false,
+  "properties": {
+    "concerns": {"type": "array", "items": {"$ref": "#/$defs/concern"}},
+    "split": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["document", "version"],
+        "additionalProperties": false,
+        "properties": {
+          "document": {"type": "string", "pattern": "^D[1-9][0-9]*$"},
+          "version": {"type": "integer", "minimum": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "concern": {
+      "type": "object",
+      "required": ["id", "sources", "targets", "place", "objectives", "status", "answer", "reason", "proposed", "returned", "sorted_by"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^K[1-9][0-9]*$"},
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "description": "every critique that raised it, each with where and its verbatim words",
+          "items": {
+            "type": "object",
+            "required": ["critique", "locator", "text"],
+            "additionalProperties": false,
+            "properties": {
+              "critique": {"type": "string", "pattern": "^(D[1-9][0-9]*|POSITION\\.md)$", "description": "the document that raised it (a critique, or a document's comment thread), or POSITION.md for the hostile review's objection"},
+              "locator": {"type": "string", "pattern": "\\S", "description": "where in it: D2#p3 for a block of the converted text, POSITION.md#hostile-review-2 for an objection"},
+              "text": {"type": "string", "pattern": "\\S", "description": "the point in the source's own words"}
+            }
+          }
+        },
+        "targets": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "the inherited claims it targets, by passage id"},
+        "place": {"enum": ["objectives", "order", "declined", null], "description": "tied to objectives, kept for the paper order, or declined; null while it waits to be sorted"},
+        "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the objectives it is tied to, when its place is objectives"},
+        "status": {"enum": ["open", "answered", "declined"]},
+        "answer": {"type": ["string", "null"], "description": "what answered it, once answered"},
+        "reason": {"type": ["string", "null"], "description": "why it was declined, once declined"},
+        "proposed": {
+          "type": ["object", "null"],
+          "required": ["place", "objective", "reason"],
+          "additionalProperties": false,
+          "description": "the critic's proposed place in the position memo, which the grill and the marks view put to the owner",
+          "properties": {
+            "place": {"enum": ["objective", "order", "decline"]},
+            "objective": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$"},
+            "reason": {"type": "string", "pattern": "\\S"}
+          }
+        },
+        "returned": {"type": ["string", "null"], "description": "why it came back to be sorted, such as its objective dropped; null otherwise"},
+        "sorted_by": {"enum": ["owner", "decider", null], "description": "who sorted it"}
+      }
+    }
+  }
+}

@@ -30,7 +30,8 @@
     "dedup-judge": {"model": "haiku", "effort": "low"},
     "fixture-judge": {"model": "haiku", "effort": "low"},
     "shape-classifier": {"model": "haiku", "effort": "low"},
-    "code-reader": {"model": "sonnet", "effort": "medium"}
+    "code-reader": {"model": "sonnet", "effort": "medium"},
+    "critique-splitter": {"model": "sonnet", "effort": "medium"}
   },
   "verifier": {
     "sonnet": {"model": "opus", "effort": "high"},

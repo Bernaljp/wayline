@@ -1,0 +1,5 @@
+{
+  "passages": [
+    {"heading": "Fitting", "text": "We fit the phase by least squares, once per cell {code:code/phase.py#fit}.", "replaces": ["P1", "P2"]}
+  ]
+}

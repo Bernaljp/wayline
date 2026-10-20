@@ -66,6 +66,7 @@ SESSIONS = "sessions/position"      # research/sessions/position/<n>
 CRITIC_BUDGET = "medium"            # policy.budget: a read-only memo needs no more turns than a decision
 DISTANCES = ("strict", "moderate", "exploratory")   # the radius's own scale, nearest first
 REFS = "refs"
+DOCUMENTS = "documents"             # research/documents/, which the critic's reading tools reach too (decision 17; ticket 96)
 # The room the prompt keeps under the context cap for what is not an input: the protocol and the schema.
 PROMPT_ROOM = 20000
 INPUTS_MIN = 20000
@@ -154,15 +155,23 @@ def rowed(objectives):
 def inputs_text(project, max_chars=None):
     """The critic's inputs, inlined in order and cut at `max_chars` with every cut announced: `(text, cut)`.
 
-    `INTAKE.md`, then `OBJECTIVES.md`, then each reference's `dossier.json` with its `dossier.md` when it
-    was read in full. Nothing else: no decision, no spec, no earlier memo, and no `GOAL.json`.
+    `INTAKE.md`, then `OBJECTIVES.md`, then the project's own documents (`DOCUMENTS.md`) and every concern
+    (`CONCERNS.md`, decision 17; ticket 96) when it has any, then each reference's `dossier.json` with its
+    `dossier.md` when it was read in full. Nothing else: no decision, no spec, no earlier memo, and no `GOAL.json`.
     """
+    from wayline.concerns import CONCERNS_MD  # the concerns module reads the sections, which this module seeds
+    from wayline.documents import DOCUMENTS_MD  # the documents module imports the tools record
+
     research = Path(project) / "research"
     entries = [
         ("research/INTAKE.md", _read(research / "INTAKE.md"), "[wayline: there is no INTAKE.md]"),
         ("research/%s" % OBJECTIVES_MD, _read(research / OBJECTIVES_MD),
          "[wayline: no objective is recorded yet; propose them in the directions]"),
     ]
+    for name, absent in ((DOCUMENTS_MD, None), (CONCERNS_MD, None)):
+        text = _read(research / name)
+        if text is not None:
+            entries.append(("research/%s" % name, text, absent))
     refs = research / REFS
     slugs = sorted(path.parent.name for path in refs.glob("*/dossier.json")) if refs.is_dir() else []
     for slug in slugs:
@@ -173,7 +182,8 @@ def inputs_text(project, max_chars=None):
     if not slugs:
         entries.append(("the dossiers", None, "[wayline: no reference has a dossier; the table of prior work will be empty]"))
     cap = None if max_chars is None else max(INPUTS_MIN, int(max_chars) - PROMPT_ROOM)
-    rendered, used, cut = ["# What you read", "", "The intake, the objectives, and the dossiers: nothing else is yours to read."], 0, False
+    rendered, used, cut = ["# What you read", "", "The intake, the objectives, the project's own documents and its concerns when "
+                           "it has them, and the dossiers: nothing else is yours to read."], 0, False
     for heading, text, absent in entries:
         rendered.extend(["", "## %s" % heading, ""])
         if text is None or not text.strip():
@@ -197,9 +207,11 @@ def inputs_text(project, max_chars=None):
     return "\n".join(rendered) + "\n", cut
 
 
-def position_prompt(role, inputs, harness, project, cut=False, objectives=()):
-    """The critic's position prompt: what is asked, the radius, the objectives to row, the inputs, the paths, the protocol, the schema."""
+def position_prompt(role, inputs, harness, project, cut=False, objectives=(), concerns=()):
+    """The critic's position prompt: what is asked, the radius, the objectives and the concerns to row, the inputs, the paths,
+    the protocol, the schema."""
     asked = [objective["id"] for objective in rowed(objectives)]
+    waiting = [item["id"] for item in waiting_concerns(concerns)]
     head = "\n".join([
         "# What you are asked for",
         "",
@@ -212,16 +224,24 @@ def position_prompt(role, inputs, harness, project, cut=False, objectives=()):
         "- autonomy: `%s`" % harness.get("autonomy"),
         ("- the objectives: one row in `objectives` for each of %s, and no other" % ", ".join(asked)) if asked else
         "- the objectives: none is recorded yet, so `objectives` is empty and the directions propose them (`id` null)",
+        ("- the concerns: one row in `concerns` for each of %s, the points critiques raised that wait to be sorted: tie each "
+         "to one of your objective rows when the work on it answers the point, propose `order` when the paper answers it at "
+         "the order (a wording, a detail), or `decline` it with the reason the owner reads; the owner settles each at the "
+         "grill" % ", ".join(waiting)) if waiting else
+        "- the concerns: none waits to be sorted, so `concerns` is empty",
     ])
     parts = [head, inputs]
     if cut:
         parts.append("[wayline: the inputs were cut at the context cap; the paths below hold the rest.]")
+    documents = Path(project) / "research" / DOCUMENTS
     parts.append("\n".join([
         "# The paths you may open",
         "",
-        "You run in the project's `research/refs/` directory (`%s`), and it is the only one you may open: "
+        "You run in the project's `research/refs/` directory (`%s`), and it is the only one you may open%s: "
         "`<slug>/dossier.json`, `<slug>/dossier.md`, and what a full read left beside them. Write a locator as "
-        "`research/refs/<slug>/...`." % (Path(project) / "research" / REFS),
+        "`research/refs/<slug>/...`." % (Path(project) / "research" / REFS,
+                                          ", with the project's own documents in `%s` (`<id>/text.md`, `<id>/comments.json`)"
+                                          % documents if documents.is_dir() else ""),
     ]))
     parts.append(worker.protocol_for(role.protocol, "position"))
     parts.append(worker.schema_section("# The memo", POSITION_SCHEMA, closing=[
@@ -238,12 +258,14 @@ def _one_line(text):
     return " ".join(str(text or "").split())
 
 
-def check_memo(memo, radius, objectives=()):
+def check_memo(memo, radius, objectives=(), concerns=()):
     """The checks on a memo the schema cannot make; returns the failures, each one line, empty when it passes.
 
     `objectives` are the project's records (`objectives.json`): the memo rows each open or parked one once, a
     revised target follows a goal's verdict and is never given for an objective without a measure, and a
-    direction names only objectives the project holds, or new ones with no id.
+    direction names only objectives the project holds, or new ones with no id. `concerns` are the project's
+    (`concerns.json`, decision 17; ticket 96): the memo proposes a place for each one waiting to be sorted, once,
+    a tie naming one of its objective rows and nothing else naming an objective.
     """
     try:
         check(memo, load_schema(POSITION_SCHEMA), name="the memo")
@@ -266,6 +288,7 @@ def check_memo(memo, radius, objectives=()):
                 failures.append("direction %d (%s) names %s, which the project does not hold"
                                 % (index, _one_line(direction["title"]), named["id"]))
     failures += _row_failures(memo["objectives"], held)
+    failures += _concern_failures(memo.get("concerns") or [], {row["id"] for row in memo["objectives"]}, concerns)
     seen = set()
     for row in memo["prior_work"]:
         key = _one_line(row["reference"]).lower()
@@ -304,6 +327,40 @@ def _row_failures(rows, held):
     return failures
 
 
+def waiting_concerns(items):
+    """The concerns the memo proposes a place for: every open one not sorted yet, in id order."""
+    from wayline.concerns import OPEN, is_sorted  # the concerns module reads the sections, which this module also seeds
+    return [item for item in items or () if item.get("status") == OPEN and not is_sorted(item)]
+
+
+def _concern_failures(rows, objective_rows, items):
+    """Why the memo's `concerns` rows are not one per concern waiting to be sorted, each tie naming an objective row."""
+    failures, counted = [], {}
+    waiting = {item["id"] for item in waiting_concerns(items)}
+    held = {item.get("id") for item in items or ()}
+    for row in rows:
+        counted[row["id"]] = counted.get(row["id"], 0) + 1
+        if row["id"] not in held:
+            failures.append("a row of concerns names %s, which the project does not hold" % row["id"])
+        elif row["id"] not in waiting:
+            failures.append("a row of concerns names %s, which is sorted already; the memo proposes a place only for one "
+                            "that waits" % row["id"])
+        if row["place"] == "objective":
+            if row["objective"] is None:
+                failures.append("the concern %s is proposed for an objective and names none" % row["id"])
+            elif row["objective"] not in objective_rows:
+                failures.append("the concern %s is proposed for %s, which is no objective row of the memo" % (row["id"], row["objective"]))
+        elif row["objective"] is not None:
+            failures.append("the concern %s is proposed for %s and names %s; only a tie names an objective"
+                            % (row["id"], "the order" if row["place"] == "order" else "a decline", row["objective"]))
+    for identifier in sorted(waiting, key=lambda name: int(name[1:])):
+        if counted.get(identifier, 0) == 0:
+            failures.append("the concern %s has no row in concerns" % identifier)
+        elif counted[identifier] > 1:
+            failures.append("the concern %s has more than one row in concerns" % identifier)
+    return failures
+
+
 # --- the citations ----------------------------------------------------------------------------------
 
 
@@ -329,7 +386,7 @@ def identifier_index(project_or_ledger):
     """`{(kind, value): slug}` over every dossier: its DOI, its arXiv id without the version, and its titles.
 
     The index the memo's citations are matched against, and the one a `ref` tag that names a work by
-    `doi:` or `arxiv:` is mapped through to its slug (decision 17; ticket 98); passages are never rewritten.
+    `doi:`, `arxiv:`, or `title:` is mapped through to its slug (decision 17; tickets 98 and 88); passages are never rewritten.
     """
     ledger = project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
     index = {}
@@ -340,11 +397,14 @@ def identifier_index(project_or_ledger):
 
 
 def slug_for_identifier(index, identifier):
-    """The slug `index` files a `doi:<doi>` or `arxiv:<id>` under, or None."""
+    """The slug `index` files a `doi:<doi>`, an `arxiv:<id>`, or a `title:<exact title>` under, or None."""
     kind, _, value = str(identifier or "").partition(":")
     kind, value = kind.strip().lower(), value.strip()
-    if not value or kind not in ("doi", "arxiv"):
+    if not value or kind not in ("doi", "arxiv", "title"):
         return None
+    if kind == "title":
+        from wayline.scout import normalize_title
+        return index.get(("title", normalize_title(value))) if normalize_title(value) else None
     return index.get((kind, value.lower() if kind == "doi" else _bare_arxiv(value)))
 
 
@@ -545,6 +605,13 @@ def render_position(record):
     lines += ["", "## The hostile reviewer", ""]
     for index, text in enumerate(memo["hostile_review"], 1):
         lines += _item("%d. " % index, text)
+    if memo.get("concerns"):
+        lines += ["", "## Where each concern goes", "",
+                  "Proposals: the grill asks the owner one question per objective with its concerns, one for the order, and "
+                  "one for the declines; `research/CONCERNS.md` holds each concern's words.", ""]
+        for row in memo["concerns"]:
+            where = {"objective": "tied to %s" % row["objective"], "order": "for the paper order", "decline": "declined"}[row["place"]]
+            lines += _item("- %s, %s: " % (row["id"], where), row["reason"])
     lines += ["", "## Three directions, by distance from the intent", "",
               "Nearest first, none farther than the radius `%s`. The objectives each direction names are proposals: the "
               "grill's first tier asks the owner which the project takes, open or parked." % record.get("radius"), ""]
@@ -612,15 +679,18 @@ def _context_cap(policy, model):
     return caps.get(model, min(caps.values()) if caps else None)
 
 
-def scoped_tools(tools, directory):
-    """The role's reading tools confined to `directory`: `Read(//<dir>/**)`, and the same for `Glob` and `Grep`.
+def scoped_tools(tools, directory, *more):
+    """The role's reading tools confined to `directory` (and each of `more`): `Read(//<dir>/**)`, the same for `Glob` and `Grep`.
 
     Under `dontAsk` a bare `Read` rule admits any path on the machine, whatever the session's working
     directory, and a scoped `Read` alone still lets `Glob` and `Grep` list and search outside it; all
     three scoped keep the session inside (`docs/verification/m4.md`, ticket 29). Any other tool passes as it is.
     """
-    root = "//%s/**" % str(Path(directory).resolve()).strip("/")
-    return ["%s(%s)" % (tool, root) if tool in READING_TOOLS else tool for tool in tools]
+    roots = ["//%s/**" % str(Path(place).resolve()).strip("/") for place in (directory,) + more]
+    scoped = []
+    for tool in tools:
+        scoped.extend(["%s(%s)" % (tool, root) for root in roots] if tool in READING_TOOLS else [tool])
+    return scoped
 
 
 def _unusable(envelope):
@@ -641,6 +711,15 @@ def _objectives(project):
         raise PositionError(str(failure)) from None
 
 
+def _concerns(project):
+    """The project's concerns as `concerns.json` holds them; an unreadable record stops the memo with the reason."""
+    from wayline.concerns import ConcernsUnreadable, read_concerns  # the concerns module reads the sections, which this module seeds
+    try:
+        return read_concerns(project)
+    except ConcernsUnreadable as failure:
+        raise PositionError(str(failure)) from None
+
+
 def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, say=lambda text: None, objectives=None):
     """One critic session on the project, checked but not written: `(memo, envelope, model, fallback_from)`.
 
@@ -654,19 +733,21 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
     policy = policy_for(project, harness_root) if policy is None else policy
     harness = read_harness(project)
     objectives = _objectives(project) if objectives is None else objectives
+    held = _concerns(project)
     what = "the critic's position memo"
     model, effort, fallback_from = critic_tier(policy, _falls_back_now(project, policy, fall_back))
     role = worker.read_role(CRITIC, harness_root, project)
     inputs, cut = inputs_text(project, _context_cap(policy, model))
     refs = project / "research" / REFS
     refs.mkdir(parents=True, exist_ok=True)
+    reading = [refs] + ([project / "research" / DOCUMENTS] if (project / "research" / DOCUMENTS).is_dir() else [])
     run_dir = _session_dir(project)
     request = worker.LaunchRequest(
-        role=role.name, model=model, effort=effort, prompt=position_prompt(role, inputs, harness, project, cut, objectives),
+        role=role.name, model=model, effort=effort, prompt=position_prompt(role, inputs, harness, project, cut, objectives, held),
         agent_json=role.agent_json(model, effort, _budget(policy, "max_turns")),
-        allowed_tools=scoped_tools(role.allowed_tools, refs), disallowed_tools=list(role.disallowed_tools),
+        allowed_tools=scoped_tools(role.allowed_tools, *reading), disallowed_tools=list(role.disallowed_tools),
         settings_path=gates.write_worker_settings(run_dir / "settings.json", harness_root),
-        add_dirs=[str(refs)],
+        add_dirs=[str(place) for place in reading],
         cwd=refs,
         env=gates.verdict_env(project, run_dir),
         schema_path=Path(harness_root).resolve() / "schemas" / (POSITION_SCHEMA + ".json"),
@@ -691,18 +772,18 @@ def take_memo(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None
         problem = _unusable(envelope)
         if problem is not None:
             raise PositionError("the critic returned no memo the schema accepts: %s" % problem)
-        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives)
+        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held)
         if failures:
             raise PositionError("the memo failed its checks after it was returned once; nothing was written", failures)
     else:
-        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives)
+        failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held)
         if failures:
             say("  the memo failed %d check(s); returned to the critic once" % len(failures))
             envelope = again(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
             problem = _unusable(envelope)
             if problem is not None:
                 raise PositionError("the critic's second memo could not be read: %s" % problem, failures)
-            failures = check_memo(envelope.structured_output, harness.get("radius"), objectives)
+            failures = check_memo(envelope.structured_output, harness.get("radius"), objectives, held)
             if failures:
                 raise PositionError("the memo failed its checks twice; nothing was written", failures)
     envelope.session_id = envelope.session_id or session_id
@@ -729,6 +810,8 @@ def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None
               "session_id": session_id, "model": model, "fallback_from": fallback_from}
     ledger.write_json(POSITION_JSON, record)
     ledger.write_markdown(POSITION_MD, render_position(record))
+    from wayline import concerns  # the concerns module reads the sections, which this module seeds
+    concerns.propose(project, memo.get("concerns") or [])
     sections.seed_passages(ledger, "introduction", prior_work_passages(record), by=SEED_BY, key=_cited_slug)
     events, _ = ledger.read_events()
     specify.move_phase(ledger, events, PHASE, session_id=session_id)
@@ -852,6 +935,19 @@ def position(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None,
     if not ledger.path("INTAKE.md").is_file():
         raise PositionError("%s has no research/INTAKE.md; the memo reads it, so run wayline intake first" % project)
     objectives = _objectives(project)  # read once: the memo is asked for, checked against, and kept with these
+    from wayline import concerns  # the concerns module reads the sections, which this module seeds
+    try:
+        # The critic reads every concern, so the open comment threads and the critiques not split yet become concerns first.
+        split = concerns.gather(project, policy=policy, harness_root=harness_root)
+    except (concerns.ConcernError, concerns.ConcernsUnreadable, worker.LaunchError, worker.RoleError) as failure:
+        report["stopped"] = "the critiques could not be split, so the critic would miss their concerns: %s" % failure
+        return report
+    except gates.UsageLimited as refused:
+        report["stopped"] = "the usage limit refused the critique splitter: %s" % refused
+        return report
+    if split["critiques"]:
+        report["did"].append("split %s into %d new concern(s)%s" % (", ".join(split["critiques"]), len(split["added"]),
+                                                                    ", %d dropped point(s)" % len(split["dropped"]) if split["dropped"] else ""))
     try:
         memo, envelope, model, fallback_from = take_memo(project, harness_root=harness_root, policy=policy,
                                                          fall_back=fall_back, say=say, objectives=objectives)

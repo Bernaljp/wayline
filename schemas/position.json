@@ -72,6 +72,21 @@
       "description": "the objections a hostile reviewer would raise against the intent as stated, worst first, each one sentence or two",
       "items": {"type": "string", "pattern": "\\S"}
     },
+    "concerns": {
+      "type": "array",
+      "description": "one row for each concern of CONCERNS.md that waits to be sorted, in id order (decision 17; ticket 96): where it goes, tied to one objective row of this memo, kept for the paper order, or declined; the owner settles each at the grill. Leave it out, or empty, when no concern waits",
+      "items": {
+        "type": "object",
+        "required": ["id", "place", "objective", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^K[1-9][0-9]*$", "description": "the concern's id in CONCERNS.md"},
+          "place": {"type": "string", "enum": ["objective", "order", "decline"], "description": "objective: the work on one objective answers it; order: the paper answers it at the order (a wording, a detail, a response); decline: the work should not take it up"},
+          "objective": {"type": ["string", "null"], "pattern": "^O[1-9][0-9]*$", "description": "the objective row it is tied to, for place objective; null otherwise"},
+          "reason": {"type": "string", "pattern": "\\S", "description": "why it goes there, in a sentence; for a decline, the reason the owner reads"}
+        }
+      }
+    },
     "directions": {
       "type": "array",
       "minItems": 3,

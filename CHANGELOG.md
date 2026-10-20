@@ -36,6 +36,31 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Critiques and concerns (ticket 96; Implementation Decisions 17, 2, and 10). A critique's points, an open Word
+  comment thread, and an objection of the position memo's hostile review the owner accepts at the grill become
+  concerns: `research/concerns.json` (schema `concern`, ids K1 onward, never reused), written only by
+  `wayline.concerns` through the ledger, journaled as `concern`, and rendered as `research/CONCERNS.md`. Each records
+  its sources (the critique, the locator, the verbatim words), the inherited claims it targets, its place (tied to
+  objectives, for the paper order, or declined), and its status (`open`, `answered`, or `declined`, with the answer or
+  the reason). `wayline concern split`, and `wayline position` before the critic runs, launch one
+  `critique-splitter` session (Sonnet at medium, no tools, schema `concern_split`) per batch of critiques not split
+  yet: code keeps a source only when its words are in that critique and locates it at its block, keeps only targets
+  among the inherited claims standing now, and merges near-identical points from different critiques with every
+  source. The critic reads `DOCUMENTS.md` and every concern, its tools reach `research/documents/`, and its memo
+  proposes a place for each concern waiting (`position` gains `concerns`); the proposals form one
+  `concern_placements` batch, and the grill asks, each human-only, one question per proposed objective with its
+  concerns, one for the order, one for the declines (`take it` or `another place`), and one per objection of the
+  hostile review (`reject`, or an accept with where it goes), then one for each concern no question placed. Specify
+  refuses to draft during setup while a concern is unsorted;
+  `wayline concern place <id> --objective <O> | --order | --decline "<reason>"` sorts one as the owner. Code answers
+  a concern once its tied objectives are answered and its targets replaced or withdrawn, follows a reframe to the
+  successor, and sends a concern back to be sorted when its objective drops. After setup, each concern that needs
+  sorting is a decision ticket of class `concern` (pausing no work): the owner's, or under `autonomous` the
+  decider's, which ties it, keeps it for the order, or declines it with a reason, and adds a new objective only once
+  the owner took `objective` off the human-only classes; `concern` may be named human-only at intake. Specify, the
+  decider, the planner, and the writer read `DOCUMENTS.md` and `CONCERNS.md`, and a worker's context pack carries the
+  open concerns of its ticket's objectives.
+
 - The stopping rule, the budgets, and keep-if-better per goal; `GOAL.json` retires (ticket 87; Implementation
   Decision 17). `stop_when` in `harness.json` is `objectives` (the default: the run ends when no objective is open),
   a list of objective ids (when those are closed), or `frontier` (when no work is left); the conductor reads it every
@@ -56,6 +81,45 @@ lists it read-only, marked with its tag.
   `usage_windows` (and `wayline intake` its `--usage-windows`), `wayline status` shows each goal's best kept value
   and the rule and budgets in its place, and the toy project's goal is O1 in `research/objectives.json` with
   `stop_when` in `harness.json`.
+
+- The linter's new tags, the owner's passages, editing a section, and consolidation (ticket 88; Implementation
+  Decisions 17, 1, 2, and 11).
+  - **New tags.** Beside `res` and `ref`, a claim sentence may end with `{code:<path>#<symbol>}` or
+    `{code:<path>#L10-L42}`, for what the project's code does (the path from the project, `code/phase.py`, or from
+    inside `code/`), resolved against the ticket's worktree at its acceptance and against `main` at every render, and
+    flagged once the file no longer defines the symbol or holds the lines; and `{doc:<document>#<locator>}`, inherited
+    text's provenance, resolved against `research/documents.json` and never rendered as a citation. A `ref` tag may
+    name its work by exact title, `{ref:title:<exact title>}` (the form ticket 93 writes for an inherited citation
+    with neither a DOI nor an arXiv id): it resolves through the identifier index's titles in the linter, the claim
+    verifier's paths, the guidelines check, and the acceptance check, which scouts a title no dossier holds. A tag
+    just before a sentence's full stop ends it, as one after it does.
+  - **The linter at acceptance and at every render.** The worktree's acceptance gains a line, "every claim sentence
+    ends with a provenance tag that resolves", over the result's passages and findings: a tag that does not resolve,
+    or a sentence the classifier calls a claim ending with no tag, sends the worker back. The classifier (one haiku
+    batch) is asked only about the sentences ending with no tag; one it could not classify is listed, never failed,
+    and a finding with no tag of its own is tagged by its provenance. Every render of a section records the linter's
+    reading in `research/sections/lint.json`; before the paper order a claim tagged only `doc` and an untagged claim
+    in an owner's passage are listed there, never failed. The paper's build still fails a `doc`-only claim.
+  - **The owner's passages.** `wayline passage add --section <s> --heading <h> [--replaces <id>] "<text>"` records an
+    owner's passage, `by: owner`, journaled `passage`; the owner may write in Results too, and replaces any passage
+    without a reason. A ticket's passage or finding replacing an owner's passage must carry evidence (a `res`, `ref`,
+    or `code` tag; a finding's provenance) and a `reason`, new in the result schema, or the declared-sections check
+    sends the worker back; the replacement's `passage` or `finding` event carries `replaces_owner` and the reason for
+    the account's "Changed without asking you", and under `interactive` the owner is notified.
+  - **Editing a section file.** The owner may edit `research/sections/<section>.md` directly: before the next render
+    code takes the edit in by the file's first-line render stamp. A new paragraph becomes an owner's passage under
+    the heading above it (or a new `## heading` of the owner's), a changed paragraph the owner's replacement of what
+    it printed, and a removed one a withdrawal; a passage that arrived since the stamp, or replaced what the owner
+    removed, is never read as a deletion. The render's own notes now follow a `<!-- wayline:notes -->` line, which
+    the edit is read up to.
+  - **Consolidation.** `wayline consolidate <section>` rewrites a section's current passages into fewer that keep
+    their tags, in one read-only writer session the owner asks for: without `--yes` it prints what the session reads,
+    the model, and about how many tokens, and launches nothing. The answer is checked before anything is written
+    (every current passage replaced by exactly one, fewer of them, every tag kept and none added, and the linter,
+    with a tag that already failed carried rather than held against it), sent back once with the problems, and
+    written `by: consolidation`, naming in `consolidates` what it rewrote, so a passage made of the owner's still
+    steers; journaled as `consolidated`. The owner's pending edit is taken in first, and an inherited claim still
+    unchecked is left out with its mark. It refuses inside an automated run and on Results, which is its findings.
 
 - The account (ticket 89; Implementation Decision 17). What wayline did leaves `REPORT.md` for
   `research/ACCOUNT.md`, rendered by code in the same pass as the report and at the end of every wave, so each

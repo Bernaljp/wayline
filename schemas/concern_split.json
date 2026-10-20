@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "concern_split",
+  "description": "What the critique splitter returns for one batch of critiques (Implementation Decision 17; ticket 96): each point the work must answer, as the verbatim words of every critique that raised it, and the inherited claims it targets. Praise and summary are left out, an item that makes two points is two concerns, and near-identical points from different critiques are one concern with every source. Code keeps a source only when its text is verbatim in that critique, locates it there, keeps a target only when it is an inherited claim standing now, and merges near-identical points again.",
+  "type": "object",
+  "required": ["concerns"],
+  "additionalProperties": false,
+  "properties": {
+    "concerns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sources", "targets"],
+        "additionalProperties": false,
+        "properties": {
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["critique", "text"],
+              "additionalProperties": false,
+              "properties": {
+                "critique": {"type": "string", "pattern": "^D[1-9][0-9]*$", "description": "the critique's document id, as the prompt heads it"},
+                "text": {"type": "string", "pattern": "\\S", "description": "the point, copied verbatim from that critique: one span of its words, never reworded"}
+              }
+            }
+          },
+          "targets": {
+            "type": "array",
+            "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+            "description": "the inherited claims the point is about, by the passage ids the prompt lists; empty when it names none"
+          }
+        }
+      }
+    }
+  }
+}

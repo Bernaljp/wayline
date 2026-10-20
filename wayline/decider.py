@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from wayline import HARNESS_ROOT, decisions, gates, grill, pacing, worker
+from wayline import HARNESS_ROOT, concerns, decisions, gates, grill, pacing, worker
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import DECISION, Ledger
 from wayline.provenance import VENUE_PREFIX
@@ -390,8 +390,9 @@ def records_text(project, max_chars=None):
     """The records the decider reads, inlined in order and cut at `max_chars` with every cut announced.
 
     `DECISIONS.md` first, whole when it fits, because the settled decisions bind the answer; then the
-    position memo, the objectives (`OBJECTIVES.md`, decision 17, in place of `GOAL.json`), the L0 and L1
-    records, and the query pack. Returns `(text, cut)`.
+    position memo, the objectives (`OBJECTIVES.md`, decision 17, in place of `GOAL.json`), the documents index
+    and the concerns when the project has them (`DOCUMENTS.md`, `CONCERNS.md`; ticket 96), the L0 and L1
+    records, and the query pack. Specify reads the same. Returns `(text, cut)`.
     """
     ledger = Ledger(project)
     entries = [
@@ -399,10 +400,22 @@ def records_text(project, max_chars=None):
         ("research/POSITION.md", _read(ledger, grill.POSITION_MD),
          "[wayline: there is no position memo; the tree rests on INTAKE.md alone]"),
         ("research/%s" % OBJECTIVES_MD, _read(ledger, OBJECTIVES_MD), "[wayline: no objective is recorded yet]"),
+    ] + documents_and_concerns(ledger) + [
         ("the L0 and L1 records (research/refs/<slug>/dossier.json)", "\n".join(_dossier_lines(ledger)), None),
         ("research/kb/query_pack.md", _read(ledger, "kb/query_pack.md"), "[wayline: there is no query pack; no reference was absorbed]"),
     ]
     return inline_records(entries, max_chars, "Read them in this order; what DECISIONS.md settles binds the answer.")
+
+
+def documents_and_concerns(project_or_ledger):
+    """The project's documents index and its concerns as record entries, for the readers decision 17 names: specify and the
+    decider through `records_text`, and the planner; a project with no document and no concern gets none (ticket 96)."""
+    from wayline.documents import DOCUMENTS_MD  # the documents module imports the tools record
+
+    ledger = project_or_ledger if isinstance(project_or_ledger, Ledger) else Ledger(project_or_ledger)
+    return [("research/%s" % name, text, None) for name, text in ((DOCUMENTS_MD, _read(ledger, DOCUMENTS_MD)),
+                                                                   (concerns.CONCERNS_MD, _read(ledger, concerns.CONCERNS_MD)))
+            if text is not None]
 
 
 def inline_records(entries, max_chars=None, lead=None, heading="# The records"):
@@ -469,6 +482,12 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "Go without: installing free software through the harness's routes is neither irreversible nor a global harness "
         "change. Changing a tool already installed, the tools venv, and licensed software (MATLAB) are the owner's alone, "
         "and their decisions never reach you.",
+        "",
+        "A `concern` decision (where a point a critique raised goes, decision 17) is yours unless the owner named the class "
+        "human-only: answer `tie it to O<n>` for the objective whose work answers it (`research/CONCERNS.md` and "
+        "`OBJECTIVES.md` hold both), `for the order` when the paper answers it at the order, or `decline: <the reason>`, the "
+        "reason the owner reads; `new objective: <the question>` adds an objective for it, which is yours only as the "
+        "objective line below says. An answer that names no place is refused.",
         "",
         "Moving the project's environment (`wayline switch --environment`: the shared tools, a conda prefix, a venv, or a "
         "container) is the owner's word alone, and no decision class names it: never answer with a move, and never set it.",
@@ -698,6 +717,12 @@ def decide_ticket(project, fields, body, record=None, *, harness_root=HARNESS_RO
         outcome = Outcome(subject, "refused", why="the decider only replans for an objective the stopping rule names or answers "
                           "it as it stands, and it answered %s" % returned.get("answer"), session_id=envelope.session_id,
                           model=envelope.model or model, fallback_from=fallback_from)
+    if outcome is None and concerns.concern_of(fields.get("origin")) is not None:
+        # A concern's ticket (ticket 96): the answer names a place, and a new objective only when `objective` is not human-only.
+        why = concerns.decider_refusal(chosen_option(returned.get("answer"), subject.options), read_harness(project))
+        if why is not None:
+            outcome = Outcome(subject, "refused", why=why, session_id=envelope.session_id, model=envelope.model or model,
+                              fallback_from=fallback_from)
     if outcome is not None and outcome.status == "refused":
         decisions.turn_over(project, identifier, outcome.why, notify=notify)
         outcome.ticket = identifier

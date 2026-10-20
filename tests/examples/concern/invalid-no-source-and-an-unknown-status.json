@@ -1,0 +1,18 @@
+{
+  "concerns": [
+    {
+      "id": "C1",
+      "sources": [],
+      "targets": ["F2"],
+      "place": "later",
+      "objectives": [],
+      "status": "pending",
+      "answer": null,
+      "reason": null,
+      "proposed": null,
+      "returned": null,
+      "sorted_by": "session"
+    }
+  ],
+  "split": []
+}

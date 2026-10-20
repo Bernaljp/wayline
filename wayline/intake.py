@@ -73,6 +73,12 @@ DEFAULT_HUMAN_ONLY = dict(zip(DEFAULT_CLASSES, (
     "a decision that changes the data: what is used, what is held out, or what may leave the machine.",
 )))
 
+# The classes a harness decision names that setup may make human-only, each with what it covers (decision 17).
+NAMED_CLASSES = {
+    "concern": "a decision that sorts a concern after setup: ties it to an objective, keeps it for the paper order, or "
+               "declines it with a reason.",
+}
+
 SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "materials", "autonomy", "radius",
                "model_fallback", "ladder_changes", "budgets", "human_only", "clone", "code_repository")
 # The fields a goal came with before decision 17; a spec that carries one is told where the goal goes now.
@@ -460,7 +466,7 @@ def human_only_classes(entries):
         if not _SLUG.match(slug):
             raise IntakeError("a human-only class is a lower-case name like `baselines`, got %r" % entry)
         if slug not in DEFAULT_HUMAN_ONLY or description.strip():
-            classes[slug] = description.strip() or classes.get(slug) or "named by the owner at intake."
+            classes[slug] = description.strip() or classes.get(slug) or NAMED_CLASSES.get(slug) or "named by the owner at intake."
     return classes
 
 
