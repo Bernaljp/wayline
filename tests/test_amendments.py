@@ -16,7 +16,7 @@ import unittest
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase, open_objective
 from tests.test_specify import DRAFT, INPUT, RECORDED, planned, verdict
-from wayline import gates, objectives, project, specify, tickets, worker
+from wayline import gates, objectives, pacing, project, specify, tickets, worker
 from wayline.ledger import Ledger
 
 
@@ -66,6 +66,13 @@ class AppendOnlyCheckTest(unittest.TestCase):
         elsewhere = amended(objective="O1")
         self.assertIn("claim C4, added by the amendment, does not name O2 among its objectives",
                       specify.check_amendment(DRAFT, elsewhere, "O2"))
+
+    def test_an_amendment_for_a_goal_defines_its_metric(self):
+        from tests.test_specify import objective
+        records = [objective("O1"), objective("O2", metric="brier")]
+        self.assertIn("the goal O2's metric brier is not among the spec's metrics",
+                      specify.check_amendment(DRAFT, amended(), "O2", records))
+        self.assertEqual(specify.check_amendment(DRAFT, amended(), "O2", [objective("O1"), objective("O2", metric="auroc_noisy")]), [])
 
     def test_the_amended_spec_still_passes_the_structural_checks(self):
         broken = amended()
@@ -182,6 +189,18 @@ class DraftTest(AmendCase):
         self.script(planned(rewritten), planned(amended()))
         self.assertIsNone(self.amend()["stopped"])
         self.assertEqual(self.spec(), amended())
+
+    def test_a_failed_verdict_is_drafted_again_with_its_findings_and_one_never_taken_is_judged_alone(self):
+        from tests.test_specify import FINDING
+        self.script(planned(amended()), planned(amended()), verdicts=(verdict(False, [FINDING]), verdict(False, [FINDING])))
+        report = self.amend()
+        self.assertEqual(report["stopped"], "the verifier failed the amendment twice; it stands unconfirmed")
+        self.assertEqual(self.state()["state"], "unverified")
+        self.script(planned(amended()))
+        self.assertIsNone(self.amend()["stopped"])
+        launch = self.calls(specify.PLANNER)[-1]
+        self.assertEqual(launch.kind, "launch", "a fresh draft")
+        self.assertIn("E2 compares the network", launch.request.prompt)
 
     def test_amendments_are_made_one_at_a_time(self):
         self.script(planned(amended()))
@@ -508,6 +527,42 @@ class ConductorReplayTest(ConductorCase):
         self.assertIn(self.ticket(state["ticket"])["status"], tickets.SATISFIED, "the answered confirmation holds nothing")
         for identifier in state["tickets"]:
             self.assertEqual(self.ticket(identifier)["blocked_by"], [state["ticket"]])
+
+    def test_a_usage_window_that_refuses_the_amendment_pauses_the_run_and_one_that_raises_fails_no_wave(self):
+        import io
+        from tests import machine
+        from tests.test_conductor import drive
+        from wayline.conductor import Conductor
+        self.autonomy("checkpoints")
+        self.approve({"kind": "add", "objective": NOISE, "reason": "the sweep raises it", "evidence": [], "feasibility": FEASIBLE})
+        self.script_work()
+        conductor = Conductor(self.project, out=io.StringIO())
+        conductor.readings = machine.recorded
+        conductor.notify = lambda *args: self.sent.append(args)
+        conductor.amender = lambda identifier, fall_back: {
+            "did": [], "stopped": "the usage limit refused a session", "failures": [], "state": None, "autonomy": "checkpoints",
+            "waits": gates.UsageLimited("refused until noon", pacing.Limit("message", 4102444800, "five_hour", None))}
+        drive(conductor, 1)
+        self.assertTrue(self.events("paused"), "the window's refusal pauses the run, as a refused cut does")
+
+    def test_an_amendment_step_that_raises_fails_no_wave_and_the_owner_is_told(self):
+        import io
+        from tests import machine
+        from tests.test_conductor import drive
+        from wayline.conductor import Conductor
+        self.autonomy("checkpoints")
+        self.approve({"kind": "add", "objective": NOISE, "reason": "the sweep raises it", "evidence": [], "feasibility": FEASIBLE})
+        self.script_work()
+
+        def broken(identifier, fall_back):
+            raise ValueError("a ticket file the harness cannot read")
+        conductor = Conductor(self.project, out=io.StringIO())
+        conductor.readings = machine.recorded
+        conductor.notify = lambda *args: self.sent.append(args)
+        conductor.amender = broken
+        drive(conductor, 2)
+        self.assertIn("could not be made: a ticket file the harness cannot read", conductor.out.getvalue())
+        self.assertEqual(len([text for _, text, _, _ in self.sent if "could not be made" in text]), 1, "told once, not tried again")
 
     def test_reopening_a_parked_objective_brings_its_claims_back_with_no_amendment(self):
         from wayline.objectives import add_objective, change_objective

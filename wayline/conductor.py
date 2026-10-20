@@ -1814,12 +1814,19 @@ class Conductor:
             may, fall_back = self._planner_falls_back(what)
             if not may:
                 return
-            report = self.amender(identifier, fall_back)
+            try:
+                report = self.amender(identifier, fall_back)
+            except (ValueError, OSError) as failure:  # a step the verb does not turn into its report fails no wave
+                report = {"did": [], "waits": False, "stopped": str(failure), "state": None, "autonomy": None}
             self._tail()
             for line in report["did"]:
                 self.say("  %s: %s" % (what, line))
-            if report["waits"]:
-                self.say("  %s waits: %s" % (what, report["stopped"]))
+            if isinstance(report["waits"], gates.FableHeld):
+                self._held_back(what)
+                return
+            if isinstance(report["waits"], gates.UsageLimited):
+                self._pause(report["waits"].limit, what)
+                self.say("  %s: the usage limit refused it; it is launched again once the window allows" % what)
                 return
             if report["stopped"]:
                 self._amendments_tried.add(identifier)

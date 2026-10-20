@@ -575,12 +575,13 @@ def prepare(record, project, existing, index, cut, start=None):
         if split_of is not None:
             blockers.update(split_of["blocked_by"])
         assignment = registry.librarian({"id": identifier, "kind": item["kind"]}, index, tags=item.get("tags"))
-        # A `lit` ticket runs on the surveyor (decision 17), which ticket 99 ships: until then it is cut on that role, and
-        # its launch fails on the missing role, handing it to a person, as an admitted one does (`proposals.role_for`).
+        # A `lit` ticket runs on the surveyor (decision 17), which ticket 99 ships: until then the cut for an amendment, the
+        # one cut that asks for one (ticket 92), cuts it on that role, and its launch fails on the missing role, handing it
+        # to a person, as an admitted one does (`proposals.role_for`).
         fields = {
             "id": identifier, "title": _one_line(item["title"]), "kind": item["kind"], "difficulty": item["difficulty"],
             "status": "open", "blocked_by": sorted(blockers), "touches": [str(touch).strip() for touch in item["touches"]],
-            "role": assignment["role"] or proposals.DECISION_17_ROLES.get(item["kind"]) or UNASSIGNED,
+            "role": assignment["role"] or (proposals.DECISION_17_ROLES.get(item["kind"]) if cut.kind == "amend" else None) or UNASSIGNED,
             "skills": list(assignment["skills"]),
         }
         if item.get("resources") is not None:
@@ -730,7 +731,11 @@ def registry_text(index):
         kinds = entry["applicability_tags"]["kinds"]
         covered.update(kinds)
         lines.append("- `%s` for %s tickets: %s" % (entry["id"], ", ".join(kinds), _one_line(entry["capability_summary"])))
-    missing = [kind for kind in _work_kinds() if kind not in covered]
+    missing = [kind for kind in _work_kinds() if kind not in covered and kind not in proposals.DECISION_17_ROLES]
+    for kind, role in sorted(proposals.DECISION_17_ROLES.items()):
+        if kind not in covered:
+            lines.append("- `%s` tickets run on the `%s` role, not shipped yet: cut one only when the cut asks for it, and it waits "
+                         "for that role" % (kind, role))
     if missing:
         lines.append("- no role covers %s tickets; do not cut one, and say in `notes` what would need it" % ", ".join("`%s`" % kind for kind in missing))
     lines += ["", "Skills, by kind and tags:"]
@@ -1052,7 +1057,7 @@ def write_plan(project, ledger, record, index, cut, *, expected=None, autonomy=N
             write_ticket(ledger, fields, body)
             ledger.append_event(TICKET_CREATED, {"ticket": fields["id"], "kind": fields["kind"], "proposed_by": PLANNER,
                                                  "origin": fields.get("origin"), "blocked_by": fields["blocked_by"]}, ticket=fields["id"])
-            registry.assign(fields, index, ledger=ledger, tags=tags)
+            registry.assign(fields, index, ledger=ledger, tags=tags, role=fields["role"] if fields["role"] != UNASSIGNED else None)
             written.append(fields["id"])
         for identifier, fields in sorted(prepared.repointed.items()):
             write_ticket(ledger, fields, existing[identifier][1])
@@ -1266,7 +1271,9 @@ def cut_graph(project, cut, *, harness_root=HARNESS_ROOT, policy=None, fall_back
     say("  wrote %d ticket(s)%s%s%s" % (len(outcome["tickets"]),
                                         " and %d decision ticket(s)" % len(outcome["decisions"]) if outcome["decisions"] else "",
                                         "; parked %s" % ", ".join(str(item) for item in outcome["superseded"]) if outcome["superseded"] else "",
-                                        "; opened decision ticket %d, \"%s\", blocking all" % (outcome["gate"], TITLE) if outcome["gate"] else ""))
+                                        ("; opened decision ticket %d, \"%s\", pausing only them" % (outcome["gate"], specify.AMEND_TITLE)
+                                         if cut.kind == "amend" else "; opened decision ticket %d, \"%s\", blocking all" % (outcome["gate"], TITLE))
+                                        if outcome["gate"] else ""))
     return outcome
 
 

@@ -333,7 +333,7 @@ class CutTest(PlanCase):
         for text in ("- the cut: the first cut", "## research/SPEC.md", "# Spec: Do pairwise interaction terms", "### E1 (claims: C1)",
                      "## research/OBJECTIVES.md", "## research/kb/query_pack.md", "paper-a extends paper-b",
                      "# The registry", "`coder` for code, harness tickets", "`documentarian` for docs tickets", "`experimenter` for experiment tickets",
-                     "no role covers `lit`, `figure`, `review` tickets", "# The difficulty rubric", "- 3: a new code path",
+                     "no role covers `figure`, `review` tickets", "`lit` tickets run on the `surveyor` role, not shipped yet", "# The difficulty rubric", "- 3: a new code path",
                      "# What the journal says", "# The paths you may open", "## Plan", "# The plan", "adds_public_api"):
             self.assertIn(text, request.prompt)
         self.assertNotIn("## Specify", request.prompt)
