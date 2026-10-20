@@ -12,7 +12,10 @@ of them, each keeps every tag of what it replaces and adds none, and the linter 
 already failed in the passages it replaces is carried, not held against it, and an untagged claim the owner's own
 passage carried is listed, as it was). An answer that fails is sent back once with the problems, and refused if it
 still fails. Then each new passage is written `by: consolidation` through the ledger, in the place of the first passage
-it replaces, the rest of what it replaces withdrawn, and the whole journaled as `consolidated`.
+it replaces, naming in `consolidates` every passage it rewrote (so one made of an owner's passage still steers), the
+rest of what it replaces withdrawn, and the whole journaled as `consolidated`. The owner's pending edit of the section
+file is taken in before the session reads and again before anything is written; an inherited claim still standing
+unchecked or unverifiable is left out, keeping its mark until a passage with this project's evidence replaces it.
 
 Results is not consolidated: it is its findings, which the reports present one result at a time.
 """
@@ -66,7 +69,10 @@ class Refused(ConsolidationError):
 
 
 def _current(book, section):
-    return [item for item in sections.arrange(sections.section_items(book, section)).current()]
+    """The passages a consolidation rewrites: the section's current ones, less an inherited claim still standing
+    unchecked or unverifiable, which keeps its mark and waits for a passage with this project's evidence."""
+    return [item for item in sections.arrange(sections.section_items(book, section)).current()
+            if not (sections.is_inherited(item) and item.get("standing") in sections.STANDINGS)]
 
 
 def _refusal(section):
@@ -150,6 +156,8 @@ def _lint_problems(project, current, passages, by_id, classify):
     """The linter on the new passages: a failing tag the replaced passages already failed on is carried, not counted."""
     before = provenance.lint_passages(project, current, provenance.read_claims_cache(project))
     carried = {(problem["tag"], problem["problem"]) for problem in before.problems if problem["tag"]}
+    # A sentence the passages already said, word for word, is theirs, whatever the linter makes of it now.
+    said = {provenance.sentence_hash(sentence.text) for item in current for sentence in provenance.prose_sentences(item.get("text"))}
     items = []
     for index, passage in enumerate(passages, start=1):
         replaced = [by_id[identifier] for identifier in passage["replaces"]]
@@ -162,7 +170,8 @@ def _lint_problems(project, current, passages, by_id, classify):
     linted = provenance.lint_passages(project, items, classes, unclassified_fails=True)
     return ["%s (%s): %s%s; %s" % (problem["problem"], problem["passage"], provenance.one_line(problem["sentence"]),
                                    " tag `%s`" % problem["tag"] if problem["tag"] else "", problem["detail"])
-            for problem in linted.problems if (problem["tag"], problem["problem"]) not in carried or not problem["tag"]]
+            for problem in linted.problems
+            if not ((problem["tag"], problem["problem"]) in carried if problem["tag"] else provenance.sentence_hash(problem["sentence"]) in said)]
 
 
 def consolidate(project, section, *, harness_root=HARNESS_ROOT, policy=None):
@@ -177,6 +186,7 @@ def consolidate(project, section, *, harness_root=HARNESS_ROOT, policy=None):
     if refusal is not None:
         raise Refused(refusal)
     book = ledger_for(project)
+    sections.render_section(book, section)  # the owner's pending edit of the file is taken in before the session reads it
     current = _current(book, section)
     if len(current) < 2:
         raise Refused("%s has %d current passage(s): there is nothing to consolidate" % (sections.TITLES[section], len(current)))
@@ -206,6 +216,7 @@ def _write(book, section, current, passages, model):
     by_id = {item.get("id"): item for item in current}
     written, replaced = [], []
     with book.lock():
+        sections.take_in(book, section)  # an edit the owner made while the session ran is the later word on it
         now = {item.get("id") for item in _current(book, section)}
         gone = [identifier for identifier in by_id if identifier not in now]
         if gone:
@@ -213,7 +224,7 @@ def _write(book, section, current, passages, model):
         for passage in passages:
             first, rest = passage["replaces"][0], passage["replaces"][1:]
             written.append(sections.add_passage(book, section, passage["heading"], passage["text"], by=sections.CONSOLIDATION,
-                                                replaces=first, render=False))
+                                                replaces=first, consolidates=passage["replaces"], render=False))
             for identifier in rest:
                 item = by_id[identifier]
                 sections.add_passage(book, section, item.get("heading"), str(item.get("text") or ""), by=sections.CONSOLIDATION,

@@ -64,6 +64,11 @@ class TagParseTest(ProjectTestCase):
         self.assertEqual([sentence.tags for sentence in found[:3]],
                          [("code:code/phase.py#fit",), ("doc:D1#p2.s1",), ("ref:title:A work the services know",)])
 
+    def test_a_title_with_a_question_mark_stays_one_tag(self):
+        found = provenance.sentences("Heads track syntax {ref:title:What Does BERT Look At? An Analysis of BERT's Attention}. Next.")
+        self.assertEqual([sentence.tags for sentence in found],
+                         [("ref:title:What Does BERT Look At? An Analysis of BERT's Attention",), ()])
+
     def test_a_doc_tag_is_never_a_citation(self):
         rendered = provenance.render_citations("The cells grew {doc:D1#p2.s1}.\n")
         self.assertIn("{doc:D1#p2.s1}", rendered)

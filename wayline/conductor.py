@@ -3791,7 +3791,7 @@ class Conductor:
         the acceptance lists rather than fails: a closed window is no verdict on the worker's prose.
         """
         provenance = _provenance()
-        if not texts:
+        if not texts or schedule.holds_model_work(self.action):  # a pacing stop launches no model, the classifier included
             return provenance.read_claims_cache(self.ledger)
         try:
             return provenance.classify(self.project, texts, harness_root=self.harness_root, policy=self.policy)
@@ -4201,6 +4201,8 @@ class Conductor:
             }
             if record["id"] in self.view.findings:
                 continue  # filed before a restart
+            if not negative:
+                self._manifest_own_tags(attempt, finding["text"])
             try:
                 line = sections.file_finding(self.ledger, record, wave=self._wave_key(), render=False)
             except sections.SectionError as failure:
@@ -4263,14 +4265,21 @@ class Conductor:
             record.get("reason") or "no reason given"), self.project, attempt.id)
 
     def _manifest_own_tags(self, attempt, text):
-        """A passage's `res` tags of the attempt's own run name files the linter took from its worktree: manifest them on `main`."""
+        """A passage's or finding's `res` tags of the attempt's own run name files the linter took from its worktree, which
+        its branch carried to `main`: manifest each under this run, the one the tag names, as the run that wrote it."""
         provenance = _provenance()
         own = "t%d-a%d" % (attempt.id, attempt.number)
         for sentence in provenance.sentences(str(text or "")):
             for found in sentence.tags:
                 kind, parts = provenance.parse_tag(found)
-                if kind == "res" and parts and parts["run_id"] == own:
-                    self._unresolved(attempt, "%s#%s" % (parts["artifact"], parts["locator"]))
+                if kind != "res" or not parts or parts["run_id"] != own:
+                    continue
+                artifact = Path(parts["artifact"])
+                path = self.project / artifact
+                if artifact.is_absolute() or ".." in artifact.parts or not _inside(path, self.project) or not path.is_file():
+                    self.say("  ticket %d: `{%s}` names no file on main, so it stays unresolved" % (attempt.id, found))
+                    continue
+                provenance.register_artifact(self.ledger, artifact.as_posix(), None, own, attempt.id)
 
     def _in_worktree(self, provenance, worktree):
         """A discarded change's `<path>#<locator>` spelled at the worktree it stays in, when the file is there.

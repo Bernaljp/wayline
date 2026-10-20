@@ -49,7 +49,7 @@ __all__ = [
     "claim_subject", "claim_paths", "verify_claims", "report_evidence", "draft_prose", "finding_tags",
     "tagged_text", "render_report", "report_command",
     "ANY_TAG_RE", "TAG_KINDS", "REF_TITLE_TAG_RE", "CODE_TAG_RE", "DOC_TAG_RE", "UNRESOLVED_CODE", "UNRESOLVED_DOC", "DOC_ONLY_CLAIM",
-    "code_reader", "main_reader", "code_tag_problem", "end_kinds", "lint_passages", "lint_result", "result_sentences",
+    "code_reader", "main_reader", "code_tag_problem", "end_kinds", "lint_passages", "lint_result", "result_sentences", "resolver_for",
 ]
 
 MANIFEST = "manifest.json"
@@ -302,8 +302,11 @@ def sentences(text):
     what the linter's classifier is handed and what the mechanical cross-check counts.
     """
     text = str(text or "")
+    # Boundaries are found with every tag's inside masked, so a title in a tag (`{ref:title:What Does BERT Look At? An
+    # Analysis}`) never ends a sentence; the masked text has the same length, so it slices the text itself.
+    masked = ANY_TAG_RE.sub(lambda found: "{%s:%s}" % (found.group(1), "x" * len(found.group(2))), text)
     found, start = [], 0
-    for boundary in _BOUNDARY.finditer(text):
+    for boundary in _BOUNDARY.finditer(masked):
         found.append(text[start:boundary.end()])
         start = boundary.end()
     found.append(text[start:])
@@ -897,10 +900,13 @@ class _Resolver:
 
 
 def _inside_file(root, relative):
+    """Whether `relative` is a file of the worktree `root` that its branch carries to `main`: there, and not git-ignored
+    (an output under `results/` stays behind in the worktree, so no manifest will ever hold it from this run)."""
     path = Path(relative)
-    if path.is_absolute() or ".." in path.parts or not path.parts:
+    if path.is_absolute() or ".." in path.parts or not path.parts or not (Path(root) / path).is_file():
         return False
-    return (Path(root) / path).is_file()
+    ignored = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", path.as_posix()], capture_output=True)
+    return ignored.returncode != 0
 
 
 def end_kinds(text):
@@ -972,17 +978,25 @@ def lint(project, markdown, classes, doc_only_fails=False, code_read=None):
     return linted.result()
 
 
-def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False):
+def resolver_for(project):
+    """What tags resolve against for one project, read once and shared by several linter passes: the manifest, the
+    identifier index, the documents, and `main`'s code, each read the first time a tag needs it."""
+    return _Resolver(project)
+
+
+def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False, resolver=None):
     """The linter over passages and findings (decision 17; ticket 88): every tag resolves, every claim ends tagged.
 
     `items` are passages (`{id, by, text}`) or findings (`{id, text, provenance}`); each problem and listed sentence
     names the `passage` it is in. Before the paper order an untagged claim in an owner's passage and a claim tagged
     only `doc` are listed, never failed; a finding with no tag of its own is tagged by its provenance. `code` tags
-    resolve against `code_root`'s working tree (a ticket's worktree), or `code_read`, or the project's `main`. An
+    resolve against `code_root`'s working tree (a ticket's worktree), or `code_read`, or the project's `main`; `resolver`,
+    from `resolver_for`, is one several passes share (a render of every section). An
     unclassified sentence is listed unless `unclassified_fails`.
     """
     read = code_read or (code_reader(code_root) if code_root is not None else None)
-    linted = _Pass(_Resolver(project, read, own_run), classes, doc_only_fails=False, unclassified_fails=unclassified_fails)
+    resolver = resolver if resolver is not None else _Resolver(project, read, own_run)
+    linted = _Pass(resolver, classes, doc_only_fails=False, unclassified_fails=unclassified_fails)
     for item in items:
         if not isinstance(item, dict):
             continue

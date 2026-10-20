@@ -113,6 +113,15 @@ class ReplacingAnOwnersPassageTest(OwnerCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("evidence", problems[0])
 
+    def test_naming_a_passage_the_owner_replaced_since_is_replacing_the_owners(self):
+        sections.add_passage(self.ledger, "discussion", "Scope", "The study covers one cell line.", by="t2-a1")
+        sections.add_passage(self.ledger, "discussion", "Scope", "The study covers two cell lines.", by="owner", replaces="P3")
+        late = {"section": "discussion", "heading": "Scope", "text": "The study covers three lines {code:code/lines.py#LINES}.",
+                "replaces": "P3"}
+        problems = sections.check_result(self.ledger, {"id": 7, "sections": ["discussion"]}, self.result([late]))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("reason", problems[0])
+
     def test_the_replacement_is_journaled_for_the_account(self):
         sections.add_passage(self.ledger, "methods", "Fitting", "We fit by likelihood {code:code/fit.py#fit}.", by="t7-a1",
                              replaces="P1", reason="It converges.")
@@ -205,6 +214,18 @@ class OwnersEditTest(OwnerCase):
         sections.add_passage(self.ledger, "methods", "Data", "Each film lasts an hour.", by="t3-a1")
         self.assertEqual([item["text"] for item in self.owners()], ["The fit runs twice per cell."])
         self.assertIn("twice per cell", self.text("methods"))
+
+    def test_a_finding_whose_run_moved_in_the_manifest_is_not_read_as_edited(self):
+        from wayline import provenance
+        (self.project / "out").mkdir()
+        (self.project / "out" / "fit.csv").write_text("rmse\n0.1\n", encoding="utf-8")
+        provenance.register_artifact(self.ledger, "out/fit.csv", None, "t3-a1", 3)
+        sections.file_finding(self.ledger, {"id": "t3-a1-f1", "ticket": 3, "text": "The fit holds.", "provenance": ["out/fit.csv#rmse"],
+                                            "negative": False, "heading": "Fit"})
+        provenance.register_artifact(self.ledger, "out/fit.csv", None, "t9-a1", 9)  # Results is not rendered again
+        self.edit("results", "The fit holds.{res:t3-a1/out/fit.csv#rmse}\n", "The fit holds.{res:t3-a1/out/fit.csv#rmse}\n\nThe owner adds a line.\n")
+        sections.render_section(self.ledger, "results")
+        self.assertEqual([(item["text"], item["replaces"]) for item in self.owners()], [("The owner adds a line.", None)])
 
     def test_an_inherited_claims_mark_is_not_part_of_the_owners_text(self):
         sections.add_passage(self.ledger, "introduction", "Background", "Cells synchronise {doc:D1#p1.s1}.", by="document:D1",

@@ -92,8 +92,9 @@ lists it read-only, marked with its tag.
     the model, and about how many tokens, and launches nothing. The answer is checked before anything is written
     (every current passage replaced by exactly one, fewer of them, every tag kept and none added, and the linter,
     with a tag that already failed carried rather than held against it), sent back once with the problems, and
-    written `by: consolidation`, journaled as `consolidated`. It refuses inside an automated run and on Results,
-    which is its findings.
+    written `by: consolidation`, naming in `consolidates` what it rewrote, so a passage made of the owner's still
+    steers; journaled as `consolidated`. The owner's pending edit is taken in first, and an inherited claim still
+    unchecked is left out with its mark. It refuses inside an automated run and on Results, which is its findings.
 
 - The rule from code to Methods (ticket 107; Implementation Decision 17). At each acceptance in the worktree, a
   Type-A check (`wayline/methods.py`) reads the ticket's diff in `code/` with parsers that spend no tokens and

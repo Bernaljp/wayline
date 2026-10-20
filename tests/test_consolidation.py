@@ -119,6 +119,43 @@ class ConsolidateTest(ConsolidationCase):
     def test_the_owners_passage_it_replaced_is_not_changed_without_asking(self):
         self.assertFalse(any(item["payload"].get("replaces_owner") for item in self.events("passage")))
 
+    def test_what_it_made_of_an_owners_passage_still_steers(self):
+        merged = [item for item in sections.read_passages(self.ledger) if item["by"] == "consolidation" and not item.get("withdrawn")][0]
+        self.assertEqual(merged["consolidates"], ["P1", "P2"])
+        late = {"section": "methods", "heading": "Fitting", "text": "We fit by likelihood {code:code/phase.py#fit}.",
+                "replaces": merged["id"]}
+        problems = sections.check_result(self.ledger, {"id": 9, "sections": ["methods"]},
+                                         {"ticket_id": 9, "status": "done", "summary": "s", "passages": [late]})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("the owner's passage", problems[0])
+
+
+class WhatItReadsTest(ConsolidationCase):
+    def test_an_unchecked_inherited_claim_is_left_out_and_keeps_its_mark(self):
+        sections.add_passage(self.ledger, "methods", "Data", "The cells came from one donor {doc:D1#p2.s1}.", by="document:D1",
+                             doc="D1#p2.s1", standing=sections.UNCHECKED)
+        self.assertEqual(consolidation.estimate(self.project, "methods")["passages"], 3)
+        code, _, err = self.run_verb("methods", "--yes", script=[answer(("Fitting", MERGED, ["P1", "P2"]), ("Data", FILM, ["P3"]))])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("P4", self.calls[0].request.prompt)
+        self.assertIn("one donor {doc:D1#p2.s1}. [unchecked]", self.methods())
+
+    def test_the_owners_pending_edit_is_taken_in_before_the_session_reads(self):
+        path = self.project / "research" / "sections" / "methods.md"
+        path.write_text(path.read_text(encoding="utf-8").replace("at 10 Hz", "at 12 Hz"), encoding="utf-8")
+        edited = FILM.replace("at 10 Hz", "at 12 Hz")
+        code, _, err = self.run_verb("methods", "--yes", script=[answer(("Fitting", MERGED, ["P1", "P2"]), ("Data", edited, ["P4"]))])
+        self.assertEqual(code, 0, err)
+        self.assertIn("P4 (the owner's)", self.calls[0].request.prompt)
+        self.assertEqual(self.methods().count("12 Hz"), 1)
+
+    def test_an_untagged_claim_the_passages_already_made_is_carried(self):
+        sections.add_passage(self.ledger, "discussion", "Scope", "The study covers one line.", by="t4-a1")
+        sections.add_passage(self.ledger, "discussion", "Scope", "Its fits converge {code:code/phase.py#fit}.", by="t5-a1")
+        merged = answer(("Scope", "The study covers one line. Its fits converge {code:code/phase.py#fit}.", ["P4", "P5"]))
+        code, _, err = self.run_verb("discussion", "--yes", script=[merged], classifier=True)
+        self.assertEqual(code, 0, err)
+
 
 class RefusedTest(ConsolidationCase):
     def assertNothingWritten(self):

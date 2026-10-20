@@ -235,10 +235,43 @@ def check_replaces(project_or_ledger, section, replaces):
 
 
 def _owners(book, section, replaces):
-    """Whether `replaces` names an owner's passage of `section`."""
+    """Whether replacing `replaces` replaces an owner's passage of `section`: the one it names, or, when that was replaced
+    since, what stands in its place now, which is what `arrange` takes out.
+
+    A consolidation's passage is the owner's when any passage it consolidated was, since the owner asked for it.
+    """
     if not replaces:
         return False
-    return any(item.get("id") == replaces and item.get("by") == OWNER for item in _items(book, section))
+    items = _items(book, section)
+    by_id = {item.get("id"): item for item in items}
+    if replaces not in by_id:
+        return False
+    current = {item.get("id") for item in arrange(items).current()}
+    children = {}
+    for item in items:
+        if item.get("replaces"):
+            children.setdefault(item["replaces"], []).append(item)
+    standing, queue, seen = [], [by_id[replaces]], set()
+    while queue:
+        item = queue.pop(0)
+        if item.get("id") in seen:
+            continue
+        seen.add(item.get("id"))
+        if item.get("id") in current:
+            standing.append(item)
+        else:
+            queue.extend(children.get(item.get("id"), []))
+    return any(_owned(item, by_id) for item in standing)
+
+
+def _owned(item, by_id, seen=()):
+    """Whether a passage is the owner's: by the owner, or a consolidation of a passage that was."""
+    if item.get("by") == OWNER:
+        return True
+    if item.get("by") != CONSOLIDATION or item.get("id") in seen:
+        return False
+    return any(_owned(by_id[identifier], by_id, seen + (item.get("id"),))
+               for identifier in item.get("consolidates") or [] if identifier in by_id)
 
 
 def owner_replacement_problem(project_or_ledger, section, replaces, text, reason, finding=False):
@@ -260,7 +293,8 @@ def owner_replacement_problem(project_or_ledger, section, replaces, text, reason
 
 
 def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None, objectives=(), ticket=None, wave=None,
-                render=True, evidence=None, doc=None, standing=None, reason=None, withdrawn=False, moved_from=None):
+                render=True, evidence=None, doc=None, standing=None, reason=None, withdrawn=False, moved_from=None,
+                consolidates=None):
     """Write one passage through the ledger: `passages.jsonl` with the next P id, the `passage` event, and the section re-rendered.
 
     `by` names who contributed it (`BY_RE`); `objectives` are the ticket's; `wave` is the wave it was integrated in,
@@ -294,7 +328,7 @@ def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None,
                   "by": by, "objectives": list(objectives or []), "ticket": ticket, "wave": wave, "ts": now_ts()}
         # A passage replacing an owner's is journaled for the account, "Changed without asking you" (ticket 88).
         extra = {"evidence": evidence, "doc": doc, "standing": standing, "reason": reason, "withdrawn": True if withdrawn else None,
-                 "moved_from": moved_from,
+                 "moved_from": moved_from, "consolidates": list(consolidates) if consolidates else None,
                  "replaces_owner": True if by not in RESULTS_BY and _owners(book, section, replaces) else None}
         record.update({key: value for key, value in extra.items() if value is not None})
         try:
@@ -704,6 +738,15 @@ def _edited(body):
     return blocks
 
 
+_RES_RUN = re.compile(r"\{res:[^/{}]*/")
+
+
+def _comparable(text):
+    """A paragraph as an edit is judged by: its words and tags without the render's marks, a `res` tag's run left out,
+    since a finding's run is read from the manifest when it renders and may have moved since the file was written."""
+    return _one_line(_RES_RUN.sub("{res:", _RENDER_MARK.sub("", str(text or ""))))
+
+
 def _merge_split(blocks, printed):
     """A printed paragraph holding a blank line reads back as its marked first part and unmarked rest: rejoin them."""
     merged, index = [], 0
@@ -711,12 +754,12 @@ def _merge_split(blocks, printed):
         heading, ids, text = blocks[index]
         index += 1
         old = printed.get(ids) if ids else None
-        if old is not None and _one_line(text) != _one_line(old[1]):
+        if old is not None and _comparable(text) != _comparable(old[1]):
             joined, step = text, index
             while step < len(blocks) and blocks[step][1] is None and blocks[step][0] == heading \
-                    and _one_line(old[1]).startswith(_one_line(joined + " " + blocks[step][2])):
+                    and _comparable(old[1]).startswith(_comparable(joined + " " + blocks[step][2])):
                 joined, step = joined + "\n\n" + blocks[step][2], step + 1
-                if _one_line(joined) == _one_line(old[1]):
+                if _comparable(joined) == _comparable(old[1]):
                     text, index = joined, step
                     break
         merged.append((heading, ids, text))
@@ -762,7 +805,7 @@ def take_in(project_or_ledger, section):
             if group_ids in printed and group_ids not in kept and words:
                 kept.add(group_ids)
                 old_heading, old_text = printed[group_ids]
-                if heading == old_heading and _one_line(words) == _one_line(_RENDER_MARK.sub("", old_text)):
+                if heading == old_heading and _comparable(words) == _comparable(old_text):
                     continue
                 first, rest = group_ids[0], group_ids[1:]
                 if first in current:
@@ -782,7 +825,7 @@ def take_in(project_or_ledger, section):
         return written
 
 
-def lint_section(project_or_ledger, section):
+def lint_section(project_or_ledger, section, resolver=None):
     """The linter over a section's current passages, as a render records it: `{problems, listed, unclassified}`.
 
     The classes are the cache's (a render launches no classifier), so a sentence it has not classified is counted and
@@ -792,14 +835,14 @@ def lint_section(project_or_ledger, section):
     from wayline import provenance  # the provenance module pulls in the gates and the report
     book = ledger_for(project_or_ledger)
     current = arrange(_items(book, section)).current()
-    linted = provenance.lint_passages(book.project, current, provenance.read_claims_cache(book))
+    linted = provenance.lint_passages(book.project, current, provenance.read_claims_cache(book), resolver=resolver)
     listed = [item for item in linted.listed if item["problem"] != provenance.UNCLASSIFIED]
     return {"problems": linted.problems, "listed": listed, "unclassified": linted.unclassified}
 
 
-def _record_lint(book, section):
+def _record_lint(book, section, resolver=None):
     """Keep the linter's reading of `section` in `research/sections/lint.json`, written only when it changed."""
-    reading = lint_section(book, section)
+    reading = lint_section(book, section, resolver)
     try:
         record = book.read_json(LINT)
     except (OSError, ValueError):
@@ -812,7 +855,7 @@ def _record_lint(book, section):
     return reading
 
 
-def render_section(project_or_ledger, section):
+def render_section(project_or_ledger, section, resolver=None):
     """Write `research/sections/<section>.md` from its log; a body that did not change keeps its file and its stamp.
 
     The owner's edit of the file is taken in first (`take_in`), and the linter's reading of the section is recorded
@@ -823,7 +866,7 @@ def render_section(project_or_ledger, section):
         raise SectionError("there is no section %r; the sections are %s" % (section, ", ".join(SECTIONS)))
     with book.lock():
         take_in(book, section)
-        _record_lint(book, section)
+        _record_lint(book, section, resolver)
         body, last = _body(book, section)
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         stamp = read_stamp(book, section)
@@ -835,9 +878,15 @@ def render_section(project_or_ledger, section):
 
 
 def render_sections(project_or_ledger, only=None):
-    """Render every section (or those in `only`); returns the ones written."""
+    """Render every section (or those in `only`); returns the ones written.
+
+    One resolver serves the linter on all of them, so the manifest, the dossiers' index, and `main` are read once.
+    """
+    from wayline import provenance  # the provenance module pulls in the gates and the report
     book = ledger_for(project_or_ledger)
-    return [section for section in (only or SECTIONS) if render_section(book, section)]
+    with book.lock():
+        resolver = provenance.resolver_for(book.project)
+        return [section for section in (only or SECTIONS) if render_section(book, section, resolver)]
 
 
 def read_stamp(project_or_ledger, section):
