@@ -617,6 +617,42 @@ class PackTest(VerdictCase):
         self.assertIn("research/VERIFICATIONS.md", cut)
 
 
+class RepeatedClaimsContradictionTest(VerdictCase):
+    """A contradiction the repeated-claims check lists (ticket 95) reaches the verification of its result, read where it is
+    listed, so one the owner marked not a contradiction does not."""
+
+    WHY = "lowest at dusk against peaks at dusk"
+
+    def record(self, outcome):
+        from wayline import repeats
+
+        ledger = Ledger(self.project)
+        with ledger.lock():
+            record = repeats.read_record(ledger)
+            entry = repeats._entry(self.claims["D1#p4.s2"], self.claims["D1#p5.s1"], ["consistency"], None,
+                                   {"label": repeats.CONTRADICTING, "why": self.WHY})
+            entry.update(outcome=outcome, flag=True, results=["Results"])
+            record["pairs"].append(entry)
+            repeats._save(ledger, record)
+
+    def test_the_pack_and_the_verifier_carry_a_contradiction_the_check_lists(self):
+        from wayline import repeats
+
+        self.record(repeats.CONTRADICTION)
+        self.assertIn("- %s (%s, %s)" % (self.WHY, self.claims["D1#p4.s2"], self.claims["D1#p5.s1"]),
+                      verification.pack_text(self.project, self.fields("T1")))
+        items = verification.verdict_items(self.project, self.fields("T1"), self.returned())
+        self.assertEqual([item["contradictions"] for item in items], [[], [self.WHY], [self.WHY]])
+
+    def test_one_the_owner_marked_not_a_contradiction_is_not_carried(self):
+        from wayline import repeats
+
+        self.record(repeats.DISMISSED)
+        self.assertNotIn(self.WHY, verification.pack_text(self.project, self.fields("T1")))
+        items = verification.verdict_items(self.project, self.fields("T1"), self.returned())
+        self.assertEqual([item["contradictions"] for item in items], [[], [], []])
+
+
 class VerdictTakenTest(VerdictCase):
     def file(self, result):
         for number, item in enumerate(result["findings"], 1):

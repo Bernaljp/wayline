@@ -856,8 +856,12 @@ def _heading_of(ledger, claim, index=None):
 
 
 def attach_contradiction(project, claims, text):
-    """Attach a contradiction to the result of the inherited claims it touches (ticket 95 lists them), for its verification
-    to answer: the worker's pack and the verifier's question carry it. Returns the headings it was attached to."""
+    """Attach a contradiction to the result of the inherited claims it touches, for its verification to answer: the worker's
+    pack and the verifier's question carry it. Returns the headings it was attached to.
+
+    The repeated-claims check's own contradictions (ticket 95) are not attached: `_contradictions` reads them where they
+    are listed each time, so one the owner marked not a contradiction leaves the verification with it.
+    """
     ledger = ledger_for(project)
     text = _one_line(text)
     if not text:
@@ -886,6 +890,23 @@ def attach_contradiction(project, claims, text):
     return attached
 
 
+def _contradictions(ledger, result):
+    """The contradictions a result's verification answers, each `{text, claims}`: those attached to it, then those the
+    repeated-claims check lists now on its heading (`repeats.contradictions`, ticket 95)."""
+    from wayline import repeats  # the repeated-claims check reads the sections and the batches
+
+    found = [dict(entry) for entry in result["contradictions"]]
+    try:
+        listed = repeats.contradictions(ledger, heading=result["heading"])
+    except repeats.RepeatsError:
+        listed = []
+    for entry in listed:
+        text = _one_line(entry.get("why")) or "%s contradicts %s" % (entry["a"], entry["b"])
+        if not any(item["text"] == text for item in found):
+            found.append({"text": text, "claims": [entry["a"], entry["b"]]})
+    return found
+
+
 def verdict_items(project, fields, result):
     """Each verdict on an inherited claim a ticket's result gives, for the fresh verifier to check one by one: the claim,
     its inherited words, the evidence and the finding that replaces it, the route, and the contradictions it carries."""
@@ -907,7 +928,7 @@ def verdict_items(project, fields, result):
         heading, chain = index.get(claim["id"], (None, set()))
         contradictions = []
         if heading is not None:
-            contradictions = [entry["text"] for entry in _find(record, heading)["contradictions"] if chain & set(entry["claims"])]
+            contradictions = [entry["text"] for entry in _contradictions(ledger, _find(record, heading)) if chain & set(entry["claims"])]
         items.append({"claim": claim["id"], "said": _plain_claim(claim["text"]), "evidence": finding["evidence"],
                       "finding": _one_line(finding.get("text")), "route": said.get("route"), "commit": said.get("commit"),
                       "substitute": _one_line(said.get("substitute")) or None, "contradictions": contradictions})
@@ -974,9 +995,10 @@ def pack_text(project_or_ledger, fields, max_chars=None):
     for claim, (current, state) in _claim_states(ledger, result["claims"]).items():
         item = by_id.get(current) or {}
         lines.append("- %s (%s): %s" % (current, state, _plain_claim(item.get("text"))))
-    if result["contradictions"]:
+    contradictions = _contradictions(ledger, result)
+    if contradictions:
         lines += ["", "## Contradictions attached, which the verification answers"]
-        lines += ["- %s (%s)" % (entry["text"], ", ".join(entry["claims"])) for entry in result["contradictions"]]
+        lines += ["- %s (%s)" % (entry["text"], ", ".join(entry["claims"])) for entry in contradictions]
     items = [item for item in record["material"] if item["heading"] == heading]
     if items:
         lines += ["", "## Material it needs that the project lacked"]
