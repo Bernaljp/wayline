@@ -13,7 +13,15 @@ front-door step, an answered objective, or a consolidation, named by `by`). The 
 
 **Findings.** A finding is a Results passage: it keeps `findings.jsonl` and its F id, and gains `heading`,
 `replaces`, and `objectives`, so a scope-down replaces the finding it narrows. `results.md` renders from
-the findings; every other section from `passages.jsonl`.
+the findings and the inherited Results passages; every other section from `passages.jsonl`.
+
+**Inherited passages** (ticket 93, `wayline.inherited`) are passages `by` a document, deconstructed verbatim
+from an earlier manuscript; they alone may stand in Results outside `findings.jsonl`. Each carries `doc`, its
+locator in the document, and an inherited claim its `standing`: `unchecked` until a passage or finding replaces
+it naming in `evidence` whether this project's evidence supports, narrows, or contradicts it, or `unverifiable`
+with its `reason`. A render rejoins the passages of one paragraph of the document, with a replacement in its
+place, and marks each claim with its standing. A withdrawal (`withdrawn`) replaces a passage and takes it out
+of the section.
 
 **How a section renders** (`arrange`). A replaced passage leaves the file and stays in the log. Within a
 heading passages keep their arrival order, and a replacement takes the place of what it replaces (under
@@ -41,7 +49,8 @@ __all__ = [
     "SECTIONS", "TITLES", "WRITTEN", "SECTIONS_DIR", "PASSAGES", "FINDINGS", "KIND_SECTIONS", "BY_RE", "SectionError",
     "section_path", "sections_for_kind", "declared", "read_passages", "read_findings", "add_passage", "file_finding", "seed_passages",
     "arrange", "render_section", "render_sections", "read_stamp", "first_sentence", "pack_text", "check_result",
-    "check_replaces", "by_ticket",
+    "check_replaces", "by_ticket", "INHERITED", "STANDINGS", "EVIDENCE", "UNCHECKED", "UNVERIFIABLE", "is_inherited",
+    "paragraph_of", "mark_of", "section_items", "current_ids",
 ]
 
 SECTIONS = ("introduction", "results", "discussion", "methods", "references")
@@ -50,6 +59,14 @@ TITLES = {"introduction": "Introduction", "results": "Results", "discussion": "D
 RESULTS = "results"
 # The sections a passage names; Results is written as findings.
 WRITTEN = tuple(name for name in SECTIONS if name != RESULTS)
+# The sections an inherited passage stands in: Results too, since nothing of a document is a finding.
+INHERITED = ("introduction", "results", "discussion", "methods")
+DOCUMENT_BY = "document:"
+UNCHECKED = "unchecked"
+UNVERIFIABLE = "unverifiable"
+STANDINGS = (UNCHECKED, UNVERIFIABLE)
+# What a passage or a finding replacing an inherited claim says of it.
+EVIDENCE = ("supports", "narrows", "contradicts")
 SECTIONS_DIR = "sections"
 PASSAGES = "passages.jsonl"
 FINDINGS = "findings.jsonl"
@@ -69,8 +86,8 @@ OWNER = "owner"
 
 STAMP_RE = re.compile(r"^<!-- wayline:render (\{.*\}) -->$")
 _PASSAGE_ID = re.compile(r"^P([1-9][0-9]*)$")
-_TAG = re.compile(r"\{(?:res|ref):[^{}]+\}")
-_SENTENCE_END = re.compile(r"[.!?](?:\{(?:res|ref):[^{}]+\})*(?=\s|$)")
+_TAG = re.compile(r"\{(?:res|ref|doc):[^{}]+\}")
+_SENTENCE_END = re.compile(r"[.!?](?:\{(?:res|ref|doc):[^{}]+\})*(?=\s|$)")
 
 
 class SectionError(LedgerError):
@@ -130,7 +147,51 @@ def read_findings(project_or_ledger):
 
 
 def _items(book, section):
-    return read_findings(book) if section == RESULTS else [item for item in read_passages(book) if item.get("section") == section]
+    """The log of one section in arrival order: for Results, its findings and its inherited passages by when each came."""
+    passages = [item for item in read_passages(book) if item.get("section") == section]
+    if section != RESULTS:
+        return passages
+    # Each log keeps its own order; the two merge by when each line came, a line with no time (a finding filed before
+    # findings carried one) taking the time of the line before it in its own log.
+    keyed = []
+    for rank, log in enumerate((read_findings(book), passages)):
+        stamp = ""
+        for index, item in enumerate(log):
+            stamp = max(stamp, str(item.get("ts") or ""))
+            keyed.append((stamp, rank, index, item))
+    return [item for _, _, _, item in sorted(keyed, key=lambda entry: entry[:3])]
+
+
+def section_items(project_or_ledger, section):
+    """Every item one section's log holds, replaced ones too, in arrival order: what `arrange` takes."""
+    return _items(ledger_for(project_or_ledger), section)
+
+
+def current_ids(project_or_ledger, section):
+    """The ids of the items that stand in a section now."""
+    return {item.get("id") for item in arrange(section_items(project_or_ledger, section)).current()}
+
+
+def is_inherited(item):
+    """Whether a passage is an inherited one, contributed by a document."""
+    return str((item or {}).get("by") or "").startswith(DOCUMENT_BY)
+
+
+def paragraph_of(item):
+    """The document paragraph an inherited passage was cut from (`D1#p4`), or None for any other passage."""
+    doc = (item or {}).get("doc")
+    return str(doc).split(".", 1)[0] if doc else None
+
+
+def mark_of(item):
+    """What a render writes after an inherited claim: its standing, with the reason when it is unverifiable."""
+    standing = (item or {}).get("standing")
+    if standing == UNCHECKED:
+        return "[unchecked]"
+    if standing == UNVERIFIABLE:
+        reason = _one_line(item.get("reason") or "no reason given").replace("[", "(").replace("]", ")")
+        return "[unverifiable: %s]" % reason
+    return None
 
 
 # --- writing a passage ---------------------------------------------------------------------------------
@@ -151,15 +212,20 @@ def check_replaces(project_or_ledger, section, replaces):
 
 
 def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None, objectives=(), ticket=None, wave=None,
-                render=True):
+                render=True, evidence=None, doc=None, standing=None, reason=None, withdrawn=False, moved_from=None):
     """Write one passage through the ledger: `passages.jsonl` with the next P id, the `passage` event, and the section re-rendered.
 
     `by` names who contributed it (`BY_RE`); `objectives` are the ticket's; `wave` is the wave it was integrated in,
     which is what tells two replacements of one passage in the same wave from a later word on it. Results is written
-    as findings, never here. Returns the record written.
+    as findings, never here, except an inherited passage (`by` a document). `evidence` is what a passage replacing an
+    inherited claim says of it; `doc`, `standing`, `reason`, `withdrawn`, and `moved_from` are an inherited passage's
+    (the module's docstring). Returns the record written.
     """
     book = ledger_for(project_or_ledger)
-    if section not in WRITTEN:
+    if evidence is not None and (evidence not in EVIDENCE or replaces is None):
+        raise SectionError("a passage's evidence is one of %s, said of the inherited claim it replaces; got %r%s"
+                           % (", ".join(EVIDENCE), evidence, "" if replaces else " with nothing replaced"))
+    if section not in WRITTEN and not (section in INHERITED and str(by or "").startswith(DOCUMENT_BY)):
         raise SectionError("a passage names one of %s, got %r%s" % (", ".join(WRITTEN), section,
                                                                   "; a Results passage is a finding" if section == RESULTS else ""))
     heading, text = _one_line(heading), str(text or "").strip()
@@ -178,11 +244,15 @@ def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None,
                        if found), default=0)
         record = {"id": "P%d" % (highest + 1), "section": section, "heading": heading, "text": text, "replaces": replaces,
                   "by": by, "objectives": list(objectives or []), "ticket": ticket, "wave": wave, "ts": now_ts()}
+        extra = {"evidence": evidence, "doc": doc, "standing": standing, "reason": reason, "withdrawn": True if withdrawn else None,
+                 "moved_from": moved_from}
+        record.update({key: value for key, value in extra.items() if value is not None})
         try:
             check(record, load_schema("passage"), name="passage %s" % record["id"])
         except ValidationError as failure:
             raise SectionError(str(failure)) from None
         payload = {key: record[key] for key in ("id", "section", "heading", "text", "replaces", "by", "objectives")}
+        payload.update({key: record[key] for key in extra if key in record})
         make_event(PASSAGE, payload, ticket=ticket)  # refused before anything is written, never after the log took it
         book.append_record(PASSAGES, record)
         book.append_event(PASSAGE, payload, ticket=ticket)
@@ -195,15 +265,23 @@ def file_finding(project_or_ledger, record, wave=None, render=True):
     """Write one finding through the ledger: `findings.jsonl`, the `finding` event, and Results re-rendered.
 
     `record` carries `id`, `ticket`, `text`, `provenance`, and `negative`, and the Results passage's `heading`,
-    `replaces` (a finding's id, or None), and `objectives`; a `replaces` naming no finding is refused before anything
-    is written. `wave` is kept on the line, as on a passage's. Returns the line written.
+    `replaces` (a finding's id or an inherited Results passage's, or None), `objectives`, and, when it replaces an
+    inherited claim, `evidence`; a `replaces` naming nothing Results holds is refused before anything is written.
+    `wave` is kept on the line, as on a passage's. Returns the line written.
     """
     book = ledger_for(project_or_ledger)
     record = dict(record)
     record["heading"] = _one_line(record.get("heading")) or None
     record.setdefault("replaces", None)
     record["objectives"] = list(record.get("objectives") or [])
-    payload = {key: record[key] for key in ("id", "ticket", "text", "provenance", "negative", "heading", "replaces", "objectives")}
+    record.setdefault("ts", now_ts())  # what orders it against the inherited Results passages it may replace
+    if record.get("evidence") is None:
+        record.pop("evidence", None)
+    elif record["evidence"] not in EVIDENCE or record["replaces"] is None:
+        raise SectionError("a finding's evidence is one of %s, said of the inherited claim it replaces; got %r"
+                           % (", ".join(EVIDENCE), record["evidence"]))
+    payload = {key: record[key] for key in ("id", "ticket", "text", "provenance", "negative", "heading", "replaces", "objectives",
+                                            "evidence") if key in record}
     with book.lock():
         problem = check_replaces(book, RESULTS, record["replaces"])
         if problem is not None:
@@ -271,7 +349,9 @@ def pack_text(project_or_ledger, declared_sections, max_chars=None):
              "Code writes `research/sections/` from the passages tickets return; nobody edits the files. Return what this "
              "ticket adds as `passages` (Results as `findings`), each under a heading: reuse a heading below when one fits, "
              "and name in `replaces` the id of a passage (a finding, for Results) yours narrows or corrects. The owner's "
-             "passages steer the work: replace one only with evidence and a stated reason."]
+             "passages steer the work: replace one only with evidence and a stated reason. An inherited claim, from the "
+             "project's own earlier writing, stands unchecked until a passage or finding of yours replaces it and says in "
+             "`evidence` whether this project's evidence `supports`, `narrows`, or `contradicts` it."]
     for section in wanted:
         arranged = arrange(_items(book, section))
         lines += ["", "## %s" % TITLES[section], ""]
@@ -282,6 +362,8 @@ def pack_text(project_or_ledger, declared_sections, max_chars=None):
             for item in current:
                 if item.get("by") == OWNER:
                     lines.append("  - %s (the owner's, in full): %s" % (item.get("id"), " ".join(str(item.get("text") or "").split())))
+                elif is_inherited(item) and item.get("standing") in STANDINGS:
+                    lines.append("  - %s (inherited claim, %s): %s" % (item.get("id"), item["standing"], first_sentence(item.get("text"))))
                 else:
                     lines.append("  - %s: %s" % (item.get("id"), first_sentence(item.get("text"))))
     text = "\n".join(lines)
@@ -319,14 +401,28 @@ def check_result(project_or_ledger, fields, result):
     for index, item in enumerate(passages, start=1):
         if item.get("section") not in WRITTEN:
             continue  # the result's schema refuses it already
-        problem = check_replaces(book, item["section"], item.get("replaces"))
+        problem = (check_replaces(book, item["section"], item.get("replaces"))
+                   or _evidence_problem(book, item["section"], item.get("replaces"), item.get("evidence")))
         if problem is not None:
             problems.append("passage %d (%s, %s) %s" % (index, TITLES[item["section"]], _one_line(item.get("heading")), problem))
     for index, item in enumerate(findings, start=1):
-        problem = check_replaces(book, RESULTS, item.get("replaces"))
+        problem = (check_replaces(book, RESULTS, item.get("replaces"))
+                   or (None if item.get("negative") else _evidence_problem(book, RESULTS, item.get("replaces"), item.get("evidence"))))
         if problem is not None:
             problems.append("finding %d %s" % (index, problem))
     return problems
+
+
+def _evidence_problem(book, section, replaces, evidence):
+    """Why `evidence` does not fit what `replaces` names: an inherited claim must be answered by it, nothing else carries it."""
+    target = next((item for item in _items(book, section) if item.get("id") == replaces), None) if replaces else None
+    claim = target is not None and is_inherited(target) and target.get("standing") in STANDINGS
+    if claim and evidence not in EVIDENCE:
+        return ("replaces the inherited claim %s, %s: say in `evidence` whether this project's evidence supports, narrows, "
+                "or contradicts it" % (replaces, target.get("standing")))
+    if not claim and evidence is not None:
+        return "carries evidence %r, which is said only of an inherited claim it replaces" % (evidence,)
+    return None
 
 
 # --- arranging and rendering ---------------------------------------------------------------------------
@@ -398,6 +494,8 @@ def arrange(items):
             else:
                 _append(slots, order, where, item, heading)
         earlier.append((item, wave))
+        if item.get("withdrawn") and identifier in where:
+            slots[where.pop(identifier)].remove(item)  # a withdrawal takes the place of what it replaces, and leaves with it
     arranged.headings = [(heading, list(slots[heading])) for heading in order if slots.get(heading)]
     # A note stands while at least two of the passages kept side by side still render; one replaced since resolves it.
     for target, ids in kept.items():
@@ -435,6 +533,26 @@ def _finding_text(item, manifest):
     return provenance.tagged_text(text, provenance.finding_tags(item, manifest))
 
 
+def _paragraphs(current, by_id):
+    """The current items of one heading as the paragraphs a render prints: consecutive passages cut from one paragraph
+    of a document rejoin, a replacement of one of them standing in its place; every other item is its own."""
+    def key(item, seen=()):
+        found = paragraph_of(item)
+        if found is not None or item.get("replaces") not in by_id or item.get("id") in seen:
+            return found
+        return key(by_id[item["replaces"]], seen + (item.get("id"),))
+
+    groups, last = [], None
+    for item in current:
+        found = key(item)
+        if found is not None and found == last:
+            groups[-1].append(item)
+        else:
+            groups.append([item])
+        last = found
+    return groups
+
+
 def _body(book, section):
     items = _items(book, section)
     arranged = arrange(items)
@@ -447,11 +565,17 @@ def _body(book, section):
     lines = ["# %s" % TITLES[section], ""]
     if not arranged.headings:
         lines += ["Nothing yet: code writes this section from the passages tickets return.", ""]
+    by_id = {item.get("id"): item for item in items}
     for heading, current in arranged.headings:
         lines += ["## %s" % heading, ""]
-        for item in current:
-            text = _finding_text(item, manifest) if section == RESULTS else str(item.get("text") or "").strip()
-            lines += ["<!-- wayline:passage %s -->" % item.get("id"), text, ""]
+        for group in _paragraphs(current, by_id):
+            texts = []
+            for item in group:
+                text = (_finding_text(item, manifest) if section == RESULTS and not is_inherited(item)
+                        else str(item.get("text") or "").strip())
+                mark = mark_of(item)
+                texts.append("%s %s" % (text, mark) if mark else text)
+            lines += ["<!-- wayline:passage %s -->" % " ".join(str(item.get("id")) for item in group), " ".join(texts), ""]
     for target, ids in arranged.notes:
         lines += ["> Note: %s each replace %s, which they did in the same wave, so both are kept until one replaces the other."
                   % (" and ".join(ids), target), ""]

@@ -17,17 +17,17 @@ Not part of this ticket:
 
 **Blocked by:** 71 - The scout's outcomes, cache, and joins; 86 - Passages and the five sections. It blocks 99 and 105.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#245](https://github.com/Bernaljp/wayline/issues/245) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (A reference found during a ticket; The scout's outcomes, cache, and joins: the check at acceptance as a caller); Implementation Decision 1 (the verb table: `scout <identifier>`); Implementation Decision 9 (dossiers, the scout, absorb, promotions); Implementation Decision 14 (the policy table: the scout's cap of 20 calls a ticket); the schemas list (`result` gains `references`); M8 criterion 11; user stories 143 and 144.
 
-- [ ] The `result` schema gains `references[]` of `{identifier, note}`. A URL identifier is refused, and each note is kept on its dossier with the ticket id.
+- [x] The `result` schema gains `references[]` of `{identifier, note}`. A URL identifier is refused, and each note is kept on its dossier with the ticket id.
 - [ ] `wayline scout <identifier>` runs from inside a worker with no network of its own, counted per `WAYLINE_TICKET` and refused past 20 calls. It files the L0 dossier and prints slug, details, and abstract; files an unresolved dossier with `retry` on a failure; and files nothing on no such work. The coder, analyst, experimenter, writer, and surveyor roles get it.
-- [ ] `ref` tags accept a slug or a `doi:` or `arxiv:` identifier, resolved through position's identifier index, and inherited citations are identifier tags with no locator.
-- [ ] At acceptance, the Type-A check runs the scout on every cited work that is neither a dossier nor listed. No such work sends the worker back, a service failure accepts with the flag, and a locator beyond what the dossier's level holds is sent back.
-- [ ] A `dossier` ticket is run by the conductor as an `absorb` promotion with no worker session, and `KIND_ROLE` has no `dossier` or `lit` route.
-- [ ] Tests through the fetch seam's recordings (found, no match, a 503 failure, the cap) and the ledger seam over a temporary project for the acceptance check; journal replay for a `dossier` ticket run as a promotion.
-- [ ] Decision 1's verb table gains `scout <identifier>`, decision 14's policy table the per-ticket cap, and the schemas list `result.references`, each in the same commit as its code.
-- [ ] `python -m unittest` passes.
+- [x] `ref` tags accept a slug or a `doi:` or `arxiv:` identifier, resolved through position's identifier index, and inherited citations are identifier tags with no locator.
+- [x] At acceptance, the Type-A check runs the scout on every cited work that is neither a dossier nor listed. No such work sends the worker back, a service failure accepts with the flag, and a locator beyond what the dossier's level holds is sent back.
+- [x] A `dossier` ticket is run by the conductor as an `absorb` promotion with no worker session, and `KIND_ROLE` has no `dossier` or `lit` route.
+- [x] Tests through the fetch seam's recordings (found, no match, a 503 failure, the cap) and the ledger seam over a temporary project for the acceptance check; journal replay for a `dossier` ticket run as a promotion.
+- [x] Decision 1's verb table gains `scout <identifier>`, decision 14's policy table the per-ticket cap, and the schemas list `result.references`, each in the same commit as its code.
+- [x] `python -m unittest` passes.

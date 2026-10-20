@@ -28,6 +28,14 @@ refuses a project made before it, which keeps its old tag or starts again on the
 
 ## Unreleased
 
+**Breaking:** `research_version` 2 (Implementation Decision 17). A project made on v1.0.x is refused, never migrated:
+`wayline upgrade` to this release changes nothing and names the two ways on (`wayline upgrade --to v1.0.1`, or a new
+project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
+lists it read-only, marked with its tag.
+
+- `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
+  (2). A small upgrade, within one `research_version`, works as before, both ways.
+
 - The stopping rule, the budgets, and keep-if-better per goal; `GOAL.json` retires (ticket 87; Implementation
   Decision 17). `stop_when` in `harness.json` is `objectives` (the default: the run ends when no objective is open),
   a list of objective ids (when those are closed), or `frontier` (when no work is left); the conductor reads it every
@@ -49,6 +57,61 @@ refuses a project made before it, which keeps its old tag or starts again on the
   and the rule and budgets in its place, and the toy project's goal is O1 in `research/objectives.json` with
   `stop_when` in `harness.json`.
 
+- The rule from code to Methods (ticket 107; Implementation Decision 17). At each acceptance in the worktree, a
+  Type-A check (`wayline/methods.py`) reads the ticket's diff in `code/` with parsers that spend no tokens and
+  sends the worker back with the list when Methods and the code disagree: every developed method the diff adds or
+  changes needs a `code` tag (`{code:code/<path>#<symbol>}` or `#L10-L42`) in a current Methods passage, the
+  ticket's own included (plumbing such as private names, `load_`/`save_`/`plot_` helpers, and tests is excluded by
+  code; anything else the worker lists in the new result field `not_methods`); every used method the diff adds
+  that the alias table (`methods/aliases.json`) lists, such as `scipy.signal.hilbert`, must be named in a Methods
+  passage by one of its aliases; and every non-default parameter it sets, every numeric default a new method gives
+  itself, and every sensitive default left unset (an unseeded random state, default solver tolerances) needs a
+  one-sentence reason in the new result field `parameters`, whose value and default code fills. Python is read
+  with `ast`, its library defaults from `inspect.signature` run in the project's environment ("not checked", and
+  not failed, until that environment is installed); MATLAB with tree-sitter-matlab in the tools venv
+  (`converters/matlab_parse.py`), the documented-defaults table (`methods/defaults.json`), and backward slices,
+  and the same parse fills the code dossier's new `methods` entries and a MATLAB repository's inventory; another
+  language gets one Sonnet reading (the `code-reader` role, `sonnet medium`, schema `code_reading`) whose items are
+  kept only when grep finds them, its usage carried on the acceptance result. The reasons and `not_methods` reach
+  the ticket's `## Result` section and the verifier's existing verdict, whose schema gains `code_rule`, the
+  judgment of each; one that does not hold fails the verdict, and a ticket that earned no verdict earns a read of
+  its diff for them.
+
+- References during a ticket (ticket 98; Implementation Decision 17). `wayline scout <identifier>` checks one work
+  from inside a worker by its DOI, arXiv id, or exact title (a URL is refused): it files the L0 dossier at once and
+  prints the slug, the details, and the abstract; on a service failure it files an unresolved dossier with the
+  `retry` flag; on no such work it files nothing and exits 1. Each call is journaled as `scouted` under
+  `WAYLINE_TICKET` and the call past `policy.scout.calls_per_ticket` (20) is refused; the coder, analyst,
+  experimenter, and writer have the verb, and their prompts say how to cite. A result gains `references[]` of
+  `{identifier, note}`. At the worktree's acceptance every cited work (each `ref` tag of the passages and findings)
+  must be a dossier or listed, the scout runs free on every work neither a found dossier nor known yet (each
+  listed one, and each cited by `doi:` or `arxiv:`), each note is kept on its dossier as `ticket <id>`, and a
+  locator must name what the dossier holds at its level (`abstract` or `metadata.<field>`, and at L2 an entry's
+  locator): no such work and a locator beyond the level send the worker back, a service failure passes with the
+  flag, and an identifier tag with no locator (the inherited citation's form) passes. Lookups ask the services
+  outside the ledger's lock and file under it, so two workers scouting at once never share a slug. A `ref` tag names a work by slug or by `doi:` or `arxiv:`,
+  resolved through position's identifier index. A `dossier` ticket has no worker session: the conductor promotes
+  the paper on the `planner_or_decider` trigger and reads it through absorb, waiting on the decision a promotion
+  beyond the phase's budget opens; `proposals.KIND_ROLE` routes neither `dossier` nor `lit`.
+
+- Inherited passages (ticket 93; Implementation Decision 17). `wayline document deconstruct D1` cuts an inherited
+  document (an earlier manuscript, a separate Methods, a supplement) verbatim into inherited passages, `by:
+  document:D1`, in `research/passages.jsonl`. Only text under headings the fixed table maps is taken (Introduction
+  or Background; Discussion, Conclusions, or Outlook; Methods, Materials and methods, Theory, Model, or Algorithm;
+  Results, and "Results and discussion" to Results); a subheading follows its parent, and any other heading is
+  placed by the setup session (`--place "<heading>=<section>"`) or, with none, lands under Results as written and
+  is listed in `DOCUMENTS.md`. The title, abstract, front matter, captions, back matter, availability statements,
+  and reference list stay in the document's record (`deconstructed.kept`), never passages. Each claim sentence the
+  classifier marks is one passage and the sentences between claims stay together, each ending with a
+  `{doc:D1#p4.s2}` tag (provenance, never a citation); a pandoc citation becomes an identifier `ref` tag with no
+  locator. An inherited claim stands `unchecked` until a ticket's passage or finding replaces it with `evidence`
+  (`supports`, `narrows`, or `contradicts`; the acceptance check asks for it), or is found `unverifiable` with its
+  reason. Results now renders from the findings and the inherited Results passages; a render rejoins a document
+  paragraph's passages, each claim marked `[unchecked]`. `wayline document move P12 results` moves a separate
+  document's outcome passage on the setup session's proposal, listed for the owner. A `.docx` kept without pandoc
+  is not deconstructed and the reason is listed; a newer version taken in again comes in like a section edit (new
+  text new passages, changed text replacements, removed text withdrawals).
+
 - Consulting one document (ticket 94; Implementation Decision 17). `wayline consult D1 "<question>"` takes a
   document id as well as a dossier slug. The document's `text.md` is cut into chunks of whole blocks under
   `policy.absorb.chunk_max_chars` (`documents/<id>/chunks/`, listed in `chunks.json`, rebuilt when the text
@@ -56,14 +119,6 @@ refuses a project made before it, which keeps its old tag or starts again on the
   anchors (`p12`). The exchange goes to `documents/<id>/qa_log.md`, is journaled as `consulted` with the id in
   `slug`, and counts against the ticket's question limit. An unknown id or a document with no text is refused
   in one line.
-
-**Breaking:** `research_version` 2 (Implementation Decision 17). A project made on v1.0.x is refused, never migrated:
-`wayline upgrade` to this release changes nothing and names the two ways on (`wayline upgrade --to v1.0.1`, or a new
-project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
-lists it read-only, marked with its tag.
-
-- `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
-  (2). A small upgrade, within one `research_version`, works as before, both ways.
 
 - `REPRODUCE.md` and the locks (ticket 106; Implementation Decision 17). After a wave that changed `code/` or ran a job a
   current finding cites (or changed which runs the findings cite), and only then, code renders into `code/`:

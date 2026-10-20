@@ -29,21 +29,21 @@ Not part of this ticket:
 
 It blocks 108 and 119.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#254](https://github.com/Bernaljp/wayline/issues/254) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Methods and the code: the rule from code to Methods, the parsers; sections and passages: the `code` tag; vocabulary the build adds: `result` gains `parameters` and `not_methods`), the schemas list; milestone M8 criterion 13; user story 150.
 
-- [ ] At acceptance, a ticket whose diff in `code/` adds or changes a developed method with no `code` tag naming it in a current Methods passage is sent back, and the message names the method. Plumbing is excluded by code. A method listed in `not_methods` passes the check and goes to the verifier's verdict.
-- [ ] A used method the diff adds that no Methods passage names through the alias table sends the ticket back.
-- [ ] Every non-default parameter set in the diff, and every sensitive default left unset, needs an entry in `parameters` with a one-sentence reason, or the ticket is sent back. Code fills each entry's value and default.
-- [ ] The verifier's verdict is given the `parameters` reasons and the `not_methods` list to judge, and its verdict schema carries that judgment.
-- [ ] The Python parser reads signatures through `inspect.signature` in the project's environment. With that environment not installed, a default is recorded as "not checked" and does not fail the check.
-- [ ] The MATLAB parser uses tree-sitter-matlab from the tools venv, the documented-defaults table, and backward slices, and fills the code dossier's methods entries for a MATLAB repository.
-- [ ] A changed file in another language gets one Sonnet reading at acceptance, with each item it names checked by grep in the file. Its cost is journaled with the ticket's usage.
-- [ ] The `result` schema gains `parameters` and `not_methods`.
-- [ ] Tests, Type-A functions over a worktree and a result, with the start-midway fixture's Python and MATLAB files (78):
+- [x] At acceptance, a ticket whose diff in `code/` adds or changes a developed method with no `code` tag naming it in a current Methods passage is sent back, and the message names the method. Plumbing is excluded by code. A method listed in `not_methods` passes the check and goes to the verifier's verdict.
+- [x] A used method the diff adds that no Methods passage names through the alias table sends the ticket back.
+- [x] Every non-default parameter set in the diff, and every sensitive default left unset, needs an entry in `parameters` with a one-sentence reason, or the ticket is sent back. Code fills each entry's value and default.
+- [x] The verifier's verdict is given the `parameters` reasons and the `not_methods` list to judge, and its verdict schema carries that judgment.
+- [x] The Python parser reads signatures through `inspect.signature` in the project's environment. With that environment not installed, a default is recorded as "not checked" and does not fail the check.
+- [x] The MATLAB parser uses tree-sitter-matlab from the tools venv, the documented-defaults table, and backward slices, and fills the code dossier's methods entries for a MATLAB repository.
+- [x] A changed file in another language gets one Sonnet reading at acceptance, with each item it names checked by grep in the file. Its cost is journaled with the ticket's usage.
+- [x] The `result` schema gains `parameters` and `not_methods`.
+- [x] Tests, Type-A functions over a worktree and a result, with the start-midway fixture's Python and MATLAB files (78):
   - an untagged developed method;
   - a used method missing from Methods;
   - an unexplained non-default;
@@ -52,6 +52,6 @@ It blocks 108 and 119.
   - "not checked" defaults;
   - the Sonnet reading through the fake launcher;
   - the parsers through the tool runner's recordings.
-- [ ] The schemas list gains the `result` fields in the same commit as the code.
-- [ ] The changelog's `## Unreleased` section describes the rule from code to Methods.
-- [ ] `python -m unittest` passes.
+- [x] The schemas list gains the `result` fields in the same commit as the code.
+- [x] The changelog's `## Unreleased` section describes the rule from code to Methods.
+- [x] `python -m unittest` passes.

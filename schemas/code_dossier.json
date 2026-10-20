@@ -28,7 +28,7 @@
       "properties": {
         "modules": {"type": "array", "items": {"$ref": "#/$defs/module"}},
         "symbols_total": {"type": "integer", "minimum": 0},
-        "note": {"type": ["string", "null"], "description": "set on a non-Python repository: universal-ctags or tree-sitter is not yet wired"}
+        "note": {"type": ["string", "null"], "description": "set on a repository in a language no parser reads (universal-ctags or tree-sitter is not yet wired), or naming the MATLAB files tree-sitter-matlab could not parse"}
       }
     },
     "entry_points": {"type": "array", "items": {"$ref": "#/$defs/entry_point"}},
@@ -55,9 +55,26 @@
       "description": "per module: what is good, bad, risky, reusable, and how to call the pieces that matter; the mechanical pass leaves these empty for the consultant to fill",
       "items": {"$ref": "#/$defs/api_map_entry"}
     },
+    "methods": {
+      "type": "array",
+      "description": "the methods the code develops (its own functions that are not plumbing) and uses (library calls the alias table lists), read by the parsers of the rule from code to Methods: ast for Python, tree-sitter-matlab for MATLAB (ticket 107)",
+      "items": {"$ref": "#/$defs/method"}
+    },
     "created": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"}
   },
   "$defs": {
+    "method": {
+      "type": "object",
+      "required": ["kind", "name", "path", "line"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "enum": ["developed", "used"]},
+        "name": {"type": "string", "pattern": "\\S", "description": "the function or class it develops; the qualified call it makes"},
+        "path": {"type": "string"},
+        "line": {"type": "integer", "minimum": 1},
+        "method": {"type": ["string", "null"], "description": "a used method's plain name, from the alias table"}
+      }
+    },
     "submodule": {
       "type": "object",
       "required": ["path", "url", "sha"],

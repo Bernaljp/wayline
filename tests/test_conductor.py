@@ -209,6 +209,8 @@ class WholePathTest(ConductorCase):
         # A finding is a Results passage (ticket 86): under the ticket's title when it named no heading, with the wave it landed in.
         wave = written[0].pop("wave")
         self.assertRegex(wave, r"^[0-9a-f]{8}/2$")
+        # It carries when it was filed, which orders it against the inherited Results passages (ticket 93).
+        self.assertRegex(written[0].pop("ts"), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
         self.assertEqual(written, [{"id": "t1-a1-f1", "ticket": 1, "text": "a finding", "provenance": "hello.txt#L1", "negative": False,
                                     "heading": "Write the hello file", "replaces": None, "objectives": []}])
         self.assertEqual(self.payload("finding"), written[0])

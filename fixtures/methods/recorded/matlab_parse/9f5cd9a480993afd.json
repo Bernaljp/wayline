@@ -1,0 +1,116 @@
+{
+ "assignments": [
+  {
+   "function": "phaselock_broken",
+   "kind": "function_call",
+   "line": 3,
+   "name": "ph",
+   "value": "angle(hilbert(traces.').'"
+  },
+  {
+   "function": "phaselock_broken",
+   "kind": "function_call",
+   "line": 4,
+   "name": "R",
+   "value": "mean(abs(mean(exp(1i * ph), 1)))"
+  }
+ ],
+ "calls": [
+  {
+   "args": [
+    {
+     "kind": "postfix_operator",
+     "text": "hilbert(traces.').'"
+    }
+   ],
+   "end": 3,
+   "function": "phaselock_broken",
+   "line": 3,
+   "name": "angle",
+   "text": "angle(hilbert(traces.').'"
+  },
+  {
+   "args": [
+    {
+     "kind": "postfix_operator",
+     "text": "traces.'"
+    }
+   ],
+   "end": 3,
+   "function": "phaselock_broken",
+   "line": 3,
+   "name": "hilbert",
+   "text": "hilbert(traces.')"
+  },
+  {
+   "args": [
+    {
+     "kind": "function_call",
+     "text": "abs(mean(exp(1i * ph), 1))"
+    }
+   ],
+   "end": 4,
+   "function": "phaselock_broken",
+   "line": 4,
+   "name": "mean",
+   "text": "mean(abs(mean(exp(1i * ph), 1)))"
+  },
+  {
+   "args": [
+    {
+     "kind": "function_call",
+     "text": "mean(exp(1i * ph), 1)"
+    }
+   ],
+   "end": 4,
+   "function": "phaselock_broken",
+   "line": 4,
+   "name": "abs",
+   "text": "abs(mean(exp(1i * ph), 1))"
+  },
+  {
+   "args": [
+    {
+     "kind": "function_call",
+     "text": "exp(1i * ph)"
+    },
+    {
+     "kind": "number",
+     "text": "1"
+    }
+   ],
+   "end": 4,
+   "function": "phaselock_broken",
+   "line": 4,
+   "name": "mean",
+   "text": "mean(exp(1i * ph), 1)"
+  },
+  {
+   "args": [
+    {
+     "kind": "binary_operator",
+     "text": "1i * ph"
+    }
+   ],
+   "end": 4,
+   "function": "phaselock_broken",
+   "line": 4,
+   "name": "exp",
+   "text": "exp(1i * ph)"
+  }
+ ],
+ "functions": [
+  {
+   "end": 5,
+   "name": "phaselock_broken",
+   "outputs": "R",
+   "params": [
+    "traces"
+   ],
+   "parent": null,
+   "start": 1
+  }
+ ],
+ "has_error": true,
+ "nargin_defaults": []
+}

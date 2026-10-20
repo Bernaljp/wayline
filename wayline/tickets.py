@@ -25,7 +25,7 @@ from wayline.ledger import Ledger
 
 __all__ = [
     "TicketError", "RESEARCH", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED",
-    "DECISION", "HARNESS", "HARDEST", "RESULT_HEADING", "works_in_the_harness", "DOCS", "DOCS_BUILD", "machine_acceptance",
+    "DECISION", "DOSSIER", "HARNESS", "HARDEST", "RESULT_HEADING", "works_in_the_harness", "DOCS", "DOCS_BUILD", "machine_acceptance",
     "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
     "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
     "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
@@ -49,6 +49,8 @@ SATISFIED = ("done", "accepted")
 # The kind whose open tickets pause their subgraph, and the difficulty whose blockers need a verdict.
 DECISION = "decision"
 HARNESS = "harness"
+# The kind the conductor runs as a promotion through absorb, with no worker session (decision 17; ticket 98).
+DOSSIER = "dossier"
 HARDEST = 5
 # The kind whose acceptance always includes the documentation site's machine checks (decision 13).
 DOCS = "docs"
@@ -286,6 +288,21 @@ def with_result(body, attempt, result):
             where = "%s, %s%s" % (item.get("section"), " ".join(str(item.get("heading") or "").split()),
                                   ", replacing %s" % item["replaces"] if item.get("replaces") else "")
             lines.append("- %s: %s" % (where, " ".join(str(item.get("text") or "").split())))
+    # The rule from code to Methods (ticket 107): the reasons, with the values and defaults code filled, and what the
+    # worker says is not a method, which the verdict on the ticket judges here.
+    parameters = [item for item in result.get("parameters") or [] if isinstance(item, dict)]
+    if parameters:
+        lines.extend(["", "Parameters:", ""])
+        for item in parameters:
+            value = " = %s" % item["value"] if item.get("value") is not None else ""
+            default = " (default %s)" % item["default"] if item.get("default") is not None else ""
+            where = " at `%s:%s`" % (item["path"], item["line"]) if item.get("path") and item.get("line") else ""
+            lines.append("- `%s` `%s`%s%s%s: %s" % (item.get("method"), item.get("name"), value, default, where,
+                                                     " ".join(str(item.get("reason") or "").split())))
+    not_methods = [item for item in result.get("not_methods") or [] if isinstance(item, dict)]
+    if not_methods:
+        lines.extend(["", "Not methods:", ""])
+        lines.extend("- `%s`: %s" % (item.get("name"), " ".join(str(item.get("why") or "").split())) for item in not_methods)
     for note in result_notes(result):
         lines.extend(["", note[0].upper() + note[1:] + "."])
     return with_result_note(body, lines)

@@ -35,7 +35,60 @@
         "damage": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}, "description": "how many of each the conversion lost: headings, equations, comments not anchored, citations not placed"},
         "abstract": {"type": ["string", "null"]},
         "headings": {"type": "array", "items": {"$ref": "#/$defs/heading"}},
-        "history": {"type": "array", "items": {"$ref": "#/$defs/earlier"}}
+        "history": {"type": "array", "items": {"$ref": "#/$defs/earlier"}},
+        "deconstructed": {"$ref": "#/$defs/deconstructed"}
+      }
+    },
+    "deconstructed": {
+      "type": "object",
+      "description": "an inherited document's deconstruction into inherited passages (ticket 93): the version taken in, where each heading went and why, the parts kept and never deconstructed, the moves made on the setup session's proposal, or why nothing was deconstructed",
+      "required": ["version", "reason", "passages", "claims", "headings", "kept", "moves"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {"type": "integer", "minimum": 1, "description": "the document's version last taken in"},
+        "reason": {"type": ["string", "null"], "description": "why nothing was deconstructed, such as a .docx kept without pandoc; null when it was"},
+        "passages": {"type": "integer", "minimum": 0, "description": "the document's inherited passages standing in the sections"},
+        "claims": {"type": "integer", "minimum": 0, "description": "how many of them are claims"},
+        "headings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["locator", "text", "to", "by"],
+            "additionalProperties": false,
+            "properties": {
+              "locator": {"type": "string", "pattern": "^p[1-9][0-9]*$"},
+              "text": {"type": "string"},
+              "to": {"type": "string", "enum": ["introduction", "results", "discussion", "methods", "kept"], "description": "the section its text went to, or kept: never deconstructed"},
+              "by": {"type": "string", "enum": ["table", "parent", "session", "default", "title"], "description": "the fixed heading table, the parent heading it follows, the setup session's placement, Results as written for want of one (listed), or the document's own title"}
+            }
+          }
+        },
+        "kept": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["locator", "part"],
+            "additionalProperties": false,
+            "properties": {
+              "locator": {"type": "string", "pattern": "^(front|p[1-9][0-9]*)$"},
+              "part": {"type": "string", "enum": ["title", "abstract", "front_matter", "caption", "back_matter", "availability", "references"]}
+            }
+          }
+        },
+        "moves": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["passage", "to_passage", "from", "to"],
+            "additionalProperties": false,
+            "properties": {
+              "passage": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+              "to_passage": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+              "from": {"type": "string", "enum": ["introduction", "results", "discussion", "methods"]},
+              "to": {"type": "string", "enum": ["introduction", "results", "discussion", "methods"]}
+            }
+          }
+        }
       }
     },
     "converter": {

@@ -81,8 +81,7 @@ class ConsultRefused(ConsultError):
 
 def questions_asked(project_or_ledger, ticket):
     """How many `consulted` events the journal holds for `ticket`."""
-    events, _ = ledger_for(project_or_ledger).read_events()
-    return sum(1 for event in events if event.get("event") == CONSULTED and event.get("ticket") == ticket)
+    return ledger_for(project_or_ledger).count_events(CONSULTED, ticket)
 
 
 def question_limit(policy):

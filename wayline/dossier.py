@@ -52,7 +52,7 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.kb import ID_MAX, NODES_DIR, make_node, rebuild_query_pack, slugify, write_node
 from wayline.ledger import ledger_for, now_ts
 from wayline.project import HARNESS_JSON, ProjectError, find_project, policy_for, read_harness
-from wayline.scout import Reference, Scout, UNRESOLVED, VERIFIED, normalize_title, parse_reference, timestamp
+from wayline.scout import NO_SUCH_WORK, NOT_LOOKED_UP, Reference, Scout, UNRESOLVED, VERIFIED, normalize_title, outcome, parse_reference, timestamp
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, read_tickets, write_ticket
 
 __all__ = [
@@ -66,7 +66,7 @@ __all__ = [
     "strip_comments", "environments", "latex_inventory", "aux_numbers", "apply_aux_numbers",
     "html_inventory", "build_inventory", "source_fetcher",
     "LOOKUP_FIELDS", "work_keys", "same_work", "merge_lookup", "file_lookup", "retry_state", "give_up", "retry_flagged",
-    "filed_index", "join_duplicates", "keep_source_pdf", "hand_over", "pdf_details", "reference_command",
+    "filed_index", "join_duplicates", "keep_source_pdf", "hand_over", "pdf_details", "reference_command", "look_up_one", "finish_lookups", "keep_ticket_note", "filed_slug",
 ]
 
 REFS = "refs"
@@ -1951,6 +1951,90 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
     return report
 
 
+def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock=None, finish=True):
+    """One reference looked up for a ticket (decision 17): `{outcome, slug, dossier, change}`.
+
+    What `wayline scout <identifier>` and the check at acceptance share. A reference a dossier
+    already holds (by any name it was filed under) is looked up as absorb looks it up: a found work
+    out of the scout's cache, a flagged one only when its daily retry is due, and never taking back
+    what the dossier knows. A reference no dossier holds is filed at once when it is found, joining
+    the dossier of the same work if one exists, and filed unresolved with the `retry` flag when a
+    service failed; when every service answered no match, nothing is filed and `slug` is None.
+    `outcome` is `scout.outcome` of what the dossier now says: `found`, `failed`, or `no such work`.
+
+    `wayline scout` runs in several workers at once, so the services are asked outside the ledger's lock
+    and the answer is filed under it, against what the project holds by then: a work another worker filed
+    meanwhile is joined rather than given a second slug. `finish` joins duplicates and rebuilds the query
+    pack after a found work; a caller looking up several passes False and calls `finish_lookups` once.
+    """
+    project = Path(project)
+    ledger = ledger_for(ledger if ledger is not None else project)
+    if email is None:
+        email = _email(project)
+    fetcher = fetcher if fetcher is not None else scout_fetcher(project, email=email)
+    clock = clock or time.time
+    if not isinstance(reference, Reference):
+        reference = parse_reference(reference)
+    key = (reference.kind, reference.value.lower())
+
+    def holdings():
+        """What the project holds now: the dossier filed under this name, the slugs taken, and the filed works."""
+        return (_existing(ledger, _known_slugs(ledger).get(key)), {path.parent.name for path in (ledger.research / REFS).glob("*/dossier.json")},
+                filed_index(ledger))
+
+    existing, taken, index = holdings()
+    dossier, change = _look_up(ledger, Scout(fetcher, email, clock=clock), reference, existing, taken, clock, _give_up_days(project),
+                               {"disagreements": []}, index, file_no_such_work=False, filing=ledger.lock, refresh=holdings)
+    if dossier is not None:
+        with ledger.lock():
+            if dossier["existence"] == VERIFIED and finish:
+                finish_lookups(project, ledger, clock)
+            dossier = read_dossier(ledger, dossier["slug"])
+            if dossier.get("joined_into"):
+                dossier = read_dossier(ledger, dossier["joined_into"])
+    if dossier is None:
+        return {"outcome": NO_SUCH_WORK, "slug": None, "dossier": None, "change": change}
+    found = outcome(dossier)
+    return {"outcome": NO_SUCH_WORK if found == NOT_LOOKED_UP else found, "slug": dossier["slug"], "dossier": dossier, "change": change}
+
+
+def finish_lookups(project, ledger=None, clock=None):
+    """After found works were filed: join two dossiers of one work, and rebuild the query pack."""
+    ledger = ledger_for(ledger if ledger is not None else project)
+    with ledger.lock():
+        join_duplicates(ledger, timestamp((clock or time.time)()))
+        rebuild_query_pack(ledger, policy_for(project).get("kb", {}).get("query_pack_max_chars", QUERY_PACK_MAX))
+
+
+def filed_slug(ledger, reference, index=None):
+    """The slug a dossier already holds `reference` under, by a name it was filed under or by its identifier; None when none does."""
+    from wayline.position import identifier_index, slug_for_identifier  # position imports this module's neighbours
+    ledger = ledger_for(ledger)
+    slug = _known_slugs(ledger).get((reference.kind, reference.value.lower()))
+    if slug is not None:
+        return slug
+    index = identifier_index(ledger) if index is None else index
+    if reference.kind in ("doi", "arxiv"):
+        return slug_for_identifier(index, "%s:%s" % (reference.kind, reference.value))
+    return index.get(("title", normalize_title(reference.value))) if reference.kind == "title" else None
+
+
+def keep_ticket_note(ledger, slug, text, ticket, now=None):
+    """A ticket's note on a reference, kept on its dossier as `ticket <id>`; the scout never reads it. Returns the dossier."""
+    ledger = ledger_for(ledger)
+    with ledger.lock():  # read, add, and write in one hold, so a lookup another worker files at once is not lost
+        dossier = read_dossier(ledger, slug)
+        if dossier.get("joined_into"):
+            dossier = read_dossier(ledger, dossier["joined_into"])
+        note = {"text": str(text), "by": "ticket %s" % ticket, "ts": now or now_ts()}
+        notes = list(dossier.get("notes") or [])
+        if any(item.get("text") == note["text"] and item.get("by") == note["by"] for item in notes):
+            return dossier
+        dossier = dict(dossier, notes=notes + [note])
+        _write_dossier(ledger, dossier)
+    return dossier
+
+
 def retry_flagged(project, fetcher=None, email=None, ledger=None, clock=None, skip=(), rebuild=True):
     """Retry every flagged reference that is due (decision 17): what the next absorb and the tick during a live run do.
 
@@ -1991,12 +2075,16 @@ def retry_flagged(project, fetcher=None, email=None, ledger=None, clock=None, sk
     return report
 
 
-def _look_up(ledger, scout, reference, existing, taken, clock, days, report, index=None):
+def _look_up(ledger, scout, reference, existing, taken, clock, days, report, index=None, file_no_such_work=True, filing=None, refresh=None):
     """One reference looked up and filed, unless its flag says to wait or to give up. Returns `(dossier, change)`.
 
     A reference no dossier holds yet that resolves to a work `index` already files (by DOI, arXiv
     id, or published DOI) joins that dossier instead of starting another, which records it among
-    its names.
+    its names. With `file_no_such_work` false, a reference no dossier holds that every service
+    answered no match for files nothing and returns `(None, "no such work")`: what `wayline scout`
+    and the check at acceptance do (decision 17), where intake's references are filed whatever they come to.
+    `filing` (the ledger's lock) is held while the answer is filed, after the services were asked without it,
+    and `refresh()` then re-reads `(existing, taken, index)`, so what another process filed meanwhile counts.
     """
     now = clock()
     state = retry_state(existing, now, days) if existing else None
@@ -2008,6 +2096,18 @@ def _look_up(ledger, scout, reference, existing, taken, clock, days, report, ind
         return existing, GAVE_UP
     found = bool(existing and existing["existence"] == VERIFIED and state is None)
     resolved = scout.resolve(reference, found=found)
+    if filing is None:
+        return _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work)
+    with filing():
+        if refresh is not None:
+            existing, taken, index = refresh()
+        return _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work)
+
+
+def _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work):
+    """`_look_up`'s second half: the scout's answer filed under the dossier it belongs to. Returns `(dossier, change)`."""
+    if existing is None and not file_no_such_work and outcome(resolved) in (NO_SUCH_WORK, NOT_LOOKED_UP):
+        return None, NO_SUCH_WORK
     if existing is None and resolved["existence"] == VERIFIED and index:
         filed = next((index[key] for key in sorted(work_keys(resolved)) if key in index), None)
         existing = _existing(ledger, filed)
@@ -2566,14 +2666,15 @@ def _l2_used_in_phase(events, phase):
     return used
 
 
-def promote(project_or_ledger, slug, trigger, phase=None, ticket=None, proposed_by=None, detail=None):
+def promote(project_or_ledger, slug, trigger, phase=None, ticket=None, proposed_by=None, detail=None, force=False):
     """Promote `slug` to level 2 on `trigger`, inside `policy.absorb.l2_per_phase`, else open a decision ticket.
 
     `trigger` is one of the five of Implementation Decisions 9. Inside the current phase's budget
     the dossier is promoted at once and `promoted` is journaled with the trigger; beyond it, a
     `decision` ticket is opened (its `origin` carries the trigger and the budget it exceeded) and
     `ticket_created` and `decision_opened` are journaled. A slug already at level 2 is a no-op.
-    Returns a dict describing what happened.
+    Returns a dict describing what happened. `force` promotes past the budget: the answer to the decision
+    ticket a promotion beyond it opened was yes (a `dossier` ticket waiting on it, ticket 98).
     """
     if trigger not in TRIGGERS:
         raise DossierError("promotion trigger %r is not one of %s" % (trigger, list(TRIGGERS)))
@@ -2586,7 +2687,7 @@ def promote(project_or_ledger, slug, trigger, phase=None, ticket=None, proposed_
     phase = phase or _current_phase(events)
     limit = ((policy_for(ledger.project).get("absorb") or {}).get("l2_per_phase") or {}).get(phase)
     used = _l2_used_in_phase(events, phase)
-    if limit is None or used < limit:
+    if force or limit is None or used < limit:
         dossier["level"] = LEVEL_2
         dossier["updated"] = now_ts()
         _write_dossier(ledger, dossier)

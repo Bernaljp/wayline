@@ -149,7 +149,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, notify, objectives, pacing, proposals, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, decider, decisions, gates, methods, notify, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -177,6 +177,8 @@ BRANCH = "ticket/%s"
 LEDGER_COMMIT = "ledger: wave %d"
 # The acceptance result the declared-sections check of decision 17 adds in the worktree (ticket 86).
 SECTIONS_CHECK = "wayline: the declared sections got their passages"
+# The acceptance result the check of a ticket's references adds in the worktree (decision 17; ticket 98).
+REFERENCES_CHECK = "wayline: every cited work is a dossier or listed, at a locator its level holds"
 # What the owner is told when the code repository's remote refuses code/'s split (decision 17; the `notified` event's `event`).
 CODE_PUSH_REJECTED = "code_push_rejected"
 # The heartbeat is rewritten every wave; committing it would make every wave a ledger commit.
@@ -769,6 +771,8 @@ class Conductor:
         self.readings = None
         # The tool runner the push of the code repository's split goes through (decision 17, seam 6); a test records it.
         self.code_run = run_tool
+        self.methods_run = run_tool    # the parsers of the rule from code to Methods (ticket 107); tests replay recordings
+        self.methods_tools = None      # `tools.json` as the machine records it, unless a test hands one in
         # The split the remote last refused, which this run does not push again (it is told to the owner once).
         self._code_rejected = None
         # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
@@ -794,6 +798,12 @@ class Conductor:
         # this run has taken, so a cut that failed is not launched again at every wave.
         self.planner = self._cut
         self.plan_pre_check = True
+        # The fetcher the check of a ticket's references runs the scout on (ticket 98): None for the project's cache.
+        self.scout_fetcher = None
+        # The level-2 read a `dossier` ticket runs as its promotion, `(project, slug) -> report` (ticket 98): None for
+        # `absorb.absorb_level_2`; and the inventory it builds first when the paper has none, None for `dossier.build_inventory`.
+        self.absorb_dossier = None
+        self.dossier_inventory = None
         self.reporter = self._render_report
         self._replanned = None
         self._objectives_trouble = None
@@ -1611,9 +1621,12 @@ class Conductor:
         of their own; the wave waits only until each process exists or its launch failed, so
         `launched` names exactly the tickets whose `ticket_launched` was journaled.
         """
-        attempts = []
+        attempts, promotions = [], []
         for entry in picks:
             ticket, body = self._ticket(entry["id"])
+            if ticket["kind"] == tickets.DOSSIER:
+                promotions.append(ticket)  # no worker session: a promotion through absorb, run once the workers started (ticket 98)
+                continue
             attempt = _Attempt(ticket, body, int(entry.get("attempt") or 0) + 1, self._worktree(entry["id"]))
             try:
                 self._begin(attempt, entry)
@@ -1630,6 +1643,49 @@ class Conductor:
                 self.flight[attempt.id] = attempt
             else:
                 self._carry(attempt, result)  # the launcher refused it before a process started
+        for ticket in promotions:
+            self._beat()
+            self._run_dossier(ticket, result)
+            self._beat()
+
+    def _run_dossier(self, ticket, result):
+        """Run a `dossier` ticket as a promotion through absorb, with no worker session (decision 17; ticket 98).
+
+        The level-2 read runs in the wave, as the decider's session does: it is code's and the absorb session's
+        work, not a worker's, so no `ticket_launched` is journaled and nothing is owed a restarted conductor. Its
+        `promoted` and `absorbed` are journaled by the promotion and the read, then `ticket_done`; a read that fails
+        its coverage audit hands the ticket to a person, since no session of its own could be resumed. A promotion
+        beyond the phase's budget opens its decision ticket and the dossier ticket waits on it, blocked by it.
+        """
+        from wayline import absorb
+        identifier = ticket["id"]
+        self.say("wave %d: ticket %d %s (a promotion through absorb, no worker session)" % (self.number, identifier, ticket["title"]))
+        answers = {number: (answer or {}).get("answer") for number, answer in self.view.answers.items()}
+        try:
+            run = absorb.run_dossier_ticket(self.project, ticket, tickets_by_id={fields["id"]: fields for fields in tickets.read_tickets(self.project)},
+                                            answers=answers, absorb=self.absorb_dossier, inventory=self.dossier_inventory, ledger=self.ledger)
+        except (ValueError, OSError) as failure:
+            run = {"outcome": absorb.FAILED, "slug": None, "reason": str(failure), "decision": None}
+        if run["outcome"] == absorb.WAITS:
+            fields, body = self._ticket(identifier)
+            blocked = sorted(set(fields.get("blocked_by") or []) | {run["decision"]})
+            tickets.write_ticket(self.ledger, dict(fields, blocked_by=blocked), body)
+            self.say("  ticket %d waits on decision ticket %d: promoting %s is %s" % (identifier, run["decision"], run["slug"], run["reason"]))
+            return
+        if run["outcome"] == absorb.FAILED:
+            question = "its promotion through absorb did not finish: %s" % run["reason"]
+            self.ledger.append_event(TICKET_NEEDS_HUMAN, {"ticket": identifier, "question": question}, ticket=identifier)
+            self._set_status(identifier, "needs_human", ["**Promotion:** %s." % run["reason"]])
+            self.say("  ticket %d needs a person: %s" % (identifier, question))
+            self._tell_owner(identifier, question)
+            result.failed.append(identifier)
+            return
+        note = ("**Promotion:** the promotion of `%s` was answered no; nothing was read." % run["slug"] if run["outcome"] == absorb.DECLINED
+                else "**Promotion:** `%s` read in full at level 2." % run["slug"])
+        self.ledger.append_event(TICKET_DONE, {"ticket": identifier}, ticket=identifier)
+        self._set_status(identifier, "done", [note])
+        self.say("  ticket %d done: %s" % (identifier, note.split(":** ", 1)[1]))
+        result.done.append(identifier)
 
     def _run_session(self, attempt, kind, message=None):
         """Start one session of an attempt, its launch or a resume, in a thread of its own."""
@@ -1753,7 +1809,8 @@ class Conductor:
             difficulty = launched.difficulty if launched.difficulty is not None else entry.get("difficulty", ticket["difficulty"])
             earned, asks = gates.owed_asks(ticket, difficulty, launched.model,
                                            self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung,
-                                           no_diff=identifier in self.view.integrated_empty)
+                                           no_diff=identifier in self.view.integrated_empty,
+                                           code_rule=methods.read_code_rule(worker.session_dir(self.project, identifier, launched.number)))
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -2040,6 +2097,7 @@ class Conductor:
             max_chars=attempt.tier.context_chars,
             budget={"max_turns": attempt.tier.max_turns, "max_minutes": attempt.tier.max_minutes},
             consult_max=(self.policy.get("consultant") or {}).get("max_questions_per_ticket", worker.CONSULT_MAX),
+            scout_max=(self.policy.get("scout") or {}).get("calls_per_ticket", worker.SCOUT_MAX),
             notes=notes,
             failure=self._last_failure(attempt),
             sections=sections.pack_text(self.ledger, sections.declared(attempt.ticket), attempt.tier.context_chars),
@@ -3671,7 +3729,7 @@ class Conductor:
         commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
-            results = list(results) + self._sections_check(attempt)
+            results = list(results) + self._sections_check(attempt) + self._references_check(attempt) + self._methods_check(attempt)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
             results = list(results) + [simulated]
@@ -3694,6 +3752,49 @@ class Conductor:
         problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
         return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
                  "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
+
+    def _references_check(self, attempt):
+        """The check of a ticket's references (decision 17; ticket 98) as one acceptance result, or none for a result that cites nothing.
+
+        Every cited work must be a dossier or listed in `references`, the scout runs free on the listed works no
+        dossier holds, and a locator must name what the dossier holds at its level; a problem sends the worker back
+        like any machine criterion that failed in its worktree, and a service failure passes with its flag.
+        """
+        result = attempt.result or {}
+        if not result.get("references") and not references.cited(result):
+            return []
+        try:
+            check = references.check_references(self.project, attempt.id, result, fetcher=self.scout_fetcher, ledger=self.ledger)
+        except (ValueError, OSError) as failure:
+            return [{"cmd": REFERENCES_CHECK, "exit_code": 1, "seconds": 0.0, "tail": "the references could not be checked: %s" % failure}]
+        problems = check["problems"]
+        tail = "\n".join(problems) if problems else "every cited work is a dossier or listed"
+        if check["flagged"]:
+            tail += "\naccepted with the retry flag, a service having failed: %s" % ", ".join(check["flagged"])
+        return [{"cmd": REFERENCES_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0, "tail": tail}]
+
+    def _methods_check(self, attempt):
+        """The rule from code to Methods (decision 17, ticket 107) as one acceptance result; none when the diff changed no code.
+
+        A developed method with no `code` tag in a current Methods passage, a used method no Methods passage names, or a
+        parameter with no reason fails it, and the worker is sent back with the list. Code fills each `parameters` entry's
+        value and default into the result, which `_close` keeps beside the attempt's session for the verdict that judges
+        them. A reading a usage window refused fails the check and pauses the run.
+        """
+        try:
+            outcome = methods.check(self.ledger, attempt.worktree, attempt.result, run=self.methods_run, tools=self.methods_tools,
+                                    policy=self.policy, harness_root=self.harness_root, ticket=attempt.id, attempt=attempt.number)
+        except (methods.MethodsError, OSError) as failure:
+            self.say("  ticket %d: the code-to-Methods check could not read the diff: %s" % (attempt.id, failure))
+            return []
+        if outcome is None:
+            return []
+        if outcome.refused is not None:
+            # A closed window, not a verdict on the work: the run pauses, and the files are read on the resume after it.
+            self._pause(outcome.refused.limit, "ticket %d's code reading" % attempt.id)
+        if outcome.parameters:  # entries come only from a result that gave some, so it is the envelope's own mapping
+            attempt.result["parameters"] = outcome.parameters
+        return [outcome.acceptance_result()]
 
     def _timeout(self):
         timeout = self.policy.get("acceptance_timeout_s", 600)
@@ -4007,6 +4108,10 @@ class Conductor:
             notes.append(waits_for_owner)
         if notes:
             attempt.body = tickets.with_result_note(attempt.body, notes)
+        rule = methods.code_rule(attempt.result)
+        if rule is not None and discarded is None and waits_for_owner is None:
+            # What the verdict judges, kept beside the session so a restarted conductor asks the same (ticket 107).
+            methods.write_code_rule(self._attempt_dir(attempt), rule)
         self._write_ticket(attempt, "done", attempt.result)
         self.ledger.append_event(TICKET_DONE, {"ticket": attempt.id}, ticket=attempt.id)
         if discarded is not None:
@@ -4043,6 +4148,8 @@ class Conductor:
                 # A discarded change displaces nothing: its findings stand beside what they would have replaced.
                 "replaces": None if negative else finding.get("replaces"),
                 "objectives": list(attempt.ticket.get("objectives") or []),
+                # What this project's evidence says of the inherited claim it replaces (ticket 93).
+                "evidence": None if negative else finding.get("evidence"),
             }
             if record["id"] in self.view.findings:
                 continue  # filed before a restart
@@ -4083,7 +4190,7 @@ class Conductor:
                 try:
                     sections.add_passage(self.ledger, item.get("section"), item.get("heading"), item.get("text"), by=by,
                                          replaces=item.get("replaces"), objectives=attempt.ticket.get("objectives") or [],
-                                         ticket=attempt.id, wave=self._wave_key(), render=False)
+                                         ticket=attempt.id, wave=self._wave_key(), render=False, evidence=item.get("evidence"))
                     touched.add(item.get("section"))
                 except sections.SectionError as failure:
                     refused.append("A passage was refused: %s (%s)" % (failure, item.get("heading")))
@@ -4288,7 +4395,7 @@ class Conductor:
         asks = gates.ticket_asks(
             attempt.ticket, attempt.difficulty, attempt.tier.model,
             tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
-            no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty,
+            no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty, code_rule=methods.code_rule(attempt.result),
         )
         if not asks:
             return

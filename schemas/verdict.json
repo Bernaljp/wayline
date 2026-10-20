@@ -29,6 +29,41 @@
       "pattern": "\\S",
       "description": "the one question this verdict answers, restated in your own words; a verdict that answers a wider question is out of its scope"
     },
+    "code_rule": {
+      "type": "object",
+      "description": "only when the question lists a ticket's parameter reasons or its not_methods (the rule from code to Methods, ticket 107): your judgment of each; one that does not hold fails the verdict and is also a finding",
+      "required": ["parameters", "not_methods"],
+      "additionalProperties": false,
+      "properties": {
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["method", "name", "holds", "why"],
+            "additionalProperties": false,
+            "properties": {
+              "method": {"type": "string", "pattern": "\\S"},
+              "name": {"type": "string", "pattern": "\\S"},
+              "holds": {"type": "boolean", "description": "true when the reason justifies the value to a reader of Methods"},
+              "why": {"type": "string", "pattern": "\\S"}
+            }
+          }
+        },
+        "not_methods": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "holds", "why"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "pattern": "\\S"},
+              "holds": {"type": "boolean", "description": "true when it is indeed not a method the paper's Methods should describe"},
+              "why": {"type": "string", "pattern": "\\S"}
+            }
+          }
+        }
+      }
+    },
     "session_id": {
       "type": ["string", "null"],
       "description": "written by the harness from the session's envelope; leave it out"

@@ -23,7 +23,8 @@
           "provenance": {"type": "string", "description": "a path with a locator the manifest can resolve"},
           "negative": {"type": "boolean"},
           "heading": {"type": ["string", "null"], "description": "a finding is a Results passage: the Results heading it stands under, naming the question; reuse one the section already has when it fits (the ticket's title when absent)"},
-          "replaces": {"type": ["string", "null"], "pattern": "\\S", "description": "the id of the finding this one replaces, when it narrows or corrects it (a scope-down); null otherwise"}
+          "replaces": {"type": ["string", "null"], "pattern": "\\S", "description": "the id of the finding this one replaces, when it narrows or corrects it (a scope-down), or of the inherited Results passage (P<n>) it checks; null otherwise"},
+          "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"], "description": "when it replaces an inherited claim: whether this project's evidence supports, narrows, or contradicts it"}
         }
       }
     },
@@ -38,7 +39,52 @@
           "section": {"type": "string", "enum": ["introduction", "discussion", "methods", "references"]},
           "heading": {"type": "string", "pattern": "\\S", "description": "the heading it stands under; reuse one the section already has when it fits"},
           "text": {"type": "string", "pattern": "\\S", "description": "Markdown, from one claim to a paragraph"},
-          "replaces": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the id of the passage this one replaces (P<n>), or null"}
+          "replaces": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the id of the passage this one replaces (P<n>), or null"},
+          "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"], "description": "when it replaces an inherited claim: whether this project's evidence supports, narrows, or contradicts it"}
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "description": "every work the ticket drew on, each by a DOI, an arXiv id, or its exact title (never a URL, which is never looked up), with a note kept on its dossier under the ticket's id and never read by the scout; acceptance looks up each one no dossier holds yet (decision 17; ticket 98)",
+      "items": {
+        "type": "object",
+        "required": ["identifier", "note"],
+        "additionalProperties": false,
+        "properties": {
+          "identifier": {"type": "string", "pattern": "^(?!\\s*[Hh][Tt][Tt][Pp][Ss]?://)\\s*\\S", "description": "a DOI, an arXiv id, or the work's exact title; never a URL"},
+          "note": {"type": "string", "description": "what the ticket drew on the work for; may be empty"}
+        }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "description": "the rule from code to Methods: a one-sentence reason for every parameter your change to code/ sets away from its default, every default a method you add or change gives itself, and every sensitive default you leave unset (a random draw no seed fixes, a solver at its default tolerances); also any value the code does not show (read from a config file, say), with its value. Code fills each value and default it can see; the verifier judges the reasons",
+      "items": {
+        "type": "object",
+        "required": ["method", "name", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "method": {"type": "string", "pattern": "\\S", "description": "the method the parameter belongs to: the function or the library call, as the code names it"},
+          "name": {"type": "string", "pattern": "\\S", "description": "the parameter's name as the code or the library spells it"},
+          "reason": {"type": "string", "pattern": "\\S", "description": "one sentence: why this value"},
+          "value": {"type": ["string", "null"], "description": "the value, only for one the code does not show; code fills the rest"},
+          "default": {"type": ["string", "null"], "description": "filled by code: the default, \"not checked\" until the project's environment is installed, \"unseeded\", or null for a method's own default"},
+          "path": {"type": "string", "description": "filled by code: the file the parameter is set in"},
+          "line": {"type": "integer", "minimum": 1, "description": "filled by code: the line it is set on"}
+        }
+      }
+    },
+    "not_methods": {
+      "type": "array",
+      "description": "the rule from code to Methods: functions your change to code/ adds or changes that are not methods the paper should describe and that code does not already take for plumbing; the verifier judges each",
+      "items": {
+        "type": "object",
+        "required": ["name", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "pattern": "\\S", "description": "the function as the code names it, or code/<path>#<function>"},
+          "why": {"type": "string", "pattern": "\\S", "description": "one sentence: why it is not a method"}
         }
       }
     },

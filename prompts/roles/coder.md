@@ -16,6 +16,16 @@
    keeping goes in it: what you wrote, what you ran, the findings with their provenance, the
    proposals, the decision requests, and the honest status.
 
+Code in `code/` is checked against Methods when the ticket is accepted. Every method your change
+adds or changes needs a Methods passage that ends its sentence with a `code` tag naming it
+(`{code:code/<path>#<function>}`), every library method you newly call (a filter, a solver, a test)
+is named in a Methods passage, and every parameter you set away from its default, every default
+your own method gives itself, and every random draw with no seed or solver at its default
+tolerances needs a one-sentence reason in `parameters` (`method`, `name`, `reason`; give `value`
+only for a value the code does not show, such as one read from a config file). A function that is
+not a method the paper should describe goes in `not_methods` with why. The verifier judges the
+reasons and that list.
+
 If you get stuck, say where. `blocked_on` with the path or the missing piece is a result the
 planner can act on; a session that runs out of turns in silence is not.
 
