@@ -78,6 +78,59 @@
         }
       }
     },
+    "objective_judgments": {
+      "type": "array",
+      "description": "only when the question lists objective proposals to judge (decision 17): your judgment of each, by its number in the list; a proposal not upheld is no finding and does not fail the verdict",
+      "items": {
+        "type": "object",
+        "required": ["proposal", "upheld", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "proposal": {"type": "integer", "minimum": 1},
+          "upheld": {"type": "boolean", "description": "true when the work's evidence bears the change out"},
+          "why": {"type": "string", "pattern": "\\S"},
+          "answer": {"type": ["string", "null"], "description": "for an answer proposal you uphold: the objective's answer as you write it, every claim sentence ending with its {res:...} or {ref:...} tag; code checks its numbers and its locators"}
+        }
+      }
+    },
+    "objective_proposals": {
+      "type": "array",
+      "description": "changes to the objectives you propose yourself from what you read (decision 17), in the result's shape; they go on to be approved without a further judgment",
+      "items": {
+        "type": "object",
+        "required": ["kind", "objective", "reason", "evidence", "feasibility"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {"type": "string", "enum": ["add", "answer", "park", "drop", "reframe", "reopen"], "description": "add a question, answer an open objective, park one for later, drop one, reframe one as a successor question, or reopen one that is parked, answered, or dropped"},
+          "objective": {"type": "string", "pattern": "\\S", "description": "the objective's id in OBJECTIVES.md (O2); for add, the new question's text"},
+          "successor": {"type": ["string", "null"], "description": "for reframe only: the question that replaces the objective, in one sentence"},
+          "reason": {"type": "string", "pattern": "\\S", "description": "why the objective should change, from what the work found"},
+          "evidence": {"type": "array", "items": {"type": "string", "pattern": "^(res|ref):\\S"}, "description": "locators in the linter's res: and ref: forms that bear the reason out"},
+          "feasibility": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "required": ["verdict", "reasoning", "revised_target"],
+                "additionalProperties": false,
+                "description": "for add and reframe: the position memo's row for the new question",
+                "properties": {
+                  "verdict": {"type": "string", "enum": ["reachable", "uncertain", "out_of_reach"]},
+                  "reasoning": {"type": "string", "pattern": "\\S"},
+                  "revised_target": {
+                    "oneOf": [
+                      {"type": "null"},
+                      {"type": "object", "required": ["value", "why"], "additionalProperties": false,
+                       "properties": {"value": {"type": "number"}, "why": {"type": "string", "pattern": "\\S"}}}
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
     "session_id": {
       "type": ["string", "null"],
       "description": "written by the harness from the session's envelope; leave it out"

@@ -116,6 +116,7 @@ REVIEWED = "reviewed"  # the owner let a decision made for them stand, or revers
 RESULT = "result"  # one result created at an acceptance, or merged or renamed on the owner's word (decision 17; ticket 90)
 VERIFICATION = "verification"  # one inherited result's standing recorded or changed in research/verifications.json (decision 17; ticket 97)
 DRAWING = "drawing"  # one drawing of a result opened at a rest point, accepted, or failed (decision 17; ticket 100)
+OBJECTIVE_PROPOSED = "objective_proposed"  # one objective proposal of a result or a verdict, or its judgment (decision 17; ticket 91)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -277,6 +278,10 @@ K_REST = "rest"  # `drawing`: the rest point it was opened at, run_end, checkpoi
 K_PLOTS = "plots"  # `drawing`: the plot and table ids an accepted drawing drew
 K_LEFT_OUT = "left_out"  # `drawing`: what acceptance left out, each with why
 K_RETIRED = "retired"  # `drawing`: the plots an accepted drawing retired
+K_PROPOSAL = "proposal"  # `objective`: the objective proposal a change applies, absent on the owner's word; `objective_proposed`: the proposal
+K_OBJECTIVE = "objective"  # `objective_proposed`: the objective it names, or the new question's text for an add
+K_UPHELD = "upheld"  # `objective_proposed`: true or false once judged, null while it waits for its verdict
+K_WHY = "why"  # `objective_proposed`: the judgment's reason
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -300,7 +305,7 @@ EVENTS = {
     TICKET_FAILED: (K_TICKET, K_ATTEMPT, K_REASON, K_NEXT),
     TICKET_BLOCKED: (K_TICKET, K_PATH),
     TICKET_NEEDS_HUMAN: (K_TICKET, K_QUESTION, K_REASON),
-    TICKET_CANCELLED: (K_TICKET, K_BY),
+    TICKET_CANCELLED: (K_TICKET, K_BY, K_REASON),
     TICKET_RERUN: (K_TICKET, K_BY),
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
     VERDICT: (K_SUBJECT_KIND, K_SUBJECT, K_VERDICT_TYPE, K_PASS, K_SESSION_ID, K_MODEL, K_FINDINGS, K_RUNG, K_FALLBACK_FROM, K_MODEL_RAN),
@@ -335,7 +340,7 @@ EVENTS = {
     REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS, K_REPORT, K_EDITED),
     PAPER_STARTED: (K_VENUE,),
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
-    OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY),
+    OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY, K_PROPOSAL),
     MARKED: (K_BATCH, K_ITEM, K_MARK, K_NOTE, K_BY),
     DOCUMENT: (K_ID, K_TITLE, K_KIND, K_VERSION, K_CONVERTER, K_BY),
     CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
@@ -349,6 +354,7 @@ EVENTS = {
     RESULT: (K_ID, K_HEADING, K_ACTION, K_INTO, K_FROM, K_BY),
     VERIFICATION: (K_HEADING, K_STANDING, K_ROUTE, K_BY, K_RELEASED),
     DRAWING: (K_RESULT, K_VERSION, K_TICKET, K_REST, K_OUTCOME, K_PLOTS, K_LEFT_OUT, K_RETIRED, K_REASON),
+    OBJECTIVE_PROPOSED: (K_ID, K_KIND, K_OBJECTIVE, K_TICKET, K_BY, K_UPHELD, K_WHY, K_ANSWER, K_PROPOSAL),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -412,6 +418,9 @@ PAYLOAD_ENUMS = {
     (VERIFICATION, K_BY): ("code", "owner", "decider"),
     (DRAWING, K_REST): ("run_end", "checkpoint", "owner"),
     (DRAWING, K_OUTCOME): ("opened", "accepted", "failed"),
+    (OBJECTIVE_PROPOSED, K_KIND): ("add", "answer", "park", "drop", "reframe", "reopen"),
+    # A ticket result's proposal, or one a verdict made itself, which goes on without a further judgment.
+    (OBJECTIVE_PROPOSED, K_BY): ("worker", "verifier"),
 }
 
 

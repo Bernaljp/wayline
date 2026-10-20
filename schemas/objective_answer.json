@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "objective_answer",
+  "description": "What one fresh verifier session returns when the owner or the decider chose to answer an objective as it stands, or approved an answer no verifier wrote (Implementation Decision 17; ticket 91): the objective's answer from what the run found. Code checks its numbers against the values at its res: locators and that every tag resolves, then writes it into research/objectives.json and as a Discussion passage.",
+  "type": "object",
+  "required": ["objective", "answer", "question_limit"],
+  "additionalProperties": false,
+  "properties": {
+    "objective": {"type": "string", "pattern": "^O[1-9][0-9]*$", "description": "the objective you answered, by its id"},
+    "answer": {"type": "string", "pattern": "\\S", "description": "the answer, in a paragraph a reader of the Discussion can follow; every claim sentence ends with its {res:...} or {ref:...} tag, and every number in it is at one of its res: locators"},
+    "question_limit": {"type": "string", "pattern": "\\S", "description": "the one question you answered, restated in your own words"}
+  }
+}
