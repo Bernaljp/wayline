@@ -10,6 +10,7 @@ import io
 import json
 import re
 import time
+import unittest
 
 from tests import machine
 from tests.projects import ProjectTestCase
@@ -415,7 +416,57 @@ class LibraryPointerTest(RaiseCase):
         self.assertIn("[References](sections/references.md#not-yet-resolved)", library)
 
 
+class AfterTheOrderTest(LibraryCase):
+    def test_after_the_paper_order_an_unresolved_citation_in_a_section_fails(self):
+        self.ledger.append_event("paper_started", {"venue": "arxiv"})
+        reading = sections.lint_section(self.ledger, "discussion")
+        self.assertIn(("unresolved_ref", "ref:ghost-2018-paper#abstract"), [(item["problem"], item["tag"]) for item in reading["problems"]])
+
+
+class CslNameTest(unittest.TestCase):
+    def test_each_way_the_services_write_a_name_reads_as_family_and_given(self):
+        for name, expected in (("Ashish Vaswani", {"family": "Vaswani", "given": "Ashish"}),
+                               ("Smith J", {"family": "Smith", "given": "J"}),
+                               ("Van der Berg AB", {"family": "Van der Berg", "given": "AB"}),
+                               ("Smith, J.", {"family": "Smith", "given": "J."}),
+                               ("Plato", {"family": "Plato"})):
+            with self.subTest(name=name):
+                item = references.csl_item(dossier("x", title="T", authors=(name,)))
+                self.assertEqual(item["author"], [expected])
+
+
+class NoReferencesPassageTest(ReferencesCase):
+    def test_a_result_passage_naming_references_is_sent_back_and_a_ticket_declaring_it_is_held_to_nothing_there(self):
+        fields = {"id": 3, "sections": ["references"]}
+        self.assertEqual(sections.check_result(self.ledger, fields, {"passages": []}), [])
+        problems = sections.check_result(self.ledger, fields, {"passages": [{"section": "references", "heading": "R", "text": "x"}]})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("References is written by code", problems[0])
+
+    def test_a_consolidation_of_references_is_refused(self):
+        from wayline import consolidation
+        with self.assertRaises(consolidation.Refused):
+            consolidation.consolidate(self.project, "references")
+
+    def test_the_context_pack_shows_no_references_section(self):
+        self.assertEqual(sections.pack_text(self.ledger, ["references"]), "")
+
+    def test_init_reports_both_files(self):
+        fresh = self.temp / "fresh"
+        report = projects.init_project(fresh, harness_root=self.fake_harness(), git=False)
+        self.assertIn("research/sections/references.md", report["changes"])
+        self.assertIn("research/references.json", report["changes"])
+
+
 class EmptyTest(ReferencesCase):
+    def test_the_library_says_nothing_of_references_when_none_is_unresolved(self):
+        self.file(dossier("only-2020-paper", title="The only paper", year=2020))
+        self.cite("introduction", "It holds {ref:only-2020-paper#abstract}.")
+        account.render_account(self.project)
+        text = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8")
+        self.assertIn("## Library", text)
+        self.assertNotIn("not yet resolved", text[text.index("## Library"):])
+
     def test_init_writes_an_empty_references_and_an_empty_csl_list(self):
         self.assertIn("# References", self.text())
         self.assertIn("## Not yet resolved", self.text())

@@ -2433,9 +2433,12 @@ def _list_waiting(project, as_json):
     """`wayline reference` with no slug: the unresolved references waiting on the owner, one line each (ticket 105)."""
     from wayline import references  # the references module imports this one
     from wayline.stopping import after_setup  # the stopping module imports the goal module, which imports the gates
-    if after_setup(ledger_for(project).read_events()[0]):
-        items = references.waiting(project)
-        items += [item for item in references.final(project) if item["slug"] not in {raised["slug"] for raised in items}]
+    events, _ = ledger_for(project).read_events()
+    if after_setup(events):
+        final = references.final(project)
+        raised = [slug for slug in references.raised_slugs(events) if any(item["slug"] == slug for item in final)]
+        items = [item for slug in raised for item in final if item["slug"] == slug]
+        items += [item for item in final if item["slug"] not in raised]
     else:
         items = references.at_setup(project)
     if as_json:

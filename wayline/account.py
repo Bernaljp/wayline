@@ -782,9 +782,9 @@ def _library(context):
         unresolved = 0
     if not any(levels["by_level"].values()) and not unresolved:
         return []
-    # The pointer to References' Not yet resolved list (ticket 105), with its count.
+    # The pointer to References' Not yet resolved list (ticket 105), with its count, while it lists anything.
     lines = ["- %d cited reference(s) not yet resolved: %s, under Not yet resolved." % (
-        unresolved, "[References](sections/references.md#not-yet-resolved)")]
+        unresolved, "[References](sections/references.md#not-yet-resolved)")] if unresolved else []
     book = Ledger(context.project)
 
     def named(slug):

@@ -46,6 +46,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -63,7 +64,7 @@ __all__ = [
     "cited", "held_locators", "check_references", "tagged_reference",
     "REFERENCES_MD", "REFERENCES_JSON", "NOT_YET_RESOLVED", "STATES", "TO_THE_SCOUT", "RETRYING", "GAVE_UP", "CLAIM_KEPT", "Work",
     "ref_tags", "cited_works", "work_named", "standing_of", "entry_line", "csl_item", "references_view", "render_references",
-    "unresolved_count", "important", "at_setup", "final", "raise_final", "waiting", "waiting_line", "notice_text", "WHY_IMPORTANT",
+    "unresolved_count", "important", "at_setup", "final", "raise_final", "raised_slugs", "waiting", "waiting_line", "notice_text", "WHY_IMPORTANT",
 ]
 
 CALLS_PER_TICKET = 20  # the fallback when a policy carries no `scout.calls_per_ticket`
@@ -542,10 +543,22 @@ def csl_item(record):
     return item
 
 
+_INITIALS = re.compile(r"^(?:[A-Z]\.?){1,4}$")  # "J", "AB", "J.K." as Europe PMC and the preprint servers write a given name
+
+
 def _csl_name(name):
-    """A name as the scout keeps it ("Given Family") as CSL's family and given; one word is the family alone."""
-    words = str(name).split()
-    return {"family": words[-1], "given": " ".join(words[:-1])} if len(words) > 1 else {"family": words[0]}
+    """A name as CSL's family and given, in each form the services keep it: "Ashish Vaswani" (Crossref, OpenAlex, arXiv),
+    "Smith J" (Europe PMC, its initials last), and "Smith, J." (bioRxiv and medRxiv); one word is the family alone."""
+    text = " ".join(str(name).split())
+    family, comma, given = text.partition(",")
+    if comma and family.strip() and given.strip():
+        return {"family": family.strip(), "given": given.strip()}
+    words = text.split()
+    if len(words) == 1:
+        return {"family": words[0]}
+    if _INITIALS.match(words[-1]):
+        return {"family": " ".join(words[:-1]), "given": words[-1]}
+    return {"family": words[-1], "given": " ".join(words[:-1])}
 
 
 def references_view(project_or_ledger, now=None):
@@ -754,11 +767,16 @@ def raise_final(project, notify=None, say=None, now=None):
     return raised
 
 
+def raised_slugs(events):
+    """The slugs `reference_raised` names, in the order raised."""
+    return list(_raised(events))
+
+
 def waiting(project, now=None):
     """What the next conversation puts to the owner first: each raised reference still final and not left, in the order raised."""
     book = ledger_for(project)
     events, _ = book.read_events()
-    order = list(_raised(events))
+    order = raised_slugs(events)
     still = {item["slug"]: item for item in final(book.project, now) if item["slug"] in order}
     return [still[slug] for slug in order if slug in still]
 

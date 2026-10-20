@@ -929,12 +929,14 @@ def resolver_for(project):
     return _Resolver(project)
 
 
-def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False, resolver=None):
+def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False, resolver=None,
+                  unresolved_ref_fails=False):
     """The linter over passages and findings (decision 17; ticket 88): every tag resolves, every claim ends tagged.
 
     `items` are passages (`{id, by, text}`) or findings (`{id, text, provenance}`); each problem and listed sentence
     names the `passage` it is in. Before the paper order an untagged claim in an owner's passage, a claim tagged
-    only `doc`, and a `ref` tag naming a work not resolved (ticket 105) are listed, never failed; a finding with no tag of its own is tagged by its provenance. `code` tags
+    only `doc`, and a `ref` tag naming a work not resolved (ticket 105) are listed, never failed (the last fails with
+    `unresolved_ref_fails`, a section's reading after the order); a finding with no tag of its own is tagged by its provenance. `code` tags
     resolve against `code_root`'s working tree (a ticket's worktree), or `code_read`, or the project's `main`; `resolver`,
     from `resolver_for`, is one several passes share (a render of every section). An
     unclassified sentence is listed unless `unclassified_fails`.
@@ -943,7 +945,7 @@ def lint_passages(project, items, classes, code_root=None, code_read=None, own_r
     resolver = resolver if resolver is not None else _Resolver(project, read, own_run)
     # Before the paper order a citation of a work not yet resolved is listed, never failed (ticket 105): References says
     # where it stands, and the check at acceptance (`references.check_references`) sends back a work no service knows.
-    linted = _Pass(resolver, classes, doc_only_fails=False, unclassified_fails=unclassified_fails, unresolved_ref_fails=False)
+    linted = _Pass(resolver, classes, doc_only_fails=False, unclassified_fails=unclassified_fails, unresolved_ref_fails=unresolved_ref_fails)
     for item in items:
         if not isinstance(item, dict):
             continue

@@ -54,7 +54,7 @@ import re
 
 from wayline import results
 from wayline.jsonschema import ValidationError, check, load_schema
-from wayline.ledger import LedgerError, ledger_for, make_event, now_ts
+from wayline.ledger import PAPER_STARTED, LedgerError, ledger_for, make_event, now_ts
 
 __all__ = [
     "SECTIONS", "TITLES", "WRITTEN", "SECTIONS_DIR", "PASSAGES", "FINDINGS", "KIND_SECTIONS", "BY_RE", "SectionError",
@@ -451,7 +451,7 @@ def pack_text(project_or_ledger, declared_sections, max_chars=None):
     announced, as the planner's pack is.
     """
     book = ledger_for(project_or_ledger)
-    wanted = [name for name in SECTIONS if name in set(declared_sections or ())]
+    wanted = [name for name in SECTIONS if name in set(declared_sections or ()) and name != REFERENCES]  # code writes References
     if not wanted:
         return ""
     lines = ["# The paper's sections", "",
@@ -912,13 +912,16 @@ def lint_section(project_or_ledger, section, resolver=None):
 
     The classes are the cache's (a render launches no classifier), so a sentence it has not classified is counted and
     neither failed nor listed. Before the paper order an untagged claim in an owner's passage, a claim tagged only
-    `doc`, and a citation of a work not yet resolved (ticket 105) are listed, never failed; a `code` tag resolves against
-    `main`.
+    `doc`, and a citation of a work not yet resolved (ticket 105) are listed, never failed, and after it the last fails;
+    a `code` tag resolves against `main`.
     """
     from wayline import provenance  # the provenance module pulls in the gates and the report
     book = ledger_for(project_or_ledger)
     current = arrange(_items(book, section)).current()
-    linted = provenance.lint_passages(book.project, current, provenance.read_claims_cache(book), resolver=resolver)
+    events, _ = book.read_events()
+    ordered = any(event.get("event") == PAPER_STARTED for event in events)  # after the order an unresolved citation fails
+    linted = provenance.lint_passages(book.project, current, provenance.read_claims_cache(book), resolver=resolver,
+                                      unresolved_ref_fails=ordered)
     listed = [item for item in linted.listed if item["problem"] != provenance.UNCLASSIFIED]
     return {"problems": linted.problems, "listed": listed, "unclassified": linted.unclassified}
 

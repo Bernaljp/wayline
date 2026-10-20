@@ -36,7 +36,7 @@ __all__ = ["SCHEMA", "ROLE", "SECTIONS", "ConsolidationError", "Refused", "estim
 
 SCHEMA = "consolidation"
 ROLE = "writer"
-SECTIONS = tuple(name for name in sections.SECTIONS if name != sections.RESULTS)
+SECTIONS = sections.WRITTEN  # every section but Results, its findings, and References, which code writes (ticket 105)
 # What a session launched by a run carries in its environment: a worker's session directory, or its ticket.
 RUN_ENV = ("WAYLINE_RUN", "WAYLINE_TICKET")
 CHARS_PER_TOKEN = 4

@@ -31,13 +31,13 @@
     },
     "passages": {
       "type": "array",
-      "description": "what this ticket adds to the paper's sections (Introduction, Discussion, Methods, References), each written by code into research/sections/; Results is written as findings. A claim sentence ends with its provenance tag, and math is LaTeX ($...$, $$...$$)",
+      "description": "what this ticket adds to the paper's sections (Introduction, Discussion, Methods), each written by code into research/sections/; Results is written as findings, and References by code from the works the sections cite, so a work enters it by a ref tag where the claim is made. A claim sentence ends with its provenance tag, and math is LaTeX ($...$, $$...$$)",
       "items": {
         "type": "object",
         "required": ["section", "heading", "text", "replaces"],
         "additionalProperties": false,
         "properties": {
-          "section": {"type": "string", "enum": ["introduction", "discussion", "methods", "references"]},
+          "section": {"type": "string", "enum": ["introduction", "discussion", "methods"]},
           "heading": {"type": "string", "pattern": "\\S", "description": "the heading it stands under; reuse one the section already has when it fits"},
           "text": {"type": "string", "pattern": "\\S", "description": "Markdown, from one claim to a paragraph"},
           "replaces": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the id of the passage this one replaces (P<n>), or null"},

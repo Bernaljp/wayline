@@ -980,7 +980,7 @@ class Conductor:
         A render that would leave both as they are writes nothing; one that fails is said, and the next wave renders again.
         """
         try:
-            references.render_references(self.ledger, now=self.clock())
+            references.render_references(self.ledger)
         except (ValueError, OSError) as failure:
             self.say("  References was not rendered: %s; the next wave renders it again" % failure)
 
@@ -1326,7 +1326,7 @@ class Conductor:
         linking to it; under `autonomous` setup asked and the account lists it. A failure to read is said, and fails no wave.
         """
         try:
-            references.raise_final(self.project, notify=self.notify, say=self.say, now=self.clock())
+            references.raise_final(self.project, notify=self.notify, say=self.say)  # real time, as the account reads it
         except (ValueError, OSError) as failure:
             self.say("  the unresolved references could not be read: %s" % failure)
         self._tail()
