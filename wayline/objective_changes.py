@@ -339,10 +339,14 @@ def _restore_tickets(project, identifier, by):
                 why[payload.get("ticket")] = payload.get("reason")
             elif event.get("event") == TICKET_RERUN:
                 why.pop(payload.get("ticket"), None)
+        from wayline.objectives import is_open, named, read_objectives, served
+        records = read_objectives(ledger.project)
         for fields in tickets.read_tickets(ledger.project):
             found = _SERVES.match(str(why.get(fields["id"]) or ""))
             if fields["status"] != "parked" or found is None or identifier not in re.findall(r"O[1-9][0-9]*", found.group(1)):
                 continue
+            if not any(is_open(named(records, name)) for name in served(fields)):
+                continue  # a ticket serves on while one of its objectives is open, and only then
             path = tickets.tickets_dir(ledger.project) / tickets.filename(fields)
             current, body = tickets.read_ticket(path)
             tickets.write_ticket(ledger, dict(current, status="open"), body)
@@ -383,7 +387,7 @@ def apply_change(project, change, by, proposal_id=None, placements=()):
     reopen keeps an answer as superseded and brings back what its park parked. The concerns follow, and a dropped
     objective's concerns are placed by `placements` (`[(K id, parsed place)]`, `concerns.parse_place`'s form).
     """
-    from wayline import concerns, specify
+    from wayline import concerns
     from wayline.objectives import add_objective, change_objective, named, read_objectives, reframe_objective
 
     kind, identifier = change.get("kind"), _one_line(change.get("objective"))
@@ -420,7 +424,6 @@ def apply_change(project, change, by, proposal_id=None, placements=()):
             report["placed"] += [item["id"] for item in concerns.place(project, [concern], parsed, by, only_unsorted=True)]
     except concerns.ConcernError:
         pass  # a concern that cannot be placed stays to be sorted, and ticket 96's decision asks about it
-    specify.render_set_aside(project)
     return report
 
 
@@ -484,7 +487,7 @@ def decider_refusal(record, harness, records):
         return "reopening %s, which is %s, is the owner's alone" % (identifier, held[identifier]["status"])
     if OBJECTIVE_CLASS in _classes(harness):
         return "`objective` is a human-only class of this project, so %s is the owner's" % (
-            "adding an objective" if kind == "add" else "%sing %s" % ("reopen" if kind == "reopen" else "reframe", identifier))
+            "adding an objective" if kind == "add" else "%s %s" % ("reopening" if kind == "reopen" else "reframing", identifier))
     if kind == "reopen":
         return None
     if (harness or {}).get("radius") not in ("moderate", "exploratory"):
@@ -512,23 +515,31 @@ def _qualifier_refusal(record, radius, qualifier, taken):
 
 _ALL = re.compile(r"^\s*(approve|decline)(?:\s+(?:all|everything|them all|each|every item))?\s*[.!]?\s*(?:$|[;,:\n])", re.IGNORECASE)
 _ITEM = re.compile(r"(?:\bitem\s*)?\b([1-9][0-9]*)\s*[:=.)\-–—]\s*(approve|decline)\b([^;\n]*)", re.IGNORECASE)
+_LISTED = re.compile(r"\b(approve|decline)\s+(?:items?\s+)?([1-9][0-9]*(?:\s*(?:,|and|&)\s*[1-9][0-9]*)*)\b", re.IGNORECASE)
 _PLACEMENT = re.compile(r"\b(K[1-9][0-9]*)\s*[:=\-–—]\s*([^;\n]+)")
 
 
 def answer_marks(text, count):
-    """`{item number: (mark, qualifier)}` an answer gives: every item for `approve all` or `decline all`, else each `<n>: approve`."""
+    """`{item number: (mark, qualifier)}` an answer gives, `count` items in all.
+
+    `approve all` or `decline all` at its head marks every item; `approve 1 and 3` or `decline 2, 4` marks those; and
+    `<n>: approve (<why>)` marks one with its qualifier. A later form overrides an earlier one for the same item, so
+    `approve all; 2: decline` approves every item but 2.
+    """
     text = str(text or "")
     found = {}
-    for match in _ITEM.finditer(text):
-        number = int(match.group(1))
-        if 1 <= number <= count and number not in found:
-            found[number] = (match.group(2).lower(), match.group(3))
-    if found:
-        return found
     whole = _ALL.match(text)
     if whole:
-        return {number: (whole.group(1).lower(), "") for number in range(1, count + 1)}
-    return {}
+        found = {number: (whole.group(1).lower(), "") for number in range(1, count + 1)}
+    for match in _LISTED.finditer(text):
+        for number in (int(value) for value in re.findall(r"[1-9][0-9]*", match.group(2))):
+            if 1 <= number <= count:
+                found[number] = (match.group(1).lower(), "")
+    for match in _ITEM.finditer(text):
+        number = int(match.group(1))
+        if 1 <= number <= count:
+            found[number] = (match.group(2).lower(), match.group(3))
+    return found
 
 
 def placements_in(text):
@@ -647,13 +658,11 @@ def _live(fields, answered):
 def _wanted_pauses(project, batch, records, objectives_held, fields_list):
     """The tickets an open batch's unsettled `answer`, `park`, `drop`, and `reframe` items pause."""
     named = sorted({_one_line(records[item["ref"]]["objective"]) for item in batch["items"]
-                    if item["mark"] is None and item["ref"] in records and records[item["ref"]]["kind"] in PAUSABLE_KINDS})
+                    if item["mark"] is None and item["ref"] in records and records[item["ref"]]["kind"] in PAUSING})
     if not named:
         return []
     return sorted(fields["id"] for fields in _serving_only(fields_list, named, objectives_held))
 
-
-PAUSABLE_KINDS = PAUSING
 
 
 def _open_ticket(project, batch_or_items, records, held, harness, notify, human_only=False, why=None):
@@ -740,7 +749,7 @@ def _place_words(parsed):
 
 def _apply_marks(project, report, say):
     """Every approved item not applied yet, applied in item order, `by` whoever marked it; an answer with no text owed."""
-    from wayline.objectives import ObjectiveError, read_objectives
+    from wayline.objectives import ObjectiveError, named, read_objectives
 
     events, _ = ledger_for(project).read_events()
     applied = _applied(events)
@@ -754,10 +763,13 @@ def _apply_marks(project, report, say):
                 continue  # owed to the answering verifier (`owed_answers`)
             identifier = _one_line(record["objective"])
             if record["kind"] != "add":
-                problem = check_proposal(dict(record, kind=record["kind"]), read_objectives(project))
+                held = read_objectives(project)
+                problem = check_proposal(record, held)
                 if problem is not None:
-                    say("  objective change %s was approved and cannot be made now: %s" % (item["ref"], problem))
-                    continue
+                    status = (named(held, identifier) or {}).get("status")
+                    if status != {"reopen": "open", "reframe": "reframed"}.get(record["kind"], CLOSES.get(record["kind"])):
+                        say("  objective change %s was approved and cannot be made now: %s" % (item["ref"], problem))
+                    continue  # the objective already stands where the change would put it, or elsewhere by the owner's word
             placements = [(concern, parsed) for concern, parsed in placements_in(item.get("note"))
                           if concern in [found for found, _ in _concerns_of(project, identifier)]] if record["kind"] == "drop" else []
             try:
@@ -899,6 +911,26 @@ def _sync(project):
                 text = text.rstrip("\n") + "\n\n" + decisions.REFUSED_HEADING + tail[1]
             grill.parse_records(text, source="the ticket body")
             tickets.write_ticket(ledger, current, text)
+
+
+def waiting_batches(project):
+    """`{objective: ticket}`: each objective an unsettled item of a waiting "Objective changes" ticket names (an add names
+    none), with that ticket. At an empty frontier the batch is the ask about these objectives: the empty-frontier ticket
+    folds into it rather than asking about them a second time (decision 17)."""
+    from wayline import tickets
+    events, _ = ledger_for(project).read_events()
+    answered = _answers(events)
+    records = {record["id"]: record for record in read_proposals(events)}
+    by_id = {fields["id"]: fields for fields in tickets.read_tickets(project)}
+    found = {}
+    for batch in _batches(project):
+        if not _live(by_id.get(batch["decision"]), answered):
+            continue
+        for item in batch["items"]:
+            record = records.get(item["ref"])
+            if item["mark"] is None and record is not None and record["kind"] != "add":
+                found.setdefault(_one_line(record["objective"]), batch["decision"])
+    return found
 
 
 def settle(project, notify=None, say=None):

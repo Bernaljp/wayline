@@ -1557,6 +1557,21 @@ class Conductor:
         records = self._objective_records() or []
         still = [record["id"] for record in records if objectives.is_open(record)]
         waiting = stopping.waited(rule, records)
+        try:
+            folded = objective_changes.waiting_batches(self.project) if waiting else {}
+        except (objectives.ObjectivesUnreadable, ValueError, OSError):
+            folded = {}
+        # An "Objective changes" ticket still waiting is the ask about the objectives it names (decision 17; ticket 91).
+        batched = sorted({folded[record["id"]] for record in waiting if record["id"] in folded})
+        waiting = [record for record in waiting if record["id"] not in folded]
+        if batched and not waiting:
+            takable = {fields["id"] for fields in tickets.read_tickets(self.project)
+                       if fields["status"] == "open" and not fields.get("human_only")}
+            if set(batched) & takable and autonomy == schedule.AUTONOMOUS and decider_ready:
+                return True, None
+            return False, self._frontier_notice(
+                "the frontier is empty and the stopping rule %s waits on objectives the Objective changes ticket(s) %s settle, "
+                "which wait for the owner" % (stopping.describe_rule(rule), ", ".join(str(identifier) for identifier in batched)))
         if rule == stopping.FRONTIER or not waiting:
             if not still:
                 return False, None
@@ -1572,7 +1587,7 @@ class Conductor:
         self._tail()
         for identifier in opened:
             self.say("  the frontier is empty with an objective the stopping rule waits on: decision ticket %d asks what to do" % identifier)
-        asked = opened + standing
+        asked = opened + standing + batched  # a waiting Objective changes ticket asks about the objectives it names
         # The decider takes an open one that is not human-only: one it was refused is the owner's now, and one it could not
         # answer (`needs_human`) waits for a person, so neither keeps the run going.
         takable = {fields["id"] for fields in tickets.read_tickets(self.project)
@@ -4942,16 +4957,22 @@ class Conductor:
         """
         if not ask.objective_proposals and not verdict.objective_proposals:
             return
+        judgments = verdict.objective_judgments
+        if not verdict.passed:
+            # The attempt that proposed them is redone: its proposals rest on work the verdict rejected (ticket 91).
+            judgments = [{"proposal": number, "upheld": False, "why": "ticket %d's %s verdict failed, so the attempt that "
+                          "proposed it is redone" % (entry.ticket, ask.verdict_type)}
+                         for number in range(1, len(ask.objective_proposals or []) + 1)]
         try:
             if ask.objective_proposals:
-                objective_changes.take_judgments(self.project, ask.objective_proposals, verdict.objective_judgments)
+                objective_changes.take_judgments(self.project, ask.objective_proposals, judgments)
             if verdict.objective_proposals:
                 objective_changes.take_verdict(self.project, entry.ticket, entry.attempt, ask.verdict_type, verdict.objective_proposals)
         except (objective_changes.ProposalError, ValueError, OSError) as failure:
             self.say("  ticket %d's %s verdict judged objective proposals that could not be recorded: %s"
                      % (entry.ticket, ask.verdict_type, failure))
             return
-        upheld = sum(1 for judgment in verdict.objective_judgments if judgment.get("upheld"))
+        upheld = sum(1 for judgment in judgments if judgment.get("upheld"))
         self.say("  ticket %d's %s verdict upheld %d of %d objective proposal(s)%s" % (
             entry.ticket, ask.verdict_type, upheld, len(ask.objective_proposals or []),
             " and proposed %d itself" % len(verdict.objective_proposals) if verdict.objective_proposals else ""))

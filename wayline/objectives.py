@@ -321,6 +321,8 @@ def _write(ledger, objectives, objective, by, proposal=None):
         payload[K_PROPOSAL] = proposal
     ledger.append_event(OBJECTIVE, payload)
     ledger.write_markdown(OBJECTIVES_MD, render_objectives(objectives))
+    from wayline import specify  # the specify module reads this one
+    specify.render_set_aside(ledger.project)  # the claims set aside by any change, whoever made it (ticket 91)
 
 
 def add_objective(project, text, measure=None, sample=None, by="owner", timeout_s=None, status=OPEN, answer=None, proposal=None):

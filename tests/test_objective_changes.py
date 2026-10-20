@@ -173,10 +173,14 @@ class TheVerdictTest(EvidenceCase):
         wrong = "Interaction terms raise the held-out AUROC to 0.81 {res:t1-a1/results/sweep.json#auroc}."
         for text, said in ((untagged, "cites no"), (wrong, "0.81")):
             with self.subTest(text=text):
-                with self.assertRaises(gates.GateError) as raised:
-                    self.verdict(judged((1, True, "yes"), (2, True, "yes", text)), judged((1, True, "yes"), (2, True, "yes", text)))
+                _, taken = self.verdict(judged((1, True, "yes"), (2, True, "yes", text)), judged((1, True, "yes"), (2, True, "yes", text)))
                 self.assertIn(said, self.calls[1].message)
-                self.assertIn(said, str(raised.exception))
+                self.assertTrue(taken.passed, "the verdict on the work stands")
+                second = taken.objective_judgments[1]
+                self.assertEqual((second["upheld"], second["answer"]), (False, None), "the answer is not upheld, never written")
+                self.assertIn(said, second["why"])
+        with self.assertRaises(gates.GateError):
+            self.verdict(judged((1, True, "yes")), judged((1, True, "yes")))  # a proposal left unjudged still loses it
 
     def test_a_proposal_the_verifier_makes_itself_goes_straight_on(self):
         objective_changes.take_verdict(self.project, 1, 1, "result", [proposal("drop", "O2")])
@@ -284,6 +288,21 @@ class ApprovalTest(GraphCase):
         records = read_objectives(self.project)
         self.assertEqual([record["id"] for record in stopping.waited(["O2"], records)], ["O3"])
         self.assertIsNone(stopping.rule_end(["O2"], records, []))
+
+    def test_spec_md_shows_the_claims_set_aside_whoever_closed_their_objective(self):
+        from wayline import specify
+        change_objective(self.project, "O2", "answered", "code", answer="reached")
+        self.assertRegex(self.spec_md.read_text(encoding="utf-8"), r"\*\*C2\.\*\*.*set aside")
+        self.assertEqual(specify.check_spec(self.project, against_objectives=False), [])
+
+    def test_a_ticket_parked_with_two_objectives_comes_back_when_one_of_them_reopens(self):
+        objective_changes.apply_change(self.project, proposal("park", "O2"), "owner")
+        objective_changes.apply_change(self.project, dict(proposal("answer", "O1"), answer=ANSWER), "owner")
+        self.assertEqual(self.statuses()[3], "parked")
+        self.assertIn("it serves only O1 and O2, which are closed", self.cancelled()[-1][2])
+        objective_changes.apply_change(self.project, proposal("reopen", "O2"), "owner")
+        self.assertEqual((self.statuses()[2], self.statuses()[3]), ("open", "open"),
+                         "a ticket serving several keeps going while one of them is open")
 
     def test_an_add_records_an_open_objective(self):
         objective_changes.apply_change(self.project, proposal("add", "Does it hold on real data?", feasibility=FEASIBLE), "decider",
@@ -526,7 +545,7 @@ class IrreversibleTest(ChangesCase):
     def test_changing_a_goals_measure_stays_on_the_list_and_the_objective_changes_leave_it(self):
         from wayline.decider import irreversible_class
         for text in ("change the goal to 0.74 AUROC on split_b", "lower the target to 0.74", "change the goal's measure",
-                     "replace the eval command"):
+                     "replace the eval command", "drop the eval command", "dropping the primary metric"):
             with self.subTest(text=text):
                 self.assertEqual(irreversible_class(text), "goal")
         for text in ("drop the goal O2: the sweep answers nothing more", "park the goal until the data arrives",
@@ -737,4 +756,56 @@ class ConductorTest(ChangesCase):
         self.assertEqual([(event["payload"]["ticket"], event["payload"]["by"]) for event in self.events("ticket_cancelled")],
                          [(2, "decider")])
         self.assertNotIn(2, [event["payload"]["ticket"] for event in self.events("ticket_launched")])
+
+    def test_a_failing_verdict_upholds_nothing_its_rejected_attempt_proposed(self):
+        from tests.test_conductor import done, hold_the_ladder, patch
+        hold_the_ladder(self)
+        self.shape()
+        finding = {"text": "hello.txt is empty", "locator": "hello.txt#L1", "severity": "blocker"}
+        self.run_conductor((done(objective_proposals=[proposal("park", "O2")]), patch()),
+                           (judged((1, True, "the sweep bears it out"), passed=False, findings=[finding]), None, "verifier"))
+        [record] = objective_changes.read_proposals(self.project)
+        self.assertFalse(record["upheld"])
+        self.assertIn("verdict failed", record["why"])
+        self.assertEqual(self.changes_tickets(), [])
+
+    def test_a_batch_waiting_when_the_frontier_empties_is_the_ask_about_the_objectives_it_names(self):
+        from tests.test_conductor import done, patch
+        from wayline import stopping
+        self.set_harness(stop_when="objectives")
+        self.shape()
+        results = self.run_conductor((done(objective_proposals=[proposal("park", "O2")]), patch()),
+                                     (judged((1, True, "the sweep bears it out")), None, "verifier"))
+        self.assertEqual(results[-1].reason, "frontier_empty")
+        asked = [stopping.frontier_objective(fields.get("origin")) for fields in tickets.read_tickets(self.project)
+                 if stopping.frontier_objective(fields.get("origin"))]
+        self.assertEqual(asked, ["O1"], "O2 is asked about in the Objective changes ticket alone")
+        self.assertEqual(len(self.changes_tickets()), 1)
+
+
+class RestartTest(ChangesCase):
+    def test_proposals_whose_judgment_never_reached_the_journal_ride_what_is_still_owed(self):
+        from wayline import gates
+        items = objective_changes.take_result(self.project, 1, 1, [proposal("park", "O2")])
+        ticket = {"id": 1, "title": "Run the sweep", "kind": "code", "acceptance": {"quality": ["the sweep is complete"]}}
+        earned, owed = gates.owed_asks(ticket, 3, "sonnet", "abc123", passed={"diff"}, objectives=items)
+        self.assertEqual([ask.verdict_type for ask in owed], ["quality"])
+        self.assertEqual(owed[0].objective_proposals, items)
+        earned, owed = gates.owed_asks(ticket, 3, "sonnet", "abc123", passed={"diff", "quality"}, objectives=items)
+        self.assertEqual([(ask.verdict_type, ask.objective_proposals) for ask in owed], [("diff", items)])
+        earned, owed = gates.owed_asks(dict(ticket, acceptance={}), 1, "sonnet", "abc123", passed={"result"}, objectives=items)
+        self.assertEqual([ask.verdict_type for ask in owed], ["result"])
+
+
+class AnswerFormsTest(ChangesCase):
+    def test_an_answer_marks_all_some_or_each_and_a_later_form_wins(self):
+        self.assertEqual(objective_changes.answer_marks("approve all", 2), {1: ("approve", ""), 2: ("approve", "")})
+        self.assertEqual(objective_changes.answer_marks("Decline.", 2), {1: ("decline", ""), 2: ("decline", "")})
+        self.assertEqual(objective_changes.answer_marks("approve all; 2: decline", 3),
+                         {1: ("approve", ""), 2: ("decline", ""), 3: ("approve", "")})
+        self.assertEqual(objective_changes.answer_marks("approve 1 and 3, decline 2", 3),
+                         {1: ("approve", ""), 2: ("decline", ""), 3: ("approve", "")})
+        self.assertEqual(objective_changes.answer_marks("1: approve (prerequisite)", 2), {1: ("approve", " (prerequisite)")})
+        self.assertEqual(objective_changes.answer_marks("not now", 2), {})
+        self.assertEqual(objective_changes.answer_marks("5: approve", 2), {})
 

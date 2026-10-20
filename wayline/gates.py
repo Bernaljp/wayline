@@ -868,6 +868,11 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         raise_if_refused(envelope, model, what)
         heard += envelope.rate_limit_events
         problem = _unusable(envelope, code_rule, inherited, objectives, answer_check)
+    judgments = list((envelope.structured_output or {}).get("objective_judgments") or []) if objectives else []
+    if problem is not None and objectives and _unusable(envelope, code_rule, inherited, objectives, None) is None:
+        # Only an upheld answer's text failed code's checks, twice: the verdict on the work stands, and that proposal is
+        # taken as not upheld with why, rather than losing the verdict over a proposal (ticket 91).
+        judgments, problem = _answers_not_upheld(judgments, objectives, answer_check), None
     if problem is not None:
         raise GateError("%s could not be taken: %s" % (what, problem))
     returned = envelope.structured_output
@@ -878,7 +883,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
         session_id=envelope.session_id, model=envelope.model, ticket=ticket, fallback_from=fallback_from,
         proposals=list(returned.get("proposals") or []), rung=rung, code_rule=returned.get("code_rule"),
         inherited=returned.get("inherited"),
-        objective_judgments=list(returned.get("objective_judgments") or []) if objectives else [],
+        objective_judgments=judgments,
         objective_proposals=list(returned.get("objective_proposals") or []),
         # What the verifier's own session ran on, when the result named another model than it was launched with
         # (decision 16): a verdict stands or falls on who read the work, so the journal says which model did.
@@ -953,6 +958,21 @@ def _unusable(envelope, code_rule=None, inherited=None, objectives=None, answer_
     if objectives:
         return _unjudged(returned, objectives, answer_check)
     return None
+
+
+def _answers_not_upheld(judgments, objectives, answer_check):
+    """The judgments with each upheld answer whose text fails code's checks turned into one not upheld, saying why."""
+    kinds = {number: item.get("kind") for number, item in enumerate(objectives, start=1)}
+    taken = []
+    for entry in judgments:
+        entry = dict(entry)
+        if kinds.get(entry.get("proposal")) == "answer" and entry.get("upheld"):
+            problem = answer_check(str(entry.get("answer") or "")) if str(entry.get("answer") or "").strip() else "no answer was written"
+            if problem is not None:
+                entry.update(upheld=False, answer=None, why="%s; but the answer the verifier wrote failed code's checks: %s"
+                             % (str(entry.get("why") or "upheld").strip(), problem))
+        taken.append(entry)
+    return taken
 
 
 def _unjudged(returned, objectives, answer_check):
@@ -1164,6 +1184,11 @@ def _with_objectives(asks, objectives, identifier, subject, paths, author_model,
     carrier.objective_proposals = list(objectives)
 
 
+def _judgment_text(objectives):
+    from wayline import objective_changes  # the objective changes module reads the objectives, which import this module
+    return objective_changes.judgment_text(objectives)
+
+
 def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_diff=False, code_rule=None, inherited=None,
               objectives=None):
     """What a done ticket is still owed: `(earned, owed)`, the verdicts it earned and the ones the journal does not hold as passed.
@@ -1182,7 +1207,19 @@ def owed_asks(ticket, difficulty, author_model, commit, passed, rung=None, no_di
                          outputs=ticket.get("outputs") or [], rung=rung, no_diff=no_diff, code_rule=code_rule,
                          inherited=inherited, objectives=objectives)
     passed = set(passed or ())
-    return earned, [ask for ask in earned if ask.verdict_type not in passed]
+    owed = [ask for ask in earned if ask.verdict_type not in passed]
+    if objectives and not any(ask.objective_proposals for ask in owed):
+        # The read that carried them passed and their judgment never reached the journal (a crash between the two):
+        # they ride what is still owed, or a read of the result of their own (ticket 91).
+        carrier = next((ask for ask in earned if ask.objective_proposals), None)
+        if owed:
+            owed[0].question = "%s\n\n%s" % (owed[0].question.rstrip(), _judgment_text(objectives))
+            owed[0].objective_proposals = list(objectives)
+            if carrier is not None and carrier not in owed:
+                carrier.objective_proposals = None
+        elif carrier is not None:
+            owed = [carrier]
+    return earned, owed
 
 
 # --- the kill argument (decision 11; BRIEF 3.2, 13.3) ------------------------------------------

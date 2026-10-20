@@ -128,6 +128,7 @@ IRREVERSIBLE = (
      r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|redefin(?:e|es|ing)|relax(?:es|ing)?|lower(?:s|ing)?|rais(?:e|es|ing)"
      r"|swap(?:s|ping)?|revis(?:e|es|ing)|rewrit(?:e|es|ing)|switch(?:es|ing)?|set(?:s|ting)?|mov(?:e|es|ing)|loosen(?:s|ing)?|tighten(?:s|ing)?)"
      r" (?:the |our |its |a |an )?(?:new )?(?:goal|measure|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
+     r"|drop(?:s|ping)? (?:the |our |its |a |an )?(?:goal's )?(?:measure|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
      r"|the goal becomes|a new target)\b"),
     ("data",
      r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|swap(?:s|ping)?|drop(?:s|ping)?|re-?split(?:s|ting)?|redefin(?:e|es|ing)|regenerat(?:e|es|ing)"
