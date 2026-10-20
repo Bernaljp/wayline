@@ -23,9 +23,11 @@ Read `research/INTAKE.md` (the intent, the constraints, the human-only classes),
 `research/POSITION.md` (the closest prior work, the feasibility verdict, a verdict on each
 objective, the hostile reviewer's objections, the three directions and the objectives each would
 pursue), `research/OBJECTIVES.md` (the objectives recorded, a goal being one with a measure), the
-dossiers under `research/refs/`, and `research/CONTEXT.md` and `research/DECISIONS.md` when they
-exist already, which means a grill is being picked up again. Then run `wayline grill --project .`
-to see the tree as it stands.
+project's own documents in `research/DOCUMENTS.md` and its concerns in `research/CONCERNS.md` when
+it has them (the points its critiques raised, each with the critic's proposed place), the dossiers
+under `research/refs/`, and `research/CONTEXT.md` and `research/DECISIONS.md` when they exist
+already, which means a grill is being picked up again. Then run `wayline grill --project .` to see
+the tree as it stands.
 
 ## The first tier: which objectives the project takes
 
@@ -46,6 +48,19 @@ The verb records each answer through the objectives' ledger: a recorded objectiv
 status chosen, and a proposed one is recorded as a new objective. A question the owner wants
 answered first is an objective too: record it with `wayline objective add` before the first tier,
 and it is asked with the others.
+
+## The concerns: where each goes, and which objections the work answers
+
+Once the memo is written, `wayline grill` also adds, each human-only, one question per objection of
+the memo's hostile review, and, over the concerns still waiting with the critic's proposed place,
+one question per proposed objective with its concerns, one for the order, and one for the declines.
+Put the concerns' questions to the owner with each concern's words from the evidence, and hand the
+answer back as `take it` (each goes where the critic proposed) or `another place`, with the place in
+the rationale (`tie them to O2`, `for the order`, `decline: <the reason>`); a rationale that names no
+place leaves them to be sorted. An objection is answered `reject`, or accepted with where it goes
+(`accept: tie it to O1`, `accept: for the order`), and an accepted one becomes a concern with the
+memo as its source. Specify drafts only once every concern is sorted; a concern the groups did not
+settle is placed with `wayline concern place <id> --objective <O> | --order | --decline "<reason>"`.
 
 When there is no `POSITION.md`, tell the owner in one line that the questions rest on the intake
 alone.

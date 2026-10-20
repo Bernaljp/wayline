@@ -126,6 +126,22 @@ FIRST_QUESTION = "what should the project answer first?"
 NO_OBJECTIVE = ("no objective is open, so there is nothing for the spec to answer: ask the owner \"%s\" and record the "
                 "answer with wayline objective add \"<question>\", then run wayline specify again" % FIRST_QUESTION)
 
+UNSORTED = ("the concerns %s wait to be sorted, so the spec cannot say what answers them: settle them at the grill or in the "
+            "marks view, or place each with wayline concern place <id> --objective <O> | --order | --decline \"<reason>\", "
+            "then run wayline specify again")
+
+
+def _unsorted_concerns(project):
+    """The concerns that still wait to be sorted once the marks given are taken and the objectives followed (ticket 96)."""
+    from wayline import concerns  # the concerns module reads the documents and the sections
+    try:
+        concerns.take_marks(project)
+        concerns.follow(project)
+        return concerns.unsorted(project)
+    except (concerns.ConcernError, concerns.ConcernsUnreadable) as failure:
+        raise SpecifyError("the concerns cannot be read, so nothing was drafted: %s" % failure) from None
+
+
 RESUME_INVALID = (
     "The spec you returned could not be read: %s. Return the whole spec again through the structured output, as the "
     "spec schema asks."
@@ -776,6 +792,9 @@ def draft_spec(project, *, change=None, unchanged_from=None, harness_root=HARNES
     pursued = [item for item in records if objectives.is_open(item)]
     if not pursued:
         raise SpecifyError(NO_OBJECTIVE)
+    waiting = _unsorted_concerns(project)
+    if waiting:
+        raise SpecifyError(UNSORTED % ", ".join(item["id"] for item in waiting))
     events, _ = ledger.read_events()
     session = _Session(project, harness_root, policy, fall_back, say)
     session.objectives = records  # read once: the draft and its redrafts are held to the objectives it was asked for

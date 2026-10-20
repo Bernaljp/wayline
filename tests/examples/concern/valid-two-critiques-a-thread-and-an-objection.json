@@ -1,0 +1,60 @@
+{
+  "concerns": [
+    {
+      "id": "K1",
+      "sources": [{"critique": "D2", "locator": "D2#p3", "text": "The abstract says synchrony peaks at dusk, but the Results say the order parameter is lowest at dusk. One of the two must be wrong."}],
+      "targets": ["P5"],
+      "place": "objectives",
+      "objectives": ["O1"],
+      "status": "answered",
+      "answer": "O1: synchrony is lowest at dusk in 38 of 40 colonies; P5 is replaced or withdrawn",
+      "reason": null,
+      "proposed": {"place": "objective", "objective": "O1", "reason": "the dusk contradiction is what O1 settles"},
+      "returned": null,
+      "sorted_by": "owner"
+    },
+    {
+      "id": "K2",
+      "sources": [
+        {"critique": "D2", "locator": "D2#p3", "text": "The authors should rule out lamp flicker in the enclosure as the cue that drives synchrony."},
+        {"critique": "D3", "locator": "D3#p2", "text": "Please rule out lamp flicker in the enclosure as the cue that drives the synchrony."}
+      ],
+      "targets": [],
+      "place": null,
+      "objectives": [],
+      "status": "open",
+      "answer": null,
+      "reason": null,
+      "proposed": null,
+      "returned": "O2 was dropped",
+      "sorted_by": null
+    },
+    {
+      "id": "K3",
+      "sources": [{"critique": "D1", "locator": "D1#p13", "text": "Add the funder."}],
+      "targets": [],
+      "place": "declined",
+      "objectives": [],
+      "status": "declined",
+      "answer": null,
+      "reason": "an acknowledgement is no research point",
+      "proposed": {"place": "decline", "objective": null, "reason": "an acknowledgement is no research point"},
+      "returned": null,
+      "sorted_by": "decider"
+    },
+    {
+      "id": "K4",
+      "sources": [{"critique": "POSITION.md", "locator": "POSITION.md#hostile-review-3", "text": "One held-out split and one seed give no variance."}],
+      "targets": [],
+      "place": "order",
+      "objectives": [],
+      "status": "open",
+      "answer": null,
+      "reason": null,
+      "proposed": null,
+      "returned": null,
+      "sorted_by": "owner"
+    }
+  ],
+  "split": [{"document": "D2", "version": 1}, {"document": "D3", "version": 1}]
+}

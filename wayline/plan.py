@@ -876,7 +876,7 @@ def plan_prompt(role, cut, harness, project, policy, records, index, journal, gr
     ]))
     return "\n\n".join(part.strip("\n") for part in parts if part and part.strip()) + "\n"
 
-
+    """The records the plan reads, inlined: the spec whole, the objectives (each goal's measure with them), the documents index and the concerns when the project has them (ticket 96), the query pack; `(text, cut short)`."""
 def _records(project, max_chars):
     """The records the plan reads, inlined: the spec whole, the objectives (each goal's measure with them), the query pack; `(text, cut short)`."""
     ledger = Ledger(project)
@@ -890,6 +890,7 @@ def _records(project, max_chars):
     entries = [
         ("research/SPEC.md", read(specify.SPEC_MD), "[wayline: there is no SPEC.md; run wayline specify]"),
         ("research/OBJECTIVES.md", read(objectives.OBJECTIVES_MD), "[wayline: no objective is recorded]"),
+    ] + decider.documents_and_concerns(ledger) + [
         ("research/kb/query_pack.md", read("kb/query_pack.md"), "[wayline: there is no query pack; no reference was absorbed]"),
     ]
     return decider.inline_records(entries, max_chars, "Read them in this order; the spec is what the tickets implement, and nothing else.")

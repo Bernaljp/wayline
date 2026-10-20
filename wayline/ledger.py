@@ -110,6 +110,7 @@ CODE_PUSHED = "code_pushed"  # code pushed `code/`'s split to the code repositor
 TOOL_INSTALLED = "tool_installed"  # a project's tool installed, licensed software recorded, or either failing (decision 17; ticket 82)
 PASSAGE = "passage"  # one passage of a section written to research/passages.jsonl (decision 17; ticket 86)
 SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted against its ticket (decision 17; ticket 98)
+CONCERN = "concern"  # one concern recorded or changed in research/concerns.json (decision 17; ticket 96)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -253,6 +254,7 @@ K_STANDING = "standing"  # `passage`: an inherited claim's standing, unchecked o
 K_WITHDRAWN = "withdrawn"  # `passage`: true on a withdrawal, which takes the passage it replaces out of the section (ticket 93)
 K_MOVED_FROM = "moved_from"  # `passage`: the inherited passage this one was moved from, in another section (ticket 93)
 K_IDENTIFIER = "identifier"  # `scouted`: the DOI, arXiv id, or exact title the worker asked about
+K_PLACE = "place"  # `concern`: where the concern was sorted, tied to objectives, for the order, or declined; null while unsorted
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -318,6 +320,7 @@ EVENTS = {
     PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES, K_EVIDENCE, K_DOC, K_STANDING, K_REASON,
               K_WITHDRAWN, K_MOVED_FROM),
     SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
+    CONCERN: (K_ID, K_STATUS, K_PLACE, K_OBJECTIVES, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -363,6 +366,11 @@ PAYLOAD_ENUMS = {
     (PASSAGE, K_EVIDENCE): ("supports", "narrows", "contradicts"),
     (FINDING, K_EVIDENCE): ("supports", "narrows", "contradicts"),
     (SCOUTED, K_OUTCOME): ("found", "no such work", "failed"),
+    (CONCERN, K_STATUS): ("open", "answered", "declined"),
+    (CONCERN, K_PLACE): ("objectives", "order", "declined"),
+    # The critique splitter's session, code (a comment thread, a reframe or a drop followed, an answer), the critic's
+    # proposal, or the owner's or the decider's placement.
+    (CONCERN, K_BY): ("session", "code", "critic", "owner", "decider"),
 }
 
 

@@ -61,7 +61,8 @@ AUTONOMOUS = "autonomous"
 _RECORD = re.compile(r"^<!-- wayline:decision (\{.*\}) -->$")
 _ID = re.compile(r"^Q([1-9][0-9]*)\Z")
 # The order a record's keys are written in, so a diff of DECISIONS.md shows what changed and nothing else.
-FIELDS = ("id", "ticket", "question", "options", "recommended", "evidence", "requires", "objective", "human_only", "reversible",
+FIELDS = ("id", "ticket", "question", "options", "recommended", "evidence", "requires", "objective", "concerns", "objection",
+          "human_only", "reversible",
           "tier", "supersedes", "answer", "rationale", "confidence", "decided_by", "model", "fallback_from", "session_id",
           "timestamp")
 # What a settled record carries about the session that answered it (decision 15; ticket 31): never on the owner's answer.
@@ -248,13 +249,16 @@ def _check(record):
 
 
 def with_question(records, question, identifier=None, options=(), recommended=None, requires=(), evidence=(),
-                  human_only=False, reversible=True, objective=None):
+                  human_only=False, reversible=True, objective=None, concerns=None, objection=None):
     """`records` with one open question added to the tree, and that question.
 
     The id is the one given (`Q` and a number nobody holds) or the next free one. A prerequisite must
     already be in the tree, which is what keeps the tree acyclic, and a question the tree already
     asks, in any spelling of the same words, is refused with the record that asks it. `objective`
-    (`{id, text}`) makes it a question of the first tier, answered `open` or `parked` (ticket 80).
+    (`{id, text}`) makes it a question of the first tier, answered `open` or `parked` (ticket 80);
+    `concerns` (`{place, objective, ids}`) a question on the critic's proposed places, answered `take it`
+    or `another place`, and `objection` (`{index, text}`) one on an objection of the hostile review,
+    answered `reject` or an accept with its place (ticket 96).
     """
     question = _text(question, "a question")
     identifier = identifier or _next_id(records)
@@ -283,6 +287,10 @@ def with_question(records, question, identifier=None, options=(), recommended=No
     }
     if objective is not None:
         record["objective"] = objective
+    if concerns is not None:
+        record["concerns"] = concerns
+    if objection is not None:
+        record["objection"] = objection
     record = _check(_ordered(record))
     return records + [record], record
 
@@ -316,6 +324,16 @@ def with_answer(records, identifier, text, rationale, confidence=None, decided_b
         if taken not in TAKE:
             raise GrillError("%s asks whether the project takes an objective: answer open or parked, got %r" % (identifier, text))
         text = taken
+    elif record.get("concerns"):
+        taken = text.casefold().rstrip(".")
+        if taken not in CONCERN_ANSWERS:
+            raise GrillError("%s asks whether concerns go where the critic proposes: answer %s, got %r"
+                             % (identifier, " or ".join(CONCERN_ANSWERS), text))
+        text = taken
+    elif record.get("objection"):
+        if not re.match(r"^(?:reject|accept)\b", text.strip(), re.IGNORECASE):
+            raise GrillError("%s asks whether the work answers an objection: answer reject, or accept with where it goes "
+                             "(\"accept: tie it to O1\", \"accept: for the order\"), got %r" % (identifier, text))
     rationale = _text(rationale, "an answer's rationale")
     if confidence is not None and (isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1):
         raise GrillError("confidence is a number from 0 to 1, or not stated; got %r" % (confidence,))
@@ -383,6 +401,8 @@ def with_tier(records, autonomy):
 
 # The two answers a question of the first tier takes: the project pursues the objective now, or sets it aside.
 TAKE = ("open", "parked")
+# The two answers a question on the critic's proposed places takes (ticket 96), the marks of a `concern_placements` batch.
+CONCERN_ANSWERS = ("take it", "another place")
 POSITION_JSON = "position.json"   # the position memo's record, which `wayline.position` writes
 # The phases of the setup, while the first tier's questions are still added (decision 17: setup ends at specify).
 SETUP_PHASES = (None, "P0", "P1", "P2")
@@ -495,7 +515,40 @@ def _seeded(project, records, events):
         memo = (Ledger(project).read_json(POSITION_JSON) or {}).get("memo")
     except (OSError, ValueError, AttributeError):
         memo = None
-    return with_objective_questions(records, objective_questions(objectives, memo))
+    records = with_objective_questions(records, objective_questions(objectives, memo))
+    if memo is None or any(record.get("objective") and not _settled(record) for record in records):
+        return records  # the concerns' questions name the objectives taken, so they wait for the first tier's answers
+    return with_concern_questions(project, records, memo, objectives)
+
+
+def with_concern_questions(project, records, memo, objectives):
+    """`records` with the setup's questions on concerns (decision 17; ticket 96), each human-only, none asked twice.
+
+    One per objection of the memo's hostile review, whether the work must answer it and where; then, over the concerns
+    still waiting with the critic's proposal, one per proposed objective with its concerns, one for the order, and one
+    for the declines. A group a question already names, in the same concerns, is not asked again.
+    """
+    from wayline import concerns  # the concerns module reads the documents and the sections; loaded when the memo is there
+
+    try:
+        held = concerns.read_concerns(project)
+    except concerns.ConcernsUnreadable as failure:
+        raise ProjectError(str(failure)) from None
+    asked = {_normal(record["question"]) for record in records}
+    objections = {record["objection"]["index"] for record in records if record.get("objection")}
+    for spec in concerns.objection_questions(memo, objectives):
+        if spec["objection"]["index"] in objections or _normal(spec["question"]) in asked:
+            continue
+        records, _ = with_question(records, spec["question"], options=spec["options"], human_only=True,
+                                   evidence=["research/POSITION.md, the hostile reviewer, objection %d" % spec["objection"]["index"]],
+                                   objection=spec["objection"])
+    named = {tuple(record["concerns"]["ids"]) for record in records if record.get("concerns")}
+    for spec in concerns.group_questions(held):
+        if tuple(spec["concerns"]["ids"]) in named or _normal(spec["question"]) in asked:
+            continue
+        records, _ = with_question(records, spec["question"], options=list(CONCERN_ANSWERS), recommended=CONCERN_ANSWERS[0],
+                                   evidence=spec["evidence"], human_only=True, concerns=spec["concerns"])
+    return records
 
 
 def _objective_of(record, records):
@@ -564,7 +617,28 @@ def _with_taken(project, records, identifiers):
         kept = _take_objective(project, record, records)
         if kept is not record:
             records = [kept if other is record else other for other in records]
+        _take_concerns(project, kept)
     return records
+
+
+def _take_concerns(project, record):
+    """Record the owner's answer to a question on concerns through the concerns' ledger (ticket 96).
+
+    A group's `take it` places each concern as the critic proposed, `another place` where the rationale says (or leaves
+    them to be sorted), and their batch items are marked alike; an accepted objection becomes a concern with the memo as
+    its source. A refused placement (a decline with no reason, an objective closed since) refuses the answer.
+    """
+    if not _settled(record) or not (record.get("concerns") or record.get("objection")):
+        return
+    from wayline import concerns  # the concerns module reads the documents and the sections
+    try:
+        if record.get("concerns"):
+            concerns.take_group(project, record["concerns"], record["answer"], record.get("rationale"),
+                                revise=bool(record.get("supersedes")))
+        else:
+            concerns.from_objection(project, record["objection"], record["answer"], record.get("rationale"))
+    except (concerns.ConcernError, concerns.ConcernsUnreadable) as failure:
+        raise GrillError("%s could not be recorded in the concerns: %s" % (record["id"], failure)) from None
 
 
 # --- CONTEXT.md -----------------------------------------------------------------------------------

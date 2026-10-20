@@ -97,7 +97,9 @@ interprets an outcome to where it belongs: `wayline document move <passage> resu
 - **Budgets**: GPU hours, wall clock hours, and the usage windows the run may spend.
 - **Decisions that stay human-only**: the classes the decider never resolves. `objective` (which
   covers a goal's measure) and `data` are always there; the owner may add classes, and is told that
-  each one added is a decision the run waits on under `autonomous`.
+  each one added is a decision the run waits on under `autonomous`. When the project has critiques,
+  `concern` is one to offer: named, every concern that needs sorting after setup waits for the owner
+  rather than the decider.
 
 What the owner wants answered is not a section: it is recorded as objectives (below).
 

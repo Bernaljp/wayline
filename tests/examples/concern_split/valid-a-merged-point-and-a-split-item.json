@@ -1,0 +1,17 @@
+{
+  "concerns": [
+    {
+      "sources": [
+        {"critique": "D2", "text": "The authors should rule out lamp flicker in the enclosure as the cue that drives synchrony."},
+        {"critique": "D3", "text": "Please rule out lamp flicker in the enclosure as the cue that drives the synchrony."}
+      ],
+      "targets": []
+    },
+    {"sources": [{"critique": "D2", "text": "(a) report how many moths were filmed per colony"}], "targets": []},
+    {"sources": [{"critique": "D2", "text": "(b) show that the camera frame rate does not alias the wingbeat."}], "targets": []},
+    {
+      "sources": [{"critique": "D2", "text": "The abstract says synchrony peaks at dusk, but the Results say the order parameter is lowest at dusk."}],
+      "targets": ["P5"]
+    }
+  ]
+}

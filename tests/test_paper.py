@@ -188,6 +188,18 @@ class DraftTest(PaperCase):
         self.assertEqual({finding["check"] for finding in build["builds"][0]["checks"]},
                          {"length", "structure", "figures", "references", "reporting_checklists", "template", "provenance"})
 
+    def test_the_writer_reads_the_concerns_when_the_project_has_them(self):
+        from wayline import concerns
+
+        self.write(draft(), verifier=PASSING_GATE)
+        self.assertNotIn("research/CONCERNS.md", self.calls_of("writer")[0].request.prompt, "none yet, so none read")
+        concerns.from_objection(self.project, {"index": 1, "text": "One seed gives no variance."}, "accept: for the order", "fair")
+        self.write(draft(), verifier=PASSING_GATE)
+        prompt = self.calls_of("writer")[0].request.prompt
+        self.assertIn("# research/CONCERNS.md", prompt)
+        self.assertIn("One seed gives no variance.", prompt)
+        self.assertIn("for the paper order", prompt)
+
     def test_the_writer_is_one_read_only_session_on_the_writer_s_tier(self):
         self.write(draft(), verifier=PASSING_GATE)
         (call,) = self.calls_of("writer")
