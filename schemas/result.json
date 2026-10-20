@@ -24,7 +24,8 @@
           "negative": {"type": "boolean"},
           "heading": {"type": ["string", "null"], "description": "a finding is a Results passage: the Results heading it stands under, naming the question; reuse one the section already has when it fits (the ticket's title when absent)"},
           "replaces": {"type": ["string", "null"], "pattern": "\\S", "description": "the id of the finding this one replaces, when it narrows or corrects it (a scope-down), or of the inherited Results passage (P<n>) it checks; null otherwise"},
-          "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"], "description": "when it replaces an inherited claim: whether this project's evidence supports, narrows, or contradicts it"}
+          "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"], "description": "when it replaces an inherited claim: whether this project's evidence supports, narrows, or contradicts it"},
+          "reason": {"type": "string", "pattern": "\\S", "description": "when it replaces an owner's passage (P<n>): one sentence on why its evidence, its provenance, overrides the owner's text; required then"}
         }
       }
     },
@@ -40,7 +41,8 @@
           "heading": {"type": "string", "pattern": "\\S", "description": "the heading it stands under; reuse one the section already has when it fits"},
           "text": {"type": "string", "pattern": "\\S", "description": "Markdown, from one claim to a paragraph"},
           "replaces": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the id of the passage this one replaces (P<n>), or null"},
-          "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"], "description": "when it replaces an inherited claim: whether this project's evidence supports, narrows, or contradicts it"}
+          "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"], "description": "when it replaces an inherited claim: whether this project's evidence supports, narrows, or contradicts it"},
+          "reason": {"type": "string", "pattern": "\\S", "description": "when it replaces an owner's passage: one sentence on why its evidence overrides the owner's text; required then, and the passage carries that evidence as a res, ref, or code tag"}
         }
       }
     },

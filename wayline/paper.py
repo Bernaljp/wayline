@@ -542,7 +542,7 @@ def check_build(project, record, text, *, harness_root=HARNESS_ROOT, policy=None
     """
     texts = [sentence.text for sentence in provenance.prose_sentences(text)]
     classes = provenance.classify(project, texts, harness_root=harness_root, policy=policy)
-    lint = provenance.lint(project, text, classes)
+    lint = provenance.lint(project, text, classes, doc_only_fails=True)  # after the order a `doc` tag supports nothing
     findings = guidelines.run_checks(guidelines.Manuscript(Path(project) / "research" / PAPER_DIR), record, project=project)
     return lint, findings
 

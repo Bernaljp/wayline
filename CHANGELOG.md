@@ -57,6 +57,45 @@ lists it read-only, marked with its tag.
   and the rule and budgets in its place, and the toy project's goal is O1 in `research/objectives.json` with
   `stop_when` in `harness.json`.
 
+- The linter's new tags, the owner's passages, editing a section, and consolidation (ticket 88; Implementation
+  Decisions 17, 1, 2, and 11).
+  - **New tags.** Beside `res` and `ref`, a claim sentence may end with `{code:<path>#<symbol>}` or
+    `{code:<path>#L10-L42}`, for what the project's code does (the path from the project, `code/phase.py`, or from
+    inside `code/`), resolved against the ticket's worktree at its acceptance and against `main` at every render, and
+    flagged once the file no longer defines the symbol or holds the lines; and `{doc:<document>#<locator>}`, inherited
+    text's provenance, resolved against `research/documents.json` and never rendered as a citation. A `ref` tag may
+    name its work by exact title, `{ref:title:<exact title>}` (the form ticket 93 writes for an inherited citation
+    with neither a DOI nor an arXiv id): it resolves through the identifier index's titles in the linter, the claim
+    verifier's paths, the guidelines check, and the acceptance check, which scouts a title no dossier holds. A tag
+    just before a sentence's full stop ends it, as one after it does.
+  - **The linter at acceptance and at every render.** The worktree's acceptance gains a line, "every claim sentence
+    ends with a provenance tag that resolves", over the result's passages and findings: a tag that does not resolve,
+    or a sentence the classifier calls a claim ending with no tag, sends the worker back. The classifier (one haiku
+    batch) is asked only about the sentences ending with no tag; one it could not classify is listed, never failed,
+    and a finding with no tag of its own is tagged by its provenance. Every render of a section records the linter's
+    reading in `research/sections/lint.json`; before the paper order a claim tagged only `doc` and an untagged claim
+    in an owner's passage are listed there, never failed. The paper's build still fails a `doc`-only claim.
+  - **The owner's passages.** `wayline passage add --section <s> --heading <h> [--replaces <id>] "<text>"` records an
+    owner's passage, `by: owner`, journaled `passage`; the owner may write in Results too, and replaces any passage
+    without a reason. A ticket's passage or finding replacing an owner's passage must carry evidence (a `res`, `ref`,
+    or `code` tag; a finding's provenance) and a `reason`, new in the result schema, or the declared-sections check
+    sends the worker back; the replacement's `passage` or `finding` event carries `replaces_owner` and the reason for
+    the account's "Changed without asking you", and under `interactive` the owner is notified.
+  - **Editing a section file.** The owner may edit `research/sections/<section>.md` directly: before the next render
+    code takes the edit in by the file's first-line render stamp. A new paragraph becomes an owner's passage under
+    the heading above it (or a new `## heading` of the owner's), a changed paragraph the owner's replacement of what
+    it printed, and a removed one a withdrawal; a passage that arrived since the stamp, or replaced what the owner
+    removed, is never read as a deletion. The render's own notes now follow a `<!-- wayline:notes -->` line, which
+    the edit is read up to.
+  - **Consolidation.** `wayline consolidate <section>` rewrites a section's current passages into fewer that keep
+    their tags, in one read-only writer session the owner asks for: without `--yes` it prints what the session reads,
+    the model, and about how many tokens, and launches nothing. The answer is checked before anything is written
+    (every current passage replaced by exactly one, fewer of them, every tag kept and none added, and the linter,
+    with a tag that already failed carried rather than held against it), sent back once with the problems, and
+    written `by: consolidation`, naming in `consolidates` what it rewrote, so a passage made of the owner's still
+    steers; journaled as `consolidated`. The owner's pending edit is taken in first, and an inherited claim still
+    unchecked is left out with its mark. It refuses inside an automated run and on Results, which is its findings.
+
 - The rule from code to Methods (ticket 107; Implementation Decision 17). At each acceptance in the worktree, a
   Type-A check (`wayline/methods.py`) reads the ticket's diff in `code/` with parsers that spend no tokens and
   sends the worker back with the list when Methods and the code disagree: every developed method the diff adds or

@@ -1,17 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "passage",
-  "description": "One line of research/passages.jsonl (Implementation Decision 17; tickets 86 and 93): a piece of a section's text with who contributed it, written only by code through the ledger. A ticket's Results passage is a finding in findings.jsonl, so only an inherited passage (by a document) names Results.",
+  "description": "One line of research/passages.jsonl (Implementation Decision 17; tickets 86, 93, and 88): a piece of a section's text with who contributed it, written only by code through the ledger. A ticket's Results passage is a finding in findings.jsonl, so only an inherited passage (by a document), the owner's, or a consolidation's names Results.",
   "type": "object",
   "required": ["id", "section", "heading", "text", "replaces", "by", "objectives", "ticket", "wave", "ts"],
   "additionalProperties": false,
   "oneOf": [
     {"properties": {"section": {"enum": ["introduction", "discussion", "methods", "references"]}}},
-    {"properties": {"section": {"const": "results"}, "by": {"pattern": "^document:"}}}
+    {"properties": {"section": {"const": "results"}, "by": {"pattern": "^(document:.+|owner|consolidation)$"}}}
   ],
   "properties": {
     "id": {"type": "string", "pattern": "^P[1-9][0-9]*$", "description": "P1 onward, never reused"},
-    "section": {"type": "string", "enum": ["introduction", "results", "discussion", "methods", "references"], "description": "results only for an inherited passage, by a document"},
+    "section": {"type": "string", "enum": ["introduction", "results", "discussion", "methods", "references"], "description": "results only for an inherited passage (by a document), the owner's, or a consolidation's"},
     "heading": {"type": "string", "pattern": "\\S", "description": "the heading it stands under in its section"},
     "text": {"type": "string", "pattern": "\\S", "description": "Markdown with LaTeX math, from one claim to a paragraph; a claim sentence ends with its provenance tag"},
     "replaces": {"type": ["string", "null"], "description": "the passage of the same section this one replaces, which then leaves the rendered file and stays here; in Results, a finding or an inherited Results passage"},
@@ -23,7 +23,9 @@
     "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"], "description": "on a passage replacing an inherited claim: whether this project's evidence supports, narrows, or contradicts it"},
     "doc": {"type": "string", "pattern": "^D[1-9][0-9]*#p[1-9][0-9]*(\\.s[1-9][0-9]*(-s[1-9][0-9]*)?)?$", "description": "an inherited passage's locator in its document's text.md: the block, and the sentence or run of sentences (D1#p4.s2, D1#p4.s1-s3, D1#p6)"},
     "standing": {"type": "string", "enum": ["unchecked", "unverifiable"], "description": "an inherited claim's standing: unchecked until a passage or finding replaces it with evidence, or unverifiable with its reason"},
-    "reason": {"type": "string", "pattern": "\\S", "description": "why an unverifiable claim could not be checked"},
+    "reason": {"type": "string", "pattern": "\\S", "description": "why an unverifiable claim could not be checked; on a passage replacing an owner's passage, the stated reason its evidence overrides it (ticket 88)"},
+    "consolidates": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "on a consolidation's passage: every passage it rewrote, the first the one it replaces in place, the rest withdrawn; it is the owner's to steer when any of them was (ticket 88)"},
+    "replaces_owner": {"const": true, "description": "on a passage replacing an owner's passage, by anyone but the owner: journaled for the account, which lists it under \"Changed without asking you\" (ticket 88)"},
     "withdrawn": {"const": true, "description": "a withdrawal: it takes the passage it replaces out of the section, its text kept here as it stood"},
     "moved_from": {"type": "string", "pattern": "^P[1-9][0-9]*$", "description": "the inherited passage, in another section, this one was moved from; a withdrawal there takes it out"}
   }
