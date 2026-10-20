@@ -16,7 +16,8 @@ detected, and without one the notifier stops at `notify-send`.
 **What the autonomy holds back** (decision 17; ticket 89). After setup, under `interactive`, every notice reaches
 the owner as it arises; under `checkpoints`, a decision ticket notifies as it opens and every other notice waits
 for the next conversation or the end notice; under `autonomous`, only the end notice of a run and the login's
-expiry notify. `holds` is that rule, which the tick applies too; a notice it holds is neither sent nor journaled,
+expiry notify, and, under every autonomy, the notice of a project stuck until the owner acts (`STUCK`), which no
+end notice would follow. `holds` is that rule, which the tick applies too; a notice it holds is neither sent nor journaled,
 and the end notice's "M waiting on you" carries it.
 
 `WAYLINE_NOTIFY=none` keeps every channel off: both `notified` lines are journaled as always, the
@@ -54,15 +55,19 @@ NOTIFY_ENV = "WAYLINE_NOTIFY"
 END_NOTICES = ("run_ended", "goal_reached")
 DECISION_OPENED = "decision_opened"
 LOGIN_ORIGIN = "tick: the login"  # the origin of the tick's login tickets (`tick.LOGIN_ORIGIN`)
+# The notices of a project stuck until the owner acts, which no end notice would ever follow or carry, so they go out
+# under every autonomy as the login's expiry does: the tick could not relaunch the conductor (`tick.RELAUNCH_REFUSED`),
+# and the code repository refused a push the conductor will not try again (`conductor.CODE_PUSH_REJECTED`).
+STUCK = ("relaunch_refused", "code_push_rejected")
 
 
 def holds(event, autonomy, setup_ended, login=False):
     """Whether the autonomy holds this notice back rather than sending it as it arises (decision 17).
 
-    Nothing is held before setup ends, and the end notice never is. `login` says a `decision_opened` is the tick's
-    ticket about the login's expiry, which notifies under every autonomy.
+    Nothing is held before setup ends, and the end notice never is, nor a notice of a project stuck (`STUCK`). `login`
+    says a `decision_opened` is the tick's ticket about the login's expiry, which notifies under every autonomy.
     """
-    if not setup_ended or event in END_NOTICES:
+    if not setup_ended or event in END_NOTICES or event in STUCK:
         return False
     if autonomy == "autonomous":
         return not (event == DECISION_OPENED and login)

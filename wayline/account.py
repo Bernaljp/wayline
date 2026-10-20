@@ -36,8 +36,10 @@ it, by `wayline review <id> stand|reverse` or by marking its item: every unrevie
 `reviewed`; a reviewed decision stays counted in its run. A reversal is the owner's own answer through the existing
 verbs: a decision ticket is asked again (`ticket_rerun`) human-only and, with an answer, answered by the owner
 (`project.answer`); a grill question is revised (`grill answer --revise`); a parked proposal the decider kept parked
-is admitted. A reversal with no answer ("undo it") reopens the decision human-only and asks in one line. Nothing a
-review does stops a run.
+is admitted; the paper's venue is the owner's next `wayline paper --venue`. A reversal with no answer ("undo it")
+reopens the decision human-only and asks in one line: a grill question or a proposal on a human-only decision ticket
+(origin `review D<n>: ...`) whose answer the next render takes in (`_settle_reopened`). A mark that cannot be taken
+is said in the banner. Nothing a review does stops a run.
 
 **The end notice.** `end_notice` is the one notice a run end sends: the account's first paragraph, then "N decided
 for you, M waiting on you", then the path. The conductor sends it after the run's end, and the tick when the
@@ -57,10 +59,10 @@ from pathlib import Path
 from wayline import batches, grill, pacing, replay, tickets
 from wayline.cli import parse_args
 from wayline.ledger import (
-    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, JOB_FINISHED, JOB_LAUNCHED, PACING, PAPER_STARTED, PASSAGE, PAUSED,
+    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, PACING, PAPER_STARTED, PASSAGE, PAUSED,
     PROMOTED, PROPOSAL_ADMITTED, PROPOSAL_PARKED, REPORT_RENDERED, REVIEWED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
     TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN,
-    TICKET_RESULT, UNPAUSED, VERDICT, WAVE, Ledger, LedgerError, now_ts,
+    TICKET_RESULT, VERDICT, WAVE, Ledger, LedgerError, now_ts,
 )
 from wayline.project import NEEDS_HUMAN_NOTES, ProjectError, find_project, read_harness
 
@@ -104,7 +106,10 @@ OUTCOMES = {TICKET_LAUNCHED: "running", TICKET_DONE: "done", TICKET_ACCEPTED: "a
 # What a decision with no ticket is about: its answer opens with the subject's prefix.
 PROPOSAL_PREFIX = "proposal "
 VENUE_PREFIX = "paper venue: "
-PROPOSAL_ANSWERS = ("admit", "keep parked")  # what a parked proposal's decision answers (`decider.ADMIT`, `decider.KEEP_PARKED`)
+PROPOSAL_ANSWERS = ("admit", "keep parked")
+# The origin of the human-only decision ticket a reversal with no answer opens: the decision, then what it was about.
+REOPENED_ORIGIN = "review %s: %s"
+_REOPENED = re.compile(r"^review (D[1-9][0-9]*): (grill Q[1-9][0-9]*|proposal .+)$")  # what a parked proposal's decision answers (`decider.ADMIT`, `decider.KEEP_PARKED`)
 # A grill question's `decision` (`grill.record_payload`): its id, its question, then its answer.
 _GRILL_ANSWER = re.compile(r"^(Q[1-9][0-9]*) (.*) Answer: (.*)$", re.S)
 
@@ -127,10 +132,11 @@ class _Context:
     notes: list = field(default_factory=list)
 
 
-def _context(project, now=None):
+def _context(project, now=None, events=None):
     project = Path(project).resolve()
     notes = []
-    events, _ = Ledger(project).read_events()
+    if events is None:
+        events, _ = Ledger(project).read_events()
     try:
         harness = read_harness(project)
     except (ProjectError, OSError, ValueError) as failure:
@@ -315,7 +321,7 @@ def _unresolved_references(context):
         index = {}
     for section in sections.SECTIONS:
         try:
-            current = sections.section_items(book, section)
+            current = sections.arrange(sections.section_items(book, section)).current()  # a replaced passage cites nothing now
         except (OSError, ValueError, LedgerError):
             continue
         for item in current:
@@ -465,21 +471,33 @@ def _per_ticket(span):
     return {ticket: entry for ticket, entry in found.items() if entry["sessions"] or entry["outcome"] or entry["verdict"]}
 
 
-def _gpu_hours(span):
-    launched, hours = {}, 0.0
-    for event in span:
-        payload = event.get("payload") or {}
-        if event.get("event") == JOB_LAUNCHED:
-            launched[payload.get("job")] = len(payload.get("gpu_uuids") or [])
-        elif event.get("event") == JOB_FINISHED and _is_number(payload.get("seconds")):
-            hours += payload["seconds"] / 3600.0 * launched.get(payload.get("job"), 0)
-    return hours
+def _run_bounds(run, events, now):
+    """`(start, end)` of a run in epoch seconds: to its `run_ended`, else to its last event when a later run started
+    (a run that died with no end), else to `now` while it is live."""
+    start = pacing.epoch(events[run.start].get("ts"))
+    if run.end is not None:
+        end = pacing.epoch(events[run.end].get("ts"))
+    elif run.after < len(events):
+        end = pacing.epoch(events[max(run.start, run.after - 1)].get("ts"))
+    else:
+        end = now
+    return start, end
 
 
 def _wall_hours(run, events, now):
-    start = pacing.epoch(events[run.start].get("ts"))
-    end = pacing.epoch(events[run.end].get("ts")) if run.end is not None else now
+    start, end = _run_bounds(run, events, now)
     return 0.0 if start is None or end is None else max(0.0, end - start) / 3600.0
+
+
+def _gpu_hours(run, events, now):
+    """The GPU hours spent during the run, counted as the GPU budget counts them (`stopping.gpu_hours`): a job carried
+    over from an earlier run counts its hours in this one, and a job that failed counts too."""
+    from wayline import stopping  # the stopping module imports the goal module, which imports the gates
+    start, end = _run_bounds(run, events, now)
+    if start is None or end is None:
+        return 0.0
+    stop = run.end + 1 if run.end is not None else run.after
+    return max(0.0, stopping.gpu_hours(events[:stop], end) - stopping.gpu_hours(events[:run.start], start))
 
 
 def _waves(span):
@@ -502,7 +520,7 @@ def _latest_run(run, context):
         ending = "ended %s: %s (`%s`)" % (_when(events[run.end].get("ts")), REASONS.get(reason, "no reason was journaled"), reason)
     lines = ["### Run %d, the latest" % run.number, "",
              "Started %s, %s; %d wave(s). Wall clock %.1f hours; GPU %.2f hours." % (
-                 _when(started.get("ts")), ending, _waves(span), _wall_hours(run, events, context.now), _gpu_hours(span))]
+                 _when(started.get("ts")), ending, _waves(span), _wall_hours(run, events, context.now), _gpu_hours(run, events, context.now))]
     peaks = _peaks(span)
     if peaks:
         lines[-1] += " Peak utilization: %s." % ", ".join("%s %s" % (window, _number(value)) for window, value in sorted(peaks.items()))
@@ -614,7 +632,7 @@ def _earlier_runs(runs, context):
             run.number, _when(context.events[run.start].get("ts")), _when(end.get("ts")) if end else "never journaled",
             (end.get("payload") or {}).get("reason") if end else "none", _waves(span),
             sum(1 for entry in per.values() if entry["outcome"] in ("done", "accepted")), sum(entry["turns"] for entry in per.values()),
-            _wall_hours(run, context.events, context.now), _gpu_hours(span)))
+            _wall_hours(run, context.events, context.now), _gpu_hours(run, context.events, context.now)))
     return lines
 
 
@@ -787,13 +805,13 @@ def _stands(context):
 # --- the view and the render ----------------------------------------------------------------------------------
 
 
-def account_view(project, now=None, full=True):
+def account_view(project, now=None, full=True, events=None):
     """What the account says, as a structure: the paragraph, each section's lines, and the counts. Writes nothing.
 
     `full=False` builds only the paragraph, "Decided for you", and "Waiting on you", which is what `status` and the end
     notice read: the rest walks every run, ticket, and dossier, and a view the dashboard polls need not.
     """
-    context = _context(project, now)
+    context = _context(project, now, events)
     return _view(context, full)
 
 
@@ -921,8 +939,10 @@ def render_account(project, now=None):
 
 def _render(project, book, now, told):
     """`render_account` under the ledger's lock; the notices a reversal owes are put in `told`."""
-    settle_marks(project, told)
+    problems = []
+    settle_marks(project, told, problems)
     context = _context(project, now)
+    context.notes.extend(problems)
     edited = take_edit(project, ACCOUNT, REPORT_KIND, context.events)
     _batch_unreviewed(project, context)
     view = _view(context)
@@ -972,24 +992,31 @@ def _batch_unreviewed(project, context):
     return batches.open_batch(project, REVIEW_BATCH, "Decided for you: let them stand or reverse them", items)
 
 
-def settle_marks(project, told=None):
+def settle_marks(project, told=None, problems=None):
     """Take the owner's marks on the account's review items as reviews; returns the D ids reviewed now.
 
     A `reverse` mark's note, when it has one, is what the owner wants instead; with none it is "undo it". A mark the
     decider gave is not a review: only the owner reviews what was decided for them. `told` collects the notices a
-    reversal owes the owner, sent by the caller once it lets go of the ledger's lock (`_tell`).
+    reversal owes the owner, sent by the caller once it lets go of the ledger's lock (`_tell`), and `problems` each
+    mark that could not be taken, which the account's banner says, since its item is settled and marks it no more.
+    The owner's answers to the decisions a reversal reopened are taken first (`_settle_reopened`).
     """
     project = Path(project).resolve()
+    _settle_reopened(project)
     events, _ = Ledger(project).read_events()
     reviewed = _reviews(events)
+    standing = {decision.id for decision in _decisions(_context(project))}
     taken = []
     for ref, (batch, item) in sorted(_review_items(project).items()):
-        if item["mark"] is None or item["by"] != OWNER or ref in reviewed:
-            continue
+        if item["mark"] is None or item["by"] != OWNER or ref in reviewed or ref not in standing:
+            continue  # one superseded since its item was opened has nothing left to review
         try:
             _apply(project, ref, item["mark"], item["note"] if item["mark"] == REVERSE else None, told)
-        except AccountError:
-            continue  # a decision superseded since its item was opened has nothing left to review
+        except AccountError as failure:
+            if problems is not None:
+                problems.append("your %s mark on %s (item %d of %s) could not be taken: %s; `wayline review %s %s` takes it again"
+                                % (item["mark"], ref, item["id"], batch["id"], failure, ref, item["mark"]))
+            continue
         taken.append(ref)
     return taken
 
@@ -1006,8 +1033,8 @@ def review(project, identifier, verdict, answer=None):
 
     Returns what happened, one line the conversation reads back. The decision's item in its review batch is marked
     too, so the marks view shows it settled. Refused for a decision that is not listed: unknown, superseded, or
-    reviewed already. A reversal is applied first and journaled `reviewed` after, so a reversal refused leaves the
-    decision listed.
+    reviewed already. A reversal is applied first and journaled `reviewed` after, so a reversal refused before it
+    changed anything leaves the decision listed.
     """
     project = Path(project).resolve()
     if verdict not in REVIEWS:
@@ -1052,46 +1079,127 @@ def _apply(project, identifier, verdict, answer, told=None):
 def _reverse(project, context, decision, answer, told):
     """The owner's own answer in place of `decision`, through the verbs that already take one; human-only from now on.
 
-    Refused, with nothing written, for an answer the decision's verb would not take: a parked proposal is admitted or
-    kept parked, nothing else.
+    - A decision ticket is asked again, human-only (`_reopen`), and an answer is the owner's answer to it.
+    - A grill question is revised by the owner's answer (`grill answer --revise`); with none, it is asked again on a
+      human-only decision ticket, whose answer revises it (`_settle_reopened`).
+    - A parked proposal the decider kept parked is admitted by `admit`; one it admitted has its ticket, which
+      `wayline cancel` parks. With no answer it is asked again on a human-only decision ticket.
+    - The paper's venue is named by the owner's next `wayline paper --venue <slug>`.
+
+    Refused, with nothing written, for an answer the decision's verb would not take.
     """
     from wayline import decisions
     from wayline.project import answer as answer_ticket
     why = "The owner reversed %s." % decision.id
     prefix = _prefix_of(decision)
-    if decision.ticket is None and not decision.record and prefix.startswith(PROPOSAL_PREFIX) and answer is not None \
-            and answer.casefold() not in PROPOSAL_ANSWERS:
-        raise AccountError("%s is about a parked proposal: reverse it with --answer \"%s\"" % (decision.id, "\" or \"".join(PROPOSAL_ANSWERS)))
+    proposal = decision.ticket is None and not decision.record and prefix.startswith(PROPOSAL_PREFIX)
+    if proposal and answer is not None:
+        answer = answer.casefold()
+        if answer not in PROPOSAL_ANSWERS:
+            raise AccountError("%s is about a parked proposal: reverse it with --answer \"%s\"" % (decision.id, "\" or \"".join(PROPOSAL_ANSWERS)))
+        admitted = _admitted(context.events, prefix[len(PROPOSAL_PREFIX):].rstrip(": "))
+        if answer != PROPOSAL_ANSWERS[0] and admitted is not None:
+            raise AccountError("%s admitted that proposal as ticket %s; `wayline cancel %s` parks it" % (decision.id, admitted, admitted))
+    if decision.ticket is None and not decision.record and not proposal:
+        if answer is not None:
+            raise AccountError("%s chose %s; name it yourself with `wayline paper --venue <slug>`, or reverse it with no answer"
+                               % (decision.id, _subject(decision, context)))
+        return "%s reversed: %s is yours to name, with wayline paper --venue <slug>." % (decision.id, _subject(decision, context))
     try:
         if decision.ticket is not None:
             question = _reopen(project, decision.ticket)
-            if answer is not None:
+            if answer is None:
+                return "%s reopened for you, human only: %s Answer with wayline answer %d \"<answer>\"." % (
+                    decision.id, question, decision.ticket)
+            try:
                 answer_ticket(project, decision.ticket, answer, rationale=why)
-                return "%s reversed: ticket %d is answered \"%s\", by you; the conductor closes it at its next wave" % (
-                    decision.id, decision.ticket, answer)
-            return "%s reopened for you, human only: %s Answer with wayline answer %d \"<answer>\"." % (
-                decision.id, question, decision.ticket)
-        if decision.record:
-            if answer is not None:
+            except ProjectError as failure:  # reopened for the owner all the same: the reversal stands, the answer waits
+                return "%s reopened for you, human only, but your answer was refused (%s): %s Answer with wayline answer %d \"<answer>\"." % (
+                    decision.id, failure, question, decision.ticket)
+            return "%s reversed: ticket %d is answered \"%s\", by you; the conductor closes it at its next wave" % (
+                decision.id, decision.ticket, answer)
+        if answer is not None:
+            if decision.record:
                 grill.answer(project, decision.record, answer, why, revise=True)
                 return "%s reversed: %s is revised to \"%s\", by you" % (decision.id, decision.record, answer)
-            origin = grill.TICKET_ORIGIN + decision.record
-            question = decision.question or decision.record
-        else:
-            if answer is not None:
-                answer = answer.casefold() if prefix.startswith(PROPOSAL_PREFIX) else answer
-                Ledger(project).append_event(DECISION, {"ticket": None, "answer": prefix + answer, "decided_by": "human",
-                                                        "rationale": why, "confidence": None})
-                return "%s reversed: %s%s, by you" % (decision.id, prefix, answer)
-            origin = prefix.rstrip(": ") if prefix.startswith(PROPOSAL_PREFIX) else "review %s" % decision.id
-            question = "%s answered %s; what do you want instead?" % (_subject(decision, context), _one_line(_answer_of(decision)))
-        opened = decisions.open_decision(project, question, blocking=None, human_only=True, proposed_by="human", origin=origin,
+            Ledger(project).append_event(DECISION, {"ticket": None, "answer": prefix + answer, "decided_by": "human",
+                                                    "rationale": why, "confidence": None})
+            return "%s reversed: %s%s, by you" % (decision.id, prefix, answer)
+        subject = ("grill " + decision.record) if decision.record else prefix.rstrip(": ")
+        question = (decision.question if decision.record else
+                    "%s answered %s; what do you want instead (%s)?" % (
+                        _subject(decision, context), _one_line(_answer_of(decision)), " or ".join(PROPOSAL_ANSWERS)))
+        opened = decisions.open_decision(project, question or subject, blocking=None, human_only=True, proposed_by="human",
+                                         origin=REOPENED_ORIGIN % (decision.id, subject),
                                          evidence=["the decider's answer, which you reversed: %s" % _one_line(_answer_of(decision))],
                                          notify=lambda event, text, where, ticket: told.append((event, text, where, ticket)))
     except (ProjectError, tickets.TicketError, grill.GrillError) as failure:
         raise AccountError("%s could not be reversed: %s" % (decision.id, failure)) from None
     return "%s reopened for you, human only: %s Answer with wayline answer %d \"<answer>\"." % (
         decision.id, _one_line(question), opened["ticket"])
+
+
+def _admitted(events, identifier):
+    """The ticket a proposal was admitted as, or None while it is parked."""
+    ticket = None
+    for event in events:
+        payload = event.get("payload") or {}
+        if event.get("event") == PROPOSAL_ADMITTED and payload.get("id") == identifier:
+            ticket = payload.get("ticket")
+    return ticket
+
+
+def _settle_reopened(project):
+    """Take the owner's answers to the decision tickets a reversal opened: a grill question revised, a proposal answered.
+
+    A ticket reopened from a decision ticket needs nothing here: its answer is its own. Each answer is taken once: a
+    grill question whose latest record is the owner's, or a proposal whose latest answer is the owner's, is left alone.
+    """
+    from wayline.proposals import _decided_answers
+    book = Ledger(project)
+    events, _ = book.read_events()
+    view = replay.replay(events)
+    try:
+        opened = [fields for fields in tickets.read_tickets(project)
+                  if fields["kind"] == tickets.DECISION and _REOPENED.match(str(fields.get("origin") or ""))]
+    except (tickets.TicketError, OSError, ValueError):
+        return
+    for fields in opened:
+        answered = view.answers.get(fields["id"])
+        if not answered or answered.get("decided_by") != "human" or not str(answered.get("answer") or "").strip():
+            continue
+        decision, subject = _REOPENED.match(fields["origin"]).groups()
+        why = "The owner answered decision ticket %d, which reopened %s." % (fields["id"], decision)
+        text = str(answered["answer"]).strip()
+        if subject.startswith("grill "):
+            records = grill.read_records(project)
+            latest, later = subject[len("grill "):], grill.superseded_by(records)
+            while latest in later:
+                latest = later[latest]
+            record = {item.get("id"): item for item in records}.get(latest)
+            if record is None or record.get("decided_by") == "human":
+                continue
+            try:
+                grill.answer(project, latest, text, why, revise=True)
+            except grill.GrillError:
+                continue
+        elif subject.startswith(PROPOSAL_PREFIX):
+            identifier, choice = subject[len(PROPOSAL_PREFIX):], text.casefold()
+            if choice not in PROPOSAL_ANSWERS or _human_proposal_answer(events, identifier) is not None:
+                continue
+            book.append_event(DECISION, {"ticket": None, "answer": PROPOSAL_PREFIX + identifier + ": " + choice,
+                                         "decided_by": "human", "rationale": why, "confidence": None})
+
+
+def _human_proposal_answer(events, identifier):
+    """The owner's latest answer on a parked proposal, or None."""
+    found = None
+    for event in events:
+        payload = event.get("payload") or {}
+        if event.get("event") == DECISION and payload.get("decided_by") == "human" and payload.get("ticket") is None \
+                and str(payload.get("answer") or "").startswith("%s%s:" % (PROPOSAL_PREFIX, identifier)):
+            found = payload.get("answer")
+    return found
 
 
 def _prefix_of(decision):

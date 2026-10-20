@@ -860,12 +860,14 @@ def status_view(project, refresh=True):
     # line counts them with what waits on the owner.
     from wayline import account  # the account reads every part of the ledger, this module included
     try:
-        told = account.account_view(project, full=False)
+        told = account.account_view(project, full=False, events=events)
     except (ValueError, OSError) as failure:
         told = None
         problems.append("account: %s" % failure)
-    unreviewed = set(told["unreviewed"]) if told else set()
-    decided = [entry for entry in decided if entry.get("decision") in unreviewed]
+    if told is not None:
+        decided = [entry for entry in decided if entry.get("decision") in set(told["unreviewed"])]
+    else:  # no review can be read: every standing decision made for the owner, rather than none
+        decided = [entry for entry in decided if entry.get("decided_by") in account.REVIEWED_BY and not entry.get("superseded")]
     policy = policy_for(project)
     from wayline.position import position_view  # the position module imports this one
     try:

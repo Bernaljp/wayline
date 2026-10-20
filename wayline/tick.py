@@ -1030,7 +1030,9 @@ def due_checks(project):
 
 def report_due(events):
     """Whether the journal gained anything since `REPORT.md` was last rendered, beside the notifications and the render itself."""
-    last = max((index for index, event in enumerate(events) if event.get("event") == REPORT_RENDERED), default=-1)
+    # REPORT.md's own renders: the account's (`report: account`, ticket 89), which every wave journals, renders no report.
+    last = max((index for index, event in enumerate(events)
+                if event.get("event") == REPORT_RENDERED and not (event.get("payload") or {}).get("report")), default=-1)
     return any(event.get("event") not in (NOTIFIED, REPORT_RENDERED) for event in events[last + 1:])
 
 

@@ -786,6 +786,15 @@ class ReportTest(TickCase):
         self.assertIsNone(second.report)
         self.assertEqual(len(self.events("report_rendered")), 2)
 
+    def test_the_accounts_render_is_no_render_of_the_report(self):
+        """The account, journaled `report_rendered` with `report: account` every wave (ticket 89), leaves REPORT.md due."""
+        self.journal("report_rendered", {"sha256": "0" * 64, "claims": 0, "tagged": 0, "linter_pass": True})
+        self.journal("finding", {"id": "F1", "ticket": 1, "text": "x", "provenance": [], "negative": False})
+        self.journal("report_rendered", {"sha256": "1" * 64, "report": "account"})
+        self.assertTrue(tick.report_due(self.events()))
+        self.journal("report_rendered", {"sha256": "2" * 64, "claims": 0, "tagged": 0, "linter_pass": True})
+        self.assertFalse(tick.report_due(self.events()))
+
     def test_a_report_that_cannot_render_is_a_problem_and_the_relaunch_still_happens(self):
         self.ran()
         self.add_ticket(1)
@@ -799,7 +808,7 @@ class ReportTest(TickCase):
         self.assertIn("report failed", self.out.getvalue())
 
     def test_a_refused_relaunch_is_a_problem_and_the_owner_is_told_once(self):
-        self.interactive()
+        """Told under `checkpoints` too: a project stuck until the owner acts is never held back (ticket 89)."""
         self.ran()
         self.add_ticket(1)
         self.refusal = tick.UnitsOff("WAYLINE_UNITS=none: this process does not reach the user manager")

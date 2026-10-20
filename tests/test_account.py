@@ -189,16 +189,40 @@ class ReviewTest(AccountCase):
         with redirect_stdout(io.StringIO()), redirect_stderr(err):
             self.assertEqual(cli.main(["review", "D2", "stand", "--project", str(self.project)]), 2)
 
-    def test_a_grill_question_is_revised_by_the_owners_answer_or_reopened_human_only(self):
-        from wayline import grill, tickets
+    def test_undo_it_on_a_grill_question_asks_it_again_and_the_owners_answer_revises_it(self):
+        from wayline import grill, project, tickets
         grill.ask(self.project, "Which metric does the goal read?")
-        record = grill.answer(self.project, "Q1", "auroc", "the spec names it", decided_by="decider", model="claude-opus-5")
+        grill.answer(self.project, "Q1", "auroc", "the spec names it", decided_by="decider", model="claude-opus-5")
         decision = "D%d" % len(self.events("decision"))
         said = account.review(self.project, decision, "reverse")
         self.assertIn("human only", said)
-        opened = [ticket for ticket in tickets.read_tickets(self.project) if ticket.get("origin") == "grill Q1"]
+        opened = [ticket for ticket in tickets.read_tickets(self.project) if ticket.get("origin") == "review %s: grill Q1" % decision]
         self.assertEqual([(ticket["human_only"], ticket["status"]) for ticket in opened], [(True, "open")])
-        self.assertEqual(record["decided_by"], "decider")
+        project.answer(self.project, opened[0]["id"], "auprc")
+        self.render()
+        revised = grill.read_records(self.project)[-1]
+        self.assertEqual((revised["answer"], revised["decided_by"], revised["supersedes"]), ("auprc", "human", "Q1"))
+        self.render()
+        self.assertEqual(len(grill.read_records(self.project)), 2, "the answer is taken once")
+
+    def test_the_venue_is_the_owners_to_name_with_the_paper_verb(self):
+        self.append("decision", {"ticket": None, "answer": "paper venue: nature", "decided_by": "decider",
+                                 "rationale": "the claims fit", "confidence": 0.6})
+        with self.assertRaises(account.AccountError):
+            account.review(self.project, "D3", "reverse", answer="neurips")
+        self.assertIn("wayline paper --venue", account.review(self.project, "D3", "reverse"))
+
+    def test_a_mark_that_cannot_be_taken_is_said_in_the_banner(self):
+        from wayline import batches
+        self.append("decision", {"ticket": None, "answer": "proposal p-0002: keep parked", "decided_by": "decider",
+                                 "rationale": "outside the claim", "confidence": 0.6})
+        self.render()
+        (batch,) = batches.read_batches(self.project)
+        item = [entry for entry in batch["items"] if entry["ref"] == "D3"][0]
+        batches.mark(self.project, batch["id"], item["id"], "reverse", note="please run it")
+        self.render()
+        self.assertIn("your reverse mark on D3", self.text().split("## ")[0])
+        self.assertIn("D3", account.account_view(self.project)["unreviewed"])
 
     def test_a_grill_reversal_with_an_answer_revises_the_question_by_the_owner(self):
         from wayline import grill
@@ -340,6 +364,16 @@ class RunsTest(AccountCase):
         runs = self.section("Runs")
         self.assertIn("The run-end gates:", runs)
         self.assertIn("scoped down by ticket 12", runs)
+
+    def test_a_run_that_died_with_no_end_is_counted_to_its_last_event_and_the_account_stays_as_it_is(self):
+        self.append("run_started", {"resume": True}, ts="2026-09-13T08:00:00.000Z")
+        self.append("wave", {"number": 1, "outcomes": [], "progressed": False}, ts="2026-09-13T09:00:00.000Z")
+        self.append("run_started", {"resume": True}, ts="2026-09-14T08:00:00.000Z")
+        self.append("run_ended", {"reason": "stopped"}, ts="2026-09-14T09:00:00.000Z")
+        self.render()
+        (row,) = [line for line in self.section("Runs").splitlines() if line.startswith("| 2 |")]
+        self.assertIn("| never journaled | none | 1 | 0 | 0 | 1.0 |", row)
+        self.assertFalse(self.render().changed)
 
     def test_a_live_run_says_running_since(self):
         self.append("run_started", {"resume": True}, ts="2026-09-14T08:00:00.000Z")
