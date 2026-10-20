@@ -149,7 +149,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, gates, methods, notify, numbers, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, worker
+from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, gates, methods, notify, numbers, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, verification, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -178,6 +178,8 @@ BRANCH = "ticket/%s"
 LEDGER_COMMIT = "ledger: wave %d"
 # The acceptance result the declared-sections check of decision 17 adds in the worktree (ticket 86).
 SECTIONS_CHECK = "wayline: the declared sections got their passages"
+VERIFICATION_CHECK = "wayline: the verification names its route"  # ticket 97: a verification ticket's verdict, at its acceptance
+INHERITED_FILE = "inherited.json"  # beside a ticket attempt's session: its verdicts on inherited claims, for its verdict (ticket 97)
 # The acceptance result the check of a ticket's references adds in the worktree (decision 17; ticket 98).
 REFERENCES_CHECK = "wayline: every cited work is a dossier or listed, at a locator its level holds"
 # The acceptance result the provenance linter adds in the worktree over a result's passages and findings (decision 17; ticket 88).
@@ -876,11 +878,13 @@ class Conductor:
         self._place_jobs(result)
         self._software(result)
         self._concerns()
+        self._verifications()
         self._pace()
         if not self._rule_ends(result) and not self._holds_launches() and not self._stops_at_stall(result):
             self._escalate(result)
             self._replan(result)
             self._decide(result)
+            self._read_cited()
             self._replan_objectives(result)
             self._evolve(result)
             self._fold_answered_refusals()  # the decider, the planner, and the evolver answer in this wave
@@ -1172,6 +1176,36 @@ class Conductor:
             concerns.settle(self.project, notify=self.notify, say=self.say)
         except (concerns.ConcernError, concerns.ConcernsUnreadable, tickets.TicketError, ValueError, OSError) as failure:
             self.say("  the concerns could not be settled: %s" % failure)
+        self._tail()
+
+    def _verifications(self):
+        """Wave step 2's verification part (decision 17; ticket 97): results followed, the objective answered, a decision per gap.
+
+        Code alone: `verification.settle` takes in the inherited results and their standing, answers "Do the inherited
+        results hold?" once each has a verdict or is unverifiable, and past setup opens one decision ticket of class
+        `material` per gap, takes each answer, and makes a result unverifiable when its verification ended `needs_human`
+        under `autonomous`, releasing what it blocked. An unreadable record is said, and fails no wave.
+        """
+        try:
+            verification.settle(self.project, notify=self.notify, say=self.say)
+        except (verification.VerificationError, verification.VerificationUnreadable, tickets.TicketError, ValueError,
+                OSError) as failure:
+            self.say("  the verifications could not be settled: %s" % failure)
+        self._tail()
+
+    def _read_cited(self):
+        """The read route (decision 17; ticket 97): the inherited claims that cite a reference the project holds, read by the
+        consultant one reference at a time, past setup and while the objective is open. A failure is said, and fails no wave."""
+        try:
+            if not verification.reading(self.project):
+                return
+            report = verification.read(self.project)
+        except (verification.VerificationError, verification.VerificationUnreadable, ValueError, OSError) as failure:
+            self.say("  the cited inherited claims could not be read: %s" % failure)
+            return
+        if report["asked"]:
+            self.say("  read %d cited inherited claim(s) against %s: %d settled" % (
+                sum(1 for _ in report["asked"]), ", ".join(report["asked"]), len(report["settled"])))
         self._tail()
 
     def _needs_tools(self, entry):
@@ -1879,7 +1913,8 @@ class Conductor:
             earned, asks = gates.owed_asks(ticket, difficulty, launched.model,
                                            self.view.integrated.get(identifier), self.view.passed(identifier), rung=launched.rung,
                                            no_diff=identifier in self.view.integrated_empty,
-                                           code_rule=methods.read_code_rule(worker.session_dir(self.project, identifier, launched.number)))
+                                           code_rule=methods.read_code_rule(worker.session_dir(self.project, identifier, launched.number)),
+                                           inherited=self._inherited_items(identifier, launched.number))
             if asks:
                 self.verdicts.append(_Queued(identifier, launched.number, asks))
                 self.say("  ticket %d is done and its %s verdict was never taken; queued again"
@@ -2178,7 +2213,10 @@ class Conductor:
         cap = attempt.tier.context_chars
         paper = sections.pack_text(self.ledger, sections.declared(attempt.ticket), cap)
         left = None if cap is None else max(0, int(cap) - len(paper))
-        return "\n\n".join(part for part in (paper, concerns.pack_text(self.ledger, objectives.served(attempt.ticket), left)) if part)
+        verifying = verification.pack_text(self.ledger, attempt.ticket, left)
+        left = None if left is None else max(0, left - len(verifying))
+        return "\n\n".join(part for part in (paper, verifying, concerns.pack_text(self.ledger, objectives.served(attempt.ticket), left))
+                           if part)
 
     def _keep_last_failure(self, attempt):
         """Write `failure.json` for an attempt a tier up launches: the failure output of the attempt before it (ticket 68).
@@ -2517,6 +2555,7 @@ class Conductor:
             self._remove_worktree(identifier)
         # The passages its worker returned with the jobs it left (decision 17): its change stands on `main` now.
         note += self._file_passages(attempt, self._running_output(attempt, known).get("passages"))
+        self._take_verdicts_on_inherited(attempt, self._running_output(attempt, known))
         self._set_status(identifier, "done", note)
         self.ledger.append_event(TICKET_DONE, {"ticket": identifier}, ticket=identifier)
         self._tail()
@@ -3264,6 +3303,18 @@ class Conductor:
             self._write_ticket(attempt, "blocked", attempt.result)
             self.ledger.append_event(TICKET_BLOCKED, {"ticket": attempt.id, "path": path}, ticket=attempt.id)
             gap = None if outside else software.gap_of(blocked_on)
+            if gap is None and not outside and verification.gap_of(blocked_on) is not None and attempt.ticket.get("verifies"):
+                # The verification lacks material it needs (ticket 97): a decision pausing only that verification.
+                try:
+                    report = verification.open_gap(self.project, attempt.id, blocked_on, notify=self.notify)
+                except (verification.VerificationError, verification.VerificationUnreadable, tickets.TicketError, ValueError,
+                        OSError) as failure:
+                    self.say("  ticket %d is blocked on missing material, and its decision could not be opened: %s" % (attempt.id, failure))
+                    return "failed"
+                if report is not None:
+                    self.say("  ticket %d is blocked: its verification lacks %s; decision ticket %d asks about it"
+                             % (attempt.id, verification.gap_of(blocked_on)[1], report["ticket"]))
+                    return "failed"
             if gap is None:
                 self.say("  ticket %d is blocked on %s; the planner re-cuts it" % (attempt.id, path))
                 return "failed"
@@ -3809,7 +3860,7 @@ class Conductor:
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
             results = (list(results) + self._sections_check(attempt) + self._lint_check(attempt) + self._numbers_check(attempt)
-                       + self._references_check(attempt) + self._methods_check(attempt))
+                       + self._references_check(attempt) + self._methods_check(attempt) + self._verification_check(attempt))
             results = results + self._repeats_check(attempt, results)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
@@ -3833,6 +3884,18 @@ class Conductor:
         problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
         return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
                  "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
+
+    def _verification_check(self, attempt):
+        """A verification ticket's verdict (decision 17; ticket 97) as one acceptance result, or none for any other ticket.
+
+        It names its route; `reproduced` runs at the commit intake recorded; a verdict on substitute data narrows each claim
+        it replaces. A failing one sends the worker back with the problems.
+        """
+        if not attempt.ticket.get("verifies"):
+            return []
+        problems = verification.check_result(self.project, attempt.ticket, attempt.result)
+        return [{"cmd": VERIFICATION_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
+                 "tail": "\n".join(problems) if problems else "the verdict names its route"}]
 
     def _lint_check(self, attempt):
         """The provenance linter (decision 17; ticket 88) over the result's passages and findings, as one acceptance result.
@@ -4292,6 +4355,8 @@ class Conductor:
         if rule is not None and discarded is None and waits_for_owner is None:
             # What the verdict judges, kept beside the session so a restarted conductor asks the same (ticket 107).
             methods.write_code_rule(self._attempt_dir(attempt), rule)
+        if discarded is None and waits_for_owner is None:
+            self._take_verdicts_on_inherited(attempt)
         self._write_ticket(attempt, "done", attempt.result)
         self.ledger.append_event(TICKET_DONE, {"ticket": attempt.id}, ticket=attempt.id)
         if discarded is not None:
@@ -4601,6 +4666,30 @@ class Conductor:
 
     # --- the Type-B gate (decision 11) ---
 
+    def _take_verdicts_on_inherited(self, attempt, result=None):
+        """A done ticket's verdicts on inherited claims (ticket 97): a verification ticket's verdict recorded with its route,
+        and every verdict on an inherited claim kept beside the session for the fresh verifier, so a restart asks the same.
+        `result` is the `running` result of a ticket whose jobs closed it, else the attempt's own."""
+        result = attempt.result if result is None else result
+        try:
+            verification.take_result(self.project, attempt.ticket, result)
+            items = verification.verdict_items(self.project, attempt.ticket, result)
+        except (verification.VerificationError, verification.VerificationUnreadable, ValueError, OSError) as failure:
+            self.say("  ticket %d's verdicts on inherited claims could not be recorded: %s" % (attempt.id, failure))
+            return
+        if items:
+            path = self._attempt_dir(attempt) / INHERITED_FILE
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(items, indent=2) + "\n", encoding="utf-8")
+
+    def _inherited_items(self, identifier, number):
+        """The verdicts on inherited claims kept beside a ticket attempt's session (ticket 97), or None."""
+        try:
+            items = json.loads((worker.session_dir(self.project, identifier, number) / INHERITED_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return items if isinstance(items, list) and items else None
+
     def _queue_verdicts(self, attempt):
         """Queue the verdicts this done ticket earned; nothing is launched from here.
 
@@ -4613,6 +4702,7 @@ class Conductor:
             attempt.ticket, attempt.difficulty, attempt.tier.model,
             tickets.relative_path(attempt.ticket), commit=attempt.commit, outputs=outputs, rung=attempt.tier.rung,
             no_diff=attempt.no_diff or attempt.id in self.view.integrated_empty, code_rule=methods.code_rule(attempt.result),
+            inherited=self._inherited_items(attempt.id, attempt.number),
         )
         if not asks:
             return

@@ -64,6 +64,20 @@
         }
       }
     },
+    "inherited": {
+      "type": "array",
+      "description": "only when the question lists a ticket's verdicts on inherited claims (ticket 97): your check of each, by the claim's P id; one that does not hold fails the verdict and is also a finding",
+      "items": {
+        "type": "object",
+        "required": ["claim", "holds", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "claim": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+          "holds": {"type": "boolean", "description": "true when the finding's evidence bears out the verdict it gives on the inherited claim, by the route it names"},
+          "why": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    },
     "session_id": {
       "type": ["string", "null"],
       "description": "written by the harness from the session's envelope; leave it out"

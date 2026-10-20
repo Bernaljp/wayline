@@ -51,6 +51,22 @@ lists it read-only, marked with its tag.
   acceptance a new passage or finding that repeats a current passage without naming it in `replaces` sends the
   worker back with the passage it repeats.
 
+- Verifying inherited results (ticket 97; Implementation Decisions 17, 2, 10, and 11). Every inherited result (one
+  inherited Results heading, all its claims together) is recorded in `research/verifications.json` (schema
+  `verification`, journaled as `verification`, rendered as `VERIFICATIONS.md`) and stands unchecked until each claim
+  has a verdict or it is unverifiable with its reason. At a start midway the critic proposes "Do the inherited results
+  hold?", open by default; the grill's first tier asks it human-only, and code answers it once every result is settled.
+  The critic's memo carries the table of the code, data, and software each result needs (fetchable data is never
+  missing), and the grill asks one question on every missing item (`as recommended`, one reply, or `M1: <reply>`).
+  Specify drafts one claim per result (`inherited`), the plan gives each a verification ticket (`verifies`) and code
+  makes it block the tickets tied to its result through the concerns, and an unverifiable result parks it and releases
+  them. A verification names its route in `verification` (`reproduced` at the commit intake recorded, `ported`,
+  `reimplemented`; a verdict on substitute data narrows each claim), checked at acceptance; `read` is code's, the
+  consultant batched per reference from the dossier's level. After setup a gap (`blocked_on: "material <kind>: <item>"`,
+  or an item with no reply) is a decision of class `material` pausing only that verification, the decider's under
+  `autonomous` (never `I'll provide it`); a verification ending `needs_human` under `autonomous` makes its result
+  unverifiable. The fresh verifier checks each verdict on an inherited claim (`inherited` in the verdict).
+
 - Critiques and concerns (ticket 96; Implementation Decisions 17, 2, and 10). A critique's points, an open Word
   comment thread, and an objection of the position memo's hostile review the owner accepts at the grill become
   concerns: `research/concerns.json` (schema `concern`, ids K1 onward, never reused), written only by

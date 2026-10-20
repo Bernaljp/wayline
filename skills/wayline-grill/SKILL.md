@@ -62,6 +62,18 @@ place leaves them to be sorted. An objection is answered `reject`, or accepted w
 memo as its source. Specify drafts only once every concern is sorted; a concern the groups did not
 settle is placed with `wayline concern place <id> --objective <O> | --order | --decline "<reason>"`.
 
+## The inherited results: whether they hold, and the material they lack
+
+At a start midway (the project inherited Results claims from its own documents) the first tier also
+asks whether the project takes "Do the inherited results hold?", which the critic proposes, open by
+default; the owner may park it. Taken open, `wayline grill` then asks one human-only question on
+every item the critic's table in `POSITION.md` marks missing (fetchable data never is). Put it to
+the owner with each item's recommendation from the evidence, and hand the answer back as `as
+recommended`, one reply for every item (`I'll provide it`, `rebuild it`, `leave it unverified`), or
+item by item (`M1: I'll provide it; M2: port to Python`); licensed software takes `I'll provide it`,
+`port to Octave`, or `port to Python`. `leave it unverified` makes that result unverifiable, with the
+item as the reason. Specify then drafts one claim per inherited result under the objective.
+
 When there is no `POSITION.md`, tell the owner in one line that the questions rest on the intake
 alone.
 

@@ -29,19 +29,19 @@ Not part of this ticket:
 
 **Blocked by:** 81 - Specify and the plan name objectives; 85 - The code repository; 93 - Inherited passages; 94 - Consulting one document; 96 - Critiques and concerns. It blocks 108, 109, 111, 115, and 117.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#244](https://github.com/Bernaljp/wayline/issues/244) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Verifying what a project inherited; Setup, at every autonomy: the missing material); Implementation Decision 10 (the critic's memo, the grill, specify, the planner, the decider); Implementation Decision 11 (the verifier); the schemas list (`verdict`'s route, the unverifiable standing); M8 criterion 10; user stories 140, 141, and 142.
 
-- [ ] At a start midway the critic proposes "Do the inherited results hold?", open and human-only by default. The grill can park it, and code answers it once every inherited result has a verdict or is unverifiable.
-- [ ] Specify drafts one claim per inherited result under that objective, and the planner may split a large result. Each verification ticket blocks the tickets built on its result through the objectives' and concerns' ties.
-- [ ] A verdict on an inherited claim carries its route: reproduced, ported, reimplemented, or read. Reproduced runs at the commit intake recorded. A read verdict goes through the consultant batched per reference from the L0 abstract, and a claim it cannot settle stays unchecked. A verdict on substitute data narrows the claim to that data.
-- [ ] Unverifiable is recorded with its reason, distinct from unchecked, and it releases every ticket the verification blocked.
-- [ ] The critic's memo carries the missing-material table, with fetchable data never counted missing. The grill asks one setup question covering every missing item with the three replies, and licensed software gets provide, port to Octave, or port to Python.
-- [ ] After setup, a gap is a decision ticket pausing only that verification: the owner's under `interactive` and `checkpoints`, the decider's under `autonomous` (rebuild or leave unverified, never provide). A verification ending `needs_human` under `autonomous` makes its result unverifiable.
-- [ ] The fresh verifier at acceptance checks each verdict on an inherited claim explicitly, and the contradictions attached to a result reach its verification.
-- [ ] Tests over a synthetic start midway from ticket 78: the critic, grill, decider, consultant, and verifier scripted through the fake launcher; journal replay for a verification blocking and then releasing its dependents, a gap's decision ticket under each autonomy, and `needs_human` becoming unverifiable.
-- [ ] Any schema field, event, or decision class added lands in the schemas list or decision 2's table in the same commit.
-- [ ] `python -m unittest` passes.
+- [x] At a start midway the critic proposes "Do the inherited results hold?", open and human-only by default. The grill can park it, and code answers it once every inherited result has a verdict or is unverifiable.
+- [x] Specify drafts one claim per inherited result under that objective, and the planner may split a large result. Each verification ticket blocks the tickets built on its result through the objectives' and concerns' ties.
+- [x] A verdict on an inherited claim carries its route: reproduced, ported, reimplemented, or read. Reproduced runs at the commit intake recorded. A read verdict goes through the consultant batched per reference from the L0 abstract, and a claim it cannot settle stays unchecked. A verdict on substitute data narrows the claim to that data.
+- [x] Unverifiable is recorded with its reason, distinct from unchecked, and it releases every ticket the verification blocked.
+- [x] The critic's memo carries the missing-material table, with fetchable data never counted missing. The grill asks one setup question covering every missing item with the three replies, and licensed software gets provide, port to Octave, or port to Python.
+- [x] After setup, a gap is a decision ticket pausing only that verification: the owner's under `interactive` and `checkpoints`, the decider's under `autonomous` (rebuild or leave unverified, never provide). A verification ending `needs_human` under `autonomous` makes its result unverifiable.
+- [x] The fresh verifier at acceptance checks each verdict on an inherited claim explicitly, and the contradictions attached to a result reach its verification.
+- [x] Tests over a synthetic start midway from ticket 78: the critic, grill, decider, consultant, and verifier scripted through the fake launcher; journal replay for a verification blocking and then releasing its dependents, a gap's decision ticket under each autonomy, and `needs_human` becoming unverifiable.
+- [x] Any schema field, event, or decision class added lands in the schemas list or decision 2's table in the same commit.
+- [x] `python -m unittest` passes.

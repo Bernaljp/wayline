@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "verification",
+  "description": "research/verifications.json (Implementation Decision 17; ticket 97): the verification of every inherited result, written only by wayline.verification through the ledger, rendered as research/VERIFICATIONS.md, and journaled as `verification`. An inherited result is one inherited Results heading with all its claims judged together; it stands unchecked until every claim has a verdict (verified) or it is found unverifiable, with the reason. Each verdict names its route. `material` is the code, data, and software each result needs that is missing (fetchable data never is), ids M1 onward, with the owner's or the decider's reply; `reads` are the consultant's batched reads of cited claims, one per reference and dossier level.",
+  "type": "object",
+  "required": ["results", "material", "reads"],
+  "additionalProperties": false,
+  "properties": {
+    "results": {"type": "array", "items": {"$ref": "#/$defs/result"}},
+    "material": {"type": "array", "items": {"$ref": "#/$defs/material"}},
+    "reads": {"type": "array", "items": {"$ref": "#/$defs/read"}}
+  },
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": ["heading", "claims", "standing", "reason", "verdicts", "contradictions"],
+      "additionalProperties": false,
+      "properties": {
+        "heading": {"type": "string", "pattern": "\\S", "description": "the inherited Results heading: the result's name"},
+        "claims": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "the inherited claims under it, as first deconstructed"},
+        "standing": {"type": "string", "enum": ["unchecked", "verified", "unverifiable"]},
+        "reason": {"type": ["string", "null"], "description": "why it is unverifiable; null otherwise"},
+        "verdicts": {"type": "array", "items": {"$ref": "#/$defs/verdict"}},
+        "contradictions": {
+          "type": "array",
+          "description": "contradicting pairs attached to the result (ticket 95), which its verification answers",
+          "items": {
+            "type": "object",
+            "required": ["text", "claims"],
+            "additionalProperties": false,
+            "properties": {
+              "text": {"type": "string", "pattern": "\\S"},
+              "claims": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}}
+            }
+          }
+        }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["ticket", "route", "commit", "substitute", "claims"],
+      "additionalProperties": false,
+      "properties": {
+        "ticket": {"type": ["integer", "null"], "minimum": 1, "description": "the verification ticket; null for a read code made"},
+        "route": {"type": "string", "enum": ["reproduced", "ported", "reimplemented", "read"]},
+        "commit": {"type": ["string", "null"], "description": "for reproduced: the commit intake recorded, which it ran at"},
+        "substitute": {"type": ["string", "null"], "description": "the substitute data it was reached on, when any: the verdict covers only the claim narrowed to that data"},
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["claim", "evidence", "by"],
+            "additionalProperties": false,
+            "properties": {
+              "claim": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+              "evidence": {"type": "string", "enum": ["supports", "narrows", "contradicts"]},
+              "by": {"type": "string", "pattern": "\\S", "description": "the finding that replaced the claim"}
+            }
+          }
+        }
+      }
+    },
+    "material": {
+      "type": "object",
+      "required": ["id", "heading", "kind", "item", "licensed", "rebuild", "reply", "by", "found_by"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^M[1-9][0-9]*$"},
+        "heading": {"type": "string", "pattern": "\\S", "description": "the inherited result that needs it"},
+        "kind": {"type": "string", "enum": ["code", "data", "software"]},
+        "item": {"type": "string", "pattern": "\\S"},
+        "licensed": {"type": "boolean", "description": "licensed software (MATLAB and its toolboxes): provide, port to Octave, or port to Python"},
+        "rebuild": {"type": "boolean", "description": "whether a rebuild (a port or a reimplementation) can work, which makes it the recommended reply"},
+        "reply": {"enum": ["I'll provide it", "rebuild it", "leave it unverified", "port to Octave", "port to Python", null]},
+        "by": {"enum": ["owner", "decider", null]},
+        "found_by": {"type": "string", "pattern": "^(critic|ticket [1-9][0-9]*)$", "description": "the critic's memo at setup, or the verification ticket that found the gap"}
+      }
+    },
+    "read": {
+      "type": "object",
+      "required": ["slug", "level", "claims", "settled"],
+      "additionalProperties": false,
+      "properties": {
+        "slug": {"type": "string", "pattern": "\\S"},
+        "level": {"type": "integer", "minimum": 0, "maximum": 2, "description": "the dossier's level when it was read; a promotion reads it again"},
+        "claims": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}},
+        "settled": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}},
+        "failed": {"type": "string", "pattern": "\\S", "description": "why the consultant gave no usable answer; the claims are not asked about again at this level"}
+      }
+    }
+  }
+}

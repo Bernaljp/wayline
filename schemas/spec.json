@@ -22,7 +22,8 @@
           "id": {"type": "string", "pattern": "^C[1-9][0-9]*$"},
           "text": {"type": "string", "pattern": "\\S"},
           "experiments": {"type": "array", "items": {"type": "string", "pattern": "^E[1-9][0-9]*$"}, "description": "the experiments that test this claim; at least one"},
-          "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the open objectives (research/OBJECTIVES.md) this claim answers; empty for a claim no objective asked for"}
+          "objectives": {"type": "array", "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}, "description": "the open objectives (research/OBJECTIVES.md) this claim answers; empty for a claim no objective asked for"},
+          "inherited": {"type": ["string", "null"], "pattern": "\\S", "description": "at a start midway (decision 17; ticket 97): the Results heading of the inherited result this claim verifies, one claim per inherited result, under the objective \"Do the inherited results hold?\"; null or absent for any other claim"}
         }
       }
     },

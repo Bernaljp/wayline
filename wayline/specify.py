@@ -214,13 +214,15 @@ def _duplicates(values):
     return repeated
 
 
-def check_draft(draft, objectives=None):
+def check_draft(draft, objectives=None, inherited=None):
     """The Type-A checks on a spec draft; returns the failures, each one line, empty when it passes.
 
     The schema is checked first, because the rest reads the fields it promises. `objectives` is the
     project's `objectives.json` records (`objectives.read_objectives`), None when the caller has none to
     hold the draft to: every objective a claim names must be open, every open objective must be
-    answered by at least one claim, and every open goal's metric must be among the spec's metrics.
+    answered by at least one claim, and every open goal's metric must be among the spec's metrics. `inherited` is
+    `verification.spec_inherited` at a start midway (decision 17; ticket 97): one claim per inherited result waiting for its
+    verdict, naming it in `inherited`, under the objective "Do the inherited results hold?".
     """
     try:
         check(draft, load_schema(SPEC_SCHEMA), name="the spec")
@@ -287,6 +289,8 @@ def check_draft(draft, objectives=None):
                 failures.append("success criterion %d names the experiment %s, which the spec does not define" % (index, reference))
     if objectives is not None:
         failures += _objective_failures(draft, objectives, metrics)
+    from wayline import verification  # the verification module reads the sections and the concerns
+    failures += verification.claim_failures(draft, inherited)
     return failures
 
 
@@ -327,8 +331,10 @@ def render_spec(draft):
     body = {
         "summary": [_one_line(draft["summary"])],
         "question": [_one_line(draft["question"])],
-        "claims": ["- **%s.** %s (experiments: %s%s)" % (item["id"], _one_line(item["text"]), _list(item["experiments"]),
-                                                          "; objectives: %s" % _list(item["objectives"]) if item["objectives"] else "")
+        "claims": ["- **%s.** %s (experiments: %s%s%s)" % (item["id"], _one_line(item["text"]), _list(item["experiments"]),
+                                                            "; objectives: %s" % _list(item["objectives"]) if item["objectives"] else "",
+                                                            "; verifies the inherited result %s" % item["inherited"]
+                                                            if item.get("inherited") else "")
                    for item in draft["claims"]],
         "anti_claims": ["- **%s.** %s (confirmed by: %s)" % (item["id"], _one_line(item["text"]), item["confirmed_by"] or "none")
                         for item in draft["anti_claims"]],
@@ -567,10 +573,11 @@ def seed_gap(project_or_ledger):
 # --- the prompt -----------------------------------------------------------------------------------------
 
 
-def specify_prompt(role, records, harness, project, open_questions=(), change=None, cut=False, pursued=()):
+def specify_prompt(role, records, harness, project, open_questions=(), change=None, cut=False, pursued=(), inherited=None):
     """The planner's specify prompt: what is asked, the objectives, the open questions, what to change, the records, the paths, the protocol, the schema.
 
-    `pursued` is the project's open objectives, which the claims answer.
+    `pursued` is the project's open objectives, which the claims answer; `inherited` the inherited results to draft one
+    claim each for (`verification.spec_inherited`, ticket 97).
     """
     lines = ["# What you are asked for", "",
              "The research spec of this project: phase P3, specify. The harness renders what you return as "
@@ -588,6 +595,8 @@ def specify_prompt(role, records, harness, project, open_questions=(), change=No
         lines.append("- %s: %s (%s)" % (item["id"], _one_line(item["text"]),
                                         "a goal: %s" % objectives.describe_measure(item["measure"]) if item.get("measure")
                                         else "an objective: no measure"))
+    from wayline import verification  # the verification module reads the sections and the concerns
+    lines += verification.spec_lines(project, inherited)
     if open_questions:
         lines += ["", "# The questions the grill left open", "",
                   "The spec takes the recommended answer on each of these where it has to take a side, and names the "
@@ -711,6 +720,7 @@ class _Session(PlannerSession):
     """The specify session and its one allowance of each return: invalid output, failed checks, failed verdict."""
 
     objectives = None  # the project's objectives, read once by `draft_spec`, which every draft of the session is checked against
+    inherited = None  # the inherited results waiting for a verdict (ticket 97), read once by `draft_spec` too
 
     def draft(self, prompt):
         """A draft that passed the schema and the Type-A checks, with each gate's one return spent as needed."""
@@ -727,7 +737,7 @@ class _Session(PlannerSession):
     def checked(self, draft, returned=False):
         """`draft` once it passes the Type-A checks; a failing one goes back once, a second failure raises."""
         self.keep(draft, "draft")
-        failures = check_draft(draft, self.objectives)
+        failures = check_draft(draft, self.objectives, self.inherited)
         if failures and not returned:
             self.say("  the draft failed %d structural check(s); returned to the planner once" % len(failures))
             envelope = self.continue_with(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
@@ -746,7 +756,7 @@ class _Session(PlannerSession):
         if problem is not None:
             raise SpecifyError("the planner's redraft after the verdict could not be read: %s" % problem)
         self.keep(envelope.structured_output, "draft")
-        failures = check_draft(envelope.structured_output, self.objectives)
+        failures = check_draft(envelope.structured_output, self.objectives, self.inherited)
         if failures:
             raise SpecifyError("the redraft after the verdict failed its structural checks; the spec as written stands "
                                "unverified", failures)
@@ -804,11 +814,16 @@ def draft_spec(project, *, change=None, unchanged_from=None, harness_root=HARNES
     events, _ = ledger.read_events()
     session = _Session(project, harness_root, policy, fall_back, say)
     session.objectives = records  # read once: the draft and its redrafts are held to the objectives it was asked for
+    from wayline import verification  # the verification module reads the sections and the concerns
+    try:
+        session.inherited = verification.spec_inherited(project)
+    except verification.VerificationUnreadable as failure:
+        raise SpecifyError("%s; nothing was drafted" % failure) from None
     records, cut = decider.records_text(project, context_cap(policy, session.model))
     harness = read_harness(project)
     open_questions = [record for record in grill.read_records(project)
                       if record.get("id") and record.get("answer") is None]
-    prompt = specify_prompt(session.role, records, harness, project, open_questions, change, cut, pursued)
+    prompt = specify_prompt(session.role, records, harness, project, open_questions, change, cut, pursued, session.inherited)
     move_phase(ledger, events, SPECIFY_PHASE)
     say("drafting the spec: the planner on %s at %s%s" % (session.model, session.effort,
                                                          " in place of fable" if session.fallback_from else ""))

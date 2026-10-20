@@ -44,6 +44,15 @@
         "text": {"type": "string", "pattern": "\\S"}
       }
     },
+    "material": {
+      "type": ["object", "null"],
+      "required": ["ids"],
+      "additionalProperties": false,
+      "description": "the setup's one question on the missing material the inherited results need (decision 17; ticket 97): answered as recommended, with one reply for every item, or item by item (M1: <reply>; M2: <reply>)",
+      "properties": {
+        "ids": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^M[1-9][0-9]*$"}}
+      }
+    },
     "blocking": {"enum": ["subgraph", "all", null]},
     "human_only": {"type": "boolean"},
     "tier": {"type": ["integer", "null"], "minimum": 1, "description": "the grill tier that first asked it; null until a tier does"},

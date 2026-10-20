@@ -224,6 +224,9 @@ def critic_memo(rows=None):
     value["concerns"] = rows if rows is not None else [
         {"id": identifier, "place": place, "objective": objective, "reason": reason}
         for identifier, (place, objective, reason) in PROPOSALS.items()]
+    # The midway project inherits one result; ticket 97's table says it needs only what the project holds.
+    value["material"] = [{"result": "Results", "needs": [{"kind": "code", "item": "phaselock.py", "state": "present",
+                                                          "licensed": False, "rebuild": True}]}]
     return value
 
 

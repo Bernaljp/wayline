@@ -1,0 +1,17 @@
+{
+  "results": [
+    {
+      "heading": "Results",
+      "claims": ["P4"],
+      "standing": "checked",
+      "reason": null,
+      "verdicts": [{"ticket": 7, "route": "rerun", "commit": null, "substitute": null, "claims": []}],
+      "contradictions": []
+    }
+  ],
+  "material": [
+    {"id": "M1", "heading": "Results", "kind": "data", "item": "data/dusk-sweep-2021.csv", "licensed": false, "rebuild": false,
+     "reply": "maybe later", "by": "owner", "found_by": "critic"}
+  ],
+  "reads": []
+}

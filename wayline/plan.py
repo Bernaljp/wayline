@@ -575,6 +575,8 @@ def prepare(record, project, existing, index, cut, start=None):
         fields["acceptance"] = {"machine": list(item["acceptance"].get("machine") or []),
                                 "quality": list(item["acceptance"].get("quality") or [])}
         fields["objectives"] = list(item["objectives"])
+        if item.get("verifies"):
+            fields["verifies"] = _one_line(item["verifies"])  # the inherited result it verifies (decision 17; ticket 97)
         failures.extend(_objective_failures(label, item, recorded))
         failures.extend(_section_failures(label, item))
         declared = list(item["sections"]) if item.get("sections") is not None else sections.sections_for_kind(item["kind"])
@@ -614,6 +616,11 @@ def prepare(record, project, existing, index, cut, start=None):
         for identifier, (fields, _) in existing.items():
             if cut.of in fields["blocked_by"] and fields["status"] not in CLOSED:
                 prepared.repointed[identifier] = dict(fields, blocked_by=sorted((set(fields["blocked_by"]) - {cut.of}) | set(pieces)))
+    from wayline import verification  # the verification module reads the sections and the concerns
+    try:
+        failures.extend(verification.wire(project, prepared, existing, cut.kind))
+    except (verification.VerificationUnreadable, objectives.ObjectivesUnreadable) as failure:
+        failures.append("the verifications cannot be read, so no ticket can be wired to them: %s" % failure)
     graph = {}
     for identifier, (fields, body) in existing.items():
         graph[identifier] = dict(prepared.repointed.get(identifier, fields), status="parked" if identifier in superseded else fields["status"])
