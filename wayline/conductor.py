@@ -171,6 +171,7 @@ __all__ = [
 ]
 
 MAIN = "main"
+INTERACTIVE = "interactive"  # the autonomy under which a passage replacing an owner's is a notice (ticket 88)
 RESEARCH = "research"
 WORKTREES = ".worktrees"
 BRANCH = "ticket/%s"
@@ -179,6 +180,8 @@ LEDGER_COMMIT = "ledger: wave %d"
 SECTIONS_CHECK = "wayline: the declared sections got their passages"
 # The acceptance result the check of a ticket's references adds in the worktree (decision 17; ticket 98).
 REFERENCES_CHECK = "wayline: every cited work is a dossier or listed, at a locator its level holds"
+# The acceptance result the provenance linter adds in the worktree over a result's passages and findings (decision 17; ticket 88).
+LINT_CHECK = "wayline: every claim sentence ends with a provenance tag that resolves"
 # What the owner is told when the code repository's remote refuses code/'s split (decision 17; the `notified` event's `event`).
 CODE_PUSH_REJECTED = "code_push_rejected"
 # The heartbeat is rewritten every wave; committing it would make every wave a ledger commit.
@@ -800,6 +803,9 @@ class Conductor:
         self.plan_pre_check = True
         # The fetcher the check of a ticket's references runs the scout on (ticket 98): None for the project's cache.
         self.scout_fetcher = None
+        # The sentence classifier the linter at acceptance asks about a result's untagged sentences (ticket 88):
+        # `classifier(texts) -> classes`, a haiku batch through the launcher; a test stands in its own.
+        self.classifier = self._classify
         # The level-2 read a `dossier` ticket runs as its promotion, `(project, slug) -> report` (ticket 98): None for
         # `absorb.absorb_level_2`; and the inventory it builds first when the paper has none, None for `dossier.build_inventory`.
         self.absorb_dossier = None
@@ -3756,7 +3762,8 @@ class Conductor:
         commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
-            results = list(results) + self._sections_check(attempt) + self._references_check(attempt) + self._methods_check(attempt)
+            results = (list(results) + self._sections_check(attempt) + self._lint_check(attempt) + self._references_check(attempt)
+                       + self._methods_check(attempt))
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
             results = list(results) + [simulated]
@@ -3779,6 +3786,45 @@ class Conductor:
         problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
         return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
                  "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
+
+    def _lint_check(self, attempt):
+        """The provenance linter (decision 17; ticket 88) over the result's passages and findings, as one acceptance result.
+
+        Every tag must resolve (a `code` tag against the ticket's worktree, the attempt's own `res` tags by the files of
+        its worktree) and every sentence the classifier calls a claim must end with one; a failing sentence sends the
+        worker back. The classifier is asked only about the sentences that end with no tag, one haiku batch through
+        `self.classifier`; when it cannot answer, those sentences are listed in the tail, never failed. None for a result
+        with no passage and no finding carrying a tag of its own, since a finding's provenance tags it.
+        """
+        result = attempt.result or {}
+        tagged = [item for item in result.get("findings") or [] if isinstance(item, dict)
+                  and _provenance().ANY_TAG_RE.search(str(item.get("text") or ""))]
+        if not result.get("passages") and not tagged:
+            return []
+        classes = self.classifier(_provenance().result_sentences(result))
+        lint = _provenance().lint_result(self.project, result, classes, code_root=attempt.worktree,
+                                               run_id="t%d-a%d" % (attempt.id, attempt.number))
+        lines = ["%s (%s): %s%s; %s" % (problem["problem"], problem["passage"], problem["sentence"],
+                                        " tag `%s`" % problem["tag"] if problem["tag"] else "", problem["detail"])
+                 for problem in lint.problems]
+        lines += ["listed, not failed: %s (%s): %s" % (item["problem"], item["passage"], item["sentence"]) for item in lint.listed]
+        tail = "\n".join(lines) if lines else "every claim sentence ends with a provenance tag that resolves"
+        return [{"cmd": LINT_CHECK, "exit_code": 0 if lint.passed else 1, "seconds": 0.0, "tail": tail}]
+
+    def _classify(self, texts):
+        """The classifier's classes for `texts`, one haiku batch through the launcher for what the cache does not hold.
+
+        A launch that fails or a usage window that refuses it leaves the sentences it did not reach unclassified, which
+        the acceptance lists rather than fails: a closed window is no verdict on the worker's prose.
+        """
+        provenance = _provenance()
+        if not texts or schedule.holds_model_work(self.action):  # a pacing stop launches no model, the classifier included
+            return provenance.read_claims_cache(self.ledger)
+        try:
+            return provenance.classify(self.project, texts, harness_root=self.harness_root, policy=self.policy)
+        except (provenance.ProvenanceError, worker.LaunchError, OSError) as failure:
+            self.say("  the sentence classifier did not answer at acceptance: %s" % failure)
+            return provenance.read_claims_cache(self.ledger)
 
     def _references_check(self, attempt):
         """The check of a ticket's references (decision 17; ticket 98) as one acceptance result, or none for a result that cites nothing.
@@ -4177,16 +4223,21 @@ class Conductor:
                 "objectives": list(attempt.ticket.get("objectives") or []),
                 # What this project's evidence says of the inherited claim it replaces (ticket 93).
                 "evidence": None if negative else finding.get("evidence"),
+                # Why its evidence overrides the owner's passage it replaces (ticket 88).
+                "reason": None if negative else finding.get("reason"),
             }
             if record["id"] in self.view.findings:
                 continue  # filed before a restart
+            if not negative:
+                self._manifest_own_tags(attempt, finding["text"])
             try:
-                sections.file_finding(self.ledger, record, wave=self._wave_key(), render=False)
+                line = sections.file_finding(self.ledger, record, wave=self._wave_key(), render=False)
             except sections.SectionError as failure:
                 refused.append("A finding was refused: %s (%s)" % (failure, finding["text"]))
                 self.say("  ticket %d: a finding was refused: %s" % (attempt.id, failure))
                 continue
             attempt.findings += 1
+            self._owner_overridden(attempt, line)
         if attempt.findings:
             sections.render_section(self.ledger, sections.RESULTS)
         return refused
@@ -4215,15 +4266,47 @@ class Conductor:
                 if key in filed:
                     continue
                 try:
-                    sections.add_passage(self.ledger, item.get("section"), item.get("heading"), item.get("text"), by=by,
-                                         replaces=item.get("replaces"), objectives=attempt.ticket.get("objectives") or [],
-                                         ticket=attempt.id, wave=self._wave_key(), render=False, evidence=item.get("evidence"))
+                    self._manifest_own_tags(attempt, item.get("text"))
+                    record = sections.add_passage(self.ledger, item.get("section"), item.get("heading"), item.get("text"), by=by,
+                                                  replaces=item.get("replaces"), objectives=attempt.ticket.get("objectives") or [],
+                                                  ticket=attempt.id, wave=self._wave_key(), render=False, evidence=item.get("evidence"),
+                                                  reason=str(item.get("reason") or "").strip() or None)
                     touched.add(item.get("section"))
+                    self._owner_overridden(attempt, record)
                 except sections.SectionError as failure:
                     refused.append("A passage was refused: %s (%s)" % (failure, item.get("heading")))
                     self.say("  ticket %d: a passage was refused: %s" % (attempt.id, failure))
             sections.render_sections(self.ledger, only=[name for name in sections.SECTIONS if name in touched])
         return refused
+
+    def _owner_overridden(self, attempt, record):
+        """Under autonomy `interactive`, a passage or finding that replaced an owner's passage is a notice (ticket 88).
+
+        The `passage` or `finding` event already carries `replaces_owner` and the reason, which the account lists under
+        "Changed without asking you"; at the other autonomies that listing is the whole of it.
+        """
+        if not (record or {}).get("replaces_owner") or self._autonomy() != INTERACTIVE:
+            return
+        self.notify(sections.PASSAGE, "%s: ticket %d replaced your passage %s in %s: %s" % (
+            self.project.name, attempt.id, record.get("replaces"), sections.TITLES.get(record.get("section"), "Results"),
+            record.get("reason") or "no reason given"), self.project, attempt.id)
+
+    def _manifest_own_tags(self, attempt, text):
+        """A passage's or finding's `res` tags of the attempt's own run name files the linter took from its worktree, which
+        its branch carried to `main`: manifest each under this run, the one the tag names, as the run that wrote it."""
+        provenance = _provenance()
+        own = "t%d-a%d" % (attempt.id, attempt.number)
+        for sentence in provenance.sentences(str(text or "")):
+            for found in sentence.tags:
+                kind, parts = provenance.parse_tag(found)
+                if kind != "res" or not parts or parts["run_id"] != own:
+                    continue
+                artifact = Path(parts["artifact"])
+                path = self.project / artifact
+                if artifact.is_absolute() or ".." in artifact.parts or not _inside(path, self.project) or not path.is_file():
+                    self.say("  ticket %d: `{%s}` names no file on main, so it stays unresolved" % (attempt.id, found))
+                    continue
+                provenance.register_artifact(self.ledger, artifact.as_posix(), None, own, attempt.id)
 
     def _in_worktree(self, provenance, worktree):
         """A discarded change's `<path>#<locator>` spelled at the worktree it stays in, when the file is there.
@@ -5434,6 +5517,11 @@ def _job_seconds(record):
 def _waiting_kind(reason):
     """What a wait is for, without the readings in its text: `needs 4 core(s)` of `needs 4 core(s) and the load is 7.5 ...`."""
     return None if reason is None else reason.split(" and ")[0]
+
+
+def _provenance():
+    from wayline import provenance  # the provenance module pulls in the gates and the report
+    return provenance
 
 
 def _inside(path, root):

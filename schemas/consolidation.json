@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "consolidation",
+  "description": "What a consolidation's one read-only writer session returns (Implementation Decision 17; ticket 88): a section's current passages rewritten into fewer, each naming every passage it replaces. Every current passage is replaced by exactly one, every tag of what it replaces is kept and no other is added, and code writes them by: consolidation through the ledger once the linter passes them.",
+  "type": "object",
+  "required": ["passages"],
+  "additionalProperties": false,
+  "properties": {
+    "passages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "the fewer passages, in the order they read; fewer than the section's current passages",
+      "items": {
+        "type": "object",
+        "required": ["heading", "text", "replaces"],
+        "additionalProperties": false,
+        "properties": {
+          "heading": {"type": "string", "pattern": "\\S", "description": "the heading it stands under: one the section has, or a merged one"},
+          "text": {"type": "string", "pattern": "\\S", "description": "Markdown with LaTeX math, every claim sentence ending with the tags of the passages it replaces"},
+          "replaces": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+                       "description": "the ids of the current passages this one replaces, the first giving its place"}
+        }
+      }
+    }
+  }
+}

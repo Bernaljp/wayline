@@ -68,6 +68,12 @@ VERBS = [
     Verb("document", "document add <file|folder|file.zip> [--kind inherited|critique|other|reference]",
          "keep the project's own writing as documents: converted by code, sorted, recorded in research/documents.json, and indexed in DOCUMENTS.md",
          "views", lazy("wayline.documents", "document_command")),
+    Verb("passage", "passage add --section <s> --heading <h> [--replaces <id>] \"<text>\"",
+         "record an owner's passage in one of the paper's five sections, by: owner, journaled as passage (the conversation calls it)", "views",
+         lazy("wayline.sections", "passage_command")),
+    Verb("consolidate", "consolidate <section> [--yes]",
+         "rewrite one section's current passages into fewer that keep their tags, in one read-only writer session the owner asks for and confirms with its cost",
+         "views", lazy("wayline.consolidation", "consolidate_command")),
     Verb("concern", "concern split | place <id>... --objective <O> | --order | --decline \"<reason>\" | show",
          "the project's concerns: split its critiques and open comment threads into concerns (one splitter session per batch), "
          "place one as the owner, or show CONCERNS.md", "views", lazy("wayline.concerns", "concern_command")),
@@ -107,7 +113,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "reference", "document", "concern",
+    "objective", "mark", "reference", "document", "passage", "consolidate", "concern",
 ))
 
 
