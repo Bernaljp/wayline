@@ -169,6 +169,16 @@ class MergeAndRenameTest(ResultsCase):
         self.assertEqual(file(self.ledger, "t4-a1-f1", "Still.", "Do the products raise the AUROC?")["result"], "R1",
                          "the old heading still names the result it named")
 
+    def test_an_owners_edit_of_the_results_file_is_taken_in_under_the_headings_it_was_made_under(self):
+        path = self.project / "research" / "sections" / "results.md"
+        path.write_text(path.read_text(encoding="utf-8").replace("The loss falls to 0.25.", "The loss falls to 0.25 by epoch 9."),
+                        encoding="utf-8")
+        results.rename(self.project, "R1", "Where do the products help?")
+        written = sections.read_passages(self.project)
+        self.assertEqual([(item["by"], item["replaces"], item["text"]) for item in written],
+                         [("owner", "t2-a1-f2", "The loss falls to 0.25 by epoch 9.{res:t2-a1/results/summary.json#auroc}")],
+                         "the renamed heading is no edit of the owner's")
+
     def test_what_cannot_be_merged_or_renamed_is_refused_and_writes_nothing(self):
         before = self.record()
         for args in (("merge", "R1", "R1"), ("merge", "R9", "R1"), ("merge", "R1", "R9"), ("rename", "R9", "x"),

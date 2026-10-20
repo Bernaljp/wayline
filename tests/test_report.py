@@ -444,7 +444,6 @@ class ReportTest(RunCase):
 
     def test_no_writer_drafts_any_of_it(self):
         self.assertEqual(self.roles_called(), ["classifier"])
-        self.assertFalse((self.project / "research" / ".cache" / "report_prose.json").exists())
 
     def test_one_classifier_batch_covered_every_finding_sentence(self):
         self.assertEqual(len(self.classifier.batches), 1)

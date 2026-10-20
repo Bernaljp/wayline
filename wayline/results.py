@@ -290,8 +290,12 @@ def result_headings(project_or_ledger):
 
 def _record(project, action, change):
     """Apply `change(clusters, stamp)` under the lock, write the record, journal it, and re-render; returns the payload."""
+    from wayline import sections  # sections calls `assign` from inside its ledger call
     book = ledger_for(project)
     with book.lock():
+        # An edit of the Results file was made under the headings it shows: take it in before they change, or every
+        # paragraph under a renamed or merged heading would read as the owner's replacement of it.
+        sections.render_section(book, sections.RESULTS)
         clusters = load(book)
         stamp = now_ts()
         payload = change(clusters, stamp)
