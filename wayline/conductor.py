@@ -149,7 +149,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, gates, methods, notify, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, verification, worker
+from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, gates, methods, notify, numbers, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, verification, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -778,6 +778,9 @@ class Conductor:
         self.code_run = run_tool
         self.methods_run = run_tool    # the parsers of the rule from code to Methods (ticket 107); tests replay recordings
         self.methods_tools = None      # `tools.json` as the machine records it, unless a test hands one in
+        # The embedding model the repeated-claims check at acceptance runs through (ticket 95); tests replay recordings.
+        self.repeats_run = run_tool
+        self.repeats_tools = None
         # The split the remote last refused, which this run does not push again (it is told to the owner once).
         self._code_rejected = None
         # The notifier the owner hears of a decision ticket through when this run opens one (decision 7), on a thread of
@@ -808,11 +811,14 @@ class Conductor:
         # The sentence classifier the linter at acceptance asks about a result's untagged sentences (ticket 88):
         # `classifier(texts) -> classes`, a haiku batch through the launcher; a test stands in its own.
         self.classifier = self._classify
+        # The verifier the numbers check sends each sentence it cannot match to (ticket 90): `(attempt, check) -> Judged`.
+        self.numbers_verifier = self._verify_numbers
         # The level-2 read a `dossier` ticket runs as its promotion, `(project, slug) -> report` (ticket 98): None for
         # `absorb.absorb_level_2`; and the inventory it builds first when the paper has none, None for `dossier.build_inventory`.
         self.absorb_dossier = None
         self.dossier_inventory = None
         self.reporter = self._render_report
+        self._integrated_now = False  # a ticket was integrated in this wave, so the general report renders at its end
         self._replanned = None
         self._objectives_trouble = None
         self._harness_trouble = None
@@ -891,6 +897,8 @@ class Conductor:
         self._journal_wave(result)
         self._check_stall(result)
         self._end(result)
+        if self._integrated_now or result.findings:
+            self._render_general_report()  # it renders the account in the same pass
         self._render_account()
         if result.ended:
             self._end_notice(result)
@@ -899,6 +907,19 @@ class Conductor:
         self._tail()
         self._beat()
         return result
+
+    def _render_general_report(self):
+        """`research/REPORT.md`, the general report, rendered by code after every wave that integrated a ticket (ticket 90).
+
+        Offline: it launches no session, the classifier included. One that fails is said, and the tick renders it again
+        when the journal moved; nothing in the run waits on it.
+        """
+        self._integrated_now = False
+        from wayline import provenance  # the provenance module pulls in the gates and the report
+        try:
+            provenance.render_report(self.project, harness_root=self.harness_root, policy=self.policy, offline=True)
+        except (ValueError, OSError) as failure:
+            self.say("  REPORT.md was not rendered: %s; the tick renders it again" % failure)
 
     def _render_account(self):
         """`research/ACCOUNT.md` rendered by code at the end of every wave, so the wave's ledger commit carries it (ticket 89).
@@ -3838,8 +3859,9 @@ class Conductor:
         commands = tickets.machine_acceptance(attempt.ticket)
         results = gates.run_machine_acceptance(commands, cwd, self._timeout())
         if where == "worktree":
-            results = (list(results) + self._sections_check(attempt) + self._lint_check(attempt) + self._references_check(attempt)
-                       + self._methods_check(attempt) + self._verification_check(attempt))
+            results = (list(results) + self._sections_check(attempt) + self._lint_check(attempt) + self._numbers_check(attempt)
+                       + self._references_check(attempt) + self._methods_check(attempt) + self._verification_check(attempt))
+            results = results + self._repeats_check(attempt, results)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
             results = list(results) + [simulated]
@@ -3899,6 +3921,34 @@ class Conductor:
         tail = "\n".join(lines) if lines else "every claim sentence ends with a provenance tag that resolves"
         return [{"cmd": LINT_CHECK, "exit_code": 0 if lint.passed else 1, "seconds": 0.0, "tail": tail}]
 
+    def _numbers_check(self, attempt):
+        """The numbers check (decision 17; ticket 90) over the result's findings as one acceptance result; none without a finding.
+
+        Every number in a finding must match a value at its sentence's `res` locators, read in the ticket's worktree and
+        then the project, a tag naming another run only while the manifest still holds that run's file at its path. Each
+        sentence code cannot match goes to a fresh verifier through `self.numbers_verifier`; a failing verdict sends the
+        worker back with the sentence. A verifier launches only when every other verdict would (pacing `normal` and no
+        hold on launches); otherwise the sentences are listed, never failed.
+        """
+        findings = [item for item in (attempt.result or {}).get("findings") or [] if isinstance(item, dict)]
+        if not findings:
+            return []
+        from wayline import provenance  # the provenance module pulls in the gates and the report
+        runs = {entry.get("path"): entry.get("run_id") for entry in provenance.read_manifest(self.ledger).get("entries", [])}
+        outcome = numbers.check(findings, numbers.reader(attempt.worktree, self.project), numbers.spec_parameters(self.project),
+                                runs=runs, own_run="t%d-a%d" % (attempt.id, attempt.number))
+        if outcome.unmatched and (self.action != schedule.NORMAL or self._holds_launches()):
+            judged = numbers.Judged(outcome, [(sentence, None, "the run holds its verdicts now, so no verifier was launched")
+                                              for sentence in outcome.unmatched])
+        else:
+            judged = self.numbers_verifier(attempt, outcome) if outcome.unmatched else numbers.Judged(outcome)
+        return [numbers.acceptance_result(judged)]
+
+    def _verify_numbers(self, attempt, outcome):
+        """One fresh verifier per sentence whose numbers code could not match, on the verifier the table gives for its author."""
+        return numbers.judge(self.project, outcome, ticket=attempt.id, author_model=attempt.tier.model, fall_back=self._falls_back(),
+                             policy=self.policy, harness_root=self.harness_root, ledger=self.ledger, cwd=attempt.worktree)
+
     def _classify(self, texts):
         """The classifier's classes for `texts`, one haiku batch through the launcher for what the cache does not hold.
 
@@ -3956,6 +4006,37 @@ class Conductor:
         if outcome.parameters:  # entries come only from a result that gave some, so it is the envelope's own mapping
             attempt.result["parameters"] = outcome.parameters
         return [outcome.acceptance_result()]
+
+    def _repeats_check(self, attempt, results=()):
+        """The repeated-claims check (decision 17; ticket 95) as one acceptance result; none when nothing could be repeated.
+
+        A new passage or finding that repeats a current passage without naming it in `replaces` sends the worker back with
+        the passage it repeats. The embedding model runs with no tokens; the confirmer is a session on Opus, so a pacing
+        stop leaves the check listed rather than run, and so does a model or a confirmer that cannot answer. A confirmer a
+        usage window refused fails the check and pauses the run, as the code reading does. It is not run when an earlier
+        result already sends the worker back: the text it would read is about to change.
+        """
+        from wayline import repeats  # the repeated-claims check reads every section
+        result = attempt.result or {}
+        if not result.get("passages") and not result.get("findings"):
+            return []
+        if any(item.get("exit_code") != 0 for item in results):
+            return []
+        if schedule.holds_model_work(self.action):
+            return [{"cmd": repeats.REPEATS_CHECK, "exit_code": 0, "seconds": 0.0,
+                     "tail": "listed, not failed: repeats not checked: a pacing stop launches no model"}]
+        try:
+            checked = repeats.check_result(self.project, result, run=self.repeats_run, tools=self.repeats_tools, policy=self.policy,
+                                           harness_root=self.harness_root)
+        except (repeats.RepeatsError, ValueError, OSError) as failure:
+            return [{"cmd": repeats.REPEATS_CHECK, "exit_code": 0, "seconds": 0.0,
+                     "tail": "listed, not failed: repeats not checked: %s" % failure}]
+        if checked is None:
+            return []
+        if checked.refused is not None:
+            # A closed window, not a verdict on the text: the run pauses, and the check runs again on the resume after it.
+            self._pause(checked.refused.limit, "ticket %d's repeated-claims check" % attempt.id)
+        return [checked.acceptance_result()]
 
     def _timeout(self):
         timeout = self.policy.get("acceptance_timeout_s", 600)
@@ -4080,6 +4161,7 @@ class Conductor:
                 attempt.no_diff = True
             self.ledger.append_event(INTEGRATED, integrated,
                                      ticket=attempt.id)
+        self._integrated_now = True  # the general report renders at the end of this wave (ticket 90)
         self.say("  integrated %s into main as %s%s" % (BRANCH % attempt.id, commit[:12],
                                                         " (resolved by the integrator)" if resolved_by == INTEGRATOR else ""))
         return "done"
@@ -5282,7 +5364,7 @@ class Conductor:
         return self.view.stall + 1 >= self._stall_waves() and self._radius() == "strict"
 
     def _render_report(self):
-        """P7 at a strict stall: `REPORT.md` rendered from the ledger, offline when the writer cannot run; never raises."""
+        """P7 at a strict stall: `REPORT.md` rendered from the ledger, offline when the classifier cannot run; never raises."""
         from wayline import provenance  # the provenance module pulls in the gates and the report
         for offline in (False, True):
             try:

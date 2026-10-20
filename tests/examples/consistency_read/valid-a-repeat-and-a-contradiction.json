@@ -1,0 +1,20 @@
+{
+  "groups": [
+    {
+      "kind": "repeat",
+      "passages": [
+        "P4",
+        "P8"
+      ],
+      "why": "both say synchrony rises with colony size"
+    },
+    {
+      "kind": "contradiction",
+      "passages": [
+        "P5",
+        "P11"
+      ],
+      "why": "lowest at dusk against peaks at dusk"
+    }
+  ]
+}

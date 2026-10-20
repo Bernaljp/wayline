@@ -30,6 +30,10 @@ takes; the decider's share is as it was. The owner's answer is recorded through 
 as an `objective` event: a recorded objective moves to the status chosen (refused when it was answered,
 dropped, or reframed since it was asked), and a proposed one is recorded with it, its new id kept on
 the settled record and on any revision of it.
+
+**The repeated claims of a start midway** (decision 17; ticket 95). While the project is in its setup, each pair
+of inherited claims the repeated-claims check lists for the grill (a contradiction standing, a pair a check kept
+apart, a pair the confirmer flagged) is one human-only question, asked once (`with_repeat_questions`).
 """
 
 import argparse
@@ -521,8 +525,10 @@ def _seeded(project, records, events):
     """`records` with a first-tier question for every objective no question names yet, while the project is in its setup.
 
     Before the first tier, and after it only once the position memo is written: a tree asked before objectives
-    existed and with no memo since is left as it is.
+    existed and with no memo since is left as it is. A question on a contradiction the owner has since marked not one
+    is settled with that mark at any time (ticket 95).
     """
+    records = with_dismissed_contradictions(project, records)
     if not in_setup(events) or (_current_tier(records) and not Ledger(project).path(POSITION_JSON).is_file()):
         return records
     from wayline.objectives import ObjectivesUnreadable, read_objectives  # the objectives module imports the gates
@@ -536,6 +542,7 @@ def _seeded(project, records, events):
         memo = None
     from wayline import verification  # the verification module reads the sections and the concerns
     records = with_objective_questions(records, objective_questions(objectives, memo, verification.midway(project)))
+    records = with_repeat_questions(project, records)
     if memo is None or any(record.get("objective") and not _settled(record) for record in records):
         return records  # the concerns' questions name the objectives taken, so they wait for the first tier's answers
     return with_material_question(project, with_concern_questions(project, records, memo, objectives))
@@ -599,6 +606,45 @@ def with_concern_questions(project, records, memo, objectives):
             continue
         records, _ = with_question(records, spec["question"], options=spec["options"], recommended=spec["recommended"],
                                    evidence=spec["evidence"], human_only=True, concerns=spec["concerns"])
+    return records
+
+
+def with_repeat_questions(project, records):
+    """`records` with one human-only question per pair the repeated-claims check lists for the grill (ticket 95).
+
+    Each contradicting pair of inherited claims standing, and each pair kept apart or flagged by the confirmer, is asked
+    once: a question the tree already asks, in any spelling, is not asked again. A contradiction the owner marked not one
+    is no longer listed (`with_dismissed_contradictions` settles the question on it). Reads only.
+    """
+    from wayline import repeats  # the repeated-claims check reads the sections and the batches
+
+    try:
+        listed = repeats.grill_items(project)
+    except (repeats.RepeatsError, LedgerError, OSError, ValueError) as failure:
+        raise ProjectError("the repeated claims cannot be read: %s" % failure) from None
+    for spec in listed:
+        if _normal(spec["question"]) in {_normal(record["question"]) for record in records}:
+            continue
+        records, _ = with_question(records, spec["question"], options=spec["options"], recommended=spec["recommended"],
+                                   evidence=spec["evidence"], human_only=True)
+    return records
+
+
+def with_dismissed_contradictions(project, records):
+    """`records` with each open question on a contradiction the owner marked not one settled by that mark (ticket 95).
+
+    The mark is the owner's answer, given in the marks view, so the question is answered `not a contradiction` by them,
+    with the batch and item as its rationale. Reads only.
+    """
+    from wayline import repeats  # the repeated-claims check reads the sections and the batches
+
+    try:
+        marked = repeats.dismissed(project)
+    except (repeats.RepeatsError, LedgerError, OSError, ValueError) as failure:
+        raise ProjectError("the repeated claims cannot be read: %s" % failure) from None
+    for evidence, why in marked:
+        for record in [record for record in records if evidence in (record.get("evidence") or []) and not _settled(record)]:
+            records, _ = with_answer(records, record["id"], "not a contradiction", why, decided_by="human")
     return records
 
 

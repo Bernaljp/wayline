@@ -496,7 +496,7 @@ class ReportTest(RunCase):
         tickets.write_ticket(self.book, fields, "## Demo\n\nA page a person reads.\n" + body)
 
     def fifth(self):
-        self.render(draft=False, offline=True)
+        self.render(offline=True)
         return self.account("Runs")
 
     def test_a_run_whose_code_added_no_public_api_says_nothing_of_a_site(self):

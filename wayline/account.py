@@ -18,8 +18,11 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
   harness changes (one wording: `wayline evolve --apply <id>`), the important unresolved references, the reports
   edited and not yet turned into passages, and a code repository still private at the order. The outline's open
   proposals join this list as one line with their count once the outline proposes (ticket 104).
-- **Changed without asking you**: the owner's passages a later passage replaced, with its reason and evidence.
-  The merges made at setup join it once the repeated-claims check makes them (ticket 95).
+- **Changed without asking you**: every passage and finding journaled with `replaces_owner` (ticket 88), each with
+  the owner's passage (or the consolidation made from the owner's text) it replaced, its reason, and its evidence; a
+  consolidation the owner asked for is not listed (ticket 90).
+  Every merge of a repeated inherited claim made at setup that still stands follows (ticket 95, `wayline.repeats`);
+  the render takes the marks on the merges and contradictions batches first, so a merge marked split has left it.
 - **Runs**: the latest run in full, earlier runs one table row each. Tokens, turns, and minutes come from
   `ticket_result`; no dollar figure is journaled, so none is shown.
 - **Not pursued**: the parked proposals with their reason and the parked tickets. Objective proposals not upheld
@@ -59,7 +62,7 @@ from pathlib import Path
 from wayline import batches, grill, pacing, replay, tickets
 from wayline.cli import parse_args
 from wayline.ledger import (
-    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, PACING, PAPER_STARTED, PASSAGE, PAUSED,
+    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, FINDING, PACING, PAPER_STARTED, PASSAGE, PAUSED,
     PROMOTED, PROPOSAL_ADMITTED, PROPOSAL_PARKED, REPORT_RENDERED, REVIEWED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
     TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN,
     TICKET_RESULT, VERDICT, WAVE, Ledger, LedgerError, now_ts,
@@ -378,22 +381,51 @@ def _private_repository(context):
 
 
 def _changed(context):
+    """Every passage and finding the journal carries with `replaces_owner` (ticket 88): each replaced an owner's passage, or a
+    consolidation made from the owner's text, without asking. A consolidation the owner asked for is never flagged.
+
+    The id a replacement names may be one the owner's passage had already replaced (the ledger follows it to what
+    stood in its place), so the passage named is the owner's one standing there when the replacement came.
+    """
     from wayline import sections
     try:
-        passages = sections.read_passages(context.project)
+        log = sections.read_passages(context.project) + sections.read_findings(context.project)
     except (OSError, ValueError, LedgerError):
-        return []
-    owners = {item.get("id"): item for item in passages if item.get("by") == OWNER}
+        log = []
     lines = []
-    for item in passages:
-        replaced = owners.get(item.get("replaces"))
-        if replaced is None or item.get("by") == OWNER:
+    for event in context.events:
+        name, payload = event.get("event"), event.get("payload") or {}
+        if name not in (PASSAGE, FINDING) or not payload.get("replaces_owner"):
             continue
+        replaced = _owners_passage(log, payload.get("replaces"), payload.get("id"), str(event.get("ts") or ""))
+        section = replaced.get("section") or (payload.get("section") if name == PASSAGE else "results")
+        by = payload.get("by") if name == PASSAGE else "a finding of ticket %s" % payload.get("ticket")
         lines.append("- Your passage %s in %s, \"%s\", was replaced by %s (%s): %s%s." % (
-            replaced["id"], sections.TITLES.get(replaced.get("section"), replaced.get("section")), _one_line(replaced.get("text")),
-            item.get("id"), item.get("by"), _one_line(item.get("reason") or "no reason was given"),
-            "; the evidence %s it" % item["evidence"] if item.get("evidence") else ""))
-    return lines
+            replaced.get("id") or payload.get("replaces"), sections.TITLES.get(section, section),
+            _one_line(replaced.get("text")) or "no longer in the log", payload.get("id"), by,
+            _one_line(payload.get("reason") or "no reason was given"),
+            "; the evidence %s it" % payload["evidence"] if payload.get("evidence") else ""))
+    from wayline import repeats  # the repeated-claims check reads the sections and the batches
+    return lines + repeats.account_lines(context.project)
+
+
+def _owners_passage(log, replaces, replacing, before):
+    """The owner's passage (or consolidation of the owner's text) at `replaces` or standing in its place by the time
+    `replacing` came (`before`, its event's time); `{}` when the log holds none."""
+    children = {}
+    for item in log:
+        if item.get("replaces") and item.get("id") != replacing and str(item.get("ts") or "") <= before:
+            children.setdefault(item["replaces"], []).append(item)
+    queue, seen = [item for item in log if item.get("id") == replaces], set()
+    while queue:
+        item = queue.pop(0)
+        if item.get("id") in seen:
+            continue
+        seen.add(item.get("id"))
+        if item.get("by") in (OWNER, "consolidation"):
+            return item
+        queue.extend(children.get(item.get("id"), []))
+    return {}
 
 
 # --- runs -------------------------------------------------------------------------------------------------
@@ -941,6 +973,11 @@ def _render(project, book, now, told):
     """`render_account` under the ledger's lock; the notices a reversal owes are put in `told`."""
     problems = []
     settle_marks(project, told, problems)
+    from wayline import repeats
+    try:
+        problems.extend(repeats.take_marks(project))  # a merge the owner split leaves "Changed without asking you"
+    except (repeats.RepeatsError, ValueError, OSError) as failure:
+        problems.append("the marks on the merges and contradictions could not be taken: %s" % failure)
     context = _context(project, now)
     context.notes.extend(problems)
     edited = take_edit(project, ACCOUNT, REPORT_KIND, context.events)

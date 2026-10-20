@@ -9,9 +9,15 @@ import json
 import subprocess
 
 from tests.projects import ProjectTestCase
-from wayline import provenance, reproduce, resources
+from wayline import provenance, reproduce, resources, sections
 from wayline.ledger import Ledger
 from wayline.project import init_project
+
+
+def file_finding(ledger, identifier, text, locator, ticket, replaces=None):
+    """One finding through the ledger call the conductor makes when it closes a ticket."""
+    return sections.file_finding(ledger, {"id": identifier, "ticket": ticket, "text": text, "provenance": [locator], "negative": False,
+                                          "heading": None, "replaces": replaces, "objectives": []})
 
 OWNER_PART = "Cite this repository as Varga (2026).\n\nThe colony data are on Zenodo, record 123.\n"
 
@@ -64,7 +70,7 @@ class ReproduceCase(ProjectTestCase):
         out.parent.mkdir(parents=True)
         out.write_text('{"r": 0.91}\n')
         provenance.register_artifact(self.ledger, "results/t3-a1/metrics.json", "t3-1", "t3-a1", 3)
-        self.first = provenance.add_finding(self.ledger, "Synchrony rises to r = 0.91.", "results/t3-a1/metrics.json#r", 3)
+        self.first = file_finding(self.ledger, "t3-a1-f1", "Synchrony rises to r = 0.91.", "results/t3-a1/metrics.json#r", 3)
 
     def ticket_run(self):
         self.later = git(self.project, "rev-parse", "main")
@@ -133,7 +139,7 @@ class TheOwnersPartTest(ReproduceCase):
         readme = path.read_text()
         begin = readme.index(reproduce.OWNER_BEGIN) + len(reproduce.OWNER_BEGIN)
         path.write_text(readme[:begin] + "\n" + OWNER_PART + readme[readme.index(reproduce.OWNER_END):])
-        provenance.add_finding(self.ledger, "A quick run agrees.", "results/t4-a1/quick.csv#r", 4)
+        file_finding(self.ledger, "t4-a1-f1", "A quick run agrees.", "results/t4-a1/quick.csv#r", 4)
         reproduce.render(self.project)
         self.assertIn(reproduce.OWNER_BEGIN + "\n" + OWNER_PART + reproduce.OWNER_END, path.read_text())
 
@@ -147,8 +153,8 @@ class TheOwnersPartTest(ReproduceCase):
 class AReplacedFindingTest(ReproduceCase):
     def test_a_finding_replaced_by_another_changes_the_runs_listed(self):
         reproduce.render(self.project)
-        provenance.add_finding(self.ledger, "Synchrony is r = 0.88 on the quick run.", "results/t4-a1/quick.csv#r", 4,
-                               replaces=self.first["id"])
+        file_finding(self.ledger, "t4-a1-f1", "Synchrony is r = 0.88 on the quick run.", "results/t4-a1/quick.csv#r", 4,
+                     replaces=self.first["id"])
         reproduce.render(self.project)
         runs = [run["run_id"] for result in self.rendered()["results"] for run in result["runs"]]
         self.assertEqual(runs, ["t4-a1"])
@@ -177,7 +183,7 @@ class PathsTheRepositoryHoldsTest(ReproduceCase):
         (session / "resume-1").mkdir()
         (session / "resume-1" / "result.json").write_text(json.dumps({"commands_run": [
             "cd %s && python3 -c \"open('results/t4-a1/quick.csv')\" --out ../results/t4-a1/quick.csv" % self.project]}))
-        provenance.add_finding(self.ledger, "A quick run agrees.", "results/t4-a1/quick.csv#r", 4)
+        file_finding(self.ledger, "t4-a1-f1", "A quick run agrees.", "results/t4-a1/quick.csv#r", 4)
         reproduce.render(self.project)
         run = self.rendered()["results"][1]["runs"][0]
         self.assertEqual(run["command"], ["python3 train.py --quick",

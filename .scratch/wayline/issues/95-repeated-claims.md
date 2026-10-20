@@ -20,19 +20,19 @@ Not part of this ticket:
 
 **Blocked by:** 75 - The harness's tools; 79 - Batches and marks; 93 - Inherited passages. It blocks 111 and 112.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#242](https://github.com/Bernaljp/wayline/issues/242) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Inherited passages and repeated claims; Setup, at every autonomy: the merges and contradictions batch); Implementation Decision 14 (the policy table: the consistency read's and confirmer's rungs, if they land as policy); M8 criterion 9; user story 138.
 
-- [ ] At setup, one consistency read on `opus high` per inherited set returns repeat groups and contradictions, through the launcher.
-- [ ] The embedding model proposes pairwise repeats with no tokens. The Opus confirmer labels each pair same, contradicting, or different, and sees each sentence's heading.
-- [ ] A merge writes one passage whose kept text is either occurrence verbatim or a combined sentence, citing every occurrence's `doc` tag and every work any cites. The confirmer's no-loss check and code's no-addition check (numbers, symbols, citations) both pass, or the occurrences stay apart with no fallback.
-- [ ] A pair kept apart can carry a flag listing it for the grill. Contradicting pairs both stay, listed for the grill and attached to the verification of the result they touch.
-- [ ] The merges and contradictions form one batch of ticket 79 with the marks right or split, and real or not a contradiction. A split mark undoes the merge and restores both passages, and the merges appear in the account under "Changed without asking you".
-- [ ] At acceptance, a ticket's new passage or finding that repeats a current passage without naming it in `replaces` sends the worker back with the passage it repeats.
-- [ ] The old TF-IDF pre-filter and Haiku confirmer are removed from this path.
-- [ ] Tests on the ledger seam over a temporary project with the synthetic start-midway project of ticket 78. The consistency read and the confirmer are scripted through the fake launcher, and the embedding model runs through the tool runner's recordings. They cover merges that pass, a merge refused by each check, a contradiction, a flagged pair, the batch and its marks, and the acceptance check sending a worker back.
-- [ ] Any policy key added (rungs, thresholds) lands in decision 14's table in the same commit.
-- [ ] `python -m unittest` passes.
+- [x] At setup, one consistency read on `opus high` per inherited set returns repeat groups and contradictions, through the launcher.
+- [x] The embedding model proposes pairwise repeats with no tokens. The Opus confirmer labels each pair same, contradicting, or different, and sees each sentence's heading.
+- [x] A merge writes one passage whose kept text is either occurrence verbatim or a combined sentence, citing every occurrence's `doc` tag and every work any cites. The confirmer's no-loss check and code's no-addition check (numbers, symbols, citations) both pass, or the occurrences stay apart with no fallback.
+- [x] A pair kept apart can carry a flag listing it for the grill. Contradicting pairs both stay, listed for the grill and attached to the verification of the result they touch.
+- [x] The merges and contradictions form one batch of ticket 79 with the marks right or split, and real or not a contradiction. A split mark undoes the merge and restores both passages, and the merges appear in the account under "Changed without asking you".
+- [x] At acceptance, a ticket's new passage or finding that repeats a current passage without naming it in `replaces` sends the worker back with the passage it repeats.
+- [x] The old TF-IDF pre-filter and Haiku confirmer are removed from this path.
+- [x] Tests on the ledger seam over a temporary project with the synthetic start-midway project of ticket 78. The consistency read and the confirmer are scripted through the fake launcher, and the embedding model runs through the tool runner's recordings. They cover merges that pass, a merge refused by each check, a contradiction, a flagged pair, the batch and its marks, and the acceptance check sending a worker back.
+- [x] Any policy key added (rungs, thresholds) lands in decision 14's table in the same commit.
+- [x] `python -m unittest` passes.

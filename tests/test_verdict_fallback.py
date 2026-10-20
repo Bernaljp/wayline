@@ -350,10 +350,10 @@ class ClaimFallbackTest(RunCase):
 
     def setUp(self):
         super().setUp()
-        on_fable(self.project, "verifier.opus", "writer", SEVEN_RUNG_LADDER)  # findings written on Opus are read on Fable; the writer drafts on Fable
+        on_fable(self.project, "verifier.opus", SEVEN_RUNG_LADDER)  # findings written on Opus are read on Fable
         self.render()
 
-    def verify(self, scripted=7):
+    def verify(self, scripted=5):
         with worker.use_fake() as fake:
             for _ in range(scripted):
                 fake.script(respond=lambda request, message: verdict(), role="verifier")
@@ -362,10 +362,10 @@ class ClaimFallbackTest(RunCase):
         return outcome
 
     def tiers(self):
-        """`{marker: (model, effort)}` for Sonnet's finding, Opus's finding, and the Fable writer's prose."""
+        """`{marker: (model, effort)}` for Sonnet's finding and Opus's finding; every claim of the report is a finding's."""
         found = {}
         for call in self.calls:
-            for marker in ("`f-0001`", "`f-0002`", "Interaction terms carry"):
+            for marker in ("`f-0001`", "`f-0002`"):
                 if marker in call.request.prompt:
                     found[marker] = (call.request.model, call.request.effort)
         return found
@@ -377,8 +377,8 @@ class ClaimFallbackTest(RunCase):
         hold(self.book)
         set_model_fallback(self.project, "auto")
         outcome = self.verify()
-        self.assertEqual((len(outcome["passed"]), outcome["waiting"], len(outcome["fell_back"])), (7, [], 2))
-        self.assertEqual(self.tiers(), {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "high"), "Interaction terms carry": ("opus", "max")})
+        self.assertEqual((len(outcome["passed"]), outcome["waiting"], len(outcome["fell_back"])), (5, [], 2))
+        self.assertEqual(self.tiers(), {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "high")})
         fell_back = [payload for payload in self.claim_verdicts() if payload.get("fallback_from")]
         self.assertEqual(len(fell_back), 2, "the claims of the two findings written on Opus, tickets 2 and 4")
         self.assertEqual({(payload["model"], payload["fallback_from"]) for payload in fell_back}, {("claude-opus-5", "r7 fable high")})
@@ -387,12 +387,12 @@ class ClaimFallbackTest(RunCase):
         hold(self.book)
         set_model_fallback(self.project, "wait")
         first = self.verify()
-        self.assertEqual((len(first["passed"]), len(first["waiting"])), (5, 2))
+        self.assertEqual((len(first["passed"]), len(first["waiting"])), (3, 2))
         self.assertNotIn("fable", [call.request.model for call in self.calls])
         self.assertFalse({payload["subject"] for payload in self.claim_verdicts()} & set(first["waiting"]))
         self.book.append_event("unpaused", {"model": "fable"})
         second = self.verify()
-        self.assertEqual((second["already_verdicted"], sorted(second["passed"]), second["waiting"]), (5, sorted(first["waiting"]), []))
+        self.assertEqual((second["already_verdicted"], sorted(second["passed"]), second["waiting"]), (3, sorted(first["waiting"]), []))
         self.assertEqual({call.request.model for call in self.calls}, {"fable"})
 
     def test_report_verify_lists_the_claims_it_judged_by_fallback_in_the_report_it_leaves(self):
@@ -401,7 +401,7 @@ class ClaimFallbackTest(RunCase):
         renders = len(self.report_events())
         out = io.StringIO()
         with worker.use_fake() as fake:
-            for _ in range(7):
+            for _ in range(5):
                 fake.script(respond=lambda request, message: verdict(), role="verifier")
             with redirect_stdout(out), redirect_stderr(io.StringIO()):
                 code = cli.main(["report", "--project", str(self.project), "--verify"])
@@ -418,7 +418,7 @@ class ClaimFallbackTest(RunCase):
         self.verify()
         self.book.append_event("unpaused", {"model": "fable"})
         again = self.verify(scripted=0)
-        self.assertEqual((again["already_verdicted"], self.calls), (7, []))
+        self.assertEqual((again["already_verdicted"], self.calls), (5, []))
 
 
 class SpotCheckFallbackTest(AbsorbTestCase):

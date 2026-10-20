@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "repeats",
+  "description": "research/repeats.json (Implementation Decision 17; ticket 95), written only by wayline/repeats.py through the ledger: the inherited claims the consistency read has read, and every pair of claims the read or the embedding net proposed with the confirmer's label and what came of it: merged into one passage, kept apart (with why), listed as a contradiction, or different; a merge the owner split, and a contradiction the owner marked not one. Merges and contradictions are items of batches (ticket 79), named here by batch and item.",
+  "type": "object",
+  "required": ["read", "pairs"],
+  "additionalProperties": false,
+  "properties": {
+    "read": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "the inherited claims a consistency read has read; a set holding a claim outside it is read again"},
+    "pending": {
+      "type": "array",
+      "description": "pairs the consistency read named that waited because this check merged one of their claims, with the merged passage in its place: the next check proposes them",
+      "items": {
+        "type": "object",
+        "required": ["a", "b", "found_by"],
+        "additionalProperties": false,
+        "properties": {
+          "a": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+          "b": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+          "found_by": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["consistency"]}}
+        }
+      }
+    },
+    "pairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["a", "b", "found_by", "similarity", "label", "outcome", "kept", "text", "passage", "why", "lost", "added", "flag",
+                     "results", "batch", "item", "at"],
+        "additionalProperties": false,
+        "properties": {
+          "a": {"type": "string", "pattern": "^P[1-9][0-9]*$", "description": "the first occurrence, in reading order"},
+          "b": {"type": "string", "pattern": "^P[1-9][0-9]*$", "description": "the second occurrence"},
+          "found_by": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["consistency", "embedding", "acceptance"]}},
+          "similarity": {"type": ["number", "null"], "description": "the embedding model's cosine of the two, when the net proposed the pair"},
+          "label": {"type": "string", "enum": ["same", "contradicting", "different"], "description": "the confirmer's label"},
+          "outcome": {"type": "string", "enum": ["merged", "apart", "contradiction", "different", "split", "split_late", "dismissed"],
+                      "description": "merged into one passage; apart, a repeat a check refused to merge; contradiction, both kept and listed; different; split, a merge the owner undid; split_late, a split marked after a later passage replaced the merged one, so nothing was restored; dismissed, a contradiction the owner marked not one"},
+          "restored": {"type": "array", "maxItems": 2, "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "on a merge the owner split: the passages that restored its two occurrences, a pair the split answers, so no later check merges them again"},
+          "kept": {"type": ["string", "null"], "enum": ["first", "second", "combined", null]},
+          "text": {"type": ["string", "null"], "description": "the kept text of a merge, without tags"},
+          "passage": {"type": ["string", "null"], "pattern": "^P[1-9][0-9]*$", "description": "the merged passage"},
+          "why": {"type": ["string", "null"], "description": "the confirmer's reason, and why a merge was refused"},
+          "lost": {"type": ["string", "null"], "description": "what the confirmer found a merge would lose"},
+          "added": {"type": "array", "items": {"type": "string"}, "description": "the numbers, symbols, and citations a merge's kept text has that neither occurrence has"},
+          "flag": {"type": "boolean", "description": "listed for the grill: a pair kept apart, or one the confirmer flagged"},
+          "results": {"type": "array", "items": {"type": "string"}, "description": "on a contradiction: the Results headings its claims stand under, whose verification it goes to"},
+          "batch": {"type": ["string", "null"], "pattern": "^B[1-9][0-9]*$", "description": "the merges or contradictions batch it is an item of"},
+          "item": {"type": ["integer", "null"], "minimum": 1},
+          "at": {"type": "string", "pattern": "\\S", "description": "when it was labelled"}
+        }
+      }
+    }
+  }
+}

@@ -26,7 +26,7 @@ sys.path.insert(0, str(HERE.parents[2]))
 from wayline.dossier import CONSULTANT_QUESTION, PRIMARY_AT_INTAKE  # noqa: E402
 from wayline.kb import make_node, write_node  # noqa: E402
 from wayline.ledger import Ledger  # noqa: E402
-from wayline.provenance import render_findings, sha256_of  # noqa: E402
+from wayline.provenance import sha256_of  # noqa: E402
 from wayline.tickets import write_ticket  # noqa: E402
 
 CLAIM = "SPEC.md#c1-interaction-terms"
@@ -55,15 +55,19 @@ PRODUCED_BY = {
     "results/depth/summary.json": ("t4-a1", "j-0003", 4),
 }
 
+# Each finding stands under its Results heading, which names the question it answers (decision 17): the results
+# cluster by heading, so the general report has three, one of them negative.
 FINDINGS = [
     ("f-0001", 1, "The two label sources disagree on 3.1 percent of the held-out rows.",
-     ["results/features/summary.json#label_disagreement"], False),
+     ["results/features/summary.json#label_disagreement"], False, "Do the two label sources agree?"),
     ("f-0002", 2, "The baseline reaches a held-out AUROC of 0.812, with a standard deviation of 0.004 over three seeds.",
-     ["results/baseline/summary.json#auroc_mean", "results/baseline/summary.json#auroc_sd"], False),
+     ["results/baseline/summary.json#auroc_mean", "results/baseline/summary.json#auroc_sd"], False,
+     "Do interaction terms raise the held-out AUROC?"),
     ("f-0003", 3, "Pairwise interaction terms raise the held-out AUROC to 0.861. That is more than ten baseline standard deviations above the baseline.",
-     ["results/interactions/summary.json#auroc_mean", "results/baseline/summary.json#auroc_sd"], False),
+     ["results/interactions/summary.json#auroc_mean", "results/baseline/summary.json#auroc_sd"], False,
+     "Do interaction terms raise the held-out AUROC?"),
     ("f-0004", 4, "Doubling the model depth without interaction terms leaves the held-out AUROC at 0.815, within one standard deviation of the baseline.",
-     ["results/depth/summary.json#auroc_mean", "results/depth/summary.json#auroc_sd"], True),
+     ["results/depth/summary.json#auroc_mean", "results/depth/summary.json#auroc_sd"], True, "Does depth alone do it?"),
 ]
 
 
@@ -95,7 +99,7 @@ TICKETS = [
     ticket(5, "Plot the goal trajectory", "figure", 2, "done", "figure-designer", CLAIM, blocked_by=[3],
            touches=["figures/trajectory/"], proposed_by="worker:3", demo="One trajectory figure."),
     ticket(6, "Which label source wins where the two disagree?", "decision", 1, "open", "decider",
-           "research/findings.md#ticket-1", blocking="subgraph", human_only=True),
+           "research/findings.jsonl#f-0001", blocking="subgraph", human_only=True),
     ticket(7, "Convert the second reference's PDF", "dossier", 2, "needs_human", "reader", "research/INTAKE.md#references",
            touches=["research/refs/paper-b/"]),
     ticket(8, "Which held-out split does the goal read?", "decision", 1, "done", "decider", "research/objectives.json",
@@ -213,12 +217,13 @@ def main():
                       ticket=owner, minutes=0)
 
     def finding(identifier):
-        for number, owner, text, provenance, negative in FINDINGS:
+        for number, owner, text, provenance, negative, heading in FINDINGS:
             if owner == identifier:
-                record = {"id": number, "ticket": owner, "text": text, "provenance": provenance, "negative": negative, "ts": clock.tick()}
+                record = {"id": number, "ticket": owner, "text": text, "provenance": provenance, "negative": negative,
+                          "heading": heading, "ts": clock.tick()}
                 book.append_record("findings.jsonl", record)
-                event("finding", {"id": number, "ticket": owner, "text": text, "provenance": provenance, "negative": negative},
-                      ticket=owner, minutes=0)
+                event("finding", {"id": number, "ticket": owner, "text": text, "provenance": provenance, "negative": negative,
+                                  "heading": heading}, ticket=owner, minutes=0)
 
     def closed(identifier, verdict_model=None, verdict_type="result", fallback_from=None):
         event("acceptance", {"ticket": identifier, "attempt": 1, "where": "main", "pass": True,
@@ -282,7 +287,6 @@ def main():
     event("run_ended", {"reason": "frontier_empty"})
     event("notified", {"event": "run_ended", "channel": "hermes", "ok": True}, minutes=0)
 
-    render_findings(book)
     (book.research / ".lock").unlink(missing_ok=True)
 
 

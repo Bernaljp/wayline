@@ -193,17 +193,18 @@ the list, and a done `docs` ticket earns one read of the site's clarity and comp
 package's purpose (`gates.DOCS_READ`) in place of the read its difficulty would give it. Its Bash
 rules are the coder's with `wayline docs *` added and no `Agent`: a site is written in one session.
 
-## The writer is launched by code twice, and takes the `writing` tickets
+## The writer is launched by code, and takes the `writing` tickets
 
-`writer` takes every `writing` ticket as a ticket worker, and code launches it twice more, read-only
-and on `policy.roles.writer` rather than a rung: `wayline report` asks it for the report's paragraphs
-(`report_prose`), and `wayline paper` for the whole manuscript (`paper_draft`, ticket 53). In both
-the ledger writes what it returns, since nothing under `research/` is a session's to write. The
-paper's session is resumed with each failed build's list (the linter, the venue's seven checks, a
+`writer` takes every `writing` ticket as a ticket worker, and code launches it read-only and on
+`policy.roles.writer` rather than a rung for `wayline paper`, the whole manuscript (`paper_draft`,
+ticket 53), and for `wayline consolidate`, a section the owner asked to have rewritten (ticket 88).
+The ledger writes what it returns, since nothing under `research/` is a session's to write. The
+general report, `REPORT.md`, is rendered by code alone since ticket 90: no writer drafts any of it.
+The paper's session is resumed with each failed build's list (the linter, the venue's seven checks, a
 figure the figure role could not place), and it is given the open `writing` tickets a failed kill
 argument or the independent read filed against the paper. The prompt carries the venue's `guidelines.json`, the
-findings with their tags, and the references a `ref` tag can name; `agent.md` stays the C8 rule both
-launches share.
+findings with their tags, and the references a `ref` tag can name; `agent.md` stays the C8 rule every
+launch shares.
 
 ## Why `disallowed_tools` names tools the harness never asked for
 
@@ -251,3 +252,16 @@ its prompt. It returns `concern_split`: each point verbatim with every critique 
 and summary left out, a two-point item split, and the inherited claims it targets. Code keeps a source
 only when its words are in that critique, locates it at its block, keeps a target only when it is an
 inherited claim standing now, and merges near-identical points from different critiques.
+
+## The consistency reader and the confirmer check repeated claims
+
+`consistency-reader` and `confirmer` are not assigned to tickets either (`kinds` empty); `wayline/repeats.py`
+launches them (ticket 95), with no tools, everything they read in the prompt. At setup, `wayline document
+repeats` launches one session of `consistency-reader` on `policy.roles.consistency-reader` (Opus at high
+effort) over every inherited claim at once, which returns `consistency_read`: the repeat groups and the
+contradictions. The pairs those groups yield, and the pairs the embedding model proposes with no tokens, go
+to one session of `confirmer` (Opus at medium effort), which sees each sentence with its heading and returns
+`repeat_labels`: same, contradicting, or different, and for a pair that is the same the text a merge keeps.
+A second, fresh `confirmer` session, which did not write the kept texts, returns `merge_check`: whether each
+merge loses anything. Code checks that nothing is added. At each ticket's acceptance the same confirmer labels
+the pairs the embedding net finds between the ticket's new passages and findings and the current ones.

@@ -14,7 +14,7 @@ from those records code renders into `code/`:
   `OWNER_BEGIN` and `OWNER_END`. A README with no markers (an absorbed clone's) is kept whole as that part.
 
 A result, until the Results headings group them, is the findings of one ticket. A finding another replaces
-(`provenance.add_finding(..., replaces=)`) is no longer current, so the runs it cited drop out.
+(its `replaces`, as `sections.file_finding` records it) is no longer current, so the runs it cited drop out.
 
 The code repository never holds `research/`, `jobs/`, or `results/`, so no rendered file names a path under
 them: a path under `code/` is given relative to `code/`, and any other path by its file name alone, an output

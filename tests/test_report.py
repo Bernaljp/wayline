@@ -1,8 +1,8 @@
-"""Provenance tags, the classifier, the linter, the sampled verdicts, and REPORT.md (ticket 40).
+"""Provenance tags, the classifier, the linter, the sampled verdicts, and REPORT.md (tickets 40 and 90).
 
 Every model call goes through the fake launcher. The classifier is answered by a responder that
-reads the numbered sentences it was actually sent; the writer and the verifier by scripted
-envelopes. What is asserted is what the owner and the next component see: the REPORT.md on disk,
+reads the numbered sentences it was actually sent; the verifier by scripted envelopes. No writer
+drafts the report: code alone writes it (ticket 90). What is asserted is what the owner and the next component see: the REPORT.md on disk,
 the cache, the journal's `report_rendered` and `verdict` events, and the writing tickets filed.
 The ledger they run against is `fixtures/projects/ended-run/`, a toy run that ended.
 """
@@ -36,12 +36,6 @@ BASELINE = "{res:t2-a1/results/baseline/summary.json#auroc_mean}"
 DEPTH = "{res:t4-a1/results/depth/summary.json#auroc_mean}"
 GROUP = "SPEC.md#c1-interaction-terms"
 
-GOOD_PROSE = {
-    "groups": [{"group": GROUP, "text": "Interaction terms carry the gain over the baseline." + INTERACTIONS + BASELINE
-                + " AUROC means the area under the receiver operating characteristic curve."}],
-    "negative_results": "Depth alone does not reach the goal." + DEPTH,
-}
-UNTAGGED_PROSE = dict(GOOD_PROSE, groups=[{"group": GROUP, "text": "Interaction terms carry the gain over the baseline."}])
 
 
 def rule(sentence):
@@ -68,17 +62,6 @@ class Classifier:
         return Envelope(structured_output={"classes": [{"n": int(number), "class": rule(text)} for number, text in found]})
 
 
-def prose(record):
-    return Envelope(structured_output=record)
-
-
-def drafts(record):
-    """The writer's answers to script: a list as given, one record repeated for every draft a render may ask for."""
-    if record is None:
-        return []
-    return record if isinstance(record, list) else [record] * 3
-
-
 def verdict(passed=True, text="The artifact holds 0.861, not a gain over the baseline.", locator="results/interactions/summary.json#auroc_mean"):
     findings = [] if passed else [{"text": text, "locator": locator, "severity": "blocker"}]
     return Envelope(structured_output={"pass": passed, "findings": findings,
@@ -99,15 +82,13 @@ class RunCase(ProjectTestCase):
         found, _ = self.book.read_events()
         return [event for event in found if event["event"] == name]
 
-    def render(self, record=GOOD_PROSE, offline=False, draft=True, verifier=None):
-        """Render with the classifier answered, the writer scripted with `record` (None scripts none)."""
+    def render(self, offline=False):
+        """Render with the classifier answered; nothing else is scripted, since code alone writes the report."""
         with worker.use_fake() as fake:
             self.classifier = Classifier()
             for _ in range(6):
                 fake.script(respond=self.classifier, role="classifier")
-            for each in drafts(record):
-                fake.script(prose(each), role="writer")
-            rendered = render_report(self.project, offline=offline, draft=draft)
+            rendered = render_report(self.project, offline=offline)
             self.calls = list(fake.calls)
         return rendered
 
@@ -129,6 +110,7 @@ class RunCase(ProjectTestCase):
         return (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
 
     def section(self, number):
+        """One numbered section of the general report, in decision 17's order (ticket 90)."""
         text = self.text()
         start = text.index("## %d. %s" % (number, SECTIONS[number - 1]))
         following = re.search(r"^## ", text[start + 3:], re.M)
@@ -303,7 +285,7 @@ class LintTest(RunCase):
     def test_a_finding_whose_artifact_was_never_manifested_does_not_resolve(self):
         record = {"id": "f-0009", "ticket": 2, "text": "The unmanifested run scores 0.9.",
                   "provenance": ["results/nowhere.json#auroc"], "negative": False, "ts": "2026-09-12T03:00:00.000Z"}
-        text = provenance._finding_item(record, provenance.read_manifest(self.project))
+        text = provenance.finding_line(record, provenance.read_manifest(self.project))
         result = self.lint(text)
         self.assertEqual([problem["problem"] for problem in result.problems], ["unresolved_res"])
         self.assertIn("results/nowhere.json is not in manifest.json", result.problems[0]["detail"])
@@ -375,10 +357,9 @@ class ReportTest(RunCase):
         super().setUp()
         self.rendered = self.render()
 
-    def test_the_sections_are_in_the_order_of_decision_11(self):
+    def test_the_sections_are_the_general_reports_in_decision_17s_order(self):
         headings = re.findall(r"^## (\d+)\. (.*)$", self.text(), re.M)
         self.assertEqual([title for _, title in headings], list(SECTIONS))
-        self.assertEqual(SECTIONS, ("Goal trajectory", "Findings by claim", "Negative results"))
 
     def test_what_wayline_did_is_in_the_account_and_no_longer_in_the_report(self):
         text = self.text()
@@ -409,26 +390,18 @@ class ReportTest(RunCase):
         self.assertNotIn("Decision ticket 8", waiting)
         self.assertNotIn("at the ladder's top rung", waiting, "no ticket here ended on the top rung")
 
-    def test_the_goal_trajectory_is_drawn_with_the_discarded_change(self):
-        third = self.section(1)
-        self.assertIn("Goal O1 (answered): `auroc`, direction `up`, target 0.85", third)
-        self.assertIn("Stopping rule: objectives", third)
-        chart = third.split("```")[1]
-        rows = [line for line in chart.splitlines() if line.strip()]
-        self.assertEqual(len(rows), 4, "three readings and the target")
-        self.assertRegex(rows[0], r"0\.812 #+\.*\|?\.*  t2-a1 +ticket 2 +kept")
-        self.assertIn("t4-a1    ticket 4    not kept", rows[2])
-        self.assertIn("^ target 0.85", rows[3])
-        self.assertGreater(rows[1].count("#"), rows[0].count("#"), "the bar grows with the metric")
-        self.assertIn("- 0.861 from run `t3-a1` (ticket 3)", third)
-        self.assertIn("- ticket 4: mean 0.815 against the best 0.861, standard deviation 0.011, seeds 3", third)
+    def test_the_goal_shows_its_kept_values_and_the_discarded_change(self):
+        goal = self.section(4)
+        self.assertIn("### O1.", goal)
+        self.assertIn("Status: answered.", goal)
+        self.assertIn("Goal: `auroc`, direction up, target 0.85", goal)
+        self.assertIn("Kept values: 0.812 from run `t2-a1` (ticket 2); 0.861 from run `t3-a1` (ticket 3).", goal)
+        self.assertIn("ticket 4: mean 0.815 against the best 0.861, standard deviation 0.011, seeds 3", goal)
 
-    def test_findings_are_grouped_by_claim_with_citations_that_resolve(self):
-        fourth = self.section(2)
-        self.assertIn("### SPEC.md#c1-interaction-terms", fourth)
-        self.assertIn("Interaction terms carry the gain over the baseline.[^", fourth)
-        self.assertRegex(fourth, r"`f-0003` \(ticket 3\): Pairwise interaction terms raise the held-out AUROC to 0\.861\.\[\^\d+\]\[\^\d+\] That is")
-        self.assertNotIn("f-0004", fourth)
+    def test_findings_render_under_their_results_with_citations_that_resolve(self):
+        beyond = self.section(5)
+        self.assertIn("### R2. Do interaction terms raise the held-out AUROC? (supported)", beyond)
+        self.assertRegex(beyond, r"`f-0003` Pairwise interaction terms raise the held-out AUROC to 0\.861\.\[\^\d+\]\[\^\d+\] That is")
         self.assertIn("`res:t3-a1/results/interactions/summary.json#auroc_mean`", self.text())
         self.assertNotIn("{res:", self.text(), "tags render as citations in the file")
 
@@ -438,10 +411,9 @@ class ReportTest(RunCase):
         self.assertIn("| 3 | experiment | accepted | result passed | fable | 41 | 25.0 |", runs)
         self.assertIn("| 4 | experiment | done | none | opus | 19 | 10.0 |", runs)
 
-    def test_negative_results_are_tagged_claims(self):
-        seventh = self.section(3)
-        self.assertIn("Depth alone does not reach the goal.[^", seventh)
-        self.assertRegex(seventh, r"`f-0004` \(ticket 4\): Doubling the model depth .*baseline\.\[\^\d+\]\[\^\d+\]")
+    def test_a_negative_result_stays_in_place_marked_and_the_table_flags_it(self):
+        self.assertRegex(self.section(5), r"`f-0004` \(negative\) Doubling the model depth .*baseline\.\[\^\d+\]\[\^\d+\]")
+        self.assertIn("| R3 Does depth alone do it? | none | **negative** | 1 current, 1 negative |", self.section(3))
 
     def test_papers_by_level_and_the_promotions_not_read_in_full_are_the_accounts_library(self):
         library = self.account("Library")
@@ -467,116 +439,56 @@ class ReportTest(RunCase):
 
     def test_report_rendered_is_journaled_with_the_digest_and_the_counts(self):
         payload = self.report_events()[-1]["payload"]
-        self.assertEqual(payload, {"sha256": provenance.sha256_of(self.rendered.path), "claims": 7, "tagged": 7, "linter_pass": True})
+        self.assertEqual(payload, {"sha256": provenance.sha256_of(self.rendered.path), "claims": 5, "tagged": 5, "linter_pass": True})
         self.assertTrue(self.rendered.lint.passed)
 
-    def test_the_writer_drafts_the_prose_through_the_launcher_read_only(self):
-        writer = [call for call in self.calls if call.request.role == "writer"]
-        self.assertEqual(len(writer), 1)
-        request = writer[0].request
-        self.assertEqual((request.model, request.effort), ("opus", "xhigh"))
-        self.assertEqual(request.schema_path.name, "report_prose.json")
-        self.assertTrue(set(request.allowed_tools) <= {"Read", "Glob", "Grep"})
-        for tool in ("Edit", "Write", "Bash"):
-            self.assertIn(tool, request.disallowed_tools)
-        self.assertIn("## Group `%s`" % GROUP, request.prompt)
-        self.assertIn("`%s`" % INTERACTIONS, request.prompt)
-        self.assertNotIn("TICKET_TOUCHES", request.env)
+    def test_no_writer_drafts_any_of_it(self):
+        self.assertEqual(self.roles_called(), ["classifier"])
 
-    def test_one_classifier_batch_covered_every_prose_sentence(self):
-        self.assertEqual(self.roles_called().count("classifier"), 1)
-        self.assertEqual(len(self.classifier.batches[0]), 8)
+    def test_one_classifier_batch_covered_every_finding_sentence(self):
+        self.assertEqual(len(self.classifier.batches), 1)
+        self.assertEqual(len(self.classifier.batches[0]), 5)
 
     def test_the_report_on_disk_passes_the_linter(self):
         result = lint_report(self.project)
         self.assertTrue(result.passed, result.problems)
-        self.assertEqual((result.claims, result.tagged), (7, 7))
+        self.assertEqual((result.claims, result.tagged), (5, 5))
 
     def test_a_rebuild_with_nothing_changed_launches_nothing(self):
-        again = self.render(record=None, offline=True)
+        again = self.render(offline=True)
         self.assertEqual(self.calls, [])
         self.assertTrue(again.lint.passed)
-        self.assertEqual(again.lint.claims, 7)
-        self.assertIn("Interaction terms carry the gain", self.text())
+        self.assertEqual(again.lint.claims, 5)
 
-    def test_a_new_finding_classifies_only_its_sentence_and_redrafts(self):
-        record = {"id": "f-0005", "ticket": 2, "text": "The seed-3 baseline scores 0.812.",
+    def test_a_new_finding_classifies_only_its_sentence(self):
+        record = {"id": "f-0005", "ticket": 2, "text": "The seed-3 baseline scores 0.812.", "heading": "Do interaction terms raise the held-out AUROC?",
                   "provenance": ["results/baseline/seed-3/summary.json#auroc"], "negative": False, "ts": "2026-09-12T03:00:00.000Z"}
         self.book.append_record("findings.jsonl", record)
         self.render()
-        self.assertEqual(self.roles_called(), ["writer", "classifier"])
-        self.assertEqual(self.classifier.batches, [[
-            "`f-0005` (ticket 2): The seed-3 baseline scores 0.812."]])
+        self.assertEqual(self.roles_called(), ["classifier"])
+        self.assertEqual(self.classifier.batches, [["`f-0005` The seed-3 baseline scores 0.812."]])
+
+
+MALFORMED = {"id": "f-0005", "ticket": 4, "text": "Depth alone does not reach the goal.{res:results/depth.json#x}", "heading": "Does depth alone do it?",
+             "provenance": ["results/depth/summary.json#auroc_mean"], "negative": True, "ts": "2026-09-12T03:00:00.000Z"}
 
 
 class LinterFailureTest(RunCase):
-    def test_untagged_writer_prose_fails_the_build_and_the_report_says_so(self):
-        rendered = self.render(record=UNTAGGED_PROSE)
-        self.assertFalse(rendered.lint.passed)
-        self.assertEqual([problem["problem"] for problem in rendered.lint.problems], ["untagged_claim"])
-        banner = self.text().split("## 1.")[0]
-        self.assertIn("The provenance linter FAILED: 7 claim sentence(s), 6 tagged.", banner)
-        self.assertIn("`untagged_claim` Interaction terms carry the gain over the baseline.", banner)
-        self.assertEqual(self.report_events()[-1]["payload"]["linter_pass"], False)
-
     def test_a_refused_tag_is_named_in_the_banner_without_becoming_a_citation_there(self):
-        broken = dict(GOOD_PROSE, negative_results="Depth alone does not reach the goal.{res:results/depth.json#x}")
-        rendered = self.render(record=broken)
+        self.book.append_record("findings.jsonl", MALFORMED)
+        rendered = self.render()
         self.assertEqual([problem["problem"] for problem in rendered.lint.problems], ["malformed_tag"])
         banner = self.text().split("## 1.")[0]
-        self.assertIn("`malformed_tag` Depth alone does not reach the goal. (tag `res:results/depth.json#x`:", banner)
+        self.assertIn("The provenance linter FAILED", banner)
+        self.assertIn("`malformed_tag` `f-0005` (negative) Depth alone does not reach the goal. (tag `res:results/depth.json#x`:", banner)
         self.assertNotIn("[^", banner)
+        self.assertEqual(self.report_events()[-1]["payload"]["linter_pass"], False)
 
-    def test_an_offline_first_render_launches_nothing_and_says_the_prose_is_missing(self):
-        rendered = self.render(record=None, offline=True)
+    def test_an_offline_first_render_launches_nothing_and_classifies_nothing(self):
+        rendered = self.render(offline=True)
         self.assertEqual(self.calls, [])
-        self.assertIn("has not been drafted", " ".join(rendered.notes))
-        self.assertIn("has not been drafted", self.text())
         self.assertEqual(rendered.lint.claims, 0, "nothing was classified")
-
-
-
-class RedraftTest(RunCase):
-    """Ticket 67: prose the linter failed goes back to the same writer session, for at most `paper.MAX_BUILDS` drafts."""
-
-    def writer_calls(self):
-        return [call for call in self.calls if call.request.role == "writer"]
-
-    def cache(self):
-        return json.loads((self.project / "research" / ".cache" / "report_prose.json").read_text(encoding="utf-8"))
-
-    def test_an_untagged_claim_is_sent_back_and_the_second_draft_passes(self):
-        rendered = self.render(record=[UNTAGGED_PROSE, GOOD_PROSE])
-        self.assertTrue(rendered.lint.passed, rendered.lint.problems)
-        first, second = self.writer_calls()
-        self.assertEqual((first.kind, second.kind), ("launch", "resume"))
-        self.assertTrue(second.session_id)
-        self.assertIn("`untagged_claim` Interaction terms carry the gain over the baseline.", second.message)
-        self.assertIn("the classifier read as a claim", second.message)
-        self.assertIn("The provenance linter passed", self.text())
-        self.assertEqual(self.cache()["lint"], {"pass": True, "failures": []})
-
-    def test_three_failing_drafts_end_in_the_banner(self):
-        rendered = self.render(record=[UNTAGGED_PROSE] * 3)
-        self.assertFalse(rendered.lint.passed)
-        self.assertEqual([call.kind for call in self.writer_calls()], ["launch", "resume", "resume"])
-        self.assertIn("still failed the linter after 3 drafts", " ".join(rendered.notes))
-        self.assertIn("`untagged_claim` Interaction terms carry the gain over the baseline.", self.text().split("## 1.")[0])
-        self.assertFalse(self.cache()["lint"]["pass"])
-
-    def test_a_cached_failing_draft_is_redrafted_on_the_next_render(self):
-        self.render(record=[UNTAGGED_PROSE] * 3)
-        rendered = self.render(record=[GOOD_PROSE])
-        self.assertTrue(rendered.lint.passed, rendered.lint.problems)
-        self.assertEqual([call.kind for call in self.writer_calls()], ["resume"])
-        self.assertTrue(self.cache()["lint"]["pass"])
-
-    def test_an_offline_render_of_a_cached_failing_draft_launches_nothing(self):
-        self.render(record=[UNTAGGED_PROSE] * 3)
-        rendered = self.render(record=None, offline=True)
-        self.assertEqual(self.calls, [])
-        self.assertFalse(rendered.lint.passed)
-        self.assertIn("Interaction terms carry the gain over the baseline.", self.text())
+        self.assertTrue(rendered.lint.passed, "every finding ends with its provenance tags")
 
 
 REFUSED = Envelope(subtype="success", rate_limit_events=[
@@ -584,34 +496,15 @@ REFUSED = Envelope(subtype="success", rate_limit_events=[
 
 
 class UsageLimitTest(RunCase):
-    """docs/verification/m5.md: the live writer on fable was refused by a weekly limit and returned nothing."""
-
-    def render_with(self, classifier=None, writer=None):
+    def test_a_classifier_refused_by_the_usage_limit_leaves_the_sentences_unclassified(self):
         with worker.use_fake() as fake:
-            self.classifier = Classifier()
-            fake.script(classifier or None, respond=None if classifier else self.classifier, role="classifier")
-            fake.script(writer or prose(GOOD_PROSE), role="writer")
+            fake.script(REFUSED, role="classifier")
             rendered = render_report(self.project)
             self.calls = list(fake.calls)
-        return rendered
-
-    def test_a_writer_refused_by_the_usage_limit_is_a_note_and_the_report_still_renders(self):
-        rendered = self.render_with(writer=REFUSED)
-        self.assertEqual([(call.request.role, call.kind) for call in self.calls],
-                         [("writer", "launch"), ("classifier", "launch")], "a refused session is not resumed")
-        self.assertIn("seven_day_overage_included", " ".join(rendered.notes))
-        self.assertIn("usage limit", self.text())
-        self.assertTrue(rendered.lint.passed)
-        self.assertEqual(rendered.lint.claims, 5, "the findings are classified and linted without the prose")
-        self.assertNotIn("report_prose.json", [path.name for path in (self.project / "research" / ".cache").iterdir()])
-
-    def test_a_classifier_refused_by_the_usage_limit_leaves_the_sentences_unclassified(self):
-        rendered = self.render_with(classifier=REFUSED)
         self.assertEqual([call.kind for call in self.calls if call.request.role == "classifier"], ["launch"])
         self.assertIn("classifier", " ".join(rendered.notes))
-        self.assertFalse(rendered.lint.passed, "an untagged sentence nobody classified cannot pass")
-        self.assertEqual({problem["problem"] for problem in rendered.lint.problems}, {"unclassified"})
-        self.assertEqual(self.report_events()[-1]["payload"]["linter_pass"], False)
+        self.assertEqual(rendered.lint.claims, 0)
+        self.assertIn("seven_day_overage_included", self.text().split("## 1.")[0])
 
 
 # --- the verifier's sample -------------------------------------------------------------------------
@@ -622,7 +515,7 @@ class VerifyTest(RunCase):
         super().setUp()
         self.render()
 
-    def verify(self, respond=None, scripted=7):
+    def verify(self, respond=None, scripted=5):
         with worker.use_fake() as fake:
             for _ in range(scripted):
                 fake.script(respond=respond or (lambda request, message: verdict()), role="verifier")
@@ -632,18 +525,18 @@ class VerifyTest(RunCase):
 
     def test_every_sampled_claim_gets_a_verdict_from_its_authors_table_verifier(self):
         outcome = self.verify()
-        self.assertEqual((outcome["claims"], outcome["sampled"], len(outcome["passed"])), (7, 7, 7))
+        self.assertEqual((outcome["claims"], outcome["sampled"], len(outcome["passed"])), (5, 5, 5))
         verdicts = self.events("verdict")
         claims_verdicted = [event["payload"] for event in verdicts if event["payload"]["subject_kind"] == "claim"]
-        self.assertEqual(len(claims_verdicted), 7)
+        self.assertEqual(len(claims_verdicted), 5)
         self.assertEqual({payload["verdict_type"] for payload in claims_verdicted}, {"claim_support"})
         by_sentence = {}
         for call in self.calls:
-            for marker in ("`f-0001`", "`f-0002`", "Interaction terms carry"):
+            for marker in ("`f-0001`", "`f-0002`"):
                 if marker in call.request.prompt:
                     by_sentence[marker] = (call.request.model, call.request.effort)
-        self.assertEqual(by_sentence, {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "max"), "Interaction terms carry": ("opus", "max")},
-                         "sonnet's finding goes to opus high, opus's finding and the writer's opus prose to opus max")
+        self.assertEqual(by_sentence, {"`f-0001`": ("opus", "high"), "`f-0002`": ("opus", "max")},
+                         "sonnet's finding goes to opus high, opus's finding to opus max")
 
     def test_the_verifier_is_given_the_sentence_and_the_artifacts_at_their_locators(self):
         self.verify()
@@ -654,7 +547,7 @@ class VerifyTest(RunCase):
 
     def test_a_failing_claim_is_journaled_and_filed_as_a_writing_ticket(self):
         def respond(request, message):
-            return verdict(passed="Interaction terms carry" not in request.prompt)
+            return verdict(passed="`f-0002`" not in request.prompt)
 
         outcome = self.verify(respond)
         self.assertEqual(len(outcome["failed"]), 1)
@@ -667,14 +560,15 @@ class VerifyTest(RunCase):
         self.assertEqual(filed[0]["touches"], [], "REPORT.md is rendered by code; the correction travels in the result")
         _, body = tickets.read_ticket(next(tickets.tickets_dir(self.project).glob("%02d-*.md" % filed[0]["id"])))
         self.assertIn("never a report tag", body, "the M5 run's scope-down findings cited `res:` tags and were refused")
+        self.assertIn("The sentence is a finding as its ticket recorded it", body)
         created = self.events("ticket_created")[-1]["payload"]
         self.assertEqual((created["ticket"], created["kind"]), (filed[0]["id"], "writing"))
 
     def test_a_second_pass_reads_no_claim_twice_and_files_no_second_ticket(self):
-        self.verify(lambda request, message: verdict(passed="Interaction terms carry" not in request.prompt))
+        self.verify(lambda request, message: verdict(passed="`f-0002`" not in request.prompt))
         outcome = self.verify(scripted=0)
         self.assertEqual(self.calls, [])
-        self.assertEqual(outcome["already_verdicted"], 7)
+        self.assertEqual(outcome["already_verdicted"], 5)
         self.assertEqual(len([fields for fields in tickets.read_tickets(self.project) if fields["kind"] == "writing"]), 1)
 
     def test_the_subject_is_the_sentence_with_its_tags(self):
@@ -688,33 +582,33 @@ class VerifyTest(RunCase):
 
 
 class ReportCommandTest(RunCase):
-    def run_verb(self, record, *extra):
+    def run_verb(self, *extra):
         out, err = io.StringIO(), io.StringIO()
         with worker.use_fake() as fake:
             for _ in range(6):
                 fake.script(respond=Classifier(), role="classifier")
-            for each in drafts(record):
-                fake.script(prose(each), role="writer")
             with redirect_stdout(out), redirect_stderr(err):
                 code = cli.main(["report", "--project", str(self.project), *extra])
         return code, out.getvalue(), err.getvalue()
 
     def test_a_failing_linter_exits_1_and_prints_the_offending_sentences(self):
-        code, out, _ = self.run_verb(UNTAGGED_PROSE)
+        self.book.append_record("findings.jsonl", MALFORMED)
+        code, out, _ = self.run_verb()
         self.assertEqual(code, 1)
         self.assertIn("FAIL", out)
-        self.assertIn("untagged_claim", out)
-        self.assertIn("Interaction terms carry the gain over the baseline.", out)
+        self.assertIn("malformed_tag", out)
+        self.assertIn("Depth alone does not reach the goal.", out)
 
     def test_a_passing_linter_exits_0(self):
-        code, out, _ = self.run_verb(GOOD_PROSE, "--json")
+        code, out, _ = self.run_verb("--json")
         self.assertEqual(code, 0)
         outcome = json.loads(out)
         self.assertTrue(outcome["linter_pass"])
-        self.assertEqual((outcome["claims"], outcome["tagged"]), (7, 7))
+        self.assertEqual((outcome["claims"], outcome["tagged"]), (5, 5))
 
     def test_verify_is_not_run_on_a_report_that_fails_the_linter(self):
-        code, out, _ = self.run_verb(UNTAGGED_PROSE, "--verify")
+        self.book.append_record("findings.jsonl", MALFORMED)
+        code, out, _ = self.run_verb("--verify")
         self.assertEqual(code, 1)
         self.assertIn("verifier  not run", out)
 

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "merge_check",
+  "description": "What the confirmer returns when it checks proposed merges for loss (Implementation Decision 17; ticket 95), in a session of its own that did not write them: for each merge, by its number, whether the kept text covers everything each occurrence says, and what it loses when it does not. Code separately checks that the kept text adds no number, symbol, or citation; a merge failing either check is not made.",
+  "type": "object",
+  "required": ["merges"],
+  "additionalProperties": false,
+  "properties": {
+    "merges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["merge", "covers", "lost"],
+        "additionalProperties": false,
+        "properties": {
+          "merge": {"type": "integer", "minimum": 1, "description": "the merge's number in the prompt"},
+          "covers": {"type": "boolean", "description": "true when the kept text says everything both occurrences say"},
+          "lost": {"type": ["string", "null"], "description": "what the kept text loses, in one sentence; null when it covers both"}
+        }
+      }
+    }
+  }
+}

@@ -1,21 +1,21 @@
 """The manifest and findings provenance (Implementation Decisions 6 and 2). Built by ticket 18.
 
-`results/` lives outside git (Implementation Decisions 1 already ignores it); every artifact a
-finding will ever cite is hashed into `research/manifest.json` first, by `register_artifact`,
-so `add_finding` can refuse a finding whose provenance points anywhere else. Findings are
-numbered sequentially in `research/findings.jsonl`; `render_findings` renders `findings.md`
-from them, grouped by ticket, negative results marked, and `add_finding` calls it after every
-change so the two files never drift.
+`results/` lives outside version control (Implementation Decisions 1 already ignores it); every artifact a
+finding will ever cite is hashed into `research/manifest.json` first, by `register_artifact`, so a
+finding's provenance resolves to a file the manifest holds. Findings are written through the ledger
+call of `wayline.sections` (`file_finding`), which clusters each into its result (`wayline.results`).
 
 Ticket 40 added the rest of Implementation Decisions 11 (C8): the claim markup
 (`{res:<run-id>/<artifact>#<locator>}` and `{ref:<slug>#<locator>}` at the end of a claim
 sentence), the sentence classifier and its cache, the linter (Type-A) that resolves every tag
 against the manifest and the knowledge base, the verifier's sample of tagged claims (Type-B,
-through the gate of `wayline.gates`), the writer's prose, and `REPORT.md` itself, which
-`render_report` renders from the journal, the findings, the tickets, and the goals of
-`objectives.json` (ticket 87: `GOAL.json` retired). The report lives here because decision 1's module list has no `report` module and BRIEF 10 gives the writer
-"role + provenance.py". Since ticket 89 it holds only the research (the goal trajectory, the findings, the negative
-results): what wayline did is `research/ACCOUNT.md`, which `wayline.account` renders in the same pass.
+through the gate of `wayline.gates`), and `REPORT.md` itself. The report lives here because decision 1's
+module list has no `report` module and BRIEF 10 gives the writer "role + provenance.py".
+
+Since ticket 90 `REPORT.md` is the general report: about the research, always current, and written by code alone
+(`render_report`), from the results, the objectives, the concerns, the passages, and the spec. No writer session
+drafts any of it. What wayline did is `research/ACCOUNT.md`, which `wayline.account` renders in the same pass. The
+numbers check at acceptance is `wayline.numbers`.
 """
 
 import argparse
@@ -39,15 +39,15 @@ from wayline.project import ProjectError, fable_falls_back, find_project, policy
 from wayline.objectives import ObjectivesUnreadable, read_objectives
 
 __all__ = [
-    "ProvenanceError", "MANIFEST", "FINDINGS", "FINDINGS_MD", "RUN_ID_RE",
+    "ProvenanceError", "MANIFEST", "FINDINGS", "RUN_ID_RE",
     "sha256_of", "read_manifest", "manifest_paths", "register_artifact",
-    "read_findings", "current_findings", "add_finding", "render_findings",
+    "read_findings", "current_findings",
     "commit_threshold_bytes", "oversized_tracked_files",
     "TAG_RE", "RES_TAG_RE", "REF_TAG_RE", "REF_IDENTIFIER_TAG_RE", "Sentence", "sentences", "parse_tag", "ref_slug", "identifier_index", "strip_tags",
-    "REPORT", "CLAIMS_CACHE", "PROSE_CACHE", "SECTIONS", "SENTENCE_CLASSES", "RECORDS_BEGIN", "RECORDS_END",
+    "REPORT", "CLAIMS_CACHE", "SECTIONS", "SENTENCE_CLASSES", "RECORDS_BEGIN", "RECORDS_END",
     "UsageLimited", "Lint", "Claim", "Rendered", "prose_sentences", "sentence_hash", "render_citations", "restore_tags",
     "read_claims_cache", "classify", "lint", "lint_report", "tagged_claims", "sample_size", "sample_claims",
-    "claim_subject", "claim_paths", "verify_claims", "report_evidence", "draft_prose", "finding_tags",
+    "claim_subject", "claim_paths", "verify_claims", "report_evidence", "finding_tags", "finding_text", "finding_line",
     "tagged_text", "render_report", "report_command",
     "ANY_TAG_RE", "TAG_KINDS", "REF_TITLE_TAG_RE", "CODE_TAG_RE", "DOC_TAG_RE", "UNRESOLVED_CODE", "UNRESOLVED_DOC", "DOC_ONLY_CLAIM",
     "code_reader", "main_reader", "code_tag_problem", "end_kinds", "lint_passages", "lint_result", "result_sentences", "resolver_for",
@@ -55,7 +55,6 @@ __all__ = [
 
 MANIFEST = "manifest.json"
 FINDINGS = "findings.jsonl"
-FINDINGS_MD = "findings.md"
 
 RUN_ID_RE = re.compile(r"^t[0-9]+-a[0-9]+$")
 
@@ -198,93 +197,12 @@ def current_findings(project_or_ledger):
     return [finding for finding in findings if finding.get("id") not in replaced]
 
 
-def _next_finding_id(findings):
-    highest = 0
-    for finding in findings:
-        match = re.match(r"^f-(\d+)$", finding.get("id", ""))
-        if match:
-            highest = max(highest, int(match.group(1)))
-    return "f-%04d" % (highest + 1)
-
-
-def _locators(provenance):
-    locators = [provenance] if isinstance(provenance, str) else list(provenance)
-    if not locators:
-        raise ProvenanceError("a finding needs at least one provenance locator")
-    return locators
-
-
 def _cited(finding):
-    """A written finding's locators: `add_finding` writes a list, and the conductor one locator per finding."""
+    """A written finding's locators: a list, or one locator as an older finding carries it."""
     provenance = finding.get("provenance")
     if isinstance(provenance, str):
         return [provenance] if provenance else []
     return list(provenance or [])
-
-
-def add_finding(project_or_ledger, text, provenance, ticket, negative=False, heading=None, replaces=None, objectives=()):
-    """Append one finding to `findings.jsonl`, journal `finding`, and re-render `findings.md` and the Results section.
-
-    `replaces` names the id of an earlier finding this one replaces: that one is no longer current,
-    and `current_findings` leaves it out (ticket 106).
-
-    `provenance` is one locator or a list of them, each `<manifested path>#<locator>`. Refused
-    (raises `ProvenanceError`, without writing anything) when a locator carries no `#<locator>`
-    half or its artifact half is not a path in `manifest.json`; register the artifact first. The
-    caller (the conductor, for a worker's finding) journals the refusal on the ticket itself.
-    A finding is a Results passage (decision 17): `heading` is the one it stands under, `replaces`
-    the finding a scope-down narrows (refused when no finding has that id), and `objectives` its ticket's.
-    """
-    book = _ledger(project_or_ledger)
-    locators = _locators(provenance)
-    with book.lock():
-        manifested = manifest_paths(read_manifest(book))
-        for locator in locators:
-            artifact, sep, rest = locator.partition("#")
-            if not sep or not artifact or not rest:
-                raise ProvenanceError("provenance %r must be <path>#<locator>, with both halves non-empty" % (locator,))
-            if artifact not in manifested:
-                raise ProvenanceError("provenance %r cites %r, which is not in manifest.json; register_artifact it first" % (locator, artifact))
-        findings = read_findings(book)
-        finding = sections.file_finding(book, {
-            "id": _next_finding_id(findings),
-            "ticket": ticket,
-            "text": text,
-            "provenance": locators,
-            "negative": bool(negative),
-            "heading": heading,
-            "replaces": replaces,
-            "objectives": list(objectives or []),
-            "ts": now_ts(),
-        })
-        render_findings(book)
-    return finding
-
-
-def render_findings(project_or_ledger):
-    """Rewrite `findings.md` from `findings.jsonl`, grouped by ticket, negative results marked.
-
-    Called by `add_finding` after every change; also callable on its own to rebuild the file
-    (a fresh project, or a `findings.jsonl` edited by hand).
-    """
-    book = _ledger(project_or_ledger)
-    findings = read_findings(book)
-    lines = ["# Findings", ""]
-    if not findings:
-        lines.append("None yet.")
-    else:
-        by_ticket = {}
-        for finding in findings:
-            by_ticket.setdefault(finding.get("ticket"), []).append(finding)
-        for ticket in sorted(by_ticket, key=lambda value: (value is None, value)):
-            lines.append("## Ticket %s" % (ticket if ticket is not None else "(none)"))
-            lines.append("")
-            for finding in by_ticket[ticket]:
-                mark = " (negative)" if finding.get("negative") else ""
-                locators = ", ".join(_cited(finding))
-                lines.append("- `%s`%s %s (%s)" % (finding["id"], mark, finding["text"], locators))
-            lines.append("")
-    return book.write_markdown(FINDINGS_MD, "\n".join(lines))
 
 
 # --- the sentence pass -------------------------------------------------------------------------
@@ -518,11 +436,9 @@ def oversized_tracked_files(project, threshold=None):
 REPORT = "REPORT.md"
 REPORT_PATH = "research/" + REPORT
 CLAIMS_CACHE = ".cache/claims.json"
-PROSE_CACHE = ".cache/report_prose.json"
 CLASSIFIER = "classifier"
 WRITER = "writer"
 CLASSES_SCHEMA = "claim_classes"
-PROSE_SCHEMA = "report_prose"
 
 CLAIM = "claim"
 DEFINITION = "definition"
@@ -551,14 +467,17 @@ CLASSIFY_BATCH = 40
 RECORDS_BEGIN = "<!-- wayline:records -->"
 RECORDS_END = "<!-- /wayline:records -->"
 
-# The sections of Implementation Decisions 11 about the research, in its order. What wayline did (the decisions made
-# for the owner, what waits on the owner, the tickets closed, the judgments on Opus while Fable was spent, the papers
-# by level, what was not pursued, the global changes proposed, and the resources spent) is the account's
-# (`wayline.account`, ticket 89), and the events table is gone; ticket 90 rewrites the rest as the general report.
+# The general report's sections, in decision 17's order (ticket 90). What wayline did (the decisions made for the owner,
+# what waits on the owner, the tickets closed, the judgments on Opus while Fable was spent, the papers by level, what
+# was not pursued, the global changes proposed, and the resources spent) is the account's (`wayline.account`, ticket 89).
 SECTIONS = (
-    "Goal trajectory",
-    "Findings by claim",
-    "Negative results",
+    "What the project is",
+    "Headlines",
+    "The results",
+    "Objectives",
+    "Results beyond the objectives",
+    "Inherited claims not yet checked",
+    "What can and cannot be inferred",
 )
 SUPPLEMENTARY = "Supplementary references"
 
@@ -1151,7 +1070,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
     verdicted = {(event.get("payload") or {}).get("subject") for event in context.events
                  if event.get("event") == ledger.VERDICT and (event.get("payload") or {}).get("subject_kind") == CLAIM}
     authors = _finding_authors(context)
-    writer_model = prose_author or _prose_author(book, policy)
+    writer_model = prose_author or _role_tier(policy, WRITER)[0]  # the paper's writer; every claim of the report is a finding's
     outcome = {"claims": len(claims), "sampled": len(chosen), "already_verdicted": 0, "passed": [], "failed": [], "tickets": [],
                "waiting": [], "fell_back": []}
     try:
@@ -1188,17 +1107,6 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
     return outcome
 
 
-def _prose_author(book, policy):
-    """The model the cached prose was written on: Opus when the writer fell back (decision 15), else `policy.roles.writer`'s."""
-    try:
-        cached = book.read_json(PROSE_CACHE)
-    except (OSError, ValueError):
-        cached = None
-    if isinstance(cached, dict) and cached.get("fallback_from") == pacing.FABLE:
-        return pacing.OPUS
-    return _role_tier(policy, WRITER)[0]
-
-
 def _finding_authors(context):
     """`{sentence hash: model alias}` for every sentence the report renders from a finding."""
     models = {}
@@ -1208,7 +1116,7 @@ def _finding_authors(context):
             models[payload.get("ticket")] = payload.get("model")
     authors = {}
     for finding in context.findings:
-        for sentence in prose_sentences(_finding_item(finding, context.manifest)):
+        for sentence in prose_sentences(finding_line(finding, context.manifest)):
             authors[sentence_hash(sentence.text)] = models.get(finding.get("ticket"))
     return authors
 
@@ -1249,11 +1157,11 @@ def _claim_ticket(project, book, claim, subject, taken, from_finding, document=R
     )
 
 
-# --- the writer -----------------------------------------------------------------------------------
+# --- what the report is rendered from -------------------------------------------------------------
 
 
 def report_evidence(context):
-    """What the writer is given: the goals, the findings grouped by claim, the negative results, each with its tags."""
+    """What a writer is given (the paper's, ticket 53): the goals, the findings grouped by claim, the negative results, each with its tags."""
     groups = [
         {"group": key, "findings": [_evidence_item(finding, context.manifest) for finding in members]}
         for key, members in _claim_groups(context).items()
@@ -1269,162 +1177,10 @@ def _evidence_item(finding, manifest):
             "tags": finding_tags(finding, manifest)}
 
 
-def draft_prose(project, evidence, *, harness_root=HARNESS_ROOT, policy=None, offline=False):
-    """The writer's prose for `evidence`, as `(prose, note)`: from the cache when the evidence is unchanged.
-
-    One `writer` session through the launcher, read-only, on the model `policy.roles.writer` gives,
-    or on Opus at the same effort while Fable's weekly window is spent under the fallback consent
-    `auto` (decision 15), with the `report_prose` schema; a group the prompt did not name is dropped. The answer is cached
-    under `research/.cache/report_prose.json` with the hash of the evidence, so a render that changes
-    nothing the writer read launches nothing. `offline` launches nothing: prose drafted for other
-    evidence is not used, and `note` says why the report has none.
-    """
-    project = Path(project).resolve()
-    book = Ledger(project)
-    if not evidence["groups"] and not evidence["negative"]:
-        return {"groups": [], "negative_results": ""}, None
-    key = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
-    try:
-        cached = book.read_json(PROSE_CACHE)
-    except (OSError, ValueError):
-        cached = None
-    if isinstance(cached, dict) and cached.get("input_sha256") == key and isinstance(cached.get("prose"), dict):
-        # Prose that failed the linter is served all the same; `render_report` resumes its writer when it may launch.
-        return cached["prose"], None
-    if offline:
-        return None, ("the writer's prose is from findings that have changed since, so it is left out; "
-                      "no writer session was launched" if cached else
-                      "the writer's prose has not been drafted; no writer session was launched")
-    policy = policy_for(project, harness_root) if policy is None else policy
-    role = worker.read_role(WRITER, harness_root, project)
-    request = structured_request(project, role, policy, harness_root, _writer_prompt(role, evidence), PROSE_SCHEMA, "medium",
-                       session_dir(project, WRITER), read_only=True)
-    try:
-        envelope = _launch_structured(request, lambda answer: schema_problem(answer, PROSE_SCHEMA), "writer")
-    except UsageLimited as refused:
-        return None, "%s, so the report is rendered without the writer's prose" % refused
-    return _keep_prose(book, policy, request, envelope, evidence, key), None
-
-
-def _keep_prose(book, policy, request, envelope, evidence, key, session_id=None):
-    """The prose of the writer's `envelope`, cached with no linter result yet."""
-    returned = envelope.structured_output
-    named = {group["group"] for group in evidence["groups"]}
-    prose = {
-        "groups": [group for group in returned["groups"] if group["group"] in named],
-        "negative_results": returned["negative_results"] if evidence["negative"] else "",
-    }
-    fell_back = request.model != _role_tier(policy, WRITER)[0]
-    book.write_json(PROSE_CACHE, {"schema_version": 1, "input_sha256": key, "session_id": envelope.session_id or session_id,
-                                  "model": envelope.model, "fallback_from": pacing.FABLE if fell_back else None,
-                                  "prose": prose, "lint": None})
-    return prose
-
-
-RESUME_PROSE = (
-    "The report was rendered from your paragraphs and the provenance linter failed on the sentences below. "
-    "Return every paragraph again, through the structured output, with each one answered: a claim sentence ends "
-    "with the tags of the findings it rests on, copied exactly from the evidence. An `untagged_claim` is a sentence "
-    "the classifier read as a claim, and it reads a statement of the study's scope or limits as one too: rewording "
-    "it rarely changes that. End it with a tag, or leave the sentence out.\n\n%s"
-)
-
-
-def writer_failures(result, prose):
-    """The linter's problems on sentences of the writer's `prose`, one line each: the sentence and why."""
-    if not prose:
-        return []
-    written = {sentence_hash(sentence.text) for text in [group["text"] for group in prose["groups"]]
-               + [prose["negative_results"]] for sentence in prose_sentences(text)}
-    return ["- `%s` %s (%s%s)" % (problem["problem"], one_line(problem["sentence"]),
-                                  "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
-            for problem in result.problems
-            # An unclassified sentence is the classifier's gap, which a redraft does not close.
-            if problem["problem"] != UNCLASSIFIED and sentence_hash(problem["sentence"]) in written]
-
-
-def _record_prose_lint(book, failures):
-    """Record beside the cached prose whether the linter passed it, and on what."""
-    try:
-        cached = book.read_json(PROSE_CACHE)
-    except (OSError, ValueError):
-        return
-    if isinstance(cached, dict):
-        cached["lint"] = {"pass": not failures, "failures": failures}
-        book.write_json(PROSE_CACHE, cached)
-
-
-def redraft_prose(project, evidence, failures, *, harness_root=HARNESS_ROOT, policy=None):
-    """The writer's session resumed with the linter's `failures`, its new prose cached; a fresh launch when none is on record."""
-    project = Path(project).resolve()
-    book = Ledger(project)
-    policy = policy_for(project, harness_root) if policy is None else policy
-    try:
-        cached = book.read_json(PROSE_CACHE)
-    except (OSError, ValueError):
-        cached = None
-    session_id = cached.get("session_id") if isinstance(cached, dict) else None
-    key = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
-    role = worker.read_role(WRITER, harness_root, project)
-    request = structured_request(project, role, policy, harness_root, _writer_prompt(role, evidence), PROSE_SCHEMA, "medium",
-                       session_dir(project, WRITER), read_only=True)
-    if not session_id:
-        envelope = _launch_structured(request, lambda answer: schema_problem(answer, PROSE_SCHEMA), "writer")
-        return _keep_prose(book, policy, request, envelope, evidence, key)
-    envelope = worker.resume(request, session_id, RESUME_PROSE % "\n".join(failures))
-    raise_if_refused(envelope, "writer", request.model)
-    problem = schema_problem(envelope, PROSE_SCHEMA)
-    if problem is not None and envelope.session_id:
-        envelope = worker.resume(request, envelope.session_id, RESUME_STRUCTURED % problem)
-        raise_if_refused(envelope, "writer", request.model)
-        problem = schema_problem(envelope, PROSE_SCHEMA)
-    if problem is not None:
-        raise ProvenanceError("the writer's answer could not be used: %s" % problem)
-    return _keep_prose(book, policy, request, envelope, evidence, key, session_id)
-
-
 def finding_lines(item):
-    """One evidence item as the writer reads it, the report's prose and the paper's alike: the finding, then its tags."""
+    """One evidence item as the paper's writer reads it: the finding, then its tags."""
     return ["- `%s` (ticket %s): %s" % (item["id"], item["ticket"], item["text"]),
             "  tags: %s" % " ".join("`{%s}`" % tag for tag in item["tags"])]
-
-
-def _writer_prompt(role, evidence):
-    lines = [
-        "# The report you are writing prose for",
-        "",
-        "Code renders every section of `research/REPORT.md` from the ledger. You write two kinds of "
-        "paragraph and nothing else: one for each claim group below, saying what its findings "
-        "establish together, and one on the negative results. The findings themselves are listed "
-        "under your paragraphs as they were recorded, so do not copy them out one by one.",
-        "",
-    ]
-    for goal in evidence.get("goals") or []:
-        lines.extend(["The goal %s: `%s`, direction %s, target %s, on the held-out split `%s`." % (
-            goal.get("id"), goal.get("metric"), goal.get("direction"), goal.get("target"), goal.get("held_out_split")), ""])
-    lines.extend([
-        "# The evidence",
-        "",
-        "Each finding carries the tags that trace it. A claim sentence of yours ends with the tags of "
-        "the findings it rests on, copied exactly.",
-        "",
-    ])
-    for group in evidence["groups"]:
-        lines.extend(["## Group `%s`" % group["group"], ""])
-        for item in group["findings"]:
-            lines.extend(finding_lines(item))
-        lines.append("")
-    lines.extend(["## Negative results", ""])
-    if evidence["negative"]:
-        for item in evidence["negative"]:
-            lines.extend(finding_lines(item))
-    else:
-        lines.append("None was recorded: return the empty string for `negative_results`.")
-    lines.extend(["", "Return the paragraphs through the structured output; the harness writes them into the report."])
-    return joined("\n".join(lines), role.protocol, worker.schema_section("# The prose", PROSE_SCHEMA))
-
-
-# --- what the report is rendered from -------------------------------------------------------------
 
 
 @dataclass
@@ -1437,6 +1193,12 @@ class _Context:
     manifest: dict
     goals: list  # the objectives with a measure, any status, from `objectives.json` (ticket 87)
     notes: list
+    objectives: list = field(default_factory=list)  # every objective, any status (ticket 90)
+    results: list = field(default_factory=list)     # the live results with a current finding (`results.read_results`)
+    concerns: list = field(default_factory=list)
+    spec: dict = None
+    unchecked: dict = field(default_factory=dict)    # section -> the current inherited claims not yet checked
+    unverifiable: list = field(default_factory=list)  # the current inherited claims the project could not check
 
 
 def report_context(project):
@@ -1455,11 +1217,35 @@ def report_context(project):
         by_id = {}
         notes.append("the tickets could not be read: %s" % failure)
     try:
-        goals = [record for record in read_objectives(project) if record.get("measure")]
+        objectives = read_objectives(project)
     except (ObjectivesUnreadable, OSError) as failure:
-        goals = []
+        objectives = []
         notes.append(str(failure))
-    return _Context(project, events, harness, by_id, read_findings(book), read_manifest(book), goals, notes)
+    goals = [record for record in objectives if record.get("measure")]
+    context = _Context(project, events, harness, by_id, read_findings(book), read_manifest(book), goals, notes, objectives=objectives)
+    from wayline import concerns, results  # both read the ledger's neighbours, which reach this module through the gates
+    try:
+        context.results = results.read_results(book)
+    except (OSError, ValueError) as failure:
+        notes.append("the results could not be read: %s" % failure)
+    try:
+        context.concerns = concerns.read_concerns(book)
+    except (OSError, ValueError) as failure:
+        notes.append(str(failure))
+    try:
+        spec = book.read_json("spec.json")
+        context.spec = spec if isinstance(spec, dict) else None
+    except FileNotFoundError:
+        context.spec = None
+    except (OSError, ValueError) as failure:
+        notes.append("research/spec.json could not be read: %s" % failure)
+    for name in sections.INHERITED:
+        for item in sections.arrange(sections.section_items(book, name)).current():
+            if sections.is_inherited(item) and item.get("standing") == sections.UNCHECKED:
+                context.unchecked.setdefault(name, []).append(item)
+            elif sections.is_inherited(item) and item.get("standing") == sections.UNVERIFIABLE:
+                context.unverifiable.append(item)
+    return context
 
 
 def finding_tags(finding, manifest):
@@ -1483,9 +1269,22 @@ def tagged_text(text, tags):
     return " ".join(part.text + marks for part in parts)
 
 
-def _finding_item(finding, manifest):
-    return "- `%s` (ticket %s): %s" % (finding.get("id"), finding.get("ticket"),
-                                        tagged_text(one_line(finding.get("text")), finding_tags(finding, manifest)))
+def finding_text(finding, manifest):
+    """A finding as the reports print it: its own text when it carries tags, else its text with its provenance as `res` tags."""
+    text = one_line(finding.get("text"))
+    if ANY_TAG_RE.search(text):
+        return text
+    return tagged_text(text, finding_tags(finding, manifest))
+
+
+def finding_line(finding, manifest):
+    """One current finding as the general report lists it: its id, marked negative, a replacement's one-line note, its text."""
+    marks = []
+    if finding.get("negative"):
+        marks.append("(negative)")
+    if finding.get("replaces"):
+        marks.append("(replaces `%s`%s)" % (finding["replaces"], ": %s" % finding["evidence"] if finding.get("evidence") else ""))
+    return "- `%s` %s%s" % (finding.get("id"), "".join(mark + " " for mark in marks), finding_text(finding, manifest))
 
 
 def _claim_groups(context):
@@ -1500,35 +1299,267 @@ def _claim_groups(context):
     return groups
 
 
-# --- the sections ---------------------------------------------------------------------------------
+# --- the general report (ticket 90) ---------------------------------------------------------------
+#
+# Code alone writes every line: what it writes itself (the project, the headlines, the objectives' records, the counts,
+# the inferences) sits between the records marks, so the classifier never reads it; the findings are the prose, as their
+# tickets recorded them, linted and sampled. Only current findings show.
+
+ACTIVE = ("open", "answered")  # the objectives shown first, in id order; parked ones follow; dropped and reframed get a line
+NO_REPORT = "none yet"
 
 
-def _trajectory(context):
-    """Each goal's trajectory, from its own `progress` and `discarded` events (ticket 87: keep-if-better runs per goal)."""
-    if not context.goals:
-        return _records(["No quantitative goal: no objective in `research/objectives.json` has a measure."])
-    from wayline import stopping  # the stopping module imports the goal module, which imports the gates
-    lines = ["Stopping rule: %s." % stopping.describe_rule(stopping.rule_of(context.harness))]
-    for record in context.goals:
-        goal, identifier = record["measure"], record["id"]
-        readings = [event.get("payload") or {} for event in context.events
-                    if event.get("event") == ledger.PROGRESS and (event.get("payload") or {}).get("goal") == identifier]
-        lines.extend(["", "Goal %s (%s): `%s`, direction `%s`, target %s on the held-out split `%s`." % (
-            identifier, record.get("status"), goal.get("metric"), goal.get("direction"), _number(goal.get("target")),
-            goal.get("held_out_split"))])
-        if not readings:
-            lines.append("No `progress` reading was journaled.")
+def _the_project(context):
+    spec = context.spec
+    if spec is None:
+        return _records(["No spec yet: `research/spec.json` is written by `wayline specify`, and this section opens with its summary."])
+    summary = one_line(spec.get("summary"))
+    if summary:
+        return _records([summary])
+    lines = []
+    if one_line(spec.get("question")):
+        lines.append(one_line(spec.get("question")))
+    data = [one_line(item.get("text")) for item in spec.get("data") or [] if isinstance(item, dict) and one_line(item.get("text"))]
+    if data:
+        lines.extend(["", "The data: %s" % " ".join(data)])
+    return _records(lines or ["The spec has no summary, question, or data to say what the project is."])
+
+
+def _cell(text):
+    return one_line(text).replace("|", "\\|")
+
+
+def _headlines(context):
+    if not context.results:
+        return _records(["No result yet: a result is one Results heading with its current findings, and the first arrives with a finding."])
+    return _records(["- %s %s (%s): %s" % (result.id, result.heading, result.standing,
+                                          sections.first_sentence(finding_text(result.current[-1], context.manifest)))
+                     for result in context.results])
+
+
+def _current_report(context, result):
+    """The link to a result's current report, the newest `research/reports/R<n>-<version>.md`, or "none yet" (ticket 100 writes them)."""
+    folder = context.project / "research" / "reports"
+    found = []
+    for path in folder.glob("%s-*.md" % result.id) if folder.is_dir() else ():
+        version = path.stem[len(result.id) + 1:]
+        if version.isdigit():
+            found.append((int(version), path.name))
+    if not found:
+        return NO_REPORT
+    name = max(found)[1]
+    return "[%s](reports/%s)" % (name[:-3], name)
+
+
+def _counts(result):
+    parts = ["%d current" % len(result.current)]
+    if result.negative:
+        parts.append("%d negative" % result.negative)
+    if result.replaced:
+        parts.append("%d replaced" % result.replaced)
+    return ", ".join(parts)
+
+
+def _results_table(context):
+    if not context.results:
+        return _records(["No result yet."])
+    lines = ["| Result | Objectives | Standing | Findings | Current report | Last change |", "|---|---|---|---|---|---|"]
+    for result in context.results:
+        standing = result.standing if result.standing == "supported" else "**%s**" % result.standing  # a negative result flagged
+        lines.append("| %s %s | %s | %s | %s | %s | %s |" % (
+            result.id, _cell(result.heading), ", ".join(result.objectives) or "none", standing, _counts(result),
+            _current_report(context, result), str(result.changed or "")[:10] or "unknown"))
+    return lines
+
+
+def _result_block(context, result, level="####"):
+    lines = ["%s %s. %s (%s)" % (level, result.id, result.heading, result.standing), ""]
+    lines.extend(finding_line(finding, context.manifest) for finding in result.current)
+    return lines + [""]
+
+
+def _goal_lines(context, record):
+    measure = record["measure"]
+    target = measure.get("target")
+    lines = ["Goal: `%s`, direction %s, target %s, on the held-out split `%s`." % (
+        measure.get("metric"), measure.get("direction"), _number(target) if target is not None else "none", measure.get("held_out_split"))]
+    kept = [event.get("payload") or {} for event in context.events if event.get("event") == ledger.PROGRESS
+            and (event.get("payload") or {}).get("goal") == record["id"] and (event.get("payload") or {}).get("kept")]
+    lines.append("Kept values: %s." % ("; ".join("%s from run `%s` (ticket %s)" % (_number(payload.get("value")), payload.get("run_id"),
+                                                                                 payload.get("ticket")) for payload in kept) or "none yet"))
+    discarded = _discarded_means(context.events, record["id"])
+    if discarded:
+        lines.append("Discarded changes: %s." % "; ".join(
+            "ticket %s: mean %s against the best %s, standard deviation %s, seeds %s" % (
+                payload.get("ticket"), _number(mean), _number(payload.get("best")), _number(payload.get("sd")), payload.get("seeds"))
+            for payload, mean in discarded))
+    return lines
+
+
+def _concern_line(concern):
+    text = one_line(((concern.get("sources") or [{}])[0]).get("text"))
+    status = concern.get("status")
+    if status == "answered" and concern.get("answer"):
+        status = "answered: %s" % one_line(concern["answer"])
+    elif status == "declined" and concern.get("reason"):
+        status = "declined: %s" % one_line(concern["reason"])
+    return "- %s (%s): %s" % (concern.get("id"), status, text)
+
+
+def _stop(text):
+    """One line of text ending as a sentence does."""
+    text = one_line(text)
+    return text if not text or text[-1] in ".!?" else text + "."
+
+
+def _objective_order(record):
+    found = re.match(r"^O([1-9][0-9]*)$", str(record.get("id")))
+    return int(found.group(1)) if found else 0
+
+
+def _paragraphs(facts):
+    """Records one fact a paragraph, except a list's items, which stay together under the line that opens them."""
+    lines = []
+    for fact in facts:
+        if lines and not (fact.startswith("- ") and (lines[-1].startswith("- ") or lines[-1].endswith(":"))):
+            lines.append("")
+        lines.append(fact)
+    return lines
+
+
+def _objectives_section(context):
+    """Each objective in id order, open and answered first, then parked; dropped and reframed one line each. Returns
+    `(lines, shown)`, `shown` the ids of the results it presented."""
+    ordered = sorted(context.objectives, key=_objective_order)
+    if not ordered:
+        return _records(["No objective is recorded yet: `wayline objective add` records one."]), set()
+    lines, shown = [], set()
+    for record in [item for item in ordered if item.get("status") in ACTIVE] + [item for item in ordered if item.get("status") == "parked"]:
+        identifier = record["id"]
+        lines.extend(["### %s. %s" % (identifier, one_line(record.get("text"))), ""])
+        status, facts = record.get("status"), []
+        if status == "answered":
+            facts.append("Status: answered. Answer: %s" % _stop(record.get("answer") or "none was given"))
+        elif status == "parked":
+            facts.append("Status: parked.%s" % (" Why: %s" % _stop(record["answer"]) if record.get("answer") else ""))
         else:
-            lines.extend(["", "```"] + _chart(readings, goal) + ["```"])
-        kept = [payload for payload in readings if payload.get("kept")]
-        lines.extend(["", "Kept readings:"])
-        lines.extend(["- %s from run `%s` (ticket %s)" % (_number(payload.get("value")), payload.get("run_id"), payload.get("ticket"))
-                      for payload in kept] or ["- none"])
-        lines.extend(["", "Discarded changes:"])
-        lines.extend(["- ticket %s: mean %s against the best %s, standard deviation %s, seeds %s" % (
-            payload.get("ticket"), _number(mean), _number(payload.get("best")), _number(payload.get("sd")), payload.get("seeds"))
-            for payload, mean in _discarded_means(context.events, identifier)] or ["- none"])
+            facts.append("Status: open.")
+        if record.get("evidence"):
+            facts.append("Evidence: %s." % ", ".join("`%s`" % item for item in record["evidence"]))
+        if record.get("measure"):
+            facts.extend(_goal_lines(context, record))
+        tied = [concern for concern in context.concerns if identifier in (concern.get("objectives") or [])]
+        if tied:
+            facts.append("Concerns:")
+            facts.extend(_concern_line(concern) for concern in tied)
+        mine = [result for result in context.results if identifier in result.objectives]
+        if not mine:
+            facts.append("No result yet.")
+        lines.extend(_records(_paragraphs(facts)) + [""])
+        for result in mine:
+            shown.add(result.id)
+            lines.extend(_result_block(context, result))
+    gone = [item for item in ordered if item.get("status") in ("dropped", "reframed")]
+    if gone:
+        rows = ["Dropped and reframed:"]
+        for record in gone:
+            if record.get("status") == "reframed":
+                rows.append("- %s (reframed as %s): %s" % (record["id"], record.get("reframed_as"), one_line(record.get("text"))))
+            else:
+                rows.append("- %s (dropped): %s%s" % (record["id"], one_line(record.get("text")),
+                                                      " %s" % _stop(record["answer"]) if record.get("answer") else ""))
+        lines.extend(_records(rows) + [""])
+    return (lines[:-1] if lines and lines[-1] == "" else lines), shown
+
+
+def _beyond(context, shown):
+    rest = [result for result in context.results if result.id not in shown]
+    if not rest:
+        return _records(["Every result serves an objective shown above."])
+    lines = []
+    for result in rest:
+        lines.extend(_result_block(context, result, level="###"))
+    return lines[:-1]
+
+
+def _unchecked_section(context):
+    if not context.unchecked:
+        return _records(["No inherited claim waits to be checked."])
+    return _records(["- %s: %d" % (sections.TITLES[name], len(context.unchecked[name]))
+                     for name in sections.INHERITED if context.unchecked.get(name)])
+
+
+def _inferences(context):
+    supported = [result for result in context.results if result.standing == "supported"]
+    other = [result for result in context.results if result.standing != "supported"]
+    lines = ["Can be inferred:"]
+    lines.extend("- %s %s (supported): %d current finding%s." % (result.id, result.heading, len(result.current),
+                                                                  "" if len(result.current) == 1 else "s") for result in supported)
+    if not supported:
+        lines.append("- nothing yet: no result stands supported.")
+    lines.extend(["", "Cannot be inferred:"])
+    rows = ["- %s %s (%s): %s." % (result.id, result.heading, result.standing,
+                                   "its current finding%s negative" % (" is" if len(result.current) == 1 else "s are all")
+                                   if result.standing == "negative" else
+                                   "%d of its %d current findings %s negative" % (result.negative, len(result.current),
+                                                                                  "is" if result.negative == 1 else "are"))
+            for result in other]
+    unchecked = sum(len(items) for items in context.unchecked.values())
+    if unchecked:
+        rows.append("- %d inherited claim%s not yet checked by this project's evidence." % (unchecked, "" if unchecked == 1 else "s"))
+    rows.extend("- The inherited claim %s could not be checked: %s." % (item.get("id"), one_line(item.get("reason") or "no reason given"))
+                for item in context.unverifiable)
+    lines.extend(rows or ["- nothing the ledger holds is negative, mixed, or unchecked."])
+    lines.extend(["", "Open questions:"])
+    questions = ["- %s %s" % (record["id"], one_line(record.get("text"))) for record in sorted(context.objectives, key=_objective_order)
+                 if record.get("status") == "open"]
+    questions += ["- %s %s" % (concern.get("id"), one_line(((concern.get("sources") or [{}])[0]).get("text")))
+                  for concern in context.concerns if concern.get("status") == "open"]
+    lines.extend(questions or ["- none: no objective and no concern is open."])
     return _records(lines)
+
+
+def _body(context):
+    objectives, shown = _objectives_section(context)
+    parts = (_the_project(context), _headlines(context), _results_table(context), objectives, _beyond(context, shown),
+             _unchecked_section(context), _inferences(context))
+    lines = []
+    for number, part in enumerate(parts, start=1):
+        lines.extend(["## %d. %s" % (number, SECTIONS[number - 1]), ""] + list(part) + [""])
+    return "\n".join(lines)
+
+
+def _banner(context, result, notes, edited):
+    lines = [
+        "# Report: %s" % context.project.name,
+        "",
+        RECORDS_BEGIN,
+        "Code renders this general report from the ledger alone, after every integration and at the tick, and never reads it "
+        "back: an edit of it is kept in git as it stood and is not taken in. It was rendered from `research/journal.jsonl` "
+        "(%d events), `findings.jsonl`, `results.json`, `objectives.json`, `concerns.json`, `passages.jsonl`, `spec.json`, "
+        "and `manifest.json`. The provenance linter %s: %d claim sentence(s), %d tagged." % (
+            len(context.events), "passed" if result.passed else "FAILED", result.claims, result.tagged),
+        "",
+        "What wayline did, what it decided for you, and what waits on you are in [ACCOUNT.md](ACCOUNT.md).",
+    ]
+    if edited is not None:
+        when, commit = edited
+        lines.extend(["", "%s was edited by hand (noticed %s). The edit was kept as it stood (%s) and is not taken in: the report "
+                      "is rendered from the ledger, and what you want it to say goes to the conversation." % (
+                          REPORT, (str(when)[:16].replace("T", " ") + "Z") if when else "at an earlier render",
+                          "commit `%s`" % commit[:12] if commit else "it could not be committed")])
+    if result.problems:
+        lines.extend(["", "The linter failed on these sentences; the report does not pass until each one ends with a tag that resolves, or is rewritten:", ""])
+        # Tags are taken off the sentence and the tag is named without its braces, so that a tag
+        # the linter refused is not rendered as a citation in the report that refused it.
+        lines.extend("- `%s` %s (%s%s)" % (problem["problem"], one_line(strip_tags(problem["sentence"])),
+                                           "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
+                     for problem in result.problems)
+    if context.notes or notes:
+        lines.append("")
+        lines.extend("- note: %s" % note for note in context.notes + list(notes))
+    lines.extend([RECORDS_END, "", ""])
+    return "\n".join(lines)
 
 
 def _discarded_means(events, goal):
@@ -1549,167 +1580,73 @@ def _discarded_means(events, goal):
     return pairs
 
 
-def _chart(readings, goal, width=40):
-    """The trajectory drawn in text: one bar per reading, the target marked, kept or not said."""
-    target = goal.get("target")
-    values = [payload["value"] for payload in readings if _is_number(payload.get("value"))]
-    scale = values + ([target] if _is_number(target) else [])
-    if not scale:
-        return ["no reading is a number"]
-    low, high = min(scale), max(scale)
-    span = (high - low) or abs(high) or 1.0
-    low, high = low - span * 0.25, high + span * 0.05
-
-    def position(value):
-        return max(0, min(width, int(round((value - low) / (high - low) * width))))
-
-    mark = position(target) if _is_number(target) else None
-    rows = []
-    for payload in readings:
-        value = payload.get("value")
-        state = "kept" if payload.get("kept") else "not kept"
-        if not _is_number(value):
-            rows.append("%8s %s  %-8s ticket %-4s %s" % ("?", " " * width, payload.get("run_id"), payload.get("ticket"), state))
-            continue
-        cells = ["#"] * position(value) + ["."] * (width - position(value))
-        if mark is not None and mark < width:
-            cells[mark] = "|"
-        rows.append("%8s %s  %-8s ticket %-4s %s" % (_number(value), "".join(cells), payload.get("run_id"), payload.get("ticket"), state))
-    if mark is not None:
-        rows.append("%8s %s^ target %s" % ("", " " * mark, _number(target)))
-    return rows
-
-
-def _findings_section(context, prose):
-    groups = _claim_groups(context)
-    if not groups:
-        return _records(["No finding was recorded."])
-    paragraphs = {group["group"]: group["text"] for group in (prose or {}).get("groups") or []}
-    lines = []
-    for key, members in groups.items():
-        lines.extend(["### %s" % key, ""])
-        if paragraphs.get(key, "").strip():
-            lines.extend([one_line(paragraphs[key]), ""])
-        lines.extend(_finding_item(finding, context.manifest) for finding in members)
-        lines.append("")
-    return lines[:-1]
-
-
-def _negative_section(context, prose):
-    negative = [finding for finding in context.findings if finding.get("negative")]
-    if not negative:
-        return _records(["No negative result was recorded."])
-    lines = []
-    paragraph = (prose or {}).get("negative_results") or ""
-    if paragraph.strip():
-        lines.extend([one_line(paragraph), ""])
-    lines.extend(_finding_item(finding, context.manifest) for finding in negative)
-    return lines
-
-
-def _body(context, prose):
-    sections = (_trajectory(context), _findings_section(context, prose), _negative_section(context, prose))
-    lines = []
-    for number, section in enumerate(sections, start=1):
-        lines.extend(["## %d. %s" % (number, SECTIONS[number - 1]), ""] + list(section) + [""])
-    return "\n".join(lines)
-
-
-def _banner(context, result, notes):
-    lines = [
-        "# Report: %s" % context.project.name,
-        "",
-        RECORDS_BEGIN,
-        "Rendered by `wayline report` from `research/journal.jsonl` (%d events), `findings.jsonl`, "
-        "`manifest.json`, `objectives.json`, and the tickets. The provenance linter %s: %d claim sentence(s), "
-        "%d tagged." % (len(context.events), "passed" if result.passed else "FAILED", result.claims, result.tagged),
-        "What wayline did, what it decided for you, and what waits on you are in [ACCOUNT.md](ACCOUNT.md).",
-    ]
-    if result.problems:
-        lines.extend(["", "The linter failed on these sentences; the report does not pass until each one ends with a tag that resolves, or is rewritten:", ""])
-        # Tags are taken off the sentence and the tag is named without its braces, so that a tag
-        # the linter refused is not rendered as a citation in the report that refused it.
-        lines.extend("- `%s` %s (%s%s)" % (problem["problem"], one_line(strip_tags(problem["sentence"])),
-                                           "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
-                     for problem in result.problems)
-    if context.notes or notes:
-        lines.append("")
-        lines.extend("- note: %s" % note for note in context.notes + list(notes))
-    lines.extend([RECORDS_END, "", ""])
-    return "\n".join(lines)
-
-
 # --- the render -----------------------------------------------------------------------------------
 
 
 @dataclass
 class Rendered:
-    """One render: where `REPORT.md` was written, its sha256, the linter's result, and the notes."""
+    """One render: where `REPORT.md` was written, its sha256, the linter's result, the notes, and the edit it kept."""
 
     path: Path
     sha256: str
     lint: Lint
     notes: list = field(default_factory=list)
+    edited: object = None  # the commit an edit by hand was kept in, "" when it could not be committed, None for no edit
 
 
-def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=False, draft=True):
-    """Render `research/REPORT.md` from the ledger, lint it, write it, and journal `report_rendered`.
+def _last_edit(events):
+    """`(when, commit)` of the general report's last render that noticed an edit by hand, or None."""
+    for event in reversed(events):
+        payload = event.get("payload") or {}
+        if event.get("event") == ledger.REPORT_RENDERED and not payload.get("report") and "edited" in payload:
+            return event.get("ts"), payload.get("edited") or ""
+    return None
 
-    The writer drafts the prose (unless `draft` is False or the cache already holds prose for these
-    findings), the classifier classifies every prose sentence the cache does not hold, the linter
-    runs on the tagged text, and the tags are rendered as citations in the file written. A report
-    that fails the linter is written all the same, with the offending sentences at its top: the
-    report is the stopping point, and one that failed says so where the owner reads it. Before
-    that, a failure on the writer's own sentences resumes the writer's session with the list, for
-    at most `paper.MAX_BUILDS` drafts, and the cache records each draft's result, so a failing
-    draft is redrafted by the next render that may launch rather than reused. `offline` launches no session at all, which is how the tick renders.
+
+def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=False):
+    """Render `research/REPORT.md`, the general report, from the ledger alone, lint it, write it, and journal `report_rendered`.
+
+    Code writes every line (decision 17; ticket 90): no writer session drafts any of it. The classifier is asked about
+    the findings' sentences the cache does not hold, unless `offline`, which launches nothing at all and is how the
+    conductor renders after every integration and the tick renders when the journal moved. The linter runs on the
+    tagged text, and the tags are rendered as citations in the file written. A report that fails the linter is
+    written all the same, with the offending sentences at its top.
+
+    The edit rule: an edit of the file since the last render (its hash against the last `report_rendered`) is
+    committed as it stood, journaled as `edited` on this render, listed in the banner from then on, and never taken in.
+    The account renders in the same pass.
     """
     project = Path(project).resolve()
     book = Ledger(project)
-    policy = policy_for(project, harness_root) if policy is None else policy
-    context = report_context(project)
-    from wayline.paper import MAX_BUILDS  # paper imports this module
-    notes = []
-    evidence = report_evidence(context)
-    may_launch = draft and not offline
-    prose, note = draft_prose(project, evidence, harness_root=harness_root, policy=policy, offline=not may_launch)
-    if note:
-        notes.append(note)
-    for number in range(1, MAX_BUILDS + 1):
-        body = _body(context, prose)
-        texts = [sentence.text for sentence in prose_sentences(body)]
-        try:
-            classes = classify(project, texts, harness_root=harness_root, policy=policy, offline=offline)
-        except UsageLimited as refused:
-            classes = read_claims_cache(book)
-            notes.append("%s; the sentences it did not reach are unclassified" % refused)
-        result = lint(project, body, classes)
-        failures = writer_failures(result, prose)
-        if not may_launch:
-            break
-        if prose:
-            _record_prose_lint(book, failures)
-        if not failures:
-            break
-        if number == MAX_BUILDS:
-            notes.append("the writer's prose still failed the linter after %d drafts" % MAX_BUILDS)
-            break
-        try:
-            prose = redraft_prose(project, evidence, failures, harness_root=harness_root, policy=policy)
-        except UsageLimited as refused:
-            notes.append("%s, so the writer's failing prose was not redrafted" % refused)
-            break
-    path = book.write_markdown(REPORT, render_citations(_banner(context, result, notes) + body))
-    digest = sha256_of(path)
-    book.append_event(ledger.REPORT_RENDERED, {"sha256": digest, "claims": result.claims, "tagged": result.tagged,
-                                               "linter_pass": result.passed})
-    # The account renders in the same pass (decision 17; ticket 89): what wayline did, beside the research.
     from wayline import account  # the account reads the decisions module, which imports this one through the gates
+    notes = []
+    if not offline:
+        # The classifier is a session: it runs before the lock, so no other writer of the ledger waits on it, and the
+        # render under the lock reads what it cached.
+        texts = [sentence.text for sentence in prose_sentences(_body(report_context(project)))]
+        try:
+            classify(project, texts, harness_root=harness_root, policy=policy)
+        except UsageLimited as refused:
+            notes.append("%s; the sentences it did not reach are unclassified" % refused)
+    with book.lock():
+        context = report_context(project)
+        body = _body(context)
+        result = lint(project, body, read_claims_cache(book))
+        edited = account.take_edit(project, REPORT, None, context.events)
+        stamp = now_ts()  # the edit is noticed at the time its render is journaled, which later banners read back
+        noticed = (stamp, edited) if edited is not None else _last_edit(context.events)
+        path = book.write_markdown(REPORT, render_citations(_banner(context, result, notes, noticed) + body))
+        digest = sha256_of(path)
+        payload = {"sha256": digest, "claims": result.claims, "tagged": result.tagged, "linter_pass": result.passed}
+        if edited is not None:
+            payload["edited"] = edited or None
+        book.append_event(ledger.REPORT_RENDERED, payload, ts=stamp)
+    # The account renders in the same pass (decision 17; ticket 89): what wayline did, beside the research.
     try:
         account.render_account(project)
     except (ValueError, OSError) as failure:
         notes.append("ACCOUNT.md could not be rendered: %s" % failure)
-    return Rendered(path, digest, result, notes)
+    return Rendered(path, digest, result, notes, edited)
 
 
 def lint_report(project):
@@ -1720,12 +1657,11 @@ def lint_report(project):
 
 
 def report_command(args):
-    """`wayline report [--project <path>] [--offline] [--no-draft] [--verify] [--json]`."""
-    parser = argparse.ArgumentParser(prog="wayline report", description="render research/REPORT.md from the ledger and lint its claims")
+    """`wayline report [--project <path>] [--offline] [--verify] [--json]`."""
+    parser = argparse.ArgumentParser(prog="wayline report", description="render research/REPORT.md, the general report, from the ledger and lint its claims")
     parser.add_argument("--project", help="the project (default: the active one)")
     parser.add_argument("--offline", action="store_true",
-                        help="launch no session: nothing new is classified or drafted, and an untagged sentence the cache does not cover fails the linter")
-    parser.add_argument("--no-draft", action="store_true", help="use the writer's cached prose rather than drafting it again")
+                        help="launch no session: nothing new is classified, and an untagged sentence the cache does not cover fails the linter")
     parser.add_argument("--verify", action="store_true",
                         help="after a passing render, take a verdict on a sample of the tagged claims (10 percent, at least ten, every difficulty-5 claim)")
     parser.add_argument("--json", action="store_true", help="print the outcome as JSON")
@@ -1738,12 +1674,12 @@ def report_command(args):
         print("wayline report: %s" % failure, file=sys.stderr)
         return 2
     try:
-        rendered = render_report(project, offline=options.offline, draft=not options.no_draft)
+        rendered = render_report(project, offline=options.offline)
         verified = verify_claims(project) if options.verify and rendered.lint.passed else None
         if verified and verified["fell_back"]:
-            # The report lists the verdicts taken by fallback from the journal, which the sampling has just added to;
-            # nothing the writer or the classifier read changed, so the render launches nothing.
-            rendered = render_report(project, offline=True, draft=False)
+            # The account lists the verdicts taken by fallback from the journal, which the sampling has just added to;
+            # nothing the classifier read changed, so the render launches nothing.
+            rendered = render_report(project, offline=True)
     except (ProvenanceError, gates.GateError, worker.LaunchError, worker.RoleError, tickets.TicketError) as failure:
         print("wayline report: %s" % failure, file=sys.stderr)
         return 1

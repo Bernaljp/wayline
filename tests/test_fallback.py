@@ -599,54 +599,5 @@ class HoldLineTest(HoldCase):
         self.assertIsNone(dashboard.overview_view(self.project)["hold"])
 
 
-class WriterFallbackTest(RunCase):
-    """Criterion 3 outside the conductor: the report's writer on Fable falls back to Opus at its own effort, and its prose is judged as Opus's."""
-
-    def setUp(self):
-        super().setUp()
-        on_fable(self.project, "writer", "verifier.opus")  # the writer on Fable, and Opus's prose read on Fable
-
-    def hold(self, hours):
-        Ledger(self.project).append_event("paused", {"resets_at": pacing.iso(time.time() + hours * HOUR), "window": "seven_day",
-                                                     "utilization": 1.0, "model": "fable"})
-
-    def writer(self):
-        (call,) = [call for call in self.calls if call.request.role == "writer"]
-        return call.request
-
-    def cached(self):
-        return json.loads((self.project / "research" / ".cache" / "report_prose.json").read_text(encoding="utf-8"))
-
-    def test_under_auto_the_writer_drafts_on_opus_at_xhigh_and_its_prose_goes_to_the_verifier_opus_gets(self):
-        self.hold(10)
-        set_model_fallback(self.project, "auto")
-        self.render()
-        request = self.writer()
-        self.assertEqual((request.model, request.effort), ("opus", "xhigh"))
-        self.assertEqual({agent["model"] for agent in json.loads(request.agent_text()).values()}, {"opus"})
-        self.assertEqual(self.cached()["fallback_from"], "fable")
-        with worker.use_fake() as fake:
-            for _ in range(7):
-                fake.script(respond=lambda request, message: verdict(), role="verifier")
-            verify_claims(self.project)
-            judged = [(call.request.model, call.request.effort) for call in fake.calls if "Interaction terms carry" in call.request.prompt]
-        self.assertEqual(judged, [("opus", "high")],
-                         "Opus's prose goes to the Fable verifier the table gives it, a fresh Opus session while the hold stands")
-
-    def test_under_wait_the_writer_stays_on_fable(self):
-        self.hold(10)
-        set_model_fallback(self.project, "wait")
-        self.render()
-        self.assertEqual(self.writer().model, "fable")
-        self.assertIsNone(self.cached()["fallback_from"])
-
-    def test_a_hold_whose_reset_has_passed_falls_nothing_back(self):
-        self.hold(-1)
-        set_model_fallback(self.project, "auto")
-        self.render()
-        self.assertEqual(self.writer().model, "fable")
-
-
-
 if __name__ == "__main__":
     unittest.main()

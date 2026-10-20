@@ -665,7 +665,8 @@ class OutputsEndpointTest(DashboardTestCase):
     def setUp(self):
         super().setUp()
         research = self.project / "research"
-        (research / "findings.md").write_text("# findings\n\nnone yet.\n", encoding="utf-8")
+        (research / "sections").mkdir(exist_ok=True)
+        (research / "sections" / "results.md").write_text("# Results\n\nNothing yet.\n", encoding="utf-8")
         (research / "REPORT.md").write_text("# Report\n\nA claim.\n", encoding="utf-8")
         (research / "paper").mkdir(parents=True, exist_ok=True)
         (research / "paper" / "main.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
@@ -692,13 +693,13 @@ class OutputsEndpointTest(DashboardTestCase):
             self.assertEqual(entry["sha256"], expected["sha256"])
             self.assertEqual(entry["ticket"], expected["ticket"])
 
-    def test_findings_jsonl_and_findings_md_are_indexed_with_a_real_hash(self):
+    def test_findings_jsonl_and_the_results_section_are_indexed_with_a_real_hash(self):
         entries = {entry["path"]: entry for entry in self.outputs()["findings"]}
         self.assertIn("research/findings.jsonl", entries)
-        self.assertIn("research/findings.md", entries)
-        on_disk = self.project / "research" / "findings.md"
-        self.assertEqual(entries["research/findings.md"]["sha256"], sha256_of(on_disk))
-        self.assertEqual(entries["research/findings.md"]["size"], on_disk.stat().st_size)
+        self.assertIn("research/sections/results.md", entries)
+        on_disk = self.project / "research" / "sections" / "results.md"
+        self.assertEqual(entries["research/sections/results.md"]["sha256"], sha256_of(on_disk))
+        self.assertEqual(entries["research/sections/results.md"]["size"], on_disk.stat().st_size)
 
     def test_the_report_is_indexed_when_it_exists(self):
         report = self.outputs()["report"]

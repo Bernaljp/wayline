@@ -7,7 +7,7 @@
     "tiers", "difficulty", "budget", "roles", "verifier", "max_parallel_workers", "poll_seconds", "heartbeat_stale_s",
     "acceptance_timeout_s", "pacing", "model_fallback", "context_pack", "escalation", "stall", "proposals", "goal", "absorb",
     "consultant", "kb", "scout", "provenance", "artifacts", "reservations", "jobs", "tick", "dashboard", "fixtures",
-    "figures", "plot_index", "plot_checks", "quiet_hours", "per_window_worker_budget"
+    "figures", "plot_index", "plot_checks", "repeats", "quiet_hours", "per_window_worker_budget"
   ],
   "additionalProperties": false,
   "properties": {
@@ -272,6 +272,16 @@
       "properties": {
         "axis_label_max_chars": {"type": "integer", "minimum": 1},
         "heatmap_label_max_cells": {"type": "integer", "minimum": 0}
+      }
+    },
+    "repeats": {
+      "type": "object",
+      "description": "the repeated-claims check (Implementation Decision 17; wayline.repeats): the embedding model's cosine at or above which a pair of claims is proposed to the confirmer, and the most pairs the net proposes in one check, the most similar first",
+      "required": ["similarity", "max_pairs"],
+      "additionalProperties": false,
+      "properties": {
+        "similarity": {"type": "number", "minimum": 0, "maximum": 1},
+        "max_pairs": {"type": "integer", "minimum": 1}
       }
     },
     "quiet_hours": {"type": "null", "description": "none until a night is measured (Implementation Decisions 14)"},

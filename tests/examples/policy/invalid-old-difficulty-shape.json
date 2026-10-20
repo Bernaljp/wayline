@@ -279,6 +279,7 @@
     "axis_label_max_chars": 40,
     "heatmap_label_max_cells": 36
   },
+  "repeats": {"similarity": 0.7, "max_pairs": 100},
   "quiet_hours": null,
   "per_window_worker_budget": null
 }

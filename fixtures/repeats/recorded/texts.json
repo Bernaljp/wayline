@@ -1,0 +1,20 @@
+[
+  "Lantern moths gather in dusk swarms whose wingbeats lock together.",
+  "Why they synchronize is unknown.",
+  "Phase locking has been measured in other insects.",
+  "Larger colonies beat more nearly in phase than small ones (Figure 1).",
+  "The order parameter is lowest at dusk across every colony.",
+  "The dusk sweep of 2021 repeated the size series under red light; its recordings are kept in data/dusk-sweep-2021.csv and gave R = 0.71.",
+  "$$R = |\\frac{1}{N}\\sum exp(i\\varphi)|$$",
+  "Our central finding is that synchrony rises with colony size.",
+  "Dusk light may be the cue.",
+  "Wingbeats were filmed at 2000 frames per second; the phase of each moth was taken from the analytic signal, as described in methods.tex.",
+  "The order parameter peaks at dusk in every colony.",
+  "Synchrony grows with the size of the colony.",
+  "Colonies filmed at noon showed no phase locking.",
+  "Lantern moths gather in swarms at dusk, and their wingbeats lock together.",
+  "Synchrony rises with colony size.",
+  "Larger colonies are more synchronized.",
+  "The wingbeat phase drifts by less than a cycle over ten minutes.",
+  "Colonies of more than 40 moths lock their wingbeats within a minute of dusk."
+]

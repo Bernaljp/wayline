@@ -376,7 +376,7 @@ class AutonomousLadderTest(EvolveCase):
         lines = changes.proposal_lines(self.project)
         self.assertTrue(any("Tell the planner to cut smaller tickets" in line and "prompts/roles/planner.md" in line for line in lines))
         self.assertTrue(any("wayline evolve --apply %s" % kept["id"] in line for line in lines))
-        provenance.render_report(self.project, offline=True, draft=False)
+        provenance.render_report(self.project, offline=True)
         told = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8").split("## Waiting on you", 1)[1]
         self.assertIn("Global change `%s`, *Tell the planner to cut smaller tickets*" % kept["id"], told)
         self.assertIn("proposed, not applied; `wayline evolve --apply %s` applies it" % kept["id"], told)

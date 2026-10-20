@@ -113,6 +113,7 @@ SCOUTED = "scouted"  # one `wayline scout <identifier>` a worker ran, counted ag
 CONSOLIDATED = "consolidated"  # one consolidation of a section the owner asked for (decision 17; ticket 88)
 CONCERN = "concern"  # one concern recorded or changed in research/concerns.json (decision 17; ticket 96)
 REVIEWED = "reviewed"  # the owner let a decision made for them stand, or reversed it (decision 17; ticket 89)
+RESULT = "result"  # one result created at an acceptance, or merged or renamed on the owner's word (decision 17; ticket 90)
 VERIFICATION = "verification"  # one inherited result's standing recorded or changed in research/verifications.json (decision 17; ticket 97)
 
 # --- payload keys ----------------------------------------------------------------------------
@@ -260,12 +261,15 @@ K_IDENTIFIER = "identifier"  # `scouted`: the DOI, arXiv id, or exact title the 
 K_REPLACES_OWNER = "replaces_owner"  # `passage`, `finding`: true when it replaces an owner's passage, for the account (ticket 88)
 K_REPLACED = "replaced"  # `consolidated`: the ids of the passages the consolidation replaced
 K_CONSOLIDATES = "consolidates"  # `passage`: on a consolidation's passage, every passage it rewrote (ticket 88)
+K_MERGES = "merges"  # `passage`: on a merged inherited passage, every occurrence of the claim it merges (ticket 95)
 K_WRITTEN = "written"  # `consolidated`: the ids of the fewer passages it wrote in their place
 K_PLACE = "place"  # `concern`: where the concern was sorted, tied to objectives, for the order, or declined; null while unsorted
 K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for research/ACCOUNT.md (ticket 89); absent for REPORT.md
 K_EDITED = "edited"  # `report_rendered`: the commit an edit by hand was kept in as it stood, null when it could not be committed
 K_DECISION = "decision"  # `reviewed`: the decision reviewed, D1 onward, by its place among the journal's `decision` events
 K_REVIEW = "review"  # `reviewed`: stand or reverse
+K_RESULT = "result"  # `finding`: the result, R1 onward, the finding joined at its acceptance (ticket 90)
+K_INTO = "into"  # `result`: the result a merged one went into
 K_ROUTE = "route"  # `verification`: the route of the verdict that changed it, reproduced, ported, reimplemented, or read
 K_RELEASED = "released"  # `verification`: the tickets an unverifiable result stopped blocking
 
@@ -296,7 +300,7 @@ EVENTS = {
     DIFFICULTY_RAISED: (K_KIND, K_FROM, K_TO),
     VERDICT: (K_SUBJECT_KIND, K_SUBJECT, K_VERDICT_TYPE, K_PASS, K_SESSION_ID, K_MODEL, K_FINDINGS, K_RUNG, K_FALLBACK_FROM, K_MODEL_RAN),
     FINDING: (K_ID, K_TICKET, K_TEXT, K_PROVENANCE, K_NEGATIVE, K_HEADING, K_REPLACES, K_OBJECTIVES, K_EVIDENCE, K_REASON,
-              K_REPLACES_OWNER),
+              K_REPLACES_OWNER, K_RESULT),
     PROGRESS: (K_METRIC, K_VALUE, K_TICKET, K_RUN_ID, K_KEPT, K_GOAL),
     DISCARDED: (K_TICKET, K_METRIC, K_BEST, K_SD, K_SEEDS, K_GOAL),
     PROPOSAL_ADMITTED: (K_ID, K_FROM, K_KIND, K_TICKET),
@@ -332,11 +336,12 @@ EVENTS = {
     CODE_PUSHED: (K_COMMIT, K_REMOTE, K_MAIN),
     TOOL_INSTALLED: (K_TICKET, K_NAME, K_OUTCOME, K_VERSION, K_ATTEMPT, K_REASON),
     PASSAGE: (K_ID, K_SECTION, K_HEADING, K_TEXT, K_REPLACES, K_BY, K_OBJECTIVES, K_EVIDENCE, K_DOC, K_STANDING, K_REASON,
-              K_WITHDRAWN, K_MOVED_FROM, K_REPLACES_OWNER, K_CONSOLIDATES),
+              K_WITHDRAWN, K_MOVED_FROM, K_REPLACES_OWNER, K_CONSOLIDATES, K_MERGES),
     SCOUTED: (K_IDENTIFIER, K_OUTCOME, K_SLUG),
     CONSOLIDATED: (K_SECTION, K_REPLACED, K_WRITTEN, K_MODEL),
     CONCERN: (K_ID, K_STATUS, K_PLACE, K_OBJECTIVES, K_BY),
     REVIEWED: (K_DECISION, K_REVIEW, K_ANSWER, K_BY),
+    RESULT: (K_ID, K_HEADING, K_ACTION, K_INTO, K_FROM, K_BY),
     VERIFICATION: (K_HEADING, K_STANDING, K_ROUTE, K_BY, K_RELEASED),
 }
 
@@ -390,6 +395,9 @@ PAYLOAD_ENUMS = {
     (CONCERN, K_BY): ("session", "code", "critic", "owner", "decider"),
     (REVIEWED, K_REVIEW): ("stand", "reverse"),
     (REVIEWED, K_BY): ("owner",),
+    (RESULT, K_ACTION): ("created", "merged", "renamed"),
+    # Code clusters a finding into a result at its acceptance; only the owner merges or renames one.
+    (RESULT, K_BY): ("code", "owner"),
     (VERIFICATION, K_STANDING): ("unchecked", "verified", "unverifiable"),
     (VERIFICATION, K_ROUTE): ("reproduced", "ported", "reimplemented", "read"),
     # Code (a result found or followed, a verdict taken, a needs_human under autonomous), or the owner's or the decider's
