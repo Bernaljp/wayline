@@ -42,23 +42,23 @@ Not part of this ticket:
 
 **Blocked by:** 79 - Batches and marks; 80 - The front door reads objectives; 81 - Specify and the plan name objectives; 86 - Passages and the five sections; 89 - The account. It blocks 92, 109, and 112.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#238](https://github.com/Bernaljp/wayline/issues/238) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 ("How objectives change as results come in"; "Defects found while charting": the decider reads the radius; "Vocabulary the build adds": `objective_proposals` on `result` and `verdict`, the `objective` event with `by` and `proposal`, `objective_proposed`, set-aside standing); decisions 2 (the event table: `objective`, `objective_proposed`, `ticket_cancelled`), 4 (the irreversible list; "change a goal's measure, or the data"), 10 (the decider), 11 (the Type-B verdict), the schemas list (`result`, `verdict`, `spec`); M8 criterion 2; user stories 106, 107, 108, 110, 111.
 
-- [ ] `result` and `verdict` gain `objective_proposals[]` with the six kinds and their fields, and each proposal is journaled as `objective_proposed`.
-- [ ] A ticket carrying a proposal always gets its Type-B verdict, at every difficulty, which judges each proposal upheld or not with a reason. A proposal not upheld goes to the account's "Not pursued".
-- [ ] Code gathers upheld proposals into one open "Objective changes" decision ticket whose items are in a batch. It pauses only the unstarted tickets serving solely an objective a `park`, `drop`, `reframe`, or `answer` names, and a declined proposal resumes them.
-- [ ] Under `autonomous` the decider takes the batch in one session within the rules: never parking or dropping a named objective; adding, reframing, or reopening only with `objective` off the human-only list; additions bounded by the radius it now reads; reopening a parked objective at every radius. What it may not take waits on the owner.
-- [ ] An objective's answer is written by the upholding verifier, or by one fresh `opus high` verifier per objective for "answer it as it stands". It passes the numbers and locator checks and becomes a Discussion passage written by code.
-- [ ] Approval cancels the unstarted tickets serving only a closed objective with `ticket_cancelled`, sets aside claims tied only to closed objectives (shown in `SPEC.md`, restored on reopen), re-ties claims and tickets on a reframe, and keeps a superseded answer on an owner's reopen.
-- [ ] The owner's word applies directly through the objective verbs with no proposal or verdict. Decision 4's wording and the irreversible list change as decision 17 says.
-- [ ] When the answer drops an objective, its concerns go back to sorting inside the same "Objective changes" answer. Ticket 96 built the re-sort as a `concern` decision ticket of its own after setup, and a grill question during setup; inside this answer it is asked there instead.
-- [ ] Tests:
+- [x] `result` and `verdict` gain `objective_proposals[]` with the six kinds and their fields, and each proposal is journaled as `objective_proposed`.
+- [x] A ticket carrying a proposal always gets its Type-B verdict, at every difficulty, which judges each proposal upheld or not with a reason. A proposal not upheld goes to the account's "Not pursued".
+- [x] Code gathers upheld proposals into one open "Objective changes" decision ticket whose items are in a batch. It pauses only the unstarted tickets serving solely an objective a `park`, `drop`, `reframe`, or `answer` names, and a declined proposal resumes them.
+- [x] Under `autonomous` the decider takes the batch in one session within the rules: never parking or dropping a named objective; adding, reframing, or reopening only with `objective` off the human-only list; additions bounded by the radius it now reads; reopening a parked objective at every radius. What it may not take waits on the owner.
+- [x] An objective's answer is written by the upholding verifier, or by one fresh `opus high` verifier per objective for "answer it as it stands". It passes the numbers and locator checks and becomes a Discussion passage written by code.
+- [x] Approval cancels the unstarted tickets serving only a closed objective with `ticket_cancelled`, sets aside claims tied only to closed objectives (shown in `SPEC.md`, restored on reopen), re-ties claims and tickets on a reframe, and keeps a superseded answer on an owner's reopen.
+- [x] The owner's word applies directly through the objective verbs with no proposal or verdict. Decision 4's wording and the irreversible list change as decision 17 says.
+- [x] When the answer drops an objective, its concerns go back to sorting inside the same "Objective changes" answer. Ticket 96 built the re-sort as a `concern` decision ticket of its own after setup, and a grill question during setup; inside this answer it is asked there instead.
+- [x] Tests:
   - replayed journals for a proposal upheld and batched, one not upheld, a decline resuming paused tickets, the decider's batch under each radius, a reopen, and a set-aside claim restored, idempotence included;
   - the fake launcher for the verdict's judgment, the decider's batch, and the answering verifier.
-- [ ] The event table of decision 2 and the schemas list gain these rows in the same commit as the code.
-- [ ] `CHANGELOG.md` under `## Unreleased` describes how objectives change.
+- [x] The event table of decision 2 and the schemas list gain these rows in the same commit as the code.
+- [x] `CHANGELOG.md` under `## Unreleased` describes how objectives change.
 - [ ] `python -m unittest` passes.
