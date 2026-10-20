@@ -31,6 +31,7 @@ Not part of this ticket:
 - [ ] `REPORT.md` gains, per result, its current and earlier report links, its headline plots with their three explanations, and the synthesis.
 - [ ] `report_rendered` carries `report` and `version`. An edited current or earlier report is noticed by its hash, committed as it stood, and listed in the next render's banner, never taken in.
 - [ ] A plot the owner asks for becomes a small drawing of its result carrying the other plots unchanged into the new version. Data no result holds becomes an analysis ticket.
+- [ ] A result merged into another (`wayline result merge`, or an outline merge proposal of ticket 104 taken) takes its plots with it: each plot of the merged result is re-pointed to the result it went into and keeps its id, so its `plot` tags still resolve and that result's next drawing keeps or retires it, and the merged result's current report freezes as an earlier report. The spec is silent here, and ticket 100 left a merged result's plots current with nothing that would ever draw them again.
 - [ ] Tests on the ledger seam over a temporary project with accepted drawing records from the fake launcher, asserting on the files written: versions, the freeze, "Since the plots were drawn", replacement notes, the general report's links, the edit rule, and the small drawing.
 - [ ] Decision 2's event table names `report` and `version` on `report_rendered` in the same commit.
 - [ ] `python -m unittest` passes.
