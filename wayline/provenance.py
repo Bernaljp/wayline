@@ -1230,6 +1230,7 @@ class _Context:
     spec: dict = None
     unchecked: dict = field(default_factory=dict)    # section -> the current inherited claims not yet checked
     unverifiable: list = field(default_factory=list)  # the current inherited claims the project could not check
+    reports: object = None  # `wayline.reports.Index`: the accepted drawings and the clustering, read once (ticket 101)
 
 
 def report_context(project):
@@ -1259,6 +1260,11 @@ def report_context(project):
         context.results = results.read_results(book)
     except (OSError, ValueError) as failure:
         notes.append("the results could not be read: %s" % failure)
+    from wayline import reports  # the reports module renders findings with this one
+    try:
+        context.reports = reports.Index(book)
+    except (OSError, ValueError) as failure:
+        notes.append("the drawings could not be read: %s" % failure)
     try:
         context.concerns = concerns.read_concerns(book)
     except (OSError, ValueError) as failure:
@@ -1374,25 +1380,29 @@ def _report_link(name):
 
 def _current_report(context, result):
     """The link to a result's current report, `research/reports/R<n>-<version>.md`, or "none yet" (ticket 101)."""
-    from wayline import reports  # the reports module renders findings with this one
-    current, _ = reports.links(context.project, result.id)
+    current = context.reports.links(result.id)[0] if context.reports else None
     return _report_link(current) if current else NO_REPORT
 
 
 def _drawn(context, result):
     """A result's reports, headline plots, and synthesis, as its last accepted drawing left them (ticket 101)."""
-    from wayline import reports
-    current, earlier = reports.links(context.project, result.id)
-    held = reports.versions(context.project, result.id)
+    if context.reports is None:
+        return []
+    current, earlier = context.reports.links(result.id)
+    held = context.reports.versions(result.id)
     if current is None and not earlier:
         return []
     lines = ["Current report: %s.%s" % (_report_link(current) if current else NO_REPORT,
                                         " Earlier reports: %s." % ", ".join(_report_link(name) for name in earlier) if earlier else "")]
     record = held[-1][1] if held else None
     if record is not None:
-        for entry in record.get("plots") or []:
-            if not entry.get("headline"):
-                continue
+        # The headline plots are the current ones plots.json marks: a plot the owner asked for carries the others' unchanged.
+        from wayline import drawings
+        marked = {plot["id"] for plot in drawings.read_plots(context.project)["plots"]
+                  if plot.get("result") == result.id and plot.get("status") == drawings.CURRENT and plot.get("headline")}
+        entries = context.reports.entries()
+        for entry in sorted((entries[identifier][0] for identifier in marked if identifier in entries and entries[identifier][1] == "plot"),
+                            key=lambda entry: drawings.plot_order(entry["id"])):
             lines.extend(["", "Headline plot %s (%s):" % (entry["id"], entry.get("chart_type")), "",
                           "![%s](../%s)" % (entry["id"], entry["png"]), "",
                           "- Purpose: %s" % entry.get("purpose"), "- Data: %s" % entry.get("data"),

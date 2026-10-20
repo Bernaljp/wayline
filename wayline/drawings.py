@@ -54,7 +54,7 @@ __all__ = [
     "KIND", "ROLE", "RUN_END", "CHECKPOINT", "OWNER", "RESTS", "PLOTS_JSON", "DRAWINGS_DIR", "DRAFT", "DRAWING_CHECK", "TOOLS_PYTHON",
     "DrawingError", "PlotterTier", "Limits", "Checked", "own_evidence", "signature", "read_records", "due", "tier", "limits",
     "plot_marks", "read_plots", "last_accepted", "drawing_of", "result_heading", "brief", "earlier_figures", "check", "accept",
-    "fail", "record_path", "directory", "draw_again", "open_drawings", "follow_merge",
+    "fail", "record_path", "directory", "draw_again", "open_drawings", "follow_merge", "accepted_records", "under_way", "plot_order", "drawing_name",
 ]
 
 RECORD_SCHEMA = "drawing"
@@ -425,7 +425,8 @@ def brief(project, ticket, policy=None):
     lines += ["", "## The house style", "",
               "`figures/style.json` in the project: its colors, ramps, and smallest text size are what the palette and "
               "font checks hold every plot to."]
-    lines += ["", "## The previous drawing and the owner's marks", ""] + _previous_lines(book, result_id)
+    asked = bool(_asked_lines(book, result_id, version))
+    lines += ["", "## The previous drawing and the owner's marks", ""] + _previous_lines(book, result_id, asked)
     figures = earlier_figures(book, result) if result else []
     if figures:
         lines += ["", "## Earlier figures to answer", "",
@@ -471,13 +472,15 @@ def follow_merge(project_or_ledger, source, into):
     return moved
 
 
-def _previous_lines(book, result_id):
+def _previous_lines(book, result_id, asked=False):
     record = last_accepted(book, result_id)
     if record is None:
         return ["None: this is the result's first accepted drawing."] + _merged_lines({plot["id"]: plot for plot in read_plots(book)["plots"]}, result_id, None)
     plots = {plot["id"]: plot for plot in read_plots(book)["plots"]}
-    lines = ["Drawing %s (`%s`). Redraw a plot by naming its id in `redraws`; a plot you leave out is retired, unless the "
-             "owner marked it keep, and a plot the owner marked drop is retired and never drawn again." % (
+    lines = ["Drawing %s (`%s`). Redraw a plot by naming its id in `redraws`; %s, and a plot the owner marked drop is "
+             "retired and never drawn again." % (
+                 "a plot you leave out is carried unchanged, since this drawing is a plot the owner asked for" if asked else
+                 "a plot you leave out is retired, unless the owner marked it keep",
                  _name(record["result"], record["version"]), directory(record["result"], record["version"]))]
     for entry in record.get("plots", []) + record.get("tables", []):
         held = plots.get(entry["id"]) or {}
@@ -490,10 +493,10 @@ def _previous_lines(book, result_id):
         held = plots.get(identifier) or {}
         lines.append("- %s (carried, marked %s)%s" % (identifier, held.get("mark") or "keep",
                                                      " Note: %s" % held["note"] if held.get("note") else ""))
-    return lines + _merged_lines(plots, result_id, record)
+    return lines + _merged_lines(plots, result_id, record, asked)
 
 
-def _merged_lines(plots, result_id, record):
+def _merged_lines(plots, result_id, record, asked=False):
     """The current plots a result merged into this one brought with it, which this drawing keeps or retires."""
     listed = set(record.get("carried") or []) if record else set()
     if record:
@@ -502,8 +505,8 @@ def _merged_lines(plots, result_id, record):
     for identifier, held in sorted(plots.items()):
         if held.get("result") == result_id and held.get("status") == CURRENT and identifier not in listed:
             lines.append("- %s (%s; %s, from a result merged into this one, marked %s): redraw it by its id in `redraws`, or "
-                         "leave it out to retire it." % (identifier, held.get("chart_type") or "table", held.get("data_view"),
-                                                         held.get("mark") or "no mark"))
+                         "leave it out to %s." % (identifier, held.get("chart_type") or "table", held.get("data_view"),
+                                                  held.get("mark") or "no mark", "carry it unchanged" if asked else "retire it"))
     return lines
 
 
@@ -907,7 +910,8 @@ def accept(project, ticket, checked):
                 retired.append(plot["id"])
             elif plot.get("mark") == KEEP or plot["id"] in failed_redraws or record.get("asked"):
                 carried.append(plot["id"])
-                plot["headline"] = False  # the headlines are this drawing's to mark
+                if not record.get("asked"):
+                    plot["headline"] = False  # the headlines are this drawing's to mark; an asked plot carries them unchanged
             else:
                 plot.update(status=RETIRED, headline=False)
                 retired.append(plot["id"])
@@ -935,6 +939,28 @@ def accept(project, ticket, checked):
                                     "outcome": ACCEPTED, "plots": sorted(ids, key=_plot_order), "left_out": list(checked.left_out),
                                     "retired": retired}, ticket=ticket["id"])
     return record
+
+
+def accepted_records(project_or_ledger, result_id=None):
+    """The accepted drawing records, of `result_id` alone when given, in result and version order."""
+    return [record for record in read_records(project_or_ledger, result_id) if record.get("status") == ACCEPTED]
+
+
+def under_way(project_or_ledger, result_id):
+    """Whether a drawing of `result_id` is under way: opened and still owing its outcome."""
+    book = ledger_for(project_or_ledger)
+    latest = read_records(book, result_id)
+    return bool(latest) and _in_progress(latest[-1], _drawing_tickets(book.project), _awaiting_resume(book.read_events()[0]))
+
+
+def plot_order(identifier):
+    """The order plots are listed in: plots before tables, each by number."""
+    return _plot_order(identifier)
+
+
+def drawing_name(result_id, version):
+    """`R4-2`: the name of a result's drawing of that version."""
+    return _name(result_id, version)
 
 
 def _plot_order(identifier):

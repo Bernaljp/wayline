@@ -27,11 +27,11 @@ import csv
 import hashlib
 import re
 
-from wayline import drawings, tickets
+from wayline import drawings, sections, tickets
 from wayline import results as results_module
 from wayline.ledger import REPORT_RENDERED, TICKET_CREATED, ledger_for, now_ts
 
-__all__ = ["REPORTS_DIR", "SINCE", "ReportError", "versions", "report_name", "report_path", "links", "plot_entries",
+__all__ = ["REPORTS_DIR", "SINCE", "ReportError", "Index", "versions", "report_name", "report_path", "links", "plot_entries",
            "render_reports", "ask_plot"]
 
 REPORTS_DIR = "reports"
@@ -54,10 +54,42 @@ def report_path(result_id, version):
     return "%s/%s.md" % (REPORTS_DIR, report_name(result_id, version))
 
 
+class Index:
+    """The accepted drawings and the clustering, read once, which every report and link of one render pass reads."""
+
+    def __init__(self, project_or_ledger):
+        book = ledger_for(project_or_ledger)
+        self.clusters = results_module.load(book)
+        self.accepted = {}
+        self._entries = None
+        for record in drawings.accepted_records(book):
+            self.accepted.setdefault(record.get("result"), []).append(record)
+
+    def versions(self, result_id):
+        return list(enumerate(self.accepted.get(result_id) or [], start=1))
+
+    def links(self, result_id):
+        own = [report_name(result_id, version) for version, _ in self.versions(result_id)]
+        merged = [report_name(source, version) for source in _merged_sources(self.clusters, result_id)
+                  for version, _ in self.versions(source)]
+        return (own[-1] if own else None), own[:-1] + merged
+
+    def entries(self):
+        """`{plot id: (entry, kind)}`: each plot or table as the drawing accepted last that drew it explained it."""
+        if self._entries is not None:
+            return self._entries
+        found = self._entries = {}
+        records = [record for held in self.accepted.values() for record in held]
+        for record in sorted(records, key=lambda record: str(record.get("closed") or "")):
+            for kind, key in (("plot", "plots"), ("table", "tables")):
+                for entry in record.get(key) or []:
+                    found[entry["id"]] = (entry, kind)
+        return found
+
+
 def versions(project_or_ledger, result_id):
     """The result's accepted drawings in order, `[(version, record)]`: version 1 is its first accepted drawing."""
-    accepted = [record for record in drawings.read_records(project_or_ledger, result_id) if record.get("status") == drawings.ACCEPTED]
-    return list(enumerate(accepted, start=1))
+    return list(enumerate(drawings.accepted_records(project_or_ledger, result_id), start=1))
 
 
 def _merged_sources(clusters, result_id):
@@ -69,33 +101,22 @@ def _merged_sources(clusters, result_id):
     return found
 
 
-def links(project_or_ledger, result_id, clusters=None):
+def links(project_or_ledger, result_id):
     """`(current, earlier)` report names of a live result: its latest version (None before its first accepted drawing),
     then its earlier versions and every report of the results merged into it."""
-    book = ledger_for(project_or_ledger)
-    clusters = clusters or results_module.load(book)
-    own = [report_name(result_id, version) for version, _ in versions(book, result_id)]
-    merged = [report_name(source, version) for source in _merged_sources(clusters, result_id) for version, _ in versions(book, source)]
-    return (own[-1] if own else None), own[:-1] + merged
+    return Index(project_or_ledger).links(result_id)
 
 
 def plot_entries(project_or_ledger):
-    """`{plot id: (entry, kind)}`: each plot or table as the latest accepted drawing that drew it explained it."""
-    found = {}
-    for record in drawings.read_records(project_or_ledger):
-        if record.get("status") != drawings.ACCEPTED:
-            continue
-        for kind, key in (("plot", "plots"), ("table", "tables")):
-            for entry in record.get(key) or []:
-                found[entry["id"]] = (entry, kind)
-    return found
+    """`{plot id: (entry, kind)}`: each plot or table as the drawing accepted last that drew it explained it."""
+    return Index(project_or_ledger).entries()
 
 
 def _shown(record, entries):
     """The plots and the tables a version shows: its drawing's own and those it carried, in id order."""
     plots = [(entry, "plot") for entry in record.get("plots") or []] + [(entry, "table") for entry in record.get("tables") or []]
     plots += [entries[identifier] for identifier in record.get("carried") or [] if identifier in entries]
-    order = drawings._plot_order
+    order = drawings.plot_order
     return (sorted((entry for entry, kind in plots if kind == "plot"), key=lambda entry: order(entry["id"])),
             sorted((entry for entry, kind in plots if kind == "table"), key=lambda entry: order(entry["id"])))
 
@@ -163,7 +184,7 @@ def _text(book, result, version, record, entries, manifest, edits):
     lines = ["# %s. %s (%s)" % (name, result.heading, result.standing), "",
              "Code renders this report of %s from the ledger alone; it is version %d, started by the accepted drawing %s. It "
              "is never read back: an edit of it is kept in git as it stood and is not taken in, and the next accepted drawing "
-             "freezes it as an earlier report." % (result.id, version, drawings._name(result.id, record["version"]))]
+             "freezes it as an earlier report." % (result.id, version, drawings.drawing_name(result.id, record["version"]))]
     if edits:
         lines += [""] + edits
     drawn_over, ticket = set(record.get("findings") or []), record.get("ticket")
@@ -230,9 +251,9 @@ def render_reports(project_or_ledger):
                 continue
             noticed[key] = account.commit_edit(book.project, "%s/%s" % (REPORTS_DIR, path.name))
         current = {}
-        clusters = results_module.load(book)
+        index = Index(book)
         for result in results_module.read_results(book):
-            held = versions(book, result.id)
+            held = index.versions(result.id)
             if held:
                 current[(result.id, held[-1][0])] = (result, held[-1][1])
         stamp = now_ts()
@@ -245,11 +266,11 @@ def render_reports(project_or_ledger):
             events.append({"event": REPORT_RENDERED, "ts": stamp, "payload": payload})
         if not current:
             return written
-        entries = plot_entries(book)
+        entries = index.entries()
         manifest = read_manifest(book)
         for key, (result, record) in sorted(current.items(), key=lambda pair: (int(pair[0][0][1:]), pair[0][1])):
-            names = {report_name(result.id, version) for version, _ in versions(book, result.id)}
-            names |= {report_name(source, version) for source in _merged_sources(clusters, result.id) for version, _ in versions(book, source)}
+            linked = index.links(result.id)
+            names = {name for name in [linked[0]] + linked[1] if name}
             told = list(events)
             if key in noticed:
                 told.append({"event": REPORT_RENDERED, "ts": stamp, "payload": {"report": key[0], "version": key[1], "edited": noticed[key]}})
@@ -287,6 +308,7 @@ def ask_plot(project, result_id, request):
             "id": identifier, "title": "Plot asked for: %s" % request, "kind": "analysis", "difficulty": 2, "status": "open",
             "blocked_by": [], "touches": ["results/"], "resources": {"gpu": 0, "cpu": 1}, "role": "analyst", "skills": [],
             "acceptance": {}, "objectives": [], "context_pack": [], "origin": "plot asked for by the owner", "proposed_by": "human",
+            "sections": list(sections.sections_for_kind("analysis")),
             "demo": request,
         }
         body = ("\n## The owner's request\n\n%s\n\nNo result holds this data yet: the analysis computes it and files its findings, "

@@ -305,10 +305,10 @@ def _record(project, action, change, by=OWNER, render=True):
         payload = change(clusters, stamp)
         payload = dict(payload, action=action, by=by)
         make_event(RESULT, payload)
-        book.write_json(RESULTS_JSON, clusters.record())
         if action == MERGED:
             from wayline import drawings  # the drawings module reads the results; this one needs it only here
             drawings.follow_merge(book, payload["id"], payload["into"])  # its plots follow it (ticket 101)
+        book.write_json(RESULTS_JSON, clusters.record())
         book.append_event(RESULT, payload, ts=stamp)
     if render:
         _render(book)
@@ -326,6 +326,10 @@ def merge(project, source, into, by=OWNER, render=True):
     """Merge result `source` into `into` on the owner's word (or the decider's, taking the outline's proposal): journaled as
     `result` `merged`, then re-rendered unless `render` is False."""
     def change(clusters, stamp):
+        from wayline import drawings  # the drawings module reads the results; this one needs it only here
+        if drawings.under_way(project, source):
+            # Its drawing would land on a result no longer live, its plots and its report version with nothing to draw them.
+            raise ResultError("%s's drawing is under way: merge it once that drawing is accepted or failed" % source)
         clusters.merge(source, into, ts=stamp)
         return {"id": source, "heading": clusters.results[source]["heading"], "into": into}
     return _record(project, MERGED, change, by=by, render=render)

@@ -235,3 +235,32 @@ class MergedResultTest(ReportsCase):
         record = self.accept_drawing(redraws=["R1.1"])
         self.assertIn("R2.1", record["retired"])
         self.assertEqual(self.plots()["R2.1"]["status"], "retired")
+
+
+class ReviewFixesTest(ReportsCase):
+    def test_a_plot_the_owner_asks_for_keeps_the_results_headline_plots(self):
+        self.accept_drawing()
+        reports.ask_plot(self.project, "R1", "A strip of the AUROC by seed.")
+        self.identifier = drawings.read_records(self.project, "R1")[-1]["ticket"]
+        self.accept_drawing(plots={"seed_strip": "seaborn-clean"}, headline=False)
+        provenance.render_report(self.project, offline=True)
+        text = (self.project / "research" / "REPORT.md").read_text(encoding="utf-8")
+        self.assertIn("Headline plot R1.1", text)
+        self.assertNotIn("Headline plot R1.3", text)
+
+    def test_a_result_whose_drawing_is_under_way_is_not_merged(self):
+        self.accept_drawing()
+        file(self.ledger, "t3-a1-f1", "The literature found 0.71 too.", R2, ticket=3)
+        self.next_drawing("R2")
+        with self.assertRaises(results.ResultError):
+            results.merge(self.project, "R2", "R1")
+
+    def test_a_merged_plot_redrawn_by_the_result_it_went_into_shows_its_newest_drawing(self):
+        self.accept_drawing()
+        file(self.ledger, "t3-a1-f1", "The literature found 0.71 too.", R2, ticket=3)
+        self.next_drawing("R2")
+        self.accept_drawing()
+        results.merge(self.project, "R2", "R1")
+        self.next_drawing("R1")
+        self.accept_drawing(plots={"auroc_box": "matplotlib-clean"}, redraws=["R2.1"])
+        self.assertEqual(reports.plot_entries(self.project)["R2.1"][0]["png"], "drawings/R1-2/auroc_box.png")

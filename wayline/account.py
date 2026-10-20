@@ -375,10 +375,10 @@ def _edited_reports(context):
         name, payload = event.get("event"), event.get("payload") or {}
         if name == PASSAGE and payload.get("by") == OWNER:
             owner_since = True
-        elif name == REPORT_RENDERED and payload.get("edited") and payload.get("report") not in (REPORT_KIND,) and not owner_since:
+        elif (name == REPORT_RENDERED and payload.get("edited") and payload.get("report") not in (REPORT_KIND,) and not owner_since
+              and not payload.get("version")):  # a result's report lists its own edits, which are never taken in (ticket 101)
             lines.append("- %s was edited by hand (kept as it stood in commit `%s`); what it says becomes passages when you say so in the conversation." % (
-                "REPORT.md" if payload.get("report") in (None, "general") else "reports/%s-%s.md" % (payload["report"], payload["version"])
-                if payload.get("version") else payload.get("report"), str(payload["edited"])[:12]))
+                "REPORT.md" if payload.get("report") in (None, "general") else payload.get("report"), str(payload["edited"])[:12]))
     return list(reversed(lines))
 
 
