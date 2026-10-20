@@ -61,4 +61,4 @@ Not part of this ticket:
   - the fake launcher for the verdict's judgment, the decider's batch, and the answering verifier.
 - [x] The event table of decision 2 and the schemas list gain these rows in the same commit as the code.
 - [x] `CHANGELOG.md` under `## Unreleased` describes how objectives change.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
