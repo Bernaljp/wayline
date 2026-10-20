@@ -897,11 +897,13 @@ class Conductor:
         self._journal_wave(result)
         self._check_stall(result)
         self._end(result)
+        reported = False
         if self._integrated_now or result.findings:
             self._propose_outline_merges()
-            self._render_general_report()  # it renders the account and the outline in the same pass
+            reported = self._render_general_report()  # it renders the account and the outline in the same pass
         self._render_account()
-        self._render_outline()
+        if not reported:
+            self._render_outline()
         if result.ended:
             self._end_notice(result)
         result.ledger_commit = self._commit_ledger(self._render_reproduce())
@@ -914,7 +916,7 @@ class Conductor:
         """`research/REPORT.md`, the general report, rendered by code after every wave that integrated a ticket (ticket 90).
 
         Offline: it launches no session, the classifier included. One that fails is said, and the tick renders it again
-        when the journal moved; nothing in the run waits on it.
+        when the journal moved; nothing in the run waits on it. Returns whether it rendered, the outline with it.
         """
         self._integrated_now = False
         from wayline import provenance  # the provenance module pulls in the gates and the report
@@ -922,6 +924,8 @@ class Conductor:
             provenance.render_report(self.project, harness_root=self.harness_root, policy=self.policy, offline=True)
         except (ValueError, OSError) as failure:
             self.say("  REPORT.md was not rendered: %s; the tick renders it again" % failure)
+            return False
+        return True
 
     def _render_account(self):
         """`research/ACCOUNT.md` rendered by code at the end of every wave, so the wave's ledger commit carries it (ticket 89).

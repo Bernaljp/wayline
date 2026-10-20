@@ -72,7 +72,7 @@ from wayline.ledger import K_ACTION, K_BY, K_ITEM, K_NOTE, K_TO, OUTLINE, PAYLOA
 
 __all__ = [
     "OUTLINE_MD", "OUTLINE_JSON", "SCHEMA", "SIMILARITY", "BATCH_KIND", "OutlineError", "read_record", "render_outline",
-    "take_in", "move", "place", "note", "add_heading", "section_order", "heading_notes", "pack_text", "propose_merges",
+    "take_in", "move", "place", "note", "add_heading", "section_order", "section_orders", "heading_notes", "pack_text", "propose_merges",
     "take_marks", "open_proposals", "outline_command", "heading_key",
 ]
 
@@ -255,7 +255,8 @@ class _Facts:
             ties = verification.ties(self.book.project)
         except (verification.VerificationUnreadable, ValueError, OSError):
             ties = {}
-        checking = verification.objective_of(self.book.project)
+        checking = next((item for item in self.objectives
+                         if _one_line(item.get("text")).casefold() == verification.OBJECTIVE.casefold()), None)
         found = {}
         for heading in self.inherited:
             named = set(ties.get(heading) or ())
@@ -455,7 +456,7 @@ def _notes_shown(facts, record, layout):
     shown = {}
     for key, text in sorted((record.get("notes") or {}).items(), key=lambda pair: (_note_target(pair[0], facts) != pair[0], pair[0])):
         target = _note_target(key, facts)
-        if target in layout.where or target in layout.order or target in facts.by_objective:
+        if target in layout.where or target in layout.order:  # a parked objective's note waits, unprinted, for its subsection
             shown.setdefault(target, []).append(_one_line(text))
     return {key: " ".join(texts) for key, texts in shown.items()}
 
@@ -744,8 +745,19 @@ def _drop_gone(book, record, layout):
     return True
 
 
+def _on_disk(book):
+    """The body of OUTLINE.md below its stamp as the file holds it now, or None when there is no file."""
+    try:
+        return (book.research / OUTLINE_MD).read_text(encoding="utf-8").partition("\n")[2]
+    except OSError:
+        return None
+
+
 def _write(book, facts=None):
-    """Write OUTLINE.md from the ledger as it is now; returns whether the file changed. The caller holds the lock."""
+    """Write OUTLINE.md from the ledger as it is now; returns whether the file changed. The caller holds the lock.
+
+    A file whose body is what this render prints, under a stamp that says so, is left; anything else is written again,
+    an edit of it that took nothing in included."""
     record = read_record(book)
     facts = facts or _Facts(book)
     layout = _layout(facts, record)
@@ -754,7 +766,7 @@ def _write(book, facts=None):
     body, printed = _text(facts, layout, record)
     digest = _digest(body)
     stamp = read_stamp(book)
-    if stamp is not None and stamp.get("sha256") == digest:
+    if stamp is not None and stamp.get("sha256") == digest and _on_disk(book) == body:
         return False
     head = {"outline": True, "rendered_at": now_ts(), "sha256": digest, "printed": printed}
     book.write_markdown(OUTLINE_MD, "<!-- wayline:render %s -->\n%s" % (json.dumps(head, ensure_ascii=False), body))
@@ -817,7 +829,7 @@ def _read_edit(body, facts, printed, record):
 
     def take(key, into):
         edited.present.add(key)
-        if into is not None and key not in edited.groups.get(into, []):
+        if into is not None and _fits(key, into) and key not in edited.groups.get(into, []):
             edited.groups.setdefault(into, []).append(key)
 
     for raw in body.splitlines():
@@ -1065,18 +1077,19 @@ def _item_key(item, layout):
     raise OutlineError("the outline shows no line %r" % said)
 
 
-def _targets(key):
-    """The groups a line may go to."""
+def _fits(key, group):
+    """Whether a line may stand in `group`: a result or a Results heading in a Results part, a heading in its own section,
+    and either under Supplement or Cut. The verb and an edit of the file both keep to it."""
+    if group in PLACES:
+        return True
     if _RESULT.match(key) or (_split_key(key) and _split_key(key)[0] == RESULTS):
-        return None  # any Results group, the supplement, or the cut
-    return (_split_key(key)[0],) + PLACES
+        return group.startswith("results:")
+    split = _split_key(key)
+    return bool(split) and group == split[0]
 
 
 def _allowed(key, group, layout):
-    targets = _targets(key)
-    if targets is None:
-        return group in layout.groups and (group.startswith("results:") or group in PLACES)
-    return group in targets
+    return group in layout.groups and _fits(key, group)
 
 
 def _change(project_or_ledger, change, by):
@@ -1106,6 +1119,8 @@ def move(project_or_ledger, item, before=None, after=None, to=None, by=OWNER):
     def change(record, layout, facts):
         key = _item_key(item, layout)
         anchor = _item_key(before if before is not None else after, layout) if to is None else None
+        if anchor == key:
+            raise OutlineError("%s cannot move before or after itself" % key)
         if _OBJECTIVE.match(key):
             if anchor is None or not _OBJECTIVE.match(anchor):
                 raise OutlineError("an objective moves before or after another objective")
@@ -1194,24 +1209,30 @@ def _heading_of(key, facts, section):
     return split[1] if split and split[0] == section else None
 
 
-def section_order(project_or_ledger, section):
-    """`(main, placed)`: a section's headings in the outline's order, then each placed under Supplement or Cut with its place.
+def section_orders(project_or_ledger):
+    """`{section: (main, placed)}` for each section the outline orders, from one reading of the ledger: its headings in the
+    outline's order, then each placed under Supplement or Cut with its place.
 
     What `sections` renders the headings in before the order; a heading the outline does not show keeps its place after
-    these, in first-appearance order.
+    these, in first-appearance order. A pass that renders several sections reads it once and hands it to each.
     """
     book = ledger_for(project_or_ledger)
     facts = _Facts(book, details=False)
     layout = _layout(facts, read_record(book))
-    if section == RESULTS:
-        groups = ["results:%s" % identifier for identifier in layout.order] + [BEYOND, INHERITED]
-    else:
-        groups = [section]
-    main = [heading for group in groups for heading in (_heading_of(key, facts, section) for key in layout.groups.get(group, []))
-            if heading]
-    placed = [(heading, group) for group in PLACES for heading in (_heading_of(key, facts, section) for key in layout.groups[group])
-              if heading]
-    return list(dict.fromkeys(main)), placed
+    found = {}
+    for section in SECTIONS:
+        groups = ["results:%s" % identifier for identifier in layout.order] + [BEYOND, INHERITED] if section == RESULTS else [section]
+        main = [heading for group in groups for heading in (_heading_of(key, facts, section) for key in layout.groups.get(group, []))
+                if heading]
+        placed = [(heading, group) for group in PLACES for heading in (_heading_of(key, facts, section) for key in layout.groups[group])
+                  if heading]
+        found[section] = (list(dict.fromkeys(main)), placed)
+    return found
+
+
+def section_order(project_or_ledger, section):
+    """`(main, placed)` of one section (`section_orders`)."""
+    return section_orders(project_or_ledger)[section]
 
 
 def heading_notes(project_or_ledger, section):
@@ -1233,7 +1254,8 @@ def pack_text(project_or_ledger, objective_ids, max_chars=None):
     book = ledger_for(project_or_ledger)
     try:
         facts = _Facts(book, details=False)
-        layout = _layout(facts, read_record(book))
+        record = read_record(book)
+        layout = _layout(facts, record)
     except (OutlineError, OSError, ValueError):
         return ""
     wanted = {facts.successor(identifier) for identifier in objective_ids or ()}
@@ -1252,7 +1274,9 @@ def pack_text(project_or_ledger, objective_ids, max_chars=None):
                 result = facts.by_result[key]
                 lines.append('- %s "%s" (%s, %s)' % (key, result.heading, result.standing, _plural(len(result.current), "finding")))
             else:
-                lines.append("- %s" % _inherited_line(facts, _split_key(key)[1]))
+                heading = _split_key(key)[1]
+                lines.append("- %s" % (_inherited_line(facts, heading) if heading in facts.inherited
+                                       else "Results: %s" % _heading_line(facts, RESULTS, heading, record)))
             if layout.notes.get(key):
                 lines.append("  Note: %s" % layout.notes[key])
         lines += ["- see %s under %s" % pointer for pointer in layout.pointers.get(identifier, [])]
@@ -1300,27 +1324,27 @@ def propose_merges(project_or_ledger, run=None, tools=None):
         cache = {}
     if (cache or {}).get("checked") == checked:
         return None
-    asked = set()
-    for batch in batches.read_batches(book.project):
-        if batch["kind"] == BATCH_KIND:
-            asked.update(frozenset(item["ref"].split("+")) for item in batch["items"])
     headings = list(dict.fromkeys(facts.by_result[identifier].heading for pair in pairs for identifier in pair))
-    vectors = dict(zip(headings, repeats.embed(headings, run=run or run_tool, tools=tools)))
-    items = []
+    vectors = dict(zip(headings, repeats.embed(headings, run=run or run_tool, tools=tools)))  # outside the lock: it takes seconds
+    close = []
     for (first, second), objective in sorted(pairs.items(), key=lambda entry: (_id_number(entry[0][0]), _id_number(entry[0][1]))):
-        if frozenset((first, second)) in asked:
-            continue
         one, other = facts.by_result[first].heading, facts.by_result[second].heading
         similarity = sum(a * b for a, b in zip(vectors[one], vectors[other]))
         if similarity >= SIMILARITY:
-            items.append({"ref": "%s+%s" % (first, second), "default": DECLINE,
+            close.append({"ref": "%s+%s" % (first, second), "default": DECLINE,
                           "text": 'Merge %s into %s: "%s" and "%s" sit close under %s (similarity %.2f).' % (
                               second, first, other, one, objective, similarity)})
+    # What was asked already is read, the batch opened, and the set recorded as checked under one lock, in that order, so
+    # two callers never open the same pair twice and a batch that could not be opened leaves the set to check again.
     with book.lock():
+        asked = set()
+        for batch in batches.read_batches(book.project):
+            if batch["kind"] == BATCH_KIND:
+                asked.update(frozenset(item["ref"].split("+")) for item in batch["items"])
+        items = [item for item in close if frozenset(item["ref"].split("+")) not in asked]
+        opened = batches.open_batch(book.project, BATCH_KIND, "Results whose headings sit close: merge them?", items) if items else None
         book.write_json(MERGES_CACHE, {"checked": checked})
-    if not items:
-        return None
-    return batches.open_batch(book.project, BATCH_KIND, "Results whose headings sit close: merge them?", items)
+    return opened
 
 
 def take_marks(project_or_ledger):

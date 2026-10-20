@@ -409,6 +409,28 @@ class OwnerEditTest(Project):
         self.assertEqual(self.record()["notes"], {"O1": "keep it to two results."},
                          "the note that changed wins over the one still printed under the subsection")
 
+    def test_an_edit_that_takes_nothing_in_is_written_over_with_every_line(self):
+        self.render()
+        self.edit(lambda text: text.replace(re.search(r"(?m)^- R3 .*\n", text).group(0), "") + "\nSome prose of mine.\n")
+        self.assertRegex(self.part("Results"), r"(?m)^- R3 ", "a line missing from the file is not removed, and comes back")
+        self.assertNotIn("Some prose of mine.", self.text())
+        self.assertEqual(self.events("outline"), [])
+
+    def test_a_line_pasted_into_a_part_it_cannot_stand_in_stays_where_code_puts_it(self):
+        self.render()
+        self.edit(lambda text: text.replace("### The paper's questions", re.search(r"(?m)^- R3 .*$", text).group(0)
+                                            + "\n\n### The paper's questions"))
+        self.assertNotIn("introduction", self.record()["groups"] if (self.project / "research" / "outline.json").exists() else {})
+        self.assertNotRegex(self.part("Introduction"), r"(?m)^- R3 ")
+        self.assertRegex(self.part("Results"), r"(?m)^- R3 ")
+
+    def test_a_parked_objectives_note_survives_an_edit_of_the_file(self):
+        outline.note(self.project, "O1", "the noise story comes first.")
+        objectives.change_objective(self.project, self.o1, "parked", "owner", answer="later")
+        self.render()
+        self.edit(lambda text: re.sub(r"(?m)^(- R3 .*)$", r"\1\n  Note: lead with this.", text))
+        self.assertEqual(self.record()["notes"], {"O1": "the noise story comes first.", "R3": "lead with this."})
+
     def test_lines_that_arrived_since_the_stamp_are_never_read_as_removed(self):
         self.render()
         text = self.text()
@@ -498,6 +520,9 @@ class VerbTest(Project):
         self.assertIn("R9", err)
         code, _, err = self.run_cli("move", "methods:Data", "--to", "introduction")
         self.assertEqual(code, 2)
+        code, _, err = self.run_cli("move", "O2", "--before", "O2")
+        self.assertEqual(code, 2, err)
+        self.assertIn("itself", err)
         with self.assertRaises(outline.OutlineError) as caught:
             outline.add_heading(self.project, "results", "Transfer to field data")
         self.assertIn("objective", str(caught.exception))
@@ -648,6 +673,14 @@ class MergeTest(Project):
         self.assertIn("2 open proposals", lines[0], "the merge and the inherited heading no objective checks")
         self.assertIn("research/OUTLINE.md", lines[0])
 
+    def test_a_batch_that_could_not_be_opened_leaves_the_pairs_to_propose_again(self):
+        from unittest import mock
+        from wayline import batches
+        with mock.patch.object(batches, "open_batch", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.propose()
+        self.assertIsNotNone(self.propose(), "the set was not recorded as checked")
+
     def test_a_model_that_is_not_recorded_is_said_and_proposes_nothing(self):
         from wayline import repeats
         with self.assertRaises(repeats.RepeatsError):
@@ -690,6 +723,13 @@ class PackTest(Project):
         self.assertNotIn("## O2", text)
         self.assertLess(len(text), 1200, "a few hundred characters")
         self.assertEqual(outline.pack_text(self.project, []), "")
+
+    def test_a_results_heading_of_the_owners_moved_under_an_objective_is_packed_as_a_heading(self):
+        sections.add_owners_passage(self.project, "results", "Old cases", "We looked at the old cases.")
+        outline.move(self.project, "results:Old cases", to="O1")
+        text = outline.pack_text(self.project, [self.o1])
+        self.assertIn('- Results: "Old cases" (1 passage; yours)', text)
+        self.assertNotIn('Inherited "Old cases"', text)
 
 
 class CriticFirstTest(unittest.TestCase):

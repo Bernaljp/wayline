@@ -53,7 +53,7 @@ __all__ = [
     "parse_replies", "material_question", "check_replies", "take_replies", "leave_unverifiable", "spec_inherited",
     "claim_failures", "spec_lines", "ties", "wire", "intake_commit", "check_result", "take_result", "attach_contradiction",
     "verdict_items", "verdict_text", "pack_text", "reading", "read", "CLASS", "material_of", "gap_of", "decider_refusal",
-    "open_gap", "release", "settle", "objective_of",
+    "open_gap", "release", "settle",
 ]
 
 OBJECTIVE = "Do the inherited results hold?"
@@ -503,12 +503,6 @@ def _objective(project):
     from wayline.objectives import read_objectives
 
     return next((item for item in read_objectives(project) if _one_line(item["text"]).casefold() == OBJECTIVE.casefold()), None)
-
-
-def objective_of(project):
-    """The objective "Do the inherited results hold?" as the project holds it, or None: while it is pursued it checks every
-    inherited result, which the outline shows under it (ticket 104)."""
-    return _objective(project)
 
 
 def material_question(project, only=None):
