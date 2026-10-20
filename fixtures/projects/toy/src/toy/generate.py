@@ -5,7 +5,7 @@ Four features, `x1` through `x4`, drawn uniform on `[-1, 1]`. The label comes fr
 a logistic and a coin flip, so the intent's question -- does modelling the interaction term help --
 has a real answer: a model that only sees `x1..x4` is missing exactly the term the label depends on,
 and one that also sees `x3 * x4` is not. `--seed` makes every row reproducible; `--signal` is how far
-apart the two classes are, which is what keeps `GOAL.json`'s target reachable without being trivial.
+apart the two classes are, which is what keeps O1's target reachable without being trivial.
 """
 
 import argparse
@@ -59,7 +59,7 @@ def read_split(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="toy.generate", description="write the synthetic dataset's two splits")
     parser.add_argument("--seed", type=int, required=True, help="the generator's seed")
-    parser.add_argument("--signal", type=float, default=4.0, help="how far apart the two classes are (GOAL.json's reachable target assumes the default)")
+    parser.add_argument("--signal", type=float, default=4.0, help="how far apart the two classes are (O1's reachable target assumes the default)")
     parser.add_argument("--rows", type=int, default=20000, help="total rows before the held-out split is taken off the end")
     parser.add_argument("--out", required=True, help="the directory to write train.jsonl, held_out.jsonl, and meta.json into")
     options = parser.parse_args(argv)

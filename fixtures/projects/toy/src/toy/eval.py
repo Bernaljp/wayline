@@ -1,10 +1,10 @@
-"""`GOAL.json`'s `eval_command` (Implementation Decisions 10): the metric off a `toy.train` summary.
+"""O1's measure's `eval_command` (Implementation Decisions 14 and 17): the metric off a `toy.train` summary.
 
 `wayline objective add --measure` and the keep-if-better loop both run this on an artifact's path,
 exported as `WAYLINE_ARTIFACT` (`objectives.run_on_sample`); `{artifact}` in the command is the same
 path, for a command that would rather take it as an argument. Either way the artifact is one of
 `toy.train`'s summary JSONs, and this prints its `auroc` on the last line the way `objectives.metric_value` reads it:
-`auroc: <value>`. `--split` is accepted for the command line `research/GOAL.json` ships
+`auroc: <value>`. `--split` is accepted for the command line `research/objectives.json`'s O1 ships
 (`python -m toy.eval --split held_out`) but names nothing this module reads: `toy.train` only ever
 reports the held-out split, so there is no other one to ask for.
 """
@@ -27,7 +27,7 @@ def read_metric(artifact):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="toy.eval", description="print the held-out auroc of a toy.train summary")
-    parser.add_argument("--split", default="held_out", help="accepted for GOAL.json's eval_command; toy.train reports only the held-out split")
+    parser.add_argument("--split", default="held_out", help="accepted for O1's eval_command; toy.train reports only the held-out split")
     parser.add_argument("artifact", nargs="?", help="the summary JSON to read; WAYLINE_ARTIFACT by default")
     options = parser.parse_args(argv)
     artifact = options.artifact or os.environ.get("WAYLINE_ARTIFACT")

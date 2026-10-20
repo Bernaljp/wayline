@@ -115,7 +115,7 @@ wayline intake --intent "the owner's paragraph" --plan plan.md \
   --reference "arXiv:1706.03762" --reference "papers/model.pdf" \
   --data "data/expression.csv" --data "split_b is held out and never leaves this machine" \
   --clone ../analysis --repo ../baseline-models --constraint "no GPU before October" \
-  --autonomy checkpoints --radius moderate --model-fallback ask --ladder-changes ask --gpu-hours 10 --wallclock-hours 48 --usage-windows 4 \
+  --autonomy checkpoints --radius moderate --model-fallback ask --ladder-changes ask --gpu-hours 10 --wallclock-hours 48 \
   --human-only "baselines: which baselines the claims are compared against"
 ```
 
@@ -132,7 +132,7 @@ wayline intake --from - <<'EOF'
  "code_repository": {"shape": "package", "license": "MIT"},
  "constraints": ["no GPU before October"],
  "autonomy": "checkpoints", "radius": "moderate", "model_fallback": "ask", "ladder_changes": "ask",
- "budgets": {"gpu_hours": 10, "wallclock_hours": 48, "usage_windows": 4},
+ "budgets": {"gpu_hours": 10, "wallclock_hours": 48},
  "human_only": ["baselines: which baselines the claims are compared against"]}
 EOF
 ```

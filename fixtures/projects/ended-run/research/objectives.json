@@ -1,0 +1,25 @@
+{
+  "objectives": [
+    {
+      "id": "O1",
+      "text": "Do feature interaction terms raise the held-out AUROC on the synthetic set?",
+      "measure": {
+        "metric": "auroc",
+        "direction": "up",
+        "target": 0.85,
+        "held_out_split": "split_b",
+        "eval_command": "python -m toy.eval --split held_out",
+        "baseline": {
+          "value": null,
+          "source": null
+        },
+        "dataset_or_split": null,
+        "min_seeds": null
+      },
+      "status": "answered",
+      "answer": "reached: the best kept auroc is 0.861 against the target 0.85 (up), measured by code on t3-a1",
+      "evidence": [],
+      "reframed_as": null
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 The spec becomes an executable graph. `wayline plan` launches the `planner` role in its plan protocol
 through the worker launcher (seam 1), on `policy.roles.planner`, with `plan.json` as its schema and,
-in its prompt, `research/SPEC.md` whole, `OBJECTIVES.md`, `GOAL.json`, the query pack, the registry (rebuilt at every
+in its prompt, `research/SPEC.md` whole, `OBJECTIVES.md` (each goal with its measure), the query pack, the registry (rebuilt at every
 launch), and what the journal says already failed. The session writes nothing: it returns a `plan`
 record, tickets keyed `T1`, `T2`, ... with `blocked_by` among the keys or `#<id>` for a ticket the
 project holds, and the decision tickets to open, each with what it pauses. Code numbers the tickets
@@ -878,7 +878,7 @@ def plan_prompt(role, cut, harness, project, policy, records, index, journal, gr
 
 
 def _records(project, max_chars):
-    """The records the plan reads, inlined: the spec whole, the objectives, the goal, the query pack; `(text, cut short)`."""
+    """The records the plan reads, inlined: the spec whole, the objectives (each goal's measure with them), the query pack; `(text, cut short)`."""
     ledger = Ledger(project)
 
     def read(relative):
@@ -890,7 +890,6 @@ def _records(project, max_chars):
     entries = [
         ("research/SPEC.md", read(specify.SPEC_MD), "[wayline: there is no SPEC.md; run wayline specify]"),
         ("research/OBJECTIVES.md", read(objectives.OBJECTIVES_MD), "[wayline: no objective is recorded]"),
-        ("research/GOAL.json", read("GOAL.json"), "[wayline: no goal is stated]"),
         ("research/kb/query_pack.md", read("kb/query_pack.md"), "[wayline: there is no query pack; no reference was absorbed]"),
     ]
     return decider.inline_records(entries, max_chars, "Read them in this order; the spec is what the tickets implement, and nothing else.")

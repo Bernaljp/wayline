@@ -756,9 +756,22 @@ class ObjectiveClassTest(FiveTicketsCase):
     def test_a_ticket_serving_a_closed_objective_is_class_2_as_the_journal_says(self):
         self.lay_out()
         open_objective(self.project)
+        open_objective(self.project, "A second question, open, so the stopping rule still waits")
         self.serve(2, "O1")
         objectives.change_objective(self.project, "O1", "parked", by="owner", answer="later")
         self.assertEqual(self.first_launch(), [1], "O1 is parked in the journal, so ticket 2 serves nothing open")
+
+    def test_an_open_objective_the_rule_does_not_name_is_class_1(self):
+        """Ticket 87: under `stop_when: [O2]`, ticket 1 serving O2 is class 0, ticket 2 serving O1 class 1, ticket 3 class 2."""
+        self.lay_out()
+        open_objective(self.project)
+        open_objective(self.project, "The question the run ends on")
+        self.serve(1, "O2")
+        self.serve(2, "O1")
+        harness = project.read_harness(self.project)
+        (self.project / "harness.json").write_text(json.dumps(dict(harness, stop_when=["O2"])), encoding="utf-8")
+        classes = Conductor(self.project, policy=self.one_slot(), out=io.StringIO())._objective_classes()
+        self.assertEqual((classes[1], classes[2], classes[3]), (0, 1, 2))
 
     def test_without_objectives_the_order_is_the_one_it_was(self):
         self.lay_out()

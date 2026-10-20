@@ -12,8 +12,8 @@ Ticket 40 added the rest of Implementation Decisions 11 (C8): the claim markup
 sentence), the sentence classifier and its cache, the linter (Type-A) that resolves every tag
 against the manifest and the knowledge base, the verifier's sample of tagged claims (Type-B,
 through the gate of `wayline.gates`), the writer's prose, and `REPORT.md` itself, which
-`render_report` renders from the journal, the findings, the tickets, and `GOAL.json`. The report
-lives here because decision 1's module list has no `report` module and BRIEF 10 gives the writer
+`render_report` renders from the journal, the findings, the tickets, and the goals of
+`objectives.json` (ticket 87: `GOAL.json` retired). The report lives here because decision 1's module list has no `report` module and BRIEF 10 gives the writer
 "role + provenance.py".
 """
 
@@ -35,6 +35,7 @@ from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, now_ts
 from wayline.project import NEEDS_HUMAN_NOTES, ProjectError, fable_falls_back, find_project, policy_for, read_harness
+from wayline.objectives import ObjectivesUnreadable, read_objectives
 
 __all__ = [
     "ProvenanceError", "MANIFEST", "FINDINGS", "FINDINGS_MD", "RUN_ID_RE",
@@ -992,14 +993,15 @@ def _claim_ticket(project, book, claim, subject, taken, from_finding, document=R
 
 
 def report_evidence(context):
-    """What the writer is given: the goal, the findings grouped by claim, the negative results, each with its tags."""
+    """What the writer is given: the goals, the findings grouped by claim, the negative results, each with its tags."""
     groups = [
         {"group": key, "findings": [_evidence_item(finding, context.manifest) for finding in members]}
         for key, members in _claim_groups(context).items()
     ]
     negative = [_evidence_item(finding, context.manifest) for finding in context.findings if finding.get("negative")]
-    goal = context.goal if isinstance(context.goal, dict) else None
-    return {"goal": goal, "groups": groups, "negative": negative}
+    goals = [dict({key: (record["measure"] or {}).get(key) for key in ("metric", "direction", "target", "held_out_split")}, id=record["id"])
+             for record in context.goals]
+    return {"goals": goals, "groups": groups, "negative": negative}
 
 
 def _evidence_item(finding, manifest):
@@ -1137,10 +1139,9 @@ def _writer_prompt(role, evidence):
         "under your paragraphs as they were recorded, so do not copy them out one by one.",
         "",
     ]
-    goal = evidence.get("goal") or {}
-    if goal.get("metric"):
-        lines.extend(["The run's goal: `%s`, direction %s, target %s, on the held-out split `%s`." % (
-            goal.get("metric"), goal.get("direction"), goal.get("target"), goal.get("held_out_split")), ""])
+    for goal in evidence.get("goals") or []:
+        lines.extend(["The goal %s: `%s`, direction %s, target %s, on the held-out split `%s`." % (
+            goal.get("id"), goal.get("metric"), goal.get("direction"), goal.get("target"), goal.get("held_out_split")), ""])
     lines.extend([
         "# The evidence",
         "",
@@ -1174,7 +1175,7 @@ class _Context:
     tickets: dict
     findings: list
     manifest: dict
-    goal: object
+    goals: list  # the objectives with a measure, any status, from `objectives.json` (ticket 87)
     notes: list
 
 
@@ -1194,10 +1195,11 @@ def report_context(project):
         by_id = {}
         notes.append("the tickets could not be read: %s" % failure)
     try:
-        goal = json.loads((book.research / "GOAL.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        goal = None
-    return _Context(project, events, harness, by_id, read_findings(book), read_manifest(book), goal, notes)
+        goals = [record for record in read_objectives(project) if record.get("measure")]
+    except (ObjectivesUnreadable, OSError) as failure:
+        goals = []
+        notes.append(str(failure))
+    return _Context(project, events, harness, by_id, read_findings(book), read_manifest(book), goals, notes)
 
 
 def finding_tags(finding, manifest):
@@ -1295,31 +1297,35 @@ def _open_questions(context):
 
 
 def _trajectory(context):
-    goal = context.goal if isinstance(context.goal, dict) else {}
-    metric = goal.get("metric")
-    if not metric:
-        return _records(["No quantitative goal: `research/GOAL.json` names no metric."])
-    readings = [event.get("payload") or {} for event in context.events
-                if event.get("event") == ledger.PROGRESS and (event.get("payload") or {}).get("metric") == metric]
-    lines = ["Goal: `%s`, direction `%s`, target %s on the held-out split `%s`; stop when `%s`." % (
-        metric, goal.get("direction"), _number(goal.get("target")), goal.get("held_out_split"), goal.get("stop_when"))]
-    if not readings:
-        lines.append("No `progress` reading was journaled.")
-    else:
-        lines.extend(["", "```"] + _chart(readings, goal) + ["```"])
-    kept = [payload for payload in readings if payload.get("kept")]
-    lines.extend(["", "Kept readings:"])
-    lines.extend(["- %s from run `%s` (ticket %s)" % (_number(payload.get("value")), payload.get("run_id"), payload.get("ticket"))
-                  for payload in kept] or ["- none"])
-    lines.extend(["", "Discarded changes:"])
-    lines.extend(["- ticket %s: mean %s against the best %s, standard deviation %s, seeds %s" % (
-        payload.get("ticket"), _number(mean), _number(payload.get("best")), _number(payload.get("sd")), payload.get("seeds"))
-        for payload, mean in _discarded_means(context.events, metric)] or ["- none"])
+    """Each goal's trajectory, from its own `progress` and `discarded` events (ticket 87: keep-if-better runs per goal)."""
+    if not context.goals:
+        return _records(["No quantitative goal: no objective in `research/objectives.json` has a measure."])
+    from wayline import stopping  # the stopping module imports the goal module, which imports the gates
+    lines = ["Stopping rule: %s." % stopping.describe_rule(stopping.rule_of(context.harness))]
+    for record in context.goals:
+        goal, identifier = record["measure"], record["id"]
+        readings = [event.get("payload") or {} for event in context.events
+                    if event.get("event") == ledger.PROGRESS and (event.get("payload") or {}).get("goal") == identifier]
+        lines.extend(["", "Goal %s (%s): `%s`, direction `%s`, target %s on the held-out split `%s`." % (
+            identifier, record.get("status"), goal.get("metric"), goal.get("direction"), _number(goal.get("target")),
+            goal.get("held_out_split"))])
+        if not readings:
+            lines.append("No `progress` reading was journaled.")
+        else:
+            lines.extend(["", "```"] + _chart(readings, goal) + ["```"])
+        kept = [payload for payload in readings if payload.get("kept")]
+        lines.extend(["", "Kept readings:"])
+        lines.extend(["- %s from run `%s` (ticket %s)" % (_number(payload.get("value")), payload.get("run_id"), payload.get("ticket"))
+                      for payload in kept] or ["- none"])
+        lines.extend(["", "Discarded changes:"])
+        lines.extend(["- ticket %s: mean %s against the best %s, standard deviation %s, seeds %s" % (
+            payload.get("ticket"), _number(mean), _number(payload.get("best")), _number(payload.get("sd")), payload.get("seeds"))
+            for payload, mean in _discarded_means(context.events, identifier)] or ["- none"])
     return _records(lines)
 
 
-def _discarded_means(events, metric):
-    """Each `discarded` payload for `metric`, with its change's mean: the unkept `progress` of its ticket just before it.
+def _discarded_means(events, goal):
+    """Each `discarded` payload of the goal `goal` (its id), with its change's mean: the unkept `progress` of its ticket just before it.
 
     The conductor journals an evaluation's `progress` and then its `discarded` (ticket 39), so pairing each
     discard with the reading before it gives every attempt of a ticket its own mean.
@@ -1327,7 +1333,7 @@ def _discarded_means(events, metric):
     last, pairs = {}, []
     for event in events:
         payload = event.get("payload") or {}
-        if payload.get("metric") != metric:
+        if payload.get("goal") != goal:
             continue
         if event.get("event") == ledger.PROGRESS and not payload.get("kept"):
             last[payload.get("ticket")] = payload.get("value")
@@ -1650,7 +1656,7 @@ def _banner(context, result, notes):
         "",
         RECORDS_BEGIN,
         "Rendered by `wayline report` from `research/journal.jsonl` (%d events), `findings.jsonl`, "
-        "`manifest.json`, `GOAL.json`, and the tickets. The provenance linter %s: %d claim sentence(s), "
+        "`manifest.json`, `objectives.json`, and the tickets. The provenance linter %s: %d claim sentence(s), "
         "%d tagged." % (len(context.events), "passed" if result.passed else "FAILED", result.claims, result.tagged),
     ]
     if result.problems:

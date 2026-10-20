@@ -12,7 +12,7 @@ outputs: []
 acceptance:
   machine: []
   quality: []
-origin: research/GOAL.json
+origin: research/objectives.json
 proposed_by: planner
 demo: null
 blocking: subgraph

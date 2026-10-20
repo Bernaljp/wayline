@@ -10,6 +10,7 @@ The reference resolution and the job runner seam are both exercised here, offlin
 backend, one attempt an OOM the ladder's override recovers from.
 """
 
+import io
 import json
 import shutil
 import subprocess
@@ -24,7 +25,9 @@ from wayline.dossier import absorb_level_0
 from wayline.fetch import recording_fetcher
 from wayline.jsonschema import load_schema, validate
 from wayline.objectives import run_on_sample
+from wayline.ledger import Ledger
 from wayline.project import init_project
+from wayline.tickets import write_ticket
 from wayline.scout import VERIFIED
 
 SAMPLE = FIXTURES_DIR / "projects" / "toy"
@@ -99,13 +102,21 @@ class MetricsTest(unittest.TestCase):
 
 
 class GoalTest(unittest.TestCase):
-    """`research/GOAL.json` is the fixture's, and `eval_command` is real: `toy.eval` over an artifact."""
+    """O1 in `research/objectives.json` is the fixture's goal, and its `eval_command` is real: `toy.eval` over an artifact."""
 
     def setUp(self):
-        self.goal = json.loads((SAMPLE / "research" / "GOAL.json").read_text(encoding="utf-8"))
+        self.record = json.loads((SAMPLE / "research" / "objectives.json").read_text(encoding="utf-8"))
+        self.goal = self.record["objectives"][0]["measure"]
 
-    def test_the_goal_validates(self):
-        self.assertEqual(validate(self.goal, load_schema("goal")), [])
+    def test_the_objectives_validate_and_no_goal_json_is_shipped(self):
+        self.assertEqual(validate(self.record, load_schema("objectives")), [])
+        self.assertEqual([(objective["id"], objective["status"]) for objective in self.record["objectives"]], [("O1", "open")])
+        self.assertFalse((SAMPLE / "research" / "GOAL.json").exists())
+
+    def test_the_stopping_rule_is_in_harness_json(self):
+        harness = json.loads((SAMPLE / "harness.json").read_text(encoding="utf-8"))
+        self.assertEqual(validate(harness, load_schema("harness")), [])
+        self.assertEqual(harness["stop_when"], "objectives")
 
     def test_the_goal_reaches_up_to_a_reachable_target(self):
         self.assertEqual(self.goal["metric"], "auroc")
@@ -122,6 +133,47 @@ class GoalTest(unittest.TestCase):
             kind, reason, value = run_on_sample(self.goal["eval_command"], self.goal["metric"], SAMPLE, artifact)
         self.assertEqual(kind, "accepted", reason)
         self.assertAlmostEqual(value, 0.851)
+
+
+class ToyRunTest(ProjectTestCase):
+    """The toy on the new shape (ticket 87): a goal ticket kept on O1's real measure, O1 written reached, the rule ending the run."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.temp / "toy"
+        shutil.copytree(SAMPLE, self.project, ignore=shutil.ignore_patterns("make.py", "__pycache__"))
+        init_project(self.project)
+        self.ledger = Ledger(self.project)
+        write_ticket(self.ledger, {
+            "id": 1, "title": "Train with the interaction term", "kind": "code", "difficulty": 1, "status": "open",
+            "blocked_by": [], "touches": ["metrics/"], "role": "coder", "skills": [], "objectives": ["O1"], "goal": "O1",
+            "outputs": ["metrics/seed-*.json"], "acceptance": {"machine": ["test -f metrics/seed-1.json"], "quality": []},
+            "context_pack": ["research/INTAKE.md"], "origin": "research/objectives.json#O1", "proposed_by": "planner",
+            "demo": "Three seeds' summaries under metrics/."}, "## Demo\n\nThree seeds' summaries.\n")
+
+    def test_the_goal_is_reached_by_code_and_the_stopping_rule_ends_the_run(self):
+        from tests import machine
+        from tests.test_conductor import done, drive
+        from wayline import worker
+        from wayline.conductor import Conductor
+        files = {"metrics/seed-%d.json" % seed: json.dumps({"seed": seed, "auroc": value}) + "\n"
+                 for seed, value in ((1, 0.85), (2, 0.86), (3, 0.87))}
+        with worker.use_fake() as fake:
+            fake.script(done(outputs_written=sorted(files)), patch=worker.Patch(files=files, message="ticket 1: three seeds"))
+            conductor = Conductor(self.project, out=io.StringIO())
+            conductor.readings = machine.recorded
+            conductor.notify = lambda *args, **kwargs: None
+            results = []
+            while not (results and results[-1].ended) and len(results) < 6:
+                results.extend(drive(conductor, 1))
+                conductor.settle()
+        events, _ = self.ledger.read_events()
+        progress = [event["payload"] for event in events if event["event"] == "progress"]
+        self.assertEqual([(payload["goal"], payload["kept"]) for payload in progress], [("O1", True)])
+        self.assertAlmostEqual(progress[0]["value"], 0.86)
+        record = json.loads((self.project / "research" / "objectives.json").read_text(encoding="utf-8"))["objectives"][0]
+        self.assertEqual(record["status"], "answered")
+        self.assertEqual([event["payload"]["reason"] for event in events if event["event"] == "run_ended"], ["goal_reached"])
 
 
 class IntakeReferencesTest(unittest.TestCase):
@@ -222,7 +274,7 @@ class RetryLadderTest(ProjectTestCase):
             state = fake.poll(handle)
         self.assertEqual(state.name, "exited")
         summary = json.loads((self.temp / "results" / "toy" / "seed-1" / "summary.json").read_text(encoding="utf-8"))
-        self.assertGreaterEqual(summary["auroc"], 0.82)  # GOAL.json's target
+        self.assertGreaterEqual(summary["auroc"], 0.82)  # O1's target
 
     def test_wayline_job_add_accepts_the_ticket_s_spec_including_the_ladder(self):
         project = self.temp / "toy"

@@ -58,6 +58,7 @@ __all__ = [
     "DECIDER", "DECISION_SCHEMA", "IRREVERSIBLE", "DeciderError", "Subject", "Outcome", "decider_tier", "decides_on_fable",
     "irreversible_class", "chosen_option", "refusal", "records_text", "decider_prompt", "take_decision", "decide_question",
     "decide_ticket", "decide_proposal", "proposal_origin", "VENUE_ANSWER", "venue_of", "decide_venue", "reconsidered", "decide_rest", "render_decided",
+    "FRONTIER_SUBJECT", "frontier_answers", "decide_frontier",
 ]
 
 DECIDER = "decider"
@@ -110,6 +111,12 @@ IRREVERSIBLE = (
      r"\b(exceed(?:s|ed|ing)? (?:the |its |our )?(?:[\w-]+ )?(?:budget|allowance|quota|cap)"
      r"|(?:rais(?:e|es|ing)|increas(?:e|es|ing)|doubl(?:e|es|ing)|extend(?:s|ing)?|lift(?:s|ing)?|remov(?:e|es|ing)) (?:the |its |our )?(?:[\w-]+ )?(?:budget|cap|allowance|quota|usage window)"
      r"|more (?:gpu|cpu|compute|wall[- ]?clock) (?:hours|time) than|over (?:the |its |our )?budget|beyond (?:the |its |our )?budget)\b"),
+    # Decision 17 (ticket 87): after setup, the stopping rule is the owner's to change, as a budget is theirs to raise.
+    ("stopping rule",
+     r"\b(switch --stop-when|stop_when"
+     r"|(?:chang(?:e|es|ing)|replac(?:e|es|ing)|relax(?:es|ing)?|loosen(?:s|ing)?|redefin(?:e|es|ing)|rewrit(?:e|es|ing)|set(?:s|ting)?"
+     r"|mov(?:e|es|ing)|switch(?:es|ing)?|extend(?:s|ing)?|drop(?:s|ping)?|remov(?:e|es|ing)|lift(?:s|ing)?)"
+     r" (?:the |its |our |a |an )?(?:new )?stop(?:ping)? (?:rule|condition|criteri(?:on|a)))\b"),
     ("spending",
      r"\b(spend(?:s|ing)? (?:money|dollars|credits)|pay(?:s|ing)? for|purchas(?:e|es|ing)"
      r"|buy(?:s|ing)? (?:a |an |the |more )?(?:credits?|licen[cs]es?|subscriptions?|gpus?|instances?|api keys?|compute|time)"
@@ -156,7 +163,7 @@ class DeciderError(ValueError):
 class Subject:
     """One decision the decider is asked for: a grill question, a decision ticket, a parked proposal, or the paper's venue."""
 
-    kind: str                      # question | ticket | proposal | venue
+    kind: str                      # question | ticket | proposal | venue | frontier
     key: str                       # Q8 | 2 | the proposal's id
     question: str
     options: list = field(default_factory=list)
@@ -169,7 +176,7 @@ class Subject:
     @property
     def name(self):
         return {"question": "the grill's %s", "ticket": "decision ticket %s", "proposal": "parked proposal %s",
-                "venue": "the venue of the %s"}[self.kind] % self.key
+                "venue": "the venue of the %s", "frontier": "%s"}[self.kind] % self.key
 
     @classmethod
     def from_record(cls, record, records=()):
@@ -451,9 +458,9 @@ def decider_prompt(role, subject, records, harness, project, cut=False):
         "# The line",
         "",
         "The irreversible list is not yours to decide: deleting or overwriting data; pushing or force-pushing; making the "
-        "code repository public or changing its visibility; exceeding "
-        "or raising a compute or usage budget; spending money; changing a goal's measure or the data; changing the harness "
-        "globally; any network write. The human-only classes of this project are: %s. An answer that falls in any of "
+        "code repository public or changing its visibility; exceeding or raising a budget (wall-clock or GPU hours: "
+        "never extend one); changing the stopping rule; spending money; changing a goal's measure or the data; changing "
+        "the harness globally; any network write. The human-only classes of this project are: %s. An answer that falls in any of "
         "these, or that cannot be taken back, is the owner's: return `answer: null` with `reversible: false` (or "
         "`human_only: true`), and put what you would have answered in the rationale. The harness checks every answer "
         "against the list as well." % _classes(harness),
@@ -679,11 +686,18 @@ def decide_ticket(project, fields, body, record=None, *, harness_root=HARNESS_RO
     `decided_by: decider`, which the conductor closes as it closes the owner's, and the record appended to
     `DECISIONS.md`. A refusal turns the ticket human-only (`decisions.turn_over`) and notifies the owner.
     """
+    from wayline.stopping import DECIDER_CHOICES, frontier_choice, frontier_objective  # the stopping module imports the goal module
     project = Path(project).resolve()
     subject = Subject.from_ticket(fields, body, record)
     identifier = fields["id"]
     outcome, returned, envelope, model, fallback_from = _attempt(subject, project=project, harness_root=harness_root,
                                                                  policy=policy, fall_back=fall_back)
+    if outcome is None and frontier_objective(fields.get("origin")) is not None \
+            and frontier_choice(returned.get("answer")) not in DECIDER_CHOICES:
+        # An empty-frontier ticket (ticket 87): the decider replans or answers; parking or dropping is the owner's.
+        outcome = Outcome(subject, "refused", why="the decider only replans for an objective the stopping rule names or answers "
+                          "it as it stands, and it answered %s" % returned.get("answer"), session_id=envelope.session_id,
+                          model=envelope.model or model, fallback_from=fallback_from)
     if outcome is not None and outcome.status == "refused":
         decisions.turn_over(project, identifier, outcome.why, notify=notify)
         outcome.ticket = identifier
@@ -893,3 +907,75 @@ def render_decided(report):
     lines.append("  every decision is in research/DECISIONS.md as decided-by: decider, and journaled; reverse one with "
                  "wayline grill answer <id> \"<answer>\" --rationale \"<why>\" --revise")
     return "\n".join(lines)
+
+
+# --- the empty frontier (decision 17; ticket 87) --------------------------------------------------------------
+
+
+FRONTIER_SUBJECT = "the empty frontier"
+_FRONTIER_LINE = re.compile(r"\b(O[1-9][0-9]*)\b\s*[:=\-–—]*\s*([^;,\n]*)")
+
+
+def frontier_answers(answer, identifiers):
+    """`{objective: choice}` from one answer naming each objective (`O1: replan for it; O2: answer it as it stands`).
+
+    The choice is `stopping.frontier_choice` of the words after the id, None when they pick no option.
+    """
+    from wayline.stopping import frontier_choice  # the stopping module imports the goal and objectives modules
+    found = {}
+    for match in _FRONTIER_LINE.finditer(str(answer or "")):
+        if match.group(1) in identifiers and match.group(1) not in found:
+            found[match.group(1)] = frontier_choice(match.group(2))
+    return found
+
+
+def decide_frontier(project, entries, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None):
+    """One decider session on every open empty-frontier ticket of this empty frontier; returns `(outcome, decided)`.
+
+    `entries` are `(fields, body, record, objective)` for each ticket. The session answers each objective with
+    `replan for it` or `answer it as it stands`, all in one answer; each such choice is written to its ticket through
+    `decisions.decide`, the answer naming the option. Parking or dropping an objective the stopping rule names is never
+    the decider's, so a choice of either, a choice of nothing, or a refused session turns the ticket over to the owner.
+    `decided` lists the tickets answered.
+    """
+    from wayline.stopping import DECIDER_CHOICES, FRONTIER_OPTIONS
+    project = Path(project).resolve()
+    identifiers = [objective for _, _, _, objective in entries]
+    lines, options, recommended, evidence = [], [], [], []
+    for fields, body, record, objective in entries:
+        record = record or {}
+        lines.append("ticket %d about %s: %s" % (fields["id"], objective, decisions.decision_question(fields, body)))
+        options.extend("%s: %s" % (objective, choice) for choice in DECIDER_CHOICES)
+        if record.get("recommended"):
+            recommended.append("%s: %s" % (objective, record["recommended"]))
+        evidence.extend("%s: %s" % (objective, item) for item in record.get("evidence") or [])
+    question = ("The frontier is empty, and the stopping rule still waits on %s. For each, answer one line `<id>: replan for it` "
+                "or `<id>: answer it as it stands`, separated by semicolons; parking or dropping one is the owner's. %s"
+                % (", ".join(identifiers), " ".join(lines)))
+    subject = Subject(kind="frontier", key=FRONTIER_SUBJECT, question=question, options=options,
+                      recommended="; ".join(recommended) or None, evidence=evidence, slug="frontier")
+    outcome, returned, envelope, model, fallback_from = _attempt(subject, project=project, harness_root=harness_root,
+                                                                 policy=policy, fall_back=fall_back)
+    if outcome is not None:
+        if outcome.status == "refused":
+            for fields, _, _, _ in entries:
+                decisions.turn_over(project, fields["id"], outcome.why, notify=notify)
+        return outcome, []
+    outcome = _decided(subject, returned, envelope, model, fallback_from)
+    chosen = frontier_answers(outcome.answer, identifiers)
+    decided = []
+    for fields, _, _, objective in entries:
+        choice = chosen.get(objective)
+        if choice not in DECIDER_CHOICES:
+            why = ("the decider only replans for an objective the stopping rule names or answers it as it stands, and its answer "
+                   "for %s was %s" % (objective, "%r, which is the owner's" % choice if choice in FRONTIER_OPTIONS else "none of those"))
+            decisions.turn_over(project, fields["id"], why, notify=notify)
+            continue
+        try:
+            decisions.decide(project, fields["id"], choice, outcome.rationale, confidence=outcome.confidence, model=outcome.model,
+                             fallback_from=fallback_from, session_id=outcome.session_id)
+        except (ProjectError, OSError) as failure:
+            decisions.turn_over(project, fields["id"], "the decider's answer could not be recorded: %s" % failure, notify=notify)
+            continue
+        decided.append(fields["id"])
+    return outcome, decided

@@ -655,10 +655,9 @@ def writer_prompt(role, project, record, harness_root=HARNESS_ROOT):
         "than writing a section named after it.",
         "",
     ]
-    goal = evidence.get("goal") or {}
-    if goal.get("metric"):
-        lines.extend(["The run's goal: `%s`, direction %s, target %s, on the held-out split `%s`." % (
-            goal.get("metric"), goal.get("direction"), goal.get("target"), goal.get("held_out_split")), ""])
+    for goal in evidence.get("goals") or []:
+        lines.extend(["The goal %s: `%s`, direction %s, target %s, on the held-out split `%s`." % (
+            goal.get("id"), goal.get("metric"), goal.get("direction"), goal.get("target"), goal.get("held_out_split")), ""])
     lines.extend(["# The evidence", "", "Each finding carries the tags that trace it; a claim sentence of yours ends with the tags "
                   "of the findings it rests on, copied exactly.", ""])
     for group in evidence["groups"]:

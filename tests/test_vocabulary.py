@@ -34,7 +34,8 @@ class VocabularyTest(unittest.TestCase):
         self.assertIn("ladder_changes", self.enums[("control", "command")])
         self.assertEqual(self.events["tagged"], ("tag",))
         self.assertEqual(self.events["pinned"], ("tag", "previous"))
-        self.assertEqual(self.enums[("run_ended", "reason")], ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched"))
+        self.assertEqual(self.enums[("run_ended", "reason")], ("frontier_empty", "goal_reached", "stopped", "stall_strict", "switched",
+                                                          "objectives_closed", "budget_spent"))
         self.assertEqual(self.enums[("notified", "channel")], ("notify-send", "hermes", "none"))
 
     def test_every_event_name_is_a_constant(self):
