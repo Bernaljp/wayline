@@ -59,7 +59,7 @@ __all__ = [
     "check_generator_clean", "check_regenerates", "check_palette", "check_one_ramp_per_quantity",
     "check_required_vs_optional_line_style", "check_selection_representativeness",
     "check_schematic_disclosed", "check_mixed_data_disclosed", "check_crops", "check_text_overlap",
-    "check_provenance",
+    "check_provenance", "hue_problems", "style_colors",
 ]
 
 CHECK_IDS = (
@@ -880,6 +880,31 @@ def _distance(first, second, kind=None):
     return ciede2000(srgb_to_lab(one), srgb_to_lab(two))
 
 
+def hue_problems(hues, style):
+    """`(in_style, new, problems)` of a figure's hues against the house style: the hues the style names (within
+    `IN_STYLE_DELTA_E` of one of its colors), the new ones, and each pair a new hue makes that one of the three color
+    vision deficiencies brings closer than the style's `cvd_min_delta_e`. The figure checks and a drawing's plots share it."""
+    allowed = _style_colors(style)
+    threshold = float(style.get("cvd_min_delta_e", DEFAULT_CVD_MIN_DELTA_E))
+    in_style = [color for color in hues if allowed and min(_distance(color, other) for other in allowed) <= IN_STYLE_DELTA_E]
+    new = [color for color in hues if color not in in_style]
+    problems = []
+    for index, color in enumerate(new):
+        for other in hues:
+            if other == color or (other in new and new.index(other) < index):
+                continue
+            for kind in CVD_KINDS:
+                distance = _distance(color, other, kind)
+                if distance < threshold:
+                    problems.append("%s and %s are %.1f apart under %s (at least %g)" % (color, other, distance, kind, threshold))
+    return in_style, new, problems
+
+
+def style_colors(style):
+    """The colors the house style spends: its categorical ones, the diverging ends, the special hue, the parameter colors."""
+    return _style_colors(style)
+
+
 def _style_colors(style):
     colors = list(style.get("categorical") or [])
     diverging = style.get("diverging") or {}
@@ -1278,17 +1303,7 @@ def check_palette(context):
             return check_outcome("palette", False, "the PDF embeds %d raster(s) whose colormap only the artist report names" % facts.images)
         colors = set(facts.colors)
     hues = sorted(color.upper() for color in colors if not is_grey(color))
-    in_style = [color for color in hues if min(_distance(color, other) for other in allowed) <= IN_STYLE_DELTA_E]
-    new = [color for color in hues if color not in in_style]
-    problems = []
-    for index, color in enumerate(new):
-        for other in hues:
-            if other == color or (other in new and new.index(other) < index):
-                continue
-            for kind in CVD_KINDS:
-                distance = _distance(color, other, kind)
-                if distance < threshold:
-                    problems.append("%s and %s are %.1f apart under %s (at least %g)" % (color, other, distance, kind, threshold))
+    in_style, new, problems = hue_problems(hues, style)
     ramps = set((style.get("ramp_per_quantity") or {}).values())
     if (style.get("diverging") or {}).get("cmap"):
         ramps.add(style["diverging"]["cmap"])

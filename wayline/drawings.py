@@ -73,14 +73,28 @@ _RECORD = re.compile(r"^(R[1-9][0-9]*)-([1-9][0-9]*)\.json$")
 _RES_TAG = re.compile(r"\{res:[^{}]+\}")
 
 
-def own_evidence(finding):
+def cited(finding):
+    """The artifacts a finding's provenance cites: a ticket's finding carries one `<path>#<locator>` string, an older
+    line a list."""
+    given = finding.get("provenance")
+    given = [given] if isinstance(given, str) else list(given or [])
+    return [str(item).strip() for item in given if str(item).strip()]
+
+
+def own_evidence(finding, manifested):
     """Whether a finding stands on the project's own evidence: it cites a run's artifact, by provenance or a `res` tag.
 
-    A ticket's finding carries its provenance as one `<path>#<locator>` string; an older line may carry a list.
+    `manifested` is the paths `research/manifest.json` holds: a provenance citing anything else (a dossier, a document)
+    is no run's artifact. A `res` tag names a run's artifact by its form, which the linter resolved at acceptance.
     """
-    cited = finding.get("provenance")
-    cited = [cited] if isinstance(cited, str) else list(cited or [])
-    return any(str(item).strip() for item in cited) or bool(_RES_TAG.search(str(finding.get("text") or "")))
+    if any(item.partition("#")[0] in manifested for item in cited(finding)):
+        return True
+    return bool(_RES_TAG.search(str(finding.get("text") or "")))
+
+
+def _manifested(project):
+    from wayline.provenance import manifest_paths, read_manifest
+    return set(manifest_paths(read_manifest(project)))
 
 
 def _drawing_tickets(project):
@@ -120,12 +134,33 @@ def _number(result_id):
     return int(found.group(1)) if found else 0
 
 
-def _in_progress(record, by_id):
-    """Whether a drawing opened over a result still owes its outcome: its ticket is not closed one way or the other."""
+def _awaiting_resume(events):
+    """The tickets whose last `ticket_failed` sent them to their resume, which the conductor still owes them."""
+    waiting = set()
+    for event in events:
+        payload = event.get("payload") or {}
+        if event.get("event") == "ticket_failed":
+            (waiting.add if payload.get("next") == "resume" else waiting.discard)(payload.get("ticket"))
+        elif event.get("event") in ("ticket_resumed", "ticket_launched", "ticket_done", "ticket_cancelled"):
+            waiting.discard(payload.get("ticket"))
+    return waiting
+
+
+def _in_progress(record, by_id, resuming=()):
+    """Whether a drawing opened over a result still owes its outcome: its ticket is not closed one way or the other,
+    or it failed and waits on its one resume."""
     if record.get("status") != OPEN:
         return False
     fields = by_id.get(record.get("ticket"))
-    return fields is not None and fields["status"] in ("open", "running", "blocked", "needs_human")
+    if fields is None:
+        return False
+    return fields["status"] in ("open", "running", "blocked", "needs_human") or (fields["status"] == "failed" and fields["id"] in resuming)
+
+
+def _run_started(events):
+    """When the latest run started, or None when no run ever did."""
+    started = [event.get("ts") for event in events if event.get("event") == "run_started"]
+    return started[-1] if started else None
 
 
 def _rule_objectives(project):
@@ -144,25 +179,37 @@ def _rule_objectives(project):
 
 
 def due(project):
-    """The results a rest point draws, the stopping rule's first, then in id order (the module's docstring)."""
+    """The results a rest point draws, the stopping rule's first, then in id order (the module's docstring).
+
+    A result is due when its current findings (those of no drawing) differ from the ones its last accepted drawing was
+    drawn over. A drawing of it under way holds it; so does one that failed, or was cancelled, over the same findings
+    in this run, so a rest point never draws one result twice; at the next run's rest point it is drawn again.
+    """
     book = ledger_for(project)
     by_id = _drawing_tickets(book.project)
     drawn_by = set(by_id)
-    latest = {}
+    events, _ = book.read_events()
+    resuming, started = _awaiting_resume(events), _run_started(events)
+    records = {}
     for record in read_records(book):
-        latest[record.get("result")] = record
+        records.setdefault(record.get("result"), []).append(record)
+    manifested = _manifested(book.project)
     rule = _rule_objectives(book.project)
     chosen = []
     for result in results_module.read_results(book):
-        own = [finding for finding in _drawn_from(result, drawn_by) if own_evidence(finding)]
+        own = [finding for finding in _drawn_from(result, drawn_by) if own_evidence(finding, manifested)]
         if not own:
             continue
-        record = latest.get(result.id)
-        if record is not None:
-            if _in_progress(record, by_id):
-                continue
-            if record.get("signature") == signature(finding["id"] for finding in _drawn_from(result, drawn_by)):
-                continue
+        held = records.get(result.id) or []
+        if held and _in_progress(held[-1], by_id, resuming):
+            continue
+        now = signature(finding["id"] for finding in _drawn_from(result, drawn_by))
+        accepted = [record for record in held if record.get("status") == ACCEPTED]
+        if accepted and accepted[-1].get("signature") == now:
+            continue
+        if any(record.get("status") != ACCEPTED and record.get("signature") == now
+               and (started is None or str(record.get("opened") or "") >= started) for record in held):
+            continue  # tried over these findings in this run, and not accepted
         chosen.append(result)
     first = [result.id for result in chosen if set(result.objectives) & rule]
     return first + [result.id for result in chosen if result.id not in first]
@@ -370,7 +417,7 @@ def brief(project, ticket, policy=None):
     for finding in (result.current if result else []):
         own = " (a drawing's own inference)" if finding.get("ticket") in drawn_by else ""
         lines.append("- %s%s%s: %s" % (finding["id"], " [negative]" if finding.get("negative") else "", own, _one_line(finding.get("text"))))
-        for item in finding.get("provenance") or []:
+        for item in cited(finding):
             lines.append("    - artifact: `%s`" % item)
     lines += ["", "## Objectives", ""] + _objective_lines(book.project, result.objectives if result else [])
     lines += ["", "## The plot index, by data shape", ""] + _index_lines(book.project)
@@ -546,13 +593,25 @@ def _what(kind, entry):
     return "%s (new)" % (entry.get("png") if kind == "plot" else entry.get("csv"))
 
 
+def _in_folder(folder, name):
+    """`name` as a file of the drawing directory `folder`, or None when it is blank or reaches outside it."""
+    if not _text(name):
+        return None
+    relative = Path(str(name))
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    return folder / relative
+
+
 def _draft_problems(book, result_id, draft, folder, bound, expected_figures):
     """What is wrong with the drawing as a whole, before any plot is looked at."""
     problems = []
-    if not _text(draft.get("script")) or not (folder / str(draft.get("script"))).is_file():
-        problems.append("its script %r is not a file in its drawing directory" % draft.get("script"))
-    if not _text(draft.get("numbers")) or not (folder / str(draft.get("numbers"))).is_file():
-        problems.append("its numbers.json %r is not a file in its drawing directory" % draft.get("numbers"))
+    for name, what in (("script", "its script"), ("numbers", "its numbers.json")):
+        path = _in_folder(folder, draft.get(name))
+        if path is None:
+            problems.append("%s %r is outside its drawing directory or not named" % (what, draft.get(name)))
+        elif not path.is_file():
+            problems.append("%s %r is not a file in its drawing directory" % (what, draft.get(name)))
     for name in ("synthesis", "headline"):
         if not _text(draft.get(name)):
             problems.append("it has no %s" % name)
@@ -627,8 +686,9 @@ def check(project, ticket, worktree, final=False, policy=None, python=_DEFAULT):
     if unmanifested:
         problems.append("it reads %s, which research/manifest.json does not hold" % ", ".join(unmanifested))
     exempt = spec_parameters(project)
-    numbers_path = folder / str(draft.get("numbers") or "numbers.json")
-    shipped, unread = drawing_checks.read_numbers(numbers_path)
+    numbers_name = str(draft.get("numbers") or "")
+    numbers_path = _in_folder(folder, numbers_name)
+    shipped, unread = drawing_checks.read_numbers(numbers_path) if numbers_path is not None else (None, "its numbers.json is not named")
     values = drawing_checks.values_of(shipped) if shipped is not None else []
     problems += drawing_checks.numbers_problems(
         [("the synthesis", draft.get("synthesis")), ("the headline", draft.get("headline"))]
@@ -637,22 +697,23 @@ def check(project, ticket, worktree, final=False, policy=None, python=_DEFAULT):
         + [("an open question", text) for text in draft.get("open_questions") or []], values, exempt)
     script = str(draft.get("script") or "")
     python = drawing_checks.interpreter() if python is _DEFAULT else python
+    script_path = _in_folder(folder, script)
     room = drawing_checks.rerun(project, folder, folder_name, script, [item for item in inputs if item in manifest],
-                                python, policy_timeout(policy)) if script and (folder / script).is_file() else \
-        drawing_checks.Room(None, "there is no script to rerun", ran=False)
+                                python, policy_timeout(policy)) if script_path is not None and script_path.is_file() else \
+        drawing_checks.Room(None, "there is no script in its drawing directory to rerun", ran=False)
     try:
         if room.failed:
             problems.append("its script did not rerun in the clean room: %s" % (room.error or "exit %s" % room.returncode))
         elif room.ran and shipped is not None:
-            again, why = drawing_checks.read_numbers(room.root / folder_name / numbers_path.name)
+            again, why = drawing_checks.read_numbers(room.root / folder_name / numbers_name)
             if again is None:
                 problems.append("the rerun wrote no numbers.json it could read: %s" % why)
             elif again != shipped:
                 problems.append("the rerun's numbers.json differs from the drawing's: the script does not compute its numbers alike")
         elif shipped is None:
             problems.append(unread)
-        script_outcome = drawing_checks.generator_clean(folder / script, room) if script else \
-            drawing_checks._not_run("generator_clean", "there is no script")
+        script_outcome = drawing_checks.generator_clean(script_path, room) if script_path is not None and script_path.is_file() else \
+            drawing_checks.not_run("generator_clean", "there is no script in its drawing directory")
         ssim_min = float(((policy or {}).get("figures") or {}).get("ssim_min", 0.99))
         style = _style(project)
         items = []
@@ -661,6 +722,8 @@ def check(project, ticket, worktree, final=False, policy=None, python=_DEFAULT):
                                      manifest, inputs, values, exempt))
     finally:
         room.close()
+    if final and items and not any(not item["failed"] for item in items):
+        problems.append("no plot or table passed its checks after the repair: the result keeps its last accepted drawing")
     left_out = [{"what": item["what"], "reason": "; ".join(item["failed"])} for item in items if item["failed"]] if final else []
     return Checked(final, problems, items, left_out, draft)
 
@@ -680,27 +743,31 @@ def _check_item(project, folder, folder_name, kind, entry, room, script_outcome,
     provenance = drawing_checks.check_provenance(project, reads, manifest)
     number_problems = drawing_checks.numbers_problems([(_LABELS[field], entry.get(field)) for field in _TEXT_FIELDS], values, exempt)
     files = (("png", "svg") if kind == "plot" else ("csv",))
-    missing = [entry.get(name) for name in files if not _text(entry.get(name)) or not (folder / str(entry.get(name))).is_file()]
-    if missing:
-        failed.append("its %s %s not in its drawing directory" % (" and ".join(map(str, missing)), "is" if len(missing) == 1 else "are"))
+    outside = [entry.get(name) for name in files if _in_folder(folder, entry.get(name)) is None]
+    missing = [entry.get(name) for name in files if entry.get(name) not in outside and not (folder / str(entry.get(name))).is_file()]
+    if outside or missing:
+        if outside:
+            failed.append("its %s %s outside its drawing directory or not named" % (" and ".join(map(str, outside)), "is" if len(outside) == 1 else "are"))
+        if missing:
+            failed.append("its %s %s not in its drawing directory" % (" and ".join(map(str, missing)), "is" if len(missing) == 1 else "are"))
         checks = []
     else:
         main = str(entry["png"] if kind == "plot" else entry["csv"])
         if not room.ran:
-            regenerates = drawing_checks._not_run("regenerates", room.error)
+            regenerates = drawing_checks.not_run("regenerates", room.error)
         elif room.failed:
-            regenerates = drawing_checks._outcome("regenerates", False, "the script did not rerun: %s" % room.error)
+            regenerates = drawing_checks.outcome("regenerates", False, "the script did not rerun: %s" % room.error)
         elif kind == "plot":
             same, detail = drawing_checks.same_png(folder / main, room.root / folder_name / main, ssim_min)
-            regenerates = drawing_checks._outcome("regenerates", same, detail)
+            regenerates = drawing_checks.outcome("regenerates", same, detail)
         else:
             again = room.root / folder_name / main
             same = again.is_file() and again.read_bytes() == (folder / main).read_bytes()
-            regenerates = drawing_checks._outcome("regenerates", same, "the rerun wrote the same CSV" if same else "the rerun's CSV differs")
+            regenerates = drawing_checks.outcome("regenerates", same, "the rerun wrote the same CSV" if same else "the rerun's CSV differs")
         if kind == "plot":
             checks = drawing_checks.plot_checks_for(folder / str(entry["svg"]), style, policy, script_outcome, regenerates, provenance, number_problems)
         else:
-            checks = [regenerates, provenance, drawing_checks._outcome(drawing_checks.NUMBERS, not number_problems,
+            checks = [regenerates, provenance, drawing_checks.outcome(drawing_checks.NUMBERS, not number_problems,
                                                                      "; ".join(number_problems) or "every number it quotes is a value in numbers.json")]
     failed += ["%s: %s" % (outcome["id"], outcome["detail"]) for outcome in checks if outcome.get("pass") is False]
     return {"what": what, "kind": kind, "entry": entry, "checks": checks, "failed": failed}
@@ -780,11 +847,16 @@ def accept(project, ticket, checked):
                         data_view=drawn_entry["data_view"], status=CURRENT, headline=drawn_entry.get("headline", False),
                         drawings=list(plot.get("drawings") or []) + [name])
         ids = {entry["id"] for entries in drawn.values() for entry in entries}
+        # A plot this drawing tried to redraw and left out for its checks stays as its last accepted drawing drew it.
+        failed_redraws = {item["entry"].get("redraws") for item in checked.items if item["failed"] and item["entry"].get("redraws")}
         carried, retired = [], []
         for plot in plots:
             if plot.get("result") != result_id or plot["id"] in ids or plot.get("status") != CURRENT:
                 continue
-            if plot.get("mark") == KEEP:
+            if plot.get("mark") == DROP:
+                plot.update(status=RETIRED, headline=False)
+                retired.append(plot["id"])
+            elif plot.get("mark") == KEEP or plot["id"] in failed_redraws:
                 carried.append(plot["id"])
                 plot["headline"] = False  # the headlines are this drawing's to mark
             else:
@@ -926,10 +998,10 @@ def draw_again(project, result_id):
                                % (result_id, ", ".join(found) or "none yet"))
         by_id = _drawing_tickets(book.project)
         drawn_by = set(by_id)
-        if not [finding for finding in _drawn_from(result, drawn_by) if own_evidence(finding)]:
+        if not [finding for finding in _drawn_from(result, drawn_by) if own_evidence(finding, _manifested(book.project))]:
             raise DrawingError("%s holds no finding from the project's own evidence: there is nothing of its own to draw" % result_id)
         latest = read_records(book, result_id)
-        if latest and _in_progress(latest[-1], by_id):
+        if latest and _in_progress(latest[-1], by_id, _awaiting_resume(book.read_events()[0])):
             raise DrawingError("%s's drawing %s-%d is under way (ticket %d)" % (result_id, result_id, latest[-1]["version"], latest[-1]["ticket"]))
         return _open_one(book, result, OWNER, drawn_by, "human")
 

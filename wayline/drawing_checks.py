@@ -41,7 +41,7 @@ from wayline.figure_checks import check_not_run, check_outcome
 
 __all__ = [
     "SIX", "CHECK_IDS", "NUMBERS", "RAMP_MIN", "DEFAULT_MIN_FONT_PT", "Room", "interpreter", "rerun", "same_png",
-    "plot_checks_for", "numbers_problems", "values_of",
+    "plot_checks_for", "numbers_problems", "values_of", "read_numbers", "outcome", "not_run", "generator_clean", "check_provenance",
 ]
 
 SIX = ("min_font_pt", "text_overlap", "palette", "generator_clean", "regenerates", "provenance")
@@ -58,11 +58,13 @@ _RGB = re.compile(r"rgb\(\s*([0-9.]+%?)\s*,\s*([0-9.]+%?)\s*,\s*([0-9.]+%?)\s*\)
 _UNIT = re.compile(r"^\s*([0-9.]+)\s*(pt|px|in|cm|mm)?\s*$")
 
 
-def _outcome(check_id, passed, detail):
+def outcome(check_id, passed, detail):
+    """One check's entry, `{id, type: "A", pass, tool, detail}`, with the tool this module reads it with."""
     return check_outcome(check_id, passed, detail, tool=_TOOL.get(check_id))
 
 
-def _not_run(check_id, reason):
+def not_run(check_id, reason):
+    """The entry of a check that cannot run: listed as not run with the reason, never passed or failed."""
     return check_not_run(check_id, reason, tool=_TOOL.get(check_id))
 
 
@@ -198,19 +200,20 @@ def _shorten(items, limit=4):
 
 def check_min_font_pt(plot, svg_path, style):
     if not plot.text_readable:
-        return _not_run("min_font_pt", "the %s SVG draws its text as outlines with no string, so its sizes cannot be read" % plot.writer)
+        return not_run("min_font_pt", "the %s SVG draws its text as outlines with no string, so its sizes cannot be read" % plot.writer)
     minimum = float((style or {}).get("min_font_pt") or DEFAULT_MIN_FONT_PT)
-    sizes = [text.size * _unit_scale(svg_path) for text in plot.texts if text.text.strip() and text.size]
+    scale = _unit_scale(svg_path)  # one parse of the root, however many texts the plot holds
+    sizes = [text.size * scale for text in plot.texts if text.text.strip() and text.size]
     if not sizes:
-        return _outcome("min_font_pt", True, "no text")
+        return outcome("min_font_pt", True, "no text")
     smallest = min(sizes)
-    return _outcome("min_font_pt", smallest >= minimum - figure_checks.FONT_TOLERANCE_PT,
+    return outcome("min_font_pt", smallest >= minimum - figure_checks.FONT_TOLERANCE_PT,
                     "smallest %.2f pt; the house style's minimum %.2f pt" % (smallest, minimum))
 
 
 def check_text_overlap(plot, svg_path, style):
     if not plot.text_readable:
-        return _not_run("text_overlap", "the %s SVG draws its text as outlines with no string, so its boxes cannot be read" % plot.writer)
+        return not_run("text_overlap", "the %s SVG draws its text as outlines with no string, so its boxes cannot be read" % plot.writer)
     texts = [(text, _text_box(text)) for text in plot.texts if text.text.strip()]
     problems = []
     for text, box in texts:
@@ -223,7 +226,7 @@ def check_text_overlap(plot, svg_path, style):
             if shared > 1 and shared > OVERLAP_FRACTION * min(_area(one), _area(two)):
                 problems.append("%r and %r overlap" % (first.text, second.text))
     detail = _shorten(problems) if problems else "%d text(s), none past the canvas or overlapping" % len(texts)
-    return _outcome("text_overlap", not problems, detail)
+    return outcome("text_overlap", not problems, detail)
 
 
 def _colors(svg_path):
@@ -245,50 +248,23 @@ def _colors(svg_path):
     return found
 
 
-def _style_colors(style):
-    colors = list((style or {}).get("categorical") or [])
-    diverging = (style or {}).get("diverging") or {}
-    colors += [diverging[key] for key in ("low", "high") if diverging.get(key)]
-    if (style or {}).get("special_hue"):
-        colors.append(style["special_hue"])
-    return colors + list((style or {}).get("equation_parameter_colors") or [])
-
-
-def _distance(first, second, kind=None):
-    one, two = figure_checks.hex_to_rgb(first), figure_checks.hex_to_rgb(second)
-    if kind is not None:
-        one, two = figure_checks.simulate_cvd(one, kind), figure_checks.simulate_cvd(two, kind)
-    return figure_checks.ciede2000(figure_checks.srgb_to_lab(one), figure_checks.srgb_to_lab(two))
-
-
 def check_palette(plot, svg_path, style):
-    allowed = _style_colors(style)
-    if not allowed:
-        return _outcome("palette", False, "the house style has no colors (figures/style.json)")
+    """The figure checks' palette rule (`figure_checks.hue_problems`) over the hues the SVG paints with."""
+    if not figure_checks.style_colors(style or {}):
+        return outcome("palette", False, "the house style has no colors (figures/style.json)")
     hues = sorted(color for color in _colors(svg_path) if not figure_checks.is_grey(color))
     if len(hues) >= RAMP_MIN:
-        return _outcome("palette", True, "%d hues: a colormap's ramp, which the SVG does not name, so its ramp is not checked here" % len(hues))
-    threshold = float((style or {}).get("cvd_min_delta_e", figure_checks.DEFAULT_CVD_MIN_DELTA_E))
-    in_style = [color for color in hues if min(_distance(color, other) for other in allowed) <= figure_checks.IN_STYLE_DELTA_E]
-    new = [color for color in hues if color not in in_style]
-    problems = []
-    for index, color in enumerate(new):
-        for other in hues:
-            if other == color or (other in new and new.index(other) < index):
-                continue
-            for kind in figure_checks.CVD_KINDS:
-                distance = _distance(color, other, kind)
-                if distance < threshold:
-                    problems.append("%s and %s are %.1f apart under %s (at least %g)" % (color, other, distance, kind, threshold))
+        return outcome("palette", True, "%d hues: a colormap's ramp, which the SVG does not name, so its ramp is not checked here" % len(hues))
+    in_style, new, problems = figure_checks.hue_problems(hues, style or {})
     detail = "%d hue(s): %d from the house style, %d new" % (len(hues), len(in_style), len(new))
-    return _outcome("palette", not problems, detail + ("; " + _shorten(problems) if problems else ""))
+    return outcome("palette", not problems, detail + ("; " + _shorten(problems) if problems else ""))
 
 
 def generator_clean(script_path, room):
     """The `generator_clean` outcome of one script, shared by every plot it draws."""
     script_path = Path(script_path)
     if script_path.suffix != ".py":
-        return _not_run("generator_clean", "generator_clean lints Python only; the script %s is not a Python script" % script_path.name)
+        return not_run("generator_clean", "generator_clean lints Python only; the script %s is not a Python script" % script_path.name)
     problems, notes = [], []
     tools = figure_checks.Tools()
     try:
@@ -307,20 +283,20 @@ def generator_clean(script_path, room):
     elif room.failed:
         problems.append("the script did not exit 0 in a fresh interpreter: %s" % (room.error or "exit %s" % room.returncode))
     if problems:
-        return _outcome("generator_clean", False, _shorten(problems + notes))
+        return outcome("generator_clean", False, _shorten(problems + notes))
     if run is None and not room.ran:
-        return _not_run("generator_clean", _shorten(notes))
+        return not_run("generator_clean", _shorten(notes))
     detail = "; ".join(part for part in (
         "no unused imports or variables (F401, F841)" if run is not None else None,
         "exits 0 in a fresh interpreter" if room.ran else None) if part)
-    return _outcome("generator_clean", True, detail + ("; " + _shorten(notes) if notes else ""))
+    return outcome("generator_clean", True, detail + ("; " + _shorten(notes) if notes else ""))
 
 
 def check_provenance(project, inputs, manifest):
     """Every artifact a plot reads is manifested and still has the manifest's hash."""
     from wayline.provenance import sha256_of
     if not inputs:
-        return _outcome("provenance", False, "the plot names no input: nothing traces it to a run")
+        return outcome("provenance", False, "the plot names no input: nothing traces it to a run")
     problems = []
     for relative in inputs:
         entry = manifest.get(relative)
@@ -332,7 +308,7 @@ def check_provenance(project, inputs, manifest):
         elif sha256_of(path) != entry.get("sha256"):
             problems.append("%s no longer has the hash the manifest holds for run %s" % (relative, entry.get("run_id")))
     detail = _shorten(problems) if problems else "%d input(s), each manifested with its hash" % len(inputs)
-    return _outcome("provenance", not problems, detail)
+    return outcome("provenance", not problems, detail)
 
 
 def plot_checks_for(plot_svg, style, policy, script_outcome, regenerates, provenance, number_problems):
@@ -344,10 +320,10 @@ def plot_checks_for(plot_svg, style, policy, script_outcome, regenerates, proven
         unreadable = "the SVG %s could not be read: %s" % (Path(plot_svg).name, failure)
     report = []
     for check_id, function in (("min_font_pt", check_min_font_pt), ("text_overlap", check_text_overlap), ("palette", check_palette)):
-        report.append(_outcome(check_id, False, unreadable) if plot is None else function(plot, plot_svg, style))
+        report.append(outcome(check_id, False, unreadable) if plot is None else function(plot, plot_svg, style))
     report += [script_outcome, regenerates, provenance]
     report += plot_checks.run_readability_checks(plot_svg, policy)
-    report.append(_outcome(NUMBERS, not number_problems, _shorten(number_problems) if number_problems
+    report.append(outcome(NUMBERS, not number_problems, _shorten(number_problems) if number_problems
                            else "every number it quotes is a value in numbers.json"))
     return report
 

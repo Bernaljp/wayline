@@ -276,7 +276,7 @@ class AcceptTest(DrawnCase):
         self.assertEqual((plots["R1.2"]["status"], plots["R1.T1"]["status"]), ("retired", "retired"))
         self.assertEqual(sorted(record["retired"]), ["R1.2", "R1.T1"])
 
-    def test_a_plot_left_out_at_the_repair_is_listed_and_a_redrawn_one_retires(self):
+    def test_a_plot_left_out_at_the_repair_is_listed_in_the_record_and_the_event(self):
         self.draw(plots={"auroc_box": "matplotlib-clean", "seed_violin": "seaborn-clean"})
         self.accept()
         self.again()
@@ -288,7 +288,6 @@ class AcceptTest(DrawnCase):
         self.assertEqual([plot["id"] for plot in record["plots"]], ["R1.1"])
         self.assertEqual([entry["what"] for entry in record["left_out"]], ["R1.2"])
         self.assertIn("rotated_text", record["left_out"][0]["reason"])
-        self.assertEqual(self.plots()["R1.2"]["status"], "retired")
         self.assertEqual(self.events("drawing")[-1]["payload"]["left_out"], record["left_out"])
 
     def test_keep_is_never_retired_by_a_drawing_alone_drop_retires_and_a_note_reaches_the_next_brief(self):
@@ -314,6 +313,26 @@ class AcceptTest(DrawnCase):
         self.assertEqual(record["carried"], ["R1.1"])
         self.assertEqual((plots["R1.2"]["status"], plots["R1.2"]["mark"]), ("retired", "drop"))
         self.assertEqual((plots["R1.3"]["status"], plots["R1.3"]["note"]), ("current", "Colour the strip by split."))
+
+    def test_a_redraw_that_fails_its_checks_leaves_the_plot_as_its_last_accepted_drawing_drew_it(self):
+        self.draw(plots={"auroc_box": "matplotlib-clean", "seed_violin": "seaborn-clean"})
+        self.accept()
+        self.again()
+        folder = self.draw(plots={"auroc_box": "matplotlib-clean", "seed_violin": "matplotlib-rotated-ticks"}, tables={})
+        value = json.loads((folder / drawings.DRAFT).read_text(encoding="utf-8"))
+        value["plots"][0]["redraws"], value["plots"][1]["redraws"] = "R1.1", "R1.2"
+        (folder / drawings.DRAFT).write_text(json.dumps(value), encoding="utf-8")
+        record = self.accept()
+        plots = self.plots()
+        self.assertEqual([entry["what"] for entry in record["left_out"]], ["R1.2"])
+        self.assertEqual((plots["R1.2"]["status"], plots["R1.2"]["drawings"]), ("current", ["R1-1"]))
+        self.assertIn("R1.2", record["carried"])
+
+    def test_a_drawing_whose_every_plot_fails_fails_as_a_whole(self):
+        self.draw(plots={"seed_bars": "matplotlib-rotated-ticks"}, tables={})
+        checked = self.check(final=True)
+        self.assertFalse(checked.passed)
+        self.assertTrue(any("no plot or table" in problem for problem in checked.problems), checked.problems)
 
     def test_a_dropped_plot_drawn_again_fails_the_drawing(self):
         from wayline import batches
@@ -553,10 +572,22 @@ class DrawingRunTest(DrawingRunCase):
         self.assertIn("0.93", record["reason"])
         self.assertTrue(results[-1].ended)
         self.assertEqual(self.ticket(2)["status"], "failed")
+        self.assertFalse(self.worktree(2).exists(), "a drawing closed with no step keeps no worktree")
+        self.assertNotIn("ticket/2", self.branches())
         account = (self.project / "research" / "ACCOUNT.md").read_text(encoding="utf-8")
         runs = account[account.index("## Runs"):]
         self.assertIn("R1-1 failed", runs)
         self.assertIn("R1 keeps no accepted drawing yet", runs)
+
+
+class NotServedTest(DrawingRunCase):
+    def test_a_plotter_model_nobody_serves_fails_the_drawing_with_no_rung_held_and_no_ask(self):
+        from tests.test_model_ran import not_served
+        self.run_drawings(lambda request, message: not_served("opus"))
+        self.assertEqual(self.payload("ticket_failed")["next"], "none")
+        self.assertIn("model_not_served", self.payload("ticket_failed")["reason"])
+        self.assertEqual(self.events("decision_opened"), [], "no rung to hold, and a drawing asks nobody")
+        self.assertEqual(drawings.read_records(self.project, "R1")[-1]["status"], "failed")
 
 
 class DrawingFindingTest(DrawingRunCase):
@@ -567,13 +598,15 @@ class DrawingFindingTest(DrawingRunCase):
             envelope = drawn(request, message)
             envelope.structured_output["findings"] = [{
                 "text": "Across the 3 seeds the AUROC never falls below 0.71.", "heading": "What the plots show",
-                "provenance": "drawings/R1-1/numbers.json#auroc", "negative": False}]
+                "provenance": "drawings/R1-1/numbers.json#auroc", "negative": False, "replaces": "t1-a1-f1"}]
             return envelope
 
         self.run_drawings(respond)
         from wayline import sections as kept
         [finding] = [item for item in kept.read_findings(self.project) if item["ticket"] == 2]
         self.assertEqual((finding["heading"], finding["result"]), (R1, "R1"))
+        self.assertIsNone(finding["replaces"], "a drawing is read-only on the research: its inference replaces no finding")
+        self.assertIn("t1-a1-f1", [item["id"] for item in results.read_results(self.project)[0].current])
         self.assertEqual([result.id for result in results.read_results(self.project)], ["R1"])
         self.assertEqual(drawings.due(self.project), [], "a drawing's own finding does not make its result changed")
 
@@ -625,6 +658,27 @@ class RestPointTest(DrawingRunCase):
                 self.run_drawings(self.plotter())
                 self.assertEqual(self.rest(), ["run_end"])
                 self.assertEqual(self.payload("run_ended")["reason"], "frontier_empty")
+
+    def test_a_decision_holding_every_ticket_leaves_the_drawing_for_after_the_answer_and_the_run_pauses(self):
+        from wayline.decisions import open_decision
+        open_decision(self.project, "Stop everything?", options=["yes", "no"], human_only=True, blocking="all",
+                      proposed_by="human", notify=lambda *args: None)
+        self.git("add", "-A")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a decision holding all")
+        results = self.run_drawings()
+        self.assertTrue(results[-1].ended)
+        self.assertEqual(self.payload("run_ended")["reason"], "frontier_empty")
+        self.assertEqual(self.launched(), [])
+        self.assertEqual([fields["status"] for fields in tickets.read_tickets(self.project) if fields["kind"] == "drawing"], ["open"],
+                         "drawn once the owner's answer lets the frontier go on")
+
+    def test_an_empty_frontier_the_decider_takes_is_no_rest_point(self):
+        open_objective = add_objective(self.project, "Does the rise hold at dusk?")[0]["id"]
+        self.autonomy("autonomous")
+        self.run_drawings(waves=1)
+        self.assertEqual(self.events("drawing"), [], "the run goes on with the decider: no drawing yet")
+        self.assertTrue(any(open_objective in str(fields.get("origin")) for fields in tickets.read_tickets(self.project)
+                            if fields["kind"] == "decision"))
 
     def test_an_end_of_the_stopping_rule_launches_only_the_drawings_and_ends_after_them(self):
         from wayline.objectives import change_objective
@@ -700,11 +754,38 @@ class DueTest(DrawingsCase):
         file(self.ledger, "t3-a1-f1", "Earlier work found no effect.", R2, provenance=())
         self.assertEqual(drawings.due(self.project), ["R1"])
 
-    def test_own_evidence_is_a_cited_artifact_by_provenance_or_a_res_tag(self):
-        self.assertTrue(drawings.own_evidence({"provenance": "results/summary.json#auroc", "text": "It is 0.71."}))
-        self.assertTrue(drawings.own_evidence({"provenance": ["results/summary.json#auroc"], "text": "It is 0.71."}))
-        self.assertTrue(drawings.own_evidence({"provenance": "", "text": "It is 0.71 {res:t2-a1/results/summary.json#auroc}."}))
-        self.assertFalse(drawings.own_evidence({"provenance": "", "text": "Earlier work found it {ref:smith2020#abstract}."}))
+    def test_own_evidence_is_a_manifested_artifact_by_provenance_or_a_res_tag(self):
+        manifested = {"results/summary.json"}
+        self.assertTrue(drawings.own_evidence({"provenance": "results/summary.json#auroc", "text": "It is 0.71."}, manifested))
+        self.assertTrue(drawings.own_evidence({"provenance": ["results/summary.json#auroc"], "text": "It is 0.71."}, manifested))
+        self.assertTrue(drawings.own_evidence({"provenance": "", "text": "It is 0.71 {res:t2-a1/results/summary.json#auroc}."}, manifested))
+        self.assertFalse(drawings.own_evidence({"provenance": "", "text": "Earlier work found it {ref:smith2020#abstract}."}, manifested))
+        self.assertFalse(drawings.own_evidence({"provenance": "research/refs/smith2020/dossier.json#abstract", "text": "It is known."},
+                                               manifested), "a dossier is no run's artifact")
+
+    def test_a_result_whose_findings_cite_no_run_artifact_is_not_drawn(self):
+        file(self.ledger, "t3-a1-f1", "Earlier work found no effect.", R2, provenance=("research/refs/smith2020/dossier.json#abstract",))
+        self.assertEqual(drawings.due(self.project), [])
+
+    def test_a_drawing_failed_in_an_earlier_run_is_drawn_again_at_the_next_runs_rest_point(self):
+        file(self.ledger, "t2-a1-f1", "The products raise the AUROC to 0.71.", R1)
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": "v0", "autonomy": "checkpoints", "radius": "moderate", "pid": 1})
+        [first] = drawings.open_drawings(self.project, drawings.RUN_END)
+        drawings.fail(self.project, self.ticket(first), "its script did not rerun")
+        self.close(first, "failed")
+        self.assertEqual(drawings.due(self.project), [], "not again in the run it failed in")
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": "v0", "autonomy": "checkpoints", "radius": "moderate", "pid": 2})
+        self.assertEqual(drawings.due(self.project), ["R1"], "changed since its last accepted drawing, in a new run")
+
+    def test_a_drawing_waiting_on_its_resume_is_still_under_way(self):
+        file(self.ledger, "t2-a1-f1", "The products raise the AUROC to 0.71.", R1)
+        [first] = drawings.open_drawings(self.project, drawings.RUN_END)
+        self.close(first, "failed")
+        self.ledger.append_event("ticket_failed", {"ticket": first, "attempt": 1, "reason": "it failed", "next": "resume"}, ticket=first)
+        file(self.ledger, "t4-a1-f1", "The rise holds on split B at 0.71.", R1)
+        self.assertEqual(drawings.due(self.project), [])
+        with self.assertRaises(drawings.DrawingError):
+            drawings.draw_again(self.project, "R1")
 
     def test_the_stopping_rules_results_come_first(self):
         add_objective(self.project, "Does the loss fall?")       # O1
@@ -812,6 +893,31 @@ class PlotterTest(DrawingsCase):
         self.assertLess(shapes.index("box plot"), shapes.index("violin plot"), "sorted by shape, then chart type")
         self.assertLess(shapes.index("violin plot"), shapes.index("scatter plot"))
         self.assertNotIn("Styling", text, "a page that is no chart type for research data is left out")
+
+    def test_the_brief_names_a_findings_artifact_as_the_conductor_files_it(self):
+        from wayline.project import policy_for
+        sections.file_finding(self.ledger, {"id": "t2-a1-f1", "ticket": 2, "text": "The products raise the AUROC to 0.71.",
+                                            "provenance": "results/summary.json#auroc", "negative": False, "heading": R1,
+                                            "replaces": None, "objectives": []})
+        [identifier] = drawings.open_drawings(self.project, drawings.RUN_END)
+        text = drawings.brief(self.project, self.ticket(identifier), policy_for(self.project))
+        self.assertIn("    - artifact: `results/summary.json#auroc`", text)
+        self.assertNotIn("    - artifact: `r`", text)
+
+    def test_a_path_outside_the_drawing_directory_is_refused(self):
+        file(self.ledger, "t2-a1-f1", "The products raise the AUROC to 0.71.", R1)
+        [identifier] = drawings.open_drawings(self.project, drawings.RUN_END)
+        worktree = self.temp / "worktree"
+        folder = draw_into(worktree / "drawings" / "R1-1", self.project)
+        (worktree / "outside.svg").write_text(sample_svg("matplotlib-clean"), encoding="utf-8")
+        draft = json.loads((folder / drawings.DRAFT).read_text(encoding="utf-8"))
+        draft["plots"][0]["svg"] = "../../outside.svg"
+        (folder / drawings.DRAFT).write_text(json.dumps(draft), encoding="utf-8")
+        from wayline.project import policy_for
+        checked = drawings.check(self.project, self.ticket(identifier), worktree, final=True, policy=policy_for(self.project),
+                                 python=sys.executable)
+        self.assertEqual([entry["what"] for entry in checked.left_out], ["auroc_box.png (new)"])
+        self.assertIn("outside its drawing directory", checked.left_out[0]["reason"])
 
     def test_the_limits_are_policys(self):
         from wayline.project import policy_for

@@ -1144,7 +1144,7 @@ class Conductor:
         # tool nobody is installing keeps none going either: it waits on its software decision (ticket 82).
         if not [entry for entry in tickets.frontier(graph)
                 if not schedule.awaits_owner(entry, autonomy, decider) and not self._needs_tools(entry)] and not running:
-            if self._draws_before_the_end(self._rest_point(autonomy, decider)):
+            if not self._decider_takes_the_frontier(autonomy, decider) and self._draws_before_the_end(self._rest_point(autonomy, decider)):
                 return  # the changed results are drawn before the run ends or pauses (ticket 100)
             takes, notice = self._empty_frontier(autonomy, decider)
             if takes:
@@ -2917,13 +2917,17 @@ class Conductor:
         return graph
 
     def _drawings_owed(self):
-        """The drawing tickets still to finish: open, running, in flight, or failed and waiting on their resume."""
+        """The drawing tickets this run still finishes: running, in flight, failed and waiting on their resume, or open
+        on the frontier. An open one a decision holds off the frontier (one blocking all) waits for the owner's answer
+        and keeps no run going, or the run would neither end nor pause."""
+        frontier = {entry["id"] for entry in tickets.frontier(self._graph())}
         owed = []
         for fields in tickets.read_tickets(self.project):
             if not _is_drawing(fields):
                 continue
             known = self.view.tickets.get(fields["id"])
-            if fields["status"] in ("open", "running") or fields["id"] in self.flight \
+            if fields["status"] == "running" or fields["id"] in self.flight \
+                    or (fields["status"] == "open" and fields["id"] in frontier) \
                     or (fields["status"] == "failed" and known is not None and known.step == RESUME):
                 owed.append(fields["id"])
         return owed
@@ -2957,6 +2961,20 @@ class Conductor:
             self._tail()
             self.say("  a rest point (%s): drawing ticket(s) %s opened" % (rest, ", ".join(str(identifier) for identifier in opened)))
         return bool(self._drawings_owed())
+
+    def _decider_takes_the_frontier(self, autonomy, decider):
+        """Whether the decider will take this empty frontier's asks and the run go on: then it is no rest point (ticket 100).
+
+        Under `autonomous` with a decider, an objective the stopping rule waits on is asked about (`_empty_frontier`), and
+        the decider answers in the run; the results are drawn when the run truly comes to rest.
+        """
+        if autonomy != schedule.AUTONOMOUS or not decider:
+            return False
+        harness = self._harness_for_rule()
+        if harness is None:
+            return False
+        rule = stopping.rule_of(harness)
+        return rule != stopping.FRONTIER and bool(stopping.waited(rule, self._objective_records() or []))
 
     def _rest_point(self, autonomy, decider):
         """The rest point an empty frontier is: a checkpoint pause under `checkpoints` when a decision ticket waits for
@@ -3189,7 +3207,8 @@ class Conductor:
             return None
         refused = worker.not_served(envelope)
         if refused is not None:
-            held = self._hold_rung(attempt, refused)
+            # A drawing runs on the plotter's tier, no rung of the ladder, so there is no rung to hold: it fails with no step.
+            held = None if _is_drawing(attempt.ticket) else self._hold_rung(attempt, refused)
             self._fail(attempt, "model_not_served: the subscription does not serve %s, the model this launch named%s; "
                                 "the attempt is not retried and launches at that rung are held%s"
                        % (refused, "" if attempt.tier is None else " at rung %s" % attempt.tier.rung,
@@ -4559,13 +4578,14 @@ class Conductor:
                 # A finding is a Results passage (decision 17): its heading (the ticket's title when it named none),
                 # the finding a scope-down narrows, and the ticket's objectives.
                 "heading": drawn or finding.get("heading") or attempt.ticket["title"],
-                # A discarded change displaces nothing: its findings stand beside what they would have replaced.
-                "replaces": None if negative else finding.get("replaces"),
+                # A discarded change displaces nothing: its findings stand beside what they would have replaced. Nor does a
+                # drawing, which is read-only on the research (ticket 100).
+                "replaces": None if negative or drawn else finding.get("replaces"),
                 "objectives": list(attempt.ticket.get("objectives") or []),
                 # What this project's evidence says of the inherited claim it replaces (ticket 93).
-                "evidence": None if negative else finding.get("evidence"),
+                "evidence": None if negative or drawn else finding.get("evidence"),
                 # Why its evidence overrides the owner's passage it replaces (ticket 88).
-                "reason": None if negative else finding.get("reason"),
+                "reason": None if negative or drawn else finding.get("reason"),
             }
             if record["id"] in self.view.findings:
                 continue  # filed before a restart
@@ -5285,6 +5305,7 @@ class Conductor:
                 self.say("  ticket %d: its failed drawing could not be recorded: %s" % (identifier, failure))
             self.say("  ticket %d: the drawing failed; its result keeps its last accepted drawing" % identifier)
             self._closed_without_step = True
+            self._remove_worktree(identifier)  # no later attempt will use it: the drawing is closed for good
             return
         self._adjust_difficulty(identifier)
         if step != NEEDS_HUMAN:
