@@ -28,8 +28,11 @@ class InventoryCase(MethodsCase):
         self.on_main({"phaselock.py": PY_SECOND, "phaselock.m": MATLAB})
 
     def integrated(self, ticket, parameters, attempt=1):
-        """What `_close` keeps beside an integrated attempt's session: its filled `parameters` (ticket 107)."""
+        """What `_close` keeps beside an integrated attempt's session (its filled `parameters`, ticket 107), and the
+        `integrated` event that says when it reached `main`."""
         methods.write_code_rule(worker.session_dir(self.project, ticket, attempt), {"parameters": parameters, "not_methods": []})
+        Ledger(self.project).append_event("integrated", {"ticket": ticket, "commit": "c%d" % ticket, "resolved_by": "none"},
+                                          ticket=ticket)
 
     def window(self, reason=WINDOW_REASON, line=13):
         return {"method": "order_parameter", "name": "window", "value": "512", "default": "256", "path": "code/phaselock.py",
@@ -61,6 +64,22 @@ class ParameterTableTest(InventoryCase):
         self.assertIn(WINDOW_REASON, text)
         self.assertNotIn("An early reason.", text)
         self.assertNotIn("Gone with its file.", text)
+
+    def test_the_ticket_that_reached_main_last_gives_the_row_whatever_its_id(self):
+        self.integrated(15, [self.window("Ticket 15's reason.")])
+        self.integrated(12, [dict(self.window("Ticket 12's reason, integrated later."), value="1024")])
+        text = self.render()
+        self.assertIn("| 1024 | 256 | Ticket 12's reason, integrated later. |", text)
+        self.assertNotIn("Ticket 15's reason.", text)
+
+    def test_a_row_with_no_line_is_tagged_and_keyed_at_its_first_line(self):
+        self.integrated(3, [dict(self.window(), line=None)])
+        text = self.render()
+        self.assertIn("{code:code/phaselock.py#L1}", text)
+        self.assertEqual(methods_inventory.read_record(self.ledger)["parameters"][0]["line"], 1)
+        path = self.project / "research" / "sections" / "methods.md"
+        path.write_text(text.replace(WINDOW_REASON, "The owner's own reason."), encoding="utf-8")
+        self.assertIn("| The owner's own reason. |", self.render())
 
     def test_a_row_whose_code_tag_main_no_longer_resolves_leaves(self):
         self.integrated(3, [self.window(), dict(self.window("Its line is gone."), name="seed", line=400)])
@@ -95,6 +114,21 @@ class OwnerReasonTest(InventoryCase):
         # A later ticket's reason for the same row does not displace the owner's.
         self.integrated(4, [self.window("A newer reason from a ticket.")])
         self.assertIn(self.OWNERS, self.render())
+        # A later ticket that changes the value brings its own reason: the owner's explained the old value.
+        self.integrated(5, [dict(self.window("Ticket 5 widens the window to four wingbeats."), value="1024")])
+        text = self.render()
+        self.assertIn("| 1024 | 256 | Ticket 5 widens the window to four wingbeats. |", text)
+        self.assertNotIn(self.OWNERS, text)
+
+    def test_a_method_holding_a_colon_is_a_row_the_owner_can_edit(self):
+        self.integrated(3, [{"method": "stats::optim", "name": "maxit", "value": "500", "default": "100",
+                             "path": "code/phaselock.py", "line": 2, "reason": "The ticket's reason."}])
+        path = self.project / "research" / "sections" / "methods.md"
+        text = self.render()
+        path.write_text(text.replace("The ticket's reason.", "The owner's reason."), encoding="utf-8")
+        self.assertIn("| The owner's reason. |", self.render())
+        [reason] = [item for item in sections.read_passages(self.ledger) if item.get("parameter")]
+        self.assertEqual(reason["parameter"], "stats::optim:maxit@code/phaselock.py")
 
     def test_a_reason_said_in_conversation_is_the_same_passage(self):
         import contextlib
@@ -192,6 +226,19 @@ class CitationTest(SoftwareTest):
         self.assertNotIn("numpy", listed)
         self.assertNotIn("umap", listed)
 
+    def test_a_cff_in_the_projects_own_venv_counts_and_one_it_cannot_read_falls_back_to_the_table(self):
+        self.lock("requirements.lock", REQUIREMENTS + "pysindy==1.7.5\n")
+        root = self.project / ".wayline" / "env-venv" / "lib" / "python3.12" / "site-packages"
+        (root / "pysindy").mkdir(parents=True)
+        (root / "pysindy" / "CITATION.cff").write_text(PYSINDY_CFF, encoding="utf-8")
+        (root / "scipy").mkdir(parents=True)
+        (root / "scipy" / "CITATION.cff").write_text("cff-version: 1.2.0\ntitle: >-\n  SciPy\n", encoding="utf-8")
+        self.methods_passage("The dynamics were identified with SINDy from the analytic signal.")
+        listed = self.citations(self.render())
+        self.assertIn("10.21105/joss.02104", listed)
+        self.assertIn("10.1038/s41592-019-0686-2", listed, "a folded title is not read: the documented equivalent stands")
+        self.assertNotIn(">-", listed)
+
     def test_a_package_the_locks_do_not_hold_gets_no_citation(self):
         self.methods_passage("The phase is taken from the analytic signal {code:code/phaselock.py#order_parameter}.")
         self.assertEqual(self.citations(self.render()), "")
@@ -221,6 +268,12 @@ class MethodsToCodeTest(InventoryCase):
         self.assertTrue(all(entry["reproduced_by_repository"] is False for entry in record["not_reproduced"]))
         # Never failed: the section renders, and the Methods passages all stand.
         self.assertEqual(sections.current_ids(self.ledger, "methods"), {backed["id"], filtered["id"], missing["id"]})
+
+    def test_every_tag_main_does_not_hold_is_listed_beside_one_it_holds(self):
+        both = self.methods_passage("The phase {code:code/phaselock.py#order_parameter} and the drift {code:code/drift.py#L9}.")
+        gaps = self.gaps(self.outline())
+        self.assertIn("{code:code/drift.py#L9} (%s)" % both["id"], gaps)
+        self.assertNotIn("order_parameter} (%s)" % both["id"], gaps)
 
     def test_code_written_later_takes_the_method_out_of_the_gaps(self):
         filtered = self.methods_passage("Each trace was band-passed with a Butterworth filter.", heading="Filtering")

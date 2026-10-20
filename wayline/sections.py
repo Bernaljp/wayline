@@ -925,7 +925,10 @@ def take_in(project_or_ledger, section):
             # A reason the owner edited in the parameter table is the owner's passage for that row (ticket 108).
             from wayline import methods_inventory  # the inventory reads the sections it renders into
             for key, reason in methods_inventory.taken_reasons(body, stamp.get("parameters") or {}):
-                add(methods_inventory.PARAMETERS, reason, parameter=key)
+                try:
+                    add(methods_inventory.PARAMETERS, reason, parameter=key)
+                except SectionError:
+                    continue  # a row no key can name is left as code prints it, never a render that fails
         return written
 
 

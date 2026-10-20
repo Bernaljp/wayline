@@ -31,7 +31,8 @@ import re
 import subprocess
 from pathlib import Path
 
-from wayline import methods, sections
+from wayline import methods, reproduce, sections
+from wayline import software as software_module
 from wayline.ledger import ledger_for
 
 __all__ = [
@@ -45,7 +46,8 @@ PARAMETERS = "Parameters"  # the heading of the table, and of an owner's reason 
 SESSIONS = "sessions"
 HEADER = "| Method | Parameter | Value | Default | Reason | Code |"
 NOT_SEEN = "not seen by the parsers"
-_PARAMETER = re.compile(r"^([^:@\s][^:@]*):([^:@\s][^:@]*?)(?:@(\S+))?$")
+# `<method>:<name>[@<path>]`: a method may hold `:` itself (R's `stats::optim`), a parameter's name never does.
+_PARAMETER = re.compile(r"^([^@\s][^@]*):([^:@\s][^:@]*?)(?:@(\S+))?$")
 
 
 def _one_line(text):
@@ -77,7 +79,10 @@ def row_key(row):
 
 
 def _integrated(book):
-    """`[(ticket, entries)]`: each ticket's last attempt with a `methods.json`, in ticket order."""
+    """`[(ticket, when, entries)]`: each ticket's last attempt with a `methods.json`, in the order the tickets reached
+    `main` (their last `integrated` event; one with none, before them all, by id), `when` that event's time or ""."""
+    from wayline.ledger import INTEGRATED
+
     latest = {}
     root = book.research / SESSIONS
     for path in root.glob("*/*/%s" % methods.CODE_RULE_FILE):
@@ -86,27 +91,35 @@ def _integrated(book):
             continue
         if int(attempt) > latest.get(int(ticket), (0, None))[0]:
             latest[int(ticket)] = (int(attempt), path.parent)
+    reached = {}
+    if latest:
+        events, _ = book.read_events()
+        for position, event in enumerate(events):
+            if event.get("event") == INTEGRATED and (event.get("payload") or {}).get("ticket") in latest:
+                reached[event["payload"]["ticket"]] = (position, str(event.get("ts") or ""))
     found = []
-    for ticket in sorted(latest):
+    for ticket in sorted(latest, key=lambda number: (reached.get(number, (-1, ""))[0], number)):
         rule = methods.read_code_rule(latest[ticket][1]) or {}
-        found.append((ticket, [entry for entry in rule.get("parameters") or [] if isinstance(entry, dict)]))
+        found.append((ticket, reached.get(ticket, (-1, ""))[1], [entry for entry in rule.get("parameters") or [] if isinstance(entry, dict)]))
     return found
 
 
 def _owner_reasons(book):
-    """`[(method, name, path or None, reason)]`: the owner's reason passages, oldest first."""
+    """`[(method, name, path or None, reason, when)]`: the owner's reason passages, oldest first."""
     found = []
     for item in sections.read_passages(book):
         if item.get("section") != "methods" or not item.get("parameter") or item.get("withdrawn"):
             continue
         parsed = parse_parameter(item["parameter"])
         if parsed is not None:
-            found.append(parsed + (_one_line(item.get("text")),))
+            found.append(parsed + (_one_line(item.get("text")), str(item.get("ts") or "")))
     return found
 
 
 def _remembered(read):
     """`read` reading each file once: a render resolves many tags against the same few files."""
+    if getattr(read, "remembered", False):
+        return read
     seen = {}
 
     def remembered(path):
@@ -115,28 +128,43 @@ def _remembered(read):
         return seen[path]
 
     remembered.where = getattr(read, "where", "")
+    remembered.remembered = True
     return remembered
 
 
-def parameter_rows(project_or_ledger, read=None):
-    """The table's rows: `[{method, name, value, default, reason, path, line, ticket, by, code}]`, in ticket order.
+def main_read(project):
+    """What one render resolves `code` tags against, each file of `main` read once."""
+    from wayline import provenance  # the provenance module pulls in the gates and the report
+    return _remembered(provenance.main_reader(project))
 
-    `read` is what `code` tags resolve against (`provenance.main_reader` by default): a row whose file it does not hold
-    is no longer current. The owner's latest reason for a row stands in place of the ticket's.
+
+def _key(entry):
+    return (entry.get("path"), _one_line(entry.get("method")), _one_line(entry.get("name")))
+
+
+def parameter_rows(project_or_ledger, read=None):
+    """The table's rows: `[{method, name, value, default, reason, path, line, ticket, by, code}]`, in the order the tickets
+    reached `main`.
+
+    `read` is what `code` tags resolve against (`main_read` by default): a row whose file or line it does not hold is no
+    longer current. A later ticket's entries for a method, parameter, and file replace an earlier one's. The owner's
+    latest reason for a row stands in place of the ticket's while the row's value is the one the owner gave it for: a
+    later ticket that changes the value brings its own reason back.
     """
     from wayline import provenance  # the provenance module pulls in the gates and the report
 
     book = ledger_for(project_or_ledger)
     read = _remembered(read or provenance.main_reader(book.project))
-    rows, order = {}, []
-    for ticket, entries in _integrated(book):
-        keys = {(entry.get("path"), _one_line(entry.get("method")), _one_line(entry.get("name"))) for entry in entries}
-        for key in keys:
-            if key in rows:
-                del rows[key]  # a later ticket's entry for the same method, parameter, and file replaces the earlier
+    rows, order, since = {}, [], {}
+    for ticket, when, entries in _integrated(book):
+        given = {}
         for entry in entries:
-            key = (entry.get("path"), _one_line(entry.get("method")), _one_line(entry.get("name")))
-            rows.setdefault(key, []).append(dict(entry, ticket=ticket, by="t%d" % ticket))
+            given.setdefault(_key(entry), []).append(entry)
+        for key, held in given.items():
+            values = sorted(str(entry.get("value")) for entry in held)
+            if key not in rows or sorted(str(row.get("value")) for row in rows[key]) != values:
+                since[key] = when  # the value as it stands now, since this ticket set it
+            rows[key] = [dict(entry, ticket=ticket, by="t%d" % ticket) for entry in held]
             if key not in order:
                 order.append(key)
     owners = _owner_reasons(book)
@@ -148,11 +176,13 @@ def parameter_rows(project_or_ledger, read=None):
                 line = int(row["line"]) if str(row.get("line") or "").isdigit() and int(row["line"]) > 0 else 1
                 if provenance.code_tag_problem(read, {"path": path, "locator": "L%d" % line}) is not None:
                     continue  # its file or its line is no longer on `main`: not current
+                row["line"] = line
                 row["code"] = "{code:%s#L%d}" % (path, line)
             else:
                 row["code"] = None
-            for method, name, where, reason in owners:
-                if method == _one_line(row.get("method")) and name == _one_line(row.get("name")) and where in (None, path):
+            for method, name, where, reason, when in owners:
+                if method == _one_line(row.get("method")) and name == _one_line(row.get("name")) and where in (None, path) \
+                        and when >= since.get(key, ""):
                     row["reason"], row["by"] = reason, "owner"
             found.append(row)
     return found
@@ -185,9 +215,12 @@ def _table(rows):
 # --- the software and its versions -----------------------------------------------------------------------------
 
 
-LANGUAGES = (("requirements.lock", "Python"), ("renv.lock", "R"), ("Manifest.toml", "Julia"), ("octave-packages.lock", "Octave Forge"))
-LOCKS_DIR = "locks"
-TOOLS_LOCK = "tools.json"
+# The package locks ticket 82 writes under `code/` (`software.LOCKS`), each read under the name Methods gives its language.
+LANGUAGES = tuple((software_module.LOCKS[language], label) for language, label in (
+    (software_module.PYTHON, "Python"), (software_module.R, "R"), (software_module.JULIA, "Julia"),
+    (software_module.OCTAVE, "Octave Forge")))
+# Where ticket 106 renders the locks as each cited run's commit held them, and the cited jobs' tools.
+LOCKS_DIR, TOOLS_LOCK = reproduce.LOCKS_DIR, reproduce.TOOLS_LOCK
 _REQUIREMENT = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*===?\s*([^\s;#]+)")
 _JULIA_DEP = re.compile(r"^\[\[(?:deps\.)?([A-Za-z0-9_]+)\]\]\s*$")
 _JULIA_VERSION = re.compile(r'^version\s*=\s*"([^"]+)"')
@@ -331,23 +364,29 @@ def _cff_fields(text):
         for line in lines:
             found = re.match(r'^\s*(?:-\s*)?%s:\s*"?([^"]*?)"?\s*$' % re.escape(name), line)
             if found and found.group(1).strip():
-                return found.group(1).strip()
+                value = found.group(1).strip()
+                return None if value[:1] in (">", "|") else value  # a folded scalar this reader does not unfold
         return None
 
     return field("title"), field("doi"), field("family-names"), field("year")
 
 
+# Where a project's Python environment keeps its packages: the shared tools' project venv, or the project's own conda
+# prefix or venv (`environment.PLACES`). A container's image is not opened.
+ENVIRONMENTS = (".venv", ".wayline/env", ".wayline/env-venv")
+
+
 def _installed_cff(project, distribution, module):
-    """The CITATION.cff the package carries as the project's Python environment installed it, or None."""
-    site = Path(project) / ".venv" / "lib"
-    if not site.is_dir():
-        return None
+    """`(text, path)` of the CITATION.cff the package carries as the project's environment installed it, or None: in the
+    package's own directory, or its `.dist-info` (beside its license files)."""
     wanted = {_normal(distribution).replace("-", "_"), _normal(module).replace("-", "_")}
-    for packages in sorted(site.glob("python*/site-packages")):
-        for folder in sorted(packages.iterdir()):
-            name = folder.name.split("-")[0].lower() if folder.name.endswith(".dist-info") else folder.name.lower()
-            if folder.is_dir() and name.replace(".", "_") in wanted:
-                for path in sorted(folder.rglob(CFF)):
+    for place in ENVIRONMENTS:
+        for packages in sorted((Path(project) / place).glob("lib/python*/site-packages")):
+            candidates = [packages / name / CFF for name in wanted]
+            candidates += [info / where / CFF for info in sorted(packages.glob("*.dist-info"))
+                           if info.name.split("-")[0].lower().replace(".", "_") in wanted for where in (".", "licenses")]
+            for path in candidates:
+                if path.is_file():
                     try:
                         return path.read_text(encoding="utf-8", errors="replace"), path.relative_to(Path(project)).as_posix()
                     except OSError:
@@ -369,10 +408,8 @@ def citations(project_or_ledger, listed=None, passages=None):
         if _normal(distribution) not in pinned:
             continue
         installed = _installed_cff(book.project, distribution, modules.get(distribution, distribution))
-        if installed is not None:
-            title, doi, author, year = _cff_fields(installed[0])
-            if not title:
-                continue
+        title, doi, author, year = _cff_fields(installed[0]) if installed is not None else (None, None, None, None)
+        if title:
             said = "%s%s%s." % ("%s et al. " % author if author else "", "(%s). " % year if year else "", title)
             entry = {"citation": said, "doi": doi, "source": "its %s (`%s`)" % (CFF, installed[1])}
         elif _normal(distribution) in published:
@@ -422,7 +459,7 @@ def _calls(project, names):
 def no_code(project_or_ledger, passages=None, read=None):
     """Each current Methods passage naming a method with no code behind it: `[{passage, heading, named, why}]`.
 
-    A passage whose `code` tag `main` holds has its code; one whose tags `main` does not hold is listed by them. A passage
+    Each `code` tag of a passage that `main` does not hold is listed, whatever its other tags name. A passage
     with no `code` tag is listed for each method of the alias table it names (by an alias, as written) when no file under
     `code/` on `main` calls any routine the table gives that alias to. Listed, never failed: the rule from Methods to code
     is no gate.
@@ -446,8 +483,6 @@ def no_code(project_or_ledger, passages=None, read=None):
         tags = methods.code_tags([text])
         problems = [(path, locator) for path, locator in tags
                     if provenance.code_tag_problem(read, {"path": path, "locator": locator}) is not None]
-        if tags and len(problems) < len(tags):
-            continue  # its code is on `main`
         for path, locator in problems:
             found.append({"passage": item["id"], "heading": _one_line(item.get("heading")), "named": "{code:%s#%s}" % (path, locator),
                           "why": "`main` holds no such code"})
@@ -600,7 +635,8 @@ def _disagreements(items, texts, passages):
         if item.kind != "parameter" or item.value in (None, methods.UNSET):
             continue
         value = _number(item.value)
-        stated = _stated_values(item.name, passages)
+        # A name shorter than three letters (`a`, `k`) is read in prose as a word as often as a parameter: not compared.
+        stated = _stated_values(item.name, passages) if len(item.name) >= 3 else []
         if value is None or not stated or any(said == value for said, _ in stated):
             continue
         said = ", ".join(sorted({"%s (%s)" % (("%g" % number), identifier) for number, identifier in stated}))
@@ -749,7 +785,8 @@ def block(project_or_ledger):
     """What the inventory adds to `methods.md` after its passages: `(lines, printed)`, `printed` being each row's key
     with its reason's digest, which the render stamp keeps so an edit of a reason is told from a newer one."""
     book = ledger_for(project_or_ledger)
-    rows = parameter_rows(book)
+    read = main_read(book.project)
+    rows = parameter_rows(book, read)
     lines, printed = [], {}
     if rows:
         lines += _table(rows)
@@ -761,7 +798,7 @@ def block(project_or_ledger):
     proposed = citations(book, listed, passages)
     if proposed:
         lines += _citation_lines(proposed)
-    _record(book, rows, listed, proposed, no_code(book, passages))
+    _record(book, rows, listed, proposed, no_code(book, passages, read))
     if not lines:
         return [], {}
     return [sections.INVENTORY, ""] + lines, printed
