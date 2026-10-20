@@ -39,32 +39,32 @@ Not part of this ticket:
 
 It blocks 105, 108, 111, 112, 113, and 115.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#251](https://github.com/Bernaljp/wayline/issues/251) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the outline; sections and passages: heading order and the owner's edit; documents, critiques, and concerns: what each session reads; vocabulary the build adds: the `outline` event, the `outline` schema, the conversation's outline verb), 1 (the verb table), 2 (the event table), the schemas list; milestone M8 criterion 8; user stories 134 and 135.
 
-- [ ] `research/OUTLINE.md` is rendered by code at every render, with no launch, in the order above. Each part reads the records it names: objectives, results, section headings, concerns, inherited passages, and the venue when one is named.
-- [ ] The Gaps list names each outline line that holds nothing yet, and it is empty for a project whose every main-text line has content.
-- [ ] Results groups by objective: the critic's `first` leads, then the rest by id. "Beyond the objectives" and "Inherited, checked by no objective" follow. Each result line carries its id, heading, standing, counts, headline plot ids, concerns, the inherited claims it decides, and its measure.
-- [ ] Discussion lists each answered objective's passage, the owner's headings, and the parked objectives as future work.
-- [ ] With a venue named, the venue block maps `required_structure` to the sections through `check_structure`'s word matching and lists the parts no section feeds as made at the order.
-- [ ] `research/outline.json` is written only through the ledger and journaled as `outline`, and holds only what the owner set.
+- [x] `research/OUTLINE.md` is rendered by code at every render, with no launch, in the order above. Each part reads the records it names: objectives, results, section headings, concerns, inherited passages, and the venue when one is named.
+- [x] The Gaps list names each outline line that holds nothing yet, and it is empty for a project whose every main-text line has content.
+- [x] Results groups by objective: the critic's `first` leads, then the rest by id. "Beyond the objectives" and "Inherited, checked by no objective" follow. Each result line carries its id, heading, standing, counts, headline plot ids, concerns, the inherited claims it decides, and its measure.
+- [x] Discussion lists each answered objective's passage, the owner's headings, and the parked objectives as future work.
+- [x] With a venue named, the venue block maps `required_structure` to the sections through `check_structure`'s word matching and lists the parts no section feeds as made at the order.
+- [x] `research/outline.json` is written only through the ledger and journaled as `outline`, and holds only what the owner set.
   - A placed line never moves in later renders.
   - New lines follow the placed ones, marked new.
   - A placed line whose item is gone is listed once.
   - A `Note:` survives a merge and a reframe of its item.
-- [ ] An owner's edit of `OUTLINE.md` is taken in before the next render, using the render stamp. That covers a moved line, a line placed under Supplement or Cut, a `Note:` line, and a heading added to Introduction, Discussion, or Methods. Lines that arrived since the stamp are never read as removed.
-- [ ] The conversation's outline verb makes the same changes as a file edit and journals the same `outline` event.
-- [ ] The five sections render their headings in outline order. A heading placed under Supplement or Cut renders at the end of its section under a marker.
-- [ ] A worker's context pack holds its objective's outline entry with the owner's notes.
-- [ ] Merge proposals come from the local embedding model (no tokens) over the headings of results under one objective. Each is an item in a batch with the marks take or decline, and taking one merges the results.
-- [ ] Tests, over a temporary project through the ledger seam:
+- [x] An owner's edit of `OUTLINE.md` is taken in before the next render, using the render stamp. That covers a moved line, a line placed under Supplement or Cut, a `Note:` line, and a heading added to Introduction, Discussion, or Methods. Lines that arrived since the stamp are never read as removed.
+- [x] The conversation's outline verb makes the same changes as a file edit and journals the same `outline` event.
+- [x] The five sections render their headings in outline order. A heading placed under Supplement or Cut renders at the end of its section under a marker.
+- [x] A worker's context pack holds its objective's outline entry with the owner's notes.
+- [x] Merge proposals come from the local embedding model (no tokens) over the headings of results under one objective. Each is an item in a batch with the marks take or decline, and taking one merges the results.
+- [x] Tests, over a temporary project through the ledger seam:
   - the render from fixture objectives, results, sections, concerns, and inherited passages, asserted on the file written;
   - each kind of owner edit, made by editing the rendered file and rendering again;
   - placements surviving a new result, a merge, and a reframe;
   - the embedding model through the tool runner's recordings.
-- [ ] The verb table of decision 1 gains the outline verb, the event table of decision 2 gains `outline`, and the schemas list gains `outline`, all in the same commit as the code.
-- [ ] The changelog's `## Unreleased` section describes the outline and how the owner changes it.
-- [ ] `python -m unittest` passes.
+- [x] The verb table of decision 1 gains the outline verb, the event table of decision 2 gains `outline`, and the schemas list gains `outline`, all in the same commit as the code.
+- [x] The changelog's `## Unreleased` section describes the outline and how the owner changes it.
+- [x] `python -m unittest` passes.

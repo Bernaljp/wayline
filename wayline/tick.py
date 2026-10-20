@@ -1037,8 +1037,16 @@ def report_due(events):
 
 
 def render_report(project):
-    """`REPORT.md` rendered from the ledger and linted, launching no session (`wayline report --offline`, ticket 40); its path."""
-    from wayline import provenance  # the report pulls in the gates and the launcher
+    """`REPORT.md` rendered from the ledger and linted, launching no session (`wayline report --offline`, ticket 40); its path.
+
+    The outline's merge proposals are taken first (ticket 104): the local embedding model, no tokens, when the results under
+    an objective changed; one that cannot run proposes nothing and the render goes on. The outline renders in the same pass.
+    """
+    from wayline import outline, provenance, repeats  # the report pulls in the gates and the launcher
+    try:
+        outline.propose_merges(project)
+    except (repeats.RepeatsError, ValueError, OSError):
+        pass  # the conductor's next wave, or `wayline outline propose`, says why
     return str(provenance.render_report(project, offline=True).path)
 
 

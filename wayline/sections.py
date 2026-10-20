@@ -26,7 +26,9 @@ of the section.
 **How a section renders** (`arrange`). A replaced passage leaves the file and stays in the log. Within a
 heading passages keep their arrival order, and a replacement takes the place of what it replaces (under
 that passage's heading when the replacement names the same heading or none, else it moves under its own).
-Headings keep their first-appearance order (until the outline orders them, ticket 104). Two passages that
+Headings keep their first-appearance order until the outline orders them (ticket 104, `wayline.outline`): before the
+paper order a section renders its headings in the outline's order, and a heading the outline places under Supplement or
+Cut still renders, at the end of the section under a marker (`arranged`). Two passages that
 replace one passage in the same wave are both kept, and the section notes it; a replacement of a passage
 that was already replaced in an earlier wave replaces what stands in its place now, since it is the later
 word on the same text.
@@ -59,7 +61,7 @@ __all__ = [
     "arrange", "render_section", "render_sections", "read_stamp", "first_sentence", "pack_text", "check_result",
     "check_replaces", "by_ticket", "INHERITED", "STANDINGS", "EVIDENCE", "UNCHECKED", "UNVERIFIABLE", "is_inherited",
     "paragraph_of", "mark_of", "section_items", "current_ids", "OWNER", "CONSOLIDATION", "LINT", "is_finding", "take_in",
-    "lint_section", "owner_replacement_problem", "add_owners_passage", "passage_command",
+    "lint_section", "owner_replacement_problem", "add_owners_passage", "passage_command", "arranged", "OUTLINED", "PLACED_MARKS",
 ]
 
 SECTIONS = ("introduction", "results", "discussion", "methods", "references")
@@ -102,6 +104,13 @@ NOTES = "<!-- wayline:notes -->"
 NOTHING_YET = "Nothing yet: code writes this section from the passages tickets return."
 # The heading new text the owner wrote above every heading of a section file stands under.
 OWNER_HEADING = "The owner's notes"
+# The sections whose headings the outline orders (ticket 104); References is rendered by code from the citations.
+OUTLINED = ("introduction", "results", "discussion", "methods")
+# What a section prints before the headings the outline placed under Supplement or Cut, which still render until the order;
+# an edit is never read from it.
+PLACED_MARKS = {"supplement": "> Placed in the supplement by the outline: it renders here until the paper order.",
+                "cut": "> Cut by the outline: it renders here until the paper order."}
+_PLACED_MARK = re.compile(r"^> (?:Placed in the supplement|Cut) by the outline: ")
 
 STAMP_RE = re.compile(r"^<!-- wayline:render (\{.*\}) -->$")
 _PASSAGE_ID = re.compile(r"^P([1-9][0-9]*)$")
@@ -448,12 +457,13 @@ def pack_text(project_or_ledger, declared_sections, max_chars=None):
              "provenance) and a stated `reason`, or it is sent back. An inherited claim, from the "
              "project's own earlier writing, stands unchecked until a passage or finding of yours replaces it and says in "
              "`evidence` whether this project's evidence `supports`, `narrows`, or `contradicts` it."]
+    orders = {}  # the outline read once for every declared section
     for section in wanted:
-        arranged = arrange(_shown(book, section, _items(book, section)))
+        shown = arranged(book, section, orders=orders)
         lines += ["", "## %s" % TITLES[section], ""]
-        if not arranged.headings:
+        if not shown.headings:
             lines.append("Nothing yet.")
-        for heading, current in arranged.headings:
+        for heading, current in shown.headings:
             lines.append("- %s" % heading)
             for item in current:
                 if item.get("by") == OWNER:
@@ -534,6 +544,7 @@ class Arranged:
         self.headings = []   # [(heading, [item])]
         self.notes = []
         self.last = None     # the id of the last item seen
+        self.places = {}     # heading -> supplement or cut, for a heading the outline placed there (`arranged`)
 
     def current(self):
         return [item for _, items in self.headings for item in items]
@@ -664,10 +675,51 @@ def _shown(book, section, items):
             for item in items]
 
 
-def _groups(book, section, items):
-    """What a render prints of `items`, one section's log: `(arranged, [(heading, ids, text)])`, a paragraph each."""
+def arranged(project_or_ledger, section, ordered=True, orders=None):
+    """One section as it renders now: `arrange` over its log, each finding under its result's current heading. With
+    `ordered`, the headings follow the outline (ticket 104): the main text in its order, a heading the outline does not
+    show after those in first-appearance order, then the headings placed under Supplement and Cut, each in `places`.
+    `orders` is a dict a caller arranging several sections passes to each, so the outline is read once for them all."""
+    book = ledger_for(project_or_ledger)
+    found = arrange(_shown(book, section, _items(book, section)))
+    if ordered:
+        _order(book, section, found, orders)
+    return found
+
+
+def _order(book, section, found, orders=None):
+    """Reorder `found.headings` by the outline's `section_orders`, read into `orders` when it does not hold them yet; a
+    section the outline cannot be read for keeps its order."""
+    if section not in OUTLINED:
+        return
+    orders = {} if orders is None else orders
+    if "sections" not in orders:
+        from wayline import outline  # the outline reads every section, unordered
+        try:
+            orders["sections"] = outline.section_orders(book)
+        except (LedgerError, OSError, ValueError):
+            orders["sections"] = {}
+    if section not in orders["sections"]:
+        return
+    main, placed = orders["sections"][section]
+    rank = {heading: index for index, heading in enumerate(main)}
+    places = dict(placed)
+    tail = {heading: index for index, (heading, _) in enumerate(placed)}
+    first = [(index, pair) for index, pair in enumerate(found.headings) if pair[0] not in places]
+    first.sort(key=lambda entry: (rank.get(entry[1][0], len(rank)), entry[0]))
+    last = sorted((pair for pair in found.headings if pair[0] in places), key=lambda pair: tail[pair[0]])
+    found.headings = [pair for _, pair in first] + last
+    found.places = {heading: places[heading] for heading, _ in last}
+
+
+def _groups(book, section, items, ordered=False, orders=None):
+    """What a render prints of `items`, one section's log: `(arranged, [(heading, ids, text)])`, a paragraph each.
+
+    With `ordered` the headings follow the outline (`arranged`), as the file prints them."""
     items = _shown(book, section, items)
     arranged = arrange(items)
+    if ordered:
+        _order(book, section, arranged, orders)
     manifest = None
     if section == RESULTS:
         try:
@@ -688,14 +740,17 @@ def _groups(book, section, items):
     return arranged, groups
 
 
-def _body(book, section):
-    arranged, groups = _groups(book, section, _items(book, section))
+def _body(book, section, orders=None):
+    arranged, groups = _groups(book, section, _items(book, section), ordered=True, orders=orders)
     lines = ["# %s" % TITLES[section], ""]
     if not groups:
         lines += [NOTHING_YET, ""]
-    heading = None
+    heading, place = None, None
     for group_heading, ids, text in groups:
         if group_heading != heading:
+            if arranged.places.get(group_heading) != place:
+                place = arranged.places.get(group_heading)
+                lines += [PLACED_MARKS[place], ""]
             lines += ["## %s" % group_heading, ""]
             heading = group_heading
         lines += ["<!-- wayline:passage %s -->" % " ".join(ids), text, ""]
@@ -734,7 +789,9 @@ def _edited(body):
         if stripped == NOTES:
             break
         mark = _PASSAGE_MARK.match(stripped)
-        if mark:
+        if _PLACED_MARK.match(stripped):
+            flush()  # the outline's marker before what it placed under Supplement or Cut: code's, never the owner's text
+        elif mark:
             flush()
             state["ids"] = tuple(mark.group(1).split())
         elif line.startswith("## "):
@@ -868,19 +925,22 @@ def _record_lint(book, section, resolver=None):
     return reading
 
 
-def render_section(project_or_ledger, section, resolver=None):
+def render_section(project_or_ledger, section, resolver=None, orders=None):
     """Write `research/sections/<section>.md` from its log; a body that did not change keeps its file and its stamp.
 
     The owner's edit of the file is taken in first (`take_in`), and the linter's reading of the section is recorded
-    at every render (`lint_section`). Returns whether the file was written.
+    at every render (`lint_section`). `orders` is the outline's reading a pass rendering several sections shares
+    (`arranged`); an edit taken in here clears it, since the headings it read have changed. Returns whether the file
+    was written.
     """
     book = ledger_for(project_or_ledger)
     if section not in SECTIONS:
         raise SectionError("there is no section %r; the sections are %s" % (section, ", ".join(SECTIONS)))
     with book.lock():
-        take_in(book, section)
+        if take_in(book, section) and orders is not None:
+            orders.clear()
         _record_lint(book, section, resolver)
-        body, last = _body(book, section)
+        body, last = _body(book, section, orders)
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         stamp = read_stamp(book, section)
         if stamp is not None and stamp.get("sha256") == digest and stamp.get("last") == last:
@@ -893,13 +953,15 @@ def render_section(project_or_ledger, section, resolver=None):
 def render_sections(project_or_ledger, only=None):
     """Render every section (or those in `only`); returns the ones written.
 
-    One resolver serves the linter on all of them, so the manifest, the dossiers' index, and `main` are read once.
+    One resolver serves the linter on all of them, so the manifest, the dossiers' index, and `main` are read once, and
+    the outline's order of their headings is read once too.
     """
     from wayline import provenance  # the provenance module pulls in the gates and the report
     book = ledger_for(project_or_ledger)
     with book.lock():
         resolver = provenance.resolver_for(book.project)
-        return [section for section in (only or SECTIONS) if render_section(book, section, resolver)]
+        orders = {}  # the outline, read once for every section unless an edit taken in changes the headings
+        return [section for section in (only or SECTIONS) if render_section(book, section, resolver, orders)]
 
 
 def read_stamp(project_or_ledger, section):

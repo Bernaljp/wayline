@@ -1,0 +1,11 @@
+[
+  "Noise sensitivity of the fit",
+  "Noise robustness of the fit",
+  "The best polynomial degree",
+  "Runtime of the solver",
+  "Degree under noise",
+  "Noise under heavy tails",
+  "A noise floor",
+  "Degree and runtime",
+  "Effect of measurement noise on the fit"
+]

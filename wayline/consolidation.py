@@ -69,9 +69,10 @@ class Refused(ConsolidationError):
 
 
 def _current(book, section):
-    """The passages a consolidation rewrites: the section's current ones, less an inherited claim still standing
-    unchecked or unverifiable, which keeps its mark and waits for a passage with this project's evidence."""
-    return [item for item in sections.arrange(sections.section_items(book, section)).current()
+    """The passages a consolidation rewrites: the section's current ones in the outline's order of its headings (ticket
+    104), less an inherited claim still standing unchecked or unverifiable, which keeps its mark and waits for a passage
+    with this project's evidence."""
+    return [item for item in sections.arranged(book, section).current()
             if not (sections.is_inherited(item) and item.get("standing") in sections.STANDINGS)]
 
 
@@ -102,11 +103,19 @@ def estimate(project, section, harness_root=HARNESS_ROOT, policy=None):
             "model": entry.get("model"), "effort": entry.get("effort")}
 
 
-def _prompt(section, current, role):
+def _prompt(section, current, role, notes=None):
+    """The session's prompt: the rules, then the current passages in the outline's order, each heading's note from the
+    outline (`notes`, `{heading: note}`) under its first passage, which the consolidation follows as an instruction."""
     lines = [INSTRUCTIONS % {"title": sections.TITLES[section]}]
+    noted = set()
     for item in current:
         owner = " (the owner's)" if item.get("by") == sections.OWNER else ""
-        lines += ["## %s%s, under %s" % (item.get("id"), owner, item.get("heading")), "", str(item.get("text") or "").strip(), ""]
+        lines += ["## %s%s, under %s" % (item.get("id"), owner, item.get("heading")), ""]
+        heading = item.get("heading")
+        if (notes or {}).get(heading) and heading not in noted:
+            noted.add(heading)
+            lines += ["The outline's note on this heading: %s" % notes[heading], ""]
+        lines += [str(item.get("text") or "").strip(), ""]
     return provenance.joined("\n".join(lines), role.protocol, worker.schema_section("# The answer", SCHEMA))
 
 
@@ -192,7 +201,12 @@ def consolidate(project, section, *, harness_root=HARNESS_ROOT, policy=None):
         raise Refused("%s has %d current passage(s): there is nothing to consolidate" % (sections.TITLES[section], len(current)))
     policy = policy_for(project, harness_root) if policy is None else policy
     role = worker.read_role(ROLE, harness_root, project)
-    request = provenance.structured_request(project, role, policy, harness_root, _prompt(section, current, role), SCHEMA, "medium",
+    from wayline import outline  # the outline reads every part of the ledger
+    try:
+        notes = outline.heading_notes(book, section)
+    except (LedgerError, OSError, ValueError):
+        notes = {}
+    request = provenance.structured_request(project, role, policy, harness_root, _prompt(section, current, role, notes), SCHEMA, "medium",
                                             provenance.session_dir(project, SESSION_DIR), read_only=True)
 
     def classify(texts):

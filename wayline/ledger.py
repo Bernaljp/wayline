@@ -117,6 +117,7 @@ RESULT = "result"  # one result created at an acceptance, or merged or renamed o
 VERIFICATION = "verification"  # one inherited result's standing recorded or changed in research/verifications.json (decision 17; ticket 97)
 DRAWING = "drawing"  # one drawing of a result opened at a rest point, accepted, or failed (decision 17; ticket 100)
 OBJECTIVE_PROPOSED = "objective_proposed"  # one objective proposal of a result or a verdict, or its judgment (decision 17; ticket 91)
+OUTLINE = "outline"  # one change the owner (or the decider, or code dropping a gone placement) made to research/outline.json (decision 17; ticket 104)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -355,6 +356,7 @@ EVENTS = {
     VERIFICATION: (K_HEADING, K_STANDING, K_ROUTE, K_BY, K_RELEASED),
     DRAWING: (K_RESULT, K_VERSION, K_TICKET, K_REST, K_OUTCOME, K_PLOTS, K_LEFT_OUT, K_RETIRED, K_REASON),
     OBJECTIVE_PROPOSED: (K_ID, K_KIND, K_OBJECTIVE, K_TICKET, K_BY, K_UPHELD, K_WHY, K_ANSWER, K_PROPOSAL),
+    OUTLINE: (K_ACTION, K_ITEM, K_TO, K_NOTE, K_BY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -409,8 +411,9 @@ PAYLOAD_ENUMS = {
     (REVIEWED, K_REVIEW): ("stand", "reverse"),
     (REVIEWED, K_BY): ("owner",),
     (RESULT, K_ACTION): ("created", "merged", "renamed"),
-    # Code clusters a finding into a result at its acceptance; only the owner merges or renames one.
-    (RESULT, K_BY): ("code", "owner"),
+    # Code clusters a finding into a result at its acceptance; the owner merges or renames one, and the decider takes a merge
+    # the outline proposed when it settles the owner's batch (ticket 104).
+    (RESULT, K_BY): ("code", "owner", "decider"),
     (VERIFICATION, K_STANDING): ("unchecked", "verified", "unverifiable"),
     (VERIFICATION, K_ROUTE): ("reproduced", "ported", "reimplemented", "read"),
     # Code (a result found or followed, a verdict taken, a needs_human under autonomous), or the owner's or the decider's
@@ -421,6 +424,10 @@ PAYLOAD_ENUMS = {
     (OBJECTIVE_PROPOSED, K_KIND): ("add", "answer", "park", "drop", "reframe", "reopen"),
     # A ticket result's proposal, or one a verdict made itself, which goes on without a further judgment.
     (OBJECTIVE_PROPOSED, K_BY): ("worker", "verifier"),
+    # A line moved in its part, placed in or out of Supplement or Cut, a note kept or taken away, a heading the owner added,
+    # or a placement whose item is gone, dropped by code.
+    (OUTLINE, K_ACTION): ("moved", "placed", "noted", "added", "gone"),
+    (OUTLINE, K_BY): ("owner", "decider", "code"),
 }
 
 

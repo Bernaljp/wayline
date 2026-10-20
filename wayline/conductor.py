@@ -929,9 +929,13 @@ class Conductor:
         self._journal_wave(result)
         self._check_stall(result)
         self._end(result)
+        reported = False
         if self._integrated_now or result.findings:
-            self._render_general_report()  # it renders the account in the same pass
+            self._propose_outline_merges()
+            reported = self._render_general_report()  # it renders the account and the outline in the same pass
         self._render_account()
+        if not reported:
+            self._render_outline()
         if result.ended:
             self._end_notice(result)
         result.ledger_commit = self._commit_ledger(self._render_reproduce())
@@ -944,7 +948,7 @@ class Conductor:
         """`research/REPORT.md`, the general report, rendered by code after every wave that integrated a ticket (ticket 90).
 
         Offline: it launches no session, the classifier included. One that fails is said, and the tick renders it again
-        when the journal moved; nothing in the run waits on it.
+        when the journal moved; nothing in the run waits on it. Returns whether it rendered, the outline with it.
         """
         self._integrated_now = False
         from wayline import provenance  # the provenance module pulls in the gates and the report
@@ -952,6 +956,8 @@ class Conductor:
             provenance.render_report(self.project, harness_root=self.harness_root, policy=self.policy, offline=True)
         except (ValueError, OSError) as failure:
             self.say("  REPORT.md was not rendered: %s; the tick renders it again" % failure)
+            return False
+        return True
 
     def _render_account(self):
         """`research/ACCOUNT.md` rendered by code at the end of every wave, so the wave's ledger commit carries it (ticket 89).
@@ -964,6 +970,29 @@ class Conductor:
             account.render_account(self.project)
         except (ValueError, OSError) as failure:
             self.say("  ACCOUNT.md was not rendered: %s; the next wave renders it again" % failure)
+
+    def _render_outline(self):
+        """`research/OUTLINE.md` rendered by code at the end of every wave, taking the owner's edit of it in first (ticket 104).
+
+        A render that would leave the file as it is writes nothing; one that fails is said, and the next wave renders it again.
+        """
+        from wayline import outline  # the outline reads every part of the ledger
+        try:
+            outline.render_outline(self.project)
+        except (ValueError, OSError) as failure:
+            self.say("  OUTLINE.md was not rendered: %s; the next wave renders it again" % failure)
+
+    def _propose_outline_merges(self):
+        """The outline's merge proposals after a wave that integrated (ticket 104): the embedding model, no tokens, over the
+        headings of the results under each objective, when they changed. One that cannot run is said; nothing waits on it."""
+        from wayline import outline, repeats  # the outline reads every part of the ledger
+        try:
+            batch = outline.propose_merges(self.project, run=self.repeats_run, tools=self.repeats_tools)
+        except (repeats.RepeatsError, ValueError, OSError) as failure:
+            self.say("  the outline proposed no merge: %s" % failure)
+            return
+        if batch is not None:
+            self.say("  the outline proposes %d merge(s) of results whose headings sit close: %s" % (len(batch["items"]), batch["id"]))
 
     def _end_notice(self, result):
         """The one notice of this run's end, sent after `run_ended` and the gates (decision 17; ticket 89).
@@ -2353,18 +2382,22 @@ class Conductor:
         )
 
     def _paper_pack(self, attempt):
-        """The context pack's part on the paper: the declared sections, then the concerns of the ticket's objectives (ticket 96),
-        the two together kept to the tier's context cap."""
+        """The context pack's part on the paper: the declared sections, the verification, the concerns of the ticket's
+        objectives (ticket 96), and their outline entries with the owner's notes (ticket 104), together kept to the tier's
+        context cap."""
+        from wayline import outline  # the outline reads every part of the ledger
         cap = attempt.tier.context_chars
         if _is_drawing(attempt.ticket):
             # A drawing's brief, rendered by code at each launch (ticket 100): the owner's latest marks and notes are in it.
             return drawings.brief(self.project, attempt.ticket, self.policy)
-        paper = sections.pack_text(self.ledger, sections.declared(attempt.ticket), cap)
-        left = None if cap is None else max(0, int(cap) - len(paper))
-        verifying = verification.pack_text(self.ledger, attempt.ticket, left)
-        left = None if left is None else max(0, left - len(verifying))
-        return "\n\n".join(part for part in (paper, verifying, concerns.pack_text(self.ledger, objectives.served(attempt.ticket), left))
-                           if part)
+        parts = [sections.pack_text(self.ledger, sections.declared(attempt.ticket), cap)]
+        served = objectives.served(attempt.ticket)
+        for build in (lambda left: verification.pack_text(self.ledger, attempt.ticket, left),
+                      lambda left: concerns.pack_text(self.ledger, served, left),
+                      lambda left: outline.pack_text(self.ledger, served, left)):
+            left = None if cap is None else max(0, int(cap) - sum(len(part) for part in parts))
+            parts.append(build(left))
+        return "\n\n".join(part for part in parts if part)
 
     def _keep_last_failure(self, attempt):
         """Write `failure.json` for an attempt a tier up launches: the failure output of the attempt before it (ticket 68).

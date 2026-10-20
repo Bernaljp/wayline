@@ -1645,12 +1645,16 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
 
     The edit rule: an edit of the file since the last render (its hash against the last `report_rendered`) is
     committed as it stood, journaled as `edited` on this render, listed in the banner from then on, and never taken in.
-    The account renders in the same pass.
+    The account renders in the same pass, and the outline after it; a merge taken on the outline's proposals is made first.
     """
     project = Path(project).resolve()
     book = Ledger(project)
-    from wayline import account  # the account reads the decisions module, which imports this one through the gates
+    from wayline import account, outline  # the account reads the decisions module, which imports this one through the gates
     notes = []
+    try:
+        outline.take_marks(project)  # a merge the owner took on the outline's proposals is in the report it renders
+    except (ValueError, OSError) as failure:
+        notes.append("the marks on the outline's proposals could not be taken: %s" % failure)
     if not offline:
         # The classifier is a session: it runs before the lock, so no other writer of the ledger waits on it, and the
         # render under the lock reads what it cached.
@@ -1677,6 +1681,11 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
         account.render_account(project)
     except (ValueError, OSError) as failure:
         notes.append("ACCOUNT.md could not be rendered: %s" % failure)
+    # And the outline (ticket 104): the shape of the paper, from the same ledger, with the owner's edit of it taken in.
+    try:
+        outline.render_outline(project)
+    except (ValueError, OSError) as failure:
+        notes.append("OUTLINE.md could not be rendered: %s" % failure)
     return Rendered(path, digest, result, notes, edited)
 
 

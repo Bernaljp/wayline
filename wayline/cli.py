@@ -77,6 +77,10 @@ VERBS = [
     Verb("result", "result merge <id> <into> | rename <id> \"<heading>\" | draw <id>",
          "merge one result into another, give a result a new heading, or draw it again now, on the owner's word (the conversation calls it)", "views",
          lazy("wayline.results", "result_command")),
+    Verb("outline", "outline [show] | move <item> --before|--after <item> | --to <part> | place <item> main|supplement|cut | "
+         "note <item> \"<text>\" | heading <section> \"<heading>\" | propose",
+         "show the outline of the paper, or change it on the owner's word as an edit of OUTLINE.md would (the conversation "
+         "calls it)", "views", lazy("wayline.outline", "outline_command")),
     Verb("consolidate", "consolidate <section> [--yes]",
          "rewrite one section's current passages into fewer that keep their tags, in one read-only writer session the owner asks for and confirms with its cost",
          "views", lazy("wayline.consolidation", "consolidate_command")),
@@ -119,7 +123,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern", "result",
+    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern", "result", "outline",
 ))
 
 
