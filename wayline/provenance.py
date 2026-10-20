@@ -1368,18 +1368,38 @@ def _headlines(context):
                      for result in context.results])
 
 
+def _report_link(name):
+    return "[%s](reports/%s.md)" % (name, name)
+
+
 def _current_report(context, result):
-    """The link to a result's current report, the newest `research/reports/R<n>-<version>.md`, or "none yet" (ticket 100 writes them)."""
-    folder = context.project / "research" / "reports"
-    found = []
-    for path in folder.glob("%s-*.md" % result.id) if folder.is_dir() else ():
-        version = path.stem[len(result.id) + 1:]
-        if version.isdigit():
-            found.append((int(version), path.name))
-    if not found:
-        return NO_REPORT
-    name = max(found)[1]
-    return "[%s](reports/%s)" % (name[:-3], name)
+    """The link to a result's current report, `research/reports/R<n>-<version>.md`, or "none yet" (ticket 101)."""
+    from wayline import reports  # the reports module renders findings with this one
+    current, _ = reports.links(context.project, result.id)
+    return _report_link(current) if current else NO_REPORT
+
+
+def _drawn(context, result):
+    """A result's reports, headline plots, and synthesis, as its last accepted drawing left them (ticket 101)."""
+    from wayline import reports
+    current, earlier = reports.links(context.project, result.id)
+    held = reports.versions(context.project, result.id)
+    if current is None and not earlier:
+        return []
+    lines = ["Current report: %s.%s" % (_report_link(current) if current else NO_REPORT,
+                                        " Earlier reports: %s." % ", ".join(_report_link(name) for name in earlier) if earlier else "")]
+    record = held[-1][1] if held else None
+    if record is not None:
+        for entry in record.get("plots") or []:
+            if not entry.get("headline"):
+                continue
+            lines.extend(["", "Headline plot %s (%s):" % (entry["id"], entry.get("chart_type")), "",
+                          "![%s](../%s)" % (entry["id"], entry["png"]), "",
+                          "- Purpose: %s" % entry.get("purpose"), "- Data: %s" % entry.get("data"),
+                          "- What it shows: %s" % entry.get("shows")])
+        if record.get("synthesis"):
+            lines.extend(["", "Synthesis: %s" % record["synthesis"]])
+    return _records(lines) + [""]
 
 
 def _counts(result):
@@ -1406,7 +1426,7 @@ def _results_table(context):
 def _result_block(context, result, level="####"):
     lines = ["%s %s. %s (%s)" % (level, result.id, result.heading, result.standing), ""]
     lines.extend(finding_line(finding, context.manifest) for finding in result.current)
-    return lines + [""]
+    return lines + [""] + _drawn(context, result)
 
 
 def _goal_lines(context, record):
@@ -1663,6 +1683,11 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
             classify(project, texts, harness_root=harness_root, policy=policy)
         except UsageLimited as refused:
             notes.append("%s; the sentences it did not reach are unclassified" % refused)
+    from wayline import reports
+    try:
+        reports.render_reports(book)  # each result's current report (ticket 101), which the general report links
+    except (ValueError, OSError) as failure:
+        notes.append("the results' reports could not be rendered: %s" % failure)
     with book.lock():
         context = report_context(project)
         body = _body(context)

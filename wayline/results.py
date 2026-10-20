@@ -306,6 +306,9 @@ def _record(project, action, change, by=OWNER, render=True):
         payload = dict(payload, action=action, by=by)
         make_event(RESULT, payload)
         book.write_json(RESULTS_JSON, clusters.record())
+        if action == MERGED:
+            from wayline import drawings  # the drawings module reads the results; this one needs it only here
+            drawings.follow_merge(book, payload["id"], payload["into"])  # its plots follow it (ticket 101)
         book.append_event(RESULT, payload, ts=stamp)
     if render:
         _render(book)
@@ -337,7 +340,7 @@ def rename(project, identifier, heading):
 
 
 def result_command(args):
-    """`wayline result merge <id> <into> | rename <id> "<heading>" | draw <id> [--project <path>]`."""
+    """`wayline result merge <id> <into> | rename <id> "<heading>" | draw <id> | plot <id|none> "<request>" [--project <path>]`."""
     from wayline.cli import parse_args
     from wayline.project import ProjectError, find_project
 
@@ -354,12 +357,24 @@ def result_command(args):
     drawing = subparsers.add_parser("draw", help="draw a result again now, changed or not: one drawing ticket the run launches (ticket 100)")
     drawing.add_argument("result", help="the result drawn, R<n>")
     drawing.add_argument("--project", help="the project; the active one by default")
+    plotting = subparsers.add_parser("plot", help="ask for a plot: a small drawing of its result, or an analysis ticket for data no result holds (ticket 101)")
+    plotting.add_argument("result", help="the result the plot is of, R<n>, or `none` for data no result holds")
+    plotting.add_argument("request", help="what the plot should show")
+    plotting.add_argument("--project", help="the project; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     try:
         project = find_project(options.project)
-        if options.action == "draw":
+        if options.action == "plot":
+            from wayline import reports  # the reports read the drawings, which read the results
+            try:
+                opened = reports.ask_plot(project, None if options.result.lower() == "none" else options.result, options.request)
+            except reports.ReportError as failure:
+                print("wayline result: %s" % failure, file=sys.stderr)
+                return 2
+            print("%s ticket %d opened for the plot asked for; the run takes it at its next wave" % (opened["kind"], opened["ticket"]))
+        elif options.action == "draw":
             from wayline import drawings  # the drawings module reads the results; this one never needs it otherwise
             try:
                 ticket = drawings.draw_again(project, options.result)

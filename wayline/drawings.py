@@ -54,7 +54,7 @@ __all__ = [
     "KIND", "ROLE", "RUN_END", "CHECKPOINT", "OWNER", "RESTS", "PLOTS_JSON", "DRAWINGS_DIR", "DRAFT", "DRAWING_CHECK", "TOOLS_PYTHON",
     "DrawingError", "PlotterTier", "Limits", "Checked", "own_evidence", "signature", "read_records", "due", "tier", "limits",
     "plot_marks", "read_plots", "last_accepted", "drawing_of", "result_heading", "brief", "earlier_figures", "check", "accept",
-    "fail", "record_path", "directory", "draw_again", "open_drawings",
+    "fail", "record_path", "directory", "draw_again", "open_drawings", "follow_merge",
 ]
 
 RECORD_SCHEMA = "drawing"
@@ -411,6 +411,7 @@ def brief(project, ticket, policy=None):
              "`%s%s`." % (_name(result_id, version), result_id, result.heading if result else "a result no longer live", rest,
                           folder, folder, DRAFT),
              "", "Limits: at most %d plots, %d tables, and %d headline plots, with no minimum." % (bound.plots, bound.tables, bound.headline),
+             *_asked_lines(book, result_id, version),
              "", "## What the project is", "", _summary(book)]
     drawn_by = set(_drawing_tickets(book.project))
     lines += ["", "## The result's findings", ""]
@@ -436,10 +437,44 @@ def brief(project, ticket, policy=None):
     return "\n".join(lines) + "\n"
 
 
+def _asked_lines(book, result_id, version):
+    """The owner's request, when the drawing is a plot the owner asked for (ticket 101)."""
+    try:
+        record = book.read_json(record_path(_name(result_id, version)))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(record, dict) or not record.get("asked"):
+        return []
+    return ["", "## The plot the owner asked for", "", record["asked"], "",
+            "This is a small drawing: draw what the owner asked for and nothing else. Every other current plot of the "
+            "result is carried into the new version unchanged, whether you name it or not."]
+
+
+def follow_merge(project_or_ledger, source, into):
+    """A result merged into another takes its plots with it: each plot of `source` is re-pointed to `into` and keeps its
+    id, so its `plot` tags still resolve and `into`'s next drawing keeps or retires it (ticket 101). Under the ledger's
+    lock, from `wayline.results.merge`; returns the ids re-pointed."""
+    book = ledger_for(project_or_ledger)
+    try:
+        record = book.read_json(PLOTS_JSON)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(record, dict) or not isinstance(record.get("plots"), list):
+        return []
+    moved = []
+    for plot in record["plots"]:
+        if plot.get("result") == source:
+            plot["result"] = into
+            moved.append(plot["id"])
+    if moved:
+        book.write_json(PLOTS_JSON, record, schema=PLOTS_SCHEMA)
+    return moved
+
+
 def _previous_lines(book, result_id):
     record = last_accepted(book, result_id)
     if record is None:
-        return ["None: this is the result's first accepted drawing."]
+        return ["None: this is the result's first accepted drawing."] + _merged_lines({plot["id"]: plot for plot in read_plots(book)["plots"]}, result_id, None)
     plots = {plot["id"]: plot for plot in read_plots(book)["plots"]}
     lines = ["Drawing %s (`%s`). Redraw a plot by naming its id in `redraws`; a plot you leave out is retired, unless the "
              "owner marked it keep, and a plot the owner marked drop is retired and never drawn again." % (
@@ -455,6 +490,20 @@ def _previous_lines(book, result_id):
         held = plots.get(identifier) or {}
         lines.append("- %s (carried, marked %s)%s" % (identifier, held.get("mark") or "keep",
                                                      " Note: %s" % held["note"] if held.get("note") else ""))
+    return lines + _merged_lines(plots, result_id, record)
+
+
+def _merged_lines(plots, result_id, record):
+    """The current plots a result merged into this one brought with it, which this drawing keeps or retires."""
+    listed = set(record.get("carried") or []) if record else set()
+    if record:
+        listed |= {entry["id"] for entry in record.get("plots", []) + record.get("tables", [])}
+    lines = []
+    for identifier, held in sorted(plots.items()):
+        if held.get("result") == result_id and held.get("status") == CURRENT and identifier not in listed:
+            lines.append("- %s (%s; %s, from a result merged into this one, marked %s): redraw it by its id in `redraws`, or "
+                         "leave it out to retire it." % (identifier, held.get("chart_type") or "table", held.get("data_view"),
+                                                         held.get("mark") or "no mark"))
     return lines
 
 
@@ -856,7 +905,7 @@ def accept(project, ticket, checked):
             if plot.get("mark") == DROP:
                 plot.update(status=RETIRED, headline=False)
                 retired.append(plot["id"])
-            elif plot.get("mark") == KEEP or plot["id"] in failed_redraws:
+            elif plot.get("mark") == KEEP or plot["id"] in failed_redraws or record.get("asked"):
                 carried.append(plot["id"])
                 plot["headline"] = False  # the headlines are this drawing's to mark
             else:
@@ -959,7 +1008,7 @@ def _one_line(text):
     return " ".join(str(text or "").split())
 
 
-def _open_one(book, result, rest, drawn_by, proposed_by):
+def _open_one(book, result, rest, drawn_by, proposed_by, asked=None):
     """One drawing ticket for `result`, its record, and its two events; returns the ticket's id. Under the ledger's lock."""
     version = max([int(record.get("version") or 0) for record in read_records(book, result.id)] or [0]) + 1
     name = _name(result.id, version)
@@ -975,7 +1024,10 @@ def _open_one(book, result, rest, drawn_by, proposed_by):
     body = ("\n## Drawing %s\n\nCode opened this drawing of %s (\"%s\") at a rest point (%s), over its findings %s. Its brief, "
             "rendered by code at each launch, is in the prompt.\n" % (name, result.id, result.heading, rest, ", ".join(finding_ids)))
     tickets.write_ticket(book, fields, body)
-    book.write_json(record_path(name), _blank_record(result.id, version, identifier, rest, finding_ids), schema=RECORD_SCHEMA)
+    record = _blank_record(result.id, version, identifier, rest, finding_ids)
+    if asked:
+        record["asked"] = asked  # a plot the owner asked for: a small drawing carrying the result's other plots (ticket 101)
+    book.write_json(record_path(name), record, schema=RECORD_SCHEMA)
     book.append_event(TICKET_CREATED, {"ticket": identifier, "kind": KIND, "proposed_by": proposed_by, "origin": fields["origin"],
                                        "blocked_by": []}, ticket=identifier)
     book.append_event(DRAWING, {"result": result.id, "version": version, "ticket": identifier, "rest": rest, "outcome": "opened"},
@@ -983,11 +1035,12 @@ def _open_one(book, result, rest, drawn_by, proposed_by):
     return identifier
 
 
-def draw_again(project, result_id):
+def draw_again(project, result_id, asked=None):
     """The owner's word, "draw R4 again": one drawing of `result_id` now, changed or not; returns its ticket's id.
 
     Refused for a result that is not live, one with no finding from the project's own evidence, and one whose drawing
-    is under way. The conductor launches it at its next wave, as any open ticket.
+    is under way. The conductor launches it at its next wave, as any open ticket. `asked` is the plot the owner asked
+    for (`wayline.reports.ask_plot`): the brief carries it, and acceptance carries the result's other plots unchanged.
     """
     book = ledger_for(project)
     with book.lock():
@@ -1003,7 +1056,7 @@ def draw_again(project, result_id):
         latest = read_records(book, result_id)
         if latest and _in_progress(latest[-1], by_id, _awaiting_resume(book.read_events()[0])):
             raise DrawingError("%s's drawing %s-%d is under way (ticket %d)" % (result_id, result_id, latest[-1]["version"], latest[-1]["ticket"]))
-        return _open_one(book, result, OWNER, drawn_by, "human")
+        return _open_one(book, result, OWNER, drawn_by, "human", asked=asked)
 
 
 def open_drawings(project, rest, only=None, proposed_by="conductor"):
