@@ -45,6 +45,12 @@ render stamp. The owner's passages steer with no lock: a ticket's passage or fin
 evidence and a stated `reason` (`owner_replacement_problem`, part of `check_result`), and is journaled with
 `replaces_owner` for the account. A consolidation (`wayline.consolidation`) writes `by: consolidation`. Every
 render records the linter's reading of the section in `research/sections/lint.json` (`lint_section`).
+
+**Methods' generated part** (ticket 108, `wayline.methods_inventory`). After its passages, `methods.md` carries what the
+methods inventory generates at every render under `INVENTORY`: the parameter table, the software and its versions, and
+the proposed citations. An edit is read as passages up to that line and never past it; a reason the owner changes in
+the table is taken in as the owner's passage for its row (`parameter`), which the table shows and the text never does
+(`is_reason`).
 """
 
 import hashlib
@@ -62,6 +68,7 @@ __all__ = [
     "check_replaces", "by_ticket", "INHERITED", "STANDINGS", "EVIDENCE", "UNCHECKED", "UNVERIFIABLE", "is_inherited",
     "paragraph_of", "mark_of", "section_items", "current_ids", "OWNER", "CONSOLIDATION", "LINT", "is_finding", "take_in",
     "lint_section", "owner_replacement_problem", "add_owners_passage", "passage_command", "arranged", "OUTLINED", "PLACED_MARKS",
+    "INVENTORY", "NOTES", "is_reason",
 ]
 
 SECTIONS = ("introduction", "results", "discussion", "methods", "references")
@@ -101,6 +108,9 @@ RESULTS_BY = (OWNER, CONSOLIDATION)
 LINT = "%s/lint.json" % SECTIONS_DIR
 # The line after a section's passages that opens code's notes; an edit is read up to it and never past it.
 NOTES = "<!-- wayline:notes -->"
+# The line before what the methods inventory generates into Methods (ticket 108): the parameter table, the software, the
+# proposed citations. An edit is read as passages up to it and never past it; only a reason in the table is taken in.
+INVENTORY = "<!-- wayline:inventory -->"
 NOTHING_YET = "Nothing yet: code writes this section from the passages tickets return."
 # The heading new text the owner wrote above every heading of a section file stands under.
 OWNER_HEADING = "The owner's notes"
@@ -178,9 +188,16 @@ def read_findings(project_or_ledger):
     return _read_lines(ledger_for(project_or_ledger), FINDINGS)
 
 
+def is_reason(item):
+    """Whether a passage is the owner's reason for a row of Methods' parameter table (ticket 108): the table shows it,
+    never the section's text."""
+    return bool((item or {}).get("parameter"))
+
+
 def _items(book, section):
-    """The log of one section in arrival order: for Results, its findings and its inherited passages by when each came."""
-    passages = [item for item in read_passages(book) if item.get("section") == section]
+    """The log of one section in arrival order: for Results, its findings and its inherited passages by when each came.
+    An owner's reason for a parameter is the table's, not the section text's (`is_reason`)."""
+    passages = [item for item in read_passages(book) if item.get("section") == section and not is_reason(item)]
     if section != RESULTS:
         return passages
     # Each log keeps its own order; the two merge by when each line came, a line with no time (a finding filed before
@@ -303,15 +320,16 @@ def owner_replacement_problem(project_or_ledger, section, replaces, text, reason
 
 def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None, objectives=(), ticket=None, wave=None,
                 render=True, evidence=None, doc=None, standing=None, reason=None, withdrawn=False, moved_from=None,
-                consolidates=None, merges=None):
+                consolidates=None, merges=None, parameter=None):
     """Write one passage through the ledger: `passages.jsonl` with the next P id, the `passage` event, and the section re-rendered.
 
     `by` names who contributed it (`BY_RE`); `objectives` are the ticket's; `wave` is the wave it was integrated in,
     which is what tells two replacements of one passage in the same wave from a later word on it. Results is written
     as findings, never here, except an inherited passage (`by` a document). `evidence` is what a passage replacing an
     inherited claim says of it; `doc`, `standing`, `reason`, `withdrawn`, and `moved_from` are an inherited passage's
-    (the module's docstring); `merges` names every occurrence a merged inherited passage merges (ticket 95). Returns the
-    record written.
+    (the module's docstring); `merges` names every occurrence a merged inherited passage merges (ticket 95). `parameter`
+    makes it the owner's reason for one row of Methods' parameter table (ticket 108, `methods_inventory.parameter_key`),
+    which the table shows in place of the ticket's. Returns the record written.
     """
     book = ledger_for(project_or_ledger)
     if evidence is not None and (evidence not in EVIDENCE or replaces is None):
@@ -325,6 +343,11 @@ def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None,
         raise SectionError("a passage needs a heading")
     if not text:
         raise SectionError("a passage needs text")
+    if parameter is not None:
+        from wayline import methods_inventory  # the inventory renders into Methods through this module
+        if section != "methods" or by != OWNER or methods_inventory.parse_parameter(parameter) is None:
+            raise SectionError("a reason for a parameter is the owner's, in Methods, naming <method>:<name>[@<path>]; got %r"
+                               % (parameter,))
     if not BY_RE.match(str(by or "")):
         raise SectionError("a passage's by is a ticket's attempt (t3-a1), owner, document:<id>, step:<name>, "
                            "objective:O<n>, or consolidation; got %r" % (by,))
@@ -339,7 +362,7 @@ def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None,
         # A passage replacing an owner's is journaled for the account, "Changed without asking you" (ticket 88).
         extra = {"evidence": evidence, "doc": doc, "standing": standing, "reason": reason, "withdrawn": True if withdrawn else None,
                  "moved_from": moved_from, "consolidates": list(consolidates) if consolidates else None,
-                 "merges": list(merges) if merges else None,
+                 "merges": list(merges) if merges else None, "parameter": parameter,
                  "replaces_owner": True if by not in RESULTS_BY and _owners(book, section, replaces) else None}
         record.update({key: value for key, value in extra.items() if value is not None})
         try:
@@ -741,6 +764,7 @@ def _groups(book, section, items, ordered=False, orders=None):
 
 
 def _body(book, section, orders=None):
+    """`(body, last, printed)`: the file below its stamp, the last item it saw, and for Methods what the inventory printed."""
     arranged, groups = _groups(book, section, _items(book, section), ordered=True, orders=orders)
     lines = ["# %s" % TITLES[section], ""]
     if not groups:
@@ -754,12 +778,17 @@ def _body(book, section, orders=None):
             lines += ["## %s" % group_heading, ""]
             heading = group_heading
         lines += ["<!-- wayline:passage %s -->" % " ".join(ids), text, ""]
+    printed = None
+    if section == "methods":
+        from wayline import methods_inventory  # the inventory reads the sections it renders into
+        generated, printed = methods_inventory.block(book)
+        lines += generated
     if arranged.notes:
         lines += [NOTES, ""]
     for target, ids in arranged.notes:
         lines += ["> Note: %s each replace %s, which they did in the same wave, so both are kept until one replaces the other."
                   % (" and ".join(ids), target), ""]
-    return "\n".join(lines).rstrip("\n") + "\n", arranged.last
+    return "\n".join(lines).rstrip("\n") + "\n", arranged.last, printed
 
 
 # --- the owner's edits ----------------------------------------------------------------------------------
@@ -786,7 +815,7 @@ def _edited(body):
     for raw in body.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
-        if stripped == NOTES:
+        if stripped in (NOTES, INVENTORY):
             break
         mark = _PASSAGE_MARK.match(stripped)
         if _PLACED_MARK.match(stripped):
@@ -892,6 +921,11 @@ def take_in(project_or_ledger, section):
                 for identifier in group_ids:
                     if identifier in current:
                         withdraw(identifier)
+        if section == "methods":
+            # A reason the owner edited in the parameter table is the owner's passage for that row (ticket 108).
+            from wayline import methods_inventory  # the inventory reads the sections it renders into
+            for key, reason in methods_inventory.taken_reasons(body, stamp.get("parameters") or {}):
+                add(methods_inventory.PARAMETERS, reason, parameter=key)
         return written
 
 
@@ -940,12 +974,15 @@ def render_section(project_or_ledger, section, resolver=None, orders=None):
         if take_in(book, section) and orders is not None:
             orders.clear()
         _record_lint(book, section, resolver)
-        body, last = _body(book, section, orders)
+        body, last, printed = _body(book, section, orders)
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         stamp = read_stamp(book, section)
-        if stamp is not None and stamp.get("sha256") == digest and stamp.get("last") == last:
+        if stamp is not None and stamp.get("sha256") == digest and stamp.get("last") == last \
+                and stamp.get("parameters") == (printed or None):
             return False
         record = {"section": section, "rendered_at": now_ts(), "last": last, "sha256": digest}
+        if printed:
+            record["parameters"] = printed  # each row's reason as printed, so an edit of one is told from a newer reason
         book.write_markdown(section_path(section), "<!-- wayline:render %s -->\n%s" % (json.dumps(record, ensure_ascii=False), body))
     return True
 
@@ -985,19 +1022,21 @@ def read_stamp(project_or_ledger, section):
 # --- the owner's passage: `wayline passage add` -----------------------------------------------------------
 
 
-def add_owners_passage(project_or_ledger, section, heading, text, replaces=None):
+def add_owners_passage(project_or_ledger, section, heading, text, replaces=None, parameter=None):
     """One owner's passage, `by: owner`, through the ledger call, journaled `passage` and rendered (decision 17; ticket 88).
 
     The conversation calls it, asking the owner only when the section or the place is unclear. The owner's passages
-    steer later work with no lock, and the owner replaces any passage without a reason.
+    steer later work with no lock, and the owner replaces any passage without a reason. With `parameter` it is the
+    owner's reason for one row of Methods' parameter table (ticket 108).
     """
     if section not in SECTIONS:
         raise SectionError("there is no section %r; the sections are %s" % (section, ", ".join(SECTIONS)))
-    return add_passage(project_or_ledger, section, heading, text, by=OWNER, replaces=replaces)
+    return add_passage(project_or_ledger, section, heading, text, by=OWNER, replaces=replaces, parameter=parameter)
 
 
 def passage_command(args):
-    """`wayline passage add --section <s> --heading <h> [--replaces <id>] "<text>" [--project <path>]`."""
+    """`wayline passage add --section <s> --heading <h> [--replaces <id>] [--parameter <method>:<name>[@<path>]] "<text>"
+    [--project <path>]`."""
     import argparse
     import sys
     from wayline.cli import parse_args
@@ -1010,13 +1049,15 @@ def passage_command(args):
     add.add_argument("--section", required=True, help="one of %s" % ", ".join(SECTIONS))
     add.add_argument("--heading", required=True, help="the heading it stands under; an existing one when it fits")
     add.add_argument("--replaces", help="the id of the passage (or finding) it replaces, which leaves the section and stays in the log")
+    add.add_argument("--parameter", help="the row of Methods' parameter table this is the reason for, <method>:<name>, "
+                                         "with @<path> for one file only; the table shows it in place of the ticket's reason")
     add.add_argument("--project", help="the project; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     try:
         record = add_owners_passage(find_project(options.project), options.section, options.heading, options.text,
-                                    replaces=options.replaces)
+                                    replaces=options.replaces, parameter=options.parameter)
     except SectionError as failure:
         print("wayline passage: %s" % failure, file=sys.stderr)
         return 2

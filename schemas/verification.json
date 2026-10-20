@@ -11,6 +11,16 @@
     "reads": {"type": "array", "items": {"$ref": "#/$defs/read"}}
   },
   "$defs": {
+    "note": {
+      "type": "object",
+      "required": ["text", "path", "line"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {"type": "string", "pattern": "\\S"},
+        "path": {"type": ["string", "null"], "description": "the file of the inherited code it is about, project-relative"},
+        "line": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
     "result": {
       "type": "object",
       "required": ["heading", "claims", "standing", "reason", "verdicts", "contradictions"],
@@ -21,6 +31,16 @@
         "standing": {"type": "string", "enum": ["unchecked", "verified", "unverifiable"]},
         "reason": {"type": ["string", "null"], "description": "why it is unverifiable; null otherwise"},
         "verdicts": {"type": "array", "items": {"$ref": "#/$defs/verdict"}},
+        "disagreements": {
+          "type": "array",
+          "description": "where the inherited Methods and the inherited code disagree on a method or a parameter, found by the parser inventory at setup (ticket 108), which the verification answers",
+          "items": {"$ref": "#/$defs/note"}
+        },
+        "leads": {
+          "type": "array",
+          "description": "the concerns the setup's Sonnet reading of the inherited code raised about a file this result uses, each grep-checked in its file (ticket 108): what the verification looks into",
+          "items": {"$ref": "#/$defs/note"}
+        },
         "contradictions": {
           "type": "array",
           "description": "contradicting pairs attached to the result (ticket 95), which its verification answers",
