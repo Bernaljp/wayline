@@ -43,6 +43,17 @@ owner can still confirm a version they first sent back.
 
 `spec_state` reads all of this back from the files and the journal, so the verb is safe to run again
 at any point: it drafts, asks, waits, or advances, whichever the ledger says is owed.
+
+**Spec amendments** (decision 17; ticket 92). An objective opened after the spec was confirmed, added or reframed,
+gets an amendment: `wayline specify --amend <O>` (`amend`), which the conductor runs for an approved batch's add or
+reframe. One planner session scoped to the objective returns the spec with claims, experiments, metrics, and
+anti-claims appended under new ids; `check_amendment`, a Type-A check over the two versions, refuses one that changes
+anything already there. The verifier judges the amendment alone, the planner cuts tickets for the new claims alone
+(with a `lit` ticket when no Introduction passage with a `ref` tag covers the objective), and the confirmation follows
+the autonomy: under `checkpoints` a "Confirm the amendment" ticket pauses only those tickets, under `autonomous` the
+decider answers it, and under `interactive` the owner's word comes before the cut. `research/amendments.json` keeps
+each amendment with the version it amends, and `spec_state` reads an amended spec as that version, so the spec stays
+confirmed and the rest of the run goes on.
 """
 
 import argparse
@@ -55,7 +66,7 @@ from pathlib import Path
 from wayline import HARNESS_ROOT, decider, decisions, gates, grill, objectives, pacing, sections, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
-from wayline.ledger import DECISION, PHASE, Ledger, LedgerError
+from wayline.ledger import DECISION, PHASE, Ledger, LedgerError, now_ts
 from wayline.project import ProjectError, find_project, journal_written_answers, policy_for, read_harness
 from wayline.project import answer as answer_ticket
 from wayline.tickets import DECISION as DECISION_KIND, TicketError, answer_section, filename, read_ticket, read_tickets, tickets_dir
@@ -65,7 +76,9 @@ __all__ = [
     "PLANNER", "SPEC_SCHEMA", "SPEC_MD", "SPEC_JSON", "SECTIONS", "SpecifyError", "planner_tier", "protocol_for",
     "check_draft", "render_spec", "render_set_aside", "check_spec", "spec_sha", "spec_state", "specify_prompt", "draft_spec", "judge_spec", "specify",
     "confirm", "advance", "render_report", "specify_command", "confirms", "what_to_change", "move_phase", "context_cap", "current_phase",
-    "PlannerSession", "falls_back_now", "session_dir",
+    "PlannerSession", "falls_back_now", "session_dir", "check_amendment", "read_amendments", "root_sha", "amendment_state",
+    "amendment_refusal", "amend_prompt", "draft_amendment", "introduction_covers", "cut_amendment", "amendment_answered",
+    "confirm_amendment", "amend", "render_amend_report", "owed_amendments",
 ]
 
 PLANNER = "planner"
@@ -294,6 +307,63 @@ def check_draft(draft, objectives=None, inherited=None):
     return failures
 
 
+# What one item of each list of the spec is called in a failure, and the field that names it (None: its place).
+_ITEMS = {
+    "claims": ("claim", "id"), "anti_claims": ("anti-claim", "id"), "experiments": ("experiment", "id"),
+    "baselines": ("baseline", "id"), "data": ("data item", "id"), "metrics": ("metric", "name"), "methods": ("method", "name"),
+    "seams": ("seam", "name"), "success_criteria": ("success criterion", None), "out_of_scope": ("out of scope item", None),
+    "risks": ("risk", None), "gap": ("gap passage", None),
+}
+_KEPT = "which the spec already holds; an amendment rewrites nothing"
+
+
+def _item_name(key, item, index):
+    label, field = _ITEMS.get(key, (key.replace("_", " "), None))
+    if field is not None and isinstance(item, dict) and item.get(field):
+        return "%s %s" % (label, item[field])
+    return "%s %d" % (label, index + 1)
+
+
+def check_amendment(base, amended, objective, records=None):
+    """The Type-A check of a spec amendment (decision 17; ticket 92), over two versions of the spec: the failures, one line each.
+
+    `base` is the spec as it stood before the amendment and `amended` the spec the scoped session returned. Everything
+    `base` holds stays as it was and where it was: each list keeps every item unchanged in its place, with the new ones
+    after them, and every other field is unchanged. The amendment adds at least one claim, and each claim it adds names
+    `objective`. The amended spec passes the structural checks too (`check_draft`), with `records`, when given, holding
+    the new claims to the objectives open now.
+    """
+    failures = check_draft(amended)
+    if failures and failures[0].startswith("the spec is not valid"):
+        return failures
+    for key, before in base.items():
+        after = amended.get(key)
+        if not isinstance(before, list):
+            if after != before:
+                failures.append("the amendment changes the spec's %s, %s" % (key.replace("_", " "), _KEPT))
+            continue
+        after = after if isinstance(after, list) else []
+        field = _ITEMS.get(key, (None, None))[1]
+        for index, item in enumerate(before):
+            there = after[index] if index < len(after) else None
+            if there == item:
+                continue
+            same = field is not None and isinstance(there, dict) and isinstance(item, dict) and there.get(field) == item.get(field)
+            if there is not None and (field is None or same):
+                failures.append("the amendment changes %s, %s" % (_item_name(key, item, index), _KEPT))
+            else:
+                failures.append("the amendment removes or moves %s, %s" % (_item_name(key, item, index), _KEPT))
+    added = list(amended.get("claims") or [])[len(base.get("claims") or []):]
+    if not added:
+        failures.append("the amendment adds no claim for %s" % objective)
+    for claim in added:
+        if objective not in (claim.get("objectives") or []):
+            failures.append("claim %s, added by the amendment, does not name %s among its objectives" % (claim.get("id"), objective))
+        if records is not None:
+            failures += objectives.check_named("claim %s" % claim.get("id"), claim.get("objectives"), records, "claim")
+    return failures
+
+
 def _objective_failures(draft, records, metrics):
     """Ticket 81's half of the Type-A checks: the claims against the objectives, and the goals against the metrics."""
     failures, answered = [], set()
@@ -490,7 +560,9 @@ def spec_state(project, events=None):
     ledger = Ledger(project)
     if events is None:
         events, _ = ledger.read_events()
-    sha = spec_sha(project)
+    # An amended spec stands where the spec it amends stood (ticket 92): its amendment is confirmed on its own, and only
+    # its new tickets wait for that, so the version named here is the one the amendments were made on.
+    sha = root_sha(project, spec_sha(project))
     state = {"state": "none", "sha": sha, "ticket": None, "answer": None, "decided_by": None, "feedback": None,
              "findings": [], "phase": current_phase(events)}
     if sha is None:
@@ -747,7 +819,7 @@ class _Session(PlannerSession):
     def checked(self, draft, returned=False):
         """`draft` once it passes the Type-A checks; a failing one goes back once, a second failure raises."""
         self.keep(draft, "draft")
-        failures = check_draft(draft, self.objectives, self.inherited)
+        failures = self.failures(draft)
         if failures and not returned:
             self.say("  the draft failed %d structural check(s); returned to the planner once" % len(failures))
             envelope = self.continue_with(RESUME_CHECKS % "\n".join("- " + failure for failure in failures))
@@ -756,8 +828,14 @@ class _Session(PlannerSession):
                 raise SpecifyError("the planner's redraft could not be read: %s" % problem, failures)
             return self.checked(envelope.structured_output, returned=True)
         if failures:
-            raise SpecifyError("the spec failed its structural checks twice; nothing was written", failures)
+            raise SpecifyError(self.twice, failures)
         return draft
+
+    twice = "the spec failed its structural checks twice; nothing was written"
+
+    def failures(self, draft):
+        """The Type-A checks a draft of this session is held to."""
+        return check_draft(draft, self.objectives, self.inherited)
 
     def revise(self, findings):
         """The draft again after a failed verdict, checked; its Type-A allowance is spent already."""
@@ -766,7 +844,7 @@ class _Session(PlannerSession):
         if problem is not None:
             raise SpecifyError("the planner's redraft after the verdict could not be read: %s" % problem)
         self.keep(envelope.structured_output, "draft")
-        failures = check_draft(envelope.structured_output, self.objectives, self.inherited)
+        failures = self.failures(envelope.structured_output)
         if failures:
             raise SpecifyError("the redraft after the verdict failed its structural checks; the spec as written stands "
                                "unverified", failures)
@@ -952,6 +1030,573 @@ def _next(state):
     }[state["state"]]
 
 
+# --- spec amendments (decision 17; ticket 92) -----------------------------------------------------------------
+
+AMENDMENTS_JSON = "amendments.json"   # research/amendments.json: one record per amended objective
+AMEND_SUBJECT = SUBJECT + " amendment for %s at %s"
+AMEND_ORIGIN_PREFIX = "specify: confirm the amendment for "
+AMEND_ORIGIN = AMEND_ORIGIN_PREFIX + "%s at %s"
+AMEND_TITLE = "Confirm the amendment"
+AMEND_ANSWER_PREFIX = "amendment %s at %s: "   # the interactive answer's `decision`, keyed by the objective and the version
+_ID_PREFIXES = (("claims", "C"), ("anti_claims", "A"), ("experiments", "E"), ("baselines", "B"), ("data", "D"))
+
+
+def read_amendments(project):
+    """The amendments `research/amendments.json` records, one per amended objective, in the order first made.
+
+    Each is `{objective, base, sha, base_spec, claims, added, tickets, lit, change, drafted_at}`: `base` the version of the
+    spec it amends and `base_spec` that spec, `sha` the version it wrote, `claims` the claims it added (`added` every id it
+    added, by section), and `tickets` the tickets the planner cut for it (None until they are cut). Raises `SpecifyError`
+    when the file is there and is not the record code writes.
+    """
+    try:
+        record = Ledger(project).read_json(AMENDMENTS_JSON)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as failure:
+        raise SpecifyError("research/%s cannot be read: %s" % (AMENDMENTS_JSON, failure)) from None
+    items = record.get("amendments") if isinstance(record, dict) else None
+    if not isinstance(items, list) or not all(isinstance(item, dict) and item.get("objective") and item.get("sha") for item in items):
+        raise SpecifyError("research/%s cannot be read: it holds no list of amendments" % AMENDMENTS_JSON)
+    return items
+
+
+def root_sha(project, sha):
+    """The version of the spec `sha` stands on: itself, or, for an amended spec, the version its amendments were made on."""
+    try:
+        bases = {item["sha"]: item.get("base") for item in read_amendments(project)}
+    except SpecifyError:
+        return sha
+    seen = set()
+    while sha in bases and bases[sha] and sha not in seen:
+        seen.add(sha)
+        sha = bases[sha]
+    return sha
+
+
+def _amendment(project, objective):
+    for item in read_amendments(project):
+        if item["objective"] == objective:
+            return item
+    return None
+
+
+def _added(base, amended):
+    """`{section: [the ids or names it added]}`: what `amended` holds after the items of `base`, each list's tail."""
+    added = {}
+    for key, value in amended.items():
+        if not isinstance(value, list):
+            continue
+        tail = value[len(base.get(key) or []):]
+        if tail:
+            added[key] = [_item_name(key, item, len(base.get(key) or []) + index) for index, item in enumerate(tail)]
+    return added
+
+
+def _names(added, key):
+    """The bare ids of one section's additions (`C4`, `auroc_noisy`), or `none`."""
+    return ", ".join(name.rsplit(" ", 1)[-1] for name in added.get(key) or []) or "none"
+
+
+def amendment_state(project, objective, events=None, autonomy=None):
+    """Where the amendment for `objective` stands, read from its record, the tickets, and the journal.
+
+    `state` is `none` (no amendment drafted), `unverified` (written, no passing verdict; `findings` the last failing
+    one's), `uncut` (its tickets are owed to the planner: verified, under `interactive` once the owner confirmed it),
+    `unasked` (no confirmation asked or given), `pending` (a "Confirm the amendment" ticket waits), `confirmed`, or
+    `revise` (answered with what to change, which `feedback` holds). Under `checkpoints` and `autonomous` the tickets are
+    cut before the confirmation, which pauses only them; under `interactive` the owner's word comes first.
+    """
+    project = Path(project).resolve()
+    ledger = Ledger(project)
+    if events is None:
+        events, _ = ledger.read_events()
+    if autonomy is None:
+        autonomy = read_harness(project).get("autonomy")
+    record = _amendment(project, objective)
+    state = {"state": "none", "objective": objective, "sha": None, "base": None, "claims": [], "tickets": None, "ticket": None,
+             "answer": None, "decided_by": None, "feedback": None, "findings": []}
+    if record is None:
+        return state
+    sha = record["sha"]
+    state.update(sha=sha, base=record.get("base"), claims=list(record.get("claims") or []), tickets=record.get("tickets"))
+    verdicts = [event["payload"] for event in events
+                if event.get("event") == "verdict" and (event.get("payload") or {}).get("subject") == AMEND_SUBJECT % (objective, sha)]
+    if not any(verdict.get("pass") for verdict in verdicts):
+        failed = [verdict for verdict in verdicts if not verdict.get("pass")]
+        state.update(state="unverified", findings=list(failed[-1].get("findings") or []) if failed else [])
+        return state
+    ticket = next((fields for fields in read_tickets(project)
+                   if fields["kind"] == DECISION_KIND and fields.get("origin") == AMEND_ORIGIN % (objective, sha)), None)
+    state["ticket"] = ticket["id"] if ticket is not None else None
+    answer, prefix = None, AMEND_ANSWER_PREFIX % (objective, sha)
+    for event in events:
+        payload = event.get("payload") or {}
+        if event.get("event") != DECISION:
+            continue
+        text = str(payload.get("answer") or "")
+        if payload.get("ticket") is None and text.startswith(prefix):
+            answer = dict(payload, answer=text[len(prefix):])
+        elif ticket is not None and payload.get("ticket") == ticket["id"]:
+            answer = dict(payload)
+    if answer is None and ticket is not None:
+        written = answer_section(read_ticket(tickets_dir(project) / filename(ticket))[1])
+        if written is not None:
+            answer = {"answer": written, "decided_by": "human"}
+    if answer is None:
+        if ticket is not None:
+            state["state"] = "pending"
+        elif record.get("tickets") is None and autonomy != INTERACTIVE:
+            state["state"] = "uncut"
+        else:
+            state["state"] = "unasked"
+        return state
+    state.update(answer=answer["answer"], decided_by=answer.get("decided_by"))
+    if confirms(answer["answer"]):
+        state["state"] = "confirmed" if record.get("tickets") is not None else "uncut"
+        return state
+    change = what_to_change(answer["answer"])
+    if change == what_to_change(REVISE):
+        change = ""
+    rationale = str(answer.get("rationale") or "").strip()
+    if rationale:
+        change = (change + " (the reason given: %s)" % rationale).strip()
+    state["state"], state["feedback"] = "revise", change or "no change was named; read the answer on the ticket"
+    return state
+
+
+def amendment_refusal(project, objective):
+    """Why `objective` gets no amendment now, or None: the spec it would amend, the objective, and another amendment under way."""
+    project = Path(project).resolve()
+    base = spec_state(project)
+    if base["state"] != "confirmed":
+        return ("the spec is %s, and an amendment amends a confirmed spec; a spec still being drafted answers every open "
+                "objective itself, so run wayline specify" % base["state"])
+    try:
+        records = objectives.read_objectives(project)
+    except objectives.ObjectivesUnreadable as failure:
+        return str(failure)
+    found = objectives.named(records, objective)
+    if found is None:
+        return "there is no objective %s (the objectives are %s)" % (objective, ", ".join(item["id"] for item in records) or "none yet")
+    if not objectives.is_open(found):
+        return "%s is %s, and an amendment is made for an open objective" % (objective, found.get("status"))
+    if _amendment(project, objective) is None:
+        draft = _read_json(Ledger(project), SPEC_JSON) or {}
+        naming = [claim["id"] for claim in draft.get("claims") or [] if objective in (claim.get("objectives") or [])]
+        if naming:
+            return "claim %s answers it already, so %s needs no amendment" % (", ".join(naming), objective)
+    for item in read_amendments(project):
+        # One whose objective closed since is under way no longer: its claims are set aside with it.
+        if item["objective"] != objective and objectives.is_open(objectives.named(records, item["objective"])):
+            other = amendment_state(project, item["objective"])["state"]
+            if other != "confirmed":
+                return ("the amendment for %s is %s, and amendments are made one at a time: finish it first (wayline specify "
+                        "--amend %s)" % (item["objective"], other, item["objective"]))
+    return None
+
+
+def _next_ids(spec):
+    words = []
+    for key, prefix in _ID_PREFIXES:
+        numbers = [int(match.group(1)) for match in (re.match(r"^%s([0-9]+)$" % prefix, str(item.get("id"))) for item in spec.get(key) or [])
+                   if match]
+        words.append("%s%d" % (prefix, max(numbers, default=0) + 1))
+    return ", ".join(words)
+
+
+def amend_prompt(role, records, harness, project, objective, base, change=None, cut=False, reframes=None):
+    """The scoped specify session's prompt: the amendment asked for, the objective, the spec as it stands, the records, the protocol."""
+    lines = ["# What you are asked for", "",
+             "a spec amendment for %s. The spec below was confirmed before %s was opened, so no claim answers it. Return the "
+             "whole spec through the structured output: every field and every item below exactly as it stands, in its place, "
+             "and after them, under new ids, the claims that answer %s (each naming it in `objectives`), the experiments that "
+             "test them, the metrics they need, and the anti-claims that bound them; methods, baselines, data, risks, and the "
+             "other lists may gain items too. Change nothing already there, not a word and not an order: the harness checks the "
+             "two versions item by item and refuses an amendment that rewrites anything. An independent verifier then reads "
+             "what you added, and the planner cuts tickets for the new claims alone." % (objective["id"], objective["id"], objective["id"]),
+             "",
+             "- autonomy: %s; radius: %s" % (harness.get("autonomy"), harness.get("radius")),
+             "- the next free ids: %s" % _next_ids(base),
+             "", "# The objective", "",
+             "- %s: %s (%s)" % (objective["id"], _one_line(objective["text"]),
+                                "a goal: %s" % objectives.describe_measure(objective["measure"]) if objective.get("measure")
+                                else "an objective: no measure")]
+    if reframes is not None:
+        lines.append("- it reframes %s, \"%s\": the claims of %s follow it as they stand, and the amendment adds what the new "
+                     "question asks besides" % (reframes["id"], _one_line(reframes["text"]), reframes["id"]))
+    if change:
+        lines += ["", "# What to change", "",
+                  "A previous draft of this amendment was not accepted. Change what this names, and keep what it does not:", "",
+                  change.strip()]
+    lines += ["", "# The spec as it stands (research/spec.json)", "", "```json",
+              json.dumps(base, indent=2, ensure_ascii=False), "```"]
+    parts = ["\n".join(lines), records]
+    if cut:
+        parts.append("[wayline: the records were cut at the context cap; the paths below hold the rest.]")
+    parts.append("\n".join([
+        "# The paths you may open",
+        "",
+        "The project is `%s`; open these with the Read tool when a record points into them:" % project,
+        "",
+        "- `research/OBJECTIVES.md`: every objective, the one you amend for among them",
+        "- `research/SPEC.md`: the spec as it renders now",
+        "- `research/INTAKE.md` and `research/CONTEXT.md`: the intent, the radius, and the vocabulary",
+        "- `research/refs/<slug>/dossier.json`, and `dossier.md` for a reference read in full",
+    ]))
+    parts.append(worker.protocol_for(role.protocol, "amend"))
+    parts.append(worker.schema_section("# The spec", SPEC_SCHEMA))
+    return "\n\n".join(part.strip("\n") for part in parts if part and part.strip()) + "\n"
+
+
+class _AmendSession(_Session):
+    """The specify session scoped to one objective: its drafts are held to the append-only check over the spec it amends."""
+
+    twice = "the amendment failed its checks twice; nothing was written"
+    objective = None
+    base = None
+
+    def failures(self, draft):
+        return check_amendment(self.base, draft, self.objective, self.objectives)
+
+
+def _write_amendment(ledger, objective, base_sha, base, draft, change):
+    """Write the amended spec, render `SPEC.md`, and record the amendment, under one lock; returns the version written."""
+    with ledger.lock():
+        records = [item for item in read_amendments(ledger.project)]
+        ledger.write_json(SPEC_JSON, draft, schema=SPEC_SCHEMA)
+        ledger.write_markdown(SPEC_MD, render_spec(draft, _set_aside(ledger.project, draft)))
+        sha = spec_sha(ledger.project)
+        added = _added(base, draft)
+        record = {"objective": objective, "base": base_sha, "sha": sha, "base_spec": base,
+                  "claims": [name.rsplit(" ", 1)[-1] for name in added.get("claims") or []], "added": added, "tickets": None,
+                  "lit": None, "change": change, "drafted_at": now_ts()}
+        places = [index for index, item in enumerate(records) if item["objective"] == objective]
+        if places:
+            records[places[0]] = record
+        else:
+            records.append(record)
+        ledger.write_json(AMENDMENTS_JSON, {"amendments": records})
+    return sha, added
+
+
+def _judge_amendment(project, objective, sha, added, author_model, harness_root, policy, fall_back):
+    question = ("Does every claim the amendment for %s adds (%s) have at least one experiment that tests it, and does every "
+                "experiment it adds (%s) defend a claim?" % (objective, _names(added, "claims"), _names(added, "experiments")))
+    scope = ("Judge only what the amendment for %s added to research/SPEC.md: the claims %s, the anti-claims %s, the experiments "
+             "%s, and the metrics %s, read against %s's question in OBJECTIVES.md. Everything else in the spec was confirmed "
+             "before and is not under judgment. Not the science's merit, the budgets, or the prose. The hex after `at` in the "
+             "subject is the first twelve of research/spec.json's sha256, written by the harness; it needs no checking."
+             % (objective, _names(added, "claims"), _names(added, "anti_claims"), _names(added, "experiments"),
+                _names(added, "metrics"), objective))
+    return gates.verdict("spec", AMEND_SUBJECT % (objective, sha), question, list(VERDICT_PATHS), scope, project=project,
+                         author_model=author_model, verdict_type=gates.SPEC_COVERAGE, harness_root=harness_root, policy=policy,
+                         fall_back=fall_back)
+
+
+def draft_amendment(project, objective, *, change=None, harness_root=HARNESS_ROOT, policy=None, fall_back=None, say=lambda text: None):
+    """Draft, check, write, and judge the amendment for `objective`; returns `(sha, verdict)`, the verdict the last one taken.
+
+    A redraft (after a revise or a failed verdict) starts again from the spec the amendment amends, so it is held to the
+    same base. Raises as `draft_spec` does.
+    """
+    project = Path(project).resolve()
+    ledger = Ledger(project)
+    policy = policy_for(project, harness_root) if policy is None else policy
+    try:
+        records = objectives.read_objectives(project)
+    except objectives.ObjectivesUnreadable as failure:
+        raise SpecifyError("%s; nothing was drafted" % failure) from None
+    record = _amendment(project, objective)
+    if record is not None:
+        base, base_sha, previous = record["base_spec"], record["base"], _read_json(ledger, SPEC_JSON)
+    else:
+        base, base_sha, previous = _read_json(ledger, SPEC_JSON), spec_sha(project), None
+    session = _AmendSession(project, harness_root, policy, fall_back, say)
+    session.objective, session.base, session.objectives = objective, base, records
+    found = objectives.named(records, objective)
+    reframes = next((item for item in records if item.get("reframed_as") == objective), None)
+    text, cut = decider.records_text(project, context_cap(policy, session.model))
+    prompt = amend_prompt(session.role, text, read_harness(project), project, found, base, change, cut, reframes)
+    say("drafting the amendment for %s: the planner on %s at %s%s" % (objective, session.model, session.effort,
+                                                                     " in place of fable" if session.fallback_from else ""))
+    draft = session.draft(prompt)
+    if change and previous is not None and draft == previous:
+        raise SpecifyError("the planner returned the amendment unchanged, so the change asked for was not made; answer it again "
+                           "(wayline specify confirm --amend %s, or revise with a clearer change)" % objective)
+    sha, added = _write_amendment(ledger, objective, base_sha, base, draft, change)
+    say("  wrote research/SPEC.md (%s), amended for %s; asking the verifier" % (sha, objective))
+    verdict = _judge_amendment(project, objective, sha, added, session.model, harness_root, policy, fall_back)
+    if verdict.passed:
+        return sha, verdict
+    say("  the verifier failed the amendment with %d finding(s); returned to the planner once" % len(verdict.findings))
+    draft = session.revise(verdict.findings)
+    sha, added = _write_amendment(ledger, objective, base_sha, base, draft, change)
+    say("  wrote research/SPEC.md again (%s); asking the verifier" % sha)
+    return sha, _judge_amendment(project, objective, sha, added, session.model, harness_root, policy, fall_back)
+
+
+def introduction_covers(project, objective):
+    """Whether a current Introduction passage with a `ref` tag covers `objective`: it names it, or one it follows."""
+    from wayline import provenance
+    try:
+        records = objectives.read_objectives(project)
+    except objectives.ObjectivesUnreadable:
+        records = []
+    for item in sections.arrange(sections.section_items(project, "introduction")).current():
+        named = [objectives.following(name, records) for name in item.get("objectives") or []]
+        if objective in named and any(kind == "ref" for kind, _ in provenance.ANY_TAG_RE.findall(str(item.get("text") or ""))):
+            return True
+    return False
+
+
+def _ask_amendment(project, objective, sha, claims, pauses, notify):
+    """The "Confirm the amendment" ticket: `blocking: subgraph`, pausing only the amendment's new tickets."""
+    return decisions.open_decision(
+        project, "Confirm the amendment for %s (research/SPEC.md at %s, claims %s) before its tickets %s run? Answer confirm, or "
+                 "revise: and what to change." % (objective, sha, ", ".join(claims) or "none",
+                                                  ", ".join(str(item) for item in pauses) or "none"),
+        options=[CONFIRM, REVISE], recommended=CONFIRM,
+        evidence=["research/SPEC.md at %s: the append-only check and the verdict on the amendment passed" % sha,
+                  "the verdict: %s" % AMEND_SUBJECT % (objective, sha),
+                  "only its new tickets wait for the answer; the rest of the run goes on"],
+        blocking="subgraph", human_only=False, reversible=True, pauses=list(pauses), proposed_by=PLANNER,
+        origin=AMEND_ORIGIN % (objective, sha), title=AMEND_TITLE, notify=notify)["ticket"]
+
+
+def cut_amendment(project, objective, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None,
+                  say=lambda text: None, pre_check=True):
+    """The planner's cut for a verified amendment: tickets for its new claims alone, and a `lit` ticket when no Introduction
+    passage with a `ref` tag covers the objective. Under `checkpoints` and `autonomous` the confirmation is opened in the
+    same locked section that writes the tickets, pausing only them. Returns what the cut wrote."""
+    from wayline import plan  # the plan module imports this one
+    project = Path(project).resolve()
+    state = amendment_state(project, objective)
+    lit = not introduction_covers(project, objective)
+    autonomy = read_harness(project).get("autonomy")
+
+    def then(ledger, outcome):
+        records = read_amendments(project)
+        kinds = {fields["id"]: fields["kind"] for fields in read_tickets(project)}
+        lits = [identifier for identifier in outcome["tickets"] if kinds.get(identifier) == "lit"]
+        for item in records:
+            if item["objective"] == objective:
+                item.update(tickets=list(outcome["tickets"]), lit=lits)
+        ledger.write_json(AMENDMENTS_JSON, {"amendments": records})
+        if autonomy != INTERACTIVE:
+            outcome["gate"] = _ask_amendment(project, objective, state["sha"], state["claims"], outcome["tickets"], notify)
+
+    cut = plan.Cut("amend", objective=objective, claims=state["claims"], lit=lit)
+    return plan.cut_graph(project, cut, harness_root=harness_root, policy=policy, fall_back=fall_back, notify=notify, say=say,
+                          pre_check=pre_check, then=then)
+
+
+def amendment_answered(project, ledger, fields, text):
+    """The new tickets of an amendment, parked because the answer to its confirmation asks for a change; `[]` otherwise.
+
+    Called from every path an answer takes (`project.graph_answered`), under the ledger's lock: the conductor closes an
+    answered ticket at its next wave, and a closed ticket pauses nothing, so tickets cut for an amendment sent back would
+    run. The next `wayline specify --amend` drafts the amendment again with the change.
+    """
+    fields = fields or {}
+    origin = str(fields.get("origin") or "")
+    if fields.get("kind") != DECISION_KIND or not origin.startswith(AMEND_ORIGIN_PREFIX) or confirms(text):
+        return []
+    objective = origin[len(AMEND_ORIGIN_PREFIX):].split(" ", 1)[0]
+    try:
+        record = _amendment(project, objective)
+    except SpecifyError:
+        return []
+    if record is None or not record.get("tickets"):
+        return []
+    from wayline import plan  # the plan module imports this one
+    why = ("Sent back: the answer to decision ticket %d, \"%s\", asks for a change to the amendment for %s; the next wayline "
+           "specify --amend %s drafts it again." % (fields["id"], _one_line(text), objective, objective))
+    parked = plan.park_open(Path(project).resolve(), ledger, why, only=set(record["tickets"]))
+    if parked:
+        from wayline.tickets import refresh_graph
+        refresh_graph(Path(project).resolve(), ledger=ledger)
+    return parked
+
+
+def confirm_amendment(project, objective, text, rationale=None, by="cli"):
+    """The owner's answer to an amendment's confirmation: through its ticket when one is open, else journaled with no ticket."""
+    project = Path(project).resolve()
+    text = str(text or "").strip()
+    if not text:
+        raise SpecifyError("an answer to the amendment's confirmation needs some text")
+    state = amendment_state(project, objective)
+    if state["state"] not in ("unasked", "pending") and not (state["state"] == "revise" and state["ticket"] is None):
+        raise SpecifyError("the amendment for %s is %s, so there is nothing to confirm; %s" % (objective, state["state"],
+                                                                                         _amend_next(state)))
+    if state["state"] == "pending":
+        answer_ticket(project, state["ticket"], text, rationale=rationale, by=by)
+    else:
+        Ledger(project).append_event(DECISION, {"ticket": None, "answer": AMEND_ANSWER_PREFIX % (objective, state["sha"]) + text,
+                                                "decided_by": "human", "rationale": rationale, "confidence": None})
+    return amendment_state(project, objective)
+
+
+def _amend_next(state):
+    objective = state["objective"]
+    return {
+        "none": "run wayline specify --amend %s to draft it" % objective,
+        "unverified": "run wayline specify --amend %s to judge or draft it again" % objective,
+        "uncut": "run wayline specify --amend %s to cut its tickets" % objective,
+        "unasked": "answer with wayline specify confirm --amend %s, or wayline specify revise --amend %s \"<what to change>\""
+                   % (objective, objective),
+        "pending": "answer decision ticket %s with wayline answer %s confirm (or revise: ...), or in the dashboard"
+                   % (state.get("ticket"), state.get("ticket")),
+        "confirmed": "its tickets run with the rest",
+        "revise": "run wayline specify --amend %s to draft it again with the change asked for" % objective,
+    }[state["state"]]
+
+
+def amend(project, objective, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None, out=None, pre_check=True):
+    """`wayline specify --amend <objective>`: do whatever the amendment owes next. Returns the report.
+
+    Draft (or judge an amendment written and never judged), cut its tickets, ask for its confirmation by the autonomy,
+    have the decider answer under `autonomous`; safe to run again at any point. The report is
+    `{project, autonomy, objective, did, stopped, failures, waits, state}`: `waits` is True when a usage window or the
+    hold on Fable's window stopped it, so it is tried again later rather than told to the owner.
+    """
+    project = Path(project).resolve()
+    say = (lambda text: print(text, file=out)) if out is not None else (lambda text: None)
+    ledger = Ledger(project)
+    autonomy = read_harness(project).get("autonomy")
+    report = {"project": str(project), "autonomy": autonomy, "objective": objective, "did": [], "stopped": None, "failures": [],
+              "waits": False}
+    journal_written_answers(project, ledger)
+    try:
+        refused = amendment_refusal(project, objective)
+    except SpecifyError as failure:
+        refused = str(failure)
+    if refused is not None:
+        report.update(stopped=refused, state=amendment_state(project, objective))
+        return report
+
+    def guarded(step):
+        try:
+            return step()
+        except SpecifyError as failure:
+            report.update(stopped=str(failure), failures=failure.failures)
+        except gates.FableHeld as held:
+            report.update(waits=True, stopped="Fable's weekly window is held until %s and the consent waits: %s" % (held.resets_at, held))
+        except gates.UsageLimited as refused_:
+            report.update(waits=True, stopped="the usage limit refused a session: %s" % refused_)
+        except (gates.GateError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
+            report["stopped"] = str(failure)
+            report["failures"] = list(getattr(failure, "failures", []) or [])
+        return None
+
+    state = amendment_state(project, objective)
+    if state["state"] == "unverified" and not state["findings"]:
+        policy = policy_for(project, harness_root) if policy is None else policy
+        model = planner_tier(policy, falls_back_now(project, policy, fall_back))[0]
+        verdict = guarded(lambda: _judge_amendment(project, objective, state["sha"],
+                                                   (_amendment(project, objective) or {}).get("added") or {}, model, harness_root,
+                                                   policy, fall_back))
+        if verdict is not None:
+            report["did"].append("the verifier %s the amendment for %s at %s" % ("passed" if verdict.passed else "failed",
+                                                                                 objective, state["sha"]))
+            if not verdict.passed:
+                report["stopped"] = "the verifier failed the amendment; the next wayline specify --amend %s drafts it again" % objective
+                report["failures"] = [gates.findings_text(verdict.findings)]
+    elif state["state"] in ("none", "unverified", "revise"):
+        change = None
+        if state["state"] == "revise":
+            change = "The %s asked: %s" % ("owner" if state["decided_by"] in ("human", None) else state["decided_by"], state["feedback"])
+        elif state["findings"]:
+            change = "The last verifier failed the amendment on these findings:\n\n" + gates.findings_text(state["findings"])
+        drafted = guarded(lambda: draft_amendment(project, objective, change=change, harness_root=harness_root, policy=policy,
+                                                  fall_back=fall_back, say=say))
+        if drafted is not None:
+            sha, verdict = drafted
+            report["did"].append("drafted the amendment for %s at %s; the verifier %s it" % (objective, sha,
+                                                                                         "passed" if verdict.passed else "failed"))
+            if not verdict.passed:
+                report["stopped"] = "the verifier failed the amendment twice; it stands unconfirmed"
+                report["failures"] = [gates.findings_text(verdict.findings)]
+    state = amendment_state(project, objective)
+    if state["state"] == "uncut" and report["stopped"] is None:
+        outcome = guarded(lambda: cut_amendment(project, objective, harness_root=harness_root, policy=policy, fall_back=fall_back,
+                                                notify=notify, say=say, pre_check=pre_check))
+        if outcome is not None:
+            report["did"].append("the planner cut ticket(s) %s for %s" % (", ".join(str(item) for item in outcome["tickets"]), objective))
+            if outcome.get("gate"):
+                report["did"].append("opened decision ticket %d, \"%s\", pausing only them" % (outcome["gate"], AMEND_TITLE))
+        state = amendment_state(project, objective)
+    if state["state"] == "unasked" and report["stopped"] is None:
+        if autonomy == INTERACTIVE:
+            report["did"].append("the amendment waits for the owner's word in this session")
+        else:
+            identifier = _ask_amendment(project, objective, state["sha"], state["claims"], state["tickets"] or [], notify)
+            report["did"].append("opened decision ticket %d, \"%s\", pausing only its tickets" % (identifier, AMEND_TITLE))
+        state = amendment_state(project, objective)
+    if state["state"] == "pending" and autonomy == AUTONOMOUS and report["stopped"] is None:
+        report["did"].append("the decider on ticket %d: %s" % (state["ticket"], _decide(
+            project, state["ticket"], harness_root, policy, fall_back, notify, say)))
+        state = amendment_state(project, objective)
+    if state["state"] == "confirmed":
+        seed_gap(ledger)
+    report["state"] = state
+    return report
+
+
+def render_amend_report(report):
+    """The text `wayline specify --amend` prints."""
+    state = report["state"]
+    lines = ["specify --amend %s  %s  (autonomy %s)" % (report["objective"], report["project"], report["autonomy"])]
+    lines += ["  " + line for line in report["did"]] or ["  nothing to do"]
+    if report["stopped"]:
+        lines.append("  stopped: %s" % report["stopped"])
+        lines += ["    " + line for failure in report["failures"] for line in str(failure).split("\n")]
+    lines.append("  the amendment: %s%s%s" % (state["state"], " at %s" % state["sha"] if state["sha"] else "",
+                                             ", answered by the %s: %s" % (state["decided_by"], state["answer"]) if state["answer"] else ""))
+    if state["state"] == "unasked" and report["autonomy"] == INTERACTIVE:
+        lines += ["", "Ask the owner to read the claims %s in research/SPEC.md and confirm them. Record the answer with:"
+                  % (", ".join(state["claims"]) or "added"),
+                  "  wayline specify confirm --amend %s [--rationale \"<why>\"]" % report["objective"],
+                  "  wayline specify revise --amend %s \"<what to change>\"" % report["objective"]]
+    elif not report["stopped"]:
+        lines.append("  " + _amend_next(state))
+    return "\n".join(lines)
+
+
+def owed_amendments(project, events=None):
+    """The objectives an approved "Objective changes" batch added or reframed whose amendment the conductor owes a step.
+
+    An objective opened by an approved proposal (its first `objective` event names the proposal) gets its amendment once
+    the spec is confirmed and while it is open: drafted, judged, cut, asked, and, under `autonomous`, decided. One waiting
+    for the owner is not owed, and neither is an objective a claim answers already.
+    """
+    project = Path(project).resolve()
+    if events is None:
+        events, _ = Ledger(project).read_events()
+    if spec_state(project, events)["state"] != "confirmed":
+        return []
+    first = {}
+    for event in events:
+        if event.get("event") == "objective":
+            payload = event.get("payload") or {}
+            first.setdefault(payload.get("id"), payload)
+    autonomy = read_harness(project).get("autonomy")
+    owed = []
+    for identifier, payload in first.items():
+        if not payload.get("proposal") or payload.get("status") != objectives.OPEN:
+            continue
+        try:
+            if amendment_refusal(project, identifier) is not None:
+                continue
+        except SpecifyError:
+            continue
+        step = amendment_state(project, identifier, events, autonomy)["state"]
+        if step in ("none", "unverified", "revise", "uncut") or (step == "pending" and autonomy == AUTONOMOUS) \
+                or (step == "unasked" and autonomy != INTERACTIVE):
+            owed.append(identifier)
+    return owed
+
+
 # --- the verb -------------------------------------------------------------------------------------------
 
 
@@ -1065,7 +1710,10 @@ def specify_command(args):
         prog="wayline specify",
         description="phase P3: draft research/SPEC.md with the planner, check it, have the verifier judge it, and ask for "
                     "its confirmation by the project's autonomy; run again, it does whatever the spec owes next. "
-                    "`wayline specify confirm` and `wayline specify revise` record the owner's answer.")
+                    "`wayline specify confirm` and `wayline specify revise` record the owner's answer. With --amend, the spec "
+                    "amendment for an objective opened after the spec was confirmed: new claims under new ids, nothing "
+                    "already there changed (decision 17).")
+    parser.add_argument("--amend", metavar="OBJECTIVE", help="amend the confirmed spec for this objective, O1 onward")
     parser.add_argument("--project", help="the project; the active one by default")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     options, code = parse_args(parser, args)
@@ -1073,11 +1721,17 @@ def specify_command(args):
         return code
     try:
         project = find_project(options.project)
-        report = specify(project, out=None if options.json else sys.stdout)
+        if options.amend:
+            report = amend(project, options.amend, out=None if options.json else sys.stdout)
+        else:
+            report = specify(project, out=None if options.json else sys.stdout)
     except (ProjectError, LedgerError, TicketError, SpecifyError, OSError) as failure:
         print("wayline specify: %s" % failure, file=sys.stderr)
         return 1
-    print(json.dumps(report, ensure_ascii=False, indent=2) if options.json else render_report(report))
+    if options.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_amend_report(report) if options.amend else render_report(report))
     return 1 if report["stopped"] else 0
 
 
@@ -1088,6 +1742,7 @@ def _answer_command(verb, args):
                     % ("confirmation" if verb == "confirm" else "request for a change"))
     if verb == "revise":
         parser.add_argument("change", help="what to change, in a sentence")
+    parser.add_argument("--amend", metavar="OBJECTIVE", help="answer the confirmation of the amendment for this objective")
     parser.add_argument("--rationale", help="the owner's reason, when they gave one")
     parser.add_argument("--project", help="the project; the active one by default")
     options, code = parse_args(parser, args)
@@ -1096,12 +1751,18 @@ def _answer_command(verb, args):
     text = CONFIRM if verb == "confirm" else "revise: " + options.change
     try:
         project = find_project(options.project)
-        state = confirm(project, text, rationale=options.rationale)
+        if options.amend:
+            state = confirm_amendment(project, options.amend, text, rationale=options.rationale)
+        else:
+            state = confirm(project, text, rationale=options.rationale)
     except SpecifyError as failure:
         print("wayline specify %s: %s" % (verb, failure), file=sys.stderr)
         return 2
     except (ProjectError, LedgerError, TicketError, OSError) as failure:
         print("wayline specify %s: %s" % (verb, failure), file=sys.stderr)
         return 1
-    print("the spec: %s at %s; %s" % (state["state"], state["sha"], _next(state)))
+    if options.amend:
+        print("the amendment for %s: %s at %s; %s" % (options.amend, state["state"], state["sha"], _amend_next(state)))
+    else:
+        print("the spec: %s at %s; %s" % (state["state"], state["sha"], _next(state)))
     return 0

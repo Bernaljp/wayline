@@ -95,6 +95,29 @@ lists it read-only, marked with its tag.
     verdict. Decision 4's "change the goal or the data" is "change a goal's measure, or the data": the code check no
     longer refuses the decider an answer that drops, adds, or reframes an objective.
 
+- Spec amendments (ticket 92; Implementation Decisions 17, 1, 10, and 11). An objective added or reframed after the
+  spec was confirmed gets new work that traces to a claim without rewriting anything confirmed.
+  `wayline specify --amend <O>` runs it, and the conductor runs it for every add or reframe an approved "Objective
+  changes" batch made; after setup, `wayline objective add` names the verb.
+  - One specify session, scoped to the objective (the planner's new `## Amend` protocol), returns the whole spec with
+    claims naming the objective, their experiments, metrics, and anti-claims appended under new ids. The append-only
+    check (`specify.check_amendment`, a Type-A function over the two versions) refuses one that changes, moves, or
+    removes anything already there, or whose new claims do not name the objective; the draft is returned once with
+    the failures, and a second failure writes nothing. `research/amendments.json` records each amendment with the
+    version it amends, and the spec stays confirmed: `spec_state` reads an amended spec as the version it amends.
+  - The verifier judges the amendment alone (subject `research/SPEC.md amendment for <O> at <sha>`). The planner then
+    cuts tickets for the new claims alone (a cut of kind `amend`, each ticket naming the objective, nothing taken back,
+    `plan.json` untouched), and a `lit` ticket serving the objective when no current Introduction passage with a `ref`
+    tag covers it. Until ticket 99 ships the surveyor, a `lit` ticket is cut on that role and its launch fails on the
+    missing role.
+  - Under `checkpoints` a "Confirm the amendment" decision ticket, opened in the same locked section as the tickets,
+    pauses only them (`blocking: subgraph`), and the rest of the run goes on; under `autonomous` the decider answers it
+    at once; under `interactive` the owner's word comes first (`wayline specify confirm --amend <O>` or
+    `revise --amend <O> "<what to change>"`, the owner told when the conductor drafted it) and the tickets are cut
+    after. A revise parks the new tickets at once, and the next amendment is drafted again from the same base.
+  - Reopening a parked objective needs no amendment: its set-aside claims come back. Reopening an answered or dropped
+    one stays the owner's alone, keeps the old answer as superseded, and has the planner cut fresh tickets (ticket 91).
+
 - The outline of the paper (ticket 104; Implementation Decisions 17, 1, and 2). Code alone builds `research/OUTLINE.md`
   at every render (with the general report and the account, at the end of every wave, at `init`), with no model
   tokens: a storyline of the objectives, the gaps (what holds nothing yet; an empty main-text list is the paper

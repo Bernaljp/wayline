@@ -97,6 +97,19 @@ A confirmation journals the phase to P5, and the verb prints `next: wayline run`
 - `wayline plan --split <id> --project .` replaces one failed ticket with smaller ones that inherit
   its blockers and its dependents; the escalation ladder calls it after a tier up failed.
 
+## An objective added after setup
+
+Once the spec is confirmed, an objective the owner adds (`wayline objective add` says so) gets a
+spec amendment: run `wayline specify --amend <O> --project .`. One planner session appends claims
+for it under new ids and changes nothing already in the spec, the verifier judges only what was
+added, and the planner cuts tickets for the new claims alone, with a `lit` ticket when no
+Introduction passage covers the objective. Under `interactive` ask the owner to read the new claims
+and record the word with `wayline specify confirm --amend <O> --project .` or
+`wayline specify revise --amend <O> "<what to change>" --project .`, then run the verb again to cut
+the tickets. Under `checkpoints` a "Confirm the amendment" ticket pauses only those tickets; under
+`autonomous` the decider answers it. The conductor amends on its own for the objectives an approved
+"Objective changes" batch added or reframed. Reopening a parked objective needs no amendment.
+
 ## How you work
 
 - Never write under `research/`, and never edit a ticket file or `graph.json` yourself: the verb

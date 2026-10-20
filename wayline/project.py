@@ -1921,11 +1921,14 @@ def graph_answered(project, ledger, fields, text):
     `wayline plan` cuts it again. Any other ticket's answer is left alone. Returns the ids parked.
 
     The same holds for the ladder decision of a change record (ticket 45): an answer that does not approve the
-    change to the rung ladder parks its harness ticket here, before the closed decision can release it.
+    change to the rung ladder parks its harness ticket here, before the closed decision can release it. And for an
+    amendment's confirmation (ticket 92): an answer that asks for a change parks the tickets cut for the amendment, which
+    the confirmation alone paused.
     """
-    from wayline import changes, plan  # both modules import this one
+    from wayline import changes, plan, specify  # the three modules import this one
 
-    return list(plan.graph_sent_back(project, ledger, fields, text) or []) + changes.ladder_answered(project, fields, text, ledger=ledger)
+    return (list(plan.graph_sent_back(project, ledger, fields, text) or []) + changes.ladder_answered(project, fields, text, ledger=ledger)
+            + specify.amendment_answered(project, ledger, fields, text))
 
 
 def journal_written_answers(project, ledger):
