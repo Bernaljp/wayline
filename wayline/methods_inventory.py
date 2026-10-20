@@ -105,6 +105,19 @@ def _owner_reasons(book):
     return found
 
 
+def _remembered(read):
+    """`read` reading each file once: a render resolves many tags against the same few files."""
+    seen = {}
+
+    def remembered(path):
+        if path not in seen:
+            seen[path] = read(path)
+        return seen[path]
+
+    remembered.where = getattr(read, "where", "")
+    return remembered
+
+
 def parameter_rows(project_or_ledger, read=None):
     """The table's rows: `[{method, name, value, default, reason, path, line, ticket, by, code}]`, in ticket order.
 
@@ -114,7 +127,7 @@ def parameter_rows(project_or_ledger, read=None):
     from wayline import provenance  # the provenance module pulls in the gates and the report
 
     book = ledger_for(project_or_ledger)
-    read = read or provenance.main_reader(book.project)
+    read = _remembered(read or provenance.main_reader(book.project))
     rows, order = {}, []
     for ticket, entries in _integrated(book):
         keys = {(entry.get("path"), _one_line(entry.get("method")), _one_line(entry.get("name"))) for entry in entries}
@@ -127,17 +140,15 @@ def parameter_rows(project_or_ledger, read=None):
             if key not in order:
                 order.append(key)
     owners = _owner_reasons(book)
-    held = {}
     found = []
     for key in order:
         for row in rows.get(key, []):
             path = row.get("path")
             if path:
-                if path not in held:
-                    held[path] = read(path) is not None
-                if not held[path]:
-                    continue
-                row["code"] = "{code:%s#L%d}" % (path, int(row["line"])) if row.get("line") else "{code:%s}" % path
+                line = int(row["line"]) if str(row.get("line") or "").isdigit() and int(row["line"]) > 0 else 1
+                if provenance.code_tag_problem(read, {"path": path, "locator": "L%d" % line}) is not None:
+                    continue  # its file or its line is no longer on `main`: not current
+                row["code"] = "{code:%s#L%d}" % (path, line)
             else:
                 row["code"] = None
             for method, name, where, reason in owners:
@@ -420,7 +431,7 @@ def no_code(project_or_ledger, passages=None, read=None):
 
     book = ledger_for(project_or_ledger)
     passages = _methods_passages(book) if passages is None else passages
-    read = read or provenance.main_reader(book.project)
+    read = _remembered(read or provenance.main_reader(book.project))
     table = methods.aliases()
     calls_of = {}  # alias, folded -> (alias as the table writes it, method, {short call names})
     for language, entries in table.items():
@@ -568,7 +579,8 @@ def _stated_values(name, passages):
     """`[(value, passage id)]`: each number the inherited Methods states for a parameter, within a few words after its
     name (`window of 256 samples`, `$\\sigma = 0.1$`)."""
     spoken = re.escape(name).replace("_", "[ _]")
-    pattern = re.compile(r"(?<![\w\\])%s(?!\w)[^.;\n]{0,%d}?(?<![\w.])(%s)(?![\w.])" % (spoken, STATED_WINDOW, _NUMBER), re.IGNORECASE)
+    pattern = re.compile(r"(?<![\w\\])%s(?!\w)[^.;\n]{0,%d}?(?<![\w.])(%s)(?!\w|\.[0-9])" % (spoken, STATED_WINDOW, _NUMBER),
+                         re.IGNORECASE)
     found = []
     for item in passages:
         for match in pattern.finditer(str(item.get("text") or "")):
@@ -581,6 +593,8 @@ def _stated_values(name, passages):
 def _disagreements(items, texts, passages):
     """`[(text, path, line, words)]`: where the inherited Methods and the code disagree, `words` naming what it is about."""
     found = []
+    if not passages:
+        return found  # no inherited Methods: nothing stated to disagree with
     stated_text = "\n".join(str(item.get("text") or "") for item in passages)
     for item in items:
         if item.kind != "parameter" or item.value in (None, methods.UNSET):

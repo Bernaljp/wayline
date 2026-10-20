@@ -5,7 +5,7 @@
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": ["matplotlib", "seaborn"], "venues": []},
   "cost_hint": "small",
   "fixtures": [],
-  "sha256": "f5b118beb24f5e3da45f93a763c00d8b5cb9ed218e3aa87812e366ffded14494",
+  "sha256": "268cd8c80b737cf925f2947ac39cfc71827d6c79d88bf4b3875152cbf451468d",
   "may_judge": false,
   "output_schema": "result",
   "allowed_tools": [

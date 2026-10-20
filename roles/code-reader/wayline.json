@@ -5,7 +5,7 @@
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "small",
   "fixtures": [],
-  "sha256": "deeadc7a2529f4791ce17d9182f43586e7630e7df34c7480ada206216b6465df",
+  "sha256": "8ca12af93cc311fd6a832bb1ef15ef54d0979102ccd2e34efa1383ebe73ab845",
   "may_judge": false,
   "output_schema": "code_reading",
   "allowed_tools": [],

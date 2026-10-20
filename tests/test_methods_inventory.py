@@ -62,6 +62,12 @@ class ParameterTableTest(InventoryCase):
         self.assertNotIn("An early reason.", text)
         self.assertNotIn("Gone with its file.", text)
 
+    def test_a_row_whose_code_tag_main_no_longer_resolves_leaves(self):
+        self.integrated(3, [self.window(), dict(self.window("Its line is gone."), name="seed", line=400)])
+        text = self.render()
+        self.assertNotIn("Its line is gone.", text)
+        self.assertIn(WINDOW_REASON, text)
+
     def test_the_table_is_never_read_as_the_owners_passages(self):
         self.integrated(3, [self.window()])
         self.render()
@@ -335,6 +341,15 @@ class SetupTest(VerificationCase):
         self.assertIn("Leads from the reading of the inherited code", verification.pack_text(self.project, {"verifies": "Results"}))
         self.assertIn("lead", (self.project / "research" / "VERIFICATIONS.md").read_text(encoding="utf-8"))
         self.assertEqual(done, record)
+
+    def test_a_value_stated_at_the_end_of_a_sentence_is_read(self):
+        (self.temp / "notes.md").write_text("# Methods\n\nThe phase was taken over a window of 384.\n", encoding="utf-8")
+        self.add(self.temp / "notes.md")
+        self.deconstruct("D3")
+        stated = next(item["id"] for item in self.ours("D3"))
+        self.setup()
+        [result] = verification.read_results(self.project)
+        self.assertTrue(any("384 (%s)" % stated in entry["text"] for entry in result["disagreements"]), result["disagreements"])
 
     def test_the_setup_runs_once(self):
         self.setup()
