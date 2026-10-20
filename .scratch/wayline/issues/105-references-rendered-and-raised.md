@@ -47,7 +47,7 @@ It blocks 109, 111, 115, and 121.
   - under `checkpoints`: "Waiting on you", put at the next conversation or with the end notice;
   - under `autonomous`: setup only, then listed with no notice.
 - [ ] Each important reference is raised once, and an item the owner settled with "leave it" is not raised again before the order.
-- [ ] The account's Library gives the count of unresolved references and points to References' Not yet resolved list. "Waiting on you" lists each important one raised.
+- [ ] The account's Library gives the count of unresolved references and points to References' Not yet resolved list. "Waiting on you" lists each important one raised, by this definition in place of the narrower test the account uses until then (`account._unresolved_references`, ticket 89: a standing passage or finding cites it).
 - [ ] Tests:
   - the render over a temporary project with fixture dossiers at L0, L1, and L2 and unresolved ones in each state, asserted on both files;
   - the raise rule under each autonomy by replaying journals that hold a retrying reference, its final failure, and a "leave it", asserted on the notices and events the next wave appends;
