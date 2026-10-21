@@ -102,11 +102,18 @@ class DraftedTicketTest(ProjectTestCase):
         self.assertEqual(read_tickets(self.project)[0]["sections"], ["discussion"])
 
     def test_a_draft_of_a_kind_no_shipped_role_covers_is_refused_rather_than_failing_at_launch(self):
-        code, _, err = self.add(draft(kind="lit", touches=["notes/related.md"], acceptance={"machine": ["test -f notes/related.md"]},
-                                      title="Survey the related work", demo="notes/related.md lists the related work"))
+        code, _, err = self.add(draft(kind="review", touches=["notes/review.md"], acceptance={"machine": ["test -f notes/review.md"]},
+                                      title="Review the related work", demo="notes/review.md reviews the related work"))
         self.assertEqual(code, 1)
         self.assertIn("no role", err)
         self.assertEqual(read_tickets(self.project), [])
+
+    def test_a_literature_search_the_owner_asks_for_is_a_lit_ticket_on_the_surveyor(self):
+        """Ticket 99's surveyor covers `lit`: an empty touch set and no machine criterion, its passages are its work."""
+        code, out, _ = self.add(draft(kind="lit", touches=[], acceptance={"machine": []}, title="Survey the related work",
+                                      demo="Introduction passages on the related work, each tagged at a scouted work's abstract"))
+        self.assertEqual(code, 0)
+        self.assertIn("Ticket 1 (lit, difficulty 2, surveyor): Survey the related work", out)
 
     def test_the_function_returns_what_it_wrote(self):
         outcome = drafts.add_drafted(self.project, draft())
