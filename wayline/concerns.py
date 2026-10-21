@@ -689,6 +689,7 @@ def take_marks(project):
                 changed += place(project, [concern["id"]], parsed, item["by"] or "owner", only_unsorted=True)
             except ConcernError:
                 continue
+            batches.acted_on(project, batch["id"], [item["id"]])  # placed: a later click in the marks view changes nothing
     return changed
 
 

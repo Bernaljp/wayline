@@ -188,6 +188,88 @@ class SettlingTest(BatchTestCase):
         self.assertEqual([batch["id"] for batch in batches.read_batches(self.project, status="open")], ["B2"])
 
 
+class ChangeTest(BatchTestCase):
+    """Where a mark was given (ticket 112): a mark the dashboard gave changes on a second click until its producer acts on it."""
+
+    def test_each_settled_item_says_where_it_was_given(self):
+        self.plots()
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        batches.mark(self.project, "B1", 2, "drop", via="conversation")
+        batches.mark(self.project, "B1", 3, "maybe", by="decider")
+        self.assertEqual([(item["by"], item["via"]) for item in self.on_disk("B1")["items"]],
+                         [("owner", "dashboard"), ("owner", "conversation"), ("decider", None)])
+
+    def test_a_second_dashboard_mark_changes_the_first_and_is_journaled(self):
+        self.plots()
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        batches.mark(self.project, "B1", 1, "drop", note="a duplicate of P2", via="dashboard")
+        item = self.on_disk("B1")["items"][0]
+        self.assertEqual((item["mark"], item["note"], item["by"], item["via"]), ("drop", "a duplicate of P2", "owner", "dashboard"))
+        self.assertEqual([event["payload"].get("mark") for event in self.marked_events()], ["keep", "drop"])
+        self.assertEqual(batches.marks(self.project, "B1")[0]["mark"], "drop", "its producer reads the changed mark")
+
+    def test_the_same_mark_again_records_nothing_and_a_note_alone_is_kept(self):
+        self.plots()
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        self.assertEqual(len(self.marked_events()), 1, "a second click on the same mark is no new answer")
+        batches.mark(self.project, "B1", 1, None, note="the headline plot", via="dashboard")
+        item = self.on_disk("B1")["items"][0]
+        self.assertEqual((item["mark"], item["note"]), ("keep", "the headline plot"))
+
+    def test_the_last_item_changed_leaves_its_batch_closed(self):
+        self.plots(count=1)
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        batches.mark(self.project, "B1", 1, "maybe", via="dashboard")
+        self.assertEqual((self.on_disk("B1")["status"], self.on_disk("B1")["items"][0]["mark"]), ("closed", "maybe"))
+
+    def test_an_item_settled_in_the_conversation_is_not_answered_again_from_the_dashboard(self):
+        self.plots()
+        batches.mark(self.project, "B1", 1, "drop", via="conversation")
+        with self.assertRaisesRegex(batches.BatchError, "settled as drop by owner in the conversation"):
+            batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        with self.assertRaisesRegex(batches.BatchError, "settled as drop"):
+            batches.mark(self.project, "B1", 1, None, note="too late", via="dashboard")
+        self.assertEqual(self.on_disk("B1")["items"][0]["mark"], "drop")
+        self.assertEqual(len(self.marked_events()), 1)
+
+    def test_the_conversation_and_the_decider_do_not_change_a_dashboard_mark(self):
+        self.plots()
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        with self.assertRaisesRegex(batches.BatchError, "settled as keep by owner in the dashboard"):
+            batches.mark(self.project, "B1", 1, "drop", via="conversation")
+        with self.assertRaisesRegex(batches.BatchError, "settled as keep"):
+            batches.mark(self.project, "B1", 1, "drop", by="decider", via="dashboard")
+
+    def test_a_mark_its_producer_acted_on_is_final(self):
+        self.plots()
+        batches.mark(self.project, "B1", 1, "drop", via="dashboard")
+        batches.mark(self.project, "B1", 2, "keep", via="dashboard")
+        self.assertEqual(batches.acted_on(self.project, "B1", [1, 3]), [1], "an open item is not acted on")
+        self.assertRegex(self.on_disk("B1")["items"][0]["acted"], r"^\d{4}-")
+        self.assertIsNone(self.on_disk("B1")["items"][2]["acted"])
+        with self.assertRaisesRegex(batches.BatchError, "acted on"):
+            batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        self.assertEqual(batches.acted_on(self.project, "B1", [1]), [], "acting twice stamps nothing new")
+        batches.mark(self.project, "B1", 2, "maybe", via="dashboard")
+        self.assertEqual(self.on_disk("B1")["items"][1]["mark"], "maybe", "an item not acted on still changes")
+
+    def test_changeable_says_which_items_a_dashboard_click_may_change(self):
+        self.plots()
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        batches.mark(self.project, "B1", 2, "keep", via="conversation")
+        items = self.on_disk("B1")["items"]
+        self.assertEqual([batches.changeable(item) for item in items], [True, False, False])
+
+    def test_taking_the_defaults_from_the_dashboard_leaves_them_changeable(self):
+        self.plots()
+        batch, settled = batches.take_defaults(self.project, "B1", via="dashboard")
+        self.assertEqual(settled, [1, 3])
+        self.assertEqual([item["via"] for item in batch["items"]], ["dashboard", None, "dashboard"])
+        batches.mark(self.project, "B1", 3, "keep", via="dashboard")
+        self.assertEqual(self.on_disk("B1")["items"][2]["mark"], "keep")
+
+
 class TakeDefaultsTest(BatchTestCase):
     def test_every_open_item_with_a_default_is_settled_and_the_rest_left_open(self):
         self.plots(count=4, defaults=("keep", None, "drop", "maybe"))
@@ -276,6 +358,7 @@ class MarkVerbTest(BatchTestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(batches.marks(self.project, "B1")[1], {"item": 2, "ref": "P2", "mark": "keep", "note": "the headline plot", "by": "owner"})
         self.assertIn("item 2 of B1 (P2) marked keep", out)
+        self.assertEqual(self.on_disk("B1")["items"][1]["via"], "conversation", "the verb is the conversation's")
 
     def test_a_mark_of_several_words_needs_no_quotes(self):
         batches.open_batch(self.project, "contradictions", "Contradictions", [{"ref": "C1", "text": "P3 says up, P9 says down"}])

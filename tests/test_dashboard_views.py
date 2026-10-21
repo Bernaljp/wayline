@@ -37,10 +37,10 @@ class Answer:
 class Serving:
     """A dashboard serving `self.project`, registered and active, on a free loopback port."""
 
-    def serve(self):
+    def serve(self, token=None):
         register(self.project, TAG)
         set_active(self.project)
-        server = make_server(LOOPBACK, 0, static_root=None, memo_ttl=0.0, readings_ttl_s=3600)
+        server = make_server(LOOPBACK, 0, token=token, static_root=None, memo_ttl=0.0, readings_ttl_s=3600)
         self.addCleanup(server.server_close)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

@@ -415,6 +415,7 @@ class ApproveTest(BatchCase):
         batches.mark(self.project, batch["id"], 1, "approve")
         report = self.settle()
         self.assertEqual(report["applied"], ["t1-a1/1"])
+        self.assertEqual([item["acted"] is not None for item in self.batches()[0]["items"]], [True, False], "a change made is final")
         self.assertEqual((self.objective("O2")["status"], self.statuses()[2]), ("parked", "parked"))
         self.assertEqual(self.objective_events()[-1], ("O2", "parked", "owner", "t1-a1/1"))
         self.assertNotIn(ticket["id"], [payload["ticket"] for payload in (event["payload"] for event in self.events("decision"))])

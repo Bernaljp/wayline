@@ -310,6 +310,8 @@ class AcceptTest(DrawnCase):
         record = self.accept()
         plots = self.plots()
         self.assertEqual((plots["R1.1"]["status"], plots["R1.1"]["mark"]), ("current", "keep"))
+        self.assertEqual([(item["mark"], bool(item["acted"])) for item in batches.read_batch(self.project, first["batch"])["items"]][:3],
+                         [("keep", True), ("drop", True), ("maybe", True)], "the next drawing took each mark: none changes now")
         self.assertEqual(record["carried"], ["R1.1"])
         self.assertEqual((plots["R1.2"]["status"], plots["R1.2"]["mark"]), ("retired", "drop"))
         self.assertEqual((plots["R1.3"]["status"], plots["R1.3"]["note"]), ("current", "Colour the strip by split."))

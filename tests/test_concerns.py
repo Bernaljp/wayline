@@ -379,6 +379,8 @@ class GrillGroupsTest(SetupCase):
         batches.mark(self.project, batch["id"], 4, "another place", note="decline: the code was fixed before submission")
         concerns.take_marks(self.project)
         self.assertEqual(self.concern("K2")["objectives"], ["O2"])
+        acted = {item["id"]: item["acted"] for item in batches.read_batch(self.project, batch["id"])["items"]}
+        self.assertTrue(acted[2] and acted[4], "a concern placed is final")
         self.assertEqual((self.concern("K4")["status"], self.concern("K4")["reason"]),
                          ("declined", "the code was fixed before submission"))
 

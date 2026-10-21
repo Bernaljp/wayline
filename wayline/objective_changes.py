@@ -749,6 +749,7 @@ def _place_words(parsed):
 
 def _apply_marks(project, report, say):
     """Every approved item not applied yet, applied in item order, `by` whoever marked it; an answer with no text owed."""
+    from wayline import batches
     from wayline.objectives import ObjectiveError, named, read_objectives
 
     events, _ = ledger_for(project).read_events()
@@ -778,6 +779,7 @@ def _apply_marks(project, report, say):
                 say("  objective change %s could not be made: %s" % (item["ref"], failure))
                 continue
             applied.add(item["ref"])
+            batches.acted_on(project, batch["id"], [item["id"]])  # made: a later click in the marks view changes nothing
             report["applied"].append(item["ref"])
             say("  objective change %s approved by the %s: %s %s%s" % (
                 item["ref"], item["by"], record["kind"], done["objective"],
@@ -801,6 +803,8 @@ def _close_settled(project):
             answer(project, fields["id"], said, rationale="every item of batch %s is marked" % batch["id"])
         except ProjectError:
             continue
+        # The ticket's answer is these marks: a later click in the marks view would leave it saying another.
+        batches.acted_on(project, batch["id"], [item["id"] for item in batch["items"]])
 
 
 def _gather(project, report, notify, say):

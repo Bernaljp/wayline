@@ -783,6 +783,7 @@ class AnsweredInstallTest(SoftwareCase):
         [answer] = [event["payload"] for event in self.events("decision") if event["ticket"] == self.ask]
         self.assertEqual((answer["answer"], answer["decided_by"]), ("Install", "human"))
         self.assertIn("mark", answer["rationale"])
+        self.assertTrue(batches.read_batch(self.project, batch["id"])["items"][0]["acted"], "the decision answered is final")
         self.wave()
         self.assertTrue((self.project / "research" / "jobs" / ("%s.json" % self.job(1))).is_file())
 

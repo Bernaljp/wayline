@@ -975,6 +975,31 @@ details.row-more > summary { cursor: pointer; }
 .side-head { margin: 0 0 var(--space-1); color: var(--ink-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .side blockquote { margin: 0; padding: var(--space-2) var(--space-3); border-left: 3px solid var(--line-strong); overflow-wrap: anywhere; }
 
+/* --- Marks (ticket 112) ----------------------------------------------------------------------------- */
+
+/* A batch: its id, title, and kind, then its items, each whole, with its marks and its note box. */
+.batches { display: grid; gap: var(--space-5); }
+.batch { min-width: 0; }
+.batch-head .row-title { font-weight: 600; }
+.mark-items { list-style: none; margin: var(--space-2) 0 0; padding: 0; }
+.mark-item { padding: var(--space-3) 0; border-top: 1px solid var(--line); min-width: 0; display: grid; gap: var(--space-2); }
+.mark-item > * { margin: 0; min-width: 0; }
+.mark-text { overflow-wrap: anywhere; }
+.mark-plot { margin: 0; }
+.mark-plot img { display: block; max-width: 100%; height: auto; background: #ffffff; border: 1px solid var(--line); border-radius: var(--radius-1); }
+.mark-choices { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+button.action.mark[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.action.mark.default { border-style: dashed; }
+.mark-note-label { display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--dim); }
+.mark-note-label textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.batch-fold > summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.batch-fold[open] > summary { margin-bottom: var(--space-2); }
+.s-keep, .s-approve, .s-stand, .s-real, .s-take-it, .s-take { --status: var(--done); }
+.s-drop, .s-decline, .s-reverse, .s-not-a-contradiction, .s-another-place { --status: var(--paused); }
+
+/* Previous and next: only a phone shows them, with one item to a screen. */
+.pager { display: none; }
+
 /* A project of another research_version is read-only (decision 17): no action is offered for it. */
 body[data-read-only="true"] .acts { display: none !important; }
 
@@ -1002,6 +1027,14 @@ body[data-read-only="true"] .acts { display: none !important; }
   dialog#viewer { width: 100vw; height: 100dvh; margin: 0; border: 0; border-radius: 0; }
   .viewer-body { padding: var(--space-3) var(--space-4); }
   .viewer-bar button.action { min-height: 44px; min-width: 44px; }
+  /* Marks: one item to a screen, with previous and next held at the bottom where a thumb reaches them. */
+  #marks-body .batch:not(.has-current), #marks-body .mark-item:not(.current) { display: none; }
+  #marks-body .mark-item.current { border-top: 0; }
+  .pager {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+    position: sticky; bottom: 0; padding: var(--space-2) 0; background: var(--surface); border-top: 1px solid var(--line);
+  }
+  .pager-at { font-size: var(--text-sm); color: var(--dim); }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -914,6 +914,16 @@ def _batch_items(entries):
     return items
 
 
+def _acted_on_marks(book, plot_ids):
+    """Every settled mark on `plot_ids` steered this drawing (its brief, what it retired and carried): none changes now."""
+    from wayline import batches
+    for batch in batches.read_batches(book):
+        if batch["kind"] == PLOTS_BATCH:
+            taken = [item["id"] for item in batch["items"] if item["ref"] in plot_ids and item["mark"] is not None and not item.get("acted")]
+            if taken:
+                batches.acted_on(book, batch["id"], taken)
+
+
 def accept(project, ticket, checked):
     """Record an accepted drawing: its plots' ids, `plots.json`, its record, its `plots` batch, and `drawing` accepted.
 
@@ -971,6 +981,7 @@ def accept(project, ticket, checked):
             else:
                 plot.update(status=RETIRED, headline=False)
                 retired.append(plot["id"])
+        _acted_on_marks(book, {plot["id"] for plot in plots if plot.get("result") == result_id})
         batch = None
         if drawn["plot"] or drawn["table"]:
             batch = batches.open_batch(book, PLOTS_BATCH, "Plots of %s, drawing %s: keep, maybe, or drop" % (result_id, name),

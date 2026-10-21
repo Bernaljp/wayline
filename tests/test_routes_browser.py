@@ -1,6 +1,6 @@
-"""The routed views (tickets 110 and 111) in a real browser over HTTP: the hash routes, back and forward, item links
-opening in the viewer, the strip's count in the title, Inherited only for a project with documents, and every view at
-phone width with no sideways scroll.
+"""The routed views (tickets 110, 111, and 112) in a real browser over HTTP: the hash routes, back and forward, item
+links opening in the viewer, the strip's count in the title, Inherited only for a project with documents, every view at
+phone width with no sideways scroll, and Marks saving per click with one item to a phone's screen.
 
 What the routes promise is only observable where the page runs, so these tests start the real server over a project
 built as a run builds it (`test_dashboard_views.DrawnProjectCase`) and load the page in a headless Chromium
@@ -11,6 +11,7 @@ import json
 import unittest
 
 from tests.browser import Browser, find_chromium
+from tests.test_dashboard_marks import TOKEN, MarksServedCase
 from tests.test_dashboard_paper import MidwayServedCase
 from tests.test_dashboard_views import DrawnProjectCase
 
@@ -175,3 +176,44 @@ class InheritedRouteTest(BrowserCase, MidwayServedCase):
     def test_paper_and_inherited_keep_to_the_phones_width(self):
         self.fits_the_phone((("paper", "document.querySelector('#paper-references-body li.row')"),
                              ("inherited", "document.querySelector('#inherited-material-body li.row')")))
+
+
+@unittest.skipUnless(CHROMIUM, "no Chromium on this machine (set WAYLINE_CHROMIUM to one)")
+class MarksRouteTest(BrowserCase, MarksServedCase):
+    """Marks (ticket 112), in the browser: a click saves, a second changes, and a phone shows one item at a time."""
+
+    def open(self, route=""):
+        self.page.goto("http://%s:%d/?token=%s%s" % (self.host, self.port, TOKEN, route))
+
+    def item(self, key):
+        return "document.querySelector('#marks-body li.mark-item[data-item=\"%s\"]')" % key
+
+    def button(self, key, name):
+        return "[...%s.querySelectorAll('button.mark')].find((button) => button.textContent === '%s')" % (self.item(key), name)
+
+    def test_a_click_saves_the_mark_and_a_second_click_changes_it(self):
+        plots = self.plots["id"]
+        self.open(self.route("marks"))
+        self.page.wait_for(self.item("%s.1" % plots) + " && " + self.item("%s.1" % plots) + ".querySelector('.mark-plot img')")
+        self.page.click(self.button("%s.1" % plots, "keep"))
+        self.page.wait_for(self.button("%s.1" % plots, "keep") + ".getAttribute('aria-pressed') === 'true'")
+        self.assertEqual(self.on_disk(plots)["items"][0]["mark"], "keep")
+        self.page.click(self.button("%s.1" % plots, "drop"))
+        self.page.wait_for(self.button("%s.1" % plots, "drop") + ".getAttribute('aria-pressed') === 'true'")
+        self.assertEqual((self.on_disk(plots)["items"][0]["mark"], self.on_disk(plots)["items"][0]["via"]), ("drop", "dashboard"))
+
+    def test_a_batch_link_opens_marks_at_it(self):
+        self.open(self.route(self.review["id"]))
+        self.page.wait_for("document.body.dataset.view === 'marks' && " + self.item("%s.1" % self.review["id"]))
+        self.assertFalse(self.shown()["open"], "a batch opens in Marks, not the viewer")
+
+    def test_a_phone_shows_one_item_at_a_time_with_previous_and_next(self):
+        self.page.screen(390, 844, mobile=True)
+        self.open(self.route("marks"))
+        first = "%s.1" % self.plots["id"]
+        self.page.wait_for(self.item(first) + " && " + self.item(first) + ".classList.contains('current')")
+        shown = "[...document.querySelectorAll('#marks-body li.mark-item')].filter((item) => item.offsetParent !== null).map((item) => item.dataset.item)"
+        self.assertEqual(self.page.evaluate(shown), [first])
+        self.page.click("[...document.querySelectorAll('#marks-body .pager button')].find((button) => button.textContent === 'next')")
+        self.page.wait_for("%s.length === 1 && %s[0] === '%s.2'" % (shown, shown, self.plots["id"]))
+        self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390, json.dumps(self.shown()))

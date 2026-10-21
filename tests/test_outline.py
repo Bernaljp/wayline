@@ -646,6 +646,7 @@ class MergeTest(Project):
         batch = self.propose()
         batches.mark(self.project, batch["id"], 1, "take")
         self.assertEqual(outline.take_marks(self.project), [("R2", "R1")])
+        self.assertTrue(batches.read_batch(self.project, batch["id"])["items"][0]["acted"], "a merge made is final")
         merged = [event for event in self.ledger.read_events()[0] if event["event"] == "result"
                   and event["payload"]["action"] == "merged"]
         self.assertEqual([(event["payload"]["id"], event["payload"]["into"], event["payload"]["by"]) for event in merged],
@@ -660,6 +661,7 @@ class MergeTest(Project):
         batch = self.propose()
         batches.mark(self.project, batch["id"], 1, "decline")
         self.assertEqual(outline.take_marks(self.project), [])
+        self.assertIsNone(batches.read_batch(self.project, batch["id"])["items"][0]["acted"], "a decline does nothing")
         self.finding("Noise under heavy tails", objectives_=[self.o1], text="Heavy tails double the error.")
         self.assertIsNone(self.propose(), "the declined pair is not proposed again")
         self.assertEqual(len(self.embedder.calls), 2, "a new result is a new set to embed")

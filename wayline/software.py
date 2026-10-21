@@ -955,6 +955,7 @@ def settle(project, runner, tools=None, notify=None, say=None, harness_root=None
                     decisions.decide(project, ask.id, text, "the decider's mark on item 1 of %s" % ask.batch["id"])
                 else:
                     answer_ticket(project, ask.id, text, rationale="the owner's mark on item 1 of %s" % ask.batch["id"])
+                batches.acted_on(project, ask.batch["id"], [item["id"]])  # the decision's answer: no later click changes it
                 changed = True
                 say("  decision ticket %d answered by the %s's mark in %s: %s" % (ask.id, item["by"], ask.batch["id"], text))
             except ProjectError as failure:

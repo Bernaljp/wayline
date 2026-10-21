@@ -1113,6 +1113,7 @@ def settle_marks(project, told=None, problems=None):
                 problems.append("your %s mark on %s (item %d of %s) could not be taken: %s; `wayline review %s %s` takes it again"
                                 % (item["mark"], ref, item["id"], batch["id"], failure, ref, item["mark"]))
             continue
+        batches.acted_on(project, batch["id"], [item["id"]])  # reviewed: a later click in the marks view changes nothing
         taken.append(ref)
     return taken
 

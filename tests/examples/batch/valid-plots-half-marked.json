@@ -6,8 +6,8 @@
   "status": "open",
   "items": [
     {"id": 1, "ref": "P12", "text": "AUROC against the number of interaction terms, one line per seed", "marks": ["keep", "maybe", "drop"], "default": "keep",
-     "note": "the headline plot", "mark": "keep", "by": "owner", "at": "2026-10-18T09:12:44.120Z"},
+     "note": "the headline plot", "mark": "keep", "by": "owner", "via": "dashboard", "at": "2026-10-18T09:12:44.120Z", "acted": null},
     {"id": 2, "ref": "P13", "text": "the same AUROC as a box per term count", "marks": ["keep", "maybe", "drop"], "default": null,
-     "note": null, "mark": null, "by": null, "at": null}
+     "note": null, "mark": null, "by": null, "via": null, "at": null, "acted": null}
   ]
 }

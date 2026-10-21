@@ -6,6 +6,6 @@
   "status": "closed",
   "items": [
     {"id": 1, "ref": "T31", "text": "the decider chose the smaller model for the held-out split", "marks": ["stand", "reverse"], "default": "stand",
-     "note": null, "mark": "stand", "by": "decider", "at": "2026-10-18T09:12:44.120Z"}
+     "note": null, "mark": "stand", "by": "decider", "via": null, "at": "2026-10-18T09:12:44.120Z", "acted": "2026-10-18T09:20:02.511Z"}
   ]
 }

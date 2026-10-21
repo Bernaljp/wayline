@@ -9,8 +9,10 @@ the marks view and the conversation show and settle them the same way.
 A batch is `research/batches/<id>.json` (schema `batch`), ids B1 onward, never reused, written
 only through the ledger. Each item carries what it is about (`ref`), its text, the marks its kind
 allows, code's default where it has one, the owner's note, and its settled mark with who settled
-it and when. A mark saves when given, with no submit: the first one settles the item, and a later
-one is refused with what settled it. A note alone is kept without settling. `take_defaults`
+it, where, and when. A mark saves when given, with no submit: the first one settles the item, and a later
+one is refused with what settled it, except that a mark the owner gave in the dashboard's marks view
+changes on a second click there until its producer acts on it (ticket 112), which the producer says
+with `acted_on`. A note alone is kept without settling. `take_defaults`
 settles every open item that has a default in one call. A batch whose items are all settled is
 closed, and its producer reads the marks back with `marks`. Every mark and every note is
 journaled as `marked`.
@@ -29,8 +31,8 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_BATCH, K_BY, K_ITEM, K_MARK, K_NOTE, MARKED, LedgerError, ledger_for, now_ts
 from wayline.project import ProjectError, find_project
 
-__all__ = ["KINDS", "WHOLE_AT", "BatchError", "open_batch", "extend", "read_batch", "read_batches", "mark", "take_defaults", "marks", "link", "render",
-           "mark_command"]
+__all__ = ["KINDS", "WHOLE_AT", "VIA", "BatchError", "open_batch", "extend", "read_batch", "read_batches", "mark", "take_defaults", "marks",
+           "changeable", "acted_on", "link", "render", "mark_command"]
 
 SCHEMA = "batch"
 DIRECTORY = "batches"
@@ -58,6 +60,12 @@ OWNER = "owner"
 DECIDER = "decider"
 WHO = (OWNER, DECIDER)
 
+# Where the owner gave a mark: the dashboard's marks view, or the conversation's `wayline mark` verb (ticket 112). A mark
+# code gives on another answer (a decision ticket's, a review's) and the decider's name no place.
+DASHBOARD = "dashboard"
+CONVERSATION = "conversation"
+VIA = (DASHBOARD, CONVERSATION)
+
 _ID_RE = re.compile(r"^B([1-9][0-9]*)$")
 
 # One `marked` event to journal: a mark, a note, or both, given on one item.
@@ -82,6 +90,11 @@ def _numbers(ledger):
 
 def _next_id(ledger):
     return "B%d" % (max(_numbers(ledger), default=0) + 1)
+
+
+def _new_item(number, item, allowed):
+    return {"id": number, "ref": item["ref"], "text": item["text"], "marks": allowed, "default": item.get("default"),
+            "note": None, "mark": None, "by": None, "via": None, "at": None, "acted": None}
 
 
 def _blank(text):
@@ -116,8 +129,7 @@ def open_batch(project, kind, title, items, decision=None):
         default = item.get("default")
         if default is not None and default not in allowed:
             raise BatchError("item %d (%s): a %s item's default is one of %s, got %r" % (number, item["ref"], kind, ", ".join(allowed), default))
-        built.append({"id": number, "ref": item["ref"], "text": item["text"], "marks": allowed, "default": default,
-                      "note": None, "mark": None, "by": None, "at": None})
+        built.append(_new_item(number, item, allowed))
     ledger = ledger_for(project)
     with ledger.lock():
         record = {"id": _next_id(ledger), "kind": kind, "title": title, "decision": decision, "status": OPEN, "items": built}
@@ -147,8 +159,7 @@ def extend(project, batch_id, items=(), decision=None):
             default = item.get("default")
             if default is not None and default not in allowed:
                 raise BatchError("a %s item's default is one of %s, got %r" % (batch["kind"], ", ".join(allowed), default))
-            batch["items"].append({"id": len(batch["items"]) + 1, "ref": item["ref"], "text": item["text"], "marks": allowed,
-                                   "default": default, "note": None, "mark": None, "by": None, "at": None})
+            batch["items"].append(_new_item(len(batch["items"]) + 1, item, allowed))
             held.add(item["ref"])
         if decision is not None:
             batch["decision"] = decision
@@ -186,7 +197,20 @@ def _item(batch, item_id):
 
 
 def _settled_by(batch, item):
-    return "item %d of %s was settled as %s by %s at %s" % (item["id"], batch["id"], item["mark"], item["by"], item["at"])
+    where = " in the %s" % item["via"] if item.get("via") else ""
+    acted = "; its producer acted on it at %s" % item["acted"] if item.get("acted") else ""
+    return "item %d of %s was settled as %s by %s%s at %s%s" % (item["id"], batch["id"], item["mark"], item["by"], where, item["at"], acted)
+
+
+def changeable(item):
+    """Whether a click in the marks view may still change a settled item: the owner gave its mark there, and its producer
+    has not acted on it yet."""
+    return item["mark"] is not None and item["by"] == OWNER and item.get("via") == DASHBOARD and not item.get("acted")
+
+
+def _check_via(via):
+    if via is not None and via not in VIA:
+        raise BatchError("a mark is given in the %s, got %r" % (" or the ".join(VIA), via))
 
 
 def _close_if_settled(batch):
@@ -211,15 +235,18 @@ def _save(ledger, batch, journaled):
         ledger.append_event(MARKED, payload, ts=entry.ts)
 
 
-def mark(project, batch_id, item_id, given, note=None, by=OWNER):
+def mark(project, batch_id, item_id, given, note=None, by=OWNER, via=None):
     """Record the mark `given` on one item of a batch, with an optional `note`; returns the batch as written.
 
-    The function the `mark` verb and the dashboard's marks view call. A mark saves when given: the
-    first one settles the item, and a later one is refused with what settled it. `given` None with
-    a `note` keeps the note on the item and leaves it open. A blank note is no note. The last item
-    settled closes the batch.
+    The function the `mark` verb (`via` the conversation) and the dashboard's marks view (`via` the
+    dashboard) call. A mark saves when given: the first one settles the item, and a later one is
+    refused with what settled it, unless the owner gave both in the dashboard and the item's producer
+    has not acted on it (`changeable`): then the later one replaces it, the same mark again records
+    nothing, and a note alone replaces the note. `given` None with a `note` keeps the note on the
+    item and leaves it open. A blank note is no note. The last item settled closes the batch.
     """
     _check_by(by)
+    _check_via(via)
     note = None if _blank(note) else note
     if given is None and note is None:
         raise BatchError("nothing to record: give a mark or a note")
@@ -227,27 +254,32 @@ def mark(project, batch_id, item_id, given, note=None, by=OWNER):
     with ledger.lock():
         batch = read_batch(ledger, batch_id)
         item = _item(batch, item_id)
-        if item["mark"] is not None:
+        if item["mark"] is not None and not (via == DASHBOARD and by == OWNER and changeable(item)):
             raise BatchError("%s; a later mark or note is refused" % _settled_by(batch, item))
         if given is not None and given not in item["marks"]:
             raise BatchError("item %d of %s (%s) takes %s, got %r" % (item["id"], batch["id"], batch["kind"], ", ".join(item["marks"]), given))
+        if given is not None and given == item["mark"]:
+            given = None  # the same mark clicked again is no new answer
+            if note is None or note == item["note"]:
+                return batch
         ts = now_ts()
         if note is not None:
             item["note"] = note
         if given is not None:
-            item.update(mark=given, by=by, at=ts)
+            item.update(mark=given, by=by, via=via if by == OWNER else None, at=ts)
             _close_if_settled(batch)
         _save(ledger, batch, [_Marked(item["id"], given, note, by, ts)])
     return batch
 
 
-def take_defaults(project, batch_id, by=OWNER):
+def take_defaults(project, batch_id, by=OWNER, via=None):
     """"Take all defaults": settle every open item that has a default with it, in one call.
 
     Returns `(batch, settled)`: the batch as written and the numbers of the items this call settled.
     An item with no default stays open, and a batch with nothing left to default is left as it was.
     """
     _check_by(by)
+    _check_via(via)
     ledger = ledger_for(project)
     with ledger.lock():
         batch = read_batch(ledger, batch_id)
@@ -255,12 +287,33 @@ def take_defaults(project, batch_id, by=OWNER):
         journaled = []
         for item in batch["items"]:
             if item["mark"] is None and item["default"] is not None:
-                item.update(mark=item["default"], by=by, at=ts)
+                item.update(mark=item["default"], by=by, via=via if by == OWNER else None, at=ts)
                 journaled.append(_Marked(item["id"], item["mark"], None, by, ts))
         if journaled:
             _close_if_settled(batch)
             _save(ledger, batch, journaled)
     return batch, [entry.item for entry in journaled]
+
+
+def acted_on(project, batch_id, item_ids):
+    """Say that a batch's producer acted on the marks of `item_ids`: a mark acted on is final, even one the dashboard gave.
+
+    The producer calls it once its act on a mark is done (a merge split, a concern placed, a plot retired), so a later
+    click in the marks view cannot change what was already done. An open item, or one stamped already, is left as it is.
+    Returns the numbers of the items stamped now; it journals nothing, since the act is journaled by its producer.
+    """
+    wanted = {int(number) for number in item_ids}
+    ledger = ledger_for(project)
+    with ledger.lock():
+        batch = read_batch(ledger, batch_id)
+        stamped, ts = [], now_ts()
+        for item in batch["items"]:
+            if item["id"] in wanted and item["mark"] is not None and not item.get("acted"):
+                item["acted"] = ts
+                stamped.append(item["id"])
+        if stamped:
+            ledger.write_json(_path(batch["id"]), batch, schema=SCHEMA)
+    return stamped
 
 
 def marks(project, batch_id):
@@ -304,7 +357,7 @@ def render(project, batch_id):
         if item["mark"] is None:
             state = "%s; %s" % (", ".join(item["marks"]), "default %s" % item["default"] if item["default"] else "no default")
         else:
-            state = "settled: %s, by %s" % (item["mark"], item["by"])
+            state = "settled: %s, by %s%s" % (item["mark"], item["by"], " in the %s" % item["via"] if item.get("via") else "")
         line = "  %d. %s: %s [%s]" % (item["id"], item["ref"], item["text"].strip().replace("\n", "\n     "), state)
         if item["note"]:
             line += " note: %s" % item["note"]
@@ -318,6 +371,11 @@ def render(project, batch_id):
 
 def _standing(batch):
     return "%s is closed" % batch["id"] if batch["status"] == CLOSED else "%d open" % _open_count(batch)
+
+
+def _via(by):
+    """The verb is the conversation's: an owner's mark through it was given there, the decider's names no place."""
+    return CONVERSATION if by == OWNER else None
 
 
 def mark_command(args):
@@ -347,13 +405,13 @@ def mark_command(args):
     try:
         project = find_project(options.project)
         if options.defaults:
-            batch, settled = take_defaults(project, options.batch, by=options.by)
+            batch, settled = take_defaults(project, options.batch, by=options.by, via=_via(options.by))
             print("%d item(s) of %s settled by their defaults; %s" % (len(settled), batch["id"], _standing(batch)))
             return 0
         if options.item is None:
             print(render(project, options.batch))
             return 0
-        batch = mark(project, options.batch, options.item, given, note=options.note, by=options.by)
+        batch = mark(project, options.batch, options.item, given, note=options.note, by=options.by, via=_via(options.by))
     except BatchError as failure:
         print("wayline mark: %s" % failure, file=sys.stderr)
         return 2

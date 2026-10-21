@@ -1389,6 +1389,7 @@ def take_marks(project_or_ledger):
                     results_module.merge(book.project, source, into, by=item["by"] or OWNER, render=False)
                 except results_module.ResultError:
                     continue  # a drawing of it is under way (ticket 101): the mark stays, taken at a later pass
+                batches.acted_on(book, batch["id"], [item["id"]])  # merged: no later click in the marks view undoes it
                 merged.append((source, into))
         if merged:
             sections.render_section(book, sections.RESULTS)
