@@ -547,6 +547,10 @@ def objective_command(args):
         print("  a goal: %s (printed %s on %s)" % (describe_measure(objective["measure"]), _number(check.value), check.sample))
     else:
         print("  recorded as an objective without a measure, because the measure's command is not ready: %s" % check.reason)
+    from wayline import specify  # the specify module reads this one
+    if specify.spec_state(project)["state"] == "confirmed":
+        # Past setup the spec is confirmed, so the new objective gets a spec amendment (decision 17; ticket 92).
+        print("  the spec is confirmed, so %s gets a spec amendment: wayline specify --amend %s" % (objective["id"], objective["id"]))
     return 0
 
 

@@ -1,7 +1,8 @@
 """The paper's five sections and the passages that make them (Implementation Decision 17; ticket 86).
 
 **The sections.** `research/sections/introduction.md`, `results.md`, `discussion.md`, `methods.md`, and
-`references.md` exist from `init` and are rendered by code alone: no model edits them. Each file opens with
+`references.md` exist from `init` and are rendered by code alone: no model edits them. References takes no passage: code
+writes it from the works the other four cite, after every render of any of them (ticket 105, `wayline.references`). Each file opens with
 a one-line render stamp, an HTML comment carrying the section, when it was rendered, the last passage or
 finding id it had seen, and the sha256 of the body below it, so that a later reader (the owner's edits,
 ticket 88) can tell an edit from passages that arrived since.
@@ -59,7 +60,7 @@ import re
 
 from wayline import results
 from wayline.jsonschema import ValidationError, check, load_schema
-from wayline.ledger import LedgerError, ledger_for, make_event, now_ts
+from wayline.ledger import PAPER_STARTED, LedgerError, ledger_for, make_event, now_ts
 
 __all__ = [
     "SECTIONS", "TITLES", "WRITTEN", "SECTIONS_DIR", "PASSAGES", "FINDINGS", "KIND_SECTIONS", "BY_RE", "SectionError",
@@ -75,8 +76,10 @@ SECTIONS = ("introduction", "results", "discussion", "methods", "references")
 TITLES = {"introduction": "Introduction", "results": "Results", "discussion": "Discussion", "methods": "Methods",
           "references": "References"}
 RESULTS = "results"
-# The sections a passage names; Results is written as findings.
-WRITTEN = tuple(name for name in SECTIONS if name != RESULTS)
+REFERENCES = "references"
+# The sections a passage names; Results is written as findings, and References by code from the works the others cite
+# (ticket 105, `wayline.references`).
+WRITTEN = tuple(name for name in SECTIONS if name not in (RESULTS, REFERENCES))
 # The sections an inherited passage stands in: Results too, since nothing of a document is a finding.
 INHERITED = ("introduction", "results", "discussion", "methods")
 DOCUMENT_BY = "document:"
@@ -104,6 +107,9 @@ OWNER = "owner"
 CONSOLIDATION = "consolidation"
 # Who may write a passage straight into Results besides a document: the owner, and a consolidation the owner asked for.
 RESULTS_BY = (OWNER, CONSOLIDATION)
+# Why no passage names References (ticket 105).
+REFERENCES_BY_CODE = ("References is written by code from the works the other sections cite: cite the work with a `ref` "
+                      "tag where the claim is made, and it is listed there")
 # Where code records the linter's reading of each section at every render (ticket 88): what it failed and what it lists.
 LINT = "%s/lint.json" % SECTIONS_DIR
 # The line after a section's passages that opens code's notes; an edit is read up to it and never past it.
@@ -337,7 +343,8 @@ def add_passage(project_or_ledger, section, heading, text, *, by, replaces=None,
                            % (", ".join(EVIDENCE), evidence, "" if replaces else " with nothing replaced"))
     if section not in WRITTEN and not (section == RESULTS and (str(by or "").startswith(DOCUMENT_BY) or by in RESULTS_BY)):
         raise SectionError("a passage names one of %s, got %r%s" % (", ".join(WRITTEN), section,
-                                                                  "; a Results passage is a finding" if section == RESULTS else ""))
+                                                                  "; a Results passage is a finding" if section == RESULTS else
+                                                                  "; %s" % REFERENCES_BY_CODE if section == REFERENCES else ""))
     heading, text = _one_line(heading), str(text or "").strip()
     if not heading:
         raise SectionError("a passage needs a heading")
@@ -467,7 +474,7 @@ def pack_text(project_or_ledger, declared_sections, max_chars=None):
     announced, as the planner's pack is.
     """
     book = ledger_for(project_or_ledger)
-    wanted = [name for name in SECTIONS if name in set(declared_sections or ())]
+    wanted = [name for name in SECTIONS if name in set(declared_sections or ()) and name != REFERENCES]  # code writes References
     if not wanted:
         return ""
     lines = ["# The paper's sections", "",
@@ -520,6 +527,8 @@ def check_result(project_or_ledger, fields, result):
     findings = [item for item in result.get("findings") or [] if isinstance(item, dict)]
     problems = []
     for section in declared(fields):
+        if section == REFERENCES:
+            continue  # code writes References from what the other sections cite
         if section == RESULTS:
             if not findings and result.get("status") != "running":
                 problems.append("ticket %s declares Results and returned no finding: a Results passage is a finding, in "
@@ -528,6 +537,9 @@ def check_result(project_or_ledger, fields, result):
             problems.append("ticket %s declares %s and returned no passage for it: add one to `passages` with section `%s`"
                             % (fields.get("id"), TITLES[section], section))
     for index, item in enumerate(passages, start=1):
+        if item.get("section") == REFERENCES:
+            problems.append("passage %d (%s) names References: %s" % (index, _one_line(item.get("heading")), REFERENCES_BY_CODE))
+            continue
         if item.get("section") not in WRITTEN:
             continue  # the result's schema refuses it already
         problem = (check_replaces(book, item["section"], item.get("replaces"))
@@ -936,13 +948,17 @@ def lint_section(project_or_ledger, section, resolver=None):
     """The linter over a section's current passages, as a render records it: `{problems, listed, unclassified}`.
 
     The classes are the cache's (a render launches no classifier), so a sentence it has not classified is counted and
-    neither failed nor listed. Before the paper order an untagged claim in an owner's passage and a claim tagged only
-    `doc` are listed, never failed; a `code` tag resolves against `main`.
+    neither failed nor listed. Before the paper order an untagged claim in an owner's passage, a claim tagged only
+    `doc`, and a citation of a work not yet resolved (ticket 105) are listed, never failed, and after it the last fails;
+    a `code` tag resolves against `main`.
     """
     from wayline import provenance  # the provenance module pulls in the gates and the report
     book = ledger_for(project_or_ledger)
     current = arrange(_items(book, section)).current()
-    linted = provenance.lint_passages(book.project, current, provenance.read_claims_cache(book), resolver=resolver)
+    events, _ = book.read_events()
+    ordered = any(event.get("event") == PAPER_STARTED for event in events)  # after the order an unresolved citation fails
+    linted = provenance.lint_passages(book.project, current, provenance.read_claims_cache(book), resolver=resolver,
+                                      unresolved_ref_fails=ordered)
     listed = [item for item in linted.listed if item["problem"] != provenance.UNCLASSIFIED]
     return {"problems": linted.problems, "listed": listed, "unclassified": linted.unclassified}
 
@@ -962,31 +978,44 @@ def _record_lint(book, section, resolver=None):
     return reading
 
 
-def render_section(project_or_ledger, section, resolver=None, orders=None):
+def render_section(project_or_ledger, section, resolver=None, orders=None, references=True):
     """Write `research/sections/<section>.md` from its log; a body that did not change keeps its file and its stamp.
 
     The owner's edit of the file is taken in first (`take_in`), and the linter's reading of the section is recorded
     at every render (`lint_section`). `orders` is the outline's reading a pass rendering several sections shares
-    (`arranged`); an edit taken in here clears it, since the headings it read have changed. Returns whether the file
-    was written.
+    (`arranged`); an edit taken in here clears it, since the headings it read have changed. References is rendered
+    after it from what the sections cite (ticket 105, `references.render_references`), unless `references` is False,
+    as when `render_sections` renders it once for them all; References itself is that render. Returns whether the
+    section's file was written.
     """
     book = ledger_for(project_or_ledger)
     if section not in SECTIONS:
         raise SectionError("there is no section %r; the sections are %s" % (section, ", ".join(SECTIONS)))
+    from wayline import references as reference_list  # the references module reads every section
+    if section == REFERENCES:
+        return reference_list.render_references(book)
     with book.lock():
-        if take_in(book, section) and orders is not None:
-            orders.clear()
-        _record_lint(book, section, resolver)
-        body, last, printed = _body(book, section, orders)
-        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-        stamp = read_stamp(book, section)
-        if stamp is not None and stamp.get("sha256") == digest and stamp.get("last") == last \
-                and stamp.get("parameters") == (printed or None):
-            return False
-        record = {"section": section, "rendered_at": now_ts(), "last": last, "sha256": digest}
-        if printed:
-            record["parameters"] = printed  # each row's reason as printed, so an edit of one is told from a newer reason
-        book.write_markdown(section_path(section), "<!-- wayline:render %s -->\n%s" % (json.dumps(record, ensure_ascii=False), body))
+        written = _render_one(book, section, resolver, orders)
+        if references:
+            reference_list.render_references(book)
+    return written
+
+
+def _render_one(book, section, resolver, orders):
+    """`render_section` of one section other than References, under the ledger's lock."""
+    if take_in(book, section) and orders is not None:
+        orders.clear()
+    _record_lint(book, section, resolver)
+    body, last, printed = _body(book, section, orders)
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    stamp = read_stamp(book, section)
+    if stamp is not None and stamp.get("sha256") == digest and stamp.get("last") == last \
+            and stamp.get("parameters") == (printed or None):
+        return False
+    record = {"section": section, "rendered_at": now_ts(), "last": last, "sha256": digest}
+    if printed:
+        record["parameters"] = printed  # each row's reason as printed, so an edit of one is told from a newer reason
+    book.write_markdown(section_path(section), "<!-- wayline:render %s -->\n%s" % (json.dumps(record, ensure_ascii=False), body))
     return True
 
 
@@ -1001,7 +1030,12 @@ def render_sections(project_or_ledger, only=None):
     with book.lock():
         resolver = provenance.resolver_for(book.project)
         orders = {}  # the outline, read once for every section unless an edit taken in changes the headings
-        return [section for section in (only or SECTIONS) if render_section(book, section, resolver, orders)]
+        written = [section for section in (only or SECTIONS)
+                   if section != REFERENCES and render_section(book, section, resolver, orders, references=False)]
+        # References follows whichever sections rendered, since any of them may have changed what is cited (ticket 105).
+        if render_section(book, REFERENCES) and (only is None or REFERENCES in only):
+            written.append(REFERENCES)
+        return written
 
 
 def read_stamp(project_or_ledger, section):

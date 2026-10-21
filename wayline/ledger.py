@@ -117,6 +117,7 @@ RESULT = "result"  # one result created at an acceptance, or merged or renamed o
 VERIFICATION = "verification"  # one inherited result's standing recorded or changed in research/verifications.json (decision 17; ticket 97)
 DRAWING = "drawing"  # one drawing of a result opened at a rest point, accepted, or failed (decision 17; ticket 100)
 OBJECTIVE_PROPOSED = "objective_proposed"  # one objective proposal of a result or a verdict, or its judgment (decision 17; ticket 91)
+REFERENCE_RAISED = "reference_raised"  # an important unresolved reference put to the owner once its failure is final (decision 17; ticket 105)
 OUTLINE = "outline"  # one change the owner (or the decider, or code dropping a gone placement) made to research/outline.json (decision 17; ticket 104)
 
 # --- payload keys ----------------------------------------------------------------------------
@@ -268,7 +269,7 @@ K_MERGES = "merges"  # `passage`: on a merged inherited passage, every occurrenc
 K_PARAMETER = "parameter"  # `passage`: on the owner's reason for a row of Methods' parameter table, the row it is for (ticket 108)
 K_WRITTEN = "written"  # `consolidated`: the ids of the fewer passages it wrote in their place
 K_PLACE = "place"  # `concern`: where the concern was sorted, tied to objectives, for the order, or declined; null while unsorted
-K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for research/ACCOUNT.md (ticket 89); absent for REPORT.md
+K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for research/ACCOUNT.md (ticket 89), the result R<n> for its report (ticket 101); absent for REPORT.md
 K_EDITED = "edited"  # `report_rendered`: the commit an edit by hand was kept in as it stood, null when it could not be committed
 K_DECISION = "decision"  # `reviewed`: the decision reviewed, D1 onward, by its place among the journal's `decision` events
 K_REVIEW = "review"  # `reviewed`: stand or reverse
@@ -339,7 +340,7 @@ EVENTS = {
     CHANGE_RECORD: (K_ID, K_SCOPE_KIND, K_MECHANISM, K_FIXTURE),
     TAGGED: (K_TAG,),
     PINNED: (K_TAG, K_PREVIOUS),
-    REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS, K_REPORT, K_EDITED),
+    REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS, K_REPORT, K_VERSION, K_EDITED),
     PAPER_STARTED: (K_VENUE,),
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
     OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY, K_PROPOSAL),
@@ -358,6 +359,7 @@ EVENTS = {
     DRAWING: (K_RESULT, K_VERSION, K_TICKET, K_REST, K_OUTCOME, K_PLOTS, K_LEFT_OUT, K_RETIRED, K_REASON),
     OBJECTIVE_PROPOSED: (K_ID, K_KIND, K_OBJECTIVE, K_TICKET, K_BY, K_UPHELD, K_WHY, K_ANSWER, K_PROPOSAL),
     OUTLINE: (K_ACTION, K_ITEM, K_TO, K_NOTE, K_BY),
+    REFERENCE_RAISED: (K_SLUG, K_REASON, K_OUTCOME, K_AUTONOMY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -384,7 +386,7 @@ PAYLOAD_ENUMS = {
     (STALL, K_ACTION): ("replan", "stop"),
     (NOTIFIED, K_CHANNEL): ("notify-send", "hermes", "none"),
     (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes", "environment",
-                         "stop_when", "budget"),
+                         "stop_when", "budget", "plotting"),
     # `retrospective` is the one code files after a run ended (ticket 45), read by the evolver like the owner's.
     # `figure` is the figure role's, carrying the traps a figure result would promote into the plot index (ticket 50).
     (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective", "figure"),
@@ -429,6 +431,11 @@ PAYLOAD_ENUMS = {
     # or a placement whose item is gone, dropped by code.
     (OUTLINE, K_ACTION): ("moved", "placed", "noted", "added", "gone"),
     (OUTLINE, K_BY): ("owner", "decider", "code"),
+    # What makes it important, the first that holds; why its failure is final; and the autonomy it was raised under
+    # (under `autonomous` it was asked at setup and is afterward listed, never raised).
+    (REFERENCE_RAISED, K_REASON): ("owner", "passage", "concern", "objective"),
+    (REFERENCE_RAISED, K_OUTCOME): ("no such work", "gave up", "not looked up"),
+    (REFERENCE_RAISED, K_AUTONOMY): ("interactive", "checkpoints"),
 }
 
 

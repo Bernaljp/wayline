@@ -5,5 +5,5 @@
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "large",
   "fixtures": ["skill/wayline-plan"],
-  "sha256": "2ba961726eb03c10cff7aa8aed6bea42da17dfe2c5f1f89ed363d92ef8defaad"
+  "sha256": "b6cc756fcf469c8e858384fd44afdfff8d1135cfb8b1878fa63d836da07070f5"
 }

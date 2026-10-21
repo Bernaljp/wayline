@@ -2,7 +2,7 @@
   "id": "plotter",
   "scope_kind": "global",
   "capability_summary": "Explores one result in every useful plot at a rest point: one script draws every plot and table and computes every quoted number, each plot explained by its Purpose, Data, and What it shows, with a synthesis.",
-  "applicability_tags": {"kinds": [], "data_types": [], "libraries": ["matplotlib", "seaborn"], "venues": []},
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": ["matplotlib", "seaborn", "altair", "ggplot2"], "venues": []},
   "cost_hint": "small",
   "fixtures": [],
   "sha256": "268cd8c80b737cf925f2947ac39cfc71827d6c79d88bf4b3875152cbf451468d",

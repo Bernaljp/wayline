@@ -36,6 +36,41 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Current and earlier reports (ticket 101; Implementation Decisions 17 and 2). Each result with an accepted drawing
+  gets `research/reports/R<n>-<version>.md`, rendered by code alone in every render pass of the general report: each
+  accepted drawing starts the next version and freezes the one before as an earlier report, never rendered again.
+  Between drawings the current report shows the new findings under "Since the plots were drawn" and marks the ones
+  replaced; only current findings show, a replacement with its note, a negative one marked. Each plot comes with its
+  Purpose, Data, and What it shows, each table is rendered from its CSV, then the synthesis, the headline, the
+  inferences, and the open questions. `REPORT.md` gives each result its current and earlier report links, its
+  headline plots, and the synthesis. `report_rendered` carries `report` (the result) and `version`; an edited report
+  is committed as it stood, journaled, listed in its result's current report, and never taken in. `wayline result
+  plot <id> "<request>"` asks for a plot: a small drawing carrying the result's other plots unchanged, or with `none`
+  an analysis ticket. A merged result's plots follow it to the result it went into, ids kept, and its report freezes.
+
+- References, and when you are asked about a reference (ticket 105; Implementation Decisions 17, 1, and 2). After
+  every render of the sections, and at the end of every wave, code writes `research/sections/references.md` from the
+  dossiers: the works the sections cite, numbered by first citation through Introduction, Results, Discussion, and
+  Methods in the outline's order, each with its authors to three then "et al.", year, title, venue, identifier, and a
+  link to its dossier, then a **Not yet resolved** list giving each unresolved cited work as "to the scout",
+  "retrying" (with the service and the date), "gave up", or "claim kept, to be resolved" (you said "leave it"). Beside
+  it, `research/references.json` holds the CSL-JSON of the cited works that resolved. A work enters References only by
+  being cited: no passage names References any more, and a ticket declaring it is held to nothing there. Before the
+  paper order the linter lists a citation of a work not yet resolved and never fails it, in a section and at
+  acceptance alike, where the references check still sends back a work no service knows.
+
+  You are asked about an unresolved reference only when it is **important** (you named it at intake, or a standing
+  passage, a concern, or an objective cites it) and only once its failure is final: no service knows it, its retry
+  flag gave up, or it is a URL or a file nothing can look up; never while it is still retrying. Under `interactive`
+  you get a notice linking to it, a line under the account's "Waiting on you", and it is the first item of your next
+  conversation; under `checkpoints` the line, and it is put to you at the next conversation or named in the end
+  notice; under `autonomous` setup asks about every important one, those still retrying included, and afterward it is
+  listed, never notified. Each is raised once, journaled as the new event `reference_raised`, and "leave it" settles
+  it until the paper order. `wayline reference` with no slug lists what waits on you. The account's "Waiting on you"
+  lists the important ones whose failure is final, in place of ticket 89's narrower test (a reference never looked up
+  is still to the scout, so it no longer counts), and its Library gives the count of unresolved cited references with
+  a pointer to References' Not yet resolved list.
+
 - Drawings and plots (ticket 100; Implementation Decisions 17, 14, 13, and 2). Each changed result is explored in
   every useful plot at rest points: before a run ends (on an empty frontier, the stopping rule, or a budget), before
   it comes to rest on the owner's answer under `checkpoints`, and on the owner's word (`wayline result draw R4`).
@@ -94,6 +129,29 @@ lists it read-only, marked with its tag.
   - `wayline objective answer|park|drop|reframe|reopen` apply the owner's word directly, with no proposal and no
     verdict. Decision 4's "change the goal or the data" is "change a goal's measure, or the data": the code check no
     longer refuses the decider an answer that drops, adds, or reframes an objective.
+
+- Spec amendments (ticket 92; Implementation Decisions 17, 1, 10, and 11). An objective added or reframed after the
+  spec was confirmed gets new work that traces to a claim without rewriting anything confirmed.
+  `wayline specify --amend <O>` runs it, and the conductor runs it for every add or reframe an approved "Objective
+  changes" batch made; after setup, `wayline objective add` names the verb.
+  - One specify session, scoped to the objective (the planner's new `## Amend` protocol), returns the whole spec with
+    claims naming the objective, their experiments, metrics, and anti-claims appended under new ids. The append-only
+    check (`specify.check_amendment`, a Type-A function over the two versions) refuses one that changes, moves, or
+    removes anything already there, or whose new claims do not name the objective; the draft is returned once with
+    the failures, and a second failure writes nothing. `research/amendments.json` records each amendment with the
+    version it amends, and the spec stays confirmed: `spec_state` reads an amended spec as the version it amends.
+  - The verifier judges the amendment alone (subject `research/SPEC.md amendment for <O> at <sha>`). The planner then
+    cuts tickets for the new claims alone (a cut of kind `amend`, each ticket naming the objective, nothing taken back,
+    `plan.json` untouched), and a `lit` ticket serving the objective when no current Introduction passage with a `ref`
+    tag covers it. Until ticket 99 ships the surveyor, a `lit` ticket is cut on that role and its launch fails on the
+    missing role.
+  - Under `checkpoints` a "Confirm the amendment" decision ticket, opened in the same locked section as the tickets,
+    pauses only them (`blocking: subgraph`), and the rest of the run goes on; under `autonomous` the decider answers it
+    at once; under `interactive` the owner's word comes first (`wayline specify confirm --amend <O>` or
+    `revise --amend <O> "<what to change>"`, the owner told when the conductor drafted it) and the tickets are cut
+    after. A revise parks the new tickets at once, and the next amendment is drafted again from the same base.
+  - Reopening a parked objective needs no amendment: its set-aside claims come back. Reopening an answered or dropped
+    one stays the owner's alone, keeps the old answer as superseded, and has the planner cut fresh tickets (ticket 91).
 
 - The outline of the paper (ticket 104; Implementation Decisions 17, 1, and 2). Code alone builds `research/OUTLINE.md`
   at every render (with the general report and the account, at the end of every wave, at `init`), with no model

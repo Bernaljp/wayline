@@ -2394,17 +2394,28 @@ def pdf_details(path):
 
 
 def reference_command(args):
-    """`wayline reference <slug> <DOI | "exact title" | file.pdf | "leave it">`: the owner's hand-over."""
-    parser = argparse.ArgumentParser(prog="wayline reference", description="hand over an unresolved reference: a DOI, an exact title, a PDF, or leave it")
-    parser.add_argument("slug", help="the reference's dossier, research/refs/<slug>/")
-    parser.add_argument("answer", help='a DOI or an arXiv id, an exact title, a PDF, or "leave it"')
+    """`wayline reference [<slug> <DOI | "exact title" | file.pdf | "leave it">]`: the owner's hand-over.
+
+    With no slug it lists the unresolved references waiting on the owner (ticket 105), what the conversation puts first:
+    before setup ends, every important one but those left, those still retrying included; after it, those raised, in
+    the order raised, then any other whose failure is final.
+    """
+    parser = argparse.ArgumentParser(prog="wayline reference", description="hand over an unresolved reference: a DOI, an exact title, a PDF, or leave it; "
+                                                                           "with no slug, list those waiting on the owner")
+    parser.add_argument("slug", nargs="?", help="the reference's dossier, research/refs/<slug>/")
+    parser.add_argument("answer", nargs="?", help='a DOI or an arXiv id, an exact title, a PDF, or "leave it"')
     parser.add_argument("--project", help="the project; the active one by default")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
     options, code = parse_args(parser, args)
     if options is None:
         return code
+    if options.slug is not None and options.answer is None:
+        print('wayline reference: hand over a DOI, an exact title, a PDF, or "leave it" for %s' % options.slug, file=sys.stderr)
+        return 2
     try:
         project = find_project(options.project)
+        if options.slug is None:
+            return _list_waiting(project, options.json)
         result = hand_over(project, options.slug, options.answer)
     except (DossierError, ProjectError, ValidationError, ValueError, OSError) as failure:
         print("wayline reference: %s" % failure, file=sys.stderr)
@@ -2415,6 +2426,29 @@ def reference_command(args):
     else:
         print("%s  %s, %s%s" % (result["slug"], "left until the paper order" if result["answer"] == LEAVE else "handed over as a %s" % result["answer"],
                                 dossier["existence"], " by %s" % dossier["resolved_by"] if dossier.get("resolved_by") else ""))
+    return 0
+
+
+def _list_waiting(project, as_json):
+    """`wayline reference` with no slug: the unresolved references waiting on the owner, one line each (ticket 105)."""
+    from wayline import references  # the references module imports this one
+    from wayline.stopping import after_setup  # the stopping module imports the goal module, which imports the gates
+    events, _ = ledger_for(project).read_events()
+    if after_setup(events):
+        final = references.final(project)
+        raised = [slug for slug in references.raised_slugs(events) if any(item["slug"] == slug for item in final)]
+        items = [item for slug in raised for item in final if item["slug"] == slug]
+        items += [item for item in final if item["slug"] not in raised]
+    else:
+        items = references.at_setup(project)
+    if as_json:
+        print(json.dumps([{key: item[key] for key in ("slug", "named", "reason", "state", "detail", "final")} for item in items],
+                         ensure_ascii=False, indent=2))
+    elif not items:
+        print("no unresolved reference waits on you")
+    else:
+        for item in items:
+            print("%s  %s (%s); %s" % (item["slug"] or item["named"], item["state"], item["detail"], references.WHY_IMPORTANT[item["reason"]]))
     return 0
 
 

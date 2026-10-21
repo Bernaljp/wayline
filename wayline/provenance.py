@@ -856,9 +856,10 @@ def end_kinds(text):
 class _Pass:
     """One linter pass: the problems, the listed sentences, and the counts, over sentences fed in one at a time."""
 
-    def __init__(self, resolver, classes, doc_only_fails, unclassified_fails):
+    def __init__(self, resolver, classes, doc_only_fails, unclassified_fails, unresolved_ref_fails=True):
         self.resolver, self.classes = resolver, classes
         self.doc_only_fails, self.unclassified_fails = doc_only_fails, unclassified_fails
+        self.unresolved_ref_fails = unresolved_ref_fails
         self.problems, self.listed = [], []
         self.claims = self.tagged = self.unclassified = 0
 
@@ -869,7 +870,9 @@ class _Pass:
         for tag in sentence.tags:
             found = self.resolver.problem(tag)
             if found is not None:
-                self.problems.append(dict(extra, sentence=sentence.text, problem=found[0], tag=tag, detail=found[1]))
+                listed = found[0] == UNRESOLVED_REF and not self.unresolved_ref_fails
+                (self.listed if listed else self.problems).append(dict(extra, sentence=sentence.text, problem=found[0], tag=tag,
+                                                                       detail=found[1]))
         for identifier in PLOT_TAG_RE.findall(sentence.text):
             found = self.resolver.plot_problem(identifier.strip())
             if found is not None:
@@ -926,19 +929,23 @@ def resolver_for(project):
     return _Resolver(project)
 
 
-def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False, resolver=None):
+def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False, resolver=None,
+                  unresolved_ref_fails=False):
     """The linter over passages and findings (decision 17; ticket 88): every tag resolves, every claim ends tagged.
 
     `items` are passages (`{id, by, text}`) or findings (`{id, text, provenance}`); each problem and listed sentence
-    names the `passage` it is in. Before the paper order an untagged claim in an owner's passage and a claim tagged
-    only `doc` are listed, never failed; a finding with no tag of its own is tagged by its provenance. `code` tags
+    names the `passage` it is in. Before the paper order an untagged claim in an owner's passage, a claim tagged
+    only `doc`, and a `ref` tag naming a work not resolved (ticket 105) are listed, never failed (the last fails with
+    `unresolved_ref_fails`, a section's reading after the order); a finding with no tag of its own is tagged by its provenance. `code` tags
     resolve against `code_root`'s working tree (a ticket's worktree), or `code_read`, or the project's `main`; `resolver`,
     from `resolver_for`, is one several passes share (a render of every section). An
     unclassified sentence is listed unless `unclassified_fails`.
     """
     read = code_read or (code_reader(code_root) if code_root is not None else None)
     resolver = resolver if resolver is not None else _Resolver(project, read, own_run)
-    linted = _Pass(resolver, classes, doc_only_fails=False, unclassified_fails=unclassified_fails)
+    # Before the paper order a citation of a work not yet resolved is listed, never failed (ticket 105): References says
+    # where it stands, and the check at acceptance (`references.check_references`) sends back a work no service knows.
+    linted = _Pass(resolver, classes, doc_only_fails=False, unclassified_fails=unclassified_fails, unresolved_ref_fails=unresolved_ref_fails)
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -1230,6 +1237,7 @@ class _Context:
     spec: dict = None
     unchecked: dict = field(default_factory=dict)    # section -> the current inherited claims not yet checked
     unverifiable: list = field(default_factory=list)  # the current inherited claims the project could not check
+    reports: object = None  # `wayline.reports.Index`: the accepted drawings and the clustering, read once (ticket 101)
 
 
 def report_context(project):
@@ -1259,6 +1267,11 @@ def report_context(project):
         context.results = results.read_results(book)
     except (OSError, ValueError) as failure:
         notes.append("the results could not be read: %s" % failure)
+    from wayline import reports  # the reports module renders findings with this one
+    try:
+        context.reports = reports.Index(book)
+    except (OSError, ValueError) as failure:
+        notes.append("the drawings could not be read: %s" % failure)
     try:
         context.concerns = concerns.read_concerns(book)
     except (OSError, ValueError) as failure:
@@ -1368,18 +1381,42 @@ def _headlines(context):
                      for result in context.results])
 
 
+def _report_link(name):
+    return "[%s](reports/%s.md)" % (name, name)
+
+
 def _current_report(context, result):
-    """The link to a result's current report, the newest `research/reports/R<n>-<version>.md`, or "none yet" (ticket 100 writes them)."""
-    folder = context.project / "research" / "reports"
-    found = []
-    for path in folder.glob("%s-*.md" % result.id) if folder.is_dir() else ():
-        version = path.stem[len(result.id) + 1:]
-        if version.isdigit():
-            found.append((int(version), path.name))
-    if not found:
-        return NO_REPORT
-    name = max(found)[1]
-    return "[%s](reports/%s)" % (name[:-3], name)
+    """The link to a result's current report, `research/reports/R<n>-<version>.md`, or "none yet" (ticket 101)."""
+    current = context.reports.links(result.id)[0] if context.reports else None
+    return _report_link(current) if current else NO_REPORT
+
+
+def _drawn(context, result):
+    """A result's reports, headline plots, and synthesis, as its last accepted drawing left them (ticket 101)."""
+    if context.reports is None:
+        return []
+    current, earlier = context.reports.links(result.id)
+    held = context.reports.versions(result.id)
+    if current is None and not earlier:
+        return []
+    lines = ["Current report: %s.%s" % (_report_link(current) if current else NO_REPORT,
+                                        " Earlier reports: %s." % ", ".join(_report_link(name) for name in earlier) if earlier else "")]
+    record = held[-1][1] if held else None
+    if record is not None:
+        # The headline plots are the current ones plots.json marks: a plot the owner asked for carries the others' unchanged.
+        from wayline import drawings
+        marked = {plot["id"] for plot in drawings.read_plots(context.project)["plots"]
+                  if plot.get("result") == result.id and plot.get("status") == drawings.CURRENT and plot.get("headline")}
+        entries = context.reports.entries()
+        for entry in sorted((entries[identifier][0] for identifier in marked if identifier in entries and entries[identifier][1] == "plot"),
+                            key=lambda entry: drawings.plot_order(entry["id"])):
+            lines.extend(["", "Headline plot %s (%s):" % (entry["id"], entry.get("chart_type")), "",
+                          "![%s](../%s)" % (entry["id"], entry["png"]), "",
+                          "- Purpose: %s" % entry.get("purpose"), "- Data: %s" % entry.get("data"),
+                          "- What it shows: %s" % entry.get("shows")])
+        if record.get("synthesis"):
+            lines.extend(["", "Synthesis: %s" % record["synthesis"]])
+    return _records(lines) + [""]
 
 
 def _counts(result):
@@ -1406,7 +1443,7 @@ def _results_table(context):
 def _result_block(context, result, level="####"):
     lines = ["%s %s. %s (%s)" % (level, result.id, result.heading, result.standing), ""]
     lines.extend(finding_line(finding, context.manifest) for finding in result.current)
-    return lines + [""]
+    return lines + [""] + _drawn(context, result)
 
 
 def _goal_lines(context, record):
@@ -1645,7 +1682,7 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
 
     The edit rule: an edit of the file since the last render (its hash against the last `report_rendered`) is
     committed as it stood, journaled as `edited` on this render, listed in the banner from then on, and never taken in.
-    The account renders in the same pass, and the outline after it; a merge taken on the outline's proposals is made first.
+    The account renders in the same pass, then the outline and References; a merge taken on the outline's proposals is made first.
     """
     project = Path(project).resolve()
     book = Ledger(project)
@@ -1663,6 +1700,11 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
             classify(project, texts, harness_root=harness_root, policy=policy)
         except UsageLimited as refused:
             notes.append("%s; the sentences it did not reach are unclassified" % refused)
+    from wayline import reports
+    try:
+        reports.render_reports(book)  # each result's current report (ticket 101), which the general report links
+    except (ValueError, OSError) as failure:
+        notes.append("the results' reports could not be rendered: %s" % failure)
     with book.lock():
         context = report_context(project)
         body = _body(context)
@@ -1686,6 +1728,12 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
         outline.render_outline(project)
     except (ValueError, OSError) as failure:
         notes.append("OUTLINE.md could not be rendered: %s" % failure)
+    # And References (ticket 105): a retry the tick ran may have found a work, or a flag given up, with no section changed.
+    from wayline import references  # the references module imports this one
+    try:
+        references.render_references(project)
+    except (ValueError, OSError) as failure:
+        notes.append("References could not be rendered: %s" % failure)
     return Rendered(path, digest, result, notes, edited)
 
 
