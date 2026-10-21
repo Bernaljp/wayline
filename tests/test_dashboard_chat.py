@@ -125,6 +125,17 @@ class PostAndPollTest(ChatServedCase):
         [call] = self.fake.calls
         self.assertIn("the Research view, with R1.2 open", call.request.prompt)
 
+    def test_a_queue_left_by_a_dashboard_that_stopped_is_taken_up_by_the_next_poll(self):
+        self.fake.script(reply("Answered after the restart."), role=chat.ROLE)
+        left = chat.post(self.project, "Sent before the restart.")
+        orphan = chat.post(self.project, "Running when it stopped.")
+        record = chat.read_message(self.project, orphan["id"])
+        record.update(status="running", pid=999999)
+        (self.project / "research" / "chat" / ("%d.json" % orphan["id"])).write_text(json.dumps(record), encoding="utf-8")
+        self.fake.alive[999999] = False
+        self.assertEqual(self.answered(orphan["id"])["status"], "failed", "a session that ended with no reply is said to have")
+        self.assertEqual(self.answered(left["id"])["reply"], "Answered after the restart.")
+
     def test_an_unchanged_conversation_answers_304(self):
         first = self.api("/chat")
         self.assertEqual(self.api("/chat", {"If-None-Match": first.etag}).status, 304)

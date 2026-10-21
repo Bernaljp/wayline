@@ -542,6 +542,8 @@ def snapshot(project):
 
 
 _RUNNERS = {}
+# Held while a runner is started or ends, apart from `_LOCKS_GUARD`, which `_lock` takes while this one is held.
+_RUNNERS_GUARD = threading.Lock()
 
 
 def busy(project):
@@ -558,7 +560,7 @@ def start(project, harness_root=HARNESS_ROOT):
     """
     project = Path(project).resolve()
     key = str(project)
-    with _LOCKS_GUARD:
+    with _RUNNERS_GUARD:
         runner = _RUNNERS.get(key)
         if runner is not None and runner.is_alive():
             return False
@@ -568,8 +570,18 @@ def start(project, harness_root=HARNESS_ROOT):
 
         def run():
             try:
-                answer_queued(project, harness_root=harness_root)
+                while True:
+                    answer_queued(project, harness_root=harness_root)
+                    # A message posted after the queue looked empty, while this thread still counted as running, is
+                    # taken here rather than left for the next poll: the thread ends only under the lock `start` holds.
+                    # A message still running here is an earlier dashboard's session, which holds the queue until it ends.
+                    with _RUNNERS_GUARD:
+                        statuses = [record["status"] for record in read_messages(project)]
+                        if QUEUED not in statuses or RUNNING in statuses:
+                            _RUNNERS.pop(key, None)
+                            return
             except Exception as failure:  # a broken record must not take the dashboard down; the next start tries again
+                _RUNNERS.pop(key, None)
                 print("wayline serve: the chat on %s stopped: %s" % (project, failure), flush=True)
 
         runner = threading.Thread(target=run, name="wayline-chat", daemon=True)
