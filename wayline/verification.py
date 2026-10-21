@@ -22,7 +22,9 @@ recorded, changed only to run here), `ported` (the same logic in another languag
 batched per reference, from the L0 abstract first; `read`). A claim the abstract cannot settle stays unchecked
 until its dossier is promoted under the budget, and is read again then. A verdict reached on substitute data covers
 only the claim narrowed to that data (`check_result`). Contradictions attached to a result (ticket 95,
-`attach_contradiction`) go into its verification: the worker's pack and the verifier's question.
+`attach_contradiction`) go into its verification: the worker's pack and the verifier's question. So do what the setup
+found (ticket 108, `attach_inventory`): each disagreement between the inherited Methods and the code, from the parser
+inventory, and each lead the Sonnet reading of the inherited code raised, in the pack and `VERIFICATIONS.md`.
 
 **The ties.** A verification ticket (`verifies`: the result's heading) blocks every ticket built on its result: the
 planner's code wires the edge from the objectives' and concerns' ties (`wire`), and an unverifiable result
@@ -53,7 +55,7 @@ __all__ = [
     "parse_replies", "material_question", "check_replies", "take_replies", "leave_unverifiable", "spec_inherited",
     "claim_failures", "spec_lines", "ties", "wire", "intake_commit", "check_result", "take_result", "attach_contradiction",
     "verdict_items", "verdict_text", "pack_text", "reading", "read", "CLASS", "material_of", "gap_of", "decider_refusal",
-    "open_gap", "release", "settle",
+    "open_gap", "release", "settle", "attach_inventory",
 ]
 
 OBJECTIVE = "Do the inherited results hold?"
@@ -890,6 +892,30 @@ def attach_contradiction(project, claims, text):
     return attached
 
 
+def attach_inventory(project, heading, disagreements=(), leads=()):
+    """File what the setup at a start midway found into the verification of one inherited result (ticket 108): each
+    disagreement between the inherited Methods and the code, and each lead the reading of the inherited code raised,
+    `{text, path, line}`, once each. Returns how many were new."""
+    ledger = ledger_for(project)
+    added = 0
+    with ledger.lock():
+        record = read_record(ledger)
+        changed = _refresh(ledger, record)
+        result = _find(record, heading)
+        for field, entries in (("disagreements", disagreements), ("leads", leads)):
+            held = result.setdefault(field, [])
+            for entry in entries:
+                note = {"text": _one_line(entry.get("text")), "path": entry.get("path"), "line": entry.get("line")}
+                if note["text"] and not any(item["text"] == note["text"] for item in held):
+                    held.append(note)
+                    added += 1
+            if not held:
+                del result[field]
+        if added or changed:
+            _save(ledger, record, changed, "code")
+    return added
+
+
 def _contradictions(ledger, result):
     """The contradictions a result's verification answers, each `{text, claims}`: those attached to it, then those the
     repeated-claims check lists now on its heading (`repeats.contradictions`, ticket 95)."""
@@ -999,6 +1025,13 @@ def pack_text(project_or_ledger, fields, max_chars=None):
     if contradictions:
         lines += ["", "## Contradictions attached, which the verification answers"]
         lines += ["- %s (%s)" % (entry["text"], ", ".join(entry["claims"])) for entry in contradictions]
+    if result.get("disagreements"):
+        lines += ["", "## Where the inherited Methods and the code disagree, found at setup, which the verification answers"]
+        lines += ["- %s" % entry["text"] for entry in result["disagreements"]]
+    if result.get("leads"):
+        lines += ["", "## Leads from the reading of the inherited code at setup, to look into"]
+        lines += ["- %s%s" % (entry["text"], " (%s:%s)" % (entry["path"], entry["line"]) if entry.get("path") and entry.get("line") else "")
+                  for entry in result["leads"]]
     items = [item for item in record["material"] if item["heading"] == heading]
     if items:
         lines += ["", "## Material it needs that the project lacked"]
@@ -1438,6 +1471,10 @@ def render(record):
                 " on substitute data (%s)" % verdict["substitute"] if verdict.get("substitute") else "", said))
         for contradiction in result["contradictions"]:
             lines.append("- contradiction (%s): %s" % (", ".join(contradiction["claims"]), contradiction["text"]))
+        for entry in result.get("disagreements") or []:
+            lines.append("- the inherited Methods and the code disagree: %s" % entry["text"])
+        for entry in result.get("leads") or []:
+            lines.append("- lead from the reading of the inherited code: %s" % entry["text"])
     if record["material"]:
         lines += ["", "## Missing material", "", "| Item | Result | Kind | Reply |", "|---|---|---|---|"]
         for item in record["material"]:

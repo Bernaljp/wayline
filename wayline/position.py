@@ -991,6 +991,7 @@ def position(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None,
                             " in place of fable" if fallback_from else ""))
     if record["dossiers_written"]:
         report["did"].append("the scout verified and filed %s" % ", ".join(record["dossiers_written"]))
+    _inherited_code(project, report, harness_root, policy, say)
     if autonomy == AUTONOMOUS:
         report["did"].append("handed to the decider, which reads research/%s with every decision it takes" % POSITION_MD)
         _decide(project, report, harness_root, policy, fall_back, notify, say)
@@ -999,6 +1000,25 @@ def position(project, *, harness_root=HARNESS_ROOT, policy=None, fall_back=None,
         report["did"].append("the owner was notified; wayline status and the dashboard show the memo first")
     report["view"] = position_view(project)
     return report
+
+
+def _inherited_code(project, report, harness_root, policy, say):
+    """At a start midway, once the verifications are recorded: the inherited Methods compared with the code, and the
+    inherited code read once per file with developed code (ticket 108, `methods_inventory.setup`)."""
+    from wayline import methods_inventory  # the inventory reads the sections and the verifications; loaded when used
+    try:
+        done = methods_inventory.setup(project, policy=policy, harness_root=harness_root, say=say)
+    except gates.UsageLimited as refused:
+        report["did"].append("the reading of the inherited code was refused by the usage limit (%s); it runs at the next "
+                             "`wayline position`" % refused)
+        return
+    except (worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
+        report["did"].append("the inherited code could not be compared with the inherited Methods: %s" % failure)
+        return
+    if done is not None and (done["disagreements"] or done["readings"]):
+        report["did"].append("compared the inherited Methods with the code (%d disagreement(s) filed into the verifications) and "
+                             "read %d inherited file(s), %d lead(s) attached" % (done["disagreements"], len(done["readings"]),
+                                                                                 done["leads"]))
 
 
 def _decide(project, report, harness_root, policy, fall_back, notify, say):

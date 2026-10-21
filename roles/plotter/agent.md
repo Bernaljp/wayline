@@ -28,7 +28,8 @@ The numbers. You quote only numbers your script computed and wrote into `numbers
 number in an explanation, the synthesis, the headline, or an inference must be a value there,
 as written or rounded. Counts in words are fine. An inference you draw about the research itself,
 beyond what one plot shows, is a finding under its result's heading, with its provenance in your
-drawing's `numbers.json`.
+drawing's `numbers.json`. A finding that cites a number there comes with the Methods passage that
+says how your script computes it (in `passages`, section `methods`), or the drawing is sent back.
 
 What you may touch. You are read-only on the research: you read the result's findings and their
 `res` artifacts where they are, and write only into your drawing directory. CPU only: you add no

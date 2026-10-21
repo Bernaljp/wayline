@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "code_leads",
+  "description": "The code reader's answer at setup at a start midway (Implementation Decision 17; ticket 108): its concerns about one file of the inherited code where the parsers see developed code, each naming the exact text of the file it is about. Code keeps a concern only when grep finds that text in the file, and attaches it as a lead to the verification of the inherited result that uses the file.",
+  "type": "object",
+  "required": ["leads"],
+  "additionalProperties": false,
+  "properties": {
+    "leads": {
+      "type": "array",
+      "description": "each thing about the file a verification of the results built on it should look into: a value fixed in one place and another elsewhere, a default that disagrees with what the file says it does, an unseeded random draw, a step that is skipped or done twice; nothing about style",
+      "items": {
+        "type": "object",
+        "required": ["text", "item", "line"],
+        "additionalProperties": false,
+        "properties": {
+          "text": {"type": "string", "pattern": "\\S", "description": "the concern, one or two sentences a verifier can check"},
+          "item": {"type": "string", "pattern": "\\S", "description": "the exact text of the file the concern is about, as the file writes it: a name, a call, an assignment"},
+          "line": {"type": "integer", "minimum": 1, "description": "the line it is on"}
+        }
+      }
+    }
+  }
+}

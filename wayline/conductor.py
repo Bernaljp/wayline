@@ -4253,9 +4253,14 @@ class Conductor:
         A declared section that got no passage (Results, no finding) or a `replaces` naming nothing its section holds
         fails it, and the worker is sent back with the problems, as for any machine criterion that failed in its worktree.
         """
-        if not sections.declared(attempt.ticket):
+        # A drawing whose finding cites a number its script computes declares Methods for that passage (ticket 108).
+        owes = _is_drawing(attempt.ticket) and bool(drawings.methods_owed(attempt.ticket, attempt.result))
+        if not sections.declared(attempt.ticket) and not owes:
             return []
         problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
+        missing = drawings.methods_problem(attempt.ticket, attempt.result) if owes else None
+        if missing is not None:
+            problems.append("ticket %d's drawing %s" % (attempt.id, missing))
         return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
                  "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
 

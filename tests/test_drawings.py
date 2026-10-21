@@ -599,6 +599,9 @@ class DrawingFindingTest(DrawingRunCase):
             envelope.structured_output["findings"] = [{
                 "text": "Across the 3 seeds the AUROC never falls below 0.71.", "heading": "What the plots show",
                 "provenance": "drawings/R1-1/numbers.json#auroc", "negative": False, "replaces": "t1-a1-f1"}]
+            # Its number is one numbers.json computes, so it returns the Methods passage saying how (ticket 108).
+            envelope.structured_output["passages"] = [{"section": "methods", "heading": "Drawing R1", "replaces": None,
+                                                       "text": "The lowest AUROC is the minimum over the seeds' AUROC."}]
             return envelope
 
         self.run_drawings(respond)

@@ -354,6 +354,34 @@ def library_of(project, ticket):
         return library_of_record(None)
 
 
+def methods_owed(ticket, result):
+    """What a drawing's findings cite of the numbers its script computes (decision 17; ticket 108): each `<path>#<key>`
+    under its own drawing directory in a JSON file other than its `drawing.json`. A drawing that cites one returns the
+    Methods passage that says how the number is computed, and acceptance checks for it as a declared section."""
+    result_id, version, _ = drawing_of(ticket)
+    if result_id is None:
+        return []
+    folder = directory(result_id, version)
+    owed = []
+    for finding in (result or {}).get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        for item in cited(finding):
+            path = item.partition("#")[0].lstrip("./")
+            if path.startswith(folder) and path.endswith(".json") and Path(path).name != DRAFT and item not in owed:
+                owed.append(item)
+    return owed
+
+
+def methods_problem(ticket, result):
+    """Why a drawing's result is sent back for want of its Methods passage, or None."""
+    owed = methods_owed(ticket, result)
+    if not owed or any(isinstance(item, dict) and item.get("section") == "methods" for item in (result or {}).get("passages") or []):
+        return None
+    return ("its finding cites %s, a number its script computes: return the Methods passage that says how it is computed, "
+            "in `passages` with section `methods`" % ", ".join(owed))
+
+
 def result_heading(project, ticket):
     """The current heading of the result a drawing ticket draws, which its findings stand under; None when it is gone."""
     result_id, _, _ = drawing_of(ticket)
