@@ -383,7 +383,7 @@ PAYLOAD_ENUMS = {
     (STALL, K_ACTION): ("replan", "stop"),
     (NOTIFIED, K_CHANNEL): ("notify-send", "hermes", "none"),
     (CONTROL, K_COMMAND): ("pause", "resume", "stop", "cancel", "rerun", "autonomy", "pacing", "model_fallback", "ladder_changes", "environment",
-                         "stop_when", "budget"),
+                         "stop_when", "budget", "plotting"),
     # `retrospective` is the one code files after a run ended (ticket 45), read by the evolver like the owner's.
     # `figure` is the figure role's, carrying the traps a figure result would promote into the plot index (ticket 50).
     (FEEDBACK, K_SOURCE): ("cli", "dashboard", "file", "retrospective", "figure"),
