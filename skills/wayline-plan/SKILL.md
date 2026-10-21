@@ -99,9 +99,10 @@ A confirmation journals the phase to P5, and the verb prints `next: wayline run`
 
 ## `lit` tickets
 
-A first plan owes a `lit` ticket to every open objective no Introduction passage with a `ref` tag
-covers; one ticket may serve several that share a literature, and a cut that leaves one uncovered
-comes back to the planner. A `lit` ticket runs on the surveyor (Sonnet at medium), which searches
+A first plan, and a re-cut that takes back the open tickets, owes a `lit` ticket to every open
+objective no Introduction passage with a `ref` tag covers and no kept `lit` ticket serves; one
+ticket may serve several that share a literature, and a cut that leaves one uncovered comes back to
+the planner. A `lit` ticket runs on the surveyor (Sonnet at medium), which searches
 with `wayline scout search`, writes no file, and returns Introduction passages; the first ones are
 handed what position's search for the missing prior work found. A worker's `lit` proposal, or the
 owner asking for one, cuts another.

@@ -608,14 +608,18 @@ def render_position(record):
         lines += ["- *%s*: %s." % (_one_line(row["reference"]), _one_line(row["reason"])) for row in record["dropped"]]
     missing = memo.get("missing_prior_work") or []
     if missing:
+        searched = record.get("missing_scouted") is not None
         lines += ["", "### What the references lack", "",
                   "Work the critic expected beside these and did not find among the dossiers. It named these from what it "
-                  "knows; the scout searched the literature for each at setup, and what the search found is listed under it, "
-                  "checked by no one yet: the first `lit` tickets take them up, and `wayline absorb` adds one now.", ""]
+                  "knows; " + ("the scout searched the literature for each at setup, and what the search found is listed under "
+                               "it, checked by no one yet: the first `lit` tickets take them up, and `wayline absorb` adds one now."
+                               if searched else "the scout has checked none of them: add the ones you want with `wayline absorb`."),
+                  ""]
         found = {item["gap"]: item for item in record.get("missing_scouted") or []}
         for gap in missing:
             lines += _item("- ", gap)
-            lines += survey.missing_lines(found.get(" ".join(str(gap).split())))
+            if searched:
+                lines += survey.missing_lines(found.get(" ".join(str(gap).split())))
     feasibility = memo["feasibility"]
     lines += ["", "## Feasibility", ""] + _lead(FEASIBILITY[feasibility["verdict"]], feasibility["reasoning"]) + [""]
     lines += _item("- compute: ", feasibility["compute"]) + _item("- data: ", feasibility["data"])
@@ -823,18 +827,22 @@ def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None
     ledger = Ledger(project)
     objectives = _objectives(project) if objectives is None else objectives
     kept, dropped, written = verify_citations(project, memo, scout=scout, say=say)
-    # The work the memo says the references lack is searched now, at setup, and handed to the first `lit` tickets (ticket 99).
-    scouted = survey.scout_missing(project, memo.get("missing_prior_work") or [], fetcher=getattr(scout, "fetcher", None),
-                                   email=getattr(scout, "email", None), say=say)
     # The objectives as the memo read them: what `POSITION.md` names beside each row, kept as the memo saw them.
     objectives = [{"id": objective["id"], "text": objective["text"], "status": objective["status"],
                    "measure": describe_measure(objective["measure"]) if objective.get("measure") else None}
                   for objective in objectives]
-    record = {"memo": memo, "prior_work": kept, "dropped": dropped, "dossiers_written": written, "missing_scouted": scouted,
+    record = {"memo": memo, "prior_work": kept, "dropped": dropped, "dossiers_written": written,
               "radius": read_harness(project).get("radius"), "objectives": objectives,
               "session_id": session_id, "model": model, "fallback_from": fallback_from}
     ledger.write_json(POSITION_JSON, record)
     ledger.write_markdown(POSITION_MD, render_position(record))
+    if memo.get("missing_prior_work"):
+        # The work the memo says the references lack is searched now, at setup, once the memo itself is kept, and handed to
+        # the first `lit` tickets (ticket 99); the record and the memo are written again with what the search found.
+        record["missing_scouted"] = survey.scout_missing(project, memo["missing_prior_work"], fetcher=getattr(scout, "fetcher", None),
+                                                         email=getattr(scout, "email", None), say=say)
+        ledger.write_json(POSITION_JSON, record)
+        ledger.write_markdown(POSITION_MD, render_position(record))
     from wayline import concerns  # the concerns module reads the sections, which this module seeds
     concerns.propose(project, memo.get("concerns") or [])
     from wayline import verification  # the verification module reads the sections, which this module seeds

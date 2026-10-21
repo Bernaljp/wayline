@@ -74,6 +74,15 @@ class SearchCase(ProjectTestCase):
         self.project = self.temp / "study"
         init_project(self.project, harness_root=self.fake_harness(), git=False, hermes_python=None, owner_email=EMAIL)
         self.ledger = Ledger(self.project)
+        for identifier in (3, 7, 8):  # the `lit` tickets the searches are counted under; a search is theirs alone
+            self.write_ticket(identifier, "lit")
+
+    def write_ticket(self, identifier, kind):
+        from wayline.tickets import write_ticket
+        write_ticket(self.ledger, {"id": identifier, "title": "Ticket %d" % identifier, "kind": kind, "difficulty": 2, "status": "running",
+                                   "blocked_by": [], "touches": [], "role": "surveyor" if kind == "lit" else "coder", "skills": [],
+                                   "acceptance": {"machine": [], "quality": []}, "context_pack": [], "origin": None,
+                                   "proposed_by": "planner", "demo": "passages"}, "## Demo\n\npassages\n")
 
     def search(self, scripted, query=QUERY, ticket=7, citing=None, clock=time.time):
         _, fetcher = recorded(scripted)
@@ -122,6 +131,28 @@ class ServicesTest(SearchCase):
 
     def test_it_files_no_dossier(self):
         self.assertEqual(list((self.project / "research" / "refs").glob("*/dossier.json")), [])
+
+
+class LitOnlyTest(SearchCase):
+    """A search is the surveyor's: whatever role's tools reach the verb, a ticket that is not `lit` is refused before any request."""
+
+    def test_a_code_ticket_is_refused(self):
+        self.write_ticket(9, "code")
+        with self.assertRaises(survey.SearchRefused) as raised:
+            self.search(answers(), ticket=9)
+        self.assertIn("ticket 9 is a code ticket", str(raised.exception))
+        self.assertEqual(self.hosts(), [])
+        self.assertEqual(self.searched(), [])
+
+    def test_a_ticket_the_project_does_not_hold_is_refused(self):
+        with self.assertRaises(survey.SearchRefused) as raised:
+            self.search(answers(), ticket=40)
+        self.assertIn("no ticket the project holds", str(raised.exception))
+
+    def test_a_title_to_scout_is_quoted_for_the_shell(self):
+        report = self.search(answers(www_ebi_ac_uk=europepmc_results((None, 'The "hallmarks" of $(cancer)', 2018, "1"))))
+        text = survey.render(report)
+        self.assertIn("""scout it: wayline scout 'The "hallmarks" of $(cancer)'""", text)
 
 
 class AlwaysLiveTest(SearchCase):

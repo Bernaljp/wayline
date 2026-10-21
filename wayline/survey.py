@@ -18,22 +18,24 @@ past the day's budget asks the three free services alone. The works citing a see
 citations of its PMID and OpenAlex's `cites:` filter on its OpenAlex id; a seed no dossier holds is
 resolved live by the scout and not filed. Every work found is listed once (two services' answers about
 one work are joined by DOI, arXiv id, or title) with the identifier `wayline scout` takes. A search under
-`WAYLINE_TICKET` is counted against `policy.scout.searches_per_ticket` and refused past it before any
-request; every search is journaled as `scout_searched`.
+`WAYLINE_TICKET` runs only for a `lit` ticket, is counted against `policy.scout.searches_per_ticket`, and is
+refused past it before any request; every search is journaled as `scout_searched`.
 
-**The tickets.** The planner cuts a `lit` ticket at specify (the graph's first cut, and a revise of it)
-for each open objective no Introduction passage with a `ref` tag covers (`uncovered`), one ticket
-serving several objectives that share a literature; after an amendment for an added or reframed
+**The tickets.** The planner cuts a `lit` ticket at specify (the graph's first cut, a revise of it, and a
+replan, each of which takes back the open tickets) for each open objective no Introduction passage with a
+`ref` tag covers (`uncovered`) and no kept `lit` ticket serves, one ticket serving several objectives that
+share a literature; after an amendment for an added or reframed
 objective that is uncovered (`specify.cut_amendment`, ticket 92); and on a worker's proposal or the
 owner's word, which `proposals.KIND_ROLE` routes to the surveyor. Position's `missing_prior_work` is
-searched at setup (`scout_missing`), and the first `lit` tickets, those of the graph's first cut, are
-handed what it found in their context pack (`MISSING_LOCATOR`).
+searched at setup (`scout_missing`), and the first `lit` tickets, those of the graph's first cut or its
+revise, are handed what it found in their context pack (`MISSING_LOCATOR`).
 """
 
 import argparse
 import json
 import os
 import re
+import shlex
 import sys
 import time
 import urllib.parse
@@ -44,6 +46,7 @@ from pathlib import Path
 from wayline.cli import parse_args
 from wayline.fetch import FetchError, Fetcher, UrllibBackend
 from wayline.ledger import SCOUT_SEARCHED, LedgerError, ledger_for
+from wayline.tickets import LIT, TicketError, read_tickets
 from wayline.project import ProjectError, find_project, policy_for, read_harness
 from wayline.scout import (ARXIV_QUERY, CROSSREF_QUERY, EUROPEPMC_SEARCH, OPENALEX_SEARCH, OPENALEX_WORK, VERIFIED, Scout,
                            ScoutError, normalize_title, parse_reference)
@@ -57,7 +60,7 @@ __all__ = [
 ]
 
 ROLE = "surveyor"
-KIND = "lit"
+KIND = LIT
 DEFAULT_ROLE = {"model": "sonnet", "effort": "medium"}  # decision 14's, for a policy that names no `roles.surveyor`
 SEARCHES_PER_TICKET = 20  # the fallback when a policy carries no `scout.searches_per_ticket`
 OPENALEX_PER_DAY = 100    # the fallback when a policy carries no `scout.openalex_per_day`
@@ -109,24 +112,32 @@ def openalex_limit(policy):
 # --- the counts, from the journal -----------------------------------------------------------------
 
 
+def _counts(project_or_ledger, ticket, now):
+    """`(searches made by ticket, OpenAlex requests made on the UTC day of now)`, from one read of the journal."""
+    day = datetime.fromtimestamp(time.time() if now is None else now, timezone.utc).strftime("%Y-%m-%d")
+    events, _ = ledger_for(project_or_ledger).read_events()
+    made = total = 0
+    for record in events:
+        if record.get("event") != SCOUT_SEARCHED:
+            continue
+        if ticket is not None and record.get("ticket") == ticket:
+            made += 1
+        if str(record.get("ts") or "").startswith(day):
+            try:
+                total += int((record.get("payload") or {}).get("openalex") or 0)
+            except (TypeError, ValueError):
+                continue
+    return made, total
+
+
 def searches_made(project_or_ledger, ticket):
     """How many `scout_searched` events the journal holds for `ticket`."""
-    return ledger_for(project_or_ledger).count_events(SCOUT_SEARCHED, ticket)
+    return _counts(project_or_ledger, ticket, None)[0]
 
 
 def openalex_today(project_or_ledger, now=None):
     """The OpenAlex requests the journal's searches made on the UTC day of `now` (epoch seconds; the present when None)."""
-    day = datetime.fromtimestamp(time.time() if now is None else now, timezone.utc).strftime("%Y-%m-%d")
-    events, _ = ledger_for(project_or_ledger).read_events()
-    total = 0
-    for record in events:
-        if record.get("event") != SCOUT_SEARCHED or not str(record.get("ts") or "").startswith(day):
-            continue
-        try:
-            total += int((record.get("payload") or {}).get("openalex") or 0)
-        except (TypeError, ValueError):
-            continue
-    return total
+    return _counts(project_or_ledger, None, now)[1]
 
 
 # --- the fetcher ----------------------------------------------------------------------------------
@@ -138,15 +149,20 @@ def search_fetcher(email=None):
 
 
 class _Budgeted:
-    """A fetcher that never replays and counts every OpenAlex request, refusing the one past the day's budget."""
+    """A fetcher that never replays and counts every OpenAlex request, refusing the one past the day's budget.
+
+    `spent` reads the day's count from the journal again before each OpenAlex request, so a search another worker
+    journaled since this one began counts too; only searches still in flight at that moment are unseen.
+    """
 
     def __init__(self, fetcher, spent, limit):
-        self.fetcher, self.spent, self.limit, self.asked = fetcher, spent, limit, 0
+        self.fetcher, self.spent, self.limit, self.asked, self.seen = fetcher, spent, limit, 0, None
         self.email = getattr(fetcher, "email", None)
 
     def fetch(self, url, headers=None, method="GET", replay=False):
         if urllib.parse.urlsplit(url).hostname == OPENALEX_HOST:
-            if self.spent + self.asked >= self.limit:
+            self.seen = self.spent()
+            if self.seen + self.asked >= self.limit:
                 raise _Spent("the day's %d OpenAlex requests are spent (USD 0.001 each); the free services still answer" % self.limit)
             self.asked += 1
         return self.fetcher.fetch(url, headers=headers, method=method, replay=False)
@@ -374,16 +390,20 @@ def search(project, query=None, *, citing=None, ticket=None, fetcher=None, email
             raise SearchError(str(failure)) from None
         if reference.kind not in ("doi", "arxiv", "title"):
             raise SearchError("%s is a URL, which is never looked up; name the seed by its DOI, its arXiv id, or its exact title" % citing)
+    if ticket is not None:
+        _refuse_unless_lit(project, ticket)
     policy = policy_for(project)
     limit = search_limit(policy)
-    made = searches_made(ledger, ticket) if ticket is not None else None
+    made, spent = _counts(ledger, ticket, clock())
+    made = made if ticket is not None else None
     if ticket is not None and made >= limit:
         raise SearchRefused("ticket %s has made %d search(es), the most policy.scout.searches_per_ticket (%d) allows; write the "
                             "passages from the works already found" % (ticket, made, limit))
     if email is None:
         email = read_harness(project).get("owner_email")
-    spent, per_day = openalex_today(ledger, clock()), openalex_limit(policy)
-    budgeted = _Budgeted(fetcher if fetcher is not None else search_fetcher(email), spent, per_day)
+    per_day = openalex_limit(policy)
+    budgeted = _Budgeted(fetcher if fetcher is not None else search_fetcher(email), lambda: openalex_today(ledger, clock()), per_day)
+    budgeted.seen = spent
     note = None
     if reference is None:
         asked = _query_services(budgeted, query)
@@ -397,8 +417,20 @@ def search(project, query=None, *, citing=None, ticket=None, fetcher=None, email
     ledger.append_event(SCOUT_SEARCHED, {"query": query, "citing": citing, "works": len(works), "openalex": budgeted.asked}, ticket=ticket)
     return {"query": query, "citing": citing, "works": works,
             "services": {name: {"outcome": answer.outcome, "works": len(answer.works), "note": answer.note} for name, answer in asked},
-            "openalex": {"asked": budgeted.asked, "today": spent + budgeted.asked, "limit": per_day}, "note": note,
+            "openalex": {"asked": budgeted.asked, "today": budgeted.seen + budgeted.asked, "limit": per_day}, "note": note,
             "ticket": ticket, "asked": None if made is None else made + 1, "limit": limit}
+
+
+def _refuse_unless_lit(project, ticket):
+    """A search is the surveyor's: under `WAYLINE_TICKET` it runs only for a `lit` ticket, whatever role's tools reach the verb."""
+    try:
+        kinds = {fields["id"]: fields.get("kind") for fields in read_tickets(project)}
+    except (TicketError, OSError, ValueError) as failure:
+        raise SearchRefused("ticket %s cannot be read, so the search cannot tell it is a `lit` ticket: %s" % (ticket, failure)) from None
+    if kinds.get(ticket) != KIND:
+        raise SearchRefused("ticket %s is %s, and a search of the literature is the surveyor's, for a `lit` ticket: check the works "
+                            "you draw on with `wayline scout <identifier>`, or propose a `lit` ticket"
+                            % (ticket, "a %s ticket" % kinds[ticket] if kinds.get(ticket) else "no ticket the project holds"))
 
 
 def _authors(names):
@@ -416,7 +448,7 @@ def render(report):
     for number, work in enumerate(report["works"], 1):
         details = ". ".join(part for part in (_authors(work["authors"]), str(work["year"] or ""), work["venue"] or "") if part)
         lines.append("%2d. %s%s" % (number, work["title"], (". " + details) if details else ""))
-        lines.append("    scout it: wayline scout \"%s\" (found by %s)" % (work["identifier"], ", ".join(work["sources"])))
+        lines.append("    scout it: wayline scout %s (found by %s)" % (shlex.quote(work["identifier"]), ", ".join(work["sources"])))
     if report["services"]:
         lines.append("services    " + "; ".join(
             "%s %s" % (name, "found %d" % entry["works"] if entry["outcome"] == FOUND else
@@ -465,7 +497,8 @@ def uncovered(project):
         records = objectives.read_objectives(project)
     except objectives.ObjectivesUnreadable:
         return []
-    return [record["id"] for record in records if record.get("status") == "open" and not specify.introduction_covers(project, record["id"])]
+    covered = specify.covered_objectives(project, records)
+    return [record["id"] for record in records if record.get("status") == "open" and record["id"] not in covered]
 
 
 def scout_missing(project, gaps, fetcher=None, email=None, clock=None, say=lambda text: None):
@@ -494,8 +527,9 @@ def scout_missing(project, gaps, fetcher=None, email=None, clock=None, say=lambd
 
 def missing_scouted(project):
     """Whether position's memo named missing prior work and the setup search ran on it: what the first `lit` tickets are handed."""
+    from wayline.grill import POSITION_JSON  # the grill reads the position memo, which the front door writes
     try:
-        record = json.loads((Path(project) / "research" / "position.json").read_text(encoding="utf-8"))
+        record = ledger_for(project).read_json(POSITION_JSON)
     except (OSError, ValueError):
         return False
     return isinstance(record, dict) and bool(record.get("missing_scouted"))

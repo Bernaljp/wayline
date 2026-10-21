@@ -73,8 +73,9 @@ The planner has one protocol per phase; the harness gives you the one below that
    the mode names and nothing else, each naming the amended objective among its `objectives`;
    every ticket the project holds stands, and a new one may wait on it as `#<id>`. When the mode
    says no Introduction passage covers the objective, one of them is a `lit` ticket serving it. In
-   a first plan, the mode names the open objectives no Introduction passage with a `ref` tag covers:
-   cut a `lit` ticket serving each, one ticket serving several when they share a literature. A
+   a first plan, a re-cut, or a graph sent back, the mode names the open objectives no Introduction
+   passage with a `ref` tag covers and no kept `lit` ticket serves: cut a `lit` ticket serving each,
+   one ticket serving several when they share a literature. A
    `lit` ticket runs on the surveyor, which writes no file: its touch set is empty, and its
    Introduction passages are its work, so it needs no machine criterion of its own.
 2. Read the records in order: `research/SPEC.md` whole (the claims, the experiments per claim, the

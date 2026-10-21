@@ -101,6 +101,12 @@ ANSWER_PREFIX = "graph %s: "            # the interactive answer's `decision`, k
 INTERACTIVE, CHECKPOINTS, AUTONOMOUS = specify.INTERACTIVE, specify.CHECKPOINTS, specify.AUTONOMOUS
 # The cuts of the graph the planner is launched for: the four of ticket 34, and the cut for a spec amendment (ticket 92).
 KINDS = ("plan", "replan", "split", "revise", "amend")
+# The cuts that take back every open ticket, so each owes a `lit` ticket to an objective no Introduction passage with a
+# `ref` tag covers and no kept `lit` ticket serves (ticket 99); an amendment asks for its own (`Cut.lit`), and a split
+# replaces one ticket with its pieces.
+OWE_LIT = ("plan", "replan", "revise")
+# The cuts whose `lit` tickets are the first ones, handed what position's search for the missing prior work found.
+FIRST_CUTS = ("plan", "revise")
 # The statuses a re-cut takes back: work not started, or stopped on a path the planner has to re-cut around.
 RECUT = ("open", "blocked")
 # The statuses a ticket can be split from: not started, or stopped short of a person.
@@ -155,7 +161,7 @@ class Cut:
     objective: Optional[str] = None             # the objective an amendment was made for (ticket 92)
     claims: list = field(default_factory=list)  # the claims the amendment added, the only ones this cut serves
     lit: bool = False                           # no Introduction passage with a `ref` tag covers the objective
-    uncovered: list = field(default_factory=list)  # a first plan's open objectives no such passage covers, each owed a `lit` ticket
+    uncovered: list = field(default_factory=list)  # the open objectives no such passage covers and no kept `lit` ticket serves
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -168,11 +174,11 @@ class Cut:
     @property
     def asked(self):
         """What the planner is asked for, in one line of its prompt."""
+        owed = ("; and `lit` tickets serving %s, since no Introduction passage with a `ref` tag covers them and no `lit` ticket the "
+                "project keeps serves them: one per objective, and one ticket may serve several objectives that share a "
+                "literature, naming each among its objectives" % ", ".join(self.uncovered)) if self.uncovered else ""
         return {
-            "plan": "the first cut of this project's graph" + (
-                "; and `lit` tickets serving %s, since no Introduction passage with a `ref` tag covers them: one per objective, "
-                "and one ticket may serve several objectives that share a literature, naming each among its objectives"
-                % ", ".join(self.uncovered) if self.uncovered else ""),
+            "plan": "the first cut of this project's graph",
             "replan": "a re-cut after a stall: every ticket marked re-cut below is cut again, from what the journal says failed",
             "split": "a split of ticket #%s, which failed its escalation: at least two smaller tickets that replace it" % self.of,
             "revise": "a re-cut: the owner sent the graph back with what to change",
@@ -181,7 +187,7 @@ class Cut:
                          self.objective, ", ".join(self.claims) or "none", self.objective,
                          "; and a `lit` ticket serving %s, since no Introduction passage with a `ref` tag covers it" % self.objective
                          if self.lit else ""),
-        }[self.kind]
+        }[self.kind] + owed
 
     def why_superseded(self, replacements):
         """The line a parked ticket's body carries: which cut superseded it and what replaced it."""
@@ -543,7 +549,7 @@ def prepare(record, project, existing, index, cut, start=None):
     prepared.superseded = superseded_by(cut, existing)
     superseded = set(prepared.superseded)
     split_of = existing[cut.of][0] if cut.kind == "split" and cut.of in existing else None
-    missing = cut.kind == "plan" and survey.missing_scouted(project)
+    missing = cut.kind in FIRST_CUTS and survey.missing_scouted(project)
     if cut.kind == "split":
         if split_of is None:
             failures.append("the project has no ticket %s to split" % cut.of)
@@ -614,8 +620,9 @@ def prepare(record, project, existing, index, cut, start=None):
         if item.get("goal") is not None:
             fields["goal"] = item["goal"]
         fields["context_pack"] = list(item["context_pack"])
-        if cut.kind == "plan" and item["kind"] == survey.KIND and missing and survey.MISSING_LOCATOR not in fields["context_pack"]:
-            # The first `lit` tickets are handed what position's search for its missing prior work found (ticket 99).
+        if item["kind"] == survey.KIND and missing and survey.MISSING_LOCATOR not in fields["context_pack"]:
+            # The first `lit` tickets, a first cut's or its revise's, are handed what position's search for its missing prior
+            # work found (ticket 99).
             fields["context_pack"].append(survey.MISSING_LOCATOR)
         fields["origin"] = _one_line(item["origin"])
         fields["proposed_by"] = PLANNER
@@ -1276,7 +1283,7 @@ def cut_graph(project, cut, *, harness_root=HARNESS_ROOT, policy=None, fall_back
     session = _Session(project, harness_root, policy, fall_back, say)
     records, cut_short = _records(project, specify.context_cap(policy, session.model))
     superseded = superseded_by(cut, existing)
-    if cut.kind == "plan":
+    if cut.kind in OWE_LIT:
         cut.uncovered = _uncovered(project, existing, superseded)
     prompt = plan_prompt(session.role, cut, harness, project, policy, records, index, journal_text(events, cut.of),
                          graph_text(existing, superseded, of=cut.of), cut_short=cut_short)

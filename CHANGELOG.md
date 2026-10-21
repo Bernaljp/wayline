@@ -50,11 +50,15 @@ lists it read-only, marked with its tag.
     `cites:` filter). Each work is listed once with the identifier `wayline scout` takes, and nothing is filed. A
     search is always live and never cached, journaled as `scout_searched`, and a ticket makes at most
     `policy.scout.searches_per_ticket` (20).
-  - The planner's first cut owes a `lit` ticket to each open objective no Introduction passage with a `ref` tag covers
-    (one ticket may serve several that share a literature), and a cut that leaves one uncovered is returned with the
-    failure; an amendment's cut already asks for one (ticket 92), and a worker's proposal or the owner's word cuts one.
-  - `wayline position` searches the memo's `missing_prior_work` at setup, keeps what it found in `position.json`, and
-    lists it under each gap in `POSITION.md`; the first cut's `lit` tickets get that section in their context pack.
+  - The planner's first cut, and a revise or a replan that takes back the open tickets, owes a `lit` ticket to each open
+    objective no Introduction passage with a `ref` tag covers and no kept `lit` ticket serves (one ticket may serve
+    several that share a literature); a cut that leaves one uncovered is returned with the failure. An amendment's cut
+    already asks for one (ticket 92), and a worker's proposal or the owner's word cuts one.
+  - A search runs only for a `lit` ticket: under `WAYLINE_TICKET`, any other ticket is refused before a request, whatever
+    role's tools reach the verb. A title to scout is printed quoted for the shell.
+  - `wayline position` searches the memo's `missing_prior_work` at setup, once the memo is kept, records what it found in
+    `position.json`, and lists it under each gap in `POSITION.md`; the `lit` tickets of the first cut (or its revise) get
+    that section in their context pack.
 
 - The plotting library switch (ticket 102; Implementation Decisions 17, 1, and 2). `harness.json` gains `plotting`:
   matplotlib with seaborn (the default, and what a project without the key draws with), Altair, or R with ggplot2.

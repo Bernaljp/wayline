@@ -8,9 +8,10 @@ position's search of its `missing_prior_work` through the fetch seam's recording
 
 import json
 import unittest
+from unittest import mock
 
 from tests.paths import HARNESS_ROOT
-from wayline import proposals, survey, worker
+from wayline import plan, proposals, survey, worker
 from wayline import POLICY_PATH
 
 
@@ -295,6 +296,44 @@ class AtSpecifyTest(PlanCase):
         [lit] = [identifier for identifier in written["tickets"] if self.ticket(identifier)["kind"] == "lit"]
         self.assertEqual(self.ticket(lit)["context_pack"], ["research/OBJECTIVES.md"])
 
+    def test_a_revise_that_takes_back_the_lit_ticket_owes_its_replacement(self):
+        from wayline import tickets
+        self.script(planned(with_lit(lit_ticket("O1", "O2"))))
+        first = self.plan()["written"]
+        [lit] = [identifier for identifier in first["tickets"] if self.ticket(identifier)["kind"] == "lit"]
+        gate = [found for found in self.confirmation()][0]["id"]
+        from tests.test_specify import run
+        code, _, err = run("answer", str(gate), "revise: fewer tickets", "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.ticket(lit)["status"], "parked")
+        self.ledger.write_json("position.json", {"memo": {"missing_prior_work": ["A gradient-boosted tree baseline"]},
+                                                 "missing_scouted": [{"gap": "A gradient-boosted tree baseline", "works": [], "note": None}]})
+        self.script(planned(CUT), planned(with_lit(lit_ticket("O1", "O2"))))
+        report = self.plan()
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual(report["cut"], "revise")
+        self.assertIn("`lit` tickets serving O1, O2", self.calls("planner")[1].request.prompt)
+        self.assertIn("no `lit` ticket of this cut serves it", self.calls("planner")[2].message)
+        [again] = [identifier for identifier in report["written"]["tickets"] if self.ticket(identifier)["kind"] == "lit"]
+        self.assertEqual(self.ticket(again)["context_pack"], ["research/OBJECTIVES.md", survey.MISSING_LOCATOR],
+                         "a revise of the first cut re-cuts the first `lit` tickets")
+        self.assertEqual(len([found for found in tickets.read_tickets(self.project) if found["kind"] == "lit"
+                              and found["status"] == "open"]), 1)
+
+    def test_a_replan_keeps_a_lit_ticket_it_does_not_take_back(self):
+        self.script(planned(with_lit(lit_ticket("O1", "O2"))))
+        first = self.plan()["written"]
+        [lit] = [identifier for identifier in first["tickets"] if self.ticket(identifier)["kind"] == "lit"]
+        self.set_status(lit, "running")
+        self.assertEqual(plan._uncovered(self.project, {found["id"]: (found, "") for found in self.all_tickets()}, []), [])
+        self.set_status(lit, "open")
+        self.assertEqual(plan._uncovered(self.project, {found["id"]: (found, "") for found in self.all_tickets()}, [lit]),
+                         ["O1", "O2"], "a re-cut that takes the lit ticket back owes its objectives one again")
+
+    def all_tickets(self):
+        from wayline import tickets
+        return tickets.read_tickets(self.project)
+
     def test_the_journal_replays_the_lit_ticket_cut_on_the_surveyor(self):
         from wayline.replay import replay
         self.script(planned(with_lit(lit_ticket("O1", "O2"))))
@@ -399,6 +438,29 @@ class MissingPriorWorkTest(PositionCase):
     def test_no_dossier_is_filed_for_what_the_search_found(self):
         self.take(written(memo()))
         self.assertFalse(any("xgb" in path.name for path in (self.project / "research" / "refs").iterdir()))
+
+    def test_a_record_written_before_the_search_says_nothing_was_searched(self):
+        from wayline import position
+        self.take(written(memo()))
+        record = self.record()
+        del record["missing_scouted"]
+        text = position.render_position(record)
+        self.assertIn("the scout has checked none of them", text)
+        self.assertNotIn("searched the literature", text)
+        self.assertNotIn("found by the search", text)
+
+    def test_the_memo_is_kept_before_the_search_runs(self):
+        from wayline import position
+        seen = []
+        original = survey.scout_missing
+
+        def watching(project, gaps, **options):
+            seen.append(self.record().get("memo") is not None)
+            return original(project, gaps, **options)
+        with mock.patch.object(survey, "scout_missing", watching):
+            self.take(written(memo()))
+        self.assertEqual(seen, [True])
+        self.assertIsNotNone(position.read_position(self.project))
 
     def test_a_memo_with_no_missing_work_searches_nothing(self):
         value = memo()

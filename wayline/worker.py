@@ -51,7 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Union
 
-from wayline import HARNESS_ROOT, BackendTouched, pacing, real_backend, registry
+from wayline import HARNESS_ROOT, BackendTouched, pacing, real_backend, registry, tickets
 from wayline.frontmatter import FrontmatterError, load_document
 from wayline.jsonschema import SchemaError, check_schema, load_schema, validate
 from wayline.ledger import now_ts
@@ -399,7 +399,6 @@ CONSULT_MAX = 5
 SCOUT_MAX = 20
 # `policy.scout.searches_per_ticket`, restated in a `lit` ticket's contract lines with the search (ticket 99).
 SEARCH_MAX = 20
-LIT = "lit"  # the kind whose ticket searches the literature: the surveyor's (decision 17)
 
 _ROLE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*\Z")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*\Z")
@@ -647,7 +646,7 @@ def assemble_prompt(ticket, role, roots=(), max_chars=None, budget=None, consult
         protocol_for(role.protocol, role.output_schema or "result"),
         _result_section(ticket, role),
         _contract_section(ticket, consult_max, scout_max if has_scout(role) else None,
-                          search_max if has_scout(role) and ticket.get("kind") == LIT else None),
+                          search_max if has_scout(role) and ticket.get("kind") == tickets.LIT else None),
     ]
     text = "\n\n".join(part.strip("\n") for part in parts if part.strip()) + "\n"
     return Prompt(text, pack.chars, pack.cut or skills.cut, pack.dropped + skills.dropped,
