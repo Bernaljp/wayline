@@ -46,4 +46,4 @@ It blocks 113.
 - [x] Each item links by `#/<project>/<id>` and opens in the popup viewer over its view.
 - [ ] Both views work at phone width with no sideways scroll, checked live with 110's pass and recorded in `docs/verification/m8.md`.
 - [x] Tests, over HTTP against a fixture ledger of a start midway: each view's JSON, the Inherited view absent with no documents, and each item's link.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
