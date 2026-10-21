@@ -132,6 +132,20 @@ class RoutingTest(unittest.TestCase):
                     self.assertTrue(any(" ".join(words).startswith(routed) for routed in self.routed),
                                     "`wayline %s` runs a verb the routing table does not name" % command)
 
+    def test_a_pipe_inside_a_backticked_command_is_no_cell_border(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            skill = Path(folder) / "skills" / "wayline"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                "# x\n\n## Routing\n\n| The owner | Rule | Verbs |\n|---|---|---|\n"
+                "| sets the consent | record | `wayline switch --fallback auto|ask`, `wayline status` |\n"
+                "| says a\\|b | read | `wayline status` |\n", encoding="utf-8")
+            rows = conversation.routing_table(folder)
+        self.assertEqual([(row["rule"], row["commands"]) for row in rows],
+                         [("record", ["switch --fallback auto|ask", "status"]), ("read", ["status"])])
+
     def test_the_drafted_ticket_and_the_irreversible_ones_take_their_rules(self):
         rules = {}
         for row in self.rows:
@@ -182,7 +196,7 @@ class RulesTest(unittest.TestCase):
     def test_under_autonomous_the_conversation_opens_with_decided_for_you(self):
         self.assertIn('"Decided for you" as one numbered item', self.body)
         self.assertIn('"let them stand"', self.body)
-        self.assertIn("`wayline review all stand`", self.body)
+        self.assertIn("`wayline review all stand --shown <ids>`", self.body)
 
     def test_compile_is_read_by_what_it_is_said_of(self):
         self.assertIn('"compile"', self.body)

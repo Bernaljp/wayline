@@ -896,8 +896,8 @@ lists it read-only, marked with its tag.
   `research/` is refused, the objectives it names, a criterion failing at the base commit), assigned a role and
   skills, written, journaled `ticket_created` with `proposed_by: human`, and placed in `graph.json` by code.
 
-- `wayline review all stand` lets every decision listed under "Decided for you" stand, one `reviewed` each: the
-  owner's yes to the autonomous opening.
+- `wayline review all stand --shown <ids>` lets each decision the owner was shown under "Decided for you" stand, one
+  `reviewed` each, and leaves listed any decided since: the owner's yes to the autonomous opening.
 
 ## v1.0.0 (2026-09-27)
 

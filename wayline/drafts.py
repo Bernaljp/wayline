@@ -22,7 +22,7 @@ from pathlib import Path
 from wayline import HARNESS_ROOT, plan, registry
 from wayline.cli import parse_args
 from wayline.ledger import Ledger, LedgerError
-from wayline.project import ProjectError, find_project, policy_for
+from wayline.project import ProjectError, find_project
 
 __all__ = ["DraftError", "KEY", "add_drafted", "ticket_command"]
 
@@ -53,8 +53,7 @@ def add_drafted(project, draft, *, harness_root=HARNESS_ROOT, timeout_s=None):
     events, _ = ledger.read_events()
     index = registry.build(project, harness_root=harness_root, events=events, pre_check=False)
     cut = plan.Cut("draft")
-    if timeout_s is None:
-        timeout_s = policy_for(project, harness_root).get("acceptance_timeout_s", 600)
+    # The same checks a cut gets (`plan.check_plan`), at the same base-commit timeout (`check_tickets`' default when None).
     failures, _ = plan.check_plan(record, project, plan.read_all(project), index, cut, timeout_s=timeout_s)
     if failures:
         raise DraftError("the drafted ticket fails the checks a planned one passes; nothing was written", failures)
@@ -95,10 +94,7 @@ def ticket_command(args):
         for line in failure.failures:
             print("  - %s" % line, file=sys.stderr)
         return 1
-    except plan.PlanError as failure:
-        print("wayline ticket: %s" % failure, file=sys.stderr)
-        return 1
-    except (ProjectError, LedgerError, OSError, ValueError) as failure:
+    except (ProjectError, LedgerError, OSError, ValueError) as failure:  # plan.PlanError among them
         print("wayline ticket: %s" % failure, file=sys.stderr)
         return 1
     print(outcome["line"])

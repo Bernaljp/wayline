@@ -937,6 +937,20 @@ class ReplanTest(PlanCase):
         self.assertEqual(report["written"]["superseded"], [2, 4, 5, 6, 7, 8, 9])
         self.assertEqual(self.statuses()[harness], "open")
 
+    def test_a_stall_replan_keeps_a_ticket_the_owner_asked_for(self):
+        """Ticket 109: a drafted ticket is the owner's request, which no re-cut takes back."""
+        from wayline import drafts
+        drafted = drafts.add_drafted(self.project, {
+            "title": "Export the summary as CSV", "kind": "code", "difficulty": 2, "blocked_by": [], "touches": ["toy/export.py"],
+            "acceptance": {"machine": ["test -f toy/export.py"]}, "objectives": [], "context_pack": ["research/SPEC.md"],
+            "origin": "the owner, in the conversation", "demo": "toy/export.py writes summary.csv"})["ticket"]
+        self.script(planned(self.recut()))
+        report = plan.replan(self.project, notify=self.notify, pre_check=False)
+        self.assertIsNone(report["stopped"], report)
+        self.assertNotIn(drafted, report["written"]["superseded"])
+        self.assertEqual(self.statuses()[drafted], "open")
+        self.assertIn("- #%d [open, kept] code" % drafted, self.calls(plan.PLANNER)[0].request.prompt)
+
     def test_the_planner_is_never_asked_to_split_a_change_record_s_harness_ticket(self):
         harness = self.harness_ticket()
         self.set_status(harness, "failed")

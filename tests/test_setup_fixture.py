@@ -104,6 +104,23 @@ class SetupFixtureTest(ProjectTestCase):
         problems = self.failures(self.record(turns))
         self.assertTrue(any("confirm" in problem for problem in problems), problems)
 
+    def test_a_re_cut_after_the_code_repository_answer_passes_as_setup_says_to_make_it(self):
+        turns = list(GOOD)
+        turns[7] = (["wayline intake --from - --project .", 'wayline plan revise "code tickets write under code/" --project .',
+                     "wayline plan --cut-only --project ."], GOOD[7][1])
+        self.assertEqual(self.failures(self.record(turns)), [])
+
+    def test_a_re_cut_or_a_split_is_no_confirmation(self):
+        turns = list(GOOD)
+        turns[7] = (GOOD[7][0] + ["wayline plan --replan --project .", "wayline plan --split 4 --project ."], GOOD[7][1])
+        self.assertEqual(self.failures(self.record(turns)), [])
+
+    def test_the_owners_confirmation_through_its_ticket_before_the_last_question_is_caught(self):
+        turns = list(GOOD)
+        turns[7] = (GOOD[7][0] + ['wayline answer 12 "confirm" --project .'], GOOD[7][1])
+        problems = self.failures(self.record(turns))
+        self.assertTrue(any("answer 12" in problem for problem in problems), problems)
+
     def test_a_graph_cut_before_the_stopping_rule_was_asked_is_caught(self):
         turns = list(GOOD)
         turns[0] = (GOOD[0][0] + ["wayline plan --cut-only --project ."], GOOD[0][1])

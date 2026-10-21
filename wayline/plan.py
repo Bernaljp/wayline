@@ -477,13 +477,16 @@ def superseded_by(cut, existing):
     every decision ticket of the planner's with `blocking: subgraph` that pauses nothing but tickets in
     that set: a question asked about work that is being cut again is asked again by the new plan when it
     still stands. A first plan takes back what it finds too, so tickets a crash left behind, or a plan
-    that stopped before `plan.json` was written, never run beside the graph.
+    that stopped before `plan.json` was written, never run beside the graph. A ticket the owner asked for
+    (`proposed_by: human`, a drafted ticket) is kept, as a change record's harness ticket is: the planner is shown
+    it as kept and may wait on it, and only a split of that one ticket takes it back.
     """
     if cut.kind == "split":
         return [cut.of]
     if cut.kind in ADDING:
         return []  # an amendment and a drafted ticket add to the graph and take nothing back
-    taken = {identifier for identifier, (fields, _) in existing.items() if _cuttable(fields) and fields["status"] in RECUT}
+    taken = {identifier for identifier, (fields, _) in existing.items()
+             if _cuttable(fields) and fields.get("proposed_by") != HUMAN and fields["status"] in RECUT}
     taken.update(identifier for identifier in cut.sent_back if identifier in existing)
     dependents = _dependents(existing)
     for identifier, (fields, _) in existing.items():
@@ -587,7 +590,7 @@ def prepare(record, project, existing, index, cut, start=None):
         fields = {
             "id": identifier, "title": _one_line(item["title"]), "kind": item["kind"], "difficulty": item["difficulty"],
             "status": "open", "blocked_by": sorted(blockers), "touches": [str(touch).strip() for touch in item["touches"]],
-            "role": assignment["role"] or (proposals.DECISION_17_ROLES.get(item["kind"]) if cut.kind in ADDING else None) or UNASSIGNED,
+            "role": assignment["role"] or (proposals.DECISION_17_ROLES.get(item["kind"]) if cut.kind == "amend" else None) or UNASSIGNED,
             "skills": list(assignment["skills"]),
         }
         if item.get("resources") is not None:

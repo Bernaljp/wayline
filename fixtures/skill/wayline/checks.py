@@ -15,8 +15,9 @@ from pathlib import Path
 QUESTIONS = 10
 LABEL = re.compile(r"\bSetup (\d+)/10\b")
 CUT = re.compile(r"^wayline plan\b.*\s--cut-only\b")
-# The graph's confirmation, which ends setup: the verb run again without --cut-only, or the owner's word recorded.
-CONFIRM = re.compile(r"^wayline (plan(?!.*\s--cut-only\b)(?!.*\b(revise|--replan|--split)\b)|answer \S+ confirm\b)")
+# The graph's confirmation, which ends setup: the verb run again without --cut-only (and not as a revise, a re-cut, or a
+# split), or the owner's word recorded, quoted or not.
+CONFIRM = re.compile(r"^wayline (plan(?!.*\s(--cut-only|--replan|--split)(\s|=|$))(?!\s+revise\b)|answer \S+ [\"']?confirm\b)")
 STOPPING_RULE, SOFTWARE, LAST = 5, 6, QUESTIONS
 
 
@@ -62,17 +63,23 @@ def asks_the_ten_questions_in_order(root):
 
 
 def confirms_the_plan_after_the_last_question(root):
-    """The graph is cut after the stopping rule is asked, and confirmed only once the last question has been asked."""
+    """The graph is first cut between the stopping rule and the software, and confirmed only once the last question was asked.
+
+    A later cut is the re-cut setup makes after a revise (the code repository's answer may send the graph back).
+    """
     turns, problems = _turns(root), []
     asked = _first_asked(turns)
+    first_cut = True
     for index, turn in enumerate(turns):
         for command in turn["commands"]:
-            if CUT.match(command) and index <= asked.get(STOPPING_RULE, len(turns)):
-                problems.append("turn %d ran `%s` before the owner answered Setup %d/10: --cut-only comes after the stopping rule and "
-                                "the budgets" % (index + 1, command, STOPPING_RULE))
-            if CUT.match(command) and index > asked.get(SOFTWARE, len(turns)):
-                problems.append("turn %d ran `%s` after Setup %d/10 was asked: the software is the planned work's"
-                                % (index + 1, command, SOFTWARE))
+            if CUT.match(command) and first_cut:
+                first_cut = False
+                if index <= asked.get(STOPPING_RULE, len(turns)):
+                    problems.append("turn %d ran `%s` before the owner answered Setup %d/10: --cut-only comes after the stopping "
+                                    "rule and the budgets" % (index + 1, command, STOPPING_RULE))
+                if index > asked.get(SOFTWARE, len(turns)):
+                    problems.append("turn %d ran `%s` after Setup %d/10 was asked: the software is the planned work's"
+                                    % (index + 1, command, SOFTWARE))
             if CONFIRM.match(command) and index <= asked.get(LAST, len(turns)):
                 problems.append("turn %d ran `%s`, which may confirm the graph and end setup, before the owner answered Setup %d/10"
                                 % (index + 1, command, LAST))

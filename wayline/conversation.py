@@ -28,7 +28,23 @@ _COMMAND = re.compile(r"`wayline ([^`]+)`")
 
 
 def _cells(line):
-    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+    """A table row's cells, split on the pipes outside backticks that are not escaped as `\\|`."""
+    cells, current, in_code, previous = [], [], False, ""
+    for char in line.strip():
+        if char == "`":
+            in_code = not in_code
+        if char == "|" and not in_code and previous != "\\":
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+        previous = char
+    cells.append("".join(current).strip())
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return cells
 
 
 def command_words(command):

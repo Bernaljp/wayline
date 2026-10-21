@@ -86,9 +86,10 @@ prints as it prints it. The owner's first answer, here or in the marks view, set
 
 Under `autonomous`, when `wayline review` lists any decision not yet reviewed, open the conversation with
 "Decided for you" as one numbered item: how many decisions were made for the owner, where they are listed
-(`research/ACCOUNT.md`), and the recommendation "let them stand". The owner's yes is `wayline review all stand`,
-which journals one review per decision; a decision they want undone or changed is `wayline review <id> reverse`,
-with `--answer` when they said what instead. Under `interactive` and `checkpoints`, open with what waits on the
+(`research/ACCOUNT.md`), and the recommendation "let them stand". The owner's yes is
+`wayline review all stand --shown <ids>`, naming the decisions you showed, which journals one review each and leaves
+listed any decided since; a decision they want undone or changed is `wayline review <id> reverse`, with `--answer`
+when they said what instead. Under `interactive` and `checkpoints`, open with what waits on the
 owner, as one numbered round.
 
 The owner reaches this project from their phone through Claude Code's Remote Control, `claude remote-control` run
@@ -114,7 +115,7 @@ What the owner says or hands over, the rule you follow, and the verbs you run. T
 | writes a passage for a section | record | `wayline passage add --section <s> --heading <h> "<text>"` |
 | merges or renames results, or asks for a result drawn again | record | `wayline result merge <id> <into>`, `wayline result rename <id> "<heading>"`, `wayline result draw <id>` |
 | moves, places, or notes a line of the outline | record | `wayline outline move <item> --before <item>`, `wayline outline place <item> main`, `wayline outline note <item> "<text>"`, `wayline outline heading <section> "<heading>"`, `wayline outline show` |
-| lets the decisions made for them stand, or reverses one | record | `wayline review all stand`, `wayline review <id> stand`, `wayline review <id> reverse` |
+| lets the decisions made for them stand, or reverses one | record | `wayline review all stand --shown <ids>`, `wayline review <id> stand`, `wayline review <id> reverse` |
 | asks for work | record | `wayline ticket add` |
 | comments on how the harness behaved (the procedure is evolve.md) | record | `wayline feedback "<text>"`, `wayline evolve`, `wayline evolve --apply <id>`, `wayline evolve --retrospective` |
 | sets the stopping rule or a budget during setup, or a setting at any time | record | `wayline switch --stop-when <rule>`, `wayline switch --budget <name>=<hours>`, `wayline switch --autonomy <level>`, `wayline switch --fallback <consent>`, `wayline switch --ladder <consent>`, `wayline switch --plotting <library>`, `wayline switch --environment <kind>` |

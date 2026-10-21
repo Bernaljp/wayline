@@ -43,7 +43,8 @@ verbs: a decision ticket is asked again (`ticket_rerun`) human-only and, with an
 (`project.answer`); a grill question is revised (`grill answer --revise`); a parked proposal the decider kept parked
 is admitted; the paper's venue is the owner's next `wayline paper --venue`. Under `autonomous` a conversation the owner opens
 starts with "Decided for you" as one numbered item recommending "let them stand", and the owner's yes is
-`wayline review all stand` (`review_all`), one `reviewed` per decision listed (ticket 109). A reversal with no answer ("undo it")
+`wayline review all stand --shown <ids>` (`review_all`), one `reviewed` per decision shown, and one decided since is left
+listed (ticket 109). A reversal with no answer ("undo it")
 reopens the decision human-only and asks in one line: a grill question or a proposal on a human-only decision ticket
 (origin `review D<n>: ...`) whose answer the next render takes in (`_settle_reopened`). A mark that cannot be taken
 is said in the banner. Nothing a review does stops a run.
@@ -1154,20 +1155,42 @@ def review(project, identifier, verdict, answer=None):
 ALL = "all"  # `wayline review all stand`: the owner's yes to "Decided for you" as one item (ticket 109)
 
 
-def review_all(project):
-    """Let every decision listed under "Decided for you" stand: the owner's yes to the autonomous opening (ticket 109).
+def review_all(project, shown):
+    """Let stand each decision the owner was shown under "Decided for you": their yes to the autonomous opening (ticket 109).
 
-    Returns one line per decision reviewed, in the account's order; empty when none is listed. A reversal is never
-    taken for all at once, since each one is the owner's own answer.
+    `shown` are the D ids the opening listed. A decision made after it, which the owner never saw, is left listed and
+    named; a shown one that no longer stands or was reviewed meanwhile is a problem said, never a silent skip. Returns
+    `(lines, problems)`: one line per decision let stand, then one naming what is still listed. The ledger is read and
+    the marks settled once, under one lock, whatever the number. A reversal is never taken for all at once, since each
+    one is the owner's own answer.
     """
     project = Path(project).resolve()
-    lines = []
-    for decision in _unreviewed(_context(project)):
-        try:
-            lines.append(review(project, decision.id, STAND))
-        except AccountError:
-            continue  # reviewed or superseded since the list was read: nothing is left to review
-    return lines
+    book, told, lines, problems = Ledger(project), [], [], []
+    shown = list(dict.fromkeys(str(identifier).strip() for identifier in shown if str(identifier).strip()))
+    with book.lock():
+        settle_marks(project, told)
+        context = _context(project)
+        listed = {decision.id: decision for decision in _unreviewed(context)}
+        held = _review_items(project)
+        for identifier in shown:
+            decision = listed.pop(identifier, None)
+            if decision is None:
+                problems.append("%s is not listed under \"Decided for you\" now: reviewed already, superseded, or never a "
+                                "decision made for you" % identifier)
+                continue
+            book.append_event(REVIEWED, {"decision": identifier, "review": STAND, "by": OWNER}, ticket=decision.ticket)
+            lines.append("%s stands: %s" % (identifier, _one_line(_answer_of(decision))))
+            item = held.get(identifier)
+            if item is not None and item[1]["mark"] is None:
+                try:
+                    batches.mark(project, item[0]["id"], item[1]["id"], STAND, by=OWNER)
+                except batches.BatchError:
+                    pass  # settled meanwhile: the review journaled above is what counts
+        if listed:
+            lines.append("Still listed, decided after you were shown the list: %s (wayline review lists them)"
+                         % ", ".join(sorted(listed, key=lambda identifier: int(identifier[1:]) if identifier[1:].isdigit() else 0)))
+    _tell(told)
+    return lines, problems
 
 
 def _apply(project, identifier, verdict, answer, told=None):
@@ -1360,6 +1383,7 @@ def review_command(args):
                                               "stand, for every one listed")
     parser.add_argument("verdict", nargs="?", choices=REVIEWS, help="stand, or reverse")
     parser.add_argument("--answer", help="with reverse: what you want instead; without one the decision is reopened for you")
+    parser.add_argument("--shown", metavar="D1,D2,...", help="with all stand: the decisions the owner was shown, each let stand")
     parser.add_argument("--project", help="the project; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
@@ -1378,9 +1402,16 @@ def review_command(args):
             if options.verdict != STAND or options.answer is not None:
                 print("wayline review: all takes stand alone; a reversal is your own answer, one at a time", file=sys.stderr)
                 return 2
-            for line in review_all(project) or ["Nothing is decided for you and not yet reviewed."]:
+            if not options.shown:
+                print("wayline review: all stand takes --shown, the D ids the owner was shown, so a decision made since is "
+                      "not let stand unseen", file=sys.stderr)
+                return 2
+            lines, problems = review_all(project, options.shown.split(","))
+            for line in lines:
                 print(line)
-            return 0
+            for problem in problems:
+                print("wayline review: %s" % problem, file=sys.stderr)
+            return 1 if problems else 0
         print(review(project, options.id, options.verdict, options.answer))
     except AccountError as failure:
         print("wayline review: %s" % failure, file=sys.stderr)

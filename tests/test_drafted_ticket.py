@@ -101,6 +101,13 @@ class DraftedTicketTest(ProjectTestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(read_tickets(self.project)[0]["sections"], ["discussion"])
 
+    def test_a_draft_of_a_kind_no_shipped_role_covers_is_refused_rather_than_failing_at_launch(self):
+        code, _, err = self.add(draft(kind="lit", touches=["notes/related.md"], acceptance={"machine": ["test -f notes/related.md"]},
+                                      title="Survey the related work", demo="notes/related.md lists the related work"))
+        self.assertEqual(code, 1)
+        self.assertIn("no role", err)
+        self.assertEqual(read_tickets(self.project), [])
+
     def test_the_function_returns_what_it_wrote(self):
         outcome = drafts.add_drafted(self.project, draft())
         self.assertEqual(outcome["ticket"], 1)
