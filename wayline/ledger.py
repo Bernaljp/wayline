@@ -267,7 +267,7 @@ K_CONSOLIDATES = "consolidates"  # `passage`: on a consolidation's passage, ever
 K_MERGES = "merges"  # `passage`: on a merged inherited passage, every occurrence of the claim it merges (ticket 95)
 K_WRITTEN = "written"  # `consolidated`: the ids of the fewer passages it wrote in their place
 K_PLACE = "place"  # `concern`: where the concern was sorted, tied to objectives, for the order, or declined; null while unsorted
-K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for research/ACCOUNT.md (ticket 89); absent for REPORT.md
+K_REPORT = "report"  # `report_rendered`: which rendered file, `account` for research/ACCOUNT.md (ticket 89), the result R<n> for its report (ticket 101); absent for REPORT.md
 K_EDITED = "edited"  # `report_rendered`: the commit an edit by hand was kept in as it stood, null when it could not be committed
 K_DECISION = "decision"  # `reviewed`: the decision reviewed, D1 onward, by its place among the journal's `decision` events
 K_REVIEW = "review"  # `reviewed`: stand or reverse
@@ -338,7 +338,7 @@ EVENTS = {
     CHANGE_RECORD: (K_ID, K_SCOPE_KIND, K_MECHANISM, K_FIXTURE),
     TAGGED: (K_TAG,),
     PINNED: (K_TAG, K_PREVIOUS),
-    REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS, K_REPORT, K_EDITED),
+    REPORT_RENDERED: (K_SHA256, K_CLAIMS, K_TAGGED, K_LINTER_PASS, K_REPORT, K_VERSION, K_EDITED),
     PAPER_STARTED: (K_VENUE,),
     FIGURE_RESULT: (K_FIGURE_ID, K_VERSION, K_PATH, K_SHA256, K_STATUS, K_REASON),
     OBJECTIVE: (K_ID, K_TEXT, K_STATUS, K_MEASURE, K_BY, K_PROPOSAL),
