@@ -48,6 +48,29 @@ lists it read-only, marked with its tag.
   plot <id> "<request>"` asks for a plot: a small drawing carrying the result's other plots unchanged, or with `none`
   an analysis ticket. A merged result's plots follow it to the result it went into, ids kept, and its report freezes.
 
+- References, and when you are asked about a reference (ticket 105; Implementation Decisions 17, 1, and 2). After
+  every render of the sections, and at the end of every wave, code writes `research/sections/references.md` from the
+  dossiers: the works the sections cite, numbered by first citation through Introduction, Results, Discussion, and
+  Methods in the outline's order, each with its authors to three then "et al.", year, title, venue, identifier, and a
+  link to its dossier, then a **Not yet resolved** list giving each unresolved cited work as "to the scout",
+  "retrying" (with the service and the date), "gave up", or "claim kept, to be resolved" (you said "leave it"). Beside
+  it, `research/references.json` holds the CSL-JSON of the cited works that resolved. A work enters References only by
+  being cited: no passage names References any more, and a ticket declaring it is held to nothing there. Before the
+  paper order the linter lists a citation of a work not yet resolved and never fails it, in a section and at
+  acceptance alike, where the references check still sends back a work no service knows.
+
+  You are asked about an unresolved reference only when it is **important** (you named it at intake, or a standing
+  passage, a concern, or an objective cites it) and only once its failure is final: no service knows it, its retry
+  flag gave up, or it is a URL or a file nothing can look up; never while it is still retrying. Under `interactive`
+  you get a notice linking to it, a line under the account's "Waiting on you", and it is the first item of your next
+  conversation; under `checkpoints` the line, and it is put to you at the next conversation or named in the end
+  notice; under `autonomous` setup asks about every important one, those still retrying included, and afterward it is
+  listed, never notified. Each is raised once, journaled as the new event `reference_raised`, and "leave it" settles
+  it until the paper order. `wayline reference` with no slug lists what waits on you. The account's "Waiting on you"
+  lists the important ones whose failure is final, in place of ticket 89's narrower test (a reference never looked up
+  is still to the scout, so it no longer counts), and its Library gives the count of unresolved cited references with
+  a pointer to References' Not yet resolved list.
+
 - Drawings and plots (ticket 100; Implementation Decisions 17, 14, 13, and 2). Each changed result is explored in
   every useful plot at rest points: before a run ends (on an empty frontier, the stopping rule, or a budget), before
   it comes to rest on the owner's answer under `checkpoints`, and on the owner's word (`wayline result draw R4`).

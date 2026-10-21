@@ -856,9 +856,10 @@ def end_kinds(text):
 class _Pass:
     """One linter pass: the problems, the listed sentences, and the counts, over sentences fed in one at a time."""
 
-    def __init__(self, resolver, classes, doc_only_fails, unclassified_fails):
+    def __init__(self, resolver, classes, doc_only_fails, unclassified_fails, unresolved_ref_fails=True):
         self.resolver, self.classes = resolver, classes
         self.doc_only_fails, self.unclassified_fails = doc_only_fails, unclassified_fails
+        self.unresolved_ref_fails = unresolved_ref_fails
         self.problems, self.listed = [], []
         self.claims = self.tagged = self.unclassified = 0
 
@@ -869,7 +870,9 @@ class _Pass:
         for tag in sentence.tags:
             found = self.resolver.problem(tag)
             if found is not None:
-                self.problems.append(dict(extra, sentence=sentence.text, problem=found[0], tag=tag, detail=found[1]))
+                listed = found[0] == UNRESOLVED_REF and not self.unresolved_ref_fails
+                (self.listed if listed else self.problems).append(dict(extra, sentence=sentence.text, problem=found[0], tag=tag,
+                                                                       detail=found[1]))
         for identifier in PLOT_TAG_RE.findall(sentence.text):
             found = self.resolver.plot_problem(identifier.strip())
             if found is not None:
@@ -926,19 +929,23 @@ def resolver_for(project):
     return _Resolver(project)
 
 
-def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False, resolver=None):
+def lint_passages(project, items, classes, code_root=None, code_read=None, own_run=None, unclassified_fails=False, resolver=None,
+                  unresolved_ref_fails=False):
     """The linter over passages and findings (decision 17; ticket 88): every tag resolves, every claim ends tagged.
 
     `items` are passages (`{id, by, text}`) or findings (`{id, text, provenance}`); each problem and listed sentence
-    names the `passage` it is in. Before the paper order an untagged claim in an owner's passage and a claim tagged
-    only `doc` are listed, never failed; a finding with no tag of its own is tagged by its provenance. `code` tags
+    names the `passage` it is in. Before the paper order an untagged claim in an owner's passage, a claim tagged
+    only `doc`, and a `ref` tag naming a work not resolved (ticket 105) are listed, never failed (the last fails with
+    `unresolved_ref_fails`, a section's reading after the order); a finding with no tag of its own is tagged by its provenance. `code` tags
     resolve against `code_root`'s working tree (a ticket's worktree), or `code_read`, or the project's `main`; `resolver`,
     from `resolver_for`, is one several passes share (a render of every section). An
     unclassified sentence is listed unless `unclassified_fails`.
     """
     read = code_read or (code_reader(code_root) if code_root is not None else None)
     resolver = resolver if resolver is not None else _Resolver(project, read, own_run)
-    linted = _Pass(resolver, classes, doc_only_fails=False, unclassified_fails=unclassified_fails)
+    # Before the paper order a citation of a work not yet resolved is listed, never failed (ticket 105): References says
+    # where it stands, and the check at acceptance (`references.check_references`) sends back a work no service knows.
+    linted = _Pass(resolver, classes, doc_only_fails=False, unclassified_fails=unclassified_fails, unresolved_ref_fails=unresolved_ref_fails)
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -1675,7 +1682,7 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
 
     The edit rule: an edit of the file since the last render (its hash against the last `report_rendered`) is
     committed as it stood, journaled as `edited` on this render, listed in the banner from then on, and never taken in.
-    The account renders in the same pass, and the outline after it; a merge taken on the outline's proposals is made first.
+    The account renders in the same pass, then the outline and References; a merge taken on the outline's proposals is made first.
     """
     project = Path(project).resolve()
     book = Ledger(project)
@@ -1721,6 +1728,12 @@ def render_report(project, *, harness_root=HARNESS_ROOT, policy=None, offline=Fa
         outline.render_outline(project)
     except (ValueError, OSError) as failure:
         notes.append("OUTLINE.md could not be rendered: %s" % failure)
+    # And References (ticket 105): a retry the tick ran may have found a work, or a flag given up, with no section changed.
+    from wayline import references  # the references module imports this one
+    try:
+        references.render_references(project)
+    except (ValueError, OSError) as failure:
+        notes.append("References could not be rendered: %s" % failure)
     return Rendered(path, digest, result, notes, edited)
 
 

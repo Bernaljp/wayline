@@ -117,6 +117,7 @@ RESULT = "result"  # one result created at an acceptance, or merged or renamed o
 VERIFICATION = "verification"  # one inherited result's standing recorded or changed in research/verifications.json (decision 17; ticket 97)
 DRAWING = "drawing"  # one drawing of a result opened at a rest point, accepted, or failed (decision 17; ticket 100)
 OBJECTIVE_PROPOSED = "objective_proposed"  # one objective proposal of a result or a verdict, or its judgment (decision 17; ticket 91)
+REFERENCE_RAISED = "reference_raised"  # an important unresolved reference put to the owner once its failure is final (decision 17; ticket 105)
 OUTLINE = "outline"  # one change the owner (or the decider, or code dropping a gone placement) made to research/outline.json (decision 17; ticket 104)
 
 # --- payload keys ----------------------------------------------------------------------------
@@ -357,6 +358,7 @@ EVENTS = {
     DRAWING: (K_RESULT, K_VERSION, K_TICKET, K_REST, K_OUTCOME, K_PLOTS, K_LEFT_OUT, K_RETIRED, K_REASON),
     OBJECTIVE_PROPOSED: (K_ID, K_KIND, K_OBJECTIVE, K_TICKET, K_BY, K_UPHELD, K_WHY, K_ANSWER, K_PROPOSAL),
     OUTLINE: (K_ACTION, K_ITEM, K_TO, K_NOTE, K_BY),
+    REFERENCE_RAISED: (K_SLUG, K_REASON, K_OUTCOME, K_AUTONOMY),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -428,6 +430,11 @@ PAYLOAD_ENUMS = {
     # or a placement whose item is gone, dropped by code.
     (OUTLINE, K_ACTION): ("moved", "placed", "noted", "added", "gone"),
     (OUTLINE, K_BY): ("owner", "decider", "code"),
+    # What makes it important, the first that holds; why its failure is final; and the autonomy it was raised under
+    # (under `autonomous` it was asked at setup and is afterward listed, never raised).
+    (REFERENCE_RAISED, K_REASON): ("owner", "passage", "concern", "objective"),
+    (REFERENCE_RAISED, K_OUTCOME): ("no such work", "gave up", "not looked up"),
+    (REFERENCE_RAISED, K_AUTONOMY): ("interactive", "checkpoints"),
 }
 
 
