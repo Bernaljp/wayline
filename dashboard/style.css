@@ -1089,6 +1089,8 @@ main { padding-bottom: calc(var(--space-6) + var(--space-5)); }
   /* On a phone the chat is the whole screen, as the viewer is. */
   .chat { inset: 0; width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
   .chat-bar button.action, .chat-send button.action { min-height: 44px; min-width: 44px; }
+  /* Above the marks view's previous and next, which a phone holds at the bottom of the screen. */
+  body[data-view="marks"] .chat-open { bottom: calc(44px + 2 * var(--space-2) + var(--space-2)); }
   body[data-chat="open"] { overflow: hidden; }
 }
 

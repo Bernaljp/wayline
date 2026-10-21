@@ -18,6 +18,9 @@ from wayline.worker import Envelope
 
 TOKEN = "a-token-the-chat-acts-with"
 DEADLINE_S = 10
+# How often a test reads the server again while it waits: often enough to be quick, seldom enough to leave the CPU to
+# the rest of a parallel suite (the browser tests share the runner).
+POLL_S = 0.05
 
 
 def reply(text="Here is where it stands.", card=None, session="s-1"):
@@ -37,7 +40,7 @@ class ChatServedCase(Serving, ProjectTestCase):
         self.fake.release()
         deadline = time.monotonic() + DEADLINE_S
         while chat.busy(self.project) and time.monotonic() < deadline:
-            time.sleep(0.01)
+            time.sleep(POLL_S)
 
     def post(self, path, body, token=TOKEN):
         connection = http.client.HTTPConnection(self.host, self.port, timeout=10)
@@ -66,7 +69,7 @@ class ChatServedCase(Serving, ProjectTestCase):
             view = self.thread()
             if check(view):
                 return view
-            time.sleep(0.01)
+            time.sleep(POLL_S)
         self.fail("the chat never showed %s: %s" % (what, self.thread()))
 
     def held(self):
@@ -75,7 +78,7 @@ class ChatServedCase(Serving, ProjectTestCase):
         while self.fake.live() < 1:
             if time.monotonic() > deadline:
                 self.fail("no session was held")
-            time.sleep(0.01)
+            time.sleep(POLL_S)
 
     def answered(self, number):
         view = self.until(lambda view: any(message["id"] == number and message["status"] not in ("queued", "running")
