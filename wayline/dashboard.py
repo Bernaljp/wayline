@@ -1375,15 +1375,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         `ACTIONS`, never from the session that proposed it."""
         from wayline import chat
         fields = _fields(body, ("choice",))
-        server, headers = self.server, self.headers
+        server, headers, number = self.server, self.headers, int(match.group("number"))
 
         def run(action, args):
             if action not in ACTIONS:
                 raise DashboardError("a card's action %r is no action of the dashboard" % action)
-            status, report = run_action(action, project, json.dumps(args).encode("utf-8"), headers, server)
+            status, report = run_action(action, project, json.dumps(args).encode("utf-8"), headers, server,
+                                        on_failure=lambda failure: chat.card_failed(project, number, failure))
             return {"status": int(status), "action": action, "report": report}
 
-        record, outcome = chat.settle_card(project, int(match.group("number")), _string(fields, "choice"), run)
+        record, outcome = chat.settle_card(project, number, _string(fields, "choice"), run)
         return HTTPStatus.OK, {"message": record, "outcome": outcome}
 
     def _action_authorized(self):
@@ -1679,12 +1680,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         here answers (the dashboard restarted) is taken up first, so the poll that finds it starts it again."""
         from wayline import chat
         path = self._project(project)
-        if old_project_problem(path) is None:
-            chat.start(path)
-        tag = etag("chat", project, chat.snapshot(path))
+        records = chat.read_messages(path)
+        if old_project_problem(path) is None and chat.start(path, records=records):
+            records = chat.read_messages(path)  # what the start changed: a recovered message, or the next one running
+        tag = etag("chat", project, chat.snapshot(path, records))
         if self._not_modified(tag):
             return None
-        return self._json(chat.thread_view(path), tag)
+        return self._json(chat.thread_view(path, records), tag)
 
     def api_action_get(self, query, project, name):
         """An action asked for with `GET`: 405, with the method it takes."""
@@ -1862,7 +1864,7 @@ def _string(fields, key, required=True):
     return value
 
 
-def run_action(name, project, body, headers=None, server=None):
+def run_action(name, project, body, headers=None, server=None, on_failure=None):
     """Take one action on one project: `(status, report)`, the report being what the verb's function returned.
 
     `body` is the raw request body. The functions are the ones the verbs call, told `by="dashboard"`
@@ -1925,7 +1927,7 @@ def run_action(name, project, body, headers=None, server=None):
         _fields(body)
         return _switch(project, server)
     if name in CARD_ACTIONS:
-        return _card_action(name, project, body, server)
+        return _card_action(name, project, body, server, on_failure)
     raise DashboardError("no action %r; the actions are %s" % (name, ", ".join(ACTIONS)))
 
 
@@ -1933,7 +1935,7 @@ def run_action(name, project, body, headers=None, server=None):
 CARD_ACTIONS = ("run", "stop_when", "budget", "consolidate", "paper", "public")
 
 
-def _card_action(name, project, body, server):
+def _card_action(name, project, body, server, on_failure=None):
     """`run` starts the run as `run --detach` does; `stop_when` and `budget` are `switch --stop-when` and `--budget`;
     `consolidate` and `paper` start the consolidation and the paper on a thread of their own and answer 202 at once,
     since each runs model sessions; `public` makes the code repository public, the owner's word."""
@@ -1957,10 +1959,10 @@ def _card_action(name, project, body, server):
     if name == "consolidate":
         from wayline import consolidation
         section = _string(_fields(body, ("section",)), "section")
-        return _on_a_thread(server, project, name, lambda: consolidation.consolidate(project, section))
+        return _on_a_thread(server, project, name, lambda: consolidation.consolidate(project, section), on_failure)
     from wayline import paper
     venue = _string(_fields(body, (), ("venue",)), "venue", required=False)
-    return _on_a_thread(server, project, name, lambda: paper.write_paper(project, venue))
+    return _on_a_thread(server, project, name, lambda: paper.write_paper(project, venue), on_failure)
 
 
 def _start_run(project):
@@ -1983,11 +1985,13 @@ _WORKING = set()
 _WORKING_LOCK = threading.Lock()
 
 
-def _on_a_thread(server, project, name, work):
-    """Run `work` on a thread of its own, one of each `name` at a time per project: 202 at once, with what started.
+def _on_a_thread(server, project, name, work, on_failure=None):
+    """Run `work` on a thread of its own, one of each `name` at a time per project, and answer once it has ended or
+    `SWITCH_REPLY_S` has passed: 200 when it ended, its own refusal (a section with nothing to consolidate, a venue with no
+    guidelines) raised as the verb would raise it, else 202 with what started.
 
-    What it writes lands in the ledger as the verb's would, and the views read it there; a failure is printed where the
-    server's log is, since the reply has gone."""
+    What it writes lands in the ledger as the verb's would, and the views read it there. A failure after the reply has
+    gone is printed where the server's log is and handed to `on_failure`, which keeps it on the card that started it."""
     working = getattr(server, "working", _WORKING)
     lock = getattr(server, "working_lock", _WORKING_LOCK)
     key = (str(project), name)
@@ -1996,16 +2000,36 @@ def _on_a_thread(server, project, name, work):
             raise ActionConflict("a %s is already running on this project; it ends on its own" % name)
         working.add(key)
 
+    outcome = {"replied": False}
+    reply_lock = threading.Lock()
+
     def run():
         try:
-            work()
+            outcome["report"] = work()
         except Exception as failure:
-            print("wayline serve: the %s on %s failed: %s" % (name, project, failure), file=sys.stderr, flush=True)
+            with reply_lock:
+                outcome["failure"] = failure
+                late = outcome["replied"]
+            if late:
+                print("wayline serve: the %s on %s failed: %s" % (name, project, failure), file=sys.stderr, flush=True)
+                if on_failure is not None:
+                    try:
+                        on_failure(failure)
+                    except Exception as kept:  # the card could not be told; the log line above says it
+                        print("wayline serve: the failure of the %s could not be kept: %s" % (name, kept), file=sys.stderr, flush=True)
         finally:
             with lock:
                 working.discard(key)
 
-    threading.Thread(target=run, name="wayline-%s" % name, daemon=True).start()
+    thread = threading.Thread(target=run, name="wayline-%s" % name, daemon=True)
+    thread.start()
+    thread.join(SWITCH_REPLY_S)
+    with reply_lock:
+        outcome["replied"] = True
+        if not thread.is_alive():
+            if "failure" in outcome:
+                raise outcome["failure"]
+            return HTTPStatus.OK, {"done": name}
     return HTTPStatus.ACCEPTED, {"started": name}
 
 

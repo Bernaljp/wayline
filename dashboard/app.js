@@ -2457,7 +2457,7 @@ function renderStrip(view, project) {
       ...(item.item ? [itemLink(project, item.item, `#${item.item}`)] : []),
       el('span', { class: 'row-title', text: item.text }),
       // A decision ticket is answered by saying so in the chat, which records it (ticket 114): no verb is typed.
-      ...(item.item ? [el('span', { class: 'row-acts acts' }, [answerButton(project, item.item)])] : []),
+      ...(item.item && /^Decision ticket /.test(item.text) ? [el('span', { class: 'row-acts acts' }, [answerButton(project, item.item)])] : []),
     ])]))
     : [el('li', {}, [emptyState('nothing waits on you')])]);
   state.waiting = view.count;

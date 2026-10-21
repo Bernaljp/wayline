@@ -528,6 +528,12 @@ class StandInMixin:
 
 
 class ClaudeCliTest(StandInMixin, unittest.TestCase):
+    def test_a_session_a_verb_of_the_dashboards_chat_launches_is_no_chat_session(self):
+        # A consultant or a planner the chat's verb starts runs its own `wayline` calls, which the chat's guard would refuse.
+        with mock.patch.dict(os.environ, {"WAYLINE_CHAT": "1"}):
+            worker.launch(self.request())
+        self.assertNotIn("WAYLINE_CHAT", self.recorded()["env"])
+
     def test_launch_runs_the_launch_line_and_writes_the_session_directory(self):
         request = self.request()
         started = []

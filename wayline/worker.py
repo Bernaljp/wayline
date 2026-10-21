@@ -1665,6 +1665,9 @@ class ClaudeCli:
         _write_session(run_dir, request, message if session_id is not None else request.prompt, executable, spelled, session_id,
                        stdin=str(prompt_path) if on_stdin else "/dev/null")
         child_env = dict(os.environ)
+        # A session a verb of the dashboard's chat launches (a consultant, a planner) is no chat session: its own `wayline`
+        # calls are its role's, so the chat's guard is not handed down to it (ticket 114).
+        child_env.pop("WAYLINE_CHAT", None)
         child_env.update({key: str(value) for key, value in request.env.items()})
         child_env.pop("CLAUDE_CODE_RETRY_WATCHDOG", None)  # workers fail fast; the conductor owns the wait
         stream_path = run_dir / "stream.jsonl"

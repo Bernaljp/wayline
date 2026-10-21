@@ -510,6 +510,9 @@ def take_intake(project, spec, base=None, run=run_tool, tools=None, push_url=Non
     budgets = {key: harness.get("budgets", {}).get(key) for key in BUDGET_FIELDS}
     budgets.update({key: value for key, value in spec.get("budgets", {}).items() if value is not None})
     updated["budgets"] = budgets
+    if os.environ.get("WAYLINE_CHAT") and budgets != {key: harness.get("budgets", {}).get(key) for key in BUDGET_FIELDS}:
+        # A budget is on the irreversible list once set: in the dashboard's chat it is a card (ticket 114), whatever carried it.
+        raise IntakeError("a budget is set in the dashboard's chat by a card the owner confirms, never by a chat session's intake")
     schema = load_schema("harness")
     order = list(schema["properties"])  # the schema's order, so the new keys sit beside autonomy and radius
     updated = {key: updated[key] for key in sorted(updated, key=lambda key: order.index(key) if key in order else len(order))}

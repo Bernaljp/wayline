@@ -1001,11 +1001,13 @@ lists it read-only, marked with its tag.
   that ends with the queue, so no process runs between messages. The conversation is kept under `research/chat/`
   (gitignored, one file per message and the sessions beside them), and the panel polls it, reading what a running
   session has said so far. The chat answers at every pacing level but a hit limit, where code answers that it cannot
-  and launches nothing; at `stop` the reply says the windows stand there. A chat session has the read tools and one
-  `Bash(wayline <verb>:*)` per verb the skill's routing table names outside its confirmed rows, under `dontAsk`, with
-  edits, the web, MCP, and subagents denied by name and each confirmed verb denied as well; under `WAYLINE_CHAT`,
-  which its environment carries, the command itself refuses a verb the chat may not run and
-  `code_repository.make_public` refuses outright. What the owner asks that the table confirms first (starting the run,
+  and launches nothing; at `stop` the reply says the windows stand there. A chat session has the read tools on the
+  project and the skill's own files, and one `Bash(wayline <verb>:*)` per verb the skill's routing table names outside
+  its confirmed rows, under `dontAsk`, with edits, the web, MCP, and subagents denied by name and each confirmed verb
+  denied as well. Under `WAYLINE_CHAT`, which its environment carries, the command itself refuses a verb the chat may
+  not run, one with no `--project` or naming another project, and an intake that would change a budget, and
+  `code_repository.make_public` refuses outright; a session a chat verb launches (a consultant, a planner) does not
+  inherit it. A resumed session that took no turn is started fresh; one that ran verbs and then failed is not run again. What the owner asks that the table confirms first (starting the run,
   the stopping rule or a budget, a consolidation, the paper order, making the code repository public) comes back as a
   card, through the new `chat_reply` schema, with what will happen, its cost, Confirm, and Not now; Confirm runs the
   card's action from the dashboard through its `ACTIONS` whitelist, which gains `run`, `stop_when`, `budget`,

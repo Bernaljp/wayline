@@ -139,6 +139,10 @@ class PostAndPollTest(ChatServedCase):
     def test_an_unchanged_conversation_answers_304(self):
         first = self.api("/chat")
         self.assertEqual(self.api("/chat", {"If-None-Match": first.etag}).status, 304)
+        harness = json.loads((self.project / "harness.json").read_text(encoding="utf-8"))
+        (self.project / "harness.json").write_text(json.dumps(dict(harness, chat={"model": "sonnet", "effort": "medium"})), encoding="utf-8")
+        moved = self.api("/chat", {"If-None-Match": first.etag})
+        self.assertEqual((moved.status, moved.json["rung"]), (200, "sonnet medium"), "a changed rung is shown")
 
     def test_posting_needs_the_token_and_records_nothing_without_it(self):
         answer = self.post("/chat", {"text": "How does it stand?"}, token=None)
@@ -194,6 +198,19 @@ class CardTest(ChatServedCase):
         self.assertEqual(answer.status, 200, answer.body)
         self.assertEqual(answer.json["message"]["card"]["state"], "not now")
         self.assertNotIn("stop_when", self.harness())
+
+    def test_a_consolidation_that_refuses_at_once_says_so_and_leaves_the_card_open(self):
+        self.fake.script(reply("Yours to confirm.", card={"action": "consolidate", "args": {"section": "discussion"},
+                                                          "what": "Rewrite Discussion's passages into fewer.", "cost": "One writer session."}),
+                         role=chat.ROLE)
+        sent = self.send("compile the discussion")
+        self.answered(sent["id"])
+        answer = self.post("/chat/%d/card" % sent["id"], {"choice": "confirm"})
+        self.assertEqual(answer.status, 400, answer.body)
+        self.assertIn("nothing to consolidate", answer.json["error"])
+        card = self.thread()["messages"][0]["card"]
+        self.assertEqual(card["state"], "open")
+        self.assertIn("nothing to consolidate", card["error"])
 
     def test_a_message_with_no_card_has_nothing_to_confirm(self):
         self.fake.script(reply("Recorded O3."), role=chat.ROLE)

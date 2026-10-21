@@ -257,7 +257,7 @@ def refuse_in_chat(args):
     if not os.environ.get("WAYLINE_CHAT"):
         return None
     from wayline import chat  # the chat reads the skill's routing table, which no other verb needs
-    return chat.refusal(args)
+    return chat.refusal(args, project=os.environ.get("WAYLINE_PROJECT") or ".")
 
 
 def exit_code(name, result):

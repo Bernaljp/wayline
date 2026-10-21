@@ -10,6 +10,7 @@ import io
 import json
 from unittest import mock
 
+from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from wayline import chat, cli, worker
 from wayline.worker import Envelope
@@ -39,7 +40,8 @@ class ChatCase(ProjectTestCase):
     def run_verb(self, *argv):
         """`wayline <argv>` as a chat session's command runs it, under `WAYLINE_CHAT`: its exit code and what it printed."""
         out = io.StringIO()
-        with mock.patch.dict("os.environ", {chat.CHAT_ENV: "1"}), contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
+        environment = {chat.CHAT_ENV: "1", "WAYLINE_PROJECT": str(self.project)}
+        with mock.patch.dict("os.environ", environment), contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
             code = cli.main(list(argv))
         return code, out.getvalue()
 
@@ -97,6 +99,22 @@ class ResumeTest(ChatCase):
         second = self.say("And O2?", now=T0 + 60)
         self.assertEqual([call.kind for call in self.fake.calls], ["launch", "resume", "launch"])
         self.assertEqual((second["status"], second["reply"], second["resumed"]), ("answered", "Fresh.", False))
+
+    def test_a_resumed_session_that_took_turns_and_then_failed_is_not_run_again(self):
+        # It may have recorded what the owner said before it failed; a fresh session would record it twice.
+        self.script(reply("First.", session="s-1"),
+                    Envelope(session_id="s-1", is_error=True, subtype="error_max_turns", errors=["max turns"], answered=True))
+        self.say("How does it stand?", now=T0)
+        second = self.say("Add an objective: does depth help?", now=T0 + 60)
+        self.assertEqual([call.kind for call in self.fake.calls], ["launch", "resume"])
+        self.assertEqual(second["status"], "failed")
+
+    def test_a_resume_the_launcher_refuses_is_started_fresh_with_no_failure_left_on_the_message(self):
+        self.script(reply("First.", session="s-1"), reply("Fresh.", session="s-2"))
+        self.say("How does it stand?", now=T0)
+        with mock.patch.object(worker, "resume", side_effect=worker.LaunchError("the session's directory is gone")):
+            second = self.say("And O2?", now=T0 + 60)
+        self.assertEqual((second["status"], second["reply"], second["errors"]), ("answered", "Fresh.", []))
 
 
 class QueueTest(ChatCase):
@@ -157,7 +175,10 @@ class LaunchRequestTest(ChatCase):
     def test_a_chat_session_gets_read_tools_and_only_the_routed_verbs_under_dont_ask(self):
         request = self.request()
         bash = [tool for tool in request.allowed_tools if tool.startswith("Bash(")]
-        self.assertEqual([tool for tool in request.allowed_tools if not tool.startswith("Bash(")], ["Read", "Grep", "Glob"])
+        reads = [tool for tool in request.allowed_tools if not tool.startswith("Bash(")]
+        self.assertEqual(reads[:3], ["Read(./**)", "Grep(./**)", "Glob(./**)"], "read tools on the project")
+        skill = "/%s/**" % (HARNESS_ROOT / "skills" / "wayline").resolve()
+        self.assertEqual(reads[3:], ["Read(%s)" % skill, "Grep(%s)" % skill, "Glob(%s)" % skill], "and on the skill's own files")
         self.assertTrue(bash and all(tool.startswith("Bash(wayline ") and tool.endswith(":*)") for tool in bash), bash)
         for verb in ("status", "objective add", "answer", "mark", "passage add --section", "ticket add", "switch --autonomy", "intake"):
             self.assertIn("Bash(wayline %s:*)" % verb, request.allowed_tools)
@@ -238,6 +259,16 @@ class CardTest(ChatCase):
             chat.settle_card(self.project, record["id"], "confirm", lambda action, args: ran.append(action))
         self.assertEqual(len(ran), 1)
 
+    def test_a_card_a_stopped_dashboard_left_confirming_opens_again_saying_so(self):
+        self.script(reply("Yours to confirm.", card=ORDER))
+        record = self.say("order the paper")
+        record["card"]["state"] = "confirming"
+        (self.project / "research" / "chat" / ("%d.json" % record["id"])).write_text(json.dumps(record), encoding="utf-8")
+        chat.start(self.project)
+        card = chat.read_message(self.project, record["id"])["card"]
+        self.assertEqual(card["state"], "open")
+        self.assertIn("check whether it was done", card["error"])
+
     def test_an_action_that_refuses_leaves_the_card_open_with_why(self):
         self.script(reply("Yours to confirm.", card=ORDER))
         record = self.say("order the paper")
@@ -306,6 +337,22 @@ class CommandGuardTest(ChatCase):
                 code, said = self.run_verb(*argv)
                 self.assertEqual(code, 2)
                 self.assertIn("card", said)
+        self.assertEqual((self.project / "harness.json").read_bytes(), harness)
+
+    def test_a_verb_acts_on_the_chats_own_project_alone(self):
+        other = self.ledger_fixture("another-project")
+        code, said = self.run_verb("pause", "--project", str(other))
+        self.assertEqual(code, 2)
+        self.assertIn("its own project alone", said)
+        code, said = self.run_verb("pause")
+        self.assertEqual(code, 2, "with no --project a verb acts on the active project, which may be another")
+        self.assertIn("--project .", said)
+
+    def test_an_intake_from_the_chat_never_sets_a_budget(self):
+        harness = (self.project / "harness.json").read_bytes()
+        code, said = self.run_verb("intake", "--intent", "a toy", "--gpu-hours", "9999", "--project", str(self.project))
+        self.assertNotEqual(code, 0)
+        self.assertIn("card", said)
         self.assertEqual((self.project / "harness.json").read_bytes(), harness)
 
     def test_a_verb_the_routing_table_does_not_name_is_refused(self):
