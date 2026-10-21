@@ -27,6 +27,15 @@
       <button type="button" id="tick-log-button" class="action">tick log</button>
     </div>
   </div>
+  <!-- The views, routed by hash (ticket 110): #/ is the projects page, #/<project>/<view> a view of one
+       project, and #/<project>/<id> opens one item in the viewer over its view. -->
+  <div class="routes">
+    <nav id="views" aria-label="views">
+      <a href="#/" data-route="projects">projects</a>
+      <a data-route="research">research</a>
+      <a data-route="run">run</a>
+    </nav>
+  </div>
   <div class="meta">
     <p id="transport" class="note"></p>
     <p id="action-note" class="note" role="status" aria-live="polite"></p>
@@ -38,6 +47,43 @@
 <aside id="index" aria-label="sections"><nav><p class="index-title">sections</p><ol id="index-list"></ol></nav></aside>
 
 <main>
+  <!-- "Waiting on you", on every view of a project: the account's section, its count also in the title and on the tab. -->
+  <details id="strip" class="strip" hidden>
+    <summary><span class="strip-title">waiting on you</span> <span id="strip-count" class="count">0</span></summary>
+    <ul id="strip-items" class="rows"></ul>
+  </details>
+
+  <div class="view" id="view-projects" data-view="projects" hidden>
+  <section id="projects-page" aria-labelledby="projects-heading">
+    <div class="view-head"><h2 id="projects-heading">Projects</h2></div>
+    <div id="projects-body" class="panel">
+      <p class="state loading">reading the projects</p>
+    </div>
+  </section>
+  </div>
+
+  <div class="view" id="view-research" data-view="research" hidden>
+  <section id="general" aria-labelledby="general-heading">
+    <div class="view-head"><h2 id="general-heading">General report</h2><p class="note">Reports, plots, and the account open in the viewer.</p></div>
+    <div id="general-body" class="panel">
+      <p class="state loading">reading the research</p>
+    </div>
+  </section>
+  <section id="objectives" aria-labelledby="objectives-heading">
+    <div class="view-head"><h2 id="objectives-heading">Objectives</h2></div>
+    <div id="objectives-body" class="panel">
+      <p class="state loading">reading the objectives</p>
+    </div>
+  </section>
+  <section id="beyond" aria-labelledby="beyond-heading">
+    <div class="view-head"><h2 id="beyond-heading">Beyond the objectives</h2></div>
+    <div id="beyond-body" class="panel">
+      <p class="state loading">reading the results</p>
+    </div>
+  </section>
+  </div>
+
+  <div class="view" id="view-run" data-view="run" hidden>
   <section id="overview" aria-labelledby="overview-heading">
     <div class="view-head"><h2 id="overview-heading">Overview</h2></div>
     <div id="overview-body" class="panel">
@@ -45,7 +91,14 @@
     </div>
   </section>
 
-  <section id="controls" aria-labelledby="controls-heading">
+  <section id="account" aria-labelledby="account-heading">
+    <div class="view-head"><h2 id="account-heading">Account</h2></div>
+    <div id="account-body" class="panel">
+      <p class="state loading">reading the account</p>
+    </div>
+  </section>
+
+  <section id="controls" class="acts" aria-labelledby="controls-heading">
     <div class="view-head"><h2 id="controls-heading">Controls</h2></div>
     <div id="controls-body" class="panel">
       <p id="controls-state" class="state loading">reading the controls</p>
@@ -139,13 +192,20 @@
   <section id="evolve" aria-labelledby="evolve-heading">
     <div class="view-head"><h2 id="evolve-heading">Feedback</h2><p class="note">Say what should have gone better. The evolve loop turns it into change records, harness tickets, and fixtures.</p></div>
     <div class="panel">
-      <form id="feedback-form" class="answer-form">
+      <form id="feedback-form" class="answer-form acts">
         <textarea id="feedback-text" rows="3" required placeholder="what should have gone better, in your own words" aria-label="feedback for the evolve loop"></textarea>
         <button type="submit" id="feedback-send" class="action primary">file feedback</button>
       </form>
       <div id="changes-body">
         <p class="state loading">reading the feedback</p>
       </div>
+    </div>
+  </section>
+
+  <section id="software" aria-labelledby="software-heading">
+    <div class="view-head"><h2 id="software-heading">Software</h2></div>
+    <div id="software-body" class="panel">
+      <p class="state loading">reading tools.json</p>
     </div>
   </section>
 
@@ -156,7 +216,7 @@
     </div>
   </section>
 
-  <section id="intake" aria-labelledby="intake-heading">
+  <section id="intake" class="acts" aria-labelledby="intake-heading">
     <div class="view-head"><h2 id="intake-heading">Intake</h2></div>
     <div id="intake-drop" class="panel drop">
       <p>Hand over anything, in any form, by dropping it here: a manuscript, a referee report, a spreadsheet, a reference's PDF, a
@@ -172,6 +232,7 @@
     <div class="view-head"><h2 id="journal-heading">Journal</h2><p id="journal-note" class="note"></p></div>
     <ol id="journal-tail" class="tail" reversed></ol>
   </section>
+  </div>
 </main>
 </div>
 

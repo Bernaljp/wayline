@@ -34,14 +34,14 @@ Not part of this ticket:
 
 It blocks 111, 112, and 114.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#257](https://github.com/Bernaljp/wayline/issues/257) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the five views, the strip, the projects page, thin lists, item links, phone width; upgrades: the old project listed read-only; tools: what Run's Software shows), 8 (the dashboard); milestone M8 criteria 16 and 18; user stories 169 and 173.
 
-- [ ] The dashboard routes `#/<project>/research`, `#/<project>/run`, and the projects page by hash. The browser's back and forward buttons move between views, and reloading keeps the view.
-- [ ] `#/<project>/<id>` opens that item in the popup viewer over its view, for every kind of id this ticket's views list:
+- [x] The dashboard routes `#/<project>/research`, `#/<project>/run`, and the projects page by hash. The browser's back and forward buttons move between views, and reloading keeps the view.
+- [x] `#/<project>/<id>` opens that item in the popup viewer over its view, for every kind of id this ticket's views list:
   - objectives (O);
   - results (R);
   - plots (R4.3) and tables (R4.T1);
@@ -50,17 +50,17 @@ It blocks 111, 112, and 114.
   - the account.
   
   An unknown id shows a "not found" line, not an error page.
-- [ ] The "Waiting on you" strip appears on every view with the account's items, and its count appears in the tab's title and on each project tab.
-- [ ] The projects page lists each project with its standing line, run state, and waiting count. A project at `research_version` 1 is listed read-only, marked with its tag. Its files open in the viewer, and no action is offered for it.
-- [ ] Research lists what is above, each item a thin row with its link. Reports, plots, and the account open only in the popup viewer.
-- [ ] Run keeps today's page and adds the account in the viewer, Software (`tools.json`, the MATLAB check's outcome, the environment, and a move in progress), and cards for each new decision kind with its fields.
-- [ ] A current report renewed since the owner last opened it shows the "new since you looked" dot, and no notice is sent.
+- [x] The "Waiting on you" strip appears on every view with the account's items, and its count appears in the tab's title and on each project tab.
+- [x] The projects page lists each project with its standing line, run state, and waiting count. A project at `research_version` 1 is listed read-only, marked with its tag. Its files open in the viewer, and no action is offered for it.
+- [x] Research lists what is above, each item a thin row with its link. Reports, plots, and the account open only in the popup viewer.
+- [x] Run keeps today's page and adds the account in the viewer, Software (`tools.json`, the MATLAB check's outcome, the environment, and a move in progress), and cards for each new decision kind with its fields.
+- [x] A current report renewed since the owner last opened it shows the "new since you looked" dot, and no notice is sent.
 - [ ] At a narrow window or phone width, every view this ticket builds keeps its content readable with no sideways scroll. Recorded live once in `docs/verification/m8.md`.
-- [ ] Tests, over HTTP against a fixture ledger:
+- [x] Tests, over HTTP against a fixture ledger:
   - each route's JSON;
   - the strip's count;
   - the projects page with an old project;
   - `#/<project>/<id>` resolution for each kind;
   - ETag 304s on the new reads.
-- [ ] The changelog's `## Unreleased` section describes the five views and item links.
-- [ ] `python -m unittest` passes.
+- [x] The changelog's `## Unreleased` section describes the five views and item links.
+- [x] `python -m unittest` passes.

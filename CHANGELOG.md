@@ -922,6 +922,30 @@ lists it read-only, marked with its tag.
 - `wayline review all stand --shown <ids>` lets each decision the owner was shown under "Decided for you" stand, one
   `reviewed` each, and leaves listed any decided since: the owner's yes to the autonomous opening.
 
+- The dashboard's views, item links, and the projects page (ticket 110; Implementation Decisions 17 and 8). The one
+  stacked page becomes views routed by the hash behind the project tabs: **Research** first, then **Run**, with
+  **Paper** and **Inherited** (ticket 111) and **Marks** (ticket 112) to follow. The browser's back and forward move
+  between them, and a reload keeps the view. Every item has a link `#/<project>/<id>` that opens it in the popup
+  viewer over its view, so a notice lands on it in one tap: an objective (`O3`, at its heading in `OBJECTIVES.md`), a
+  result (`R4`, its current report), a plot (`R4.3`, with its Purpose, Data, and What it shows) or a table (`R4.T1`, its
+  rows), a report (`R4-2`, or `report` for the general report), a ticket or decision ticket (its number), and
+  `account`. An id that names nothing shows one "not found" line. A "Waiting on you" strip on every view mirrors the
+  account's section, and its count is in the browser tab's title and on each project tab. `#/` is the projects page:
+  each project with the account's standing line, its run state, and its waiting count, and a project made before
+  `research_version` 2 listed read-only with its tag, its files opening in the viewer and no action offered.
+  Research lists the general report, each objective with its status, measure, kept values, and lineage, its results
+  with their headline, current and earlier reports, plots by id, and what the drawing left out, then the results
+  beyond the objectives, the set-aside claims, the tickets parked for a closed objective, and the plotting library.
+  Run is the page as it was, plus the account (opened in the viewer) and Software: `tools.json`, the outcome of the
+  MATLAB check, the environment, and a move in progress. The new decision kinds (objective changes, software, the
+  empty frontier, a concern to sort, a verification gap) get cards with their own fields. Views are thin lists: each
+  row has an id, a title, a status, a link that opens it, and insert (which copies the reference until the chat
+  arrives with ticket 114). Every Markdown file code renders is read in the viewer only. A current report renewed
+  since you last opened it shows a dot, kept in your browser, and sends no notice. The new reads are
+  `research`, `run`, `waiting`, and `items/<id>` under `/api/projects/<id>/`, each answering 304 while nothing
+  changed. Every view lays out at phone width. The dashboard spends no tokens.
+
+
 ## v1.0.0 (2026-09-27)
 
 - The paper on request (ticket 53; Implementation Decisions 13 and 11). `wayline paper --venue <slug>` drafts
