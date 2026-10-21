@@ -58,4 +58,4 @@ Not part of this ticket:
 - [x] A second order freezes the first version under `research/paper/earlier/v1/`, recomposes only parts whose inputs changed (title and abstract with any main-text part), and keeps an owner's edit of an unchanged part; the writer offers three titles.
 - [x] `paper.md`, `build.json`, `--continue`, and the gate's two `writing` tickets are gone, and the writer's output carries no reference list; the `wayline` skill's paper reference file describes the order; the docs carry P7's retirement, P8 as Paper order, and R26's new wording.
 - [x] Tests: the fake launcher scripts the writer's parts; journal replay covers the rest point with a running ticket; the ledger seam covers the parts, versions, re-order, and the owner's edit kept; the verb table of decision 1 and the schemas list change in the same commit; CHANGELOG `## Unreleased` names the paper order.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
