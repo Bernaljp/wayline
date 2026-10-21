@@ -118,6 +118,7 @@ VERIFICATION = "verification"  # one inherited result's standing recorded or cha
 DRAWING = "drawing"  # one drawing of a result opened at a rest point, accepted, or failed (decision 17; ticket 100)
 OBJECTIVE_PROPOSED = "objective_proposed"  # one objective proposal of a result or a verdict, or its judgment (decision 17; ticket 91)
 REFERENCE_RAISED = "reference_raised"  # an important unresolved reference put to the owner once its failure is final (decision 17; ticket 105)
+SCOUT_SEARCHED = "scout_searched"  # one `wayline scout search`, counted against its ticket and the day's OpenAlex requests (decision 17; ticket 99)
 OUTLINE = "outline"  # one change the owner (or the decider, or code dropping a gone placement) made to research/outline.json (decision 17; ticket 104)
 
 # --- payload keys ----------------------------------------------------------------------------
@@ -285,6 +286,10 @@ K_PROPOSAL = "proposal"  # `objective`: the objective proposal a change applies,
 K_OBJECTIVE = "objective"  # `objective_proposed`: the objective it names, or the new question's text for an add
 K_UPHELD = "upheld"  # `objective_proposed`: true or false once judged, null while it waits for its verdict
 K_WHY = "why"  # `objective_proposed`: the judgment's reason
+K_QUERY = "query"  # `scout_searched`: what was searched for, or null for the works citing a seed
+K_CITING = "citing"  # `scout_searched`: the seed whose citing works were listed, or null for a query
+K_WORKS = "works"  # `scout_searched`: how many works the search listed
+K_OPENALEX = "openalex"  # `scout_searched`: the OpenAlex requests it made, which the day's count adds up
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -360,6 +365,7 @@ EVENTS = {
     OBJECTIVE_PROPOSED: (K_ID, K_KIND, K_OBJECTIVE, K_TICKET, K_BY, K_UPHELD, K_WHY, K_ANSWER, K_PROPOSAL),
     OUTLINE: (K_ACTION, K_ITEM, K_TO, K_NOTE, K_BY),
     REFERENCE_RAISED: (K_SLUG, K_REASON, K_OUTCOME, K_AUTONOMY),
+    SCOUT_SEARCHED: (K_QUERY, K_CITING, K_WORKS, K_OPENALEX),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.

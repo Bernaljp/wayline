@@ -251,7 +251,9 @@ class SetupCase(SplitterCase):
         with worker.use_fake() as fake:
             for value in memos or (critic_memo(),):
                 fake.script(Envelope(structured_output=value, session_id="critic-1", num_turns=3), role=position.CRITIC)
-            report = position.position(self.project, notify=lambda *args: None)
+            from tests.scout_net import quiet_search
+            with quiet_search():  # the setup search of the missing prior work (ticket 99)
+                report = position.position(self.project, notify=lambda *args: None)
             self.critic_calls = [call for call in fake.calls if call.request.role == position.CRITIC]
         return report
 

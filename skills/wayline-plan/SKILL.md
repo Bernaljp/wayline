@@ -97,6 +97,15 @@ A confirmation journals the phase to P5, and the verb prints `next: wayline run`
 - `wayline plan --split <id> --project .` replaces one failed ticket with smaller ones that inherit
   its blockers and its dependents; the escalation ladder calls it after a tier up failed.
 
+## `lit` tickets
+
+A first plan owes a `lit` ticket to every open objective no Introduction passage with a `ref` tag
+covers; one ticket may serve several that share a literature, and a cut that leaves one uncovered
+comes back to the planner. A `lit` ticket runs on the surveyor (Sonnet at medium), which searches
+with `wayline scout search`, writes no file, and returns Introduction passages; the first ones are
+handed what position's search for the missing prior work found. A worker's `lit` proposal, or the
+owner asking for one, cuts another.
+
 ## An objective added after setup
 
 Once the spec is confirmed, an objective the owner adds (`wayline objective add` says so) gets a

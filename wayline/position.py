@@ -42,7 +42,7 @@ import re
 import sys
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, gates, grill, pacing, sections, specify, worker
+from wayline import HARNESS_ROOT, gates, grill, pacing, sections, specify, survey, worker
 from wayline.cli import parse_args
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, LedgerError
@@ -610,9 +610,12 @@ def render_position(record):
     if missing:
         lines += ["", "### What the references lack", "",
                   "Work the critic expected beside these and did not find among the dossiers. It named these from what it "
-                  "knows, so the scout has checked none of them: add the ones you want with `wayline absorb`.", ""]
+                  "knows; the scout searched the literature for each at setup, and what the search found is listed under it, "
+                  "checked by no one yet: the first `lit` tickets take them up, and `wayline absorb` adds one now.", ""]
+        found = {item["gap"]: item for item in record.get("missing_scouted") or []}
         for gap in missing:
             lines += _item("- ", gap)
+            lines += survey.missing_lines(found.get(" ".join(str(gap).split())))
     feasibility = memo["feasibility"]
     lines += ["", "## Feasibility", ""] + _lead(FEASIBILITY[feasibility["verdict"]], feasibility["reasoning"]) + [""]
     lines += _item("- compute: ", feasibility["compute"]) + _item("- data: ", feasibility["data"])
@@ -820,11 +823,14 @@ def write_memo(project, memo, *, session_id=None, model=None, fallback_from=None
     ledger = Ledger(project)
     objectives = _objectives(project) if objectives is None else objectives
     kept, dropped, written = verify_citations(project, memo, scout=scout, say=say)
+    # The work the memo says the references lack is searched now, at setup, and handed to the first `lit` tickets (ticket 99).
+    scouted = survey.scout_missing(project, memo.get("missing_prior_work") or [], fetcher=getattr(scout, "fetcher", None),
+                                   email=getattr(scout, "email", None), say=say)
     # The objectives as the memo read them: what `POSITION.md` names beside each row, kept as the memo saw them.
     objectives = [{"id": objective["id"], "text": objective["text"], "status": objective["status"],
                    "measure": describe_measure(objective["measure"]) if objective.get("measure") else None}
                   for objective in objectives]
-    record = {"memo": memo, "prior_work": kept, "dropped": dropped, "dossiers_written": written,
+    record = {"memo": memo, "prior_work": kept, "dropped": dropped, "dossiers_written": written, "missing_scouted": scouted,
               "radius": read_harness(project).get("radius"), "objectives": objectives,
               "session_id": session_id, "model": model, "fallback_from": fallback_from}
     ledger.write_json(POSITION_JSON, record)

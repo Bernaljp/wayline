@@ -36,6 +36,26 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The surveyor and `lit` tickets (ticket 99; Implementation Decisions 17, 1, 2, 10, and 14). The literature is searched
+  mid-run for each objective the Introduction does not yet cover, by a cheap session through free services.
+  - The new `surveyor` role takes `lit` tickets (`proposals.KIND_ROLE` routes `lit` to it, a worker's proposal of one
+    included). It runs at `policy.roles.surveyor`, Sonnet at medium, whatever the ticket's difficulty, under the budget
+    its rung gives; pacing never steps it down and the escalation chain never tiers it up (its resume, then the split,
+    then a person). Its tools are Read, Glob, Grep, `wayline scout`, and `wayline consult`, with `wayline accept`; it
+    writes no file, so a `lit` ticket's touch set is empty, and it returns Introduction passages tagged at a scouted
+    work's `#abstract`, its `references`, and proposals.
+  - `wayline scout search "<query>"` (`wayline.survey`) lists the works arXiv, Crossref, and Europe PMC find, free, and
+    OpenAlex's while the day's `policy.scout.openalex_per_day` (100) requests last, at USD 0.001 each, counted by code
+    from the journal. `--citing <identifier>` lists the works citing a seed (Europe PMC by its PMID, OpenAlex by its
+    `cites:` filter). Each work is listed once with the identifier `wayline scout` takes, and nothing is filed. A
+    search is always live and never cached, journaled as `scout_searched`, and a ticket makes at most
+    `policy.scout.searches_per_ticket` (20).
+  - The planner's first cut owes a `lit` ticket to each open objective no Introduction passage with a `ref` tag covers
+    (one ticket may serve several that share a literature), and a cut that leaves one uncovered is returned with the
+    failure; an amendment's cut already asks for one (ticket 92), and a worker's proposal or the owner's word cuts one.
+  - `wayline position` searches the memo's `missing_prior_work` at setup, keeps what it found in `position.json`, and
+    lists it under each gap in `POSITION.md`; the first cut's `lit` tickets get that section in their context pack.
+
 - The plotting library switch (ticket 102; Implementation Decisions 17, 1, and 2). `harness.json` gains `plotting`:
   matplotlib with seaborn (the default, and what a project without the key draws with), Altair, or R with ggplot2.
   `wayline switch --plotting <library>`, and the dashboard's select through `project.set_plotting`, first installs
@@ -168,8 +188,7 @@ lists it read-only, marked with its tag.
   - The verifier judges the amendment alone (subject `research/SPEC.md amendment for <O> at <sha>`). The planner then
     cuts tickets for the new claims alone (a cut of kind `amend`, each ticket naming the objective, nothing taken back,
     `plan.json` untouched), and a `lit` ticket serving the objective when no current Introduction passage with a `ref`
-    tag covers it. Until ticket 99 ships the surveyor, a `lit` ticket is cut on that role and its launch fails on the
-    missing role.
+    tag covers it, which runs on the surveyor (ticket 99).
   - Under `checkpoints` a "Confirm the amendment" decision ticket, opened in the same locked section as the tickets,
     pauses only them (`blocking: subgraph`), and the rest of the run goes on; under `autonomous` the decider answers it
     at once; under `interactive` the owner's word comes first (`wayline specify confirm --amend <O>` or

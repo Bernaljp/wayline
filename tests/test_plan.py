@@ -235,6 +235,9 @@ class PlanCase(ProjectTestCase):
 
     autonomy = "checkpoints"
     git = False
+    # The Introduction already cites the literature for both objectives, so the first cut owes no `lit` ticket (ticket 99);
+    # `tests/test_surveyor.py` cuts the graph of a project whose Introduction does not.
+    introduction_covered = True
 
     def setUp(self):
         super().setUp()
@@ -252,6 +255,10 @@ class PlanCase(ProjectTestCase):
         self.confirm_spec()
         open_objective(self.project)
         open_goal(self.project)  # O2, a goal on `auroc`, which the cut's E1 ticket names as its `goal`
+        if self.introduction_covered:
+            from wayline import sections
+            sections.add_passage(self.project, "introduction", "Interaction terms",
+                                 "Interaction terms help on tabular data {ref:paper-a#abstract}.", by="owner", objectives=["O1", "O2"])
         project.set_autonomy(self.project, self.autonomy)
         self.notified = []
         self.fake = self.enterContext(worker.use_fake())
@@ -333,7 +340,7 @@ class CutTest(PlanCase):
         for text in ("- the cut: the first cut", "## research/SPEC.md", "# Spec: Do pairwise interaction terms", "### E1 (claims: C1)",
                      "## research/OBJECTIVES.md", "## research/kb/query_pack.md", "paper-a extends paper-b",
                      "# The registry", "`coder` for code, harness tickets", "`documentarian` for docs tickets", "`experimenter` for experiment tickets",
-                     "no role covers `figure`, `review` tickets", "`lit` tickets run on the `surveyor` role, not shipped yet", "# The difficulty rubric", "- 3: a new code path",
+                     "no role covers `figure`, `review` tickets", "`surveyor` for lit tickets", "# The difficulty rubric", "- 3: a new code path",
                      "# What the journal says", "# The paths you may open", "## Plan", "# The plan", "adds_public_api"):
             self.assertIn(text, request.prompt)
         self.assertNotIn("## Specify", request.prompt)
@@ -556,6 +563,11 @@ class ObjectivesTest(PlanCase):
         objectives.change_objective(self.project, "O1", "parked", by="owner", answer="later")
         value = cut()
         value["tickets"][4]["objectives"] = []  # T5 named O1, which is parked now
+        # O3 is open and no Introduction passage cites for it, so the first cut serves it with a `lit` ticket (ticket 99).
+        value["tickets"].append({"key": "T20", "title": "Survey the later question", "kind": "lit", "difficulty": 2, "blocked_by": [],
+                                 "touches": [], "acceptance": {"machine": [], "quality": []}, "objectives": ["O3"],
+                                 "context_pack": ["research/OBJECTIVES.md"], "origin": "research/OBJECTIVES.md",
+                                 "demo": "The Introduction gains passages on O3."})
         self.script(planned(value))
         report = self.plan()
         self.assertIsNone(report["stopped"], report)

@@ -147,12 +147,14 @@
     },
     "scout": {
       "type": "object",
-      "description": "the scout (Implementation Decision 17): a reference whose lookup failed is retried at most once a day and given up after give_up_days; a ticket makes at most calls_per_ticket `wayline scout` calls (ticket 98)",
-      "required": ["give_up_days", "calls_per_ticket"],
+      "description": "the scout (Implementation Decision 17): a reference whose lookup failed is retried at most once a day and given up after give_up_days; a ticket makes at most calls_per_ticket `wayline scout` calls (ticket 98) and searches_per_ticket `wayline scout search` calls, and every search together makes at most openalex_per_day OpenAlex requests in a UTC day (ticket 99)",
+      "required": ["give_up_days", "calls_per_ticket", "searches_per_ticket", "openalex_per_day"],
       "additionalProperties": false,
       "properties": {
         "give_up_days": {"type": "integer", "minimum": 1},
-        "calls_per_ticket": {"type": "integer", "minimum": 1}
+        "calls_per_ticket": {"type": "integer", "minimum": 1},
+        "searches_per_ticket": {"type": "integer", "minimum": 1},
+        "openalex_per_day": {"type": "integer", "minimum": 0}
       }
     },
     "consultant": {
