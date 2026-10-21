@@ -59,4 +59,4 @@ It blocks 121.
   - an item settled first in the conversation;
   - "take all defaults".
 - [x] The changelog's `## Unreleased` section describes the marks view.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
