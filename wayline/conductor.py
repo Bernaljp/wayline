@@ -137,6 +137,14 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   out and listed; a drawing that still fails after its resume journals `ticket_failed` with `next: none` and keeps its
   result's last accepted drawing: no tier up, no split, no ask. An accepted drawing writes `plots.json` and its record
   at its close, and earns no verdict.
+- The run-end gates (decision 17; ticket 103, `wayline.run_end`). After the drawings and before `run_ended`, the general
+  report is rendered and its claims never sampled are sampled for verdicts, then the kill argument runs on it when it
+  changed since the last one; each failure files a scope-down whose findings name in `replaces` what they narrow. At an
+  end of the stopping rule (`frontier_empty` included) the scope-downs run alone, with their verdicts, until an end holds
+  with no gate owed; after `budget_spent` and a strict stall the gates run once and their scope-downs wait for the next
+  run; a stop or a switch takes none. A strict stall rests on its drawings and gates like any end (`_strict_stall`). The
+  gates wait on a pause, pacing, and at an end of the rule on a verdict held on Fable; one nobody could take is said and
+  passed over.
 
 The conductor never trusts the worker's own acceptance file. It runs the ticket's commands itself,
 three times, and the ticket is `done` only once they passed on `main`. Nor does it trust the
@@ -837,6 +845,8 @@ class Conductor:
         # launching only drawings, and ends with this reason once none is. The clean room's interpreter for a drawing's
         # acceptance: the tools venv's by default; a test hands in its own.
         self._resting = self._said_resting = None
+        # The run-end gates (ticket 103): what was said of them once, and whether a gate waits on Fable's held window.
+        self._said_gates, self._gates_held = None, False
         self.drawing_python = drawings.TOOLS_PYTHON
         self._closed_without_step = False  # a drawing closed failed in this wave: progress, as a closed ticket is
         self._said_no_plotting = False  # the rest point that drew nothing for want of the tools venv's matplotlib was said
@@ -910,12 +920,14 @@ class Conductor:
         self._references()
         self._pace()
         if self._resting_on_rule_end(result):
-            # An end of the rule or a budget holds and drawings are owed: they alone run before the run ends (ticket 100).
+            # An end holds and drawings are owed, or the run-end gates' scope-downs at an end of the rule: they alone run
+            # before the run ends (tickets 100 and 103), with the verdicts a scope-down earned.
             if not self._holds_launches():
-                self._escalate(result, only=self._drawing_ids())
-                picks = self._picks(self._drawing_graph())
+                self._escalate(result, only=self._rest_ids())
+                picks = self._picks(self._rest_graph())
                 if picks:
                     self._start(picks, result)
+                self._drain_verdicts(result)
         elif not result.ended and not self._holds_launches() and not self._stops_at_stall(result):
             self._escalate(result)
             self._replan(result)
@@ -1180,6 +1192,8 @@ class Conductor:
             self.ledger.append_event(RUN_ENDED, {"reason": requested.reason})
             result.ended, result.reason = True, requested.reason
             return
+        if self._resting is not None:
+            return  # the run rests on an end that holds (the rule, a budget, a strict stall): that end, not this one, ends it
         if self.flight or self.verdicts:
             # Queued verdicts wait on pacing or on the hold on Fable's weekly window, and are taken once it allows.
             return
@@ -1195,8 +1209,11 @@ class Conductor:
         # tool nobody is installing keeps none going either: it waits on its software decision (ticket 82).
         if not [entry for entry in tickets.frontier(graph)
                 if not schedule.awaits_owner(entry, autonomy, decider) and not self._needs_tools(entry)] and not running:
-            if not self._decider_takes_the_frontier(autonomy, decider) and self._draws_before_the_end(self._rest_point(autonomy, decider)):
-                return  # the changed results are drawn before the run ends or pauses (ticket 100)
+            if not self._decider_takes_the_frontier(autonomy, decider):
+                if self._draws_before_the_end(self._rest_point(autonomy, decider)):
+                    return  # the changed results are drawn before the run ends or pauses (ticket 100)
+                if self._gates_before_the_end(stopping.FRONTIER_EMPTY):
+                    return  # then the run-end gates, whose scope-downs continue the run (ticket 103)
             takes, notice = self._empty_frontier(autonomy, decider)
             if takes:
                 return  # the decider takes this empty frontier's tickets at the next wave
@@ -3071,38 +3088,20 @@ class Conductor:
         return self._objective_records() or records
 
     def _rule_ends(self, result):
-        """Wave step 6 (decision 17; ticket 87): end the run when the stopping rule holds or a budget is spent.
+        """Wave step 6 (decision 17; tickets 87 and 103): end the run when the stopping rule holds, a budget is spent, or a
+        strict stall stopped it.
 
         Code first writes reached every open goal whose best kept value reached its target. Then the rule of
         `harness.json`'s `stop_when` is read, every wave: it ends the run `objectives_closed`, or `goal_reached` when
-        every objective it closed was a goal that reached its target. A budget spent ends it `budget_spent`. The
-        workers still running finish on their own, as after a stop, and the owner is notified.
+        every objective it closed was a goal that reached its target. A budget spent ends it `budget_spent`, and a strict
+        stall journaled with no end after it `stall_strict`. Before the end the run rests on its drawings and then on its
+        run-end gates (`_rests_before_the_end`). The workers still running finish on their own, as after a stop, and the
+        owner is notified.
         """
-        records = self._objective_records()
-        if records is not None:
-            records = self._write_reached(records)
-        harness = self._harness_for_rule()
-        if harness is None:
+        reason, words = self._end_that_holds()
+        if reason is None:
             return False
-        rule = stopping.rule_of(harness)
-        reason = stopping.rule_end(rule, records, list(self.view.progress.values())) if records is not None else None
-        if reason is not None:
-            closed = [record["id"] for record in stopping.covered(rule, records)]
-            words = ("every goal the stopping rule waits on is reached (%s)" if reason == stopping.GOAL_REACHED else
-                     "the objectives the stopping rule waits on are closed (%s)") % ", ".join(closed)
-        else:
-            if not stopping.stated(harness):
-                return False
-            events, _ = self.ledger.read_events()
-            found = stopping.spent(harness, events, self.clock())
-            if not found:
-                return False
-            reason, words = stopping.BUDGET_SPENT, stopping.describe_spent(found)
-        if self._draws_before_the_end(drawings.RUN_END):
-            # The rest point of a run end (ticket 100): the changed results are drawn first, and the run ends after them.
-            if self._said_resting != reason:
-                self.say("  %s; the run ends once its drawings are done" % words)
-            self._resting = self._said_resting = reason
+        if self._rests_before_the_end(reason, words):
             return False
         self.ledger.append_event(RUN_ENDED, {"reason": reason})
         result.ended, result.reason = True, reason
@@ -3114,22 +3113,183 @@ class Conductor:
                      % ", ".join(str(identifier) for identifier in left))
         return True  # the end notice follows the wave (`_end_notice`)
 
+    def _end_that_holds(self):
+        """`(reason, words)` of the end that holds now: a strict stall not yet ended, the stopping rule, or a spent budget;
+        `(None, None)` when none does."""
+        stalled = self._strict_stall()
+        if stalled is not None:
+            return STALL_STRICT, stalled
+        records = self._objective_records()
+        if records is not None:
+            records = self._write_reached(records)
+        harness = self._harness_for_rule()
+        if harness is None:
+            return None, None
+        rule = stopping.rule_of(harness)
+        reason = stopping.rule_end(rule, records, list(self.view.progress.values())) if records is not None else None
+        if reason is not None:
+            closed = [record["id"] for record in stopping.covered(rule, records)]
+            words = ("every goal the stopping rule waits on is reached (%s)" if reason == stopping.GOAL_REACHED else
+                     "the objectives the stopping rule waits on are closed (%s)") % ", ".join(closed)
+            return reason, words
+        if not stopping.stated(harness):
+            return None, None
+        events, _ = self.ledger.read_events()
+        found = stopping.spent(harness, events, self.clock())
+        if not found:
+            return None, None
+        return stopping.BUDGET_SPENT, stopping.describe_spent(found)
+
+    def _strict_stall(self):
+        """What a strict stall journaled (`stall` with `action: stop`) says, when no run ended since it and no run the owner
+        started afresh came after it; else None. The run it stopped rests on its drawings and its gates, then ends."""
+        events, _ = self.ledger.read_events()
+        stalled = None
+        for event in events:
+            name, payload = event.get("event"), event.get("payload") or {}
+            if name == STALL and payload.get("action") == STOP:
+                stalled = payload
+            elif name == RUN_ENDED or (name == RUN_STARTED and not payload.get("resume")):
+                stalled = None
+        if stalled is None:
+            return None
+        return ("the run stalled: %s settling wave(s) without a closed ticket, a finding, or goal progress, and the radius is "
+                "strict, so it stopped" % stalled.get("waves"))
+
+    def _rests_before_the_end(self, reason, words):
+        """Whether the run goes on before it ends `reason`: its drawings first (ticket 100), then its run-end gates and, at
+        an end of the stopping rule, their scope-downs (ticket 103). Said once for each thing the end waits on."""
+        if self._draws_before_the_end(drawings.RUN_END):
+            waits = "its drawings are done"
+        elif self._gates_before_the_end(reason):
+            waits = "its run-end gates and their scope-downs are done"
+        else:
+            return False
+        if self._said_resting != (reason, waits):
+            self.say("  %s; the run ends once %s" % (words, waits))
+        self._resting = reason
+        self._said_resting = (reason, waits)
+        return True
+
+    # --- the run-end gates (decision 17; ticket 103) ---
+
+    def _gates_before_the_end(self, reason):
+        """The run-end gates after the drawings: whether the run goes on before it ends `reason`.
+
+        At an end of the stopping rule the scope-downs the gates filed run first; then the gates owed run, sampled
+        verdicts before the kill argument, and the scope-downs they file continue the run. After `budget_spent` or
+        `stall_strict` the gates run once and their scope-downs wait for the next run. After a stop or a switch none runs.
+        The gates wait while the run holds model work, as a verdict does, and at an end of the rule while a verdict on
+        Fable waits on the hold, which this run does not take the gates again for until it ends. A gate nobody could take
+        is said and passed over: it is no reason to hold the run's end. At most `run_end.MAX_ROUNDS` kill arguments are
+        taken in one run: after the last, its scope-downs wait for the next run, as after `budget_spent`.
+        """
+        from wayline import run_end
+        if not run_end.runs_gates(reason):
+            return False
+        events, _ = self.ledger.read_events()
+        rounds = run_end.rounds(events)
+        scoped = run_end.continues(reason) and rounds < run_end.MAX_ROUNDS
+        if scoped and self._scope_downs_owed():
+            return True
+        if rounds >= run_end.MAX_ROUNDS:
+            if self._said_gates != "rounds":
+                self.say("  the kill argument ran %d times in this run; the run ends, and what it left standing is marked and "
+                         "waits for the next run" % rounds)
+                self._said_gates = "rounds"
+            return False
+        if self._gates_held and self.view.hold is not None and not self._falls_back():
+            return scoped  # a gate waits on Fable's held window: nothing to take again until it lifts
+        self._gates_held = False
+        self._render_general_report()  # the gates read the report as the ledger stands now, this wave's work included
+        if not run_end.pending(self.project):
+            return False
+        if self._holds_launches() or self.action != schedule.NORMAL:
+            return True  # model work waits on the pause, the stop, or pacing; the gates are taken once it allows
+        try:
+            self._gates_held = self._take_gates(run_end, self._falls_back())
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, "the run-end gates")
+            return True
+        if not run_end.continues(reason) or run_end.rounds(self.ledger.read_events()[0]) >= run_end.MAX_ROUNDS:
+            return False
+        return self._gates_held or bool(self._scope_downs_owed())
+
+    def _take_gates(self, run_end, fall_back):
+        """Sampled verdicts, then the kill argument, said; whether a gate waits on Fable's weekly window.
+
+        The claim sampler decides the fallback once for its pass from the journal, as `wayline report --verify` does; the
+        kill argument is told this wave's answer when it falls back, and otherwise has the journal decide. A gate that
+        cannot be taken is said and the other is still taken; a claim drawn and not judged is owed at the next end.
+        """
+        empty = {"new": 0, "sampled": 0, "passed": [], "failed": [], "tickets": [], "waiting": []}
+        try:
+            sampled = run_end.sampled_verdicts(self.project, harness_root=self.harness_root, policy=self.policy,
+                                               classifier=self.classifier)
+        except gates.UsageLimited:
+            raise
+        except (ValueError, OSError) as failure:
+            self.say("  the run-end gates: the sampled verdicts could not be taken: %s; the claims drawn are owed at the "
+                     "next end" % failure)
+            sampled = empty
+        if sampled["new"] or sampled["passed"] or sampled["failed"]:
+            self.say("  the run-end gates: %d claim(s) never sampled, %d drawn; %d verdict(s) passed, %d failed%s%s" % (
+                sampled["new"], sampled["sampled"], len(sampled["passed"]), len(sampled["failed"]),
+                "; %d wait for Fable's weekly window" % len(sampled["waiting"]) if sampled["waiting"] else "",
+                "; scope-down ticket(s) %s" % ", ".join(map(str, sampled["tickets"])) if sampled["tickets"] else ""))
+        waiting = bool(sampled["waiting"])
+        try:
+            kill = run_end.kill_argument(self.project, harness_root=self.harness_root, policy=self.policy,
+                                         fall_back=True if fall_back else None)
+        except gates.FableHeld as refused:
+            self.say("  the kill argument on REPORT.md waits: %s" % refused)
+            kill, waiting = None, True
+        except gates.UsageLimited:
+            raise
+        except (ValueError, OSError) as failure:
+            self.say("  the run-end gates: the kill argument on REPORT.md could not be taken: %s" % failure)
+            kill = None
+        if kill is not None:
+            self.say("  the run-end gates: the kill argument on REPORT.md %s on %s (session %s)" % (
+                "passed" if kill.passed else "failed", kill.model or "an unnamed model", kill.session_id or "unknown"))
+            self._heard_verdict(kill, "the kill argument on REPORT.md")
+        if sampled["failed"] or (kill is not None and not kill.passed):
+            self._render_general_report()  # the failed claims are marked in its records
+        self._tail()
+        return waiting
+
+    def _scope_downs_owed(self):
+        """The run-end gates' scope-downs this run still finishes: running, in flight, owed a verdict, failed and waiting
+        on a step, or open on the frontier."""
+        from wayline import run_end
+        frontier = {entry["id"] for entry in tickets.frontier(self._graph())}
+        judged = {entry.ticket for entry in self.verdicts}
+        stepping = set(self._owed_steps())
+        return [fields["id"] for fields in run_end.scope_downs(self.project)
+                if fields["status"] == "running" or fields["id"] in self.flight or fields["id"] in judged
+                or fields["id"] in stepping or (fields["status"] == "open" and fields["id"] in frontier)]
+
     # --- drawings at rest points (decision 17; ticket 100) ---
 
     def _resting_on_rule_end(self, result):
-        """Whether this wave runs only the drawings owed before an end of the rule or a budget: `_rule_ends` decides."""
+        """Whether this wave runs only what is owed before an end (drawings, the gates' scope-downs): `_rule_ends` decides."""
         self._resting = None
         if self._rule_ends(result):
             return False
         return self._resting is not None
 
-    def _drawing_ids(self):
-        return {fields["id"] for fields in tickets.read_tickets(self.project) if _is_drawing(fields)}
+    def _rest_ids(self):
+        """The tickets a wave resting on an end launches: its drawings, and at an end of the rule the gates' scope-downs."""
+        from wayline import run_end
+        scoped = run_end.continues(self._resting)
+        return {fields["id"] for fields in tickets.read_tickets(self.project)
+                if _is_drawing(fields) or (scoped and run_end.is_scope_down(fields))}
 
-    def _drawing_graph(self):
-        """The graph with only its drawing tickets and what runs: what a wave resting on an end launches from."""
+    def _rest_graph(self):
+        """The graph with only the tickets a wave resting on an end launches, and what runs."""
         graph = self._graph()
-        graph["tickets"] = [entry for entry in graph["tickets"] if entry.get("kind") == drawings.KIND or entry["status"] == "running"]
+        wanted = self._rest_ids()
+        graph["tickets"] = [entry for entry in graph["tickets"] if entry["id"] in wanted or entry["status"] == "running"]
         return graph
 
     def _drawings_owed(self):
@@ -4234,7 +4394,7 @@ class Conductor:
         if where == "worktree":
             results = (list(results) + self._sections_check(attempt) + self._lint_check(attempt) + self._numbers_check(attempt)
                        + self._references_check(attempt) + self._methods_check(attempt) + self._verification_check(attempt)
-                       + self._drawing_check(attempt))
+                       + self._drawing_check(attempt) + self._scope_down_check(attempt))
             results = results + self._repeats_check(attempt, results)
         simulated = worker.simulated_failure(attempt.id)  # `wayline run --simulate-failure` (ticket 38)
         if simulated is not None:
@@ -4280,6 +4440,16 @@ class Conductor:
             return [{"cmd": drawings.DRAWING_CHECK, "exit_code": 1, "seconds": 0.0, "tail": "the drawing could not be checked: %s" % failure}]
         self.ledger.write_json(self._attempt_dir(attempt).relative_to(self.ledger.research) / DRAWING_CHECKED, checked.to_json())
         return [checked.acceptance_result()]
+
+    def _scope_down_check(self, attempt):
+        """A run-end gate's scope-down (decision 17; ticket 103) as one acceptance result, or none for any other ticket:
+        each finding it returns names in `replaces` the finding it narrows. A failing one sends the worker back."""
+        from wayline import run_end
+        if not run_end.is_scope_down(attempt.ticket):
+            return []
+        problems = run_end.check_scope_down(attempt.ticket, attempt.result)
+        return [{"cmd": run_end.SCOPE_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
+                 "tail": "\n".join(problems) if problems else "every finding names the finding it narrows"}]
 
     def _verification_check(self, attempt):
         """A verification ticket's verdict (decision 17; ticket 97) as one acceptance result, or none for any other ticket.
@@ -4357,7 +4527,7 @@ class Conductor:
         try:
             return provenance.classify(self.project, texts, harness_root=self.harness_root, policy=self.policy)
         except (provenance.ProvenanceError, worker.LaunchError, OSError) as failure:
-            self.say("  the sentence classifier did not answer at acceptance: %s" % failure)
+            self.say("  the sentence classifier did not answer: %s" % failure)
             return provenance.read_claims_cache(self.ledger)
 
     def _references_check(self, attempt):
@@ -5828,12 +5998,10 @@ class Conductor:
             if not self._holds_launches():
                 self._replan(result)
             return
-        self.ledger.append_event(RUN_ENDED, {"reason": STALL_STRICT})
-        result.ended, result.reason = True, STALL_STRICT
-        words = ("the run stalled: %d settling wave(s) without a closed ticket, a finding, or goal progress, and the radius is "
-                 "strict, so it stopped" % waves)
-        self.say("  " + words)
-        self.reporter()  # the end notice follows the wave (`_end_notice`)
+        self.reporter()
+        # The end of a strict stall (ticket 103): its drawings and its run-end gates once, then `run_ended`; the end notice
+        # follows the wave (`_end_notice`). While they are owed the next waves rest on them (`_strict_stall`).
+        self._rule_ends(result)
 
     def _stops_at_stall(self, result):
         """Whether this wave ends the run on a strict stall: then it launches nothing, since nothing would carry what it started."""

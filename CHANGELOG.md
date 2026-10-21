@@ -36,6 +36,15 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The plotting library switch (ticket 102; Implementation Decisions 17, 1, and 2). `harness.json` gains `plotting`:
+  matplotlib with seaborn (the default, and what a project without the key draws with), Altair, or R with ggplot2.
+  `wayline switch --plotting <library>`, and the dashboard's select through `project.set_plotting`, first installs
+  what the library needs and `tools.json` does not record, as the owner's yes (Altair with vl-convert into the tools
+  venv, R with ggplot2, svglite, and jsonlite from conda-forge), each install journaled as `tool_installed`; a failed
+  install leaves the setting as it was. Then it writes `harness.json` and journals `control plotting`. The decider
+  has no path to the setting. A drawing keeps the library it was opened in: its brief, its clean-room rerun
+  (`Rscript --vanilla` for R), and its checks use that library, so a switch never redraws an accepted drawing.
+
 - Current and earlier reports (ticket 101; Implementation Decisions 17 and 2). Each result with an accepted drawing
   gets `research/reports/R<n>-<version>.md`, rendered by code alone in every render pass of the general report: each
   accepted drawing starts the next version and freezes the one before as an earlier report, never rendered again.
@@ -70,6 +79,22 @@ lists it read-only, marked with its tag.
   lists the important ones whose failure is final, in place of ticket 89's narrower test (a reference never looked up
   is still to the scout, so it no longer counts), and its Library gives the count of unresolved cited references with
   a pointer to References' Not yet resolved list.
+
+- The run-end gates (ticket 103; Implementation Decisions 17, 11, 5, and 2): the general report's claims are tested at
+  every run end without the owner asking, in a fixed order before the one end notice. First the drawings of every
+  result changed since its last accepted drawing; then sampled claim verdicts on `REPORT.md` (`wayline.run_end`), only
+  the claims never sampled, cached by sentence hash in `research/.cache/sampled.json`, 10 percent of them and at least
+  ten, plus every difficulty-5 claim, so a run end with no new claim samples nothing; then the two-thread kill argument
+  on the report when it changed since the last one (its `verdict` carries the new `subject_kind` `report`, its subject
+  the report's version). Both verdict gates file scope-downs: `writing` tickets declaring Results, whose findings name
+  the finding they narrow in `replaces`, which a new acceptance check holds them to. At the stopping rule's own ends
+  (`objectives_closed`, `goal_reached`, `frontier_empty`) the gates run first and their scope-downs continue the run,
+  launching alone, until an end holds with no gate owed; after `budget_spent` or `stall_strict` (which now rests on its
+  drawings and gates too) they run once, their scope-downs wait for the next run, and the failed claims are marked in
+  the report's records; after `stopped` or `switched` none runs. The tick relaunches a run that rests at its end on
+  them, as the conductor's own run, and never one that ended with its gates done. The account lists the gates of each
+  run with the scope-downs they filed. BRIEF P7's one independent read is dropped, and sampled verdicts no longer need
+  `wayline report --verify` by hand.
 
 - Drawings and plots (ticket 100; Implementation Decisions 17, 14, 13, and 2). Each changed result is explored in
   every useful plot at rest points: before a run ends (on an empty frontier, the stopping rule, or a budget), before

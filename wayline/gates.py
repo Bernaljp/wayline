@@ -1246,7 +1246,7 @@ WRITING_DIFFICULTY = 3
 
 
 def kill_argument(paths, *, project, author_model, subject_kind="paper", subject=None,
-                  harness_root=HARNESS_ROOT, policy=None, ledger=None, cwd=None, fall_back=None):
+                  harness_root=HARNESS_ROOT, policy=None, ledger=None, cwd=None, fall_back=None, file=None):
     """The two-thread gate: one session writes the memo, a second adjudicates it, one verdict comes back.
 
     Both threads are the verifier role on separate fresh sessions, on the model `policy.verifier`
@@ -1261,6 +1261,9 @@ def kill_argument(paths, *, project, author_model, subject_kind="paper", subject
     A memo that finds nothing is an answer, not a failure. Its `pass` is then true, the
     adjudicating thread is told the memo had no case, and the gate passes, because the strongest
     rejection anyone could write against these paths was empty.
+
+    `file(project, ledger, adjudication, paths, memo)` files the scope-down of a fail in place of the paper's `writing`
+    ticket: the general report's names the findings it may narrow (`wayline.run_end`, ticket 103).
     """
     paths = [str(item) for item in (paths or [])]
     if not paths:
@@ -1279,7 +1282,7 @@ def kill_argument(paths, *, project, author_model, subject_kind="paper", subject
                            verdict_type=KILL_ARGUMENT, run_dir=run_dir / "adjudication",
                            memo=memo.findings, ledger=ledger, **common)
     if not adjudication.passed:
-        _file_writing_ticket(project, ledger, adjudication, paths, memo)
+        (file or _file_writing_ticket)(project, ledger, adjudication, paths, memo)
     return adjudication
 
 
@@ -1328,13 +1331,14 @@ def open_writing_ticket(project, origin):
     return None
 
 
-def file_writing_ticket(project, ledger, *, title, touches, inputs, quality, origin, demo, body):
+def file_writing_ticket(project, ledger, *, title, touches, inputs, quality, origin, demo, body, sections=None):
     """File one `writing` ticket on the verifier's behalf and journal `ticket_created`; returns its id.
 
     What files one: a failed kill argument, and a sampled report claim its artifacts do not support
     (ticket 40). The verifier is the ticket's author: no planner, worker, decider, human, or evolve
     pass proposed it, and naming one of them would be a lie in the file a person reads. `body` is
-    the markdown after the `## Demo` section, which this writes from `demo`.
+    the markdown after the `## Demo` section, which this writes from `demo`. `sections` are the sections the ticket
+    declares: a scope-down of the general report declares Results, so its acceptance wants the findings it narrows.
     """
     project = Path(project).resolve()
     problems = touches_problems(touches, project)
@@ -1362,6 +1366,8 @@ def file_writing_ticket(project, ledger, *, title, touches, inputs, quality, ori
         "proposed_by": VERIFIER,
         "demo": demo,
     }
+    if sections:
+        fields["sections"] = list(sections)
     text = "\n".join(["## Demo", "", demo, "", body.strip("\n")]) + "\n"
     write_ticket(ledger, fields, text)
     ledger.append_event(TICKET_CREATED, {

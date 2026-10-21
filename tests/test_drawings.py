@@ -625,7 +625,8 @@ class ReplayTest(DrawingRunCase):
         self.assertEqual((known.status, known.step, known.steps), ("failed", "none", ["resume", "none"]))
         conductor = Conductor(self.project, out=io.StringIO())
         conductor.drawing_python = sys.executable
-        conductor.wave()
+        with worker.use_fake():  # nothing scripted: the run-end gates (ticket 103) reach no real backend
+            conductor.wave()
         self.assertEqual(conductor._owed_steps(), [])
         self.assertEqual(len(self.events("ticket_launched")), 1, "a new conductor launches nothing for it")
 
