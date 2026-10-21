@@ -41,7 +41,7 @@ const state = {
   ticket: null, // the ticket id whose page is open, or null when the graph is showing
   log: null, // { kind, id, since } of the log tail that is open, or null
 
-  view: null, // the view shown: 'projects', 'research', or 'run' (ticket 110)
+  view: null, // the view shown: 'projects', or one of VIEW_NAMES (tickets 110 and 111)
   projectsLoaded: false, // whether /api/projects has answered once, so a route naming a project can be applied
   research: null, // { project, view } of the last Research view read, for the dot of the report the owner opens
   waiting: 0, // the selected project's "Waiting on you" count, which the browser tab's title carries
@@ -432,6 +432,7 @@ async function loadProjects() {
     return tab;
   }));
   state.projectsLoaded = true;
+  markViews(); // a project's first document offers its Inherited view
   if (state.view === 'projects') renderProjectsPage();
   if (state.project && !state.projects.some((project) => project.id === state.project && project.readable)) {
     // The project open here was unregistered or its path is gone: its polls would only fail, so the page moves to the
@@ -466,11 +467,7 @@ function select(id) {
   replace(document.getElementById('outputs-body'), [loadingState('indexing the outputs')]);
   replace(document.getElementById('decisions-open'), [loadingState('reading the open decision tickets')]);
   replace(document.getElementById('changes-body'), [loadingState('reading the feedback')]);
-  replace(document.getElementById('general-body'), [loadingState('reading the research')]);
-  replace(document.getElementById('objectives-body'), [loadingState('reading the objectives')]);
-  replace(document.getElementById('beyond-body'), [loadingState('reading the results')]);
-  replace(document.getElementById('account-body'), [loadingState('reading the account')]);
-  replace(document.getElementById('software-body'), [loadingState('reading tools.json')]);
+  for (const [id, text] of Object.entries(READING)) replace(document.getElementById(id), [loadingState(text)]);
   replace(document.getElementById('strip-items'), []);
   state.research = null;
   state.waiting = 0;
@@ -496,7 +493,7 @@ function select(id) {
   every('changes', state.pollViews, loadChanges);
   every('waiting', state.pollViews, loadWaiting);
   every('run', state.pollViews, loadRun);
-  every('research', state.pollViews, loadResearch);
+  for (const [name, load] of Object.entries(VIEW_LOADERS)) every(name, state.pollViews, load);
   markViews();
   showGraph();
   startTail();
@@ -1453,16 +1450,25 @@ function pointIntoProject(node, fileAt) {
 }
 
 // Open `path`, relative to the project, in the viewer: the one way any view shows a document,
-// report, section, or image. `options` comes from an item link (ticket 110): the `title` the bar
-// shows, the heading to `focus` (an objective in OBJECTIVES.md), a plot's `caption`, a table's `rows`.
+// report, section, or image. `options` comes from an item link (tickets 110 and 111): the `title` the
+// bar shows, the heading to `focus` (an objective in OBJECTIVES.md), a plot's `caption`, a table's
+// `rows`, and for an item no file holds (a pair of claims, `path` null) its `sides` and `fields`.
 async function openViewer(path, options) {
   const opts = options || {};
   const dialog = document.getElementById('viewer');
   const body = document.getElementById('viewer-body');
   const shown = document.getElementById('viewer-doc');
   const read = ++viewer.reads;
+  const download = document.getElementById('viewer-download');
   document.getElementById('viewer-title').textContent = opts.title || path;
-  document.getElementById('viewer-download').href = downloadUrl(path);
+  if (!path) {
+    download.removeAttribute('href');
+    replace(shown, [sidesOf(opts.sides), fields(opts.fields || [])]);
+    if (!dialog.open) dialog.showModal();
+    body.scrollTop = 0;
+    return;
+  }
+  download.href = downloadUrl(path);
   replace(shown, [loadingState(`reading ${path}`)]);
   if (!dialog.open) dialog.showModal();
   if (opts.rows) {
@@ -1493,6 +1499,18 @@ async function openViewer(path, options) {
 function withoutFrontmatter(text) {
   const found = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
   return found ? text.slice(found[0].length) : text;
+}
+
+// Two claims side by side, each with where it stands: a contradiction or a merge (ticket 111). The
+// columns stack on a phone.
+function sidesOf(sides) {
+  return el('div', { class: 'sides' }, (sides || []).map((side) => {
+    const where = [side.section, side.heading ? `under "${side.heading}"` : null].filter(Boolean).join(', ');
+    return el('div', { class: 'side' }, [
+      el('p', { class: 'side-head' }, [el('strong', { text: side.id }), document.createTextNode(where ? ` in ${where}` : '')]),
+      el('blockquote', { text: side.text || 'its passage could not be read' }),
+    ]);
+  }));
 }
 
 // A plot's or a table's three explanations, under it.
@@ -1728,7 +1746,7 @@ function refreshViews() {
   loadGraph();
   loadWaiting();
   loadRun();
-  loadResearch();
+  for (const load of Object.values(VIEW_LOADERS)) load();
 }
 
 // --- the controls (ticket 35) ------------------------------------------------------------------
@@ -2113,11 +2131,40 @@ function wireIntake() {
 // The dashboard is views behind the project tabs, routed by the hash so the browser's back and forward
 // move between them and a reload keeps the one shown: `#/` is the projects page, `#/<project>/research`
 // and `#/<project>/run` a project's views, and `#/<project>/<id>` opens one item in the viewer over its
-// view, so a notice on the phone lands on the item in one tap. Paper and Inherited (111) and Marks
-// (112) join the views. A hash that is not a route (`#ticket/3`, a graph node's) is left alone.
+// view, so a notice on the phone lands on the item in one tap. Paper and Inherited (111) are views too,
+// Inherited only for a project with documents; Marks (112) joins them. A hash that is not a route
+// (`#ticket/3`, a graph node's) is left alone.
 
-const VIEW_NAMES = ['research', 'run'];
+const VIEW_NAMES = ['research', 'paper', 'inherited', 'run'];
 const routing = { done: false };
+
+// The views that read only while they are shown, each by its loader: every poll asks, and a hidden view
+// returns at once. Run's panels are read whatever is shown, since its overview feeds the tabs.
+const VIEW_LOADERS = { research: loadResearch, paper: loadPaper, inherited: loadInherited };
+
+// Each routed view's panels, with what each says until its project's first answer lands.
+const READING = {
+  'general-body': 'reading the research',
+  'objectives-body': 'reading the objectives',
+  'beyond-body': 'reading the results',
+  'account-body': 'reading the account',
+  'software-body': 'reading tools.json',
+  'paper-sections-body': 'reading the sections',
+  'paper-references-body': 'reading the references',
+  'paper-repository-body': 'reading the code repository',
+  'paper-methods-body': 'reading Methods',
+  'inherited-documents-body': 'reading the documents',
+  'inherited-concerns-body': 'reading the concerns',
+  'inherited-claims-body': 'reading the inherited claims',
+  'inherited-pairs-body': 'reading the repeated claims',
+  'inherited-material-body': 'reading the missing material',
+};
+
+// Whether a project offers Inherited: only one with documents does (decision 17).
+function offersInherited(id) {
+  const entry = state.projects.find((project) => project.id === id);
+  return Boolean(entry && entry.documents);
+}
 
 function routeTo(project, viewOrItem) {
   return `#/${encodeURIComponent(project)}/${encodeURIComponent(viewOrItem)}`;
@@ -2174,6 +2221,13 @@ function route() {
     return;
   }
   select(target.project);
+  if (target.view === 'inherited' && !offersInherited(target.project)) {
+    closeItem();
+    history.replaceState(null, '', routeTo(target.project, 'research'));
+    showView('research');
+    say('this project has no documents, so it has no Inherited view: hand one over in a conversation or the intake', true);
+    return;
+  }
   if (target.view) {
     closeItem();
     showView(target.view);
@@ -2190,12 +2244,12 @@ function showView(name) {
   markViews();
   buildIndex();
   if (name === 'projects') renderProjectsPage();
-  if (name === 'research') loadResearch();
+  if (VIEW_LOADERS[name]) VIEW_LOADERS[name]();
   // A drawing that could not be measured while Run was hidden is drawn now that it can be.
   if (name === 'run') drawGraph();
 }
 
-// The views' links name the selected project's routes.
+// The views' links name the selected project's routes; Inherited's shows only for a project with documents.
 function markViews() {
   for (const link of document.querySelectorAll('#views a[data-route]')) {
     const name = link.dataset.route;
@@ -2203,6 +2257,7 @@ function markViews() {
       if (state.project) link.setAttribute('href', routeTo(state.project, name));
       else link.removeAttribute('href');
     }
+    if (name === 'inherited') link.hidden = !state.project || !offersInherited(state.project);
     link.setAttribute('aria-current', String(name === state.view));
   }
 }
@@ -2242,7 +2297,9 @@ async function openItem(project, id, landed) {
   showView(item.view);
   // `R4 Does the loss fall?`, but `The account` alone: a word id says nothing its title does not.
   const title = !item.title ? item.id : /^[A-Z0-9]/.test(item.id) ? `${item.id} ${item.title}` : item.title;
-  openViewer(item.path, { title, focus: item.focus, caption: item.caption, rows: item.rows, unreadable: item.unreadable });
+  openViewer(item.path, {
+    title, focus: item.focus, caption: item.caption, rows: item.rows, unreadable: item.unreadable, sides: item.sides, fields: item.fields,
+  });
   seeReport(project, item);
 }
 
@@ -2319,18 +2376,27 @@ function itemLink(project, id, text) {
   return el('a', { class: 'row-id', href: routeTo(project, id), text: text || id, title: `open ${id} in the viewer` });
 }
 
+// A row: `id`, the item it links to, shown as `label` when one is given (a section by its name, not its
+// route word); `title`, `status`, `dot`, and `more` lines; `link: false` for a row that opens nothing,
+// `insert: false` for one that names nothing a conversation could take.
 function itemRow(project, row) {
+  const label = row.label || row.id;
   const line = [
-    row.link === false ? el('span', { class: 'row-id', text: row.id }) : itemLink(project, row.id),
+    row.link === false ? el('span', { class: 'row-id', text: label, title: label }) : itemLink(project, row.id, label),
     el('span', { class: 'row-title', text: row.title || '' }),
   ];
-  if (row.status) line.push(el('span', { class: `chip s-${row.status}`, text: row.status }));
+  if (row.status) line.push(statusChip(row.status));
   if (row.dot) line.push(newDot());
   const acts = [];
   if (row.link !== false) acts.push(el('a', { class: 'action', href: routeTo(project, row.id), text: 'view' }));
-  acts.push(insertButton(project, row.id));
-  line.push(el('span', { class: 'row-acts' }, acts));
+  if (row.insert !== false) acts.push(insertButton(project, row.id));
+  if (acts.length) line.push(el('span', { class: 'row-acts' }, acts));
   return el('li', { class: 'row', 'data-item': row.id }, [el('div', { class: 'row-line' }, line), ...(row.more || [])]);
+}
+
+// A status as a chip, its class the status's words joined (`to the scout` is `s-to-the-scout`).
+function statusChip(status) {
+  return el('span', { class: `chip s-${String(status).replace(/[^a-z0-9_]+/gi, '-')}`, text: status });
 }
 
 function newDot() {
@@ -2536,6 +2602,218 @@ function renderResearch(view, project) {
       id: String(ticket.id), title: ticket.title, status: 'parked', more: [more(ticket.reason)],
     }), 'no ticket is parked for a closed objective'),
   ]);
+}
+
+// --- Paper (ticket 111) --------------------------------------------------------------------------------------
+//
+// The five sections and the outline, each read only in the viewer; References with its Not yet resolved
+// rows; the code repository; Methods' parameter table and the methods with no code; and the place the
+// paper order's card takes (ticket 121). The edit buttons on the sections, the outline, and a parameter's
+// reason come with ticket 113.
+
+async function loadPaper() {
+  const project = state.project;
+  if (!project || state.view !== 'paper') return;
+  try {
+    const view = await get(projectPath('/paper'), 'paper');
+    if (view && project === state.project) renderPaper(view, project);
+  } catch (failure) {
+    if (project === state.project) replace(document.getElementById('paper-sections-body'), [errorState(failure)]);
+  }
+}
+
+// What a view could not read, said under its first panel while the rest of it still shows.
+function problemsList(problems) {
+  return (problems || []).length ? [el('ul', { class: 'problems' }, problems.map((problem) => el('li', { text: problem })))] : [];
+}
+
+// A file code renders, as a row that opens it: a section or the outline.
+function renderedRow(project, file, lines) {
+  return itemRow(project, {
+    id: file.id, label: file.title, link: file.exists,
+    more: [more(file.exists ? `rendered ${file.rendered || 'by code'}` : 'not rendered yet'), ...(lines || [])],
+  });
+}
+
+function passagesLine(section) {
+  if (section.passages === null || section.passages === undefined) return more('code writes it from the works the other sections cite');
+  if (!section.passages) return more('empty for now');
+  return more(`${section.passages} passage${section.passages === 1 ? '' : 's'} standing`);
+}
+
+function renderPaper(view, project) {
+  const files = (view.sections || []).map((section) => renderedRow(project, section, [passagesLine(section)]));
+  if (view.outline) files.push(renderedRow(project, view.outline, [more('the proposed shape of the paper, built by code')]));
+  replace(document.getElementById('paper-sections-body'), [
+    files.length ? el('ul', { class: 'rows' }, files) : emptyState('no section is rendered yet'),
+    ...problemsList(view.problems),
+  ]);
+  renderReferences(view.references || {}, project);
+  renderRepository(view.code_repository || {});
+  renderMethods(view.methods || {}, project);
+}
+
+function authorsOf(entry) {
+  const names = (entry.authors || []).join(', ');
+  return names ? `${names}${entry.more_authors ? ' et al.' : ''}` : '';
+}
+
+// References' entries are works, not items: a row of one opens nothing and inserts nothing.
+function renderReferences(references, project) {
+  const entries = references.entries || [];
+  const unresolved = references.unresolved || [];
+  replace(document.getElementById('paper-references-body'), [
+    el('p', { class: 'note' }, [itemLink(project, 'references', 'open References'), document.createTextNode(' as code wrote it')]),
+    subhead('entries', entries.length),
+    rowsOrNone(entries, (entry) => itemRow(project, {
+      id: `[${entry.number}]`, link: false, insert: false,
+      title: [authorsOf(entry), entry.year ? `(${entry.year})` : '', entry.title].filter(Boolean).join(' '),
+      more: [more([entry.venue, entry.identifier, entry.slug].filter(Boolean).join(' · '))],
+    }), 'nothing is cited yet: a work enters References only when a section cites it'),
+    subhead('not yet resolved', unresolved.length),
+    rowsOrNone(unresolved, (row) => itemRow(project, {
+      id: row.slug || row.named, link: false, insert: false, title: row.slug ? row.title || row.named : '', status: row.state,
+      more: [more(row.detail)],
+    }), 'nothing: every cited work resolved'),
+  ]);
+}
+
+// A remote's link, only when it is a web address: anything else is shown as words, never followed.
+function remoteLink(repository) {
+  const name = repository.repository || repository.url || '';
+  if (!/^https:\/\//i.test(repository.url || '')) return document.createTextNode(name);
+  return el('a', { href: repository.url, target: '_blank', rel: 'noopener noreferrer', text: name });
+}
+
+function renderRepository(repository) {
+  const body = document.getElementById('paper-repository-body');
+  if (!repository.settled) {
+    replace(body, [emptyState('no code repository yet: one setup question settles its shape, its remote, its visibility, and its license')]);
+    return;
+  }
+  const pushed = repository.last_push;
+  replace(body, [
+    el('p', {}, [remoteLink(repository)]),
+    fields([
+      ['visibility', repository.visibility === 'public' ? 'public' : 'private, until you make it public'],
+      ['shape', repository.shape],
+      ['license', repository.license],
+      ['last push', pushed ? `${String(pushed.commit || '').slice(0, 12)} at ${pushed.ts}` : 'nothing pushed yet', pushed ? pushed.commit : undefined],
+    ]),
+  ]);
+}
+
+function renderMethods(methods, project) {
+  const parameters = methods.parameters || [];
+  const missing = methods.no_code || [];
+  replace(document.getElementById('paper-methods-body'), [
+    subhead('parameters', parameters.length),
+    tableOrNone(['method', 'parameter', 'value', 'default', 'reason', 'whose reason', 'code'],
+      parameters.map((row) => [row.method, row.name, row.value, row.default, row.reason, row.by === 'owner' ? 'yours' : `ticket ${row.ticket}`, row.code]),
+      'no parameter is recorded yet: the results that ran list theirs', ['short', 'short', 'short', 'short', 'text', 'short', 'text']),
+    subhead('methods with no code behind them', missing.length),
+    rowsOrNone(missing, (entry) => itemRow(project, {
+      id: entry.passage, title: `${entry.heading ? `${entry.heading}: ` : ''}${entry.named}`, more: [more(entry.why)],
+    }), 'every method Methods names has code behind it'),
+  ]);
+}
+
+// --- Inherited (ticket 111) ----------------------------------------------------------------------------------
+//
+// Only for a project with documents: what a start midway brought (the documents, the concerns their
+// critiques raised) and what became of it (each inherited claim's standing, the contradictions and the
+// merges the setup's check found, the material verification still lacks, with the owner's replies).
+
+async function loadInherited() {
+  const project = state.project;
+  if (!project || state.view !== 'inherited') return;
+  try {
+    const view = await get(projectPath('/inherited'), 'inherited');
+    if (view && project === state.project) renderInherited(view, project);
+  } catch (failure) {
+    if (project === state.project) replace(document.getElementById('inherited-documents-body'), [errorState(failure)]);
+  }
+}
+
+// A document's headings, folded under their count: a manuscript has dozens.
+function headingsOf(held) {
+  const headings = held.headings || [];
+  if (!headings.length) return more('no headings');
+  return el('details', { class: 'row-more' }, [
+    el('summary', { text: `${headings.length} heading${headings.length === 1 ? '' : 's'}` }),
+    el('ul', { class: 'headings' }, headings.map((heading) => el('li', { class: `level-${Math.min(heading.level || 1, 4)}` }, [
+      el('span', { class: 'mono', text: heading.locator }), document.createTextNode(` ${heading.text}`),
+    ]))),
+  ]);
+}
+
+function concernStanding(concern) {
+  if (concern.status === 'answered') return `answered: ${concern.answer || ''}`;
+  if (concern.status === 'declined') return `declined: ${concern.reason || ''}`;
+  if (concern.place === 'objectives') return `open, tied to ${(concern.objectives || []).join(', ')}`;
+  if (concern.place === 'order') return 'open, kept for the paper order';
+  return 'open, waiting to be sorted';
+}
+
+function verdictLine(claim) {
+  if (claim.standing === 'verified') {
+    const how = [claim.route, claim.ticket ? `ticket ${claim.ticket}` : null, claim.by ? `by ${claim.by}` : null].filter(Boolean).join(', ');
+    return `${claim.verdict || 'replaced'}${how ? ` (${how})` : ''}`;
+  }
+  if (claim.standing === 'unverifiable') return `unverifiable: ${claim.reason || 'no reason given'}`;
+  return claim.section === 'results' ? 'unchecked: its verification has no verdict yet' : 'unchecked';
+}
+
+// A pair of claims, each named with its words: a contradiction or a merge.
+function pairRow(project, pair, title, status, lines) {
+  const texts = (pair.texts || []).map((text, index) => more(`${index ? pair.b : pair.a}: ${text}`));
+  return itemRow(project, { id: pair.id, title, status, more: [...texts, ...(lines || [])] });
+}
+
+function renderInherited(view, project) {
+  replace(document.getElementById('inherited-documents-body'), [
+    rowsOrNone(view.documents || [], (held) => itemRow(project, {
+      id: held.id, title: held.title, status: held.kind,
+      more: [more(`version ${held.version}${held.converted ? '' : ', kept as given: not converted'}`), headingsOf(held)],
+    }), 'no document is recorded'),
+    ...problemsList(view.problems),
+  ]);
+  replace(document.getElementById('inherited-concerns-body'), [rowsOrNone(view.concerns || [], (concern) => itemRow(project, {
+    id: concern.id, title: concern.text, status: concern.status,
+    more: [
+      ...(concern.sources || []).map((source) => more(`${source.locator}: "${source.text}"`)),
+      more([concernStanding(concern), (concern.targets || []).length ? `targets ${concern.targets.join(', ')}` : null].filter(Boolean).join('; ')),
+    ],
+  }), 'no concern is recorded: a critique’s points and the open comment threads become concerns')]);
+  const claims = view.claims || [];
+  const unverifiable = view.unverifiable || [];
+  replace(document.getElementById('inherited-claims-body'), [
+    subhead('claims', claims.length),
+    rowsOrNone(claims, (claim) => itemRow(project, {
+      id: claim.id, title: claim.text, status: claim.standing,
+      more: [more(`${claim.section}, under "${claim.heading}"`), more(verdictLine(claim))],
+    }), 'no inherited claim stands'),
+    subhead('unverifiable', unverifiable.length),
+    rowsOrNone(unverifiable, (claim) => itemRow(project, {
+      id: claim.id, title: claim.text, status: 'unverifiable', more: [more(claim.reason || 'no reason given')],
+    }), 'no claim was found unverifiable'),
+  ]);
+  const contradictions = view.contradictions || [];
+  const merges = view.merges || [];
+  replace(document.getElementById('inherited-pairs-body'), [
+    subhead('contradicting pairs', contradictions.length),
+    rowsOrNone(contradictions, (pair) => pairRow(project, pair, pair.why || 'they contradict each other', 'contradiction',
+      (pair.results || []).length ? [more(`for the verification of ${pair.results.join(', ')}`)] : []),
+    'no contradicting pair is listed'),
+    subhead('merges at setup', merges.length),
+    rowsOrNone(merges, (pair) => pairRow(project, pair, `kept: ${pair.text || ''}`, pair.mark || pair.outcome,
+      pair.passage ? [more(null, linkList(project, 'merged into', [pair.passage]))] : []),
+    'the setup merged no claims'),
+  ]);
+  replace(document.getElementById('inherited-material-body'), [rowsOrNone(view.material || [], (item) => itemRow(project, {
+    id: item.id, title: item.item, status: item.reply || 'waiting',
+    more: [more(`${item.heading}, ${item.kind}${item.licensed ? ', licensed' : ''}; ${item.reply ? `${item.reply}, said by the ${item.by}` : 'no reply yet'}`)],
+  }), 'no material is missing')]);
 }
 
 // --- Run's additions: the account and Software ------------------------------------------------------------

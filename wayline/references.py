@@ -63,7 +63,7 @@ __all__ = [
     "CALLS_PER_TICKET", "LOOKED_UP_KINDS", "ReferenceError_", "ScoutRefused", "call_limit", "calls_made", "looked_up", "scout", "scout_command", "render",
     "cited", "held_locators", "check_references", "tagged_reference",
     "REFERENCES_MD", "REFERENCES_JSON", "NOT_YET_RESOLVED", "STATES", "TO_THE_SCOUT", "RETRYING", "GAVE_UP", "CLAIM_KEPT", "Work",
-    "ref_tags", "cited_works", "work_named", "standing_of", "entry_line", "csl_item", "references_view", "render_references",
+    "ref_tags", "cited_works", "work_named", "standing_of", "identifier_of", "entry_line", "csl_item", "references_view", "render_references",
     "unresolved_count", "important", "at_setup", "final", "raise_final", "raised_slugs", "waiting", "waiting_line", "notice_text", "WHY_IMPORTANT",
 ]
 
@@ -483,7 +483,7 @@ def standing_of(record, now=None, days=None):
     return TO_THE_SCOUT, "no lookup has answered yet"
 
 
-def _identifier(record):
+def identifier_of(record):
     """The identifier an entry shows: the DOI, else the arXiv id, else PubMed's, else the URL."""
     identifiers = record.get("identifiers") or {}
     for key, label in (("doi", "doi:%s"), ("arxiv_id", "arXiv:%s"), ("pmid", "PMID:%s"), ("url", "%s")):
@@ -519,7 +519,7 @@ def entry_line(number, record):
     if metadata.get("year"):
         head = ("%s (%s)" % (head, metadata["year"])).strip()
     parts = [head, _title(record) or record["slug"], "*%s*" % _one_line(metadata["container"]) if metadata.get("container") else "",
-             _identifier(record) or ""]
+             identifier_of(record) or ""]
     return "%d. %s. %s" % (number, ". ".join(part.rstrip(".") for part in parts if part), dossier_link(record["slug"]))
 
 

@@ -883,6 +883,8 @@ dialog#viewer::backdrop { background: var(--backdrop); }
 #views a:hover { border-color: var(--accent); }
 #views a[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
 #views a:not([href]) { opacity: 0.45; pointer-events: none; }
+/* Inherited is offered only for a project with documents (ticket 111). */
+#views a[hidden] { display: none; }
 
 /* A count beside a name: a tab's waiting count, the strip's. */
 .count {
@@ -918,7 +920,7 @@ ul.rows > li { padding: var(--space-2) 0; border-top: 1px solid var(--line); min
 ul.rows > li:first-child { border-top: 0; }
 ul.rows.nested { margin: var(--space-2) 0 0 var(--space-4); padding-left: var(--space-3); border-left: 1px solid var(--line-strong); }
 .row-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); min-width: 0; }
-.row-id { font-weight: 700; white-space: nowrap; }
+.row-id { font-weight: 700; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .row-title { flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; }
 .row-title.mono { color: var(--dim); font-size: var(--text-sm); }
 .row-acts { display: flex; gap: var(--space-2); margin-left: auto; }
@@ -951,6 +953,27 @@ a.action:hover { background: var(--accent-soft); border-color: var(--accent); }
   background: var(--accent);
   vertical-align: middle;
 }
+
+/* --- Paper and Inherited (ticket 111) ------------------------------------------------------------ */
+
+/* Where an inherited claim, a concern, a pair, or a missing item stands, as the chips say a ticket's. */
+.s-verified, .s-answered, .s-merged, .s-right { --status: var(--done); }
+.s-contradiction, .s-gave-up { --status: var(--failed); }
+.s-unverifiable, .s-declined, .s-split, .s-retrying, .s-waiting, .s-unchecked { --status: var(--paused); }
+
+/* A document's headings, folded under their count, each indented by its level. */
+.headings { list-style: none; margin: var(--space-1) 0 0; padding: 0; }
+.headings li { overflow-wrap: anywhere; }
+.headings li.level-2 { padding-left: var(--space-3); }
+.headings li.level-3 { padding-left: var(--space-5); }
+.headings li.level-4 { padding-left: var(--space-6); }
+details.row-more > summary { cursor: pointer; }
+
+/* Two claims side by side in the viewer: a contradiction or a merge. They stack when the screen is narrow. */
+.sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: var(--space-4); margin-bottom: var(--space-4); }
+.side { min-width: 0; }
+.side-head { margin: 0 0 var(--space-1); color: var(--ink-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.side blockquote { margin: 0; padding: var(--space-2) var(--space-3); border-left: 3px solid var(--line-strong); overflow-wrap: anywhere; }
 
 /* A project of another research_version is read-only (decision 17): no action is offered for it. */
 body[data-read-only="true"] .acts { display: none !important; }

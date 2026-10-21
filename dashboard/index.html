@@ -27,12 +27,15 @@
       <button type="button" id="tick-log-button" class="action">tick log</button>
     </div>
   </div>
-  <!-- The views, routed by hash (ticket 110): #/ is the projects page, #/<project>/<view> a view of one
-       project, and #/<project>/<id> opens one item in the viewer over its view. -->
+  <!-- The views, routed by hash (tickets 110 and 111): #/ is the projects page, #/<project>/<view> a view of
+       one project, and #/<project>/<id> opens one item in the viewer over its view. -->
   <div class="routes">
     <nav id="views" aria-label="views">
       <a href="#/" data-route="projects">projects</a>
       <a data-route="research">research</a>
+      <a data-route="paper">paper</a>
+      <!-- Offered only for a project with documents (ticket 111): app.js hides it for one without. -->
+      <a data-route="inherited" hidden>inherited</a>
       <a data-route="run">run</a>
     </nav>
   </div>
@@ -79,6 +82,73 @@
     <div class="view-head"><h2 id="beyond-heading">Beyond the objectives</h2></div>
     <div id="beyond-body" class="panel">
       <p class="state loading">reading the results</p>
+    </div>
+  </section>
+  </div>
+
+  <div class="view" id="view-paper" data-view="paper" hidden>
+  <section id="paper-sections" aria-labelledby="paper-sections-heading">
+    <div class="view-head"><h2 id="paper-sections-heading">Sections</h2><p class="note">The five sections and the outline open in the viewer.</p></div>
+    <div id="paper-sections-body" class="panel">
+      <p class="state loading">reading the sections</p>
+    </div>
+  </section>
+  <section id="paper-references" aria-labelledby="paper-references-heading">
+    <div class="view-head"><h2 id="paper-references-heading">References</h2></div>
+    <div id="paper-references-body" class="panel">
+      <p class="state loading">reading the references</p>
+    </div>
+  </section>
+  <section id="paper-repository" aria-labelledby="paper-repository-heading">
+    <div class="view-head"><h2 id="paper-repository-heading">Code repository</h2></div>
+    <div id="paper-repository-body" class="panel">
+      <p class="state loading">reading the code repository</p>
+    </div>
+  </section>
+  <section id="paper-methods" aria-labelledby="paper-methods-heading">
+    <div class="view-head"><h2 id="paper-methods-heading">Methods</h2><p class="note">What the methods inventory generated at the last render.</p></div>
+    <div id="paper-methods-body" class="panel">
+      <p class="state loading">reading Methods</p>
+    </div>
+  </section>
+  <!-- The paper order's card (ticket 121) takes this place. -->
+  <section id="paper-order" aria-labelledby="paper-order-heading">
+    <div class="view-head"><h2 id="paper-order-heading">Paper order</h2></div>
+    <div id="paper-order-body" class="panel">
+      <p class="state">Until the paper order the project holds only its sections and reports. The order's card comes here.</p>
+    </div>
+  </section>
+  </div>
+
+  <div class="view" id="view-inherited" data-view="inherited" hidden>
+  <section id="inherited-documents" aria-labelledby="inherited-documents-heading">
+    <div class="view-head"><h2 id="inherited-documents-heading">Documents</h2></div>
+    <div id="inherited-documents-body" class="panel">
+      <p class="state loading">reading the documents</p>
+    </div>
+  </section>
+  <section id="inherited-concerns" aria-labelledby="inherited-concerns-heading">
+    <div class="view-head"><h2 id="inherited-concerns-heading">Concerns</h2></div>
+    <div id="inherited-concerns-body" class="panel">
+      <p class="state loading">reading the concerns</p>
+    </div>
+  </section>
+  <section id="inherited-claims" aria-labelledby="inherited-claims-heading">
+    <div class="view-head"><h2 id="inherited-claims-heading">Inherited claims</h2></div>
+    <div id="inherited-claims-body" class="panel">
+      <p class="state loading">reading the inherited claims</p>
+    </div>
+  </section>
+  <section id="inherited-pairs" aria-labelledby="inherited-pairs-heading">
+    <div class="view-head"><h2 id="inherited-pairs-heading">Contradictions and merges</h2></div>
+    <div id="inherited-pairs-body" class="panel">
+      <p class="state loading">reading the repeated claims</p>
+    </div>
+  </section>
+  <section id="inherited-material" aria-labelledby="inherited-material-heading">
+    <div class="view-head"><h2 id="inherited-material-heading">Missing material</h2></div>
+    <div id="inherited-material-body" class="panel">
+      <p class="state loading">reading the missing material</p>
     </div>
   </section>
   </div>
