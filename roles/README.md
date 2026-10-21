@@ -196,15 +196,16 @@ rules are the coder's with `wayline docs *` added and no `Agent`: a site is writ
 ## The writer is launched by code, and takes the `writing` tickets
 
 `writer` takes every `writing` ticket as a ticket worker, and code launches it read-only and on
-`policy.roles.writer` rather than a rung for `wayline paper`, the whole manuscript (`paper_draft`,
-ticket 53), and for `wayline consolidate`, a section the owner asked to have rewritten (ticket 88).
+`policy.roles.writer` rather than a rung for the paper order, the whole paper (`paper_parts`, ticket
+115), and for `wayline consolidate`, a section the owner asked to have rewritten (ticket 88).
 The ledger writes what it returns, since nothing under `research/` is a session's to write. The
 general report, `REPORT.md`, is rendered by code alone since ticket 90: no writer drafts any of it.
-The paper's session is resumed with each failed build's list (the linter, the venue's seven checks, a
-figure the figure role could not place), and it is given the open `writing` tickets a failed kill
-argument or the independent read filed against the paper. The prompt carries the venue's `guidelines.json`, the
-findings with their tags, and the references a `ref` tag can name; `agent.md` stays the C8 rule every
-launch shares.
+At a paper order the session returns each part of the paper as its own field, each heading carrying
+its outline id, from the outline and the five sections; it writes no reference list (code writes
+`references.json` from the `ref` tags) and no front matter (code's, from the records). Code checks
+the headings against the outline and that no inherited title, abstract, or caption is in a part,
+and resumes the same session once with what failed. `agent.md` stays the C8 rule every launch
+shares.
 
 ## Why `disallowed_tools` names tools the harness never asked for
 

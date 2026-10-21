@@ -1221,7 +1221,7 @@ def _reverse(project, context, decision, answer, told):
       human-only decision ticket, whose answer revises it (`_settle_reopened`).
     - A parked proposal the decider kept parked is admitted by `admit`; one it admitted has its ticket, which
       `wayline cancel` parks. With no answer it is asked again on a human-only decision ticket.
-    - The paper's venue is named by the owner's next `wayline paper --venue <slug>`.
+    - The paper's venue is the owner's to name when the paper is compiled for one (the paper order is under no venue).
 
     Refused, with nothing written, for an answer the decision's verb would not take.
     """
@@ -1239,9 +1239,9 @@ def _reverse(project, context, decision, answer, told):
             raise AccountError("%s admitted that proposal as ticket %s; `wayline cancel %s` parks it" % (decision.id, admitted, admitted))
     if decision.ticket is None and not decision.record and not proposal:
         if answer is not None:
-            raise AccountError("%s chose %s; name it yourself with `wayline paper --venue <slug>`, or reverse it with no answer"
+            raise AccountError("%s chose %s; name it yourself when the paper is compiled for a venue, or reverse it with no answer"
                                % (decision.id, _subject(decision, context)))
-        return "%s reversed: %s is yours to name, with wayline paper --venue <slug>." % (decision.id, _subject(decision, context))
+        return "%s reversed: %s is yours to name when the paper is compiled for a venue." % (decision.id, _subject(decision, context))
     try:
         if decision.ticket is not None:
             question = _reopen(project, decision.ticket)

@@ -17,7 +17,7 @@ SHIPPED = ["journal_event", "ticket", "result", "harness", "policy", "job", "man
            "claim_classes", "figure_request", "figure_result",
            "dossier_entry", "dossier_entry_list", "dossier_sections", "absorb_result", "fixture", "fixture_verdict",
            "dedup_verdict", "spec", "consultant_answer", "plan", "position", "change", "change_list",
-           "figure_drafts", "figure_ranking", "figure_finish", "paper_draft", "objectives", "batch", "index_shape", "document", "passage", "consolidation", "concern", "concern_split",
+           "figure_drafts", "figure_ranking", "figure_finish", "paper_parts", "paper", "front_matter", "objectives", "batch", "index_shape", "document", "passage", "consolidation", "concern", "concern_split",
            "consistency_read", "repeat_labels", "merge_check", "repeats", "verification", "plots", "drawing", "outline",
            "methods_inventory", "code_leads"]
 

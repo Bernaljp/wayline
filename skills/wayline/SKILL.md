@@ -1,6 +1,6 @@
 ---
 name: wayline
-description: "The owner's way of talking with a wayline project, in any Claude Code session in it (Remote Control included) or the dashboard's chat. The owner talks normally and never types a verb or a label: this skill routes what they say to the verb that records it, asks one line only when something is unclear, and confirms first what costs or cannot be undone. Its reference files hold the procedures: setup.md (intake, position, the grill, the stopping rule and budgets, specify, and the plan, as one conversation) and evolve.md. Use it whenever the owner talks with a session in a wayline project."
+description: "The owner's way of talking with a wayline project, in any Claude Code session in it (Remote Control included) or the dashboard's chat. The owner talks normally and never types a verb or a label: this skill routes what they say to the verb that records it, asks one line only when something is unclear, and confirms first what costs or cannot be undone. Its reference files hold the procedures: setup.md (intake, position, the grill, the stopping rule and budgets, specify, and the plan, as one conversation), paper.md (the paper order), and evolve.md. Use it whenever the owner talks with a session in a wayline project."
 ---
 
 # Talking with the project
@@ -70,7 +70,7 @@ fact you asked the owner for is a question you should have answered yourself.
 ## Confirm first
 
 Before a paper order, a consolidation, and anything on the irreversible list, say what will happen and what it
-costs, and wait for the owner's yes. The irreversible list: deleting or overwriting data, spending money or more
+costs, and wait for the owner's yes. A paper order's card is `wayline paper` without `--yes`, which launches nothing. The irreversible list: deleting or overwriting data, spending money or more
 than a budget, changing a goal's measure or the data, a global harness change, after setup changing the stopping
 rule or raising a budget, and making the code repository public. A consolidation prints its cost when run without
 `--yes`; run it so first, tell the owner, and run it with `--yes` only on their word. A human-only class the owner
@@ -128,7 +128,8 @@ What the owner says or hands over, the rule you follow, and the verbs you run. T
 | asks about a reference | read | `wayline consult <slug> "<question>"` |
 | it is unclear what they mean, which section, which ticket, project or harness | ask | `wayline status` |
 | asks for a section to be compiled (a consolidation) | confirm | `wayline consolidate <section>` |
-| orders the paper, or "compile" said of the paper | confirm | `wayline paper --venue <slug>` |
+| orders the paper, or "compile" said of the paper (the procedure is paper.md) | confirm | `wayline paper`, `wayline paper --yes` |
+| gives the paper's front matter, at setup or any time after | record | `wayline paper front -` |
 | after setup changes the stopping rule, raises a budget, or makes the code repository public | confirm | `wayline switch --stop-when <rule>`, `wayline switch --budget <name>=<hours>`, `wayline intake --from -` |
 | asks to promote a local skill, role, or policy into the harness | confirm | `wayline promote skill <name>` |
 
@@ -137,6 +138,8 @@ What the owner says or hands over, the rule you follow, and the verbs you run. T
 - `setup.md`: the start of a project, at every autonomy, as one conversation: intake's settings, the documents,
   the position memo, the grill, the stopping rule and budgets, specify, and the plan, with the ten setup questions
   in their order. Read it whenever the project has no confirmed plan yet.
+- `paper.md`: the paper order: its card, the confirmation, the rest point, the batch it asks, what it writes under
+  `research/paper/`, and the front matter. Read it whenever the owner orders the paper or asks how it stands.
 - `evolve.md`: the owner's feedback on the harness, the evolve loop, and its records.
 
 ## How you work

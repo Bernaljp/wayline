@@ -29,7 +29,7 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_BATCH, K_BY, K_ITEM, K_MARK, K_NOTE, MARKED, LedgerError, ledger_for, now_ts
 from wayline.project import ProjectError, find_project
 
-__all__ = ["KINDS", "WHOLE_AT", "BatchError", "open_batch", "extend", "read_batch", "read_batches", "mark", "take_defaults", "marks", "link", "render",
+__all__ = ["KINDS", "PER_ITEM", "WHOLE_AT", "BatchError", "open_batch", "extend", "read_batch", "read_batches", "mark", "take_defaults", "marks", "link", "render",
            "mark_command"]
 
 SCHEMA = "batch"
@@ -45,7 +45,12 @@ KINDS = {
     "contradictions": ("real", "not a contradiction"),
     "concern_placements": ("take it", "another place"),
     "outline_proposals": ("take", "decline"),
+    # The paper order's one batch (ticket 115): its items are of several sorts, each item carrying its own marks among these.
+    "paper_order": ("the first", "the second", "a typo, fix it", "leave out", "keep, not verified", "hand over", "drop",
+                    "to be resolved", "take", "decline", "keep as stated"),
 }
+# The kinds whose items each carry their own marks, at least two of the kind's: a batch that asks several sorts of thing.
+PER_ITEM = ("paper_order",)
 
 OPEN = "open"
 CLOSED = "closed"
@@ -97,8 +102,20 @@ def _open_count(batch):
     return sum(1 for item in batch["items"] if item["mark"] is None)
 
 
+def _item_marks(kind, item, label):
+    """The marks one item may take: its kind's, or for a kind of `PER_ITEM` its own `marks`, at least two of the kind's."""
+    allowed = list(KINDS[kind])
+    if kind not in PER_ITEM:
+        return allowed
+    own = list(item.get("marks") or [])
+    if len(own) < 2 or len(set(own)) != len(own) or any(mark not in allowed for mark in own):
+        raise BatchError("%s: a %s item names its own marks, two or more of %s, got %r" % (label, kind, ", ".join(allowed), own))
+    return own
+
+
 def open_batch(project, kind, title, items, decision=None):
-    """Open a batch of `items` (each `{ref, text, default?}`) of one `kind`; returns the record written.
+    """Open a batch of `items` (each `{ref, text, default?}`, and `marks` for a kind of `PER_ITEM`) of one `kind`; returns the
+    record written.
 
     `decision` is the decision ticket the batch answers, when there is one.
     """
@@ -108,11 +125,11 @@ def open_batch(project, kind, title, items, decision=None):
         raise BatchError("a batch has a title, got %r" % (title,))
     if not items:
         raise BatchError("a batch of %s with no items puts nothing before the owner" % kind)
-    allowed = list(KINDS[kind])
     built = []
     for number, item in enumerate(items, start=1):
         if _blank(item.get("ref")) or _blank(item.get("text")):
             raise BatchError("item %d: an item names what it is about (`ref`) and says it (`text`)" % number)
+        allowed = _item_marks(kind, item, "item %d" % number)
         default = item.get("default")
         if default is not None and default not in allowed:
             raise BatchError("item %d (%s): a %s item's default is one of %s, got %r" % (number, item["ref"], kind, ", ".join(allowed), default))
@@ -137,13 +154,13 @@ def extend(project, batch_id, items=(), decision=None):
         batch = read_batch(ledger, batch_id)
         if batch["status"] != OPEN:
             raise BatchError("%s is closed and takes no new item" % batch["id"])
-        allowed = list(KINDS[batch["kind"]])
         held = {item["ref"] for item in batch["items"]}
         for item in items:
             if _blank(item.get("ref")) or _blank(item.get("text")):
                 raise BatchError("an item names what it is about (`ref`) and says it (`text`)")
             if item["ref"] in held:
                 continue
+            allowed = _item_marks(batch["kind"], item, item["ref"])
             default = item.get("default")
             if default is not None and default not in allowed:
                 raise BatchError("a %s item's default is one of %s, got %r" % (batch["kind"], ", ".join(allowed), default))
@@ -166,8 +183,10 @@ def read_batch(project, identifier):
     except FileNotFoundError:
         raise BatchError("%s holds no batch %s" % (ledger.project, identifier)) from None
     check(record, load_schema(SCHEMA), name="batch %s" % identifier)
-    allowed = list(KINDS[record["kind"]])
     for item in record["items"]:
+        allowed = list(KINDS[record["kind"]])
+        if record["kind"] in PER_ITEM and len(item["marks"]) >= 2 and set(item["marks"]) <= set(allowed):
+            allowed = list(item["marks"])
         if item["marks"] != allowed or any(value is not None and value not in allowed for value in (item["default"], item["mark"])):
             raise BatchError("batch %s, item %d: a %s item's marks are %s, and its default and mark are among them; the file says otherwise"
                              % (identifier, item["id"], record["kind"], ", ".join(allowed)))

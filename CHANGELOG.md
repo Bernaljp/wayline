@@ -36,6 +36,39 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The paper order and the paper's parts (ticket 115; Implementation Decisions 17, 13, 1, and 2). The paper is made only
+  on an explicit order, from the outline and the sections; until one, the project holds only its sections and reports.
+  - `wayline paper` now prints the order's card and does nothing else: the readiness list (open objectives, the
+    outline's gaps, the general report's last kill argument and its standing points, results changed since their last
+    drawing, inherited claims unchecked or unverifiable, open contradictions, unresolved references, concerns for the
+    order, the outline's link, the front matter not given yet) and the cost, built by code with no model call. Nothing on
+    it blocks the order. The dashboard serves the same card at `/api/projects/<id>/paper`, and its `paper` action is the
+    Confirm. `wayline paper --yes` makes the order, journaled as `paper_order`; no decision ticket opens.
+  - The order is a rest point: running tickets finish, nothing new launches, the changed results are drawn (rest
+    `order`), and the paper is composed from that commit; the run resumes, or, when the order started a conductor for
+    itself, ends as the last run had. The tick relaunches a conductor for an order left open.
+  - Under `interactive` and `checkpoints` the order asks one batch (kind `paper_order`) before the writer: open
+    contradictions (code's side, or "a typo, fix it"), unverifiable claims to keep, unresolved references (hand over,
+    drop, or keep the claim "to be resolved"), the outline's open proposals, and, with no inherited result verified, keep
+    the unchecked ones as stated (the default) or leave them out. Every item has code's default.
+  - One writer session (`opus xhigh`, read-only, schema `paper_parts` in place of `paper_draft`) returns each part as its
+    own field. Code checks every heading against the outline's order and placement by its outline id (`## ... {#R3}`),
+    refuses an inherited title, abstract, or caption and a reference list, resumes the session once with what failed,
+    and writes `research/paper/`: the eight parts, `tables/`, `references.json`, `alternatives/` (three titles),
+    `paper.json`, and `PAPER.md`, the build report, which also names what was left out, the owner's passages reworded,
+    the writer's proposals, and the cost. The build is recorded as not yet gated. `front.md` is code's: the availability
+    statements from the records, and the front matter from `wayline paper front -` (`research/front.json`), a marked
+    placeholder until said.
+  - Each order makes a new version, the previous one under `research/paper/earlier/v<n>/`; a re-order recomposes only
+    the parts whose inputs changed (with the title and abstract when a main-text part did) and keeps an owner's edit of
+    an unchanged part.
+  - `check_structure` also checks the order of the required sections at a venue that is not `structure_flexible`.
+  - Gone: `research/paper/paper.md`, `build.json`, `--venue`, `--continue`, `--verify`, and the gate's two `writing`
+    tickets on the paper; the builds' gates come with ticket 117. The `wayline` skill gains `paper.md`, its paper
+    reference file, and setup question 9 now records the front matter. BRIEF's P7 Report retires, P8 is the Paper
+    order, and R26 reads "The general report is always current; the paper is made only on an explicit order, from the
+    owner, or from the decider in an autonomous run."
+
 - The surveyor and `lit` tickets (ticket 99; Implementation Decisions 17, 1, 2, 10, and 14). The literature is searched
   mid-run for each objective the Introduction does not yet cover, by a cheap session through free services.
   - The new `surveyor` role takes `lit` tickets (`proposals.KIND_ROLE` routes `lit` to it, a worker's proposal of one

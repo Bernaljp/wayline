@@ -258,7 +258,7 @@ class ReviewTest(AccountCase):
                                  "rationale": "the claims fit", "confidence": 0.6})
         with self.assertRaises(account.AccountError):
             account.review(self.project, "D3", "reverse", answer="neurips")
-        self.assertIn("wayline paper --venue", account.review(self.project, "D3", "reverse"))
+        self.assertIn("yours to name when the paper is compiled for a venue", account.review(self.project, "D3", "reverse"))
 
     def test_a_mark_that_cannot_be_taken_is_said_in_the_banner(self):
         from wayline import batches

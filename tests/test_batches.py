@@ -71,9 +71,13 @@ class OpenBatchTest(BatchTestCase):
             "contradictions": ["real", "not a contradiction"],
             "concern_placements": ["take it", "another place"],
             "outline_proposals": ["take", "decline"],
+            "paper_order": ["the first", "the second", "a typo, fix it", "leave out", "keep, not verified", "hand over", "drop",
+                            "to be resolved", "take", "decline", "keep as stated"],
         }
         self.assertEqual(set(batches.KINDS), set(expected))
         for kind, marks in expected.items():
+            if kind in batches.PER_ITEM:
+                continue
             with self.subTest(kind=kind):
                 batch = batches.open_batch(self.project, kind, "a %s batch" % kind, [{"ref": "x1", "text": "one item", "default": marks[0]}])
                 self.assertEqual(batches.read_batch(self.project, batch["id"])["items"][0]["marks"], marks)

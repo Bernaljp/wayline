@@ -1289,6 +1289,18 @@ def relaunch_decision(project, ledger, policy, reading, now):
     switched = view.switched or {}
     if switched.get("from") == str(project) and switched.get("to") != str(project):
         return None, "the project was switched away from, to %s" % switched.get("to")
+    ordered_at = max((index for index, event in enumerate(events) if event.get("event") == "paper_order"
+                      and (event.get("payload") or {}).get("action") == "ordered"), default=-1)
+    stopped_since = any(event.get("event") == RUN_ENDED and (event.get("payload") or {}).get("reason") == "stopped"
+                        for event in events[ordered_at + 1:])
+    if view.paper_order is not None and view.stop is None and not stopped_since:
+        # An open paper order is the owner's word to compose the paper (ticket 115): a conductor takes it whatever the last
+        # run's end, and its run ends again the same way once the paper is composed. A stop since the order holds.
+        stop_at, _ = thresholds_for(project, policy, view)
+        closed = window_closed(view, reading, stop_at, now)
+        if closed is not None:
+            return None, "paper order %s is open, but %s" % (view.paper_order.get("order"), closed)
+        return "paper order %s is open, and the window is open" % view.paper_order.get("order"), None
     ended = ended_for_good(project, events, now)
     # A run that journaled no end yet and still owes its drawings, its run-end gates, or their scope-downs, as a run
     # resting at an end does: relaunched, it takes them as its own run and then ends (decision 17; ticket 103).

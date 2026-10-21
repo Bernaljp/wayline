@@ -2018,7 +2018,8 @@ def heading_matches(required, heading):
 
 
 def check_structure(manuscript, guidelines):
-    """2. Section presence, a warning rather than a failure where the venue is flexible."""
+    """2. Section presence, a warning rather than a failure where the venue is flexible; and, at a venue that is not
+    `structure_flexible`, the order its required sections stand in (ticket 115)."""
     required = guidelines["required_structure"]
     if not required:
         return [Finding("structure", "skipped", "%s names no required sections." % guidelines["display_name"])]
@@ -2029,10 +2030,21 @@ def check_structure(manuscript, guidelines):
         if not any(heading_matches(name, heading) for heading in headings)
         and not (title and _normalize(name) in ("title", "titlepage"))
     ]
+    findings = []
+    if not guidelines["structure_flexible"]:
+        placed = [(next(index for index, heading in enumerate(headings) if heading_matches(name, heading)), name)
+                  for name in required if any(heading_matches(name, heading) for heading in headings)]
+        if [name for _, name in sorted(placed, key=lambda pair: pair[0])] != [name for _, name in placed]:
+            findings.append(Finding("structure", "fail", "the sections stand as %s; %s asks for them in the order %s." % (
+                ", ".join(name for _, name in sorted(placed, key=lambda pair: pair[0])), guidelines["display_name"],
+                ", ".join(name for _, name in placed))))
     if not missing:
-        return [Finding("structure", "ok", "every one of the %d section(s) %s asks for is present." % (len(required), guidelines["display_name"]))]
+        if findings:
+            return findings
+        return [Finding("structure", "ok", "every one of the %d section(s) %s asks for is present%s." % (
+            len(required), guidelines["display_name"], ", in its order" if not guidelines["structure_flexible"] else ""))]
     level = "warn" if guidelines["structure_flexible"] else "fail"
-    return [Finding("structure", level, "%s: %s%s" % (
+    return findings + [Finding("structure", level, "%s: %s%s" % (
         "missing section" if len(missing) == 1 else "missing sections",
         ", ".join(missing),
         "; %s is structure-flexible, so this is a warning" % guidelines["display_name"] if level == "warn" else "",

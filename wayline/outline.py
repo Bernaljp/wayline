@@ -74,7 +74,7 @@ from wayline.ledger import K_ACTION, K_BY, K_ITEM, K_NOTE, K_TO, OUTLINE, PAYLOA
 __all__ = [
     "OUTLINE_MD", "OUTLINE_JSON", "SCHEMA", "SIMILARITY", "BATCH_KIND", "OutlineError", "read_record", "render_outline",
     "take_in", "move", "place", "note", "add_heading", "section_order", "section_orders", "heading_notes", "pack_text", "propose_merges",
-    "take_marks", "open_proposals", "outline_command", "heading_key",
+    "take_marks", "open_proposals", "outline_command", "heading_key", "gaps", "outline_id", "paper_structure", "PAPER_PARTS",
 ]
 
 OUTLINE_MD = "OUTLINE.md"
@@ -1393,6 +1393,71 @@ def take_marks(project_or_ledger):
         if merged:
             sections.render_section(book, sections.RESULTS)
     return merged
+
+
+def gaps(project_or_ledger):
+    """`(main, supplement)`: the Gaps lines as the outline shows them, what the paper order's card lists (ticket 115)."""
+    book = ledger_for(project_or_ledger)
+    facts = _Facts(book)
+    record = read_record(book)
+    return _gaps(facts, _layout(facts, record), record)
+
+
+# The paper's parts the outline shapes, in the paper's order (ticket 115): the four main-text sections, then the supplement.
+PAPER_PARTS = (INTRODUCTION, RESULTS, DISCUSSION, METHODS, SUPPLEMENT)
+_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+def outline_id(key):
+    """The id a paper heading carries for an outline line, as a pandoc attribute (`## ... {#R3}`): a result's or an
+    objective's own id, and a heading's `<section>-<its words>` in lower case joined by hyphens."""
+    if _RESULT.match(str(key)) or _OBJECTIVE.match(str(key)):
+        return str(key)
+    split = _split_key(key)
+    if split is None:
+        raise OutlineError("%r is no line of the outline" % (key,))
+    words = _SLUG.sub("-", split[1].casefold()).strip("-")
+    return "%s-%s" % (split[0], words or "heading")
+
+
+def paper_structure(project_or_ledger):
+    """What the paper's headings follow at the order (ticket 115): `{part: [{id, key, heading, note}]}` for each part of
+    `PAPER_PARTS`, in the outline's order.
+
+    Introduction, Discussion, and Methods are their headings; Results is each objective's subsection (its id, its question
+    as the heading) followed by the lines under it, then the lines beyond the objectives and the inherited ones; the
+    supplement is every line placed there, whatever its section. What is cut is in no part. `note` is the owner's note on
+    the line, which the writer follows.
+    """
+    book = ledger_for(project_or_ledger)
+    facts = _Facts(book, details=False)
+    layout = _layout(facts, read_record(book))
+    seen = {}
+
+    def entry(key):
+        if _RESULT.match(key):
+            heading = facts.by_result[key].heading if key in facts.by_result else key
+        elif _OBJECTIVE.match(key):
+            heading = _one_line((facts.by_objective.get(key) or {}).get("text")) or key
+        else:
+            heading = _split_key(key)[1]
+        identifier = outline_id(key)
+        number = seen.get(identifier, 0) + 1
+        seen[identifier] = number
+        if number > 1:
+            identifier = "%s-%d" % (identifier, number)
+        return {"id": identifier, "key": key, "heading": heading, "note": layout.notes.get(key)}
+
+    found = {part: [] for part in PAPER_PARTS}
+    for section in (INTRODUCTION, DISCUSSION, METHODS):
+        found[section] = [entry(key) for key in layout.groups.get(section, [])]
+    for identifier in layout.order:
+        found[RESULTS].append(entry(identifier))
+        found[RESULTS] += [entry(key) for key in layout.groups.get("results:%s" % identifier, [])]
+    for group in (BEYOND, INHERITED):
+        found[RESULTS] += [entry(key) for key in layout.groups.get(group, [])]
+    found[SUPPLEMENT] = [entry(key) for key in layout.groups.get(SUPPLEMENT, [])]
+    return found
 
 
 def open_proposals(project_or_ledger):

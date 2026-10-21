@@ -51,7 +51,7 @@ class TreeTest(unittest.TestCase):
         self.assertEqual(frontmatter["name"], "wayline")
         self.assertIn("talks", frontmatter["description"])
         self.assertIn("## Routing", body)
-        for name in ("setup.md", "evolve.md"):
+        for name in ("setup.md", "evolve.md", "paper.md"):
             self.assertTrue((SKILL / name).is_file(), name)
         sidecar = registry.read_sidecar(SKILL / "wayline.json", "skill", expect_id="wayline")
         self.assertEqual(sidecar["applicability_tags"]["kinds"], [], "no ticket kind is assigned the owner's skill")
@@ -153,7 +153,9 @@ class RoutingTest(unittest.TestCase):
                 rules.setdefault(command, set()).add(row["rule"])
         self.assertIn("record", rules["ticket add"])
         self.assertEqual(rules["consolidate"], {"confirm"})
-        self.assertIn("confirm", rules["paper --venue"])
+        self.assertIn("confirm", rules["paper --yes"])
+        self.assertIn("confirm", rules["paper"])
+        self.assertEqual(rules["paper front -"], {"record"})
         self.assertEqual(rules["promote skill"], {"confirm"})
 
 

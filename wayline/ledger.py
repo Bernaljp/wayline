@@ -119,6 +119,7 @@ DRAWING = "drawing"  # one drawing of a result opened at a rest point, accepted,
 OBJECTIVE_PROPOSED = "objective_proposed"  # one objective proposal of a result or a verdict, or its judgment (decision 17; ticket 91)
 REFERENCE_RAISED = "reference_raised"  # an important unresolved reference put to the owner once its failure is final (decision 17; ticket 105)
 SCOUT_SEARCHED = "scout_searched"  # one `wayline scout search`, counted against its ticket and the day's OpenAlex requests (decision 17; ticket 99)
+PAPER_ORDER = "paper_order"  # a paper order made, its paper composed, or the order failing (decision 17; ticket 115)
 OUTLINE = "outline"  # one change the owner (or the decider, or code dropping a gone placement) made to research/outline.json (decision 17; ticket 104)
 
 # --- payload keys ----------------------------------------------------------------------------
@@ -278,6 +279,9 @@ K_RESULT = "result"  # `finding`: the result, R1 onward, the finding joined at i
 K_INTO = "into"  # `result`: the result a merged one went into
 K_ROUTE = "route"  # `verification`: the route of the verdict that changed it, reproduced, ported, reimplemented, or read
 K_RELEASED = "released"  # `verification`: the tickets an unverifiable result stopped blocking
+K_ORDER = "order"  # `paper_order`: the order's number, 1 onward
+K_RUN = "run"  # `paper_order`: how the last run ended when the order was made with no run going, null while one was going
+K_PARTS = "parts"  # `paper_order`: the parts a composition wrote afresh
 K_REST = "rest"  # `drawing`: the rest point it was opened at, run_end, checkpoint, or owner
 K_PLOTS = "plots"  # `drawing`: the plot and table ids an accepted drawing drew
 K_LEFT_OUT = "left_out"  # `drawing`: what acceptance left out, each with why
@@ -366,6 +370,7 @@ EVENTS = {
     OUTLINE: (K_ACTION, K_ITEM, K_TO, K_NOTE, K_BY),
     REFERENCE_RAISED: (K_SLUG, K_REASON, K_OUTCOME, K_AUTONOMY),
     SCOUT_SEARCHED: (K_QUERY, K_CITING, K_WORKS, K_OPENALEX),
+    PAPER_ORDER: (K_ORDER, K_ACTION, K_BY, K_RUN, K_BATCH, K_VERSION, K_COMMIT, K_PARTS, K_REASON),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -428,7 +433,7 @@ PAYLOAD_ENUMS = {
     # Code (a result found or followed, a verdict taken, a needs_human under autonomous), or the owner's or the decider's
     # reply leaving a result unverified.
     (VERIFICATION, K_BY): ("code", "owner", "decider"),
-    (DRAWING, K_REST): ("run_end", "checkpoint", "owner"),
+    (DRAWING, K_REST): ("run_end", "checkpoint", "owner", "order"),
     (DRAWING, K_OUTCOME): ("opened", "accepted", "failed"),
     (OBJECTIVE_PROPOSED, K_KIND): ("add", "answer", "park", "drop", "reframe", "reopen"),
     # A ticket result's proposal, or one a verdict made itself, which goes on without a further judgment.
@@ -442,6 +447,9 @@ PAYLOAD_ENUMS = {
     (REFERENCE_RAISED, K_REASON): ("owner", "passage", "concern", "objective"),
     (REFERENCE_RAISED, K_OUTCOME): ("no such work", "gave up", "not looked up"),
     (REFERENCE_RAISED, K_AUTONOMY): ("interactive", "checkpoints"),
+    # The order made, the paper composed from it, or the composition failing, which closes the order (ticket 115).
+    (PAPER_ORDER, K_ACTION): ("ordered", "composed", "failed"),
+    (PAPER_ORDER, K_BY): ("owner", "decider"),
 }
 
 
