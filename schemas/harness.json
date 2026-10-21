@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "harness",
-  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, the fallback consent, the ladder consent, the environment, the stopping rule, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
+  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, the fallback consent, the ladder consent, the environment, the plotting library, the stopping rule, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
   "type": "object",
   "required": ["harness_tag", "autonomy", "radius"],
   "additionalProperties": false,
@@ -24,6 +24,11 @@
       "type": "string",
       "enum": ["shared", "conda", "venv", "container"],
       "description": "where the project's tools and packages live and its jobs run (Implementation Decision 17; ticket 83): the shared tools, one conda prefix at .wayline/env, a venv, or one Singularity image at .wayline/env.sif; set only by `wayline switch --environment` once the new one is built from the locks and checked, never by the decider; a project without the key behaves as shared"
+    },
+    "plotting": {
+      "type": "string",
+      "enum": ["matplotlib", "altair", "ggplot2"],
+      "description": "the plotting library (Implementation Decision 17; ticket 102): Python with matplotlib and seaborn, Altair, or R with ggplot2, applied at each result's next drawing; set only by `wayline switch --plotting` on the owner's word, never by the decider; a project without the key draws with matplotlib"
     },
     "human_only": {
       "type": "array",

@@ -13,6 +13,7 @@
     "ticket": {"type": "integer", "minimum": 1, "description": "the drawing ticket"},
     "rest": {"type": "string", "enum": ["run_end", "checkpoint", "owner"], "description": "the rest point it was opened at"},
     "status": {"type": "string", "enum": ["open", "accepted", "failed"]},
+    "library": {"type": "string", "enum": ["matplotlib", "altair", "ggplot2"], "description": "the plotting library it is drawn, rerun, and checked in, harness.json's plotting when it was opened (ticket 102); a record without it was drawn with matplotlib"},
     "findings": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the result's current findings it was opened over, leaving out those a drawing filed"},
     "signature": {"type": "string", "pattern": "^[0-9a-f]{16}$", "description": "what `findings` hashes to: a result whose findings still hash to it is not drawn again at a rest point"},
     "opened": {"type": "string"},
@@ -57,7 +58,8 @@
         }
       }
     },
-    "batch": {"type": ["string", "null"], "pattern": "^B[1-9][0-9]*$", "description": "the plots batch the accepted drawing put before the owner"}
+    "batch": {"type": ["string", "null"], "pattern": "^B[1-9][0-9]*$", "description": "the plots batch the accepted drawing put before the owner"},
+    "asked": {"type": ["string", "null"], "description": "the plot the owner asked for, when this is a small drawing on the owner's word: the result's other plots are carried into the new version unchanged (ticket 101)"}
   },
   "$defs": {
     "check": {

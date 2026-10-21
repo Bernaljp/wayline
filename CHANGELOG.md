@@ -36,6 +36,18 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Current and earlier reports (ticket 101; Implementation Decisions 17 and 2). Each result with an accepted drawing
+  gets `research/reports/R<n>-<version>.md`, rendered by code alone in every render pass of the general report: each
+  accepted drawing starts the next version and freezes the one before as an earlier report, never rendered again.
+  Between drawings the current report shows the new findings under "Since the plots were drawn" and marks the ones
+  replaced; only current findings show, a replacement with its note, a negative one marked. Each plot comes with its
+  Purpose, Data, and What it shows, each table is rendered from its CSV, then the synthesis, the headline, the
+  inferences, and the open questions. `REPORT.md` gives each result its current and earlier report links, its
+  headline plots, and the synthesis. `report_rendered` carries `report` (the result) and `version`; an edited report
+  is committed as it stood, journaled, listed in its result's current report, and never taken in. `wayline result
+  plot <id> "<request>"` asks for a plot: a small drawing carrying the result's other plots unchanged, or with `none`
+  an analysis ticket. A merged result's plots follow it to the result it went into, ids kept, and its report freezes.
+
 - Drawings and plots (ticket 100; Implementation Decisions 17, 14, 13, and 2). Each changed result is explored in
   every useful plot at rest points: before a run ends (on an empty frontier, the stopping rule, or a budget), before
   it comes to rest on the owner's answer under `checkpoints`, and on the owner's word (`wayline result draw R4`).
