@@ -32,4 +32,4 @@ Not part of this ticket:
 - [x] Tests through the fetch seam's recordings for `scout search` (each service, the OpenAlex day count, the per-ticket cap, citing works); the fake launcher scripting a surveyor result; journal replay for `lit` tickets cut at specify and after an amendment.
 - [x] Decision 1's verb table gains `scout search`, and decision 14's policy table the surveyor role and the caps, in the same commit as their code.
 - [x] The CHANGELOG's `## Unreleased` entry describes the surveyor.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
