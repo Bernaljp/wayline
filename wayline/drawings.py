@@ -54,7 +54,7 @@ __all__ = [
     "KIND", "ROLE", "RUN_END", "CHECKPOINT", "OWNER", "RESTS", "PLOTS_JSON", "DRAWINGS_DIR", "DRAFT", "DRAWING_CHECK", "TOOLS_PYTHON",
     "DrawingError", "PlotterTier", "Limits", "Checked", "own_evidence", "signature", "read_records", "due", "tier", "limits",
     "plot_marks", "read_plots", "last_accepted", "drawing_of", "result_heading", "brief", "earlier_figures", "check", "accept",
-    "fail", "record_path", "directory", "draw_again", "open_drawings",
+    "fail", "record_path", "directory", "library_of", "library_of_record", "draw_again", "open_drawings",
 ]
 
 RECORD_SCHEMA = "drawing"
@@ -337,6 +337,23 @@ def drawing_of(ticket):
     return _parse_origin(ticket.get("origin"))
 
 
+def library_of_record(record):
+    """The plotting library a drawing record was opened in: matplotlib for a record from before the switch (ticket 102)."""
+    from wayline import plotting
+    return plotting.setting({"plotting": (record or {}).get("library")})
+
+
+def library_of(project, ticket):
+    """The plotting library the drawing `ticket` is drawn, rerun, and checked in: the one its record was opened in."""
+    result_id, version, _ = drawing_of(ticket)
+    if result_id is None:
+        return library_of_record(None)
+    try:
+        return library_of_record(ledger_for(project).read_json(record_path(_name(result_id, version))))
+    except (OSError, ValueError):
+        return library_of_record(None)
+
+
 def result_heading(project, ticket):
     """The current heading of the result a drawing ticket draws, which its findings stand under; None when it is gone."""
     result_id, _, _ = drawing_of(ticket)
@@ -398,6 +415,7 @@ def _objective_lines(project, wanted):
 
 def brief(project, ticket, policy=None):
     """The drawing's brief as its prompt carries it, rendered by code at each launch (the module's docstring)."""
+    from wayline import plotting
     book = ledger_for(project)
     result_id, version, rest = drawing_of(ticket)
     if result_id is None:
@@ -410,6 +428,7 @@ def brief(project, ticket, policy=None):
              "Drawing %s: %s, \"%s\", opened at %s. Your drawing directory, your whole touch set, is `%s`; your draft is "
              "`%s%s`." % (_name(result_id, version), result_id, result.heading if result else "a result no longer live", rest,
                           folder, folder, DRAFT),
+             ""] + plotting.brief_lines(library_of(book, ticket)) + [
              "", "Limits: at most %d plots, %d tables, and %d headline plots, with no minimum." % (bound.plots, bound.tables, bound.headline),
              "", "## What the project is", "", _summary(book)]
     drawn_by = set(_drawing_tickets(book.project))
@@ -696,11 +715,20 @@ def check(project, ticket, worktree, final=False, policy=None, python=_DEFAULT):
         + [("what cannot be inferred", text) for text in draft.get("cannot_infer") or []]
         + [("an open question", text) for text in draft.get("open_questions") or []], values, exempt)
     script = str(draft.get("script") or "")
-    python = drawing_checks.interpreter() if python is _DEFAULT else python
+    from wayline import plotting
+    library = library_of(book, ticket)
+    if python is _DEFAULT:
+        python = plotting.interpreter(library)
     script_path = _in_folder(folder, script)
-    room = drawing_checks.rerun(project, folder, folder_name, script, [item for item in inputs if item in manifest],
-                                python, policy_timeout(policy)) if script_path is not None and script_path.is_file() else \
-        drawing_checks.Room(None, "there is no script in its drawing directory to rerun", ran=False)
+    expected = Path(plotting.LIBRARIES[library].script).suffix
+    if script_path is not None and script_path.suffix != expected:
+        problems.append("its script %s is not a %s script, and this drawing is drawn in %s"
+                        % (script, expected, plotting.LIBRARIES[library].label))
+        room = drawing_checks.Room(None, "the script is not in the drawing's library, so it was not rerun", ran=False)
+    else:
+        room = drawing_checks.rerun(project, folder, folder_name, script, [item for item in inputs if item in manifest],
+                                    python, policy_timeout(policy)) if script_path is not None and script_path.is_file() else \
+            drawing_checks.Room(None, "there is no script in its drawing directory to rerun", ran=False)
     try:
         if room.failed:
             problems.append("its script did not rerun in the clean room: %s" % (room.error or "exit %s" % room.returncode))
@@ -947,8 +975,8 @@ def directory(result_id, version):
     return "%s/%s/" % (DRAWINGS_DIR, _name(result_id, version))
 
 
-def _blank_record(result_id, version, ticket, rest, finding_ids):
-    return {"result": result_id, "version": version, "ticket": ticket, "rest": rest, "status": OPEN,
+def _blank_record(result_id, version, ticket, rest, finding_ids, library):
+    return {"result": result_id, "version": version, "ticket": ticket, "rest": rest, "status": OPEN, "library": library,
             "findings": sorted(finding_ids), "signature": signature(finding_ids), "opened": now_ts(), "closed": None,
             "reason": None, "script": None, "numbers": None, "inputs": [], "plots": [], "tables": [], "carried": [],
             "retired": [], "left_out": [], "synthesis": None, "headline": None, "can_infer": [], "cannot_infer": [],
@@ -975,7 +1003,10 @@ def _open_one(book, result, rest, drawn_by, proposed_by):
     body = ("\n## Drawing %s\n\nCode opened this drawing of %s (\"%s\") at a rest point (%s), over its findings %s. Its brief, "
             "rendered by code at each launch, is in the prompt.\n" % (name, result.id, result.heading, rest, ", ".join(finding_ids)))
     tickets.write_ticket(book, fields, body)
-    book.write_json(record_path(name), _blank_record(result.id, version, identifier, rest, finding_ids), schema=RECORD_SCHEMA)
+    from wayline import plotting
+    from wayline.project import read_harness
+    library = plotting.setting(read_harness(book.project))  # the library it is drawn in, whatever a later switch says
+    book.write_json(record_path(name), _blank_record(result.id, version, identifier, rest, finding_ids, library), schema=RECORD_SCHEMA)
     book.append_event(TICKET_CREATED, {"ticket": identifier, "kind": KIND, "proposed_by": proposed_by, "origin": fields["origin"],
                                        "blocked_by": []}, ticket=identifier)
     book.append_event(DRAWING, {"result": result.id, "version": version, "ticket": identifier, "rest": rest, "outcome": "opened"},
