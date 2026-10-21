@@ -40,7 +40,7 @@ It blocks 111, 112, and 114.
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the five views, the strip, the projects page, thin lists, item links, phone width; upgrades: the old project listed read-only; tools: what Run's Software shows), 8 (the dashboard); milestone M8 criteria 16 and 18; user stories 169 and 173.
 
-- [ ] The dashboard routes `#/<project>/research`, `#/<project>/run`, and the projects page by hash. The browser's back and forward buttons move between views, and reloading keeps the view.
+- [x] The dashboard routes `#/<project>/research`, `#/<project>/run`, and the projects page by hash. The browser's back and forward buttons move between views, and reloading keeps the view.
 - [x] `#/<project>/<id>` opens that item in the popup viewer over its view, for every kind of id this ticket's views list:
   - objectives (O);
   - results (R);
@@ -63,4 +63,4 @@ It blocks 111, 112, and 114.
   - `#/<project>/<id>` resolution for each kind;
   - ETag 304s on the new reads.
 - [x] The changelog's `## Unreleased` section describes the five views and item links.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
