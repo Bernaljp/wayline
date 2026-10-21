@@ -6,7 +6,7 @@ things: `research/INTAKE.md` with the sections of `SECTIONS`, and the `autonomy`
 `model_fallback`, `ladder_changes`, `budgets`, and `human_only` classes in `harness.json` (the file
 the conductor rereads).
 
-The `wayline-intake` skill is the same phase with a person in the conversation: it settles the
+The `wayline` skill's setup reference is the same phase with a person in the conversation: it settles the
 answers with the owner and hands them to this verb as one JSON spec, because the ledger is the only
 writer of `research/` (decision 2) and a model that wrote `INTAKE.md` itself would bypass it.
 
@@ -53,7 +53,7 @@ __all__ = [
 
 INTAKE_MD = "INTAKE.md"
 
-# The sections of INTAKE.md, in order. The fixture of the wayline-intake skill pins the same list. Decision 17 took
+# The sections of INTAKE.md, in order. The intake fixture of the wayline skill pins the same list. Decision 17 took
 # the `Goal` section out: objectives and goals live in `research/objectives.json`, rendered as `OBJECTIVES.md`.
 SECTIONS = ("Intent", "References", "Data", "Code", "Constraints", "Autonomy", "Radius", "Budgets",
             "Decisions that stay human-only")

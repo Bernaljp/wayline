@@ -720,8 +720,8 @@ class ReadersTest(SetupCase):
         self.assertNotIn("K7", pack, "a concern for the order")
         self.assertEqual(concerns.pack_text(self.project, []), "")
 
-    def test_the_grill_skill_reads_them(self):
-        skill = (HARNESS_ROOT / "skills" / "wayline-grill" / "SKILL.md").read_text(encoding="utf-8")
+    def test_the_setup_reference_reads_them(self):
+        skill = (HARNESS_ROOT / "skills" / "wayline" / "setup.md").read_text(encoding="utf-8")
         self.assertIn("research/DOCUMENTS.md", skill)
         self.assertIn("research/CONCERNS.md", skill)
 

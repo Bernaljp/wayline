@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "id": "skill/wayline",
+  "kind": "skill",
+  "subject": {
+    "path": "skills/wayline/SKILL.md",
+    "sha256": null,
+    "also": [
+      "skills/wayline/setup.md",
+      "skills/wayline/wayline.json"
+    ]
+  },
+  "origin": {
+    "project": null,
+    "ticket": 109,
+    "session_id": null,
+    "journal_ts": null,
+    "change_record": null,
+    "reason": "seed: ticket 109 folded the five phase skills into the owner-facing skill `wayline` and set setup's ten questions in the order decision 17 gives them; this fixture is the setup conversation in that order"
+  },
+  "launch": {
+    "model": "opus",
+    "effort": "high",
+    "permission_mode": "dontAsk",
+    "max_turns": 300,
+    "output_format": "stream-json",
+    "json_schema": null,
+    "fallback_model": "opus",
+    "tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(wayline *)"
+    ]
+  },
+  "input": {
+    "prompt": "input/prompt.md",
+    "replies": [
+      "input/replies/2.md",
+      "input/replies/3.md",
+      "input/replies/4.md",
+      "input/replies/5.md",
+      "input/replies/6.md",
+      "input/replies/7.md",
+      "input/replies/8.md",
+      "input/replies/9.md",
+      "input/replies/10.md",
+      "input/replies/11.md"
+    ],
+    "agent": null,
+    "context_manifest": null,
+    "input_hash": null
+  },
+  "structural": [
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline intake"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline document add"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline switch --stop-when"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline plan --cut-only"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline tools needs"
+    },
+    {
+      "check": "tool_used",
+      "tool": "Bash",
+      "input_matches": "wayline reference"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Write"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Edit"
+    },
+    {
+      "check": "tool_not_used",
+      "tool": "Bash",
+      "input_matches": "write_text|write_bytes|\\.write\\(|os\\.(remove|unlink|rename|replace)|shutil\\.|>>?\\s*(research/|harness\\.json)"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "asks_the_ten_questions_in_order"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "confirms_the_plan_after_the_last_question"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "nothing_is_asked_after_setup"
+    },
+    {
+      "check": "python",
+      "file": "checks.py",
+      "fn": "the_stopping_rule_is_recorded"
+    }
+  ],
+  "note": "The setup conversation in decision 17's order, run on demand: it is a live session of many turns, so the suite never runs it, and tests/test_setup_fixture.py holds its checks to a recording written by hand. To run it, lay out a project with wayline init, copy fixtures/midway's files into its owner/ directory (critiques/ included), build the code repository with `python3 fixtures/midway/build_code.py ../moths-code` beside the project, and start one session in the project with the skill loaded and the launch above: input/prompt.md first, then each of input/replies/ sent with --resume on the session id, one per setup question. The owner's replies answer the ten questions in order: the documents' batch, the objectives, the concerns, the missing material, the stopping rule and budgets, the software, the code repository, the paper order, the front matter (left for later), and the references. Keep under recorded/ per turn the result envelope and the trace (system/init reduced to the session id and the model), and the files the session left: research/journal.jsonl and harness.json. The checks read the order from the `Setup N/10:` headings the setup reference puts on its questions, the graph's cut and confirmation from the commands, and, under autonomous, that no decision for the owner was opened after the confirmation ended setup. The paper order's and the front matter's answers have no verb to record them yet, so no check reads them from the ledger.",
+  "baseline": null,
+  "quarantine": {
+    "status": "active",
+    "flake_limit": 2,
+    "flakes": [],
+    "stable_runs_to_restore": 3
+  }
+}

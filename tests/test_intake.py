@@ -263,6 +263,16 @@ class IntakeTakesInformationOnlyTest(IntakeTestCase):
         self.assertIn("`concern`", classes)
         self.assertIn("sorts a concern", classes)
 
+    def test_setup_may_name_objective_and_concern_together_and_each_is_kept_once(self):
+        """Ticket 109: setup's human_only classes can name `objective` and `concern`, the owner's word with no confirmation."""
+        code, _, err = run("--project", str(self.project), "--intent", "find out whether it works",
+                           "--human-only", "objective", "--human-only", "concern", "--human-only", "objective")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(read_harness(self.project)["human_only"], ["objective", "data", "concern"])
+        classes = self.section("Decisions that stay human-only")
+        self.assertEqual(classes.count("`objective`"), 1)
+        self.assertIn("`concern`", classes)
+
 
 class SpecOnStdinTest(IntakeTestCase):
     """The skill's path: one JSON spec on stdin, the ledger writing what the conversation settled."""

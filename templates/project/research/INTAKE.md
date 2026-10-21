@@ -1,6 +1,6 @@
 # Intake
 
-What the owner has, in their own words. `wayline intake` (or the `wayline-intake` skill)
+What the owner has, in their own words. `wayline intake` (or a session using the `wayline` skill)
 rewrites this file; until then the headings are the questions. Hand over anything, in any form:
 a paragraph, a plan, references as bare identifiers, data pointers, a repository, an earlier
 manuscript or a referee report (those are documents, kept with `wayline document add`).
