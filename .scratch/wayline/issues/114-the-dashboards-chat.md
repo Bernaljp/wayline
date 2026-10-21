@@ -29,4 +29,4 @@ Not part of this ticket:
 - [x] A batch of five items or fewer shows as text in the chat; a larger one shows one line with its count and a link to the marks view; an item answered in either place shows as settled in the other.
 - [x] Tests: the fake launcher scripts the chat's sessions (a first message, a resumed one, one past the hour, a queued second message, a card); HTTP over a fixture ledger covers posting a message, polling the reply, the queue, a card's Confirm with and without the token, and the hidden view; the `harness.json` schema gains the chat's rung in the same commit, and the CHANGELOG `## Unreleased` entry describes the chat.
 - [ ] Live through the tunnel: a message from the phone recorded, its reply, a resumed follow-up, and one card confirmed; recorded in `docs/verification/m8.md`.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
