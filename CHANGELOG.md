@@ -1018,7 +1018,11 @@ lists it read-only, marked with its tag.
   `GET` and `POST /api/projects/<id>/chat` and `POST /api/projects/<id>/chat/<n>/card`, each write token-guarded like
   an action. The account's "Waiting on you" and `wayline review`'s reversal now say to answer a decision ticket in the
   dashboard's chat or any conversation with the project, not with a typed `wayline answer`, and the strip's decision
-  lines carry an answer button that starts the message in the chat.
+  lines carry an answer button that starts the message in the chat. The panel reads the conversation only while it is
+  open or a message sent from it is being answered. Closing the viewer over an item route now lands on its view however
+  many times the route was applied: only a `hashchange` (an entry the owner's navigation pushed) is stepped back over,
+  and every other pass replaces the item's entry with the view's, where before a second pass made the close step back
+  off the page and leave the item's hash in place.
 
 
 ## v1.0.0 (2026-09-27)

@@ -2203,7 +2203,10 @@ function go(hash) {
   else location.hash = hash;
 }
 
-function route() {
+// `event` is the `hashchange` that called it, when one did: only then did the route push an entry of its own, which
+// closing an item steps back over. Every other call (the first load, the projects' read, `go` to the hash shown) applies
+// the route in place, so closing an item it opened replaces the entry with the view's, whichever call came first.
+function route(event) {
   let target = parseRoute(location.hash);
   if (target === null) {
     // Not a route of ours (`#ticket/3`, a fragment a rendered file linked to): left alone once a view is shown, and
@@ -2223,7 +2226,7 @@ function route() {
   }
   if (!state.projectsLoaded) return;
   const known = state.projects.find((project) => project.id === target.project);
-  const landed = !routing.done;
+  const landed = !(event && event.type === 'hashchange');
   routing.done = true;
   if (!known || !known.readable) {
     closeItem();
@@ -2282,7 +2285,9 @@ function markViews() {
 // owner landed on the item from a notice.
 
 async function openItem(project, id, landed) {
-  const opening = { project, id, landed };
+  // The same item asked for again while it is open (a second call of the route) keeps how it was reached.
+  const same = viewer.item && viewer.item.project === project && viewer.item.id === id;
+  const opening = { project, id, landed: same ? viewer.item.landed : landed };
   viewer.item = opening;
   if (!state.view || state.view === 'projects') showView('research');
   const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
@@ -2321,12 +2326,16 @@ function closeItem() {
   viewer.item = null;
 }
 
-// The viewer closed: an item route goes back to its view.
+// The viewer closed: an item route goes back to its view. Whatever opened the viewer, closing it never leaves an item's
+// route in the address: one this page no longer counts as open is replaced by the view under it.
 function leaveItem() {
   const item = viewer.item;
   viewer.item = null;
-  if (!item) return;
   const now = parseRoute(location.hash);
+  if (!item) {
+    if (now && now.item) history.replaceState(null, '', routeTo(now.project, state.view && state.view !== 'projects' ? state.view : 'research'));
+    return;
+  }
   if (!now || now.item !== item.id || now.project !== item.project) return;
   if (item.landed) history.replaceState(null, '', routeTo(item.project, state.view && state.view !== 'projects' ? state.view : 'research'));
   else history.back();
@@ -3409,11 +3418,12 @@ function setChatProject(id) {
   chat.project = id;
   chat.signature = null;
   chat.answered = 0;
+  chat.busy = false; // the other project's message being answered is not this one's
   remember(STORE.chat, id);
-  delete state.tags[`chat:${id}`];
   replace(document.getElementById('chat-thread'), [el('li', {}, [loadingState('reading the conversation')])]);
   chatSay('');
   syncChatPicker();
+  chatPolling();
   loadChat();
 }
 
@@ -3446,9 +3456,18 @@ function openChat(open, quietly) {
   button.setAttribute('aria-expanded', String(open));
   if (open) button.classList.remove('news');
   remember(STORE.chatOpen, open ? '1' : '');
-  if (open) {
-    loadChat();
-    if (!quietly) document.getElementById('chat-text').focus();
+  chatPolling();
+  if (open && !quietly) document.getElementById('chat-text').focus();
+}
+
+// The conversation is read only while the panel is open, or while a message sent from it is still being answered (so a
+// reply that lands while the panel is closed shows on its button). A closed, quiet panel asks the server for nothing.
+function chatPolling() {
+  const wanted = chat.open || chat.busy;
+  if (wanted && !state.timers.chat) every('chat', CHAT_POLL_S, loadChat);
+  else if (!wanted && state.timers.chat) {
+    clearInterval(state.timers.chat);
+    state.timers.chat = null;
   }
 }
 
@@ -3458,7 +3477,9 @@ function chatUrl(project, suffix) {
 
 async function loadChat() {
   const project = chatProject();
-  if (!project || (!chat.open && !chat.busy && chat.signature !== null)) return;
+  if (!project || (!chat.open && !chat.busy)) return;
+  // A conversation not drawn yet is asked for whole: a tag kept from before would answer 304 to a thread still saying it reads.
+  if (chat.signature === null) delete state.tags[`chat:${project}`];
   try {
     const view = await get(chatUrl(project), `chat:${project}`);
     if (view && project === chatProject()) renderChat(view, project);
@@ -3469,6 +3490,7 @@ async function loadChat() {
 
 function renderChat(view, project) {
   chat.busy = view.busy;
+  chatPolling();
   const answered = view.messages.filter((message) => !['queued', 'running'].includes(message.status)).length;
   if (!chat.open && chat.signature !== null && answered > chat.answered) document.getElementById('chat-open').classList.add('news');
   chat.answered = answered;
@@ -3584,6 +3606,7 @@ async function sendChat(event) {
     await chatPost(project, '', body);
     box.value = '';
     chat.busy = true;
+    chatPolling();
     chatSay('');
   } catch (failure) {
     chatSay(failure.message || String(failure), true);
@@ -3633,7 +3656,6 @@ function wireChat() {
   });
   if (!TOKEN) chatSay('The chat needs the dashboard token: open the URL wayline serve printed, which carries it.');
   openChat(remembered(STORE.chatOpen) === '1', true);
-  every('chat', CHAT_POLL_S, loadChat);
 }
 
 // --- start ---------------------------------------------------------------------------------------
