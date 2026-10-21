@@ -955,8 +955,9 @@ def settle(project, notify=None, say=None):
     say = say or (lambda line: None)
     report = {"opened": [], "joined": [], "applied": [], "declined": []}
     _take_answers(project, report, say)
-    _apply_marks(project, report, say)
-    _close_settled(project)
+    with ledger_for(project).lock():  # the marks read, acted on, and stamped with no click of the marks view between
+        _apply_marks(project, report, say)
+        _close_settled(project)
     _gather(project, report, notify, say)
     _sync(project)
     return report

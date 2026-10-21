@@ -2034,8 +2034,9 @@ def _on_a_thread(server, project, name, work, on_failure=None):
 
 
 def _mark(project, fields):
-    """One click of the marks view (ticket 112): `{batch, item, mark?, note?}` saves a mark, a note, or both on one item, and
-    `{batch, defaults: true}` takes all defaults; the owner's, given in the dashboard. A batch's own refusal (an item settled
+    """One click of the marks view (ticket 112): `{batch, item, mark?, note?}` saves a mark, a note, or both on one item (an
+    empty note with no mark takes the item's note away), and `{batch, defaults: true}` takes all defaults; the owner's,
+    given in the dashboard. A batch's own refusal (an item settled
     in the conversation, a mark its producer acted on, a mark the kind does not take) is a `BatchError`, answered 400."""
     from wayline import batches  # the batches import the project module, which the views do not need
     batch = _string(fields, "batch")
@@ -2048,8 +2049,11 @@ def _mark(project, fields):
         raise DashboardError("a mark or a note is given on an item: name it")
     if isinstance(fields["item"], bool) or not isinstance(fields["item"], int):
         raise DashboardError("item is the item's number in the batch, got %r" % (fields["item"],))
-    record = batches.mark(project, batch, fields["item"], _string(fields, "mark", required=False), note=_string(fields, "note", required=False),
-                          by=batches.OWNER, via=batches.DASHBOARD)
+    given, note = _string(fields, "mark", required=False), _string(fields, "note", required=False)
+    # A note box emptied by the owner, with no mark, takes the item's note away.
+    clear = given is None and note is not None and not note.strip()
+    record = batches.mark(project, batch, fields["item"], given, note=None if clear else note, by=batches.OWNER, via=batches.DASHBOARD,
+                          clear_note=clear)
     return HTTPStatus.OK, {"batch": record, "settled": []}
 
 

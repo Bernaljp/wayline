@@ -969,7 +969,8 @@ lists it read-only, marked with its tag.
   carries it. Each item has its marks (plots keep, maybe, drop; objective changes and the software ask approve,
   decline; account review stand, reverse; merges right, split; contradictions real, not a contradiction; concern
   placements take it, another place; outline proposals take, decline) and a note box. A mark saves when clicked, with
-  no submit, and a note when its box is left or with the mark clicked while it is still in it, through the one new
+  no submit, and a note when its box is left or with the mark clicked while it is still in it (an emptied box takes
+  the note away, journaled as a `marked` with an empty note), through the one new
   action, `mark`, token-guarded like the others, which calls the `wayline mark` verb's function. "Take all defaults"
   settles every unsettled item with a default in one click. A settled item shows its mark and who gave it, the owner in
   the dashboard or in the conversation, or the decider. The first answer, either place, settles an item; a mark given

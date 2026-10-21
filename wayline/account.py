@@ -1112,7 +1112,8 @@ def settle_marks(project, told=None, problems=None):
             continue
         if ref in reviewed or ref not in standing:
             # Reviewed another way, or superseded since its item was opened: nothing is left for the mark to do.
-            acted.setdefault(batch["id"], {})[item["id"]] = item["mark"]
+            if not item.get("acted"):
+                acted.setdefault(batch["id"], {})[item["id"]] = item["mark"]
             continue
         try:
             _apply(project, ref, item["mark"], item["note"] if item["mark"] == REVERSE else None, told)

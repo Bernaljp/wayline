@@ -988,7 +988,7 @@ def accept(project, ticket, checked):
             else:
                 plot.update(status=RETIRED, headline=False)
                 retired.append(plot["id"])
-        _acted_on_marks(book, {plot["id"] for plot in plots if plot.get("result") == result_id})
+        steered = {plot["id"] for plot in plots if plot.get("result") == result_id}
         batch = None
         if drawn["plot"] or drawn["table"]:
             batch = batches.open_batch(book, PLOTS_BATCH, "Plots of %s, drawing %s: keep, maybe, or drop" % (result_id, name),
@@ -1012,6 +1012,8 @@ def accept(project, ticket, checked):
         book.append_event(DRAWING, {"result": result_id, "version": version, "ticket": ticket["id"], "rest": record["rest"],
                                     "outcome": ACCEPTED, "plots": sorted(ids, key=_plot_order), "left_out": list(checked.left_out),
                                     "retired": retired}, ticket=ticket["id"])
+        # Last, once the drawing is recorded: an acceptance that failed half-way took no mark, so none is final yet.
+        _acted_on_marks(book, steered)
     return record
 
 

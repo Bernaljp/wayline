@@ -384,6 +384,42 @@ class GrillGroupsTest(SetupCase):
         self.assertEqual((self.concern("K4")["status"], self.concern("K4")["reason"]),
                          ("declined", "the code was fixed before submission"))
 
+    def test_a_click_while_a_concern_is_placed_waits_and_finds_the_mark_acted_on(self):
+        """The marks are read, acted on, and stamped under the ledger's lock: a click in the marks view meanwhile waits for
+        it, so the mark stamped final is the one that placed the concern (ticket 112)."""
+        import threading
+        from unittest import mock
+        from wayline import batches
+
+        batch = batches.read_batches(self.project)[0]
+        batches.mark(self.project, batch["id"], 2, "take it", via="dashboard")
+        clicked = {}
+
+        def click():
+            try:
+                batches.mark(self.project, batch["id"], 2, "another place", note="decline: fixed", via="dashboard")
+            except batches.BatchError as failure:
+                clicked["refused"] = str(failure)
+
+        place = concerns.place
+
+        def placing(*args, **kwargs):
+            thread = threading.Thread(target=click)
+            thread.start()
+            thread.join(0.3)
+            clicked["waited"] = thread.is_alive()
+            clicked["thread"] = thread
+            return place(*args, **kwargs)
+
+        with mock.patch.object(concerns, "place", placing):
+            concerns.take_marks(self.project)
+        clicked["thread"].join(5)
+        self.assertTrue(clicked["waited"], "the click waited for the placement to finish")
+        self.assertIn("acted on", clicked.get("refused", ""))
+        item = batches.read_batch(self.project, batch["id"])["items"][1]
+        self.assertEqual((item["mark"], bool(item["acted"])), ("take it", True))
+        self.assertEqual(self.concern("K2")["objectives"], ["O2"])
+
     def test_specify_refuses_to_draft_while_a_concern_is_unsorted(self):
         from wayline import specify
 
