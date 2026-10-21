@@ -1,5 +1,7 @@
 ## This project runs under wayline $harness_tag
 
+When the owner talks with a session here, use the `wayline` skill.
+
 The ledger is `research/`. It is written by the harness from structured results, never by hand
 while a conductor is running, and it is where everything the project knows is kept: `INTAKE.md`
 and `OBJECTIVES.md` say what the work is for (a goal is an objective with a measure), `SPEC.md`

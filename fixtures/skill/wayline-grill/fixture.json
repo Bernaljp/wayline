@@ -3,10 +3,11 @@
   "id": "skill/wayline-grill",
   "kind": "skill",
   "subject": {
-    "path": "skills/wayline-grill/SKILL.md",
+    "path": "skills/wayline/SKILL.md",
     "sha256": "2a130f0a27dfa8e3abc3603c51733ab932af3ca615146619d248e8d31aba88bf",
     "also": [
-      "skills/wayline-grill/wayline.json"
+      "skills/wayline/setup.md",
+      "skills/wayline/wayline.json"
     ]
   },
   "origin": {
@@ -147,7 +148,7 @@
       "fn": "the_switch_leaves_the_rest_to_the_decider"
     }
   ],
-  "note": "The project is laid out by wayline init, with input/context/ copied into its root, `wayline intake --from input/intake.json` run there (the toy intent, four references, and a goal its eval_command measures on the sample), and input/research/ (a position memo written by hand in the shape of Implementation Decisions 10, because the critic arrives with ticket 29, and the four toy dossiers) written through the ledger. The grill is three turns of one session: input/prompt.md, then each of input/replies/ sent with --resume on the session id. Replies are the owner's: turn 2 answers the first tier, overturning one recommendation, skipping one question, and defining a term; turn 3 answers the carried question and says to decide the rest. The intake leaves open whether scikit-learn is installed, and the generator's code says how big the set is, so a grill that asks either has asked a fact. recorded/ holds per turn the result envelope and the trace with system/init reduced to the session id and the model, and the files the grill left: research/DECISIONS.md, research/CONTEXT.md, research/journal.jsonl, and harness.json. subject.sha256 is the skill as it was recorded. After the recording, the code review of ticket 30 had the skill pass `--project .` on every command, because a verb without it acts on the machine's active project, and had the decider leave irreversible questions to the owner. The skill on disk therefore hashes differently, and the runner of ticket 44 re-runs this fixture.",
+  "note": "The project is laid out by wayline init, with input/context/ copied into its root, `wayline intake --from input/intake.json` run there (the toy intent, four references, and a goal its eval_command measures on the sample), and input/research/ (a position memo written by hand in the shape of Implementation Decisions 10, because the critic arrives with ticket 29, and the four toy dossiers) written through the ledger. The grill is three turns of one session: input/prompt.md, then each of input/replies/ sent with --resume on the session id. Replies are the owner's: turn 2 answers the first tier, overturning one recommendation, skipping one question, and defining a term; turn 3 answers the carried question and says to decide the rest. The intake leaves open whether scikit-learn is installed, and the generator's code says how big the set is, so a grill that asks either has asked a fact. recorded/ holds per turn the result envelope and the trace with system/init reduced to the session id and the model, and the files the grill left: research/DECISIONS.md, research/CONTEXT.md, research/journal.jsonl, and harness.json. subject.sha256 is the skill as it was recorded. After the recording, the code review of ticket 30 had the skill pass `--project .` on every command, because a verb without it acts on the machine's active project, and had the decider leave irreversible questions to the owner. The skill on disk therefore hashes differently, and the runner of ticket 44 re-runs this fixture. Ticket 109 retired wayline-grill into the owner-facing skill `wayline` (decision 17): this fixture now holds the grill's step of its setup.md reference, its subject that skill's body and reference file. What recorded/ holds was recorded with skills/wayline-grill/SKILL.md as it was then, whose hash subject.sha256 keeps.",
   "baseline": null,
   "quarantine": {
     "status": "active",

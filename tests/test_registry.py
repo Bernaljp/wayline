@@ -1,7 +1,7 @@
 """The registry of skills and roles, and the librarian (Implementation Decisions 10).
 
-Three things are checked here: the artifacts the harness ships (the five interactive skills, their
-sidecars, and their fixture directories), the build that turns both scopes plus the journal into
+Three things are checked here: the artifacts the harness ships (the owner-facing skill `wayline` and
+`wayline-interval-claims`, their sidecars, and their fixture directories), the build that turns both scopes plus the journal into
 `research/registry.json`, and the librarian step that assigns a role and skills to a ticket from it.
 """
 
@@ -18,14 +18,14 @@ from wayline.frontmatter import load_document
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger
 
-# The five interactive skills of Implementation Decisions 10, directory name to ticket-facing id.
-INTERACTIVE = {
-    "wayline-intake": "intake",
-    "wayline-grill": "grill",
-    "wayline-plan": "plan",
-    "wayline-evolve": "evolve",
-    "wayline-paper": "paper",
+# The skills the harness ships, directory name to registry id: the owner-facing skill of decision 17 (ticket 109), which
+# replaced the five phase skills of decision 10, and the one a ticket is assigned.
+SHIPPED = {
+    "wayline": "wayline",
+    "wayline-interval-claims": "interval-claims",
 }
+# The owner-facing skill's fixtures: the setup conversation, and the phase fixtures its setup and evolve references took over.
+OWNER_FIXTURES = ("wayline", "wayline-intake", "wayline-grill", "wayline-plan", "wayline-evolve")
 
 SIDECAR = """{"id": "%s", "capability_summary": "%s", "applicability_tags": {"kinds": %s},
               "cost_hint": "%s", "fixtures": %s}"""
@@ -53,10 +53,10 @@ def write_fixture(root, identifier, baseline=None):
 
 
 class ShippedSkillsTest(unittest.TestCase):
-    """The five interactive skills as the harness ships them, with sidecars and fixture directories."""
+    """The skills as the harness ships them, with sidecars and fixture directories."""
 
-    def test_the_five_interactive_skills_exist_with_a_body_and_a_sidecar(self):
-        for name, identifier in INTERACTIVE.items():
+    def test_the_shipped_skills_exist_with_a_body_and_a_sidecar(self):
+        for name, identifier in SHIPPED.items():
             with self.subTest(skill=name):
                 directory = HARNESS_ROOT / "skills" / name
                 frontmatter, body = load_document((directory / "SKILL.md").read_text(encoding="utf-8"))
@@ -81,8 +81,8 @@ class ShippedSkillsTest(unittest.TestCase):
                     stale.append("%s: sidecar says %s, files hash to %s" % (directory.name, declared, computed))
         self.assertEqual(stale, [], "run python3 -c 'from wayline.registry import stamp_sidecars; stamp_sidecars()'")
 
-    def test_every_interactive_skill_has_a_fixture_with_structural_checks_only(self):
-        for name in INTERACTIVE:
+    def test_every_fixture_of_the_owners_skill_has_structural_checks_only(self):
+        for name in OWNER_FIXTURES:
             with self.subTest(skill=name):
                 record = json.loads((FIXTURES_DIR / "skill" / name / "fixture.json").read_text(encoding="utf-8"))
                 self.assertEqual(record["id"], "skill/" + name)
@@ -92,11 +92,15 @@ class ShippedSkillsTest(unittest.TestCase):
                 self.assertTrue((HARNESS_ROOT / record["subject"]["path"]).is_file())
                 self.assertTrue((FIXTURES_DIR / "skill" / name / record["input"]["prompt"]).is_file())
 
-    def test_every_skill_names_its_own_fixture(self):
-        for name, identifier in INTERACTIVE.items():
+    def test_every_skill_names_its_own_fixtures(self):
+        named = {"wayline": ["skill/" + name for name in OWNER_FIXTURES], "wayline-interval-claims": ["skill/wayline-interval-claims"]}
+        for name, identifier in SHIPPED.items():
             with self.subTest(skill=name):
                 sidecar = registry.read_sidecar(HARNESS_ROOT / "skills" / name / "wayline.json", "skill", identifier)
-                self.assertEqual(sidecar["fixtures"], ["skill/" + name])
+                self.assertEqual(sidecar["fixtures"], named[name])
+                for fixture in sidecar["fixtures"]:
+                    record = json.loads((FIXTURES_DIR / fixture / "fixture.json").read_text(encoding="utf-8"))
+                    self.assertTrue(record["subject"]["path"].startswith("skills/%s/" % name), fixture)
 
     def test_the_coder_role_carries_the_registry_fields_and_the_four_a_role_adds(self):
         sidecar = registry.read_sidecar(HARNESS_ROOT / "roles" / "coder" / "wayline.json", "role", "coder")
@@ -200,15 +204,15 @@ class BuildTest(ProjectTestCase):
     def local_skill(self, name, **options):
         return write_skill(self.project / ".claude" / "skills" / name, name.replace("wayline-", ""), **options)
 
-    def test_the_registry_lists_the_five_interactive_skills_with_their_capability_summaries(self):
+    def test_the_registry_lists_the_shipped_skills_with_their_capability_summaries(self):
         built = self.build()
-        for name, identifier in INTERACTIVE.items():
+        for name, identifier in SHIPPED.items():
             with self.subTest(skill=identifier):
                 entry = self.entry(built, "skill", identifier)
                 self.assertEqual(entry["scope_kind"], "global")
                 self.assertEqual(entry["path"], "skills/" + name)
                 self.assertTrue(entry["capability_summary"].strip())
-                self.assertTrue(entry["assignable"])
+                self.assertEqual(entry["assignable"], name != "wayline", "the owner's skill is listed and never assigned")
 
     def test_every_entry_validates_against_the_registry_entry_schema(self):
         schema = load_schema("registry_entry")
@@ -231,7 +235,7 @@ class BuildTest(ProjectTestCase):
         self.assertEqual(coder["outcome"]["last_used"], "2026-09-11T11:00:02.000Z")
 
     def test_a_skill_the_journal_never_names_has_an_empty_outcome(self):
-        self.assertEqual(self.entry(self.build(), "skill", "intake")["outcome"],
+        self.assertEqual(self.entry(self.build(), "skill", "interval-claims")["outcome"],
                          {"assigned": 0, "passed_first_time": 0, "failed": 0, "last_used": None})
 
     def test_a_local_skill_is_registered_under_the_project_scope(self):
@@ -285,8 +289,8 @@ class BuildTest(ProjectTestCase):
     def test_a_skill_symlinked_in_by_init_is_not_registered_twice(self):
         links = self.project / ".claude" / "skills"
         links.mkdir(parents=True, exist_ok=True)
-        (links / "wayline-intake").symlink_to(HARNESS_ROOT / "skills" / "wayline-intake")
-        entries = [entry for entry in self.build()["entries"] if entry["id"] == "intake"]
+        (links / "wayline-interval-claims").symlink_to(HARNESS_ROOT / "skills" / "wayline-interval-claims")
+        entries = [entry for entry in self.build()["entries"] if entry["id"] == "interval-claims"]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["scope_kind"], "global")
 
@@ -294,9 +298,9 @@ class BuildTest(ProjectTestCase):
         """A relative target is read against the link's directory, not the process's."""
         links = self.project / ".claude" / "skills"
         links.mkdir(parents=True, exist_ok=True)
-        target = os.path.relpath(HARNESS_ROOT / "skills" / "wayline-plan", links)
-        (links / "wayline-plan").symlink_to(target)
-        entries = [entry for entry in self.build()["entries"] if entry["id"] == "plan"]
+        target = os.path.relpath(HARNESS_ROOT / "skills" / "wayline", links)
+        (links / "wayline").symlink_to(target)
+        entries = [entry for entry in self.build()["entries"] if entry["id"] == "wayline"]
         self.assertEqual([entry["scope_kind"] for entry in entries], ["global"])
 
     def test_a_finding_on_a_local_skill_lands_on_the_local_entry(self):
@@ -311,7 +315,7 @@ class BuildTest(ProjectTestCase):
         os.environ["WAYLINE_CLAUDE"] = str(fake)
         built = self.build()
         self.assertIn("the description is empty", " ".join(self.entry(built, "skill", "sweep")["problems"]))
-        self.assertNotIn("problems", self.entry(built, "skill", "intake"))
+        self.assertNotIn("problems", self.entry(built, "skill", "interval-claims"))
 
     def test_a_local_role_override_keeps_the_harness_role_s_kinds(self):
         agents = self.project / ".claude" / "agents"
@@ -334,17 +338,17 @@ class BuildTest(ProjectTestCase):
     def test_a_missing_validator_is_one_note_and_not_a_failure(self):
         built = self.build()
         self.assertTrue(any("structural pre-check" in note for note in built["notes"]))
-        self.assertTrue(self.entry(built, "skill", "intake")["assignable"])
+        self.assertTrue(self.entry(built, "skill", "interval-claims")["assignable"])
 
     def test_the_validator_s_findings_are_notes_on_the_entry_and_never_a_veto(self):
         fake = self.temp / "fake-claude"
         report = {"success": True, "contents": [{
-            "file": str(HARNESS_ROOT / "skills" / "wayline-intake" / "SKILL.md"), "type": "skill",
+            "file": str(HARNESS_ROOT / "skills" / "wayline-interval-claims" / "SKILL.md"), "type": "skill",
             "errors": [], "warnings": [{"path": "frontmatter", "message": "consider a shorter description"}]}]}
         fake.write_text("#!/bin/sh\ncat <<'JSON'\n%s\nJSON\n" % json.dumps(report), encoding="utf-8")
         fake.chmod(0o755)
         os.environ["WAYLINE_CLAUDE"] = str(fake)
-        entry = self.entry(self.build(), "skill", "intake")
+        entry = self.entry(self.build(), "skill", "interval-claims")
         self.assertTrue(entry["assignable"])
         self.assertIn("claude plugin validate", " ".join(entry["problems"]))
 
@@ -397,7 +401,7 @@ class BuildTest(ProjectTestCase):
         entry = self.entry(built, "skill", "sweep")
         self.assertFalse(entry["assignable"])
         self.assertIn("data.csv cannot be read", " ".join(entry["problems"]))
-        self.assertTrue(self.entry(built, "skill", "intake")["assignable"], "one broken skill is not the build")
+        self.assertTrue(self.entry(built, "skill", "interval-claims")["assignable"], "one broken skill is not the build")
 
     def test_a_baseline_that_records_no_result_is_not_a_pass(self):
         self.local_skill("wayline-sweep", kinds=["experiment"], fixtures=["skill/sweep"])
@@ -647,7 +651,7 @@ class VerbTest(ProjectTestCase):
         with redirect_stdout(out):
             code = cli.main(["registry", "build", "--project", str(self.project)])
         self.assertEqual(code, 0)
-        for identifier in INTERACTIVE.values():
+        for identifier in SHIPPED.values():
             self.assertIn(identifier, out.getvalue())
         self.assertTrue((self.project / "research" / "registry.json").is_file())
 

@@ -3,10 +3,11 @@
   "id": "skill/wayline-evolve",
   "kind": "skill",
   "subject": {
-    "path": "skills/wayline-evolve/SKILL.md",
+    "path": "skills/wayline/SKILL.md",
     "sha256": null,
     "also": [
-      "skills/wayline-evolve/wayline.json"
+      "skills/wayline/evolve.md",
+      "skills/wayline/wayline.json"
     ]
   },
   "origin": {
@@ -56,7 +57,7 @@
       "path": "research/evolve.json"
     }
   ],
-  "note": "The skill's session files the owner's feedback with `wayline feedback`, runs `wayline evolve`, and reads the records back; it writes nothing itself, so the checks read the verbs it ran and the record the loop keeps of what the evolver read. No skill session is recorded yet, so the fixture stays unrunnable (agent null); the loop itself is covered by tests/test_changes.py and tests/test_harness_tickets.py with the fake launcher, and docs/verification/m6.md holds the live run.",
+  "note": "The skill's session files the owner's feedback with `wayline feedback`, runs `wayline evolve`, and reads the records back; it writes nothing itself, so the checks read the verbs it ran and the record the loop keeps of what the evolver read. No skill session is recorded yet, so the fixture stays unrunnable (agent null); the loop itself is covered by tests/test_changes.py and tests/test_harness_tickets.py with the fake launcher, and docs/verification/m6.md holds the live run. Ticket 109 retired wayline-evolve into the owner-facing skill `wayline` (decision 17): this fixture now holds the evolve loop's step of its evolve.md reference, its subject that skill's body and reference file. What recorded/ holds was recorded with skills/wayline-evolve/SKILL.md as it was then.",
   "baseline": null,
   "quarantine": {
     "status": "active",

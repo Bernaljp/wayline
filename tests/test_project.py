@@ -28,6 +28,9 @@ from wayline.project import (
 )
 from wayline.tickets import GRAPH
 
+# The one line decision 17 adds to the block init writes (ticket 109).
+SKILL_LINE = "When the owner talks with a session here, use the `wayline` skill."
+
 
 class InitLayoutTest(ProjectTestCase):
     def setUp(self):
@@ -242,6 +245,31 @@ class InitIdempotenceTest(ProjectTestCase):
         self.assertEqual(text.count(BLOCK_BEGIN), 1)
         self.assertIn("v9.9.9", text)
         self.assertNotIn("v0.0.0", text)
+
+    def test_the_block_tells_a_session_to_use_the_wayline_skill_when_the_owner_talks(self):
+        harness = self.fake_harness()
+        project = self.temp / "study"
+        init_project(project, harness_root=harness)
+        text = (project / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertEqual(text.count(SKILL_LINE), 1)
+        self.assertLess(text.index(BLOCK_BEGIN), text.index(SKILL_LINE))
+        self.assertLess(text.index(SKILL_LINE), text.index(BLOCK_END))
+
+    def test_refreshing_a_block_written_before_the_skill_line_adds_it_once(self):
+        harness = self.fake_harness()
+        project = self.temp / "study"
+        init_project(project, harness_root=harness)
+        path = project / "CLAUDE.md"
+        older = path.read_text(encoding="utf-8").replace(SKILL_LINE + "\n\n", "")
+        path.write_text("# Mine\n\n" + older, encoding="utf-8")
+        self.assertNotIn(SKILL_LINE, path.read_text(encoding="utf-8"))
+        init_project(project, harness_root=harness)
+        text = path.read_text(encoding="utf-8")
+        self.assertEqual(text.count(SKILL_LINE), 1)
+        self.assertEqual(text.count(BLOCK_BEGIN), 1)
+        self.assertTrue(text.startswith("# Mine"))
+        init_project(project, harness_root=harness)
+        self.assertEqual(path.read_text(encoding="utf-8"), text, "a second refresh changes nothing")
 
     def test_init_keeps_an_owner_edited_harness_json(self):
         harness = self.fake_harness()

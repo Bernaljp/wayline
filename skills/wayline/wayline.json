@@ -1,0 +1,9 @@
+{
+  "id": "wayline",
+  "scope_kind": "global",
+  "capability_summary": "The owner-facing skill: routes what the owner says in a session in the project to the verb that records it, asks one line only when unclear, confirms first what costs or cannot be undone, and holds the setup and evolve procedures as reference files. A conversation loads it; no ticket is assigned it.",
+  "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "large",
+  "fixtures": ["skill/wayline", "skill/wayline-intake", "skill/wayline-grill", "skill/wayline-plan", "skill/wayline-evolve"],
+  "sha256": "3c98eca1bc492de5a4cca325f4910faab438cf5d8d7a204de8b3eb564288e7c2"
+}

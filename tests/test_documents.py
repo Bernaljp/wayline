@@ -485,7 +485,7 @@ class ReviewFixesTest(DocumentsCase):
 
 class IntakeWordingTest(DocumentsCase):
     def test_the_intake_tells_the_owner_to_hand_over_anything_in_any_form(self):
-        skill = " ".join((HARNESS_ROOT / "skills" / "wayline-intake" / "SKILL.md").read_text(encoding="utf-8").split())
+        skill = " ".join((HARNESS_ROOT / "skills" / "wayline" / "setup.md").read_text(encoding="utf-8").split())
         for words in ("anything, in any form", "references as bare identifiers", "the owner's plan as the plan",
                       "a collaborator's list of experiments as a critique", "wayline document add <file> --kind"):
             self.assertIn(words, skill)

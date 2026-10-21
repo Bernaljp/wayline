@@ -16,6 +16,8 @@ Three rules make the index trustworthy rather than merely long:
 - An entry is `assignable: false` when nothing has shown that it works. A local, model-authored
   skill qualifies only with a fixture that passed at its baseline; a local role override with no
   harness sidecar cannot be launched at all, because the tool lists are the harness's.
+- The owner-facing skill, `wayline`, is listed and never assigned: a conversation with the owner loads it
+  (decision 17), and a ticket's worker never talks with the owner.
 - A skill a ticket cannot name is not assignable either. The prompt builder looks a ticket's skill
   up as `wayline-<skill>`, so a skill directory without that prefix is unreachable however good it
   is, and the entry says so instead of failing at launch.
@@ -51,7 +53,7 @@ from wayline.ledger import (ASSIGNED, K_ATTEMPT, K_ROLE, K_SKILLS, K_TICKET, Led
 from wayline.project import ProjectError, find_project
 
 __all__ = [
-    "RegistryError", "REGISTRY_JSON", "SIDECAR", "SIDECAR_FIELDS", "ROLE_FIELDS", "SKILL_PREFIX",
+    "RegistryError", "REGISTRY_JSON", "SIDECAR", "SIDECAR_FIELDS", "ROLE_FIELDS", "SKILL_PREFIX", "OWNER_SKILL",
     "COST_HINTS", "ticket_kinds", "content_sha256", "read_sidecar", "stamp_sidecars",
     "scan", "hash_contents", "outcomes", "plugin_validate", "build", "read_registry", "librarian", "assign",
     "build_command",
@@ -64,6 +66,8 @@ ROLE_FILE = "agent.md"
 
 # A ticket names a skill without the prefix and the prompt builder puts it back (`/wayline-<skill>`).
 SKILL_PREFIX = "wayline-"
+# The owner-facing skill a conversation with the owner loads (decision 17; ticket 109): listed, never assigned to a ticket.
+OWNER_SKILL = "wayline"
 
 # Where each scope keeps its skills and roles.
 HARNESS_SKILLS = "skills"
@@ -333,7 +337,9 @@ def _skill_entry(directory, root, scope_kind, harness_root):
     vetoes = []
     name = directory.name
     identifier = name[len(SKILL_PREFIX):] if name.startswith(SKILL_PREFIX) else name
-    if not name.startswith(SKILL_PREFIX):
+    if name == OWNER_SKILL:
+        vetoes.append("the owner-facing skill: a conversation with the owner loads it, and no ticket is assigned it")
+    elif not name.startswith(SKILL_PREFIX):
         vetoes.append("a ticket names a skill as /%s<skill>, so a directory not called %s%s is one no ticket can reach" % (SKILL_PREFIX, SKILL_PREFIX, identifier))
     if not (directory / SKILL_FILE).is_file():
         vetoes.append("no %s, and the body is what the prompt carries" % SKILL_FILE)

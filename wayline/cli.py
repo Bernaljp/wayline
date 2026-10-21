@@ -39,14 +39,14 @@ def lazy(module, attribute):
 # verb decisions 4 and 6 give experiment workers to write a job file for the runner.
 VERBS = [
     Verb("init", "init <path> [--email <address>] | init --uninstall-units", "lay out a project, register it, make it the active one, and install the tick and dashboard user units", "project", lazy("wayline.project", "init_command")),
-    Verb("intake", "intake [<material>...] [--from <spec>]", "phase P0: take what the owner has and write INTAKE.md and the harness settings; information only (also a skill)", "phases", lazy("wayline.intake", "intake_command")),
+    Verb("intake", "intake [<material>...] [--from <spec>]", "phase P0: take what the owner has and write INTAKE.md and the harness settings; information only", "phases", lazy("wayline.intake", "intake_command")),
     Verb("absorb", "absorb [--level 0|1|2 [<slug>...]] [--code <slug> <url>@<sha>] [--inventory <slug> [--pdf <path>]]", "phase P1: build the dossiers for the references (level 2 reads one promoted paper in full), and one reference's inventory from its arXiv source or a PDF", "phases", lazy("wayline.dossier", "absorb_command")),
     Verb("position", "position", "phase P2: a fresh critic writes POSITION.md from the dossiers, the intake, and the objectives, with the prior work the scout verified", "phases", lazy("wayline.position", "position_command")),
-    Verb("grill", "grill [ask|answer|term] [--from <file>]", "phase P2: ask the design tree's frontier in tiers, and record each answer and term (also a skill)", "phases", lazy("wayline.grill", "grill_command")),
-    Verb("specify", "specify [confirm | revise \"<change>\"]", "phase P3: draft SPEC.md with claims, experiments, and seams, check and judge it, and ask for its confirmation", "phases",
+    Verb("grill", "grill [ask|answer|term] [--from <file>] [--decide-rest]", "phase P2: ask the design tree's frontier in tiers, and record each answer and term; under autonomous, the decider takes the rest", "phases", lazy("wayline.grill", "grill_command")),
+    Verb("specify", "specify [--amend <O>] [confirm | revise \"<change>\"]", "phase P3: draft SPEC.md with claims, experiments, and seams, check and judge it, and ask for its confirmation", "phases",
          lazy("wayline.specify", "specify_command")),
-    Verb("plan", "plan [--replan | --split <id>] [confirm | revise \"<change>\"]",
-         "phase P4: cut SPEC.md into the ticket graph with the planner, assign roles and skills from the registry, check it, and ask for its confirmation (also a skill)", "phases",
+    Verb("plan", "plan [--replan | --split <id> | --cut-only] [confirm | revise \"<change>\"]",
+         "phase P4: cut SPEC.md into the ticket graph with the planner, assign roles and skills from the registry, check it, and ask for its confirmation", "phases",
          lazy("wayline.plan", "plan_command")),
     Verb("run", "run [--resume] [--detach] [--simulate-limit s] [--simulate-failure id]", "the conductor: waves until the frontier is empty (--project picks one, wayline run --help lists the rest)", "conductor", lazy("wayline.conductor", "run_command")),
     Verb("pause", "pause", "journal a control event the conductor applies at its next wave", "controls", lazy("wayline.project", "pause_command")),
@@ -56,19 +56,24 @@ VERBS = [
     Verb("rerun", "rerun <id>", "journal a control event rerunning a ticket", "controls", lazy("wayline.project", "rerun_command")),
     Verb("status", "status [--project <path>] [--json]", "print the frontier, running tickets and jobs, open decisions, the window, the goal, the last events", "views", lazy("wayline.project", "status_command")),
     Verb("answer", "answer <id> \"<text>\" [--rationale \"<why>\"]", "answer a decision ticket from the command line or a session", "views", lazy("wayline.project", "answer_command")),
-    Verb("switch", "switch <path> | --autonomy <level> | --fallback auto|ask|wait | --ladder auto|ask | --environment shared|conda|venv|container | --plotting matplotlib|altair|ggplot2 | --stop-at f --cheap-at f", "make another project the active one, or set its autonomy, its fallback consent, its ladder consent, its environment, its plotting library, or its pacing thresholds", "views", lazy("wayline.project", "switch_command")),
+    Verb("switch", "switch <path> | --autonomy <level> | --fallback auto|ask|wait | --ladder auto|ask | --stop-when objectives|frontier|<ids> | --budget <name>=<hours>|none | --environment shared|conda|venv|container | --plotting matplotlib|altair|ggplot2 | --stop-at f --cheap-at f", "make another project the active one, or set its autonomy, its fallback consent, its ladder consent, its stopping rule, a budget, its environment, its plotting library, or its pacing thresholds", "views", lazy("wayline.project", "switch_command")),
     Verb("objective", "objective add \"<question>\" [--measure <file> --sample <artifact>] | answer|park|drop|reframe|reopen <O> ...", "record an objective, a question the research answers, a goal when its measure's eval_command printed the metric on the sample artifact; or change one on the owner's word", "views",
          lazy("wayline.objectives", "objective_command")),
+    Verb("ticket", "ticket add [<draft.json>|-]",
+         "place one ticket a conversation drafted for work the owner asked for: checked as the planner's are (schema, touch set, "
+         "never research/, a criterion failing at the base commit), assigned, written, and placed in the graph (the conversation calls it)",
+         "views", lazy("wayline.drafts", "ticket_command")),
     Verb("feedback", "feedback \"<text>\"", "file feedback for the evolve loop", "views", lazy("wayline.changes", "feedback_command")),
     Verb("mark", "mark <batch> [<item> [<mark>] [--note \"<text>\"] | --defaults] [--by owner|decider]",
          "show a batch of the marks view, settle one of its items with a mark, keep a note on one, or take all defaults", "views",
          lazy("wayline.batches", "mark_command")),
-    Verb("review", "review [<id> stand|reverse [--answer \"<text>\"]]",
-         "let a decision made for you stand, or reverse it with your own answer or none (reopened for you); with no id, list the ones not yet reviewed",
+    Verb("review", "review [<id> stand|reverse [--answer \"<text>\"] | all stand --shown <ids>]",
+         "let a decision made for you stand, or reverse it with your own answer or none (reopened for you); all stand --shown lets every one the owner was shown stand; with no id, list the ones not yet reviewed",
          "views", lazy("wayline.account", "review_command")),
     Verb("reference", "reference [<slug> <doi|title|file.pdf|\"leave it\">]", "hand over an unresolved reference: a DOI or exact title back to the scout, a PDF as its source, or leave it until the paper order; with no slug, list those waiting on the owner", "views",
          lazy("wayline.dossier", "reference_command")),
-    Verb("document", "document add <file|folder|file.zip> [--kind inherited|critique|other|reference]",
+    Verb("document", "document add <file|folder|file.zip> [--kind inherited|critique|other|reference] | deconstruct <id> [--place <h>=<section>] | "
+         "move <passage> <section> | repeats",
          "keep the project's own writing as documents: converted by code, sorted, recorded in research/documents.json, and indexed in DOCUMENTS.md",
          "views", lazy("wayline.documents", "document_command")),
     Verb("passage", "passage add --section <s> --heading <h> [--replaces <id>] \"<text>\"",
@@ -123,7 +128,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern", "result", "outline",
+    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern", "result", "outline", "ticket",
 ))
 
 
