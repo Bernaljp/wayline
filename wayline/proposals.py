@@ -69,22 +69,18 @@ DEDUP_MAX_MINUTES = 5
 
 # A kind's default role, absent anything else to size an auto-admitted ticket by: the planner's own
 # convention in the toy fixtures, for a ticket that was never planned by a person.
-# A `dossier` ticket has no worker session (the conductor runs it as a promotion through absorb) and a `lit` ticket runs
-# on the surveyor, so neither is routed here (decision 17; ticket 98): `role_for` gives them the role whose registry
-# kinds name them.
+# A `dossier` ticket has no worker session (the conductor runs it as a promotion through absorb), so it is not routed
+# here (decision 17; ticket 98): `role_for` gives it the role whose registry kinds name it. A `lit` ticket runs on the
+# surveyor (decision 17; ticket 99), a worker's proposal of one included.
 KIND_ROLE = {
     "code": "coder", "docs": "documentarian", "experiment": "experimenter",
     "analysis": "analyst", "figure": "figure-designer", "writing": "writer", "review": "critic",
-    "decision": "decider", "harness": "coder",
+    "decision": "decider", "harness": "coder", "lit": "surveyor",
 }
-# The role decision 17 gives a kind whose role no shipped sidecar names yet: a `lit` ticket runs on the surveyor (ticket 99),
-# and until that role ships its launch fails on the missing role, handing it to a person, rather than running on the coder.
-DECISION_17_ROLES = {"lit": "surveyor"}
 
 
 def role_for(kind, harness_root=None):
-    """The role an admitted ticket of `kind` takes: `KIND_ROLE`'s, else the first harness role whose kinds name it,
-    else decision 17's (`DECISION_17_ROLES`), else `coder`."""
+    """The role an admitted ticket of `kind` takes: `KIND_ROLE`'s, else the first harness role whose kinds name it, else `coder`."""
     if kind in KIND_ROLE:
         return KIND_ROLE[kind]
     from wayline import registry
@@ -96,7 +92,7 @@ def role_for(kind, harness_root=None):
             continue
         if kind in (sidecar.get("applicability_tags") or {}).get("kinds", []):
             return sidecar["id"]
-    return DECISION_17_ROLES.get(kind, "coder")
+    return "coder"
 
 
 class ProposalsError(ValueError):

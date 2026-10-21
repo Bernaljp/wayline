@@ -1,0 +1,23 @@
+{
+  "id": "surveyor",
+  "scope_kind": "global",
+  "capability_summary": "Searches the literature for a lit ticket through `wayline scout search`, checks each work it cites with `wayline scout`, and returns Introduction passages tagged at the abstract, its references, and proposals.",
+  "applicability_tags": {"kinds": ["lit"], "data_types": [], "libraries": [], "venues": []},
+  "cost_hint": "small",
+  "fixtures": [],
+  "sha256": "396bfe0afb241f91ca2c34d1b406501bb8ec6daa4233938fc9ded0f946ea6fc0",
+  "may_judge": false,
+  "output_schema": "result",
+  "allowed_tools": [
+    "Read", "Glob", "Grep", "Bash(wayline scout *)", "Bash(wayline consult *)",
+    "Bash(wayline accept*)"
+  ],
+  "disallowed_tools": [
+    "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Agent",
+    "mcp__*", "Workflow", "Skill", "ToolSearch", "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    "Monitor", "PushNotification", "SendMessage", "ListAgents", "RemoteTrigger",
+    "ScheduleWakeup", "TaskOutput", "TaskStop", "ReportFindings", "DesignSync",
+    "Bash(wayline job add*)"
+  ]
+}

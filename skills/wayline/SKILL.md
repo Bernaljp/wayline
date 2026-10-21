@@ -29,6 +29,8 @@ work a result out yourself, and never read a run's raw outputs to answer a quest
 - A new line of work that needs a claim is not a ticket: it is an objective (`wayline objective add`), and once
   the spec is confirmed its spec amendment is `wayline specify --amend <O>`.
 - A question about a reference goes to the consultant: `wayline consult <slug> "<question>"`.
+- A search of the literature the owner asks for is a `lit` ticket with an empty touch set and no machine criterion:
+  the surveyor runs it and returns Introduction passages.
 
 A drafted ticket is one JSON object on stdin:
 

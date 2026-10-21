@@ -75,3 +75,10 @@ def recorded(answers):
     """Synthetic recordings: a temporary directory a recording fetcher over `answers` fills, and that fetcher."""
     root = Path(tempfile.mkdtemp(prefix="wayline-recorded-"))
     return root, Fetcher(DirectoryBackend(root, inner=Net(answers), record=True), email=EMAIL)
+
+
+def quiet_search():
+    """Position's setup search of its missing prior work (ticket 99), always live, put on a network that answers nothing."""
+    from unittest import mock
+    from wayline import survey
+    return mock.patch.object(survey, "search_fetcher", lambda email=None: net_fetcher({})[0])

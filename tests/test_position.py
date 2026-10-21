@@ -413,7 +413,7 @@ class MemoTest(PositionCase):
         self.assertIn("  - scout: verified (crossref)", text)
         self.assertNotIn("|---|", text)
         self.assertIn("### What the references lack", text)
-        self.assertIn("so the scout has checked none of them", text)
+        self.assertIn("the scout searched the literature for each at setup", text)
         self.assertIn("- A gradient-boosted tree baseline", text)
         self.assertIn("Dropped, because the scout did not verify them:\n\n- *paper-d*: research/refs/paper-d/dossier.json says "
                       "existence: unresolved.", text)
@@ -556,7 +556,9 @@ class ShownTest(PositionCase):
 
     def test_the_owner_is_notified_and_the_verb_prints_the_memo(self):
         self.fake.script(written(memo()), role=position.CRITIC)
-        code, out, err = run("position", "--project", str(self.project))
+        from tests.scout_net import quiet_search
+        with quiet_search():  # the memo's missing prior work is searched at setup (ticket 99), always live
+            code, out, err = run("position", "--project", str(self.project))
         self.assertEqual(code, 0, err)
         self.assertIn("wrote research/POSITION.md: 3 prior work(s) cited, 1 dropped, on claude-opus", out)
         self.assertIn("## The hostile reviewer", out)

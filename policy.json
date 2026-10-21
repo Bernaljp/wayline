@@ -34,7 +34,8 @@
     "critique-splitter": {"model": "sonnet", "effort": "medium"},
     "consistency-reader": {"model": "opus", "effort": "high"},
     "confirmer": {"model": "opus", "effort": "medium"},
-    "plotter": {"model": "opus", "effort": "medium"}
+    "plotter": {"model": "opus", "effort": "medium"},
+    "surveyor": {"model": "sonnet", "effort": "medium"}
   },
   "verifier": {
     "sonnet": {"model": "opus", "effort": "high"},
@@ -64,7 +65,7 @@
   },
   "consultant": {"max_questions_per_ticket": 5},
   "kb": {"query_pack_max_chars": 20000},
-  "scout": {"give_up_days": 7, "calls_per_ticket": 20},
+  "scout": {"give_up_days": 7, "calls_per_ticket": 20, "searches_per_ticket": 20, "openalex_per_day": 100},
   "provenance": {"sample": 0.10, "min": 10, "all_difficulty_5": true},
   "artifacts": {"commit_threshold_bytes": 1000000},
   "reservations": {"gpu": [], "cores": 8, "ram_gb": 64, "processes": []},

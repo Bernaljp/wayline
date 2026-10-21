@@ -1357,16 +1357,23 @@ def draft_amendment(project, objective, *, change=None, revising=False, harness_
 
 def introduction_covers(project, objective):
     """Whether a current Introduction passage with a `ref` tag covers `objective`: it names it, or one it follows."""
+    return objective in covered_objectives(project)
+
+
+def covered_objectives(project, records=None):
+    """Every objective a current Introduction passage with a `ref` tag covers, by naming it or one it follows; `records` are
+    the objectives, read when None."""
     from wayline import provenance
-    try:
-        records = objectives.read_objectives(project)
-    except objectives.ObjectivesUnreadable:
-        records = []
+    if records is None:
+        try:
+            records = objectives.read_objectives(project)
+        except objectives.ObjectivesUnreadable:
+            records = []
+    covered = set()
     for item in sections.arrange(sections.section_items(project, "introduction")).current():
-        named = [objectives.following(name, records) for name in item.get("objectives") or []]
-        if objective in named and any(kind == "ref" for kind, _ in provenance.ANY_TAG_RE.findall(str(item.get("text") or ""))):
-            return True
-    return False
+        if any(kind == "ref" for kind, _ in provenance.ANY_TAG_RE.findall(str(item.get("text") or ""))):
+            covered.update(objectives.following(name, records) for name in item.get("objectives") or [])
+    return covered
 
 
 def _ask_amendment(project, objective, sha, claims, pauses, notify):
