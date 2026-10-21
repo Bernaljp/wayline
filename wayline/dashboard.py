@@ -1253,7 +1253,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/run/?$"), "api_run"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/waiting/?$"), "api_waiting"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/items/(?P<item>[^/]+)/?$"), "api_item"),
-        (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/?$"), "api_paper"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/card/?$"), "api_paper_card"),
         (ACTION_ROUTE, "api_action_get"),
     )
 
@@ -1574,12 +1574,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                                                ensure_ascii=False).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-cache"),))
         return self._json(found, tag)
 
-    def api_paper(self, query, project):
+    def api_paper_card(self, query, project):
         """The paper order's card (ticket 115): the readiness list and the cost, built by code with no model call, which
         the `paper` action's Confirm acts on; tagged by the ledger it is read from."""
         from wayline import paper  # the paper order reads every part of the ledger
         path = self._project(project)
-        tag = etag("paper", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        tag = etag("paper_card", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
         if self._not_modified(tag):
             return None
         found = paper.card(path)

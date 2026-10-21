@@ -7,7 +7,7 @@ project holds only its sections and its reports, and the general report is alway
 objectives, the outline's gaps, the general report's last kill argument and its standing points, the results changed
 since their last drawing, the inherited claims unchecked or unverifiable, the open contradictions, the unresolved
 references, the concerns for the order, the outline's link, and the front matter not given yet) and the cost. The
-conversation shows it and confirms first; the dashboard shows the same card (`/api/projects/<id>/paper`) and its Confirm
+conversation shows it and confirms first; the dashboard shows the same card (`/api/projects/<id>/paper/card`) and its Confirm
 runs the same order (the `paper` action). Nothing on the card blocks the order, and "Not now" does nothing: no decision
 ticket opens.
 

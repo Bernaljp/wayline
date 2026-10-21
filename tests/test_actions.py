@@ -458,7 +458,7 @@ class PaperActionTest(ActionCase):
 
     def test_the_card_carries_the_readiness_list_and_the_cost_and_journals_nothing(self):
         before = self.ledger.journal_path.read_bytes()
-        response = self.request("GET", "/api/projects/%s/paper" % self.project.name)
+        response = self.request("GET", "/api/projects/%s/paper/card" % self.project.name)
         self.assertEqual(response.status, 200, response.text)
         self.assertEqual(response.json["readiness"][0]["title"], "Open objectives")
         self.assertIn("$35 to $40", response.json["cost"])

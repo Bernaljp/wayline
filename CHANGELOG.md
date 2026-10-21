@@ -42,7 +42,7 @@ lists it read-only, marked with its tag.
     outline's gaps, the general report's last kill argument and its standing points, results changed since their last
     drawing, inherited claims unchecked or unverifiable, open contradictions, unresolved references, concerns for the
     order, the outline's link, the front matter not given yet) and the cost, built by code with no model call. Nothing on
-    it blocks the order. The dashboard serves the same card at `/api/projects/<id>/paper`, and its `paper` action is the
+    it blocks the order. The dashboard serves the same card at `/api/projects/<id>/paper/card`, and its `paper` action is the
     Confirm. `wayline paper --yes` makes the order, journaled as `paper_order`; no decision ticket opens.
   - The order is a rest point: running tickets finish, nothing new launches, the changed results are drawn (rest
     `order`), and the paper is composed from that commit; the run resumes, or, when the order started a conductor for
