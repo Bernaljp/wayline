@@ -199,8 +199,8 @@ class LadderIntakeTest(ConductorCase):
         self.assertEqual(self.intake("--intent", "the same question, restated")[0], 0)
         self.assertEqual(read_harness(self.project)["ladder_changes"], "auto")
 
-    def test_the_recommended_answer_is_ask_and_the_skill_asks_it_beside_the_other_two(self):
-        skill = (project.HARNESS_ROOT / "skills" / "wayline-intake" / "SKILL.md").read_text(encoding="utf-8")
+    def test_the_recommended_answer_is_ask_and_setup_asks_it_beside_the_other_two(self):
+        skill = (project.HARNESS_ROOT / "skills" / "wayline" / "setup.md").read_text(encoding="utf-8")
         self.assertIn("`ladder_changes`", skill)
         self.assertIn("recommended", skill)
         self.assertIn("--ladder-changes", skill)

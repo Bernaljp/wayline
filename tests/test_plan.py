@@ -803,6 +803,20 @@ class AutonomousTest(PlanCase):
         self.assertEqual(self.statuses()[7], "parked")
         self.assertEqual(self.phases(), [(None, "P4")])
 
+    def test_setup_cuts_the_graph_and_leaves_its_confirmation_until_its_last_question_is_answered(self):
+        """Ticket 109: the confirmation ends setup, so setup cuts first, asks what the planned work needs, then confirms."""
+        self.script(planned(cut()))
+        report = self.plan(cut_only=True)
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual(report["state"]["state"], "pending")
+        self.assertEqual(self.calls(decider.DECIDER), [], "the decider is not launched on the confirmation yet")
+        self.assertEqual(self.phases(), [(None, "P4")], "setup has not ended")
+        self.fake.script(decided("confirm"), role=decider.DECIDER)
+        report = self.plan()
+        self.assertEqual((report["state"]["state"], report["state"]["decided_by"]), ("confirmed", "decider"))
+        self.assertEqual(self.phases(), [(None, "P4"), ("P4", "P5")])
+        self.assertEqual(len(self.calls(plan.PLANNER)), 1, "the graph is cut once")
+
     def test_a_decider_that_cannot_decide_leaves_it_for_the_owner(self):
         self.script(planned(cut()))
         report = self.plan()  # nothing scripted for the decider: its launch fails

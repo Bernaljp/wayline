@@ -1,4 +1,4 @@
-/wayline-intake
+/wayline
 
 Here is what I have, in this directory: a paragraph of intent in `intent.md`, three references in
 `references.md`, and the data, which is `data/expression.csv`.

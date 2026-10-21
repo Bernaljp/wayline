@@ -1,6 +1,6 @@
 """Phase P2, the grill: the design tree asked tier by tier, answers in DECISIONS.md, terms in CONTEXT.md.
 
-Implementation Decisions 10 and BRIEF 6.2. The `wayline-grill` skill builds the design tree from
+Implementation Decisions 10 and BRIEF 6.2. The `wayline` skill's setup reference builds the design tree from
 `POSITION.md` and `INTAKE.md` with the owner in the conversation, looks facts up rather than asking
 them, and hands every question, answer, and settled term to this verb, because the ledger is the
 only writer of `research/` (decision 2) and a model that wrote `DECISIONS.md` itself would bypass it.
@@ -1204,7 +1204,7 @@ def render_grill(view):
              "no position memo yet: wayline position writes it, and until then the tree rests on INTAKE.md alone", ""]
     if not view["total"]:
         lines.append('no questions yet: build the design tree from POSITION.md and INTAKE.md with '
-                     'wayline grill ask "<question>" --recommend "<answer>" (the wayline-grill skill does)')
+                     'wayline grill ask "<question>" --recommend "<answer>" (the setup reference of the wayline skill does)')
         return "\n".join(lines)
     if view["ask"]:
         count = len(view["ask"])

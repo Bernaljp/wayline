@@ -3,10 +3,11 @@
   "id": "skill/wayline-intake",
   "kind": "skill",
   "subject": {
-    "path": "skills/wayline-intake/SKILL.md",
+    "path": "skills/wayline/SKILL.md",
     "sha256": "ce7806f832fb13f3000fda9fdfec0b306b9fbd418f45aa799b835c7d3e6a498c",
     "also": [
-      "skills/wayline-intake/wayline.json"
+      "skills/wayline/setup.md",
+      "skills/wayline/wayline.json"
     ]
   },
   "origin": {
@@ -75,7 +76,7 @@
       "fn": "harness_records_the_intake"
     }
   ],
-  "note": "The session runs in a project laid out by wayline init with input/context/ copied into its root. The owner states no quantitative goal, so GOAL.json must not be written: a goal nobody asked for is the failure this fixture exists to catch. The skill writes through `wayline intake`, never into research/ itself, which tool_used checks on the trace. recorded/ holds what the session left: research/INTAKE.md, harness.json, the result envelope, and the trace with system/init reduced to the session id and the model. Two things about the recording machine rather than the skill are redacted in the trace and the result: the hermes interpreter path the session read out of harness.json, and a closing paragraph about the host's own claude.ai connectors.",
+  "note": "The session runs in a project laid out by wayline init with input/context/ copied into its root. The owner states no quantitative goal, so GOAL.json must not be written: a goal nobody asked for is the failure this fixture exists to catch. The skill writes through `wayline intake`, never into research/ itself, which tool_used checks on the trace. recorded/ holds what the session left: research/INTAKE.md, harness.json, the result envelope, and the trace with system/init reduced to the session id and the model. Two things about the recording machine rather than the skill are redacted in the trace and the result: the hermes interpreter path the session read out of harness.json, and a closing paragraph about the host's own claude.ai connectors. Ticket 109 retired wayline-intake into the owner-facing skill `wayline` (decision 17): this fixture now holds intake's step of its setup.md reference, its subject that skill's body and reference file. What recorded/ holds was recorded with skills/wayline-intake/SKILL.md as it was then, whose hash subject.sha256 keeps.",
   "baseline": null,
   "quarantine": {
     "status": "active",

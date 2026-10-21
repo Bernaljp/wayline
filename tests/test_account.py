@@ -189,6 +189,30 @@ class ReviewTest(AccountCase):
         with redirect_stdout(io.StringIO()), redirect_stderr(err):
             self.assertEqual(cli.main(["review", "D2", "stand", "--project", str(self.project)]), 2)
 
+    def test_the_owners_yes_to_the_autonomous_opening_lets_every_listed_decision_stand(self):
+        """Ticket 109: "Decided for you" is one numbered item recommending "let them stand"; a yes reviews each one."""
+        from wayline import grill
+        grill.ask(self.project, "Which metric does the goal read?")
+        grill.answer(self.project, "Q1", "auroc", "the spec names it", decided_by="decider", model="claude-opus-5")
+        listed = sorted(["D2", "D%d" % len(self.events("decision"))])
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["review", "all", "stand", "--project", str(self.project)])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertEqual(sorted(event["payload"]["decision"] for event in self.events("reviewed")), listed)
+        self.assertEqual({event["payload"]["review"] for event in self.events("reviewed")}, {"stand"})
+        self.assertEqual(len(out.getvalue().splitlines()), 2, "one line read back per decision")
+        with redirect_stdout(io.StringIO()) as again, redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(["review", "all", "stand", "--project", str(self.project)]), 0)
+        self.assertIn("Nothing is decided for you", again.getvalue())
+        self.assertEqual(len(self.events("reviewed")), 2)
+
+    def test_all_takes_only_stand(self):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(cli.main(["review", "all", "reverse", "--project", str(self.project)]), 2)
+        self.assertIn("one at a time", err.getvalue())
+        self.assertEqual(self.events("reviewed"), [])
+
     def test_undo_it_on_a_grill_question_asks_it_again_and_the_owners_answer_revises_it(self):
         from wayline import grill, project, tickets
         grill.ask(self.project, "Which metric does the goal read?")

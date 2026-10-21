@@ -41,7 +41,9 @@ it, by `wayline review <id> stand|reverse` or by marking its item: every unrevie
 `reviewed`; a reviewed decision stays counted in its run. A reversal is the owner's own answer through the existing
 verbs: a decision ticket is asked again (`ticket_rerun`) human-only and, with an answer, answered by the owner
 (`project.answer`); a grill question is revised (`grill answer --revise`); a parked proposal the decider kept parked
-is admitted; the paper's venue is the owner's next `wayline paper --venue`. A reversal with no answer ("undo it")
+is admitted; the paper's venue is the owner's next `wayline paper --venue`. Under `autonomous` a conversation the owner opens
+starts with "Decided for you" as one numbered item recommending "let them stand", and the owner's yes is
+`wayline review all stand` (`review_all`), one `reviewed` per decision listed (ticket 109). A reversal with no answer ("undo it")
 reopens the decision human-only and asks in one line: a grill question or a proposal on a human-only decision ticket
 (origin `review D<n>: ...`) whose answer the next render takes in (`_settle_reopened`). A mark that cannot be taken
 is said in the banner. Nothing a review does stops a run.
@@ -74,7 +76,7 @@ from wayline.project import NEEDS_HUMAN_NOTES, ProjectError, find_project, read_
 __all__ = [
     "ACCOUNT", "ACCOUNT_PATH", "REPORT_KIND", "FIRST_LINE", "TITLES", "STAND", "REVERSE", "REVIEWS", "AccountError",
     "Rendered", "account_view", "render_account", "take_edit", "commit_edit", "end_notice", "counts_line", "review", "settle_marks",
-    "review_command",
+    "ALL", "review_all", "review_command",
 ]
 
 ACCOUNT = "ACCOUNT.md"
@@ -1149,6 +1151,25 @@ def review(project, identifier, verdict, answer=None):
     return said
 
 
+ALL = "all"  # `wayline review all stand`: the owner's yes to "Decided for you" as one item (ticket 109)
+
+
+def review_all(project):
+    """Let every decision listed under "Decided for you" stand: the owner's yes to the autonomous opening (ticket 109).
+
+    Returns one line per decision reviewed, in the account's order; empty when none is listed. A reversal is never
+    taken for all at once, since each one is the owner's own answer.
+    """
+    project = Path(project).resolve()
+    lines = []
+    for decision in _unreviewed(_context(project)):
+        try:
+            lines.append(review(project, decision.id, STAND))
+        except AccountError:
+            continue  # reviewed or superseded since the list was read: nothing is left to review
+    return lines
+
+
 def _apply(project, identifier, verdict, answer, told=None):
     context = _context(project)
     reviewed = _reviews(context.events)
@@ -1335,7 +1356,8 @@ def _reopen(project, identifier):
 def review_command(args):
     """`wayline review <id> stand|reverse [--answer "<text>"] [--project <path>]`, or `wayline review` to list them."""
     parser = argparse.ArgumentParser(prog="wayline review", description="let a decision made for you stand, or reverse it; with no id, list the ones not yet reviewed")
-    parser.add_argument("id", nargs="?", help="the decision, D1 onward, as the account's \"Decided for you\" names it")
+    parser.add_argument("id", nargs="?", help="the decision, D1 onward, as the account's \"Decided for you\" names it; all, with "
+                                              "stand, for every one listed")
     parser.add_argument("verdict", nargs="?", choices=REVIEWS, help="stand, or reverse")
     parser.add_argument("--answer", help="with reverse: what you want instead; without one the decision is reopened for you")
     parser.add_argument("--project", help="the project; the active one by default")
@@ -1352,6 +1374,13 @@ def review_command(args):
         if options.verdict is None:
             print("wayline review: name the review, stand or reverse", file=sys.stderr)
             return 2
+        if options.id == ALL:
+            if options.verdict != STAND or options.answer is not None:
+                print("wayline review: all takes stand alone; a reversal is your own answer, one at a time", file=sys.stderr)
+                return 2
+            for line in review_all(project) or ["Nothing is decided for you and not yet reviewed."]:
+                print(line)
+            return 0
         print(review(project, options.id, options.verdict, options.answer))
     except AccountError as failure:
         print("wayline review: %s" % failure, file=sys.stderr)
