@@ -67,7 +67,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, decisions
+from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, dashboard_views, decisions
 from wayline.ledger import TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, Ledger, atomic_write, conductor_holder
 from wayline.project import (
     FINDINGS, HARNESS_JSON, NEEDS_HUMAN_NOTES, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for, rung_label,
@@ -333,6 +333,7 @@ def projects_view(active=None, entries=None, settings=None):
             "readable": is_project(path),
             **_version_fields(path),
         })
+        projects[-1].update(_summary(path, projects[-1]))
     view = {
         "harness_tag": TAG,
         "active": next((item["id"] for item in projects if item["active"]), None),
@@ -344,6 +345,16 @@ def projects_view(active=None, entries=None, settings=None):
             "poll_views_s": settings.get("poll_views_s", 5),
         }
     return view
+
+
+def _summary(path, entry):
+    """The projects page's fields of one listed project (ticket 110): the account's standing line, the run state, and the
+    waiting count, whose count is also on its tab. None for a project that cannot be read or is of another version: an old
+    project's account is not this release's to read."""
+    if not entry["readable"] or entry["read_only"]:
+        return {"standing": None, "run_state": None, "waiting": None}
+    summary = dashboard_views.project_summary(path)
+    return {"standing": summary["standing"], "run_state": summary["run_state"], "waiting": summary["waiting"]}
 
 
 def _same(path, other):
@@ -1233,6 +1244,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/site/(?P<relpath>.*)$"), "api_site"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/decisions/?$"), "api_decisions"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/changes/?$"), "api_changes"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/research/?$"), "api_research"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/run/?$"), "api_run"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/waiting/?$"), "api_waiting"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/items/(?P<item>[^/]+)/?$"), "api_item"),
         (ACTION_ROUTE, "api_action_get"),
     )
 
@@ -1361,7 +1376,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "poll_journal_s": _poll(active, "poll_journal_s", 2),
             "poll_views_s": _poll(active, "poll_views_s", 5),
         }
-        tag = etag("projects", self.server.memo.get("projects", _pointer_snapshot))
+        # Each tab carries its project's waiting count, so each project's ledger is part of the tag.
+        ledgers = {entry["path"]: self.server.memo.get(("ledger", entry["path"]), lambda path=entry["path"]: ledger_snapshot(path))
+                   for entry in entries if isinstance(entry, dict) and isinstance(entry.get("path"), str)}
+        tag = etag("projects", self.server.memo.get("projects", _pointer_snapshot), ledgers)
         if self._not_modified(tag):
             return None
         return self._json(projects_view(active=active, entries=entries, settings=settings), tag)
@@ -1491,10 +1509,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def api_decisions(self, query, project):
         """The decisions view (ticket 35), tagged by the ledger, which holds `DECISIONS.md` and `harness.json`, and by the active pointer."""
         path = self._project(project)
-        tag = etag("decisions", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)), _active_version())
+        tag = etag("decisions", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)), _active_version(),
+                   dashboard_views.software_snapshot(path))
         if self._not_modified(tag):
             return None
-        return self._json(decisions.decisions_view(path), tag)
+        view = decisions.decisions_view(path)
+        read = {}
+        for entry in view["open"]:  # the new decision kinds get a card of their own on Run (ticket 110)
+            entry["kind"], entry["about"] = dashboard_views.decision_kind(path, entry.get("origin"), read)
+        return self._json(view, tag)
 
     def api_changes(self, query, project):
         """The evolve loop's view (ticket 45): the feedback filed and what was made of each item, and the change records."""
@@ -1504,6 +1527,44 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self._not_modified(tag):
             return None
         return self._json(changes.changes_view(path), tag)
+
+    def api_research(self, query, project):
+        """The Research view (ticket 110): the general report, the objectives and their results, and what stands beside them."""
+        path = self._project(project)
+        tag = etag("research", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        if self._not_modified(tag):
+            return None
+        return self._json(dashboard_views.research_view(path), tag)
+
+    def api_run(self, query, project):
+        """What Run adds to today's page (ticket 110): the account and Software, tagged by the ledger and the files Software reads."""
+        path = self._project(project)
+        tag = etag("run", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
+                   dashboard_views.software_snapshot(path))
+        if self._not_modified(tag):
+            return None
+        return self._json(dashboard_views.run_view(path), tag)
+
+    def api_waiting(self, query, project):
+        """The "Waiting on you" strip (ticket 110): the account's section, tagged by the ledger the account is read from."""
+        path = self._project(project)
+        tag = etag("waiting", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        if self._not_modified(tag):
+            return None
+        return self._json(dashboard_views.waiting_view(path), tag)
+
+    def api_item(self, query, project, item):
+        """What an item link `#/<project>/<id>` opens (ticket 110); an id that names nothing is a 404 with the line the page shows."""
+        path = self._project(project)
+        item = unquote(item)
+        tag = etag("item", project, item, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        if self._not_modified(tag):
+            return None
+        found = dashboard_views.item_view(path, item)
+        if found is None:
+            return self._send(HTTPStatus.NOT_FOUND, json.dumps({"found": False, "id": item, "line": "%s: not found in this project" % item},
+                                                               ensure_ascii=False).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-cache"),))
+        return self._json(found, tag)
 
     def api_action_get(self, query, project, name):
         """An action asked for with `GET`: 405, with the method it takes."""

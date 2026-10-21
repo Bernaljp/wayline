@@ -74,7 +74,8 @@ class BrowserTestCase(DashboardTestCase):
         return "http://%s:%d" % (self.host, self.port)
 
     def open_dashboard(self):
-        self.page.goto(self.origin() + "/")
+        # The outputs index is on Run since the views were routed (ticket 110); `/` lands on Research.
+        self.page.goto(self.origin() + "/#/%s/run" % self.project_id)
         self.page.wait_for("typeof renderMarkdown === 'function' && document.querySelector('#outputs-body ul.outputs')")
 
     def render(self, markdown):

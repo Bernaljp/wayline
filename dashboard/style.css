@@ -859,6 +859,102 @@ dialog#viewer::backdrop { background: var(--backdrop); }
 .memo { overflow-x: auto; margin-bottom: var(--space-3); }
 .memo > summary { cursor: pointer; font-size: var(--text-sm); color: var(--ink-2); margin-bottom: var(--space-2); }
 
+/* --- the routes, the strip, and the thin lists (ticket 110) ------------------------------------ */
+
+/* The views of the selected project, and the projects page, under the tabs. */
+.routes {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 var(--gutter) var(--space-2);
+}
+#views a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: var(--space-1) var(--space-3);
+  font: 600 var(--text-sm) / 1.5 var(--ui);
+  text-transform: lowercase;
+  text-decoration: none;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-1);
+}
+#views a:hover { border-color: var(--accent); }
+#views a[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+#views a:not([href]) { opacity: 0.45; pointer-events: none; }
+
+/* A count beside a name: a tab's waiting count, the strip's. */
+.count {
+  font: 600 var(--text-xs) / 1.6 var(--mono);
+  color: var(--dim);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+}
+button.tab .count { margin-left: var(--space-2); color: var(--running); border-color: var(--running); }
+
+/* "Waiting on you": one line folded, the account's items open. Its edge says whether anything waits. */
+.strip {
+  margin: 0 0 var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--running);
+  border-radius: var(--radius-2);
+  padding: var(--space-2) var(--space-3);
+}
+.strip.empty { border-left-color: var(--line-strong); }
+.strip[hidden] { display: none; }
+.strip > summary { cursor: pointer; display: flex; align-items: center; gap: var(--space-2); min-height: 30px; }
+.strip-title { font-size: var(--text-xs); font-weight: 650; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2); }
+.strip:not(.empty) #strip-count { color: var(--running); border-color: var(--running); }
+.strip ul.rows { margin-top: var(--space-2); }
+
+/* A thin row: the id, the title, the status, then the links that open and insert it, on one line while
+   they fit and wrapping when they do not, never wider than the page. */
+ul.rows { list-style: none; margin: 0; padding: 0; }
+ul.rows > li { padding: var(--space-2) 0; border-top: 1px solid var(--line); min-width: 0; }
+ul.rows > li:first-child { border-top: 0; }
+ul.rows.nested { margin: var(--space-2) 0 0 var(--space-4); padding-left: var(--space-3); border-left: 1px solid var(--line-strong); }
+.row-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); min-width: 0; }
+.row-id { font-weight: 700; white-space: nowrap; }
+.row-title { flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; }
+.row-title.mono { color: var(--dim); font-size: var(--text-sm); }
+.row-acts { display: flex; gap: var(--space-2); margin-left: auto; }
+.row-more { margin: var(--space-1) 0 0; color: var(--ink-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.row-more a { white-space: nowrap; }
+
+/* A link that acts as a button: "view", beside "insert". */
+a.action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: var(--space-1) var(--space-3);
+  font: 500 var(--text-sm) / 1.5 var(--ui);
+  text-transform: lowercase;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-1);
+}
+a.action:hover { background: var(--accent-soft); border-color: var(--accent); }
+
+/* New since you looked: a current report renewed since the owner last opened it. */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: var(--space-1);
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+/* A project of another research_version is read-only (decision 17): no action is offered for it. */
+body[data-read-only="true"] .acts { display: none !important; }
+
 /* --- the narrow width, and reduced motion ----------------------------------------------------- */
 
 @media (max-width: 1180px) {
@@ -872,6 +968,10 @@ dialog#viewer::backdrop { background: var(--backdrop); }
 
 @media (max-width: 720px) {
   :root { --gutter: var(--space-4); }
+  /* A thumb's targets, and the row's links on a line of their own under its title. */
+  #views a, a.action, button.action, button.tab { min-height: 44px; }
+  .row-acts { margin-left: 0; }
+  ul.rows.nested { margin-left: 0; }
   .tail li { flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
   .tail .ts, .tail .event { flex: 0 0 auto; }
   form.inline label { min-width: 0; }

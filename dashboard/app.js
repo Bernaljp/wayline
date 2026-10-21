@@ -41,6 +41,11 @@ const state = {
   ticket: null, // the ticket id whose page is open, or null when the graph is showing
   log: null, // { kind, id, since } of the log tail that is open, or null
 
+  view: null, // the view shown: 'projects', 'research', or 'run' (ticket 110)
+  projectsLoaded: false, // whether /api/projects has answered once, so a route naming a project can be applied
+  research: null, // { project, view } of the last Research view read, for the dot of the report the owner opens
+  waiting: 0, // the selected project's "Waiting on you" count, which the browser tab's title carries
+
   pollJournal: 2,
   pollViews: 5,
   stream: null,
@@ -412,21 +417,22 @@ async function loadProjects() {
       class: 'tab',
       type: 'button',
       'data-id': project.id,
-      // A project of another research_version is read-only (decision 17): marked with its tag, its files still open.
-      text: project.name + (project.active ? ' *' : '') + (project.readable && project.read_only ? ' (' + (project.harness_tag || 'an older tag') + ', read-only)' : ''),
       title: project.path + (project.readable ? '' : ' (the path is gone)')
         + (project.readable && project.read_only ? ' (made with ' + (project.harness_tag || 'an older tag') + ', read-only: wayline upgrade --to that tag, or a new project)' : ''),
       'aria-current': String(project.id === state.project),
-    });
+    }, [
+      // A project of another research_version is read-only (decision 17): marked with its tag, its files still open.
+      el('span', { text: project.name + (project.active ? ' *' : '') + (project.readable && project.read_only ? ' (' + (project.harness_tag || 'an older tag') + ', read-only)' : '') }),
+      // What waits on the owner in that project, on its tab (ticket 110).
+      ...(project.waiting ? [el('span', { class: 'count', text: String(project.waiting), title: `${project.waiting} waiting on you` })] : []),
+    ]);
     if (!project.readable) tab.disabled = true;
-    tab.addEventListener('click', () => select(project.id));
+    tab.addEventListener('click', () => go(routeTo(project.id, state.view && state.view !== 'projects' ? state.view : 'research')));
     return tab;
   }));
-  if (!state.projects.some((project) => project.id === state.project)) {
-    const first = state.projects.find((project) => project.active && project.readable) || state.projects.find((project) => project.readable);
-    if (first) select(first.id);
-    else replace(document.getElementById('overview-body'), [emptyState('no readable project is registered: run wayline init <path>')]);
-  }
+  state.projectsLoaded = true;
+  if (state.view === 'projects') renderProjectsPage();
+  if (!routing.done) route();
 }
 
 function select(id) {
@@ -452,6 +458,18 @@ function select(id) {
   replace(document.getElementById('outputs-body'), [loadingState('indexing the outputs')]);
   replace(document.getElementById('decisions-open'), [loadingState('reading the open decision tickets')]);
   replace(document.getElementById('changes-body'), [loadingState('reading the feedback')]);
+  replace(document.getElementById('general-body'), [loadingState('reading the research')]);
+  replace(document.getElementById('objectives-body'), [loadingState('reading the objectives')]);
+  replace(document.getElementById('beyond-body'), [loadingState('reading the results')]);
+  replace(document.getElementById('account-body'), [loadingState('reading the account')]);
+  replace(document.getElementById('software-body'), [loadingState('reading tools.json')]);
+  replace(document.getElementById('strip-items'), []);
+  state.research = null;
+  state.waiting = 0;
+  // A project of another research_version is read-only (decision 17): its files open, and no action is offered.
+  const entry = state.projects.find((project) => project.id === id);
+  document.body.dataset.readOnly = String(Boolean(entry && entry.read_only));
+  showTitle();
   controlsState('reading the controls');
   for (const tab of document.querySelectorAll('button.tab')) {
     tab.setAttribute('aria-current', String(tab.dataset.id === id));
@@ -468,6 +486,10 @@ function select(id) {
   dirty.ladder_changes = false;
   every('decisions', state.pollViews, loadDecisions);
   every('changes', state.pollViews, loadChanges);
+  every('waiting', state.pollViews, loadWaiting);
+  every('run', state.pollViews, loadRun);
+  every('research', state.pollViews, loadResearch);
+  markViews();
   showGraph();
   startTail();
 }
@@ -1346,6 +1368,7 @@ const ZOOM_RESET = ZOOM_STEPS.indexOf(1);
 const viewer = {
   zoom: ZOOM_RESET,
   reads: 0, // counts every open and close, so a slow read that a newer one replaced is dropped
+  item: null, // { project, id, landed } of the item link the viewer is open on (ticket 110), or null
 };
 
 function setZoom(index) {
@@ -1422,18 +1445,25 @@ function pointIntoProject(node, fileAt) {
 }
 
 // Open `path`, relative to the project, in the viewer: the one way any view shows a document,
-// report, section, or image.
-async function openViewer(path) {
+// report, section, or image. `options` comes from an item link (ticket 110): the `title` the bar
+// shows, the heading to `focus` (an objective in OBJECTIVES.md), a plot's `caption`, a table's `rows`.
+async function openViewer(path, options) {
+  const opts = options || {};
   const dialog = document.getElementById('viewer');
   const body = document.getElementById('viewer-body');
   const shown = document.getElementById('viewer-doc');
   const read = ++viewer.reads;
-  document.getElementById('viewer-title').textContent = path;
+  document.getElementById('viewer-title').textContent = opts.title || path;
   document.getElementById('viewer-download').href = downloadUrl(path);
   replace(shown, [loadingState(`reading ${path}`)]);
   if (!dialog.open) dialog.showModal();
+  if (opts.rows) {
+    const [head, ...rows] = opts.rows;
+    replace(shown, [tableOrNone(head || [], rows, 'the table has no rows'), ...captionOf(opts.caption)]);
+    return;
+  }
   if (PREVIEWABLE_IMAGE.test(path)) {
-    replace(shown, [el('img', { src: downloadUrl(path), alt: path })]);
+    replace(shown, [el('img', { src: downloadUrl(path), alt: opts.title || path }), ...captionOf(opts.caption)]);
     return;
   }
   try {
@@ -1442,11 +1472,43 @@ async function openViewer(path) {
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
     const text = await response.text();
     if (read !== viewer.reads) return;
-    replace(shown, [renderMarkdown(text, path)]);
+    replace(shown, [renderMarkdown(withoutFrontmatter(text), path)]);
     body.scrollTop = 0;
+    if (opts.focus) focusHeading(shown, opts.focus);
   } catch (failure) {
     if (read === viewer.reads) replace(shown, [errorState(failure)]);
   }
+}
+
+// A ticket file opens on its body: the YAML frontmatter above it is the ticket page's fields, not prose.
+function withoutFrontmatter(text) {
+  const found = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
+  return found ? text.slice(found[0].length) : text;
+}
+
+// A plot's or a table's three explanations, under it.
+function captionOf(caption) {
+  if (!caption) return [];
+  return [fields([['purpose', caption.purpose], ['data', caption.data], ['what it shows', caption.shows]])];
+}
+
+// The heading an item link names inside its file (`O3` in OBJECTIVES.md, `R4` in REPORT.md), scrolled to the top.
+function focusHeading(node, id) {
+  const heading = [...node.querySelectorAll('h1, h2, h3, h4')].find((candidate) => {
+    const text = candidate.textContent.trim();
+    return text === id || text.startsWith(`${id} `) || text.startsWith(`${id}.`) || text.startsWith(`${id}:`);
+  });
+  if (heading && heading.scrollIntoView) heading.scrollIntoView({ block: 'start' });
+}
+
+// What the viewer says for an item link that names nothing: one line, not an error page.
+function viewerNotFound(id, line) {
+  const dialog = document.getElementById('viewer');
+  viewer.reads += 1;
+  document.getElementById('viewer-title').textContent = id;
+  document.getElementById('viewer-download').removeAttribute('href');
+  replace(document.getElementById('viewer-doc'), [emptyState(line || `${id}: not found in this project`)]);
+  if (!dialog.open) dialog.showModal();
 }
 
 function wireViewer() {
@@ -1472,6 +1534,7 @@ function wireViewer() {
   dialog.addEventListener('close', () => {
     viewer.reads += 1;
     replace(document.getElementById('viewer-doc'), []);
+    leaveItem();
   });
   const saved = ZOOM_STEPS.indexOf(Number(remembered(STORE.zoom)));
   setZoom(saved >= 0 ? saved : ZOOM_RESET);
@@ -1654,6 +1717,9 @@ function refreshViews() {
   loadDecisions();
   loadChanges();
   loadGraph();
+  loadWaiting();
+  loadRun();
+  loadResearch();
 }
 
 // --- the controls (ticket 35) ------------------------------------------------------------------
@@ -1767,7 +1833,7 @@ function ticketActions(f) {
     });
     return button;
   });
-  return el('p', { class: 'inline' }, buttons);
+  return el('p', { class: 'inline acts' }, buttons);
 }
 
 // --- the feedback form and the evolve loop's view (ticket 45) -----------------------------------
@@ -1913,6 +1979,7 @@ function decisionCard(decision, project) {
       ['asked by', decision.proposed_by],
       ['origin', decision.origin],
     ]),
+    ...kindFields(decision, project),
   ]);
   if ((decision.evidence || []).length) {
     card.appendChild(el('h5', { text: 'evidence' }));
@@ -1926,7 +1993,7 @@ function decisionCard(decision, project) {
     card.appendChild(el('p', { class: 'note', text: `an answer is written in the ticket file: ${decision.written}. The next wave or tick journals it as the owner's.` }));
     return card;
   }
-  const form = el('form', { class: 'answer-form' });
+  const form = el('form', { class: 'answer-form acts' });
   for (const option of decision.options || []) {
     const input = el('input', { type: 'radio', name: `choice-${decision.id}`, value: option, 'data-draft': key, 'data-field': 'choice' });
     input.checked = draft.choice === option;
@@ -2032,6 +2099,513 @@ function wireIntake() {
   });
 }
 
+// --- the routes (ticket 110) ------------------------------------------------------------------------
+//
+// The dashboard is views behind the project tabs, routed by the hash so the browser's back and forward
+// move between them and a reload keeps the one shown: `#/` is the projects page, `#/<project>/research`
+// and `#/<project>/run` a project's views, and `#/<project>/<id>` opens one item in the viewer over its
+// view, so a notice on the phone lands on the item in one tap. Paper and Inherited (111) and Marks
+// (112) join the views. A hash that is not a route (`#ticket/3`, a graph node's) is left alone.
+
+const VIEW_NAMES = ['research', 'run'];
+const routing = { done: false };
+
+function routeTo(project, viewOrItem) {
+  return `#/${encodeURIComponent(project)}/${encodeURIComponent(viewOrItem)}`;
+}
+
+function parseRoute(hash) {
+  const raw = (hash || '').replace(/^#/, '');
+  if (!raw.startsWith('/')) return null;
+  let parts;
+  try {
+    parts = raw.slice(1).split('/').filter(Boolean).map(decodeURIComponent);
+  } catch (failure) {
+    return null;
+  }
+  if (!parts.length) return { page: 'projects' };
+  const [project, rest] = parts;
+  if (rest === undefined) return { project, view: 'research' };
+  if (VIEW_NAMES.includes(rest)) return { project, view: rest };
+  return { project, item: rest };
+}
+
+// Move to a route: a new entry in the history, which `hashchange` then applies.
+function go(hash) {
+  if (location.hash === hash) route();
+  else location.hash = hash;
+}
+
+function route() {
+  let target = parseRoute(location.hash);
+  if (target === null) {
+    if (location.hash && location.hash !== '#') return; // not a route of ours
+    if (!state.projectsLoaded) return; // the default needs the projects: applied once they are read
+    // No route yet: the active project's Research, else the projects page. Replaced, not pushed, so back leaves the page.
+    const first = state.projects.find((project) => project.active && project.readable) || state.projects.find((project) => project.readable);
+    target = first ? { project: first.id, view: 'research' } : { page: 'projects' };
+    history.replaceState(null, '', first ? routeTo(first.id, 'research') : '#/');
+  }
+  if (target.page === 'projects') {
+    routing.done = true;
+    closeItem();
+    showView('projects');
+    return;
+  }
+  if (!state.projectsLoaded) return;
+  const known = state.projects.find((project) => project.id === target.project);
+  const landed = !routing.done;
+  routing.done = true;
+  if (!known || !known.readable) {
+    closeItem();
+    showView('projects');
+    say(`no readable project has the id ${target.project}: the projects page lists them`, true);
+    return;
+  }
+  select(target.project);
+  if (target.view) {
+    closeItem();
+    showView(target.view);
+    return;
+  }
+  openItem(target.project, target.item, landed);
+}
+
+function showView(name) {
+  state.view = name;
+  for (const view of document.querySelectorAll('main .view')) view.hidden = view.dataset.view !== name;
+  document.getElementById('strip').hidden = name === 'projects' || !state.project || readOnlyNow();
+  document.body.dataset.view = name;
+  markViews();
+  buildIndex();
+  if (name === 'projects') renderProjectsPage();
+  if (name === 'research') loadResearch();
+  // A drawing that could not be measured while Run was hidden is drawn now that it can be.
+  if (name === 'run') drawGraph();
+}
+
+// The views' links name the selected project's routes.
+function markViews() {
+  for (const link of document.querySelectorAll('#views a[data-route]')) {
+    const name = link.dataset.route;
+    if (name !== 'projects') {
+      if (state.project) link.setAttribute('href', routeTo(state.project, name));
+      else link.removeAttribute('href');
+    }
+    link.setAttribute('aria-current', String(name === state.view));
+  }
+}
+
+// --- items in the viewer ----------------------------------------------------------------------------
+//
+// An item link asks the server what it opens (`items/<id>`): a file the viewer reads, with the heading to
+// scroll to, a plot's image and its explanation, or a table's rows. Closing the viewer goes back to the
+// view under it: a step back when the item was opened from the page, the view's own route when the
+// owner landed on the item from a notice.
+
+async function openItem(project, id, landed) {
+  const opening = { project, id, landed };
+  viewer.item = opening;
+  if (!state.view || state.view === 'projects') showView('research');
+  const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
+  let item;
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/items/${encodeURIComponent(id)}`, { cache: 'no-store', headers });
+    if (response.status === 404) {
+      let line;
+      try {
+        line = (await response.json()).line;
+      } catch (failure) {
+        line = null; // a project the server no longer knows answers in plain text
+      }
+      if (viewer.item === opening) viewerNotFound(id, line);
+      return;
+    }
+    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+    item = await response.json();
+  } catch (failure) {
+    if (viewer.item === opening) viewerNotFound(id, `${id}: ${failure.message || failure}`);
+    return;
+  }
+  if (viewer.item !== opening) return;
+  showView(item.view);
+  // `R4 Does the loss fall?`, but `The account` alone: a word id says nothing its title does not.
+  const title = !item.title ? item.id : /^[A-Z0-9]/.test(item.id) ? `${item.id} ${item.title}` : item.title;
+  openViewer(item.path, { title, focus: item.focus, caption: item.caption, rows: item.rows });
+  seeReport(project, item);
+}
+
+function closeItem() {
+  const dialog = document.getElementById('viewer');
+  if (viewer.item && dialog.open) dialog.close();
+  viewer.item = null;
+}
+
+// The viewer closed: an item route goes back to its view.
+function leaveItem() {
+  const item = viewer.item;
+  viewer.item = null;
+  if (!item) return;
+  const now = parseRoute(location.hash);
+  if (!now || now.item !== item.id || now.project !== item.project) return;
+  if (item.landed) history.replaceState(null, '', routeTo(item.project, state.view && state.view !== 'projects' ? state.view : 'research'));
+  else history.back();
+}
+
+// --- new since you looked ---------------------------------------------------------------------------
+//
+// A current report renewed since the owner last opened it carries a dot. What the owner last opened is
+// kept in this browser, each report's hash as it was then, and nowhere else: the dashboard never writes
+// the ledger, and a renewed report notifies nowhere.
+
+function seenReports() {
+  try {
+    return JSON.parse(remembered(STORE.seen) || '{}') || {};
+  } catch (failure) {
+    return {};
+  }
+}
+
+function isNew(project, name, sha) {
+  return Boolean(sha) && seenReports()[`${project}:${name}`] !== sha;
+}
+
+// The report an opened item is, and its hash, from the Research view last read; the dot goes once it is seen.
+function seeReport(project, item) {
+  const held = state.research && state.research.project === project ? state.research.view : null;
+  if (!held) return;
+  let name = null;
+  let sha = null;
+  if (item.id === 'report') {
+    name = 'report';
+    sha = held.report.sha256;
+  } else {
+    for (const result of held.results || []) {
+      const current = result.current;
+      if (current && (item.id === result.id || item.id === current.name)) {
+        name = current.name;
+        sha = current.sha256;
+      }
+    }
+  }
+  if (!name || !sha) return;
+  const seen = seenReports();
+  seen[`${project}:${name}`] = sha;
+  remember(STORE.seen, JSON.stringify(seen));
+  renderResearch(held, project);
+}
+
+// --- thin lists ---------------------------------------------------------------------------------------
+//
+// Every view lists items as thin rows: the id, the title, the status, the link that opens it, and insert
+// into chat. A row never carries a rendered file: those open in the viewer only.
+
+function itemLink(project, id, text) {
+  return el('a', { class: 'row-id', href: routeTo(project, id), text: text || id, title: `open ${id} in the viewer` });
+}
+
+function itemRow(project, row) {
+  const line = [
+    row.link === false ? el('span', { class: 'row-id', text: row.id }) : itemLink(project, row.id),
+    el('span', { class: 'row-title', text: row.title || '' }),
+  ];
+  if (row.status) line.push(el('span', { class: `chip s-${row.status}`, text: row.status }));
+  if (row.dot) line.push(newDot());
+  const acts = [];
+  if (row.link !== false) acts.push(el('a', { class: 'action', href: routeTo(project, row.id), text: 'view' }));
+  acts.push(insertButton(project, row.id));
+  line.push(el('span', { class: 'row-acts' }, acts));
+  return el('li', { class: 'row', 'data-item': row.id }, [el('div', { class: 'row-line' }, line), ...(row.more || [])]);
+}
+
+function newDot() {
+  return el('span', { class: 'dot', role: 'img', title: 'new since you looked', 'aria-label': 'new since you looked' });
+}
+
+function more(text, children) {
+  return el('p', { class: 'row-more', text: children ? null : text }, children || []);
+}
+
+// The chat panel arrives with ticket 114; until then insert copies the item's reference, to paste into a conversation.
+function insertButton(project, id) {
+  const button = el('button', { type: 'button', class: 'action', text: 'insert', title: `insert ${id} into the chat` });
+  button.addEventListener('click', async () => {
+    const reference = `${id} (${location.pathname}${routeTo(project, id)})`;
+    try {
+      await navigator.clipboard.writeText(reference);
+      say(`${id}: its reference is copied, to paste into a conversation`);
+    } catch (failure) {
+      say(`${id}: copy its reference by hand: ${reference}`);
+    }
+  });
+  return button;
+}
+
+function rowsOrNone(items, render, empty) {
+  return items.length ? el('ul', { class: 'rows' }, items.map(render)) : emptyState(empty);
+}
+
+// --- "Waiting on you" -----------------------------------------------------------------------------------
+
+// A project of another research_version gets no strip: its account is not this release's to read.
+function readOnlyNow() {
+  return document.body.dataset.readOnly === 'true';
+}
+
+async function loadWaiting() {
+  const project = state.project;
+  if (!project || readOnlyNow()) return;
+  try {
+    const view = await get(projectPath('/waiting'), 'waiting');
+    if (view && project === state.project) renderStrip(view, project);
+  } catch (failure) {
+    if (project === state.project) replace(document.getElementById('strip-items'), [el('li', {}, [errorState(failure)])]);
+  }
+}
+
+function renderStrip(view, project) {
+  const strip = document.getElementById('strip');
+  document.getElementById('strip-count').textContent = String(view.count);
+  strip.classList.toggle('empty', !view.count);
+  replace(document.getElementById('strip-items'), view.items.length
+    ? view.items.map((item) => el('li', { class: 'row' }, [el('div', { class: 'row-line' }, [
+      ...(item.item ? [itemLink(project, item.item, `#${item.item}`)] : []),
+      el('span', { class: 'row-title', text: item.text }),
+    ])]))
+    : [el('li', {}, [emptyState('nothing waits on you')])]);
+  state.waiting = view.count;
+  showTitle();
+}
+
+// The selected project's waiting count in the browser tab's title, so it shows from another tab.
+function showTitle() {
+  const entry = state.projects.find((project) => project.id === state.project);
+  const name = entry ? entry.name : null;
+  document.title = `${state.waiting ? `(${state.waiting}) ` : ''}${name ? `${name} - ` : ''}wayline`;
+}
+
+// --- the projects page -----------------------------------------------------------------------------------
+
+function runStateLine(run) {
+  if (!run) return null;
+  const conductor = run.conductor ? 'a conductor holds it' : 'no conductor runs';
+  if (run.state === 'running') return `running since ${run.since}; ${conductor}`;
+  if (run.state === 'ended') return `ended ${run.since}${run.reason ? ` (${run.reason})` : ''}; ${conductor}`;
+  return `not started; ${conductor}`;
+}
+
+function renderProjectsPage() {
+  const body = document.getElementById('projects-body');
+  if (!state.projectsLoaded) return;
+  if (!state.projects.length) {
+    replace(body, [emptyState('no project is registered: run wayline init <path>')]);
+    return;
+  }
+  replace(body, [el('ul', { class: 'rows' }, state.projects.map((project) => {
+    const chips = [];
+    if (project.active) chips.push(el('span', { class: 'chip', text: 'active' }));
+    if (project.read_only) chips.push(el('span', { class: 'chip s-parked', text: `${project.harness_tag || 'an older tag'}, read-only` }));
+    if (project.waiting) chips.push(el('span', { class: 'chip s-running', text: `${project.waiting} waiting on you` }));
+    const title = project.readable
+      ? el('a', { class: 'row-id', href: routeTo(project.id, project.read_only ? 'run' : 'research'), text: project.name })
+      : el('span', { class: 'row-id', text: project.name });
+    const lines = [el('div', { class: 'row-line' }, [title, el('span', { class: 'row-title mono', text: project.path }), ...chips])];
+    if (!project.readable) lines.push(more('the path is gone'));
+    else if (project.read_only) {
+      lines.push(more(null, [
+        document.createTextNode(`Made with ${project.harness_tag || 'an older tag'} (research_version ${project.research_version}): read-only here. `),
+        el('a', { href: routeTo(project.id, 'run'), text: 'its files' }),
+        document.createTextNode(' open in the viewer; wayline upgrade --to that tag, or a new project, to work on it.'),
+      ]));
+    } else {
+      if (project.standing) lines.push(more(project.standing));
+      const run = runStateLine(project.run_state);
+      if (run) lines.push(more(run));
+    }
+    return el('li', { class: 'row project-row' }, lines);
+  }))]);
+}
+
+// --- Research -----------------------------------------------------------------------------------------------
+
+async function loadResearch() {
+  const project = state.project;
+  if (!project || state.view !== 'research') return;
+  try {
+    const view = await get(projectPath('/research'), 'research');
+    if (!view || project !== state.project) return;
+    state.research = { project, view };
+    renderResearch(view, project);
+  } catch (failure) {
+    if (project === state.project) replace(document.getElementById('general-body'), [errorState(failure)]);
+  }
+}
+
+function measureLine(objective) {
+  if (!objective.measure) return 'no measure: an objective, not a goal';
+  const kept = (objective.kept || []).length ? `kept ${objective.kept.join(', ')}` : 'nothing kept yet';
+  const best = objective.best === null || objective.best === undefined ? '' : `; best ${objective.best}${objective.reached ? ', reached' : ''}`;
+  return `${objective.measure}; ${kept}${best}`;
+}
+
+function lineageLine(objective) {
+  const lineage = objective.lineage || {};
+  const parts = [];
+  if ((lineage.reframed_from || []).length) parts.push(`reframed from ${lineage.reframed_from.join(', ')}`);
+  if (lineage.reframed_as) parts.push(`reframed as ${lineage.reframed_as}`);
+  for (const earlier of lineage.superseded || []) parts.push(`once ${earlier.status}: ${earlier.answer || 'no answer'}`);
+  return parts.join('; ');
+}
+
+// A list of item links, `R1-1, R1-2`, after a word that says what they are.
+function linkList(project, word, ids) {
+  const parts = [document.createTextNode(`${word} `)];
+  ids.forEach((id, index) => {
+    if (index) parts.push(document.createTextNode(', '));
+    parts.push(itemLink(project, id));
+  });
+  return parts;
+}
+
+function resultRow(project, result) {
+  const current = result.current;
+  const lines = [];
+  if (result.headline) lines.push(more(`headline: ${result.headline}`));
+  const reports = current ? linkList(project, 'current report', [current.name]) : [document.createTextNode('no report before its first drawing')];
+  if (current && isNew(project, current.name, current.sha256)) reports.push(newDot());
+  if ((result.earlier || []).length) reports.push(document.createTextNode('; '), ...linkList(project, 'earlier', result.earlier.map((report) => report.name)));
+  lines.push(more(null, reports));
+  if ((result.plots || []).length) lines.push(more(null, linkList(project, 'plots', result.plots.map((plot) => plot.id))));
+  if ((result.left_out || []).length) {
+    lines.push(more(`left out: ${result.left_out.map((item) => `${item.what} (${item.reason})`).join('; ')}`));
+  }
+  return itemRow(project, { id: result.id, title: result.heading, status: result.standing, more: lines });
+}
+
+function renderResearch(view, project) {
+  const byId = new Map((view.results || []).map((result) => [result.id, result]));
+  const report = view.report || {};
+  const general = [report.exists
+    ? rowsOrNone([report], () => itemRow(project, {
+      id: 'report', title: 'The general report', dot: isNew(project, 'report', report.sha256),
+      more: [more(report.renewed ? `rendered ${report.renewed}` : 'rendered by code')],
+    }), '')
+    : emptyState('no general report yet: code renders it once the first finding is filed')];
+  general.push(fields([['plotting', view.plotting ? `${view.plotting.label} (${view.plotting.library})` : null]]));
+  if ((view.problems || []).length) general.push(el('ul', { class: 'problems' }, view.problems.map((problem) => el('li', { text: problem }))));
+  replace(document.getElementById('general-body'), general);
+
+  replace(document.getElementById('objectives-body'), [rowsOrNone(view.objectives || [], (objective) => {
+    const lines = [more(measureLine(objective))];
+    const lineage = lineageLine(objective);
+    if (lineage) lines.push(more(lineage));
+    const results = (objective.results || []).map((id) => byId.get(id)).filter(Boolean);
+    lines.push(results.length ? el('ul', { class: 'rows nested' }, results.map((result) => resultRow(project, result)))
+      : more('no result answers it yet'));
+    return itemRow(project, { id: objective.id, title: objective.text, status: objective.status, more: lines });
+  }, 'no objective is recorded yet: say what the research should answer in a conversation')]);
+
+  const beyond = (view.beyond || []).map((id) => byId.get(id)).filter(Boolean);
+  replace(document.getElementById('beyond-body'), [
+    subhead('results', beyond.length),
+    rowsOrNone(beyond, (result) => resultRow(project, result), 'every result answers an objective'),
+    subhead('set-aside claims', (view.set_aside || []).length),
+    rowsOrNone(view.set_aside || [], (claim) => itemRow(project, {
+      id: claim.id, title: claim.text, link: false, more: [more(`its objectives ${claim.objectives.join(', ')} are closed`)],
+    }), 'no claim is set aside'),
+    subhead('parked for a closed objective', (view.parked || []).length),
+    rowsOrNone(view.parked || [], (ticket) => itemRow(project, {
+      id: String(ticket.id), title: ticket.title, status: 'parked', more: [more(ticket.reason)],
+    }), 'no ticket is parked for a closed objective'),
+  ]);
+}
+
+// --- Run's additions: the account and Software ------------------------------------------------------------
+
+async function loadRun() {
+  const project = state.project;
+  if (!project) return;
+  try {
+    const view = await get(projectPath('/run'), 'run');
+    if (!view || project !== state.project) return;
+    renderAccount(view.account, project);
+    renderSoftware(view.software);
+  } catch (failure) {
+    if (project !== state.project) return;
+    replace(document.getElementById('account-body'), [errorState(failure)]);
+    replace(document.getElementById('software-body'), [errorState(failure)]);
+  }
+}
+
+function renderAccount(account, project) {
+  if (!account.exists) {
+    replace(document.getElementById('account-body'), [emptyState('no account yet: code renders it with the general report')]);
+    return;
+  }
+  replace(document.getElementById('account-body'), [rowsOrNone([account], () => itemRow(project, {
+    id: 'account', title: 'What wayline did: the account',
+    more: [more(`${account.decided ?? '?'} decided for you, ${account.waiting ?? '?'} waiting on you`)],
+  }), '')]);
+}
+
+function renderSoftware(software) {
+  const tools = software.tools || [];
+  const matlab = software.matlab;
+  const environment = software.environment || {};
+  const move = environment.move;
+  const parts = [
+    subhead('tools.json', tools.length),
+    tableOrNone(['tool', 'version', 'installer', 'executable'], tools.map((tool) => [tool.name, tool.version, tool.installer, tool.executable]),
+      'tools.json records no tool yet: wayline tools install', ['short', 'short', 'short', 'text']),
+    subhead('MATLAB'),
+  ];
+  if (!matlab) parts.push(emptyState('no MATLAB is recorded, and no check of one has run'));
+  else {
+    const check = matlab.check;
+    parts.push(fields([
+      ['recorded', matlab.version ? `${matlab.version} (${matlab.release || 'release unknown'}) at ${matlab.executable}` : 'not recorded'],
+      ['toolboxes', (matlab.toolboxes || []).length ? matlab.toolboxes.join(', ') : null],
+      ['the check', check ? `${check.outcome}${check.reason ? `: ${check.reason}` : ''} (${check.ts})` : 'no matlab -batch "ver" check has run'],
+    ]));
+  }
+  parts.push(subhead('environment'), fields([
+    ['setting', environment.setting],
+    ['place', environment.place || 'the shared tools'],
+    ['move', move ? `to ${move.to} from ${move.from}, since ${move.started} (pid ${move.pid})` : 'none under way'],
+  ]));
+  replace(document.getElementById('software-body'), parts);
+}
+
+// --- the new decision kinds' cards ----------------------------------------------------------------------------
+
+const KIND_NAMES = {
+  objective_changes: 'objective changes',
+  software: 'software',
+  empty_frontier: 'empty frontier',
+  concern: 'a concern to sort',
+  verification_gap: 'a verification gap',
+};
+
+function kindFields(decision, project) {
+  const about = decision.about || {};
+  if (!decision.kind || decision.kind === 'decision') return [];
+  const pairs = [['kind', KIND_NAMES[decision.kind] || decision.kind]];
+  if (decision.kind === 'objective_changes') pairs.push(['round', about.round]);
+  if (decision.kind === 'software') {
+    pairs.push(['tool', about.tool], ['licensed', about.licensed ? 'yes: the owner installs it and says where' : 'no'],
+      ['asks about', about.gap ? 'a gap in the installed tool' : 'installing it'],
+      ['recorded', about.recorded ? `version ${about.version || 'unknown'}` : 'not yet']);
+  }
+  if (decision.kind === 'empty_frontier') pairs.push(['objective', `${about.objective}${about.text ? ` ${about.text}` : ''}`], ['asked', about.asked]);
+  if (decision.kind === 'concern') pairs.push(['concern', about.concern], ['status', about.status], ['raised in', (about.sources || []).join(' | ') || null]);
+  if (decision.kind === 'verification_gap') {
+    pairs.push(['item', about.item], ['missing', about.missing ? `${about.missing}: ${about.what || ''}` : null], ['result', about.heading], ['asked', about.asked]);
+  }
+  const parts = [fields(pairs)];
+  if (decision.kind === 'empty_frontier' && about.objective) parts.push(el('p', { class: 'note' }, [itemLink(project, about.objective, `open ${about.objective}`)]));
+  return parts;
+}
+
 // --- the theme, and the sections that fold ------------------------------------------------------
 //
 // Both are the owner's own choice about their own screen, so both are remembered in this browser
@@ -2039,7 +2613,7 @@ function wireIntake() {
 // that refuses storage (a private window, blocked site data) still works; it just forgets.
 
 const THEMES = [['auto', 'auto'], ['light', 'day'], ['dark', 'night']];
-const STORE = { theme: 'wayline.theme', folded: 'wayline.folded', view: 'wayline.view', zoom: 'wayline.viewer.zoom' };
+const STORE = { theme: 'wayline.theme', folded: 'wayline.folded', view: 'wayline.view', zoom: 'wayline.viewer.zoom', seen: 'wayline.seen' };
 
 function remember(key, value) {
   try {
@@ -2099,7 +2673,7 @@ function setFolded(section, folded) {
 // the index is, so a section added to the page folds without a second edit.
 function wireFolds() {
   const folded = foldedNow();
-  for (const section of document.querySelectorAll('main > section')) {
+  for (const section of document.querySelectorAll('main .view > section')) {
     const head = section.querySelector('.view-head');
     const heading = section.querySelector('h2');
     if (!head) continue;
@@ -2119,7 +2693,7 @@ function wireFolds() {
 // asking to go somewhere is asking to see it.
 
 function sectionsShown() {
-  return [...document.querySelectorAll('main > section')].filter((section) => !section.hidden);
+  return [...document.querySelectorAll('main .view:not([hidden]) > section')].filter((section) => !section.hidden);
 }
 
 function buildIndex() {
@@ -2206,4 +2780,6 @@ wireIntake();
 wireFeedback();
 intakeEmpty();
 if (!TOKEN) say('Actions need the dashboard token: open the URL wayline serve printed, which carries it. The views work without it.');
+window.addEventListener('hashchange', route);
+route();
 every('projects', 5, loadProjects);
