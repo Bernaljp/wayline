@@ -225,13 +225,13 @@ def _standing(ledger, result, view=None):
     return VERIFIED, None
 
 
-def _refresh(ledger, record):
+def _refresh(ledger, record, view=None):
     """Take in the results the passages hold now and each one's standing; returns the results changed.
 
     A result whose document withdrew every claim (a newer version without it) is no longer an inherited result, and leaves
-    the record.
+    the record. `view` is the passages as the caller read them, read here when None.
     """
-    view = _View(ledger)
+    view = view or _View(ledger)
     changed = []
     known = {}
     for result in record["results"]:
@@ -281,8 +281,9 @@ def claim_rows(project_or_ledger):
     from wayline import sections
 
     ledger = ledger_for(project_or_ledger)
-    record = current_record(ledger)
+    record = read_record(ledger)
     view = _View(ledger)
+    _refresh(ledger, record, view)
     rows = []
     for result in record["results"]:
         recorded = {entry["claim"]: verdict for verdict in result["verdicts"] for entry in verdict["claims"]}

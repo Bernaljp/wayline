@@ -380,18 +380,13 @@ def _code_repository(project, events, problems):
     """The code repository: its remote's link, its visibility, and the last push code made, from `harness.json` and the
     journal's last `code_pushed`; `settled` is False until the setup question made a remote."""
     from wayline import code_repository
-    from wayline.ledger import CODE_PUSHED
     try:
         record = code_repository.record(project)
     except (ProjectError, OSError, ValueError) as failure:
         problems.append("harness.json: %s" % failure)
         record = {}
     remote = record.get("remote") or {}
-    pushed = None
-    for event in events:
-        if event.get("event") == CODE_PUSHED:
-            payload = event.get("payload") or {}
-            pushed = {"commit": payload.get("commit"), "main": payload.get("main"), "ts": event.get("ts")}
+    pushed = code_repository.last_push(project, events)
     return {"settled": bool(remote), "repository": remote.get("repository"), "url": remote.get("url"),
             "visibility": record.get("visibility"), "shape": record.get("shape"), "license": record.get("license"),
             "last_push": pushed}
@@ -406,12 +401,23 @@ def _methods(project):
             "no_code": [{key: entry.get(key) for key in ("passage", "heading", "named", "why")} for entry in record.get("not_reproduced") or []]}
 
 
+# How often Paper's and Inherited's tags move with no file moving, so a reference's give-up time reaches the page.
+REFERENCES_TICK_S = 60
+
+
 def paper_snapshot(project):
-    """What Paper and Inherited read outside the ledger's snapshot: the section files, whose stamps the views show, and the
-    day, which turns a retried reference into one given up with no file moving."""
+    """What Paper reads outside the ledger's snapshot: the section files (`section_snapshot`), and the minute: a retried
+    reference gives up at the moment its flag's days run out, with no file moving, so the tag moves each minute and
+    References shows it given up within one."""
     import time
+    return dict(section_snapshot(project), minute=int(time.time() // REFERENCES_TICK_S))
+
+
+def section_snapshot(project):
+    """The `(mtime_ns, size)` of each section file, which the ledger's snapshot does not scan: an owner's edit of one
+    moves no ledger file until the next render takes it in."""
     from wayline import sections
-    found = {"day": time.strftime("%Y-%m-%d")}
+    found = {}
     try:
         with os.scandir(Path(project) / RESEARCH / sections.SECTIONS_DIR) as entries:
             for entry in entries:
@@ -449,6 +455,15 @@ def _documents(project, problems):
     except (OSError, ValueError) as failure:
         problems.append("documents.json: %s" % failure)
         return []
+
+
+def _document_count(project, problems):
+    """How many documents the project holds, or None when `documents.json` cannot be read: not known is not none, so the
+    page still offers Inherited, which says why."""
+    found = []
+    held = _documents(project, found)
+    problems.extend(found)
+    return None if found else len(held)
 
 
 def _document_path(project, document):
@@ -494,13 +509,12 @@ def _words(text):
     return " ".join(provenance.strip_tags(str(text or "")).split())
 
 
-def _claim_rows(project, problems):
+def _claim_rows(project, passages, problems):
     """The inherited claims standing now: each Results claim of an inherited result with its standing, its verdict, and
-    its route (`verification.claim_rows`), then the other sections' claims, which no verification reaches, with their
-    standing. Each by the passage that holds it now, which its link opens."""
+    its route (`verification.claim_rows`), followed wherever it went, then the other sections' claims, which no
+    verification reaches, with their standing. Each once, by the passage that holds it now, which its link opens."""
     from wayline import sections, verification
     try:
-        passages = {item.get("id"): item for item in sections.read_passages(project)}
         followed = verification.claim_rows(project)
     except (OSError, ValueError) as failure:
         problems.append("the inherited claims: %s" % failure)
@@ -508,20 +522,24 @@ def _claim_rows(project, problems):
     rows = []
     for row in followed:
         passage = passages.get(row["current"]) or {}
-        rows.append({"id": row["current"], "claim": row["claim"], "section": sections.RESULTS, "heading": row["heading"],
-                     "text": _words(passage.get("text")), "standing": row["standing"], "reason": row["reason"],
-                     "verdict": row["verdict"], "route": row["route"], "ticket": row["ticket"], "by": row["by"]})
+        rows.append({"id": row["current"], "claim": row["claim"], "section": passage.get("section") or sections.RESULTS,
+                     "heading": passage.get("heading") or row["heading"], "result": row["heading"], "text": _words(passage.get("text")),
+                     "standing": row["standing"], "reason": row["reason"], "verdict": row["verdict"], "route": row["route"],
+                     "ticket": row["ticket"], "by": row["by"]})
+    listed = {row["id"] for row in rows}
     for section in sections.INHERITED:
         if section == sections.RESULTS:
             continue
         try:
-            standing = sections.current_ids(project, section)
+            items = sections.section_items(project, section)
+            standing = {item.get("id") for item in sections.arrange(items).current()}
         except (OSError, ValueError) as failure:
             problems.append("%s: %s" % (sections.TITLES[section], failure))
             continue
-        for item in sections.section_items(project, section):
-            if item.get("id") in standing and sections.is_inherited(item) and item.get("standing") in sections.STANDINGS:
-                rows.append({"id": item["id"], "claim": item["id"], "section": section, "heading": item.get("heading"),
+        for item in items:
+            if (item.get("id") in standing and item.get("id") not in listed and sections.is_inherited(item)
+                    and item.get("standing") in sections.STANDINGS):
+                rows.append({"id": item["id"], "claim": item["id"], "section": section, "heading": item.get("heading"), "result": None,
                              "text": _words(item.get("text")), "standing": item["standing"],
                              "reason": item.get("reason") if item["standing"] == sections.UNVERIFIABLE else None,
                              "verdict": None, "route": None, "ticket": None, "by": None})
@@ -533,15 +551,15 @@ def pair_id(first, second):
     return "%s+%s" % (first, second)
 
 
-def _pairs(project, problems):
+def _pairs(project, passages, problems):
     """`(contradictions, merges)` of the repeated-claims check (ticket 95), each pair by its id with both claims' words."""
-    from wayline import repeats, sections
+    from wayline import repeats
     try:
-        passages = {item.get("id"): item for item in sections.read_passages(project)}
         contradicting, merged = repeats.contradictions(project), repeats.merges(project)
     except (OSError, ValueError) as failure:
         problems.append("the repeated claims: %s" % failure)
         return [], []
+
     def row(entry):
         texts = [_words((passages.get(entry[side]) or {}).get("text")) for side in ("a", "b")]
         return dict(entry, id=pair_id(entry["a"], entry["b"]), texts=texts)
@@ -565,13 +583,19 @@ def inherited_view(project):
     """The Inherited view, or None for a project with no documents: the documents and their headings, the concerns, the
     inherited claims with their standing, verdict, and route, the unverifiable ones with their reasons, the contradicting
     pairs, the setup's merges, and the missing material with the owner's replies."""
+    from wayline import sections
     project = Path(project).resolve()
     problems = []
     held = _documents(project, problems)
     if not held and not problems:
         return None
-    claims = _claim_rows(project, problems)
-    contradictions, merges = _pairs(project, problems)
+    try:  # read once for the claims and the pairs
+        passages = {item.get("id"): item for item in sections.read_passages(project)}
+    except (OSError, ValueError) as failure:
+        problems.append("passages.jsonl: %s" % failure)
+        passages = {}
+    claims = _claim_rows(project, passages, problems)
+    contradictions, merges = _pairs(project, passages, problems)
     return {
         "documents": _document_rows(project, held),
         "concerns": _concern_rows(project, problems),
@@ -650,7 +674,7 @@ def project_summary(project, snapshot=None):
         events = _events(project, problems)
         view = _account(project, problems, events) or {}
         held = (snapshot, {"standing": view.get("stands"), "runs": _runs(events), "waiting": view.get("waiting"),
-                           "documents": len(_documents(project, problems)), "problems": problems})
+                           "documents": _document_count(project, problems), "problems": problems})
         if snapshot is not None:
             _SUMMARIES[str(project)] = held
     summary = held[1]
@@ -786,16 +810,25 @@ def _passage_item(project, identifier):
     from wayline import sections
     if "+" in identifier:
         return _pair_item(project, identifier)
-    passage = next((item for item in sections.read_passages(project) if item.get("id") == identifier), None)
+    passages = sections.read_passages(project)
+    passage = next((item for item in passages if item.get("id") == identifier), None)
     if passage is None:
         return None
-    section = passage.get("section")
     claim = sections.is_inherited(passage) and passage.get("standing") in sections.STANDINGS
-    status = passage.get("standing") if claim else None
-    if identifier not in sections.current_ids(project, section):
-        status = "replaced"
+    status, shown = (passage.get("standing") if claim else None), passage
+    later = [item for item in passages + sections.read_findings(project) if item.get("replaces") == identifier]
+    if later:
+        # Replaced: by this project's evidence (a verdict on an inherited claim), or by a later word. It opens where the
+        # replacement stands, unless a withdrawal took it out of the section.
+        replacement = next((item for item in later if not sections.is_inherited(item) and item.get("evidence")), later[-1])
+        status = "verified" if claim and replacement.get("evidence") and not sections.is_inherited(replacement) else "replaced"
+        if not replacement.get("withdrawn"):
+            shown = dict(replacement, section=replacement.get("section") or sections.RESULTS)
+    else:
+        replacement = None
     return _item("claim" if claim else "passage", INHERITED_VIEW if claim else PAPER_VIEW, identifier, _clip(_words(passage.get("text"))),
-                 "%s/%s" % (RESEARCH, sections.section_path(section)), focus=passage.get("heading"), status=status)
+                 "%s/%s" % (RESEARCH, sections.section_path(shown.get("section"))), focus=shown.get("heading"), status=status,
+                 replaced_by=(replacement or {}).get("id"))
 
 
 # A pair's kind by what came of it: a merge (standing, or split by the owner since) or a contradiction (or one dismissed).
@@ -805,7 +838,11 @@ _PAIR_KINDS = {"merged": "merge", "split": "merge", "split_late": "merge", "cont
 def _pair_item(project, identifier):
     from wayline import repeats, sections
     first, second = identifier.split("+")
-    entry = next((entry for entry in repeats.read_record(project)["pairs"] if (entry["a"], entry["b"]) == (first, second)), None)
+    try:
+        held = repeats.read_record(project)["pairs"]
+    except (OSError, ValueError):  # the Inherited view says why; a link to a pair it cannot read names nothing
+        return None
+    entry = next((entry for entry in held if (entry["a"], entry["b"]) == (first, second)), None)
     if entry is None:
         return None
     passages = {item.get("id"): item for item in sections.read_passages(project)}

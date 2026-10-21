@@ -1556,7 +1556,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self._json(dashboard_views.run_view(path), tag)
 
     def api_paper(self, query, project):
-        """The Paper view (ticket 111), tagged by the ledger, the section files, and the day References' states turn on."""
+        """The Paper view (ticket 111), tagged by the ledger, the section files, and the minute a reference gives up at."""
         path = self._project(project)
         tag = etag("paper", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
                    dashboard_views.paper_snapshot(path))
@@ -1568,7 +1568,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """The Inherited view (ticket 111), tagged by the ledger and the section files; a project with no documents has none."""
         path = self._project(project)
         tag = etag("inherited", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
-                   dashboard_views.paper_snapshot(path))
+                   dashboard_views.section_snapshot(path))
         if self._not_modified(tag):
             return None
         view = dashboard_views.inherited_view(path)

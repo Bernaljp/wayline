@@ -107,6 +107,9 @@ class PaperViewTest(MidwayServedCase):
         self.assertIn("no code under `code/`", missing["why"])
 
     def test_an_unchanged_ledger_answers_304_and_an_owners_edit_of_a_section_moves_the_tag(self):
+        from unittest import mock
+        from wayline import dashboard_views
+        self.enterContext(mock.patch.object(dashboard_views, "REFERENCES_TICK_S", 10 ** 9))  # no minute turns mid-test
         for route in ("/paper", "/inherited"):
             with self.subTest(route=route):
                 first = self.api(route)
@@ -173,6 +176,19 @@ class InheritedViewTest(MidwayServedCase):
         self.assertNotIn("P10", claims, "a Methods sentence that claims nothing is no claim")
         self.assertNotIn("P1", claims, "the merge's first occurrence stands as the merged passage")
 
+    def test_a_results_claim_moved_to_discussion_is_listed_once_where_it_stands(self):
+        moved = inherited.move_passage(self.project, "P12", "discussion")["id"]
+        claims = [claim for claim in self.api("/inherited").json["claims"] if claim["claim"] == "P12" or claim["id"] == moved]
+        self.assertEqual([(claim["id"], claim["section"]) for claim in claims], [(moved, "discussion")])
+
+    def test_an_unreadable_documents_record_still_offers_the_view_which_says_why(self):
+        (self.project / "research" / "documents.json").write_text("{not json", encoding="utf-8")
+        [entry] = self.get("/api/projects").json["projects"]
+        self.assertIsNone(entry["documents"], "not known, which is not none: the page still offers Inherited")
+        view = self.api("/inherited")
+        self.assertEqual(view.status, 200)
+        self.assertTrue(any("documents.json" in problem for problem in view.json["problems"]))
+
     def test_the_unverifiable_claims_carry_their_reasons(self):
         view = self.api("/inherited").json
         claim = {claim["id"]: claim for claim in view["claims"]}[self.unverifiable]
@@ -229,6 +245,20 @@ class ItemLinkTest(MidwayServedCase):
         passage = self.item("P10").json
         self.assertEqual((passage["kind"], passage["view"], passage["path"], passage["focus"]),
                          ("passage", "paper", "research/sections/methods.md", "Methods"))
+
+    def test_a_verified_claim_opens_with_its_verdict_and_what_replaced_it(self):
+        claim = self.item("P4").json
+        self.assertEqual((claim["kind"], claim["view"], claim["status"], claim["replaced_by"]), ("claim", "inherited", "verified", "t7-a1-f1"))
+
+    def test_an_owners_reason_for_a_parameter_stands_as_a_passage_of_methods(self):
+        reason = sections.add_owners_passage(self.ledger, "methods", "Parameters", "A fourth order keeps the band flat.",
+                                             parameter="scipy.signal.butter:N")["id"]
+        passage = self.item(reason).json
+        self.assertEqual((passage["kind"], passage["view"], passage["status"]), ("passage", "paper", None))
+
+    def test_a_pair_record_that_cannot_be_read_is_not_found_rather_than_an_error(self):
+        (self.project / "research" / "repeats.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(self.item("P5+P11").status, 404)
 
     def test_a_document_a_concern_and_a_missing_item_open_their_files_over_inherited(self):
         self.assertEqual(self.opens("D1"), ("document", "inherited", "research/documents/D1/text.md"))

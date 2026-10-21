@@ -1519,11 +1519,15 @@ function captionOf(caption) {
   return [fields([['purpose', caption.purpose], ['data', caption.data], ['what it shows', caption.shows]])];
 }
 
-// The heading an item link names inside its file (`O3` in OBJECTIVES.md, `R4` in REPORT.md), scrolled to the top.
+// The heading an item link names inside its file, scrolled to the top: an id (`O3` in OBJECTIVES.md, `R4` in
+// REPORT.md) leading its heading, or a passage's heading as written. A heading that is the name exactly wins over one
+// it only leads, and one under the file's title over the title, so a passage under "Results" lands at its `## Results`.
 function focusHeading(node, id) {
-  const heading = [...node.querySelectorAll('h1, h2, h3, h4')].find((candidate) => {
+  const headings = [...node.querySelectorAll('h2, h3, h4'), ...node.querySelectorAll('h1')];
+  const exact = headings.find((candidate) => candidate.textContent.trim() === id);
+  const heading = exact || headings.find((candidate) => {
     const text = candidate.textContent.trim();
-    return text === id || text.startsWith(`${id} `) || text.startsWith(`${id}.`) || text.startsWith(`${id}:`);
+    return text.startsWith(`${id} `) || text.startsWith(`${id}.`) || text.startsWith(`${id}:`);
   });
   if (heading && heading.scrollIntoView) heading.scrollIntoView({ block: 'start' });
 }
@@ -2160,10 +2164,11 @@ const READING = {
   'inherited-material-body': 'reading the missing material',
 };
 
-// Whether a project offers Inherited: only one with documents does (decision 17).
+// Whether a project offers Inherited: only one with documents does (decision 17). A count not known (its record
+// could not be read) still offers it, and the view says why.
 function offersInherited(id) {
   const entry = state.projects.find((project) => project.id === id);
-  return Boolean(entry && entry.documents);
+  return Boolean(entry && entry.readable && !entry.read_only && entry.documents !== 0);
 }
 
 function routeTo(project, viewOrItem) {
