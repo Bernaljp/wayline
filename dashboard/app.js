@@ -45,6 +45,7 @@ const state = {
   projectsLoaded: false, // whether /api/projects has answered once, so a route naming a project can be applied
   research: null, // { project, view } of the last Research view read, for the dot of the report the owner opens
   waiting: 0, // the selected project's "Waiting on you" count, which the browser tab's title carries
+  seeing: null, // { project, item } of a report opened before Research was read, to mark seen once it is
 
   pollJournal: 2,
   pollViews: 5,
@@ -432,6 +433,13 @@ async function loadProjects() {
   }));
   state.projectsLoaded = true;
   if (state.view === 'projects') renderProjectsPage();
+  if (state.project && !state.projects.some((project) => project.id === state.project && project.readable)) {
+    // The project open here was unregistered or its path is gone: its polls would only fail, so the page moves to the
+    // default route, the active project's Research or the projects page.
+    state.project = null;
+    history.replaceState(null, '', location.pathname + location.search);
+    routing.done = false;
+  }
   if (!routing.done) route();
 }
 
@@ -1459,7 +1467,8 @@ async function openViewer(path, options) {
   if (!dialog.open) dialog.showModal();
   if (opts.rows) {
     const [head, ...rows] = opts.rows;
-    replace(shown, [tableOrNone(head || [], rows, 'the table has no rows'), ...captionOf(opts.caption)]);
+    const table = opts.unreadable ? emptyState(`${path} could not be read`) : tableOrNone(head || [], rows, 'the table has no rows');
+    replace(shown, [table, ...captionOf(opts.caption)]);
     return;
   }
   if (PREVIEWABLE_IMAGE.test(path)) {
@@ -2139,7 +2148,9 @@ function go(hash) {
 function route() {
   let target = parseRoute(location.hash);
   if (target === null) {
-    if (location.hash && location.hash !== '#') return; // not a route of ours
+    // Not a route of ours (`#ticket/3`, a fragment a rendered file linked to): left alone once a view is shown, and
+    // replaced by the default route on a page that has shown none yet, so a stray hash never leaves the page blank.
+    if (location.hash && location.hash !== '#' && routing.done) return;
     if (!state.projectsLoaded) return; // the default needs the projects: applied once they are read
     // No route yet: the active project's Research, else the projects page. Replaced, not pushed, so back leaves the page.
     const first = state.projects.find((project) => project.active && project.readable) || state.projects.find((project) => project.readable);
@@ -2231,7 +2242,7 @@ async function openItem(project, id, landed) {
   showView(item.view);
   // `R4 Does the loss fall?`, but `The account` alone: a word id says nothing its title does not.
   const title = !item.title ? item.id : /^[A-Z0-9]/.test(item.id) ? `${item.id} ${item.title}` : item.title;
-  openViewer(item.path, { title, focus: item.focus, caption: item.caption, rows: item.rows });
+  openViewer(item.path, { title, focus: item.focus, caption: item.caption, rows: item.rows, unreadable: item.unreadable });
   seeReport(project, item);
 }
 
@@ -2273,7 +2284,11 @@ function isNew(project, name, sha) {
 // The report an opened item is, and its hash, from the Research view last read; the dot goes once it is seen.
 function seeReport(project, item) {
   const held = state.research && state.research.project === project ? state.research.view : null;
-  if (!held) return;
+  if (!held) {
+    // Landed from a notice: the item came back before Research did, so it is seen once Research is read.
+    state.seeing = { project, item };
+    return;
+  }
   let name = null;
   let sha = null;
   if (item.id === 'report') {
@@ -2436,6 +2451,9 @@ async function loadResearch() {
     if (!view || project !== state.project) return;
     state.research = { project, view };
     renderResearch(view, project);
+    const seeing = state.seeing;
+    state.seeing = null;
+    if (seeing && seeing.project === project) seeReport(project, seeing.item);
   } catch (failure) {
     if (project === state.project) replace(document.getElementById('general-body'), [errorState(failure)]);
   }

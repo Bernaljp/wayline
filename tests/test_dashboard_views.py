@@ -280,6 +280,68 @@ class WaitingStripTest(DrawnProjectCase):
                          "the tabs' counts move with the ledger of every project")
 
 
+class LivenessTest(DrawnProjectCase):
+    """What a process's death changes without touching a file still reaches the page: the tags carry it."""
+
+    def test_a_conductor_taking_the_lock_moves_the_projects_tag(self):
+        import fcntl
+        import os
+        first = self.get("/api/projects")
+        self.assertFalse(first.json["projects"][0]["run_state"]["conductor"])
+        heartbeat = self.project / "research" / "conductor.json"
+        heartbeat.write_text("{}", encoding="utf-8")
+        second = self.get("/api/projects")
+        fd = os.open(heartbeat, os.O_RDONLY)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        held = self.get("/api/projects", {"If-None-Match": second.etag})
+        self.assertEqual(held.status, 200, "a conductor that took the lock reaches the projects page")
+        self.assertTrue(held.json["projects"][0]["run_state"]["conductor"])
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        gone = self.get("/api/projects", {"If-None-Match": held.etag})
+        self.assertEqual(gone.status, 200, "a conductor that died with the file untouched reaches the projects page")
+        self.assertFalse(gone.json["projects"][0]["run_state"]["conductor"])
+
+    def test_a_mover_that_died_with_its_marker_left_moves_the_run_tag(self):
+        import os
+        import subprocess
+        mover = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(mover.wait)
+        self.addCleanup(mover.kill)
+        marker = self.project / ".wayline" / "env-move.json"
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text(json.dumps({"from": "shared", "to": "conda", "started": "2026-10-21T10:00:00Z", "pid": mover.pid}), encoding="utf-8")
+        under_way = self.api("/run")
+        self.assertIsNotNone(under_way.json["software"]["environment"]["move"])
+        mover.kill()
+        mover.wait()
+        after = self.api("/run", {"If-None-Match": under_way.etag})
+        self.assertEqual(after.status, 200)
+        self.assertIsNone(after.json["software"]["environment"]["move"])
+        self.assertTrue(os.path.exists(marker), "the marker was never touched")
+
+
+class RobustnessTest(DrawnProjectCase):
+    """What cannot be read is said in `problems`, and the rest of the view, or of the tab list, still answers."""
+
+    def test_a_results_record_that_cannot_be_read_leaves_the_rest_of_research_standing(self):
+        from unittest import mock
+        with mock.patch("wayline.results.read_results", side_effect=ValueError("results.json is not the record code writes")):
+            view = self.api("/research")
+        self.assertEqual(view.status, 200)
+        self.assertEqual([objective["id"] for objective in view.json["objectives"]], ["O1"])
+        self.assertTrue(view.json["problems"])
+
+    def test_a_project_whose_account_fails_still_leaves_every_tab_listed(self):
+        from unittest import mock
+        with mock.patch("wayline.account.account_view", side_effect=RuntimeError("a broken ledger")):
+            listed = self.get("/api/projects")
+        self.assertEqual(listed.status, 200)
+        [entry] = listed.json["projects"]
+        self.assertIsNone(entry["waiting"])
+        self.assertIn("a broken ledger", entry["problem"])
+
+
 class ProjectsPageTest(DrawnProjectCase):
     def test_each_project_has_the_accounts_standing_line_its_run_state_and_its_waiting_count(self):
         [entry] = self.get("/api/projects").json["projects"]
@@ -346,6 +408,21 @@ class ItemLinkTest(DrawnProjectCase):
     def test_the_account_opens_over_run(self):
         item = self.item("account").json
         self.assertEqual((item["kind"], item["view"], item["path"]), ("account", "run", "research/ACCOUNT.md"))
+
+    def test_a_report_or_an_account_not_rendered_yet_is_not_found(self):
+        for identifier, path in (("report", "REPORT.md"), ("account", "ACCOUNT.md")):
+            with self.subTest(identifier=identifier):
+                (self.project / "research" / path).unlink()
+                self.assertEqual(self.item(identifier).status, 404)
+
+    def test_a_tables_blank_lines_are_left_out_as_its_report_leaves_them_and_an_unreadable_csv_says_so(self):
+        csv_path = self.project / self.item("R1.T1").json["path"]
+        csv_path.write_text("seed,auroc\n\n1,0.71\n", encoding="utf-8")
+        item = self.item("R1.T1").json
+        self.assertEqual((item["rows"], item["unreadable"]), ([["seed", "auroc"], ["1", "0.71"]], False))
+        csv_path.unlink()
+        item = self.item("R1.T1").json
+        self.assertEqual((item["rows"], item["unreadable"]), ([], True))
 
     def test_an_unknown_id_answers_404_with_a_line_to_show_not_an_error_page(self):
         for identifier in ("R99", "O7", "R1.9", "R1-4", "77", "nonsense", "..%2Fharness.json"):

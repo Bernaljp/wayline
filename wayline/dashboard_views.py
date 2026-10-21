@@ -26,7 +26,6 @@ journaled. The page keeps, in its own browser, the hash each report had when the
 report whose hash moved with a dot. A renewed report notifies nowhere: nothing here or in the renders sends a notice.
 """
 
-import csv
 import re
 from pathlib import Path
 
@@ -215,10 +214,13 @@ def research_view(project):
     problems = []
     events = _events(project, problems)
     renders = _renders(events)
-    index = reports.Index(project)
-    plots = _plots(project, index)
+    try:
+        index = reports.Index(project)
+        results = _result_rows(project, index, _plots(project, index), renders)
+    except (OSError, ValueError) as failure:  # the objectives and the general report still show
+        problems.append("the results and their drawings: %s" % failure)
+        results = []
     general = renders.get("general") or {}
-    results = _result_rows(project, index, plots, renders)
     records = _read_objectives(project, problems)
     held = {record.get("id") for record in records}
     return {
@@ -257,27 +259,26 @@ def run_view(project):
     problems = []
     events = _events(project, problems)
     view = _account(project, problems, events) or {}
+    from wayline.tools import Tools
+    tools = Tools()
     return {
         "account": {"path": ACCOUNT_MD, "exists": (project / ACCOUNT_MD).is_file(), "decided": view.get("decided"),
                     "waiting": view.get("waiting")},
-        "software": {"tools": _tools(), "matlab": _matlab(events), "environment": _environment(project, problems)},
+        "software": {"tools": _tools(tools), "matlab": _matlab(events, tools), "environment": _environment(project, problems)},
         "problems": problems,
     }
 
 
-def _tools():
-    from wayline.tools import Tools
-    record = Tools()
+def _tools(record):
     return [dict({"name": name}, **{key: (record.entry(name) or {}).get(key) for key in ("version", "installer", "executable", "route")})
             for name in record.names()]
 
 
-def _matlab(events):
+def _matlab(events, tools):
     """MATLAB as `tools.json` records it, and the outcome of its last `matlab -batch "ver"` check; None when neither is there."""
     from wayline.ledger import TOOL_INSTALLED
     from wayline.software import MATLAB
-    from wayline.tools import Tools
-    entry = Tools().entry(MATLAB)
+    entry = tools.entry(MATLAB)
     check = None
     for event in events:
         payload = event.get("payload") or {}
@@ -301,6 +302,13 @@ def _environment(project, problems):
     place = environment.place(project, setting)
     return {"setting": setting, "place": place.relative_to(project).as_posix() if place else None,
             "move": environment.move_in_progress(project)}
+
+
+def move_alive(project):
+    """The move under way, which `move_in_progress` reads only while its mover lives: no file moves when one dies, so
+    Run's tag carries this too."""
+    from wayline import environment
+    return environment.move_in_progress(project)
 
 
 # --- "Waiting on you" and the projects page ----------------------------------------------------------------------
@@ -328,28 +336,50 @@ def waiting_view(project):
             "problems": problems}
 
 
-def run_state(project, events):
+def _runs(events):
     """Where the project's runs stand: `running` since a `run_started` no `run_ended` closed, else `ended` with its reason,
-    else `not started`; and whether a conductor holds the ledger now."""
-    from wayline.ledger import RUN_ENDED, RUN_STARTED, conductor_holder
+    else `not started`."""
+    from wayline.ledger import RUN_ENDED, RUN_STARTED
     state = {"state": "not started", "since": None, "reason": None}
     for event in events:
         if event.get("event") == RUN_STARTED:
             state = {"state": "running", "since": event.get("ts"), "reason": None}
         elif event.get("event") == RUN_ENDED:
             state = {"state": "ended", "since": event.get("ts"), "reason": (event.get("payload") or {}).get("reason")}
-    state["conductor"] = conductor_holder(project) is not None
     return state
 
 
-def project_summary(project):
-    """The projects page's row for one current project: the account's standing line, the run state, the waiting count."""
+def conductor_alive(project):
+    """Whether a conductor holds the project's lock now: no file moves when one dies, so a view's tag carries this too."""
+    from wayline.ledger import conductor_holder
+    try:
+        return conductor_holder(project) is not None
+    except OSError:  # a heartbeat that cannot be opened names no conductor the page can show
+        return False
+
+
+# The account's part of each project's row, by project, with the ledger snapshot it was read under: the projects page is
+# polled every few seconds by every open page, and one project's journal moving must not re-read every other account.
+_SUMMARIES = {}
+
+
+def project_summary(project, snapshot=None):
+    """The projects page's row for one current project: the account's standing line, the run state, the waiting count.
+
+    `snapshot` is the project's ledger snapshot: the account's part is read again only once it moved. Whether a
+    conductor holds the project is asked at every call, since no file moves when one dies."""
     project = Path(project).resolve()
-    problems = []
-    events = _events(project, problems)
-    view = _account(project, problems, events) or {}
-    return {"standing": view.get("stands"), "run_state": run_state(project, events), "waiting": view.get("waiting"),
-            "problems": problems}
+    held = _SUMMARIES.get(str(project))
+    if snapshot is None or held is None or held[0] != snapshot:
+        problems = []
+        events = _events(project, problems)
+        view = _account(project, problems, events) or {}
+        held = (snapshot, {"standing": view.get("stands"), "runs": _runs(events), "waiting": view.get("waiting"), "problems": problems})
+        if snapshot is not None:
+            _SUMMARIES[str(project)] = held
+    summary = held[1]
+    return {"standing": summary["standing"], "run_state": dict(summary["runs"], conductor=conductor_alive(project)),
+            "waiting": summary["waiting"], "problems": list(summary["problems"])}
 
 
 _ASKED = re.compile(r"#([1-9][0-9]*)\Z")
@@ -369,7 +399,9 @@ def decision_kind(project, origin, read=None):
     if tool is not None:
         from wayline.tools import Tools
         name, gap = tool
-        entry = read.setdefault("tools", Tools()).entry(name)
+        if "tools" not in read:
+            read["tools"] = Tools()
+        entry = read["tools"].entry(name)
         return "software", {"tool": name, "gap": gap, "licensed": name in software.LICENSED, "recorded": bool(entry),
                             "version": (entry or {}).get("version")}
     objective = stopping.frontier_objective(origin)
@@ -431,10 +463,10 @@ def item_view(project, item):
     project = Path(project).resolve()
     if not ITEM_ID.match(str(item or "")):
         return None
-    if item == "report":
-        return _item("report", RESEARCH_VIEW, item, "The general report", REPORT_MD)
+    if item == "report":  # a file not rendered yet is no item: the page says "not found", not an error
+        return _item("report", RESEARCH_VIEW, item, "The general report", REPORT_MD) if (project / REPORT_MD).is_file() else None
     if item == "account":
-        return _item("account", RUN_VIEW, item, "The account", ACCOUNT_MD)
+        return _item("account", RUN_VIEW, item, "The account", ACCOUNT_MD) if (project / ACCOUNT_MD).is_file() else None
     if item.isdigit():
         return _ticket_item(project, int(item))
     if item.startswith("O"):
@@ -494,16 +526,10 @@ def _plot_item(project, identifier):
     if plot is None or entry is None:
         return None
     if kind == "table":
+        rows = reports.read_rows(project / str(entry.get("csv") or ""))
         return _item("table", RESEARCH_VIEW, identifier, entry.get("data_view") or identifier, entry.get("csv"), status=plot.get("status"),
-                     rows=_rows(project / str(entry.get("csv") or "")),
+                     rows=(rows or [])[:TABLE_ROWS], unreadable=rows is None,
                      caption={"purpose": entry.get("purpose"), "data": entry.get("data"), "shows": entry.get("shows")})
     return _item("plot", RESEARCH_VIEW, identifier, entry.get("chart_type") or identifier, entry.get("png"), status=plot.get("status"),
                  caption={"purpose": entry.get("purpose"), "data": entry.get("data"), "shows": entry.get("shows")})
 
-
-def _rows(path):
-    try:
-        with path.open(encoding="utf-8", newline="") as handle:
-            return [row for _, row in zip(range(TABLE_ROWS), csv.reader(handle))]
-    except (OSError, ValueError, csv.Error):
-        return []

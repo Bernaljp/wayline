@@ -352,9 +352,13 @@ def _summary(path, entry):
     waiting count, whose count is also on its tab. None for a project that cannot be read or is of another version: an old
     project's account is not this release's to read."""
     if not entry["readable"] or entry["read_only"]:
-        return {"standing": None, "run_state": None, "waiting": None}
-    summary = dashboard_views.project_summary(path)
-    return {"standing": summary["standing"], "run_state": summary["run_state"], "waiting": summary["waiting"]}
+        return {"standing": None, "run_state": None, "waiting": None, "problem": None}
+    try:
+        summary = dashboard_views.project_summary(path, ledger_snapshot(path))
+    except Exception as failure:  # noqa: BLE001 - one project's ledger must never take every tab off the page
+        return {"standing": None, "run_state": None, "waiting": None, "problem": "%s: %s" % (type(failure).__name__, failure)}
+    return {"standing": summary["standing"], "run_state": summary["run_state"], "waiting": summary["waiting"],
+            "problem": "; ".join(summary["problems"]) or None}
 
 
 def _same(path, other):
@@ -1379,7 +1383,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Each tab carries its project's waiting count, so each project's ledger is part of the tag.
         ledgers = {entry["path"]: self.server.memo.get(("ledger", entry["path"]), lambda path=entry["path"]: ledger_snapshot(path))
                    for entry in entries if isinstance(entry, dict) and isinstance(entry.get("path"), str)}
-        tag = etag("projects", self.server.memo.get("projects", _pointer_snapshot), ledgers)
+        # A conductor that dies moves no file, so whether each one holds its project is part of the tag as well.
+        alive = {path: dashboard_views.conductor_alive(path) for path in ledgers}
+        tag = etag("projects", self.server.memo.get("projects", _pointer_snapshot), ledgers, alive)
         if self._not_modified(tag):
             return None
         return self._json(projects_view(active=active, entries=entries, settings=settings), tag)
@@ -1540,7 +1546,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """What Run adds to today's page (ticket 110): the account and Software, tagged by the ledger and the files Software reads."""
         path = self._project(project)
         tag = etag("run", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
-                   dashboard_views.software_snapshot(path))
+                   dashboard_views.software_snapshot(path), dashboard_views.move_alive(path))
         if self._not_modified(tag):
             return None
         return self._json(dashboard_views.run_view(path), tag)

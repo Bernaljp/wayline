@@ -31,7 +31,7 @@ from wayline import drawings, sections, tickets
 from wayline import results as results_module
 from wayline.ledger import REPORT_RENDERED, TICKET_CREATED, ledger_for, now_ts
 
-__all__ = ["REPORTS_DIR", "SINCE", "ReportError", "Index", "versions", "report_name", "report_path", "links", "plot_entries",
+__all__ = ["REPORTS_DIR", "SINCE", "ReportError", "Index", "versions", "report_name", "report_path", "links", "plot_entries", "read_rows",
            "render_reports", "ask_plot"]
 
 REPORTS_DIR = "reports"
@@ -129,12 +129,19 @@ def _explained(entry, image_root):
     return lines
 
 
-def _table(project, entry):
-    path = project / str(entry.get("csv") or "")
+def read_rows(path):
+    """A table's CSV as its rows, blank lines left out, or None when it cannot be read: what a report and the dashboard's
+    viewer (ticket 110) both show of a table."""
     try:
-        with path.open(encoding="utf-8", newline="") as handle:
-            rows = [row for row in csv.reader(handle) if row]
+        with open(path, encoding="utf-8", newline="") as handle:
+            return [row for row in csv.reader(handle) if row]
     except (OSError, UnicodeDecodeError, csv.Error):
+        return None
+
+
+def _table(project, entry):
+    rows = read_rows(project / str(entry.get("csv") or ""))
+    if rows is None:
         return ["(The CSV `%s` could not be read.)" % entry.get("csv")]
     if not rows:
         return ["(The CSV `%s` is empty.)" % entry.get("csv")]
