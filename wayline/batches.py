@@ -295,20 +295,23 @@ def take_defaults(project, batch_id, by=OWNER, via=None):
     return batch, [entry.item for entry in journaled]
 
 
-def acted_on(project, batch_id, item_ids):
-    """Say that a batch's producer acted on the marks of `item_ids`: a mark acted on is final, even one the dashboard gave.
+def acted_on(project, batch_id, acted):
+    """Say that a batch's producer acted on marks: `acted` is `{item number: the mark it acted on}`, and each mark acted on
+    is final, even one the dashboard gave.
 
-    The producer calls it once its act on a mark is done (a merge split, a concern placed, a plot retired), so a later
-    click in the marks view cannot change what was already done. An open item, or one stamped already, is left as it is.
-    Returns the numbers of the items stamped now; it journals nothing, since the act is journaled by its producer.
+    The producer calls it once its act on a mark is done (a merge split, a concern placed, a plot retired), or once it
+    knows it never will (the decision was answered another way), so a later click in the marks view cannot change what
+    was already done. An item whose mark is no longer the one the producer read (a click landed in between) is left
+    changeable, as is an open item or one stamped already. Returns the numbers of the items stamped now; it journals
+    nothing, since the act is journaled by its producer.
     """
-    wanted = {int(number) for number in item_ids}
+    wanted = {int(number): given for number, given in dict(acted).items()}
     ledger = ledger_for(project)
     with ledger.lock():
         batch = read_batch(ledger, batch_id)
         stamped, ts = [], now_ts()
         for item in batch["items"]:
-            if item["id"] in wanted and item["mark"] is not None and not item.get("acted"):
+            if item["id"] in wanted and item["mark"] is not None and item["mark"] == wanted[item["id"]] and not item.get("acted"):
                 item["acted"] = ts
                 stamped.append(item["id"])
         if stamped:

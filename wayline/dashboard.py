@@ -388,9 +388,8 @@ def ledger_snapshot(project):
     """One `(st_mtime_ns, st_size)` per ledger file: the change detection of decision 8.
 
     The directories scanned are the ones the read-only views read: `harness.json`, the files at the
-    root of `research/`, `research/tickets/`, `research/jobs/`, the evolve loop's `research/feedback/`
-    and `research/changes/` (ticket 45), and the marks view's `research/batches/` and `research/drawings/`
-    (ticket 112: a producer saying it acted on a mark moves only its batch). Session streams and job logs are
+    root of `research/`, `research/tickets/`, `research/jobs/`, and the evolve loop's `research/feedback/`
+    and `research/changes/` (ticket 45). Session streams and job logs are
     tailed by byte offset instead, which needs no snapshot. Dot files are skipped: they are the
     ledger's lock and the temp files an atomic write leaves for a few milliseconds, neither of which
     is content a view shows.
@@ -399,7 +398,7 @@ def ledger_snapshot(project):
     research = project / RESEARCH
     values = {}
     _stat_into(values, project / HARNESS_JSON, HARNESS_JSON)
-    for relative in ("", "tickets", "jobs", "feedback", "changes", "batches", "drawings"):
+    for relative in ("", "tickets", "jobs", "feedback", "changes"):
         prefix = "/".join(part for part in (RESEARCH, relative) if part)
         try:
             with os.scandir(research / relative) as entries:
@@ -1582,9 +1581,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self._json(view, tag)
 
     def api_marks(self, query, project):
-        """The marks view (ticket 112), tagged by the ledger, which holds the batches and the drawings their plots come from."""
+        """The marks view (ticket 112), tagged by the ledger and by the batch and drawing records, which the ledger's
+        snapshot does not scan: a producer saying it acted on a mark moves only its batch."""
         path = self._project(project)
-        tag = etag("marks", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        tag = etag("marks", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
+                   dashboard_views.marks_snapshot(path))
         if self._not_modified(tag):
             return None
         return self._json(dashboard_views.marks_view(path), tag)

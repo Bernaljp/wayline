@@ -915,11 +915,18 @@ def _batch_items(entries):
 
 
 def _acted_on_marks(book, plot_ids):
-    """Every settled mark on `plot_ids` steered this drawing (its brief, what it retired and carried): none changes now."""
+    """Every settled mark on `plot_ids` steered this drawing (its brief, what it retired and carried): none changes now.
+
+    A batch that cannot be read is passed over, as `plot_marks` passes it over: it never stops a drawing's acceptance."""
     from wayline import batches
-    for batch in batches.read_batches(book):
+    try:
+        held = batches.read_batches(book)
+    except (batches.BatchError, ValueError, OSError):
+        return
+    for batch in held:
         if batch["kind"] == PLOTS_BATCH:
-            taken = [item["id"] for item in batch["items"] if item["ref"] in plot_ids and item["mark"] is not None and not item.get("acted")]
+            taken = {item["id"]: item["mark"] for item in batch["items"]
+                     if item["ref"] in plot_ids and item["mark"] is not None and not item.get("acted")}
             if taken:
                 batches.acted_on(book, batch["id"], taken)
 

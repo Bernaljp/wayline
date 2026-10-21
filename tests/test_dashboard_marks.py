@@ -138,6 +138,13 @@ class MarksViewTest(MarksServedCase):
         batches.mark(self.project, self.review["id"], 1, "stand", via="conversation")
         self.assertEqual(self.api("/marks", {"If-None-Match": first.etag}).status, 200)
 
+    def test_a_producer_acting_moves_the_marks_tag_and_no_other_views(self):
+        batches.mark(self.project, self.review["id"], 1, "stand", via="dashboard")
+        marks, research = self.api("/marks"), self.api("/research")
+        batches.acted_on(self.project, self.review["id"], {1: "stand"})
+        self.assertEqual(self.api("/marks", {"If-None-Match": marks.etag}).status, 200, "only the batch file moved")
+        self.assertEqual(self.api("/research", {"If-None-Match": research.etag}).status, 304)
+
     def test_a_batch_link_names_its_project_as_the_dashboard_routes_it(self):
         self.assertEqual(batches.link(self.project, self.review["id"]), "#/%s/%s" % (self.project_id, self.review["id"]))
 
@@ -172,7 +179,7 @@ class MarkActionTest(MarksServedCase):
         answer = self.act({"batch": self.merges["id"], "item": 1, "mark": "split"})
         self.assertEqual(answer.status, 200, answer.body)
         self.assertEqual(self.on_disk(self.merges["id"])["items"][0]["mark"], "split")
-        batches.acted_on(self.project, self.merges["id"], [1])
+        batches.acted_on(self.project, self.merges["id"], {1: "split"})
         answer = self.act({"batch": self.merges["id"], "item": 1, "mark": "right"})
         self.assertEqual(answer.status, 400)
         self.assertIn("acted on", answer.json["error"])

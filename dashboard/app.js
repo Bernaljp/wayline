@@ -2921,8 +2921,12 @@ function markButtons(project, batch, item) {
       'aria-pressed': String(name === item.mark), title: name === item.default ? `${name}, its default` : null,
     });
     button.disabled = !(open || item.changeable);
-    // The note box keeps the focus, so a note typed and not left yet goes with this mark rather than on its own first.
-    button.addEventListener('mousedown', (event) => event.preventDefault());
+    // This item's note box keeps the focus, so a note typed and not left yet goes with this mark rather than on its own
+    // first; another item's box is left, which saves its note.
+    button.addEventListener('mousedown', (event) => {
+      const typing = noteInFocus();
+      if (typing && typing.key === itemKey(batch, item)) event.preventDefault();
+    });
     button.addEventListener('click', () => giveMark(project, batch, item, name));
     return button;
   }));
@@ -2936,8 +2940,10 @@ function noteBox(project, batch, item) {
   box.value = key in marks.notes ? marks.notes[key] : (item.note || '');
   box.disabled = readOnlyNow() || !(isOpen(item) || item.changeable);
   box.addEventListener('input', () => { marks.notes[key] = box.value; });
-  // A box a redraw takes away is not left by the owner: its note is not saved half typed.
-  box.addEventListener('change', () => { if (box.isConnected) saveNote(project, batch, item); });
+  // Saved when the owner leaves the box, whatever drew it: a box a redraw gave back the focus to fires no `change`, so
+  // leaving is the moment, and `unsavedNote` sends nothing the item holds already. A box a redraw takes away is not left
+  // by the owner: its note is not saved half typed.
+  box.addEventListener('blur', () => { if (box.isConnected) saveNote(project, batch, item); });
   return el('label', { class: 'mark-note-label' }, [el('span', { text: 'note' }), box]);
 }
 

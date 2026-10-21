@@ -16,7 +16,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "ref", "text", "marks", "default", "note", "mark", "by", "via", "at", "acted"],
+        "required": ["id", "ref", "text", "marks", "default", "note", "mark", "by", "at"],
         "additionalProperties": false,
         "properties": {
           "id": {"type": "integer", "minimum": 1, "description": "1 onward within the batch"},
@@ -27,9 +27,9 @@
           "note": {"type": ["string", "null"], "description": "the owner's note, kept with or without a mark"},
           "mark": {"type": ["string", "null"], "description": "the settled mark, null while the item is open"},
           "by": {"type": ["string", "null"], "enum": ["owner", "decider", null], "description": "who settled the item"},
-          "via": {"type": ["string", "null"], "enum": ["dashboard", "conversation", null], "description": "where the owner gave the settling mark: the dashboard's marks view or the conversation's `wayline mark` (ticket 112); null for the decider's, and for a mark code gave on another answer such as a decision ticket's"},
+          "via": {"type": ["string", "null"], "enum": ["dashboard", "conversation", null], "description": "where the owner gave the settling mark: the dashboard's marks view or the conversation's `wayline mark` (ticket 112; absent in a batch written before it, read as null); null for the decider's, and for a mark code gave on another answer such as a decision ticket's"},
           "at": {"type": ["string", "null"], "description": "when the item was settled, as the journal spells a timestamp"},
-          "acted": {"type": ["string", "null"], "description": "when the batch's producer acted on the settled mark (`wayline.batches.acted_on`), after which no click in the marks view changes it; null until then (ticket 112)"}
+          "acted": {"type": ["string", "null"], "description": "when the batch's producer acted on the settled mark (`wayline.batches.acted_on`), after which no click in the marks view changes it; null until then (ticket 112; absent in a batch written before it, read as null)"}
         }
       }
     }

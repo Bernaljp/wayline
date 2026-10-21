@@ -671,8 +671,9 @@ def take_marks(project):
     for batch in batches.read_batches(project):
         if batch["kind"] != PLACEMENTS:
             continue
+        acted = {}
         for item in batch["items"]:
-            if item["mark"] is None:
+            if item["mark"] is None or item.get("acted"):
                 continue
             record = read_record(project)
             try:
@@ -680,6 +681,7 @@ def take_marks(project):
             except ConcernError:
                 continue
             if concern["status"] != OPEN or is_sorted(concern):
+                acted[item["id"]] = item["mark"]  # sorted another way: nothing is left for the mark to do
                 continue
             parsed = _proposed_place(concern["proposed"]) if item["mark"] == TAKE_IT and concern.get("proposed") else \
                 parse_place(item["note"]) if item["mark"] == ANOTHER_PLACE else None
@@ -689,7 +691,9 @@ def take_marks(project):
                 changed += place(project, [concern["id"]], parsed, item["by"] or "owner", only_unsorted=True)
             except ConcernError:
                 continue
-            batches.acted_on(project, batch["id"], [item["id"]])  # placed: a later click in the marks view changes nothing
+            acted[item["id"]] = item["mark"]
+        if acted:  # placed: a later click in the marks view changes nothing
+            batches.acted_on(project, batch["id"], acted)
     return changed
 
 

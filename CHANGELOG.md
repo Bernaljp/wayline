@@ -981,11 +981,13 @@ lists it read-only, marked with its tag.
 
 - Where a mark was given, and when its producer acted on it (ticket 112). A batch item carries `via` (`dashboard` or
   `conversation`, null for the decider's and for a mark code gave on another answer) and `acted`, stamped by
-  `batches.acted_on` when the producer has done what the mark asks: a split merge, a dismissed contradiction, a placed
+  `batches.acted_on` when the producer has done what the mark asks (a split merge, a dismissed contradiction, a placed
   concern, merged results, a review taken, an objective change made or its ticket answered by the marks, the software
-  ask's decision answered, a drawing that took the plots' marks. `batches.mark` lets the owner's dashboard mark change
-  on a later dashboard mark until then, and refuses every other later answer as before, naming where the first was
-  given.
+  ask's decision answered, a drawing that took the plots' marks) or knows it never will (the decision answered another
+  way first, the concern sorted, the review superseded). It stamps only the mark the producer read, so a click that
+  landed in between stays the owner's to change. `batches.mark` lets the owner's dashboard mark change on a later
+  dashboard mark until then, and refuses every other later answer as before, naming where the first was given. A
+  batch file written before these fields is read with both null.
 
 
 ## v1.0.0 (2026-09-27)

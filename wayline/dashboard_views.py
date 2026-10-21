@@ -689,6 +689,22 @@ def _batch_row(batch, read):
             "items": [_mark_item(batch, item, read) for item in batch["items"]]}
 
 
+def marks_snapshot(project):
+    """The `(mtime_ns, size)` of each batch and drawing record, which Marks reads and the ledger's snapshot does not scan:
+    only Marks' tag moves with them, so a mark moves no other view's."""
+    found = {}
+    for folder in ("batches", "drawings"):
+        try:
+            with os.scandir(Path(project) / RESEARCH / folder) as entries:
+                for entry in entries:
+                    if not entry.name.startswith(".") and entry.is_file(follow_symlinks=False):
+                        stamp = entry.stat()
+                        found["%s/%s" % (folder, entry.name)] = (stamp.st_mtime_ns, stamp.st_size)
+        except OSError:
+            continue
+    return found
+
+
 def marks_view(project):
     """The Marks view: every open batch, oldest first, each with its unsettled count and its items whole (a plot's SVG with
     its three explanations, a merge's or a contradiction's two texts side by side, a proposal's reason, evidence,

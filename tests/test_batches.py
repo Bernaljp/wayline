@@ -245,12 +245,13 @@ class ChangeTest(BatchTestCase):
         self.plots()
         batches.mark(self.project, "B1", 1, "drop", via="dashboard")
         batches.mark(self.project, "B1", 2, "keep", via="dashboard")
-        self.assertEqual(batches.acted_on(self.project, "B1", [1, 3]), [1], "an open item is not acted on")
+        self.assertEqual(batches.acted_on(self.project, "B1", {1: "drop", 3: "keep"}), [1], "an open item is not acted on")
         self.assertRegex(self.on_disk("B1")["items"][0]["acted"], r"^\d{4}-")
         self.assertIsNone(self.on_disk("B1")["items"][2]["acted"])
         with self.assertRaisesRegex(batches.BatchError, "acted on"):
             batches.mark(self.project, "B1", 1, "keep", via="dashboard")
-        self.assertEqual(batches.acted_on(self.project, "B1", [1]), [], "acting twice stamps nothing new")
+        self.assertEqual(batches.acted_on(self.project, "B1", {1: "drop"}), [], "acting twice stamps nothing new")
+        self.assertEqual(batches.acted_on(self.project, "B1", {2: "drop"}), [], "a mark changed since the producer read it is not the one it acted on")
         batches.mark(self.project, "B1", 2, "maybe", via="dashboard")
         self.assertEqual(self.on_disk("B1")["items"][1]["mark"], "maybe", "an item not acted on still changes")
 
@@ -268,6 +269,18 @@ class ChangeTest(BatchTestCase):
         self.assertEqual([item["via"] for item in batch["items"]], ["dashboard", None, "dashboard"])
         batches.mark(self.project, "B1", 3, "keep", via="dashboard")
         self.assertEqual(self.on_disk("B1")["items"][2]["mark"], "keep")
+
+
+    def test_a_batch_written_before_the_marks_view_is_read_with_its_items_open_to_no_place(self):
+        self.plots(count=1)
+        path = self.project / "research" / "batches" / "B1.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        for item in record["items"]:
+            del item["via"], item["acted"]
+        path.write_text(json.dumps(record), encoding="utf-8")
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        batches.mark(self.project, "B1", 1, "drop", via="dashboard")
+        self.assertEqual((self.on_disk("B1")["items"][0]["mark"], self.on_disk("B1")["items"][0]["via"]), ("drop", "dashboard"))
 
 
 class TakeDefaultsTest(BatchTestCase):

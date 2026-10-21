@@ -796,6 +796,7 @@ class AnsweredInstallTest(SoftwareCase):
         self.assertEqual(self.jobs_written(), [], "the mark came first: Not now")
         [batch] = [batch for batch in batches.read_batches(self.project) if batch["decision"] == self.ask]
         self.assertEqual(batch["items"][0]["mark"], "decline")
+        self.assertTrue(batch["items"][0]["acted"], "the decision is answered: the mark does no more, so no click changes it")
         self.assertEqual(self.launched(), [1])
 
     def test_an_earlier_mark_is_the_answer_the_install_job_reads_too(self):

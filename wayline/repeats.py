@@ -601,16 +601,16 @@ def take_marks(project):
         for entry, given in _given(book, record, problems):
             if entry["outcome"] == CONTRADICTION and given == NOT_ONE:
                 entry.update(outcome=DISMISSED, flag=False)
-                acted.append(entry)
+                acted.append((entry, given))
             elif entry["outcome"] == MERGED and given == SPLIT_MARK:
-                acted.append(entry)
+                acted.append((entry, given))
                 problem = _split(book, record, entry, touched)
                 if problem is not None:
                     problems.append(problem)
         if acted:
             _save(book, record)
-            for entry in acted:  # settled for good: a later click in the marks view would change nothing done
-                batches.acted_on(book, entry["batch"], [entry["item"]])
+            for entry, given in acted:  # settled for good: a later click in the marks view would change nothing done
+                batches.acted_on(book, entry["batch"], {entry["item"]: given})
         if touched:
             sections.render_sections(book, only=sorted(touched))
     return problems
