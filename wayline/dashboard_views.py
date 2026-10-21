@@ -419,13 +419,19 @@ def section_snapshot(project):
     """The `(mtime_ns, size)` of each section file, which the ledger's snapshot does not scan: an owner's edit of one
     moves no ledger file until the next render takes it in."""
     from wayline import sections
+    return _stamps(Path(project) / RESEARCH / sections.SECTIONS_DIR)
+
+
+def _stamps(directory, prefix=""):
+    """`{prefix + name: (mtime_ns, size)}` of the files directly in `directory`, dot files left out; nothing when it is
+    not there. What a view's tag carries of files the ledger's snapshot does not scan."""
     found = {}
     try:
-        with os.scandir(Path(project) / RESEARCH / sections.SECTIONS_DIR) as entries:
+        with os.scandir(directory) as entries:
             for entry in entries:
                 if not entry.name.startswith(".") and entry.is_file(follow_symlinks=False):
                     stamp = entry.stat()
-                    found[entry.name] = (stamp.st_mtime_ns, stamp.st_size)
+                    found[prefix + entry.name] = (stamp.st_mtime_ns, stamp.st_size)
     except OSError:
         pass
     return found
@@ -644,11 +650,12 @@ def _plot_shown(drawn, ref):
 
 
 def _sides(passages, ref):
-    """The two passages a merge or a contradiction names (`P5+P11`), each with where it stands, to show side by side."""
+    """The two passages a merge or a contradiction names (`P5+P11`), each with where it stands, to show side by side: in
+    the viewer for a pair's link, in Marks for a merges or contradictions batch's item."""
     sides = []
     for side in ref.split("+"):
         passage = passages.get(side) or {}
-        sides.append({"id": side, "section": passage.get("section"), "heading": passage.get("heading"), "text": _words(passage.get("text")) or None})
+        sides.append({"id": side, "section": passage.get("section"), "heading": passage.get("heading"), "text": _words(passage.get("text"))})
     return sides
 
 
@@ -694,14 +701,7 @@ def marks_snapshot(project):
     only Marks' tag moves with them, so a mark moves no other view's."""
     found = {}
     for folder in ("batches", "drawings"):
-        try:
-            with os.scandir(Path(project) / RESEARCH / folder) as entries:
-                for entry in entries:
-                    if not entry.name.startswith(".") and entry.is_file(follow_symlinks=False):
-                        stamp = entry.stat()
-                        found["%s/%s" % (folder, entry.name)] = (stamp.st_mtime_ns, stamp.st_size)
-        except OSError:
-            continue
+        found.update(_stamps(Path(project) / RESEARCH / folder, folder + "/"))
     return found
 
 
@@ -712,12 +712,12 @@ def marks_view(project):
     marks given here may still change until their producer acts on them."""
     from wayline import batches, objective_changes, sections
     project = Path(project).resolve()
-    problems = []
-    try:
-        held = batches.read_batches(project)
-    except (OSError, ValueError) as failure:  # a batch file a hand broke: the view says why instead of failing
-        problems.append("the batches: %s" % failure)
-        held = []
+    problems, held = [], []
+    for identifier in batches.batch_ids(project):
+        try:
+            held.append(batches.read_batch(project, identifier))
+        except (OSError, ValueError) as failure:  # a batch file a hand broke: said, and the other batches still show
+            problems.append("batch %s: %s" % (identifier, failure))
     kinds = {batch["kind"] for batch in held}
     read = {"drawn": _drawn(project, problems) if "plots" in kinds else {}, "passages": {}, "proposals": {}}
     if kinds & {"merges", "contradictions"}:
@@ -968,11 +968,7 @@ def _pair_item(project, identifier):
     entry = next((entry for entry in held if (entry["a"], entry["b"]) == (first, second)), None)
     if entry is None:
         return None
-    passages = {item.get("id"): item for item in sections.read_passages(project)}
-    sides = []
-    for side in (first, second):
-        passage = passages.get(side) or {}
-        sides.append({"id": side, "section": passage.get("section"), "heading": passage.get("heading"), "text": _words(passage.get("text"))})
+    sides = _sides({item.get("id"): item for item in sections.read_passages(project)}, identifier)
     kind = _PAIR_KINDS.get(entry["outcome"], "pair")
     fields = [["why", entry.get("why")], ["outcome", entry["outcome"]]]
     if kind == "merge":

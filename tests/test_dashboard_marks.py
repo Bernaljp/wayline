@@ -145,6 +145,14 @@ class MarksViewTest(MarksServedCase):
         self.assertEqual(self.api("/marks", {"If-None-Match": marks.etag}).status, 200, "only the batch file moved")
         self.assertEqual(self.api("/research", {"If-None-Match": research.etag}).status, 304)
 
+    def test_a_batch_that_cannot_be_read_is_said_and_the_others_still_show(self):
+        (self.project / "research" / "batches" / ("%s.json" % self.software["id"])).write_text("{not json", encoding="utf-8")
+        view = self.marks()
+        self.assertEqual(len(view["batches"]), 7)
+        self.assertNotIn(self.software["id"], [batch["id"] for batch in view["batches"]])
+        [problem] = view["problems"]
+        self.assertTrue(problem.startswith("batch %s:" % self.software["id"]), problem)
+
     def test_a_batch_link_names_its_project_as_the_dashboard_routes_it(self):
         self.assertEqual(batches.link(self.project, self.review["id"]), "#/%s/%s" % (self.project_id, self.review["id"]))
 
@@ -172,6 +180,10 @@ class MarkActionTest(MarksServedCase):
         self.act({"batch": self.plots["id"], "item": 1, "mark": "maybe", "note": "a log axis"})
         item = self.on_disk(self.plots["id"])["items"][0]
         self.assertEqual((item["mark"], item["note"]), ("maybe", "a log axis"))
+        answer = self.act({"batch": self.plots["id"], "item": 1, "note": ""})
+        self.assertEqual(answer.status, 200, answer.body)
+        self.assertEqual((self.on_disk(self.plots["id"])["items"][0]["mark"], self.on_disk(self.plots["id"])["items"][0]["note"]),
+                         ("maybe", None), "an emptied note box takes the note away and leaves the mark")
 
     def test_a_second_click_changes_the_mark_until_its_producer_acts_on_it(self):
         self.act({"batch": self.merges["id"], "item": 1, "mark": "right"})

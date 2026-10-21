@@ -31,7 +31,7 @@ from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import K_BATCH, K_BY, K_ITEM, K_MARK, K_NOTE, MARKED, LedgerError, ledger_for, now_ts
 from wayline.project import ProjectError, find_project
 
-__all__ = ["KINDS", "WHOLE_AT", "VIA", "BatchError", "open_batch", "extend", "read_batch", "read_batches", "mark", "take_defaults", "marks",
+__all__ = ["KINDS", "WHOLE_AT", "VIA", "BatchError", "open_batch", "extend", "read_batch", "batch_ids", "read_batches", "mark", "take_defaults", "marks",
            "changeable", "acted_on", "link", "render", "mark_command"]
 
 SCHEMA = "batch"
@@ -235,7 +235,7 @@ def _save(ledger, batch, journaled):
         ledger.append_event(MARKED, payload, ts=entry.ts)
 
 
-def mark(project, batch_id, item_id, given, note=None, by=OWNER, via=None):
+def mark(project, batch_id, item_id, given, note=None, by=OWNER, via=None, clear_note=False):
     """Record the mark `given` on one item of a batch, with an optional `note`; returns the batch as written.
 
     The function the `mark` verb (`via` the conversation) and the dashboard's marks view (`via` the
@@ -244,11 +244,17 @@ def mark(project, batch_id, item_id, given, note=None, by=OWNER, via=None):
     has not acted on it (`changeable`): then the later one replaces it, the same mark again records
     nothing, and a note alone replaces the note. `given` None with a `note` keeps the note on the
     item and leaves it open. A blank note is no note. The last item settled closes the batch.
+
+    `clear_note` takes the item's note away, on an item a note could still be given on: the owner
+    emptying the note box. It takes no mark and no note, and is journaled as a `marked` whose note
+    is empty; an item with no note is left as it was.
     """
     _check_by(by)
     _check_via(via)
+    if clear_note and (given is not None or not _blank(note)):
+        raise BatchError("clearing a note takes no mark and no note")
     note = None if _blank(note) else note
-    if given is None and note is None:
+    if given is None and note is None and not clear_note:
         raise BatchError("nothing to record: give a mark or a note")
     ledger = ledger_for(project)
     with ledger.lock():
@@ -258,6 +264,12 @@ def mark(project, batch_id, item_id, given, note=None, by=OWNER, via=None):
             raise BatchError("%s; a later mark or note is refused" % _settled_by(batch, item))
         if given is not None and given not in item["marks"]:
             raise BatchError("item %d of %s (%s) takes %s, got %r" % (item["id"], batch["id"], batch["kind"], ", ".join(item["marks"]), given))
+        if clear_note:
+            if item["note"] is None:
+                return batch
+            item["note"] = None
+            _save(ledger, batch, [_Marked(item["id"], None, "", by, now_ts())])
+            return batch
         if given is not None and given == item["mark"]:
             given = None  # the same mark clicked again is no new answer
             if note is None or note == item["note"]:
@@ -308,7 +320,12 @@ def acted_on(project, batch_id, acted):
     wanted = {int(number): given for number, given in dict(acted).items()}
     ledger = ledger_for(project)
     with ledger.lock():
-        batch = read_batch(ledger, batch_id)
+        try:
+            batch = read_batch(ledger, batch_id)
+        except (BatchError, ValidationError, ValueError, OSError):
+            # A batch that cannot be read now is stamped nothing: the act is done and journaled by its producer, which
+            # must not fail for want of a stamp; the item stays changeable, as a mark that was never acted on would.
+            return []
         stamped, ts = [], now_ts()
         for item in batch["items"]:
             if item["id"] in wanted and item["mark"] is not None and item["mark"] == wanted[item["id"]] and not item.get("acted"):
@@ -325,10 +342,16 @@ def marks(project, batch_id):
     return [{"item": item["id"], "ref": item["ref"], "mark": item["mark"], "note": item["note"], "by": item["by"]} for item in batch["items"]]
 
 
+def batch_ids(project):
+    """The ids of the batches the project holds, B1 onward, in order, read or not: what a reader that passes over one it
+    cannot read (the marks view) walks."""
+    return ["B%d" % number for number in _numbers(ledger_for(project))]
+
+
 def read_batches(project, status=None):
     """Every batch the project holds in id order, or only those of one `status` (`open`, `closed`)."""
     ledger = ledger_for(project)
-    found = [read_batch(ledger, "B%d" % number) for number in _numbers(ledger)]
+    found = [read_batch(ledger, identifier) for identifier in batch_ids(ledger)]
     return [batch for batch in found if status is None or batch["status"] == status]
 
 

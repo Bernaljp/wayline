@@ -271,6 +271,31 @@ class ChangeTest(BatchTestCase):
         self.assertEqual(self.on_disk("B1")["items"][2]["mark"], "keep")
 
 
+    def test_a_batch_that_cannot_be_read_is_stamped_nothing_and_raises_nothing(self):
+        """Its producer has acted and journaled the act already: the stamp's failing must not fail it."""
+        self.plots(count=1)
+        batches.mark(self.project, "B1", 1, "keep", via="dashboard")
+        (self.project / "research" / "batches" / "B1.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(batches.acted_on(self.project, "B1", {1: "keep"}), [])
+        self.assertEqual(batches.acted_on(self.project, "B9", {1: "keep"}), [])
+
+    def test_an_emptied_note_box_takes_the_note_away(self):
+        self.plots()
+        batches.mark(self.project, "B1", 1, None, note="a log axis", via="dashboard")
+        batches.mark(self.project, "B1", 1, None, via="dashboard", clear_note=True)
+        self.assertIsNone(self.on_disk("B1")["items"][0]["note"])
+        self.assertEqual(self.marked_events()[-1]["payload"], {"batch": "B1", "item": 1, "note": "", "by": "owner"})
+        batches.mark(self.project, "B1", 1, None, via="dashboard", clear_note=True)
+        self.assertEqual(len(self.marked_events()), 2, "an item with no note is left as it was")
+        batches.mark(self.project, "B1", 2, "keep", note="the headline", via="dashboard")
+        batches.mark(self.project, "B1", 2, None, via="dashboard", clear_note=True)
+        self.assertEqual((self.on_disk("B1")["items"][1]["mark"], self.on_disk("B1")["items"][1]["note"]), ("keep", None))
+        batches.mark(self.project, "B1", 3, "drop", note="says nothing", via="conversation")
+        with self.assertRaisesRegex(batches.BatchError, "settled as drop"):
+            batches.mark(self.project, "B1", 3, None, via="dashboard", clear_note=True)
+        with self.assertRaisesRegex(batches.BatchError, "no mark and no note"):
+            batches.mark(self.project, "B1", 1, "keep", via="dashboard", clear_note=True)
+
     def test_a_batch_written_before_the_marks_view_is_read_with_its_items_open_to_no_place(self):
         self.plots(count=1)
         path = self.project / "research" / "batches" / "B1.json"

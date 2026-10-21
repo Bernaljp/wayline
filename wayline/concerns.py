@@ -665,6 +665,11 @@ def take_marks(project):
     `take it` takes the critic's proposal; `another place` takes the place the item's note names, and with none leaves
     the concern to be sorted. Returns the concerns changed.
     """
+    with ledger_for(project).lock():  # the marks read, placed, and stamped with no click of the marks view between
+        return _take_marks(project)
+
+
+def _take_marks(project):
     from wayline import batches
 
     changed = []

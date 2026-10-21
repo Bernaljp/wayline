@@ -2859,8 +2859,10 @@ const marks = {
   current: null, // `B1.2`, the item the phone's one screen shows
   order: [], // the open items as last drawn, so an item a click took out of them (its batch closed) hands on to the next
   focus: null, // the batch a link `#/<project>/B3` named, shown once the view is drawn
-  notes: {}, // `B1.2` -> a note typed and not saved yet, which a redraw keeps
-  saving: {}, // `B1.2` -> the note's save under way, which a mark clicked meanwhile waits for
+  unfolded: new Set(), // the settled batches the owner opened, which stay open through the redraws
+  // By `<project>/B1.2`, so a note typed in one project is still there when the owner comes back from another:
+  notes: {}, // a note typed and not saved yet, which a redraw keeps
+  saving: {}, // the note's save under way, which a mark clicked meanwhile waits for
 };
 
 async function loadMarks() {
@@ -2870,7 +2872,7 @@ async function loadMarks() {
     const view = await get(projectPath('/marks'), 'marks');
     if (project !== state.project) return;
     if (view) {
-      if (marks.project !== project) Object.assign(marks, { current: null, order: [], notes: {}, saving: {} });
+      if (marks.project !== project) Object.assign(marks, { current: null, order: [], unfolded: new Set() });
       Object.assign(marks, { project, view });
     }
     if (view || marks.focus) renderMarks();
@@ -2881,6 +2883,11 @@ async function loadMarks() {
 
 function itemKey(batch, item) {
   return `${batch.id}.${item.id}`;
+}
+
+// Where a note typed for an item is kept until it is saved: by project, since `B1.2` names an item in each of them.
+function draftKey(project, batch, item) {
+  return `${project}/${itemKey(batch, item)}`;
 }
 
 function isOpen(item) {
@@ -2933,9 +2940,10 @@ function markButtons(project, batch, item) {
 }
 
 function noteBox(project, batch, item) {
-  const key = itemKey(batch, item);
+  const key = draftKey(project, batch, item);
   const box = el('textarea', {
-    class: 'mark-note', rows: '2', 'data-key': key, placeholder: 'a note, kept with the item', 'aria-label': `note on item ${item.id} of ${batch.id}`,
+    class: 'mark-note', rows: '2', 'data-key': itemKey(batch, item), placeholder: 'a note, kept with the item',
+    'aria-label': `note on item ${item.id} of ${batch.id}`,
   });
   box.value = key in marks.notes ? marks.notes[key] : (item.note || '');
   box.disabled = readOnlyNow() || !(isOpen(item) || item.changeable);
@@ -2947,27 +2955,32 @@ function noteBox(project, batch, item) {
   return el('label', { class: 'mark-note-label' }, [el('span', { text: 'note' }), box]);
 }
 
-// The note typed for an item and not saved yet, or null.
+// The note typed for an item and not saved yet, or null: `''` when the owner emptied the box of a note the item holds,
+// which takes the note away.
 function unsavedNote(item, key) {
   const typed = marks.notes[key];
-  return typed !== undefined && typed.trim() && typed !== (item.note || '') ? typed : null;
+  if (typed === undefined || typed === (item.note || '')) return null;
+  if (typed.trim()) return typed;
+  return item.note ? '' : null;
 }
 
 async function giveMark(project, batch, item, name) {
-  const key = itemKey(batch, item);
+  const key = draftKey(project, batch, item);
   if (marks.saving[key]) await marks.saving[key];
   const note = unsavedNote(item, key);
   const body = { batch: batch.id, item: item.id, mark: name };
-  if (note !== null) body.note = note;
-  const reply = await perform('mark', body, () => `${batch.id}, item ${item.id}: ${name}${note !== null ? ' and its note' : ''} saved`, project);
-  if (reply && marks.notes[key] === note) delete marks.notes[key];
+  if (note) body.note = note;
+  const reply = await perform('mark', body, () => `${batch.id}, item ${item.id}: ${name}${note ? ' and its note' : ''} saved`, project);
+  if (reply && note === '') await saveNote(project, batch, item); // an emptied box: the note goes once the mark is in
+  else if (reply && marks.notes[key] === note) delete marks.notes[key];
 }
 
 async function saveNote(project, batch, item) {
-  const key = itemKey(batch, item);
+  const key = draftKey(project, batch, item);
   const note = unsavedNote(item, key);
   if (note === null) return;
-  const saving = perform('mark', { batch: batch.id, item: item.id, note }, () => `${batch.id}, item ${item.id}: note saved`, project);
+  const saving = perform('mark', { batch: batch.id, item: item.id, note },
+    () => `${batch.id}, item ${item.id}: ${note ? 'note saved' : 'note taken away'}`, project);
   marks.saving[key] = saving;
   const reply = await saving;
   if (marks.saving[key] === saving) delete marks.saving[key];
@@ -3051,6 +3064,19 @@ function restoreNote(typing) {
   if (box.setSelectionRange) box.setSelectionRange(typing.start, typing.end);
 }
 
+// A settled batch, folded unless the owner opened it or a link named it; opened, it stays open through the redraws.
+function settledFold(project, batch) {
+  if (batch.id === marks.focus) marks.unfolded.add(batch.id);
+  const fold = el('details', { class: 'batch-fold', 'data-batch': batch.id, open: marks.unfolded.has(batch.id) ? '' : null }, [
+    el('summary', { text: `${batch.id} ${batch.title}` }), batchCard(project, batch),
+  ]);
+  fold.addEventListener('toggle', () => {
+    if (fold.open) marks.unfolded.add(batch.id);
+    else marks.unfolded.delete(batch.id);
+  });
+  return fold;
+}
+
 function renderMarks() {
   const project = state.project;
   if (marks.project !== project || !marks.view) return;
@@ -3075,9 +3101,7 @@ function renderMarks() {
     ...problemsList(view.problems),
   ]);
   replace(document.getElementById('marks-settled-body'), [settled.length
-    ? el('div', { class: 'batches' }, settled.map((batch) => el('details', { class: 'batch-fold', 'data-batch': batch.id, open: batch.id === marks.focus ? '' : null }, [
-      el('summary', { text: `${batch.id} ${batch.title}` }), batchCard(project, batch),
-    ])))
+    ? el('div', { class: 'batches' }, settled.map((batch) => settledFold(project, batch)))
     : emptyState('no batch is settled yet')]);
   restoreNote(typing);
   if (marks.focus) {
