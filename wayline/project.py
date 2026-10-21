@@ -631,9 +631,13 @@ def _write_research(project, harness_root, harness_tag):
             ledger.write_json(GRAPH, empty_graph())
             changes.append("%s/%s" % (RESEARCH, GRAPH))
         # The paper's five sections exist from the start, rendered by code from their passages (decision 17).
-        for name in sections.SECTIONS:
-            if not (project / RESEARCH / sections.section_path(name)).exists() and sections.render_section(ledger, name):
+        missing = [name for name in sections.SECTIONS if not (project / RESEARCH / sections.section_path(name)).exists()]
+        csl = not (project / RESEARCH / "references.json").exists()  # References' CSL-JSON, written with it (ticket 105)
+        for name in missing:
+            if (project / RESEARCH / sections.section_path(name)).exists() or sections.render_section(ledger, name, references=False):
                 changes.append("%s/%s" % (RESEARCH, sections.section_path(name)))
+        if csl and (project / RESEARCH / "references.json").exists():
+            changes.append("%s/references.json" % RESEARCH)
         # And the outline of the paper, built by code from them and the objectives (ticket 104).
         from wayline import outline  # the outline reads every part of the ledger
         if not (project / RESEARCH / outline.OUTLINE_MD).exists() and outline.render_outline(ledger):
@@ -1654,6 +1658,12 @@ def set_model_fallback(project, consent, by="cli"):
     return report
 
 
+def set_plotting(project, library, by="cli", **options):
+    """`wayline switch --plotting`, and the dashboard's select (ticket 121): `wayline.plotting.set_plotting` (ticket 102)."""
+    from wayline import plotting
+    return plotting.set_plotting(project, library, by=by, **options)
+
+
 # --- the ladder consent ---------------------------------------------------------------------------------------
 
 
@@ -1921,11 +1931,14 @@ def graph_answered(project, ledger, fields, text):
     `wayline plan` cuts it again. Any other ticket's answer is left alone. Returns the ids parked.
 
     The same holds for the ladder decision of a change record (ticket 45): an answer that does not approve the
-    change to the rung ladder parks its harness ticket here, before the closed decision can release it.
+    change to the rung ladder parks its harness ticket here, before the closed decision can release it. And for an
+    amendment's confirmation (ticket 92): an answer that asks for a change parks the tickets cut for the amendment, which
+    the confirmation alone paused.
     """
-    from wayline import changes, plan  # both modules import this one
+    from wayline import changes, plan, specify  # the three modules import this one
 
-    return list(plan.graph_sent_back(project, ledger, fields, text) or []) + changes.ladder_answered(project, fields, text, ledger=ledger)
+    return (list(plan.graph_sent_back(project, ledger, fields, text) or []) + changes.ladder_answered(project, fields, text, ledger=ledger)
+            + specify.amendment_answered(project, ledger, fields, text))
 
 
 def journal_written_answers(project, ledger):
@@ -2090,6 +2103,7 @@ def switch_command(args):
                     "or lower it while no conductor is running; with --fallback, set its fallback consent at any time; "
                     "with --ladder, set its ladder consent at any time; "
                     "with --environment, move its environment at any time once the new one is built and checked; "
+                    "with --plotting, set the library its results are drawn in at any time; "
                     "with --stop-at or --cheap-at, set its pacing thresholds at any time; "
                     "with --stop-when, set its stopping rule; with --budget, set one of its budgets "
                     "(after setup, a changed rule or a raised budget is the owner's word alone)")
@@ -2108,6 +2122,9 @@ def switch_command(args):
     parser.add_argument("--environment", choices=["shared", "conda", "venv", "container"],
                         help="move the project's environment, instead of switching: built from the locks, every tool checked inside "
                              "it, and only then set; the owner's word alone (ticket 83)")
+    parser.add_argument("--plotting", choices=["matplotlib", "altair", "ggplot2"],
+                        help="the plotting library each result's next drawing is drawn in, instead of switching: matplotlib with "
+                             "seaborn, Altair, or R with ggplot2; what it needs is installed first, on the owner's word (ticket 102)")
     parser.add_argument("--stop-when", metavar="RULE",
                         help="the stopping rule to set on the project, instead of switching: objectives (no objective open), "
                              "frontier (no work left), or objective ids separated by commas (those closed)")
@@ -2115,20 +2132,28 @@ def switch_command(args):
                         help="one budget to set on the project, instead of switching: wallclock_hours=<hours> or "
                              "gpu_hours=<hours>, or =none for no limit")
     parser.add_argument("--project",
-                        help="with --autonomy, --fallback, --ladder, --environment, --stop-at, --cheap-at, --stop-when, or "
+                        help="with --autonomy, --fallback, --ladder, --environment, --plotting, --stop-at, --cheap-at, --stop-when, or "
                              "--budget, the project to set; the active one by default")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     if options.stop_when is not None or options.budget is not None:
-        others = (options.path, options.autonomy, options.fallback, options.ladder, options.environment, options.stop_at,
-                  options.cheap_at)
+        others = (options.path, options.autonomy, options.fallback, options.ladder, options.environment, options.plotting,
+                  options.stop_at, options.cheap_at)
         if any(value is not None for value in others) or (options.stop_when is not None and options.budget is not None):
             print("wayline switch: give --stop-when or --budget on its own, not with a project to switch to or another "
                   "setting (--project names the project it sets)", file=sys.stderr)
             return 2
         from wayline import stopping  # the stopping module imports this one
         return stopping.switch_command(options)
+    if options.plotting is not None:
+        if (options.path is not None or options.autonomy is not None or options.fallback is not None or options.ladder is not None
+                or options.environment is not None or options.stop_at is not None or options.cheap_at is not None):
+            print("wayline switch: give --plotting on its own, not with a project to switch to or another setting "
+                  "(--project names the project it sets)", file=sys.stderr)
+            return 2
+        from wayline import plotting
+        return plotting.switch_command(options)
     if options.environment is not None:
         if (options.path is not None or options.autonomy is not None or options.fallback is not None or options.ladder is not None
                 or options.stop_at is not None or options.cheap_at is not None):

@@ -258,7 +258,7 @@ def methods_text(project_or_ledger, result):
     book = ledger_for(project_or_ledger)
     own = [item for item in (result or {}).get("passages") or [] if isinstance(item, dict) and item.get("section") == "methods"]
     replaced = {item.get("replaces") for item in own if item.get("replaces")}
-    held = [item for item in sections.read_passages(book) if item.get("section") == "methods"]
+    held = [item for item in sections.read_passages(book) if item.get("section") == "methods" and not sections.is_reason(item)]
     current = [item for item in sections.arrange(held).current() if item.get("id") not in replaced]
     return [str(item.get("text") or "") for item in current] + [str(item.get("text") or "") for item in own]
 
@@ -782,27 +782,31 @@ def _reading_prompt(files):
     return "\n".join(parts) + "\n"
 
 
-def _reading(project, files, *, policy, harness_root, ticket=None, attempt=None):
-    """One Sonnet reading of `files` (`(path, text, lines)`): its structured answer and the envelope's accounting."""
+def _reading(project, files, *, policy, harness_root, ticket=None, attempt=None, prompt=None, schema=READING_SCHEMA,
+             folder="code-reading"):
+    """One Sonnet reading of `files` (`(path, text, lines)`): its structured answer and the envelope's accounting.
+
+    `prompt` and `schema` stand in for the acceptance reading's own: the setup's reading of inherited code asks for its
+    concerns (`methods_inventory.setup`, ticket 108)."""
     from wayline import provenance, worker
 
     role = worker.read_role(READER, harness_root, project)
-    base = provenance.session_dir(project, "code-reading") if ticket is None else \
-        Path(project) / "research" / "sessions" / str(ticket) / str(attempt or 1) / "code-reading"
+    base = provenance.session_dir(project, folder) if ticket is None else \
+        Path(project) / "research" / "sessions" / str(ticket) / str(attempt or 1) / folder
     run_dir = base
     number = 1
     while run_dir.exists():
         number += 1
         run_dir = base.parent / ("%s-%d" % (base.name, number))
-    prompt = _reading_prompt(files) + "\n" + worker.schema_section("# What you return", READING_SCHEMA)
-    request = provenance.structured_request(project, role, policy, harness_root, prompt, READING_SCHEMA, "small", run_dir)
+    prompt = (prompt or _reading_prompt(files)) + "\n" + worker.schema_section("# What you return", schema)
+    request = provenance.structured_request(project, role, policy, harness_root, prompt, schema, "small", run_dir)
     envelope = worker.launch(request)
     provenance.raise_if_refused(envelope, "code reading", request.model)
-    problem = provenance.schema_problem(envelope, READING_SCHEMA)
+    problem = provenance.schema_problem(envelope, schema)
     if problem is not None and envelope.session_id:
         envelope = worker.resume(request, envelope.session_id, provenance.RESUME_STRUCTURED % problem)
         provenance.raise_if_refused(envelope, "code reading", request.model)
-        problem = provenance.schema_problem(envelope, READING_SCHEMA)
+        problem = provenance.schema_problem(envelope, schema)
     accounting = {"session_id": envelope.session_id, "model": envelope.model or request.model, "usage": envelope.usage,
                   "lines": sum(len(text.splitlines()) for _, text, _ in files), "files": [path for path, _, _ in files]}
     if problem is not None:

@@ -7,7 +7,8 @@ inherited passages and the objectives that check them, the headline plots, and t
 
 1. **Storyline**: the objectives in outline order, each with its status, its results and their standing, and its answer.
 2. **Gaps**: what the outline names that holds nothing yet (an objective with no result, a heading with no passage, a
-   section with nothing in it). An empty main-text Gaps list is the paper order's test of complete.
+   section with nothing in it, a Methods method with no code behind it, ticket 108). An empty main-text Gaps list is the
+   paper order's test of complete.
 3. **Introduction**: its headings, then the objectives as the paper's questions.
 4. **Results**: one subsection per open or answered objective, the critic's `first` leading, then by id; each result
    with its id, heading, standing, findings and headline plots counted, its concerns, the inherited claims it decides,
@@ -15,7 +16,7 @@ inherited passages and the objectives that check them, the headline plots, and t
    pointer from the second. Then "Beyond the objectives" and "Inherited, checked by no objective".
 5. **Discussion**: its headings (each answered objective's passage among them), the owner's, and the parked
    objectives as future work.
-6. **Methods**: its headings.
+6. **Methods**: its headings, then the parameter table the methods inventory generates (ticket 108).
 7. **Venue**, once one is named: its `required_structure` mapped to the sections by `check_structure`'s word matching,
    the parts no section feeds listed as made at the order.
 8. **Supplement** and **Cut**: what the owner (or the decider) placed there.
@@ -281,6 +282,14 @@ class _Facts:
             plots = {}
         self.plots = [item for item in (plots or {}).get("plots") or [] if isinstance(item, dict)]
         self.venue = self._venue()
+        # The methods inventory (ticket 108): the Methods methods with no code behind them, and the parameter table's rows.
+        from wayline import methods_inventory
+        passages = [item for _, items in self.headings[METHODS] for item in items]
+        try:
+            self.no_code = methods_inventory.no_code(self.book, passages)
+            self.parameters = len(methods_inventory.parameter_rows(self.book))
+        except (OSError, ValueError):
+            self.no_code, self.parameters = [], 0
 
     def _venue(self):
         """`(slug, guidelines)` of the venue last named (the paper order's), or None while none is."""
@@ -608,6 +617,9 @@ def _gaps(facts, layout, record):
                     supplement.append(said)
                 elif group != CUT:
                     main.append(said)
+    # The rule from Methods to code is no gate: a method with no code behind it is a gap, never a failure (ticket 108).
+    from wayline import methods_inventory
+    main += methods_inventory.gap_lines(facts.no_code)
     return main, supplement
 
 
@@ -687,7 +699,11 @@ def _text(facts, layout, record):
     lines += ["## Discussion", ""] + (_lines_of(facts, layout, DISCUSSION, record) or [NOTHING])
     future = ["- %s (parked) %s" % (item["id"], _one_line(item["text"])) for item in facts.objectives if item.get("status") == "parked"]
     lines += ["", "### Future work", ""] + (future or ["No objective is parked."])
-    lines += ["", "## Methods", ""] + (_lines_of(facts, layout, METHODS, record) or [NOTHING]) + [""]
+    lines += ["", "## Methods", ""] + (_lines_of(facts, layout, METHODS, record) or [NOTHING])
+    if facts.parameters:
+        lines += ["", "- Parameter table: %s, generated at the end of Methods from the tickets' `parameters`; a reason is "
+                  "edited in its row." % _plural(facts.parameters, "parameter")]
+    lines += [""]
     if facts.venue is not None:
         lines += _venue_lines(facts)
     for group, title in ((SUPPLEMENT, "Supplement"), (CUT, "Cut")):
@@ -1369,7 +1385,10 @@ def take_marks(project_or_ledger):
                 if len(pair) != 2 or pair[0] == pair[1] or not set(pair) <= live:
                     continue
                 into, source = sorted(pair, key=_id_number)
-                results_module.merge(book.project, source, into, by=item["by"] or OWNER, render=False)
+                try:
+                    results_module.merge(book.project, source, into, by=item["by"] or OWNER, render=False)
+                except results_module.ResultError:
+                    continue  # a drawing of it is under way (ticket 101): the mark stays, taken at a later pass
                 merged.append((source, into))
         if merged:
             sections.render_section(book, sections.RESULTS)

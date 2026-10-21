@@ -28,6 +28,7 @@
     "merges": {"type": "array", "minItems": 2, "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "on an inherited passage merged from a claim made in several places: every occurrence it merges, the first the one it replaces in place, the rest withdrawn; its text cites every occurrence's doc tag and every work any cites (ticket 95)"},
     "replaces_owner": {"const": true, "description": "on a passage replacing an owner's passage, by anyone but the owner: journaled for the account, which lists it under \"Changed without asking you\" (ticket 88)"},
     "withdrawn": {"const": true, "description": "a withdrawal: it takes the passage it replaces out of the section, its text kept here as it stood"},
+    "parameter": {"type": "string", "pattern": "^[^@\\s][^@]*:[^:@\\s][^:@]*(@\\S+)?$", "description": "on the owner's reason for one row of Methods' parameter table, `<method>:<name>`, with `@<path>` for one file only: the table shows it in place of the ticket's reason, never the section's text (ticket 108)"},
     "moved_from": {"type": "string", "pattern": "^P[1-9][0-9]*$", "description": "the inherited passage, in another section, this one was moved from; a withdrawal there takes it out"}
   }
 }

@@ -31,26 +31,26 @@ Not part of this ticket:
 
 It blocks 109, 111, 115, and 121.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#252](https://github.com/Bernaljp/wayline/issues/252) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (a reference found during a ticket: what code writes after every render; the scout's outcomes, cache, and joins: important unresolved references and how each autonomy raises them; the account: Library and Waiting on you; talking with the project: notices); milestone M8 criteria 11 and 12; user stories 146, 147, and 162.
 
-- [ ] After every render, code writes `references.md` with entries numbered by first citation through the sections in outline order, in the stated entry shape, each linking to its dossier.
-- [ ] `references.md` ends with a Not yet resolved list that gives each unresolved cited work one of the four states, and "retrying" names the service and the date.
-- [ ] `research/references.json` holds CSL-JSON built from the dossiers of the cited works only.
-- [ ] Before the order, the linter lists an unresolved citation in a section and never fails it.
-- [ ] A reference counts as important when the owner named it or a standing passage, a concern, or an objective cites it, and only then.
-- [ ] It is raised only when its failure is final, never while retrying:
+- [x] After every render, code writes `references.md` with entries numbered by first citation through the sections in outline order, in the stated entry shape, each linking to its dossier.
+- [x] `references.md` ends with a Not yet resolved list that gives each unresolved cited work one of the four states, and "retrying" names the service and the date.
+- [x] `research/references.json` holds CSL-JSON built from the dossiers of the cited works only.
+- [x] Before the order, the linter lists an unresolved citation in a section and never fails it.
+- [x] A reference counts as important when the owner named it or a standing passage, a concern, or an objective cites it, and only then.
+- [x] It is raised only when its failure is final, never while retrying:
   - under `interactive`: a notice with the item's link, a "Waiting on you" line, and the next conversation's first item;
   - under `checkpoints`: "Waiting on you", put at the next conversation or with the end notice;
   - under `autonomous`: setup only, then listed with no notice.
-- [ ] Each important reference is raised once, and an item the owner settled with "leave it" is not raised again before the order.
-- [ ] The account's Library gives the count of unresolved references and points to References' Not yet resolved list. "Waiting on you" lists each important one raised, by this definition in place of the narrower test the account uses until then (`account._unresolved_references`, ticket 89: a standing passage or finding cites it).
-- [ ] Tests:
+- [x] Each important reference is raised once, and an item the owner settled with "leave it" is not raised again before the order.
+- [x] The account's Library gives the count of unresolved references and points to References' Not yet resolved list. "Waiting on you" lists each important one raised, by this definition in place of the narrower test the account uses until then (`account._unresolved_references`, ticket 89: a standing passage or finding cites it).
+- [x] Tests:
   - the render over a temporary project with fixture dossiers at L0, L1, and L2 and unresolved ones in each state, asserted on both files;
   - the raise rule under each autonomy by replaying journals that hold a retrying reference, its final failure, and a "leave it", asserted on the notices and events the next wave appends;
   - the linter's listing.
-- [ ] The changelog's `## Unreleased` section describes References and when the owner is asked about a reference.
-- [ ] `python -m unittest` passes.
+- [x] The changelog's `## Unreleased` section describes References and when the owner is asked about a reference.
+- [x] `python -m unittest` passes.

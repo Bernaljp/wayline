@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "methods_inventory",
+  "description": "research/methods_inventory.json (Implementation Decision 17; ticket 108): what the methods inventory generated into Methods at its last render, written only by wayline.methods_inventory through the ledger. `parameters` are the parameter table's rows, from the current results' `parameters` with the owner's reasons; `software` the exact versions the locks in code/ pin; `citations` the preferred citations proposed for packages a Methods passage relies on; `not_reproduced`, the data and code availability statement's inputs, each Methods method with no code behind it, which the code repository does not reproduce; `setup` what the setup at a start midway compared and read, done once.",
+  "type": "object",
+  "required": ["parameters", "software", "citations", "not_reproduced", "setup"],
+  "additionalProperties": false,
+  "properties": {
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["method", "name", "value", "default", "reason", "path", "line", "code", "ticket", "by"],
+        "additionalProperties": false,
+        "properties": {
+          "method": {"type": "string", "pattern": "\\S"},
+          "name": {"type": "string", "pattern": "\\S"},
+          "value": {"type": ["string", "null"]},
+          "default": {"type": ["string", "null"]},
+          "reason": {"type": ["string", "null"]},
+          "path": {"type": ["string", "null"]},
+          "line": {"type": ["integer", "null"], "minimum": 1},
+          "code": {"type": ["string", "null"], "description": "the row's `code` tag, resolved against main; null for a value no parser saw"},
+          "ticket": {"type": "integer", "minimum": 1, "description": "the ticket whose result gave the row"},
+          "by": {"type": "string", "pattern": "^(t[1-9][0-9]*|owner)$", "description": "whose reason the row shows: the ticket's, or the owner's passage for the row"}
+        }
+      }
+    },
+    "software": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["language", "packages", "locks"],
+        "additionalProperties": false,
+        "properties": {
+          "language": {"type": "string", "enum": ["Python", "R", "Julia", "Octave Forge", "Tools"]},
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "versions"],
+              "additionalProperties": false,
+              "properties": {
+                "name": {"type": "string", "pattern": "\\S"},
+                "versions": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}}
+              }
+            }
+          },
+          "locks": {"type": "array", "items": {"type": "string", "pattern": "\\S"}}
+        }
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["package", "method", "passages", "citation", "doi", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "package": {"type": "string", "pattern": "\\S"},
+          "method": {"type": "string", "pattern": "\\S"},
+          "passages": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}},
+          "citation": {"type": "string", "pattern": "\\S"},
+          "doi": {"type": ["string", "null"]},
+          "source": {"type": "string", "pattern": "\\S", "description": "where the package publishes the citation it prefers"}
+        }
+      }
+    },
+    "not_reproduced": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["passage", "heading", "named", "why", "reproduced_by_repository"],
+        "additionalProperties": false,
+        "properties": {
+          "passage": {"type": "string", "pattern": "^P[1-9][0-9]*$"},
+          "heading": {"type": "string"},
+          "named": {"type": "string", "pattern": "\\S", "description": "the method as the passage names it, or its `code` tag"},
+          "why": {"type": "string", "pattern": "\\S"},
+          "reproduced_by_repository": {"const": false, "description": "the availability statement may not claim the code repository reproduces it"}
+        }
+      }
+    },
+    "setup": {
+      "type": ["object", "null"],
+      "required": ["commit", "disagreements", "readings", "leads", "dropped"],
+      "additionalProperties": false,
+      "properties": {
+        "commit": {"type": ["string", "null"], "description": "the commit intake recorded, which the setup compared and read"},
+        "disagreements": {"type": "integer", "minimum": 0, "description": "how many disagreements between the inherited Methods and the code were filed"},
+        "readings": {
+          "type": "array",
+          "description": "one Sonnet reading per file where the parsers see developed code, with its accounting",
+          "items": {
+            "type": "object",
+            "required": ["path", "session_id", "model", "usage", "lines"],
+            "additionalProperties": false,
+            "properties": {
+              "path": {"type": "string", "pattern": "\\S"},
+              "session_id": {"type": ["string", "null"]},
+              "model": {"type": ["string", "null"]},
+              "usage": {"type": ["object", "null"]},
+              "lines": {"type": "integer", "minimum": 0},
+              "failed": {"type": "string", "pattern": "\\S", "description": "why the reading gave no usable answer"}
+            }
+          }
+        },
+        "leads": {"type": "integer", "minimum": 0, "description": "how many concerns the readings raised that grep confirmed, attached as leads"},
+        "dropped": {"type": "array", "items": {"type": "string"}, "description": "what a reading named that grep did not find in its file"}
+      }
+    }
+  }
+}

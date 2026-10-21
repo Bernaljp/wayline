@@ -857,6 +857,10 @@ class Conductor:
         self._answer_stamps = {}
         self._answers_tried = set()  # the objectives the answering verifier was launched on in this run (ticket 91)
         self._reopen_replans = set()  # the owner's reopens of answered or dropped objectives a cut was launched for (ticket 91)
+        # The spec amendment for an objective an approved batch added or reframed (ticket 92): `amender(objective, fall_back)`
+        # returns `specify.amend`'s report, and a test stands in its own; one that stopped is not tried again in this run.
+        self.amender = self._amend
+        self._amendments_tried = set()
         # The evolve loop (ticket 45, decision 12). A policy nobody handed in is read again every wave, so a local change
         # to `harness.json` is used from the next one. `evolver(fall_back)` is the evolver's session over the pending
         # feedback, `prover` runs a change's fixture on the old and the new subject, and `global_checks` runs the harness
@@ -913,6 +917,7 @@ class Conductor:
         self._objective_changes()
         self._concerns()
         self._verifications()
+        self._references()
         self._pace()
         if self._resting_on_rule_end(result):
             # An end holds and drawings are owed, or the run-end gates' scope-downs at an end of the rule: they alone run
@@ -929,6 +934,7 @@ class Conductor:
             self._decide(result)
             self._read_cited()
             self._replan_objectives(result)
+            self._amend_objectives()
             self._answer_objectives(result)
             self._evolve(result)
             self._fold_answered_refusals()  # the decider, the planner, and the evolver answer in this wave
@@ -945,6 +951,7 @@ class Conductor:
         if self._integrated_now or result.findings:
             self._propose_outline_merges()
             reported = self._render_general_report()  # it renders the account and the outline in the same pass
+        self._render_references()
         self._render_account()
         if not reported:
             self._render_outline()
@@ -982,6 +989,17 @@ class Conductor:
             account.render_account(self.project)
         except (ValueError, OSError) as failure:
             self.say("  ACCOUNT.md was not rendered: %s; the next wave renders it again" % failure)
+
+    def _render_references(self):
+        """`research/sections/references.md` and `research/references.json` rendered by code at the end of every wave (ticket
+        105), since a dossier's state moves with no section changing: a retry that found the work, or a flag that gave up.
+
+        A render that would leave both as they are writes nothing; one that fails is said, and the next wave renders again.
+        """
+        try:
+            references.render_references(self.ledger)
+        except (ValueError, OSError) as failure:
+            self.say("  References was not rendered: %s; the next wave renders it again" % failure)
 
     def _render_outline(self):
         """`research/OUTLINE.md` rendered by code at the end of every wave, taking the owner's edit of it in first (ticket 104).
@@ -1320,6 +1338,19 @@ class Conductor:
         except (verification.VerificationError, verification.VerificationUnreadable, tickets.TicketError, ValueError,
                 OSError) as failure:
             self.say("  the verifications could not be settled: %s" % failure)
+        self._tail()
+
+    def _references(self):
+        """Wave step 2's references part (decision 17; ticket 105): each important unresolved reference whose failure became
+        final, raised once, never while it is still retrying.
+
+        Code alone: `references.raise_final` journals `reference_raised` past setup, under `interactive` with a notice
+        linking to it; under `autonomous` setup asked and the account lists it. A failure to read is said, and fails no wave.
+        """
+        try:
+            references.raise_final(self.project, notify=self.notify, say=self.say)  # real time, as the account reads it
+        except (ValueError, OSError) as failure:
+            self.say("  the unresolved references could not be read: %s" % failure)
         self._tail()
 
     def _read_cited(self):
@@ -1798,6 +1829,60 @@ class Conductor:
         result.escalated.append((None, REPLAN))
         self.say("  the planner replanned for %s: ticket(s) %s written" % (
             ", ".join(named), ", ".join(str(item) for item in outcome.get("tickets") or []) or "none"))
+
+    def _amend(self, identifier, fall_back):
+        from wayline import specify  # the specify module pulls in the planner's session
+        return specify.amend(self.project, identifier, harness_root=self.harness_root, policy=self.policy, fall_back=fall_back,
+                             notify=self.notify, pre_check=self.plan_pre_check)
+
+    def _amend_objectives(self):
+        """The spec amendment for each objective an approved "Objective changes" batch added or reframed (decision 17; ticket 92).
+
+        One specify session scoped to the objective appends claims under new ids, the verifier judges the amendment alone,
+        the planner cuts tickets for the new claims alone (and a `lit` ticket when the Introduction does not cover it), and
+        the confirmation follows the autonomy: a ticket pausing only the new tickets under `checkpoints`, the decider under
+        `autonomous`, and the owner's word under `interactive`, which the owner is told it waits on. Model work, so it waits
+        while pacing or the hold allows none; one that stopped is said, the owner told, and not tried again in this run.
+        """
+        from wayline import specify  # the specify module pulls in the planner's session
+        try:
+            owed = [identifier for identifier in specify.owed_amendments(self.project) if identifier not in self._amendments_tried]
+        except (specify.SpecifyError, objectives.ObjectivesUnreadable, tickets.TicketError, ValueError, OSError) as failure:
+            self.say("  the amendments owed could not be read: %s" % failure)
+            return
+        for identifier in owed:
+            if self._holds_launches() or self.action != schedule.NORMAL:
+                return
+            what = "the spec amendment for %s" % identifier
+            may, fall_back = self._planner_falls_back(what)
+            if not may:
+                return
+            try:
+                report = self.amender(identifier, fall_back)
+            except (ValueError, OSError) as failure:  # a step the verb does not turn into its report fails no wave
+                report = {"did": [], "waits": False, "stopped": str(failure), "state": None, "autonomy": None}
+            self._tail()
+            for line in report["did"]:
+                self.say("  %s: %s" % (what, line))
+            if isinstance(report["waits"], gates.FableHeld):
+                self._held_back(what)
+                return
+            if isinstance(report["waits"], gates.UsageLimited):
+                self._pause(report["waits"].limit, what)
+                self.say("  %s: the usage limit refused it; it is launched again once the window allows" % what)
+                return
+            if report["stopped"]:
+                self._amendments_tried.add(identifier)
+                words = "%s could not be made: %s" % (what, report["stopped"])
+                self.say("  " + words)
+                self.notify(decisions.DECISION, "%s: %s; wayline specify --amend %s tries again" % (self.project.name, words, identifier),
+                            self.project, None)
+                continue
+            if report["state"]["state"] == "unasked" and report["autonomy"] == specify.INTERACTIVE:
+                self.notify(decisions.DECISION, "%s: %s waits for your word: read the claims %s in research/SPEC.md, then wayline "
+                            "specify confirm --amend %s, or wayline specify revise --amend %s \"<what to change>\"" % (
+                                self.project.name, what, ", ".join(report["state"]["claims"]) or "it added", identifier, identifier),
+                            self.project, None)
 
     def _answered_ask(self, identifier, known):
         """Say what the owner's answer to the ask of decision 15 does, at its closing; one that matches no option is also sent to the owner."""
@@ -3223,11 +3308,17 @@ class Conductor:
                 owed.append(fields["id"])
         return owed
 
-    def _plotting_python(self):
-        """The interpreter a drawing is drawn and reran in: the tools venv's (`matplotlib` in `tools.json`), or a test's."""
+    def _plotting_python(self, ticket=None):
+        """The interpreter a drawing is drawn and rerun in, or a test's (ticket 102).
+
+        The drawing `ticket`'s own library, the one it was opened in; with no ticket, the library `harness.json` names now,
+        which the next drawings open in.
+        """
         if self.drawing_python is drawings.TOOLS_PYTHON:
-            from wayline import drawing_checks
-            return drawing_checks.interpreter()
+            from wayline import plotting
+            if ticket is not None:
+                return plotting.interpreter(drawings.library_of(self.project, ticket))
+            return plotting.interpreter(plotting.setting(read_harness(self.project)))
         return self.drawing_python
 
     def _draws_before_the_end(self, rest):
@@ -3240,8 +3331,8 @@ class Conductor:
         opened = []
         if self._plotting_python() is None:
             if not self._said_no_plotting:
-                self.say("  the results are not drawn at this rest point: the tools venv records no matplotlib "
-                         "(wayline tools install), and a drawing is drawn and rerun there")
+                self.say("  the results are not drawn at this rest point: tools.json records no tools for the plotting library "
+                         "(wayline switch --plotting, or wayline tools install), and a drawing is drawn and rerun in them")
                 self._said_no_plotting = True
         else:
             try:
@@ -4322,9 +4413,14 @@ class Conductor:
         A declared section that got no passage (Results, no finding) or a `replaces` naming nothing its section holds
         fails it, and the worker is sent back with the problems, as for any machine criterion that failed in its worktree.
         """
-        if not sections.declared(attempt.ticket):
+        # A drawing whose finding cites a number its script computes declares Methods for that passage (ticket 108).
+        owes = _is_drawing(attempt.ticket) and bool(drawings.methods_owed(attempt.ticket, attempt.result))
+        if not sections.declared(attempt.ticket) and not owes:
             return []
         problems = sections.check_result(self.ledger, attempt.ticket, attempt.result)
+        missing = drawings.methods_problem(attempt.ticket, attempt.result) if owes else None
+        if missing is not None:
+            problems.append("ticket %d's drawing %s" % (attempt.id, missing))
         return [{"cmd": SECTIONS_CHECK, "exit_code": 1 if problems else 0, "seconds": 0.0,
                  "tail": "\n".join(problems) if problems else "every declared section got its passage"}]
 
@@ -4339,7 +4435,7 @@ class Conductor:
             return []
         try:
             checked = drawings.check(self.project, attempt.ticket, attempt.worktree, final=attempt.stage == ACCEPTANCE_FAILED,
-                                     policy=self.policy, python=self._plotting_python())
+                                     policy=self.policy, python=self._plotting_python(attempt.ticket))
         except (drawings.DrawingError, ValueError, OSError) as failure:
             return [{"cmd": drawings.DRAWING_CHECK, "exit_code": 1, "seconds": 0.0, "tail": "the drawing could not be checked: %s" % failure}]
         self.ledger.write_json(self._attempt_dir(attempt).relative_to(self.ledger.research) / DRAWING_CHECKED, checked.to_json())
@@ -4848,7 +4944,7 @@ class Conductor:
             value = json.loads((self._attempt_dir(attempt) / DRAWING_CHECKED).read_text(encoding="utf-8"))
             checked = drawings.Checked.from_json(value)
         except (OSError, ValueError, AttributeError):
-            checked = drawings.check(self.project, attempt.ticket, self.project, final=True, policy=self.policy, python=self._plotting_python())
+            checked = drawings.check(self.project, attempt.ticket, self.project, final=True, policy=self.policy, python=self._plotting_python(attempt.ticket))
         try:
             record = drawings.accept(self.project, attempt.ticket, checked)
         except (drawings.DrawingError, ValueError, OSError) as failure:

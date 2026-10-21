@@ -1,0 +1,72 @@
+{
+  "parameters": [
+    {
+      "method": "order_parameter",
+      "name": "window",
+      "value": "512",
+      "default": "256",
+      "reason": "A 512-sample window spans two wingbeats.",
+      "path": "code/phaselock.py",
+      "line": 13,
+      "code": "{code:code/phaselock.py#L13}",
+      "ticket": 3,
+      "by": "owner"
+    }
+  ],
+  "software": [
+    {
+      "language": "Python",
+      "packages": [
+        {
+          "name": "scipy",
+          "versions": [
+            "1.11.4"
+          ]
+        }
+      ],
+      "locks": [
+        "code/locks/0123456789abcdef0123456789abcdef01234567/requirements.lock"
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "package": "scipy",
+      "method": "Hilbert transform",
+      "passages": [
+        "P3"
+      ],
+      "citation": "Virtanen, P. et al. (2020). SciPy 1.0. Nature Methods 17, 261-272.",
+      "doi": "10.1038/s41592-019-0686-2",
+      "source": "its CITATION.bib in the SciPy repository"
+    }
+  ],
+  "not_reproduced": [
+    {
+      "passage": "P5",
+      "heading": "Filtering",
+      "named": "Butterworth",
+      "why": "no code under `code/` calls Butterworth filter (butter)",
+      "reproduced_by_repository": false
+    }
+  ],
+  "setup": {
+    "commit": "0123456789abcdef",
+    "disagreements": 2,
+    "readings": [
+      {
+        "path": "code/phaselock.py",
+        "session_id": "s1",
+        "model": "sonnet",
+        "usage": {
+          "input_tokens": 700
+        },
+        "lines": 14
+      }
+    ],
+    "leads": 1,
+    "dropped": [
+      "code/phaselock.py: bandpass("
+    ]
+  }
+}
