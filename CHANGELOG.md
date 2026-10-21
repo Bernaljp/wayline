@@ -36,6 +36,15 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The plotting library switch (ticket 102; Implementation Decisions 17, 1, and 2). `harness.json` gains `plotting`:
+  matplotlib with seaborn (the default, and what a project without the key draws with), Altair, or R with ggplot2.
+  `wayline switch --plotting <library>`, and the dashboard's select through `project.set_plotting`, first installs
+  what the library needs and `tools.json` does not record, as the owner's yes (Altair with vl-convert into the tools
+  venv, R with ggplot2, svglite, and jsonlite from conda-forge), each install journaled as `tool_installed`; a failed
+  install leaves the setting as it was. Then it writes `harness.json` and journals `control plotting`. The decider
+  has no path to the setting. A drawing keeps the library it was opened in: its brief, its clean-room rerun
+  (`Rscript --vanilla` for R), and its checks use that library, so a switch never redraws an accepted drawing.
+
 - Current and earlier reports (ticket 101; Implementation Decisions 17 and 2). Each result with an accepted drawing
   gets `research/reports/R<n>-<version>.md`, rendered by code alone in every render pass of the general report: each
   accepted drawing starts the next version and freezes the one before as an earlier report, never rendered again.
