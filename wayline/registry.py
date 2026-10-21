@@ -654,13 +654,15 @@ def _rank(entry, kind, tags):
     return (-matches, -record, COST_HINTS.index(entry["cost_hint"]), entry["id"])
 
 
-def assign(ticket, registry, ledger=None, tags=None):
+def assign(ticket, registry, ledger=None, tags=None, role=None):
     """Assign one ticket and journal it as `assigned`; returns the assignment.
 
     The planner calls this for every ticket it cuts, so the journal says which role and which
     skills every ticket was given and the outcome records of the next build are computable from it.
     """
     assignment = librarian(ticket, registry, tags=tags)
+    if assignment["role"] is None and role is not None:
+        assignment["role"] = role  # the role decision 17 gives a kind no shipped role covers yet (`plan.prepare`)
     if ledger is not None:
         ledger_for(ledger).append_event(
             ASSIGNED,

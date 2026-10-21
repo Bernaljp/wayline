@@ -457,7 +457,7 @@ Numbered so the milestones can point at them. Every decision below either restat
     results/                     outside git, hashed in research/manifest.json
     research/
       INTAKE.md GOAL.json CONTEXT.md DECISIONS.md POSITION.md SPEC.md REPORT.md   (GOAL.json retires in decision 17)
-      objectives.json OBJECTIVES.md ACCOUNT.md OUTLINE.md outline.json passages.jsonl references.json plots.json
+      objectives.json OBJECTIVES.md ACCOUNT.md OUTLINE.md outline.json passages.jsonl references.json plots.json amendments.json
       concerns.json CONCERNS.md documents.json DOCUMENTS.md   (decision 17)
       sections/  reports/R<n>-<version>.md  drawings/R<n>-<version>.json  documents/<id>/  batches/<id>.json   (decision 17)
       refs/<slug>/               source/ figures/ inventory.json entries.jsonl dossier.json dossier.md code/ qa_log.md
@@ -478,6 +478,7 @@ Numbered so the milestones can point at them. Every decision below either restat
   |---|---|
   | `init <path> [--uninstall-units]` | lays out a project, registers it, installs the three user units once per machine |
   | `intake`, `absorb`, `position`, `grill`, `specify`, `plan` | the phases P0 to P4; the interactive ones are also skills; intake takes information only, and `intake --goal` is gone (decision 17; objectives and goals are `objective add`'s) |
+  | `specify --amend <O>`, `specify confirm|revise --amend <O>` | the spec amendment for an objective opened after the spec was confirmed (decision 17; ticket 92): one specify session scoped to it appends claims, experiments, metrics, and anti-claims under new ids, refused by a Type-A check if it changes anything already there; the verifier judges the amendment alone; the planner cuts tickets for the new claims alone, with a `lit` ticket when no Introduction passage with a `ref` tag covers the objective; under `checkpoints` a "Confirm the amendment" ticket pauses only those tickets, under `autonomous` the decider answers it, and under `interactive` the owner's word, recorded by `confirm` or `revise`, comes before the cut; the conductor runs it for an approved batch's add or reframe, and the conversation after the owner adds an objective once setup is done; recorded in `research/amendments.json` |
   | `run [--resume] [--detach] [--simulate-limit [cheap:][fable:]s] [--simulate-failure id]` | the conductor; `--detach` launches it as the transient unit `wayline-conductor` |
   | `pause`, `resume`, `stop [--drain]`, `cancel <id>`, `rerun <id>` | journal `control` events the conductor applies at its next wave |
   | `status`, `answer <id> "<text>"`, `switch <path>`, `switch --fallback auto|ask|wait`, `switch --ladder auto|ask`, `feedback "<text>"` | views and answers that work without the dashboard; from decision 17 `status`'s decisions are those made for the owner and not yet reviewed, and it prints "Account: N decided for you, M waiting on you: research/ACCOUNT.md" (ticket 89) |
