@@ -35,7 +35,7 @@ Not part of this ticket:
 
 It blocks 113.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#258](https://github.com/Bernaljp/wayline/issues/258) (mirror; the local file is the source)
 
