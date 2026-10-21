@@ -216,6 +216,21 @@ class OrderTest(PaperCase):
         self.assertIsNone(self.orders()[0]["batch"])
         self.assertEqual(batches.read_batches(self.project, status="open"), [batches.read_batch(self.project, self.merges)])
 
+    def test_under_autonomous_codes_defaults_leave_the_outlines_proposals_for_the_decider(self):
+        self.autonomy("autonomous")
+        self.compose()
+        self.assertIsNone(batches.read_batch(self.project, self.merges)["items"][0]["mark"])
+        self.assertIn("No batch was asked under `autonomous`", self.read("PAPER.md"))
+
+    def test_a_proposal_marked_first_in_its_own_batch_is_what_the_paper_follows(self):
+        made = paper.order(self.project, start=None)
+        batches.mark(self.project, self.merges, 1, "take")
+        record = self.compose()
+        [followed] = [item for item in record["answers"] if item["ref"].startswith("outline:")]
+        self.assertEqual(followed["mark"], "take")
+        self.assertIn("marked take in %s first" % self.merges, followed["note"])
+        self.assertIsNotNone(made["batch"])
+
     def test_a_second_order_while_one_is_open_is_refused(self):
         paper.order(self.project, start=None)
         code, _, err = self.verb("--yes")
@@ -404,6 +419,14 @@ class ReorderTest(PaperCase):
         self.assertEqual(self.second["kept_edits"], ["introduction"])
         self.assertIn("| introduction | introduction.md | 1 | your edit kept |", self.read("PAPER.md"))
 
+    def test_a_version_is_frozen_once(self):
+        frozen = self.project / "research" / "paper" / "earlier" / "v1" / "title.md"
+        before = frozen.read_bytes()
+        (self.project / "research" / "paper" / "paper.json").write_text(json.dumps(dict(self.first)), encoding="utf-8")
+        self.passage("discussion", "Limits", "Heavier tails come next.")
+        self.compose()
+        self.assertEqual(frozen.read_bytes(), before, "a second freeze of v1, as after a composition that failed partway, writes nothing")
+
     def test_an_owners_edit_of_a_part_whose_inputs_changed_is_recomposed(self):
         (self.project / "research" / "paper" / "discussion.md").write_text("## Limits {#discussion-limits}\n\nMine.\n", encoding="utf-8")
         self.passage("discussion", "Limits", "The noise model is Gaussian; heavier tails come next.")
@@ -545,6 +568,13 @@ class ReplayTest(PaperCase):
         self.assertEqual(replay.replay(events).paper_order["order"], 1)
         self.assertIsNone(replay.replay(events + [{"event": "paper_order", "payload": {"order": 1, "action": "composed"}}]).paper_order)
         self.assertIsNone(replay.replay(events + [{"event": "paper_order", "payload": {"order": 1, "action": "failed"}}]).paper_order)
+
+    def test_the_tick_relaunches_a_conductor_for_an_order_on_a_project_never_run(self):
+        from wayline import tick
+        made = paper.order(self.project, start=lambda path: (_ for _ in ()).throw(ValueError("the unit is busy")))
+        self.assertIn("not started (the unit is busy)", made["started"])
+        reason, _ = tick.relaunch_decision(self.project, self.ledger, json.loads((HARNESS_ROOT / "policy.json").read_text()), None, 0)
+        self.assertIn("paper order 1 is open", reason)
 
     def test_the_tick_relaunches_a_conductor_for_an_open_order(self):
         from wayline import tick

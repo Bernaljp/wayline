@@ -1284,8 +1284,6 @@ def relaunch_decision(project, ledger, policy, reading, now):
     """
     events, _ = ledger.read_events()
     view = replay.replay(events)
-    if view.run is None:
-        return None, "the project has never been run; wayline run starts it"
     switched = view.switched or {}
     if switched.get("from") == str(project) and switched.get("to") != str(project):
         return None, "the project was switched away from, to %s" % switched.get("to")
@@ -1301,6 +1299,8 @@ def relaunch_decision(project, ledger, policy, reading, now):
         if closed is not None:
             return None, "paper order %s is open, but %s" % (view.paper_order.get("order"), closed)
         return "paper order %s is open, and the window is open" % view.paper_order.get("order"), None
+    if view.run is None:
+        return None, "the project has never been run; wayline run starts it"
     ended = ended_for_good(project, events, now)
     # A run that journaled no end yet and still owes its drawings, its run-end gates, or their scope-downs, as a run
     # resting at an end does: relaunched, it takes them as its own run and then ends (decision 17; ticket 103).

@@ -406,6 +406,16 @@ class ChecksTest(unittest.TestCase):
         self.assertEqual([finding.level for finding in failed], ["fail"])
         self.assertIn("Results, Methods", failed[0].message)
 
+    def test_a_subsection_and_a_draft_of_several_files_say_nothing_of_the_order(self):
+        sub = "# T\n\n## Abstract\n\nText.\n\n### Methods of others\n\nText.\n\n## Results\n\nText.\n\n## Methods\n\nText.\n"
+        self.assertFalse([finding for finding in self.structure_of(sub, "nature-communications") if "order" in finding.message])
+        draft = Path(tempfile.mkdtemp(prefix="wayline-parts-"))
+        self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
+        (draft / "a-methods.md").write_text("## Methods\n\nText.\n", encoding="utf-8")
+        (draft / "b-results.md").write_text("## Results\n\nText.\n", encoding="utf-8")
+        found = self.by_check(venue.run_checks(draft, self.guidelines["nature-communications"]), "structure")
+        self.assertFalse([finding for finding in found if "order" in finding.message], "files in name order are no sections' order")
+
     def test_a_structure_flexible_venue_takes_its_sections_in_any_order(self):
         self.assertTrue(self.guidelines["nature"]["structure_flexible"])
         swapped = "# T\n\n## Methods\n\nText.\n\n## Summary paragraph\n\nText.\n"

@@ -3343,6 +3343,12 @@ class Conductor:
         if self._draws_before_the_end(drawings.ORDER):
             self._say_order(order, "draws the changed results first")
             return
+        if self.verdicts and self.view.hold is None:
+            # A failed verdict sends its ticket back, whose findings the paper is made from; one held on Fable's spent
+            # window is not waited for, or the order would wait for the window.
+            self._say_order(order, "waits for the verdicts of ticket(s) %s" % ", ".join(
+                str(identifier) for identifier in sorted({entry.ticket for entry in self.verdicts})))
+            return
         batch = paper.waiting_on(self.project, order)
         if batch:
             self._say_order(order, "waits on its batch %s: the owner's marks, or wayline mark %s --defaults" % (batch, batch))

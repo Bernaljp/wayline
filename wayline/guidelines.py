@@ -1650,6 +1650,25 @@ class Manuscript:
     def section_names(self):
         return [name for name, _ in self.sections() if name]
 
+    def ordered_section_names(self):
+        """The top-level headings of a draft that is one file, in their order; None for a draft of several files, whose
+        file order says nothing of the sections' (ticket 115). A heading below the shallowest level is a subsection."""
+        if len(self.sources) != 1:
+            return None
+        text = next(iter(self.sources.values()))
+        if self.kind == "latex":
+            found = [(len(re.match(r"\\((?:sub)*)", mark.group(0)).group(1)) // 3, mark.group(1).strip())
+                     for mark in re.finditer(r"\\(?:sub){0,2}section\*?\s*\{([^}]*)\}", text)]
+        else:
+            found = [(len(mark.group(1)), mark.group(2).strip()) for mark in _MD_HEADING.finditer(text)]
+            title = [level for level, _ in found if level == 1]
+            if len(title) == 1:
+                found = [(level, name) for level, name in found if level > 1]  # the one level-one heading is the title
+        if not found:
+            return []
+        top = min(level for level, _ in found)
+        return [name for level, name in found if level == top]
+
     def title(self):
         """The draft's title: a LaTeX `\\title{}`, or the first level-one heading of a Markdown draft.
 
@@ -2031,9 +2050,10 @@ def check_structure(manuscript, guidelines):
         and not (title and _normalize(name) in ("title", "titlepage"))
     ]
     findings = []
-    if not guidelines["structure_flexible"]:
-        placed = [(next(index for index, heading in enumerate(headings) if heading_matches(name, heading)), name)
-                  for name in required if any(heading_matches(name, heading) for heading in headings)]
+    ordered = manuscript.ordered_section_names() if not guidelines["structure_flexible"] else None
+    if ordered:
+        placed = [(next(index for index, heading in enumerate(ordered) if heading_matches(name, heading)), name)
+                  for name in required if any(heading_matches(name, heading) for heading in ordered)]
         if [name for _, name in sorted(placed, key=lambda pair: pair[0])] != [name for _, name in placed]:
             findings.append(Finding("structure", "fail", "the sections stand as %s; %s asks for them in the order %s." % (
                 ", ".join(name for _, name in sorted(placed, key=lambda pair: pair[0])), guidelines["display_name"],

@@ -233,9 +233,8 @@ def _inherited(book):
 def _contradictions(project):
     """The contradictions standing now that the owner did not mark not one: `[{a, b, why, results}]`."""
     from wayline import repeats
-    dismissed = {why_pair for why_pair, _ in repeats.dismissed(project)}
-    return [item for item in repeats.contradictions(project)
-            if "research/repeats.json, the pair %s+%s" % (item["a"], item["b"]) not in dismissed]
+    dismissed = repeats.dismissed_pairs(project)
+    return [item for item in repeats.contradictions(project) if (item["a"], item["b"]) not in dismissed]
 
 
 def _unresolved(project):
@@ -250,14 +249,12 @@ def _order_concerns(project):
 
 def _kill(events):
     """The last kill argument on the general report as `(passed, subject, points)`, or None before the first."""
-    from wayline import gates
-    for event in reversed(events):
-        payload = event.get("payload") or {}
-        if event.get("event") == "verdict" and payload.get("subject_kind") == "report" \
-                and payload.get("verdict_type") == gates.KILL_ARGUMENT:
-            points = [_one_line(item.get("text") if isinstance(item, dict) else item) for item in payload.get("findings") or []]
-            return bool(payload.get("pass")), payload.get("subject"), [point for point in points if point]
-    return None
+    from wayline import run_end
+    payload = run_end.last_kill_verdict(events)
+    if payload is None:
+        return None
+    points = [_one_line(item.get("text") if isinstance(item, dict) else item) for item in payload.get("findings") or []]
+    return bool(payload.get("pass")), payload.get("subject"), [point for point in points if point]
 
 
 def _verified_none(project):
@@ -447,19 +444,30 @@ def answers(project, payload):
 
 
 def _take_outline_answers(project, found):
-    """Give each outline proposal the order's answer on its own batch, then let the outline take the marks."""
+    """Give each outline proposal the order's answer on its own batch, then let the outline take the marks.
+
+    Only an answer someone gave (the owner's, or the decider's) is given there: code's default under `autonomous` leaves
+    the proposal open for the decider (ticket 120). A proposal marked in its own batch since keeps that mark, and the
+    answer the paper follows becomes it, so the record says what the outline holds.
+    """
     from wayline import outline
     taken = False
     for answer in found:
         match = re.match(r"^outline:(B[1-9][0-9]*)#([1-9][0-9]*)$", answer["ref"])
-        if not match:
+        if not match or answer["by"] not in (OWNER, DECIDER):
             continue
-        by = DECIDER if answer["by"] == DECIDER else OWNER
         try:
-            batches.mark(project, match.group(1), int(match.group(2)), answer["mark"], by=by)
+            batches.mark(project, match.group(1), int(match.group(2)), answer["mark"], by=answer["by"])
             taken = True
         except batches.BatchError:
-            continue  # marked since, in its own batch: that mark stands
+            try:
+                item = next(entry for entry in batches.read_batch(project, match.group(1))["items"]
+                            if entry["id"] == int(match.group(2)))
+            except (batches.BatchError, StopIteration, OSError, ValueError):
+                continue
+            if item["mark"] is not None:
+                answer.update(mark=item["mark"], by=item["by"] or answer["by"],
+                              note="marked %s in %s first" % (item["mark"], match.group(1)))
     if taken:
         outline.take_marks(project)
 
@@ -874,9 +882,10 @@ def _write_session(project, number, version, written, structure, followed, previ
 
 
 def _freeze(book, previous):
-    """Copy the version on disk under `earlier/v<n>/`, everything of `research/paper/` but `earlier/` itself."""
+    """Copy the version on disk under `earlier/v<n>/`, everything of `research/paper/` but `earlier/` itself, once: a
+    composition that failed after freezing it leaves the frozen copy as it was, and the next order freezes nothing over it."""
     root = book.path(_paper())
-    if not root.is_dir():
+    if not root.is_dir() or book.path(_paper("%s/v%d" % (EARLIER, previous["version"]))).is_dir():
         return
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)

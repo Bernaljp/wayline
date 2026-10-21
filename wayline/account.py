@@ -41,7 +41,7 @@ it, by `wayline review <id> stand|reverse` or by marking its item: every unrevie
 `reviewed`; a reviewed decision stays counted in its run. A reversal is the owner's own answer through the existing
 verbs: a decision ticket is asked again (`ticket_rerun`) human-only and, with an answer, answered by the owner
 (`project.answer`); a grill question is revised (`grill answer --revise`); a parked proposal the decider kept parked
-is admitted; the paper's venue is the owner's next `wayline paper --venue`. Under `autonomous` a conversation the owner opens
+is admitted; the paper's venue is the owner's to name when the paper is compiled for one. Under `autonomous` a conversation the owner opens
 starts with "Decided for you" as one numbered item recommending "let them stand", and the owner's yes is
 `wayline review all stand --shown <ids>` (`review_all`), one `reviewed` per decision shown, and one decided since is left
 listed (ticket 109). A reversal with no answer ("undo it")

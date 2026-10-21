@@ -184,9 +184,10 @@ def read_batch(project, identifier):
         raise BatchError("%s holds no batch %s" % (ledger.project, identifier)) from None
     check(record, load_schema(SCHEMA), name="batch %s" % identifier)
     for item in record["items"]:
-        allowed = list(KINDS[record["kind"]])
-        if record["kind"] in PER_ITEM and len(item["marks"]) >= 2 and set(item["marks"]) <= set(allowed):
-            allowed = list(item["marks"])
+        try:
+            allowed = _item_marks(record["kind"], item, "batch %s, item %d" % (identifier, item["id"]))
+        except BatchError:
+            allowed = list(KINDS[record["kind"]])  # refused just below, naming the marks the kind allows
         if item["marks"] != allowed or any(value is not None and value not in allowed for value in (item["default"], item["mark"])):
             raise BatchError("batch %s, item %d: a %s item's marks are %s, and its default and mark are among them; the file says otherwise"
                              % (identifier, item["id"], record["kind"], ", ".join(allowed)))
