@@ -84,4 +84,4 @@ It blocks 114 and 115.
   - the recorded setup conversation fixture (decision 12's fixtures) updated to the new setup order, run on demand.
 - [x] The verb table of decision 1 gains the drafted-ticket verb in the same commit as the code.
 - [x] The changelog's `## Unreleased` section describes the `wayline` skill and the phase skills' retirement.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
