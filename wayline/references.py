@@ -132,6 +132,9 @@ def scout(project, identifier, ticket=None, fetcher=None, email=None, clock=None
 
 def scout_command(args):
     """`wayline scout <identifier> [--json] [--project <path>]`: called by workers; the ticket is `WAYLINE_TICKET`."""
+    if args and args[0] == "search":
+        from wayline import survey  # `wayline scout search`, the surveyor's (ticket 99)
+        return survey.search_command(args[1:])
     parser = argparse.ArgumentParser(prog="wayline scout", description="check one work with the scout: file its L0 dossier and print its slug, details, and abstract")
     parser.add_argument("identifier", help="a DOI, an arXiv id, or the work's exact title (a URL is never looked up)")
     parser.add_argument("--project", help="the project; WAYLINE_PROJECT or the active one by default")

@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from wayline import HARNESS_ROOT, changes, decider, decisions, gates, objectives, proposals, registry, sections, software, specify, worker
+from wayline import HARNESS_ROOT, changes, decider, decisions, gates, objectives, registry, sections, software, specify, survey, worker
 from wayline.cli import parse_args
 from wayline.frontmatter import dump_document
 from wayline.jsonschema import ValidationError, check, load_schema
@@ -99,8 +99,18 @@ TITLE = "Confirm the graph"
 CONFIRM, REVISE = specify.CONFIRM, specify.REVISE
 ANSWER_PREFIX = "graph %s: "            # the interactive answer's `decision`, keyed by the graph it answers
 INTERACTIVE, CHECKPOINTS, AUTONOMOUS = specify.INTERACTIVE, specify.CHECKPOINTS, specify.AUTONOMOUS
-# The cuts of the graph the planner is launched for: the four of ticket 34, and the cut for a spec amendment (ticket 92).
-KINDS = ("plan", "replan", "split", "revise", "amend")
+# The cuts of the graph the planner is launched for: the four of ticket 34, and the cut for a spec amendment (ticket 92);
+# and `draft`, the one ticket a conversation drafts for work the owner asks for, which no planner cuts (ticket 109).
+KINDS = ("plan", "replan", "split", "revise", "amend", "draft")
+# The cuts that add to the graph and take nothing back, and ask nothing of the graph's confirmation.
+ADDING = ("amend", "draft")
+HUMAN = "human"                         # `proposed_by` of a drafted ticket: the owner asked for it (decision 17)
+# The cuts that take back every open ticket, so each owes a `lit` ticket to an objective no Introduction passage with a
+# `ref` tag covers and no kept `lit` ticket serves (ticket 99); an amendment asks for its own (`Cut.lit`), and a split
+# replaces one ticket with its pieces.
+OWE_LIT = ("plan", "replan", "revise")
+# The cuts whose `lit` tickets are the first ones, handed what position's search for the missing prior work found.
+FIRST_CUTS = ("plan", "revise")
 # The statuses a re-cut takes back: work not started, or stopped on a path the planner has to re-cut around.
 RECUT = ("open", "blocked")
 # The statuses a ticket can be split from: not started, or stopped short of a person.
@@ -148,13 +158,14 @@ class PlanError(ValueError):
 class Cut:
     """One cut of the graph: which of the planner's four asks this launch is, and what it carries."""
 
-    kind: str                                   # plan | replan | split | revise | amend
+    kind: str                                   # plan | replan | split | revise | amend | draft
     of: Optional[int] = None                    # the ticket a split replaces
     change: Optional[str] = None                # what the owner or the decider asked to change, for a revise
     sent_back: list = field(default_factory=list)  # the ids a sent-back answer parked, which a revise takes back too
     objective: Optional[str] = None             # the objective an amendment was made for (ticket 92)
     claims: list = field(default_factory=list)  # the claims the amendment added, the only ones this cut serves
     lit: bool = False                           # no Introduction passage with a `ref` tag covers the objective
+    uncovered: list = field(default_factory=list)  # the open objectives no such passage covers and no kept `lit` ticket serves
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -167,6 +178,9 @@ class Cut:
     @property
     def asked(self):
         """What the planner is asked for, in one line of its prompt."""
+        owed = ("; and `lit` tickets serving %s, since no Introduction passage with a `ref` tag covers them and no `lit` ticket the "
+                "project keeps serves them: one per objective, and one ticket may serve several objectives that share a "
+                "literature, naming each among its objectives" % ", ".join(self.uncovered)) if self.uncovered else ""
         return {
             "plan": "the first cut of this project's graph",
             "replan": "a re-cut after a stall: every ticket marked re-cut below is cut again, from what the journal says failed",
@@ -177,7 +191,8 @@ class Cut:
                          self.objective, ", ".join(self.claims) or "none", self.objective,
                          "; and a `lit` ticket serving %s, since no Introduction passage with a `ref` tag covers it" % self.objective
                          if self.lit else ""),
-        }[self.kind]
+            "draft": "one ticket a conversation drafted for work the owner asked for",
+        }[self.kind] + owed
 
     def why_superseded(self, replacements):
         """The line a parked ticket's body carries: which cut superseded it and what replaced it."""
@@ -188,6 +203,7 @@ class Cut:
             "revise": "Re-cut by the planner with the owner's change; its replacements are tickets %s." % named,
             "plan": "Superseded by the planner's first cut of the graph; its replacements are tickets %s." % named,
             "amend": "Superseded by the cut for the amendment of %s; its replacements are tickets %s." % (self.objective, named),
+            "draft": "Superseded by a drafted ticket; its replacements are tickets %s." % named,
         }[self.kind]
 
 
@@ -386,8 +402,9 @@ def check_tickets(new, graph, project, *, base=True, timeout_s=None, declared=fr
         label = _label(fields, labels)
         if not _one_line(fields.get("demo")):
             failures.append("%s has no demo" % label)
-        # A writing ticket changes no file: its passages are its work, and the declared-sections check its machine gate.
-        writing = fields.get("kind") == sections.WRITING
+        # A writing ticket changes no file, nor does a `lit` ticket (ticket 99): its passages are its work, and the
+        # declared-sections check its machine gate.
+        writing = fields.get("kind") in (sections.WRITING, survey.KIND)
         if not writing and not (fields.get("acceptance") or {}).get("machine"):
             failures.append("%s has no machine criterion in acceptance.machine" % label)
         touches = fields.get("touches") or []
@@ -437,7 +454,7 @@ def read_all(project):
 def check_graph(project, base=True, timeout_s=None):
     """The plan-time checks on the graph as written: every open work ticket checked, the whole graph for the DAG and the docs rule.
 
-    What the fixture of the `wayline-plan` skill and the tests run on a written graph, hand-written or
+    What the plan fixture of the `wayline` skill and the tests run on a written graph, hand-written or
     cut. A ticket already `done` is not run at the base commit, since its criteria pass now by design.
     """
     project = Path(project).resolve()
@@ -463,6 +480,15 @@ def _dependents(existing):
     return found
 
 
+def _uncovered(project, existing, superseded):
+    """The open objectives a first plan owes a `lit` ticket (ticket 99): none of the Introduction's passages with a `ref` tag
+    covers them, and no `lit` ticket the project keeps through this cut serves them already."""
+    kept = {objective for identifier, (fields, _) in existing.items()
+            if fields.get("kind") == survey.KIND and identifier not in superseded and fields.get("status") not in ("parked", "failed")
+            for objective in fields.get("objectives") or []}
+    return [objective for objective in survey.uncovered(project) if objective not in kept]
+
+
 def superseded_by(cut, existing):
     """The ids this cut takes back, sorted: what is parked when the plan is written.
 
@@ -471,13 +497,16 @@ def superseded_by(cut, existing):
     every decision ticket of the planner's with `blocking: subgraph` that pauses nothing but tickets in
     that set: a question asked about work that is being cut again is asked again by the new plan when it
     still stands. A first plan takes back what it finds too, so tickets a crash left behind, or a plan
-    that stopped before `plan.json` was written, never run beside the graph.
+    that stopped before `plan.json` was written, never run beside the graph. A ticket the owner asked for
+    (`proposed_by: human`, a drafted ticket) is kept, as a change record's harness ticket is: the planner is shown
+    it as kept and may wait on it, and only a split of that one ticket takes it back.
     """
     if cut.kind == "split":
         return [cut.of]
-    if cut.kind == "amend":
-        return []  # an amendment adds to the graph and takes nothing back
-    taken = {identifier for identifier, (fields, _) in existing.items() if _cuttable(fields) and fields["status"] in RECUT}
+    if cut.kind in ADDING:
+        return []  # an amendment and a drafted ticket add to the graph and take nothing back
+    taken = {identifier for identifier, (fields, _) in existing.items()
+             if _cuttable(fields) and fields.get("proposed_by") != HUMAN and fields["status"] in RECUT}
     taken.update(identifier for identifier in cut.sent_back if identifier in existing)
     dependents = _dependents(existing)
     for identifier, (fields, _) in existing.items():
@@ -529,6 +558,7 @@ def prepare(record, project, existing, index, cut, start=None):
     prepared.superseded = superseded_by(cut, existing)
     superseded = set(prepared.superseded)
     split_of = existing[cut.of][0] if cut.kind == "split" and cut.of in existing else None
+    missing = cut.kind in FIRST_CUTS and survey.missing_scouted(project)
     if cut.kind == "split":
         if split_of is None:
             failures.append("the project has no ticket %s to split" % cut.of)
@@ -575,13 +605,10 @@ def prepare(record, project, existing, index, cut, start=None):
         if split_of is not None:
             blockers.update(split_of["blocked_by"])
         assignment = registry.librarian({"id": identifier, "kind": item["kind"]}, index, tags=item.get("tags"))
-        # A `lit` ticket runs on the surveyor (decision 17), which ticket 99 ships: until then the cut for an amendment, the
-        # one cut that asks for one (ticket 92), cuts it on that role, and its launch fails on the missing role, handing it
-        # to a person, as an admitted one does (`proposals.role_for`).
         fields = {
             "id": identifier, "title": _one_line(item["title"]), "kind": item["kind"], "difficulty": item["difficulty"],
             "status": "open", "blocked_by": sorted(blockers), "touches": [str(touch).strip() for touch in item["touches"]],
-            "role": assignment["role"] or (proposals.DECISION_17_ROLES.get(item["kind"]) if cut.kind == "amend" else None) or UNASSIGNED,
+            "role": assignment["role"] or UNASSIGNED,
             "skills": list(assignment["skills"]),
         }
         if item.get("resources") is not None:
@@ -602,8 +629,12 @@ def prepare(record, project, existing, index, cut, start=None):
         if item.get("goal") is not None:
             fields["goal"] = item["goal"]
         fields["context_pack"] = list(item["context_pack"])
+        if item["kind"] == survey.KIND and missing and survey.MISSING_LOCATOR not in fields["context_pack"]:
+            # The first `lit` tickets, a first cut's or its revise's, are handed what position's search for its missing prior
+            # work found (ticket 99).
+            fields["context_pack"].append(survey.MISSING_LOCATOR)
         fields["origin"] = _one_line(item["origin"])
-        fields["proposed_by"] = PLANNER
+        fields["proposed_by"] = HUMAN if cut.kind == "draft" else PLANNER
         fields["demo"] = _one_line(item["demo"])
         if item.get("retry") and item["kind"] == "experiment":
             fields["retry"] = retry_steps(item["retry"])
@@ -618,6 +649,12 @@ def prepare(record, project, existing, index, cut, start=None):
     if cut.kind == "amend" and cut.lit and not any(fields["kind"] == "lit" for _, fields, _, _ in prepared.tickets):
         failures.append("no Introduction passage with a `ref` tag covers %s, so the cut includes a `lit` ticket serving it"
                         % cut.objective)
+    served = {objective for _, fields, _, _ in prepared.tickets if fields["kind"] == survey.KIND for objective in fields["objectives"]}
+    for objective in cut.uncovered:
+        if objective not in served:
+            failures.append("no Introduction passage with a `ref` tag covers %s, and no `lit` ticket of this cut serves it: cut one "
+                            "naming %s among its objectives, or name it on a `lit` ticket that serves an objective sharing its "
+                            "literature" % (objective, objective))
     first_decision = start + len(tickets)
     placeholders = []
     for position, item in enumerate(record.get("decisions") or []):
@@ -687,7 +724,10 @@ def _section_failures(label, item):
                             "so drop %s" % (label, ", ".join("`%s`" % touch for touch in item["touches"])))
         if not given:
             failures.append("%s is a writing ticket and declares no section; name the sections it writes in `sections`" % label)
-    elif given is not None and sorted(set(given)) != sorted(sections.sections_for_kind(kind)):
+    elif kind == survey.KIND and item.get("touches"):
+        failures.append("%s is a lit ticket, whose touch set is empty: the surveyor writes no file, and code writes its "
+                        "Introduction passages, so drop %s" % (label, ", ".join("`%s`" % touch for touch in item["touches"])))
+    if kind != sections.WRITING and given is not None and sorted(set(given)) != sorted(sections.sections_for_kind(kind)):
         failures.append("%s declares %s; a %s ticket declares %s" % (label, ", ".join(given) or "no section", kind,
                                                                     ", ".join(sections.sections_for_kind(kind)) or "no section"))
     return failures
@@ -731,11 +771,7 @@ def registry_text(index):
         kinds = entry["applicability_tags"]["kinds"]
         covered.update(kinds)
         lines.append("- `%s` for %s tickets: %s" % (entry["id"], ", ".join(kinds), _one_line(entry["capability_summary"])))
-    missing = [kind for kind in _work_kinds() if kind not in covered and kind not in proposals.DECISION_17_ROLES]
-    for kind, role in sorted(proposals.DECISION_17_ROLES.items()):
-        if kind not in covered:
-            lines.append("- `%s` tickets run on the `%s` role, not shipped yet: cut one only when the cut asks for it, and it waits "
-                         "for that role" % (kind, role))
+    missing = [kind for kind in _work_kinds() if kind not in covered]
     if missing:
         lines.append("- no role covers %s tickets; do not cut one, and say in `notes` what would need it" % ", ".join("`%s`" % kind for kind in missing))
     lines += ["", "Skills, by kind and tags:"]
@@ -1055,7 +1091,7 @@ def write_plan(project, ledger, record, index, cut, *, expected=None, autonomy=N
         written = []
         for key, fields, body, tags in prepared.tickets:
             write_ticket(ledger, fields, body)
-            ledger.append_event(TICKET_CREATED, {"ticket": fields["id"], "kind": fields["kind"], "proposed_by": PLANNER,
+            ledger.append_event(TICKET_CREATED, {"ticket": fields["id"], "kind": fields["kind"], "proposed_by": fields["proposed_by"],
                                                  "origin": fields.get("origin"), "blocked_by": fields["blocked_by"]}, ticket=fields["id"])
             registry.assign(fields, index, ledger=ledger, tags=tags, role=fields["role"] if fields["role"] != UNASSIGNED else None)
             written.append(fields["id"])
@@ -1071,7 +1107,7 @@ def write_plan(project, ledger, record, index, cut, *, expected=None, autonomy=N
             opened.append(report["ticket"])
         outcome = {"cut": cut.kind, "of": cut.of, "tickets": written, "decisions": opened, "superseded": list(prepared.superseded),
                    "repointed": sorted(prepared.repointed), "notes": list(record.get("notes") or []), "sha": None, "gate": None}
-        if cut.kind not in ("split", "amend"):
+        if cut.kind not in ("split",) + ADDING:
             outcome["sha"] = graph_sha(record, written, opened)
             ledger.write_json(PLAN_JSON, {
                 "sha": outcome["sha"], "cut_at": now_ts(), "cut": cut.kind, "change": cut.change, "session_id": session,
@@ -1256,6 +1292,8 @@ def cut_graph(project, cut, *, harness_root=HARNESS_ROOT, policy=None, fall_back
     session = _Session(project, harness_root, policy, fall_back, say)
     records, cut_short = _records(project, specify.context_cap(policy, session.model))
     superseded = superseded_by(cut, existing)
+    if cut.kind in OWE_LIT:
+        cut.uncovered = _uncovered(project, existing, superseded)
     prompt = plan_prompt(session.role, cut, harness, project, policy, records, index, journal_text(events, cut.of),
                          graph_text(existing, superseded, of=cut.of), cut_short=cut_short)
     say("cutting the graph (%s): the planner on %s at %s%s" % (cut.kind, session.model, session.effort,
@@ -1343,8 +1381,12 @@ def _next(state):
 
 
 def plan(project, *, replan=False, split=None, harness_root=HARNESS_ROOT, policy=None, fall_back=None, notify=None, out=None,
-         pre_check=True):
+         pre_check=True, cut_only=False):
     """Do whatever the graph owes next: cut, re-cut, split, ask, decide, or advance. Returns the report.
+
+    `cut_only` cuts and asks but leaves an open confirmation to a later call, even under `autonomous`: the graph's
+    confirmation ends setup, and setup asks what the planned work needs (its software, then the questions after it)
+    between the cut and the confirmation (decision 17; ticket 109).
 
     The report is `{project, autonomy, cut, did, written, stopped, failures, state}`; `stopped` names what
     ended the call early (a failed gate, a usage window, the hold on Fable's window) and `failures` the
@@ -1401,7 +1443,7 @@ def plan(project, *, replan=False, split=None, harness_root=HARNESS_ROOT, policy
             refresh_graph(project, ledger=ledger)
             report["did"].append("opened decision ticket %d, \"%s\", blocking all" % (identifier, TITLE))
         state = plan_state(project)
-    if state["state"] == "pending" and autonomy == AUTONOMOUS and report["stopped"] is None:
+    if state["state"] == "pending" and autonomy == AUTONOMOUS and report["stopped"] is None and not cut_only:
         report["did"].append("the decider on ticket %d: %s" % (state["ticket"], _decide(
             project, state["ticket"], harness_root, policy, fall_back, notify, say)))
         state = plan_state(project)
@@ -1477,6 +1519,9 @@ def plan_command(args):
     parser.add_argument("--replan", action="store_true", help="re-cut every open or blocked ticket from what the journal says failed")
     parser.add_argument("--split", type=int, metavar="ID", help="replace one failed ticket with smaller ones that inherit its blockers and dependents")
     parser.add_argument("--no-pre-check", action="store_true", help="skip the free structural pre-check when the registry is rebuilt")
+    parser.add_argument("--cut-only", action="store_true",
+                        help="cut and ask, but leave the confirmation to a later run of the verb even under autonomous: setup asks "
+                             "what the planned work needs before the confirmation ends it")
     parser.add_argument("--project", help="the project; the active one by default")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     options, code = parse_args(parser, args)
@@ -1488,7 +1533,7 @@ def plan_command(args):
     try:
         project = find_project(options.project)
         report = plan(project, replan=options.replan, split=options.split, out=None if options.json else sys.stdout,
-                      pre_check=not options.no_pre_check)
+                      pre_check=not options.no_pre_check, cut_only=options.cut_only)
     except (ProjectError, LedgerError, TicketError, PlanError, OSError) as failure:
         print("wayline plan: %s" % failure, file=sys.stderr)
         return 1

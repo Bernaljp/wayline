@@ -686,7 +686,7 @@ def wire(project, prepared, existing, kind):
     """The plan's verification tickets checked and their edges wired, in `prepared.tickets`; returns the failures.
 
     Every ticket's `verifies` names an inherited result waiting for its verdict; a first plan, a re-cut, or a revise leaves
-    none waiting without a verification ticket (a split asks nothing). Each verification ticket, new or kept, blocks every
+    none waiting without a verification ticket (a split and a drafted ticket ask nothing). Each verification ticket, new or kept, blocks every
     ticket that serves an objective its result is tied to (`ties`), never another verification or a decision: each new
     one, and each kept one not yet run or stopped short (re-pointed in `prepared.repointed`).
     """
@@ -705,7 +705,7 @@ def wire(project, prepared, existing, kind):
                             % (prepared.labels.get(fields["id"], key), heading))
             continue
         verifying.setdefault(heading, set()).add(fields["id"])
-    if kind != "split":
+    if kind not in ("split", "draft"):  # a split and a drafted ticket add work and leave the rest of the graph as it is
         for heading in waiting:
             if not verifying.get(heading):
                 failures.append("the inherited result %s waits for its verdict and no ticket verifies it: add one with `verifies` "

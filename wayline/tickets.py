@@ -51,6 +51,8 @@ DECISION = "decision"
 HARNESS = "harness"
 # The kind the conductor runs as a promotion through absorb, with no worker session (decision 17; ticket 98).
 DOSSIER = "dossier"
+# The kind the surveyor runs, on its own tier, searching the literature (decision 17; ticket 99).
+LIT = "lit"
 HARDEST = 5
 # The kind whose acceptance always includes the documentation site's machine checks (decision 13).
 DOCS = "docs"

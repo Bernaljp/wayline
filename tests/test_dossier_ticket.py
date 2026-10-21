@@ -18,9 +18,9 @@ from wayline.replay import replay
 
 
 class KindRoleTest(ProposalsCase):
-    def test_kind_role_routes_neither_dossier_nor_lit(self):
+    def test_kind_role_routes_no_dossier_and_lit_to_the_surveyor(self):
         self.assertNotIn("dossier", proposals.KIND_ROLE)
-        self.assertNotIn("lit", proposals.KIND_ROLE)
+        self.assertEqual(proposals.KIND_ROLE["lit"], "surveyor", "the surveyor ships with ticket 99")
 
     def test_an_admitted_dossier_proposal_takes_the_role_whose_kinds_name_it(self):
         outcome = self.admit([{"title": "Read the method paper in full", "kind": "dossier", "why": "its exact loss matters",
@@ -29,7 +29,7 @@ class KindRoleTest(ProposalsCase):
         fields, _ = tickets.read_ticket(next(tickets.tickets_dir(self.project).glob("%02d-*.md" % outcome["ticket"])))
         self.assertEqual(fields["role"], "reader")
 
-    def test_an_admitted_lit_proposal_waits_for_the_surveyor_never_the_coder(self):
+    def test_an_admitted_lit_proposal_runs_on_the_surveyor_never_the_coder(self):
         outcome = self.admit([{"title": "Survey the flows literature", "kind": "lit", "why": "the Introduction is empty",
                                "radius": "moderate"}])[0]
         fields, _ = tickets.read_ticket(next(tickets.tickets_dir(self.project).glob("%02d-*.md" % outcome["ticket"])))

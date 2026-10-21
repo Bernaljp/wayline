@@ -276,3 +276,15 @@ touch set is its own drawing directory, so it is read-only on the research; it m
 and `wayline job add`, `consult`, and `scout` are removed, since a drawing adds no job and asks nobody. Its brief is
 the paper part of its prompt, rendered by code at each launch (`drawings.brief`). Its acceptance is code's alone: the
 clean-room rerun and every plot's checks (`wayline/drawing_checks.py`), with no verdict.
+
+## The surveyor takes the `lit` tickets
+
+`surveyor` (ticket 99) covers the `lit` kind, so the librarian assigns it, and `proposals.KIND_ROLE` routes a worker's
+`lit` proposal to it. The conductor launches it on `policy.roles.surveyor` (Sonnet at medium effort) whatever the
+ticket's difficulty, with the turns and minutes of the rung that difficulty names, never on a rung: pacing does not
+step it down, and the escalation chain goes from its resume to the split and then to a person, with no tier up. Its
+tools are `Read`, `Glob`, `Grep`, `wayline scout` (which covers `wayline scout search`), `wayline consult`, and the
+contract's `wayline accept`; `Edit` and `Write` are removed, since a `lit` ticket's touch set is empty and code writes
+its Introduction passages. Its protocol has it search with `wayline scout search`, check every work it cites with
+`wayline scout <identifier>`, and return Introduction passages tagged at the work's `#abstract`, its `references`, and
+proposals; its contract states both caps, `policy.scout.calls_per_ticket` and `policy.scout.searches_per_ticket`.

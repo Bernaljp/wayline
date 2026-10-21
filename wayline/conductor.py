@@ -167,7 +167,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, drawings, gates, methods, notify, numbers, objective_changes, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, tick, tickets, verification, worker
+from wayline import HARNESS_ROOT, code_repository, concerns, decider, decisions, drawings, gates, methods, notify, numbers, objective_changes, objectives, pacing, proposals, references, replay, reproduce, resources, schedule, sections, software, stopping, survey, tick, tickets, verification, worker
 from wayline import goal as goals
 from wayline.tools import run_tool
 from wayline.ledger import (
@@ -1458,6 +1458,17 @@ class Conductor:
         return Tier(model=plotter.model, effort=plotter.effort, max_turns=plotter.max_turns, max_minutes=plotter.max_minutes,
                     context_chars=_context_cap(self.policy, family), family=family), plotter.stepped_from
 
+    def _lit_tier(self, ticket, model=None, effort=None):
+        """A `lit` ticket's tier: the surveyor's model and effort (`policy.roles.surveyor`), whatever its difficulty, under the
+        turns and minutes of the rung its difficulty names (decision 17; ticket 99). It is no rung, so pacing never steps it
+        down and the escalation chain never tiers it up. `model` and `effort` name the tier a session under way launched on."""
+        role_model, role_effort = survey.role_tier(self.policy)
+        sized = rung_tier(self.policy, self._effective_rung(ticket), ticket.get("budget"))
+        model = model or role_model
+        family = pacing.family(model)
+        return Tier(model=model, effort=effort or role_effort, max_turns=sized.max_turns, max_minutes=sized.max_minutes,
+                    context_chars=_context_cap(self.policy, family), family=family)
+
     def _tier_ran(self, rung, difficulty, budget=None, ticket=None, replayed=None):
         """The tier of a session already under way: the rung `ticket_launched` named, else its difficulty's.
 
@@ -1468,6 +1479,8 @@ class Conductor:
         """
         if ticket is not None and _is_drawing(ticket):
             return self._drawing_tier(model=getattr(replayed, "model", None), effort=getattr(replayed, "effort", None))[0]
+        if ticket is not None and _is_lit(ticket):
+            return self._lit_tier(ticket, model=getattr(replayed, "model", None), effort=getattr(replayed, "effort", None))
         if rung is not None:
             try:
                 return rung_tier(self.policy, rung, budget)
@@ -1491,8 +1504,8 @@ class Conductor:
         ticket at that rung waits, a tier up onto it waits with it, and every other rung goes on launching.
         """
         held = self.view.held_rungs()
-        if not held:
-            return None
+        if not held or _role_model(self.policy, entry) is not None:
+            return None  # a drawing or a `lit` ticket runs on its role's tier, no rung, so no held rung holds it
         rung = entry.get("rung")  # the effective rung `_graph` put on the entry, which a tier up may have lifted
         if rung is None:
             try:
@@ -1507,6 +1520,9 @@ class Conductor:
         The rung is the one `_graph` put on the entry, which a tier up may have lifted past the level's own;
         an entry from anywhere else falls back to the tier of its difficulty.
         """
+        model = _role_model(self.policy, entry)
+        if model is not None:
+            return pacing.family(model) == pacing.FABLE  # the role's own model, not a rung's
         try:
             rung = entry.get("rung")
             tier = rung_tier(self.policy, rung) if rung is not None else tier_for(self.policy, entry.get("difficulty"))
@@ -2448,6 +2464,10 @@ class Conductor:
             # A drawing runs on the plotter's own tier, never on a rung (decision 17; ticket 100).
             attempt.tier, attempt.stepped_from = self._drawing_tier(cheap=schedule.steps_down(self.action))
             running = rung
+        elif _is_lit(attempt.ticket):
+            # A `lit` ticket runs on the surveyor's own tier, never on a rung (decision 17; ticket 99).
+            attempt.tier, attempt.stepped_from = self._lit_tier(attempt.ticket), None
+            running = rung
         else:
             running = self._launch_rung(attempt.id, rung)
             attempt.stepped_from = rung_tier(self.policy, rung, attempt.ticket.get("budget")).label if running != rung else None
@@ -2478,6 +2498,7 @@ class Conductor:
             budget={"max_turns": attempt.tier.max_turns, "max_minutes": attempt.tier.max_minutes},
             consult_max=(self.policy.get("consultant") or {}).get("max_questions_per_ticket", worker.CONSULT_MAX),
             scout_max=(self.policy.get("scout") or {}).get("calls_per_ticket", worker.SCOUT_MAX),
+            search_max=(self.policy.get("scout") or {}).get("searches_per_ticket", worker.SEARCH_MAX),
             notes=notes,
             failure=self._last_failure(attempt),
             sections=self._paper_pack(attempt),
@@ -3589,15 +3610,19 @@ class Conductor:
             return None
         refused = worker.not_served(envelope)
         if refused is not None:
-            # A drawing runs on the plotter's tier, no rung of the ladder, so there is no rung to hold: it fails with no step.
-            held = None if _is_drawing(attempt.ticket) else self._hold_rung(attempt, refused)
+            # A drawing runs on the plotter's tier and a `lit` ticket on the surveyor's, no rung of the ladder, so there is no
+            # rung to hold: the drawing fails with no step, and the `lit` ticket takes the escalation chain's next one.
+            held = None if _role_model(self.policy, attempt.ticket) is not None else self._hold_rung(attempt, refused)
+            ruled = attempt.tier is not None and attempt.tier.rung is not None  # a role's own tier holds no rung
             self._fail(attempt, "model_not_served: the subscription does not serve %s, the model this launch named%s; "
-                                "the attempt is not retried and launches at that rung are held%s"
-                       % (refused, "" if attempt.tier is None else " at rung %s" % attempt.tier.rung,
+                                "the attempt is not retried%s%s"
+                       % (refused, " at rung %s" % attempt.tier.rung if ruled else "",
+                          " and launches at that rung are held" if ruled else "",
                           " until decision ticket %d is answered" % held if held else ""),
                        # Straight to the tier up, skipping the split: a rung naming a model nobody serves is a policy
                        # typo, and re-cutting the ticket would spend the planner on it. A tier up onto a held rung waits.
-                       self._step_from(attempt.id, start=TIER_UP))
+                       # A `lit` ticket has no tier up, and its typo is in `policy.roles.surveyor`: a person fixes it.
+                       NEEDS_HUMAN if _is_lit(attempt.ticket) else self._step_from(attempt.id, start=TIER_UP))
             return "failed"
         if worker.ran_as_asked(asked, envelope):
             return None
@@ -5606,8 +5631,8 @@ class Conductor:
         ladder records no rung, so the rung the next attempt would launch on stands in for it.
         """
         fields = self._fields(identifier)
-        if fields is None:
-            return None
+        if fields is None or _role_model(self.policy, fields) is not None:
+            return None  # a drawing or a `lit` ticket runs on its role's tier, no rung, and has none to climb to
         rung, ran = self._effective_rung(fields), self._ran_on(identifier)
         rung = max(rung, ran + 1) if ran is not None else rung + 1
         return rung if rung <= self._top_rung() else None
@@ -5618,7 +5643,8 @@ class Conductor:
         A ticket whose file is gone has no rung at all, and is handed over without a reason rather than
         reported as one the ladder ran out on.
         """
-        return self._fields(identifier) is not None and self._next_rung(identifier) is None
+        fields = self._fields(identifier)
+        return fields is not None and _role_model(self.policy, fields) is None and self._next_rung(identifier) is None
 
     def _rung_family(self, rung):
         """The model family of a rung of the rung ladder, or None for a rung the ladder does not have."""
@@ -6354,6 +6380,25 @@ DRAWING_CHECKED = "drawing_check.json"
 def _is_drawing(fields):
     """Whether a ticket is a drawing, which code alone creates (decision 17; ticket 100)."""
     return (fields or {}).get("kind") == drawings.KIND
+
+
+def _is_lit(fields):
+    """Whether a ticket is a `lit` ticket, which runs on the surveyor's tier (decision 17; ticket 99)."""
+    return (fields or {}).get("kind") == survey.KIND
+
+
+def _role_model(policy, fields):
+    """The model a ticket that runs on its role's own tier launches on, never a rung's: a drawing's the plotter's (ticket 100), a
+    `lit` ticket's the surveyor's (ticket 99); None for every ticket that runs on a rung of the rung ladder.
+
+    Where the conductor asks whether a ticket is on a rung (a held rung, the hold on Fable, a tier up, the ladder's top),
+    it asks this once, so a kind that runs on a role's tier is read the same way everywhere.
+    """
+    if _is_drawing(fields):
+        return drawings.tier(policy).model
+    if _is_lit(fields):
+        return survey.role_tier(policy)[0]
+    return None
 
 
 def _job_seconds(record):

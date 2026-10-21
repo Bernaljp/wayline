@@ -60,28 +60,28 @@ Not part of this ticket:
 
 It blocks 114 and 115.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#256](https://github.com/Bernaljp/wayline/issues/256) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (talking with the project; setup, at every autonomy; objectives, goals, and measures: the owner talks normally; sections and passages: "compile"; the account: the autonomous opening), 1 (the verb table: the drafted-ticket verb), 10 (intake's `human_only` classes, the phase skills); milestone M8 criterion 15 and the M4 criteria it supersedes for a project at `research_version` 2; user stories 104, 136, 165, 166, and 172.
 
-- [ ] `skills/wayline/` holds a body that is the routing table and reference files for setup and evolve. The five phase skills are removed, `wayline-interval-claims` stays, and no skill names another skill to call.
-- [ ] The routing table names only the verbs the conversation may run, and each is a CLI verb that exists. The registry's skill tests and the docs check pass over the new tree. The tickets before it planned these names, which the table uses unless the verb table says otherwise: `objective add` (76), `mark` (79), `document add --kind` (84), `passage add` and `consolidate <section>` (88), `review <id> stand|reverse` (89), `result merge` and `result rename` (90), `specify --amend <objective>` (92), the outline's verb (104), and the hand-over command (71).
-- [ ] `init`'s CLAUDE.md block gains the one line about the `wayline` skill, and refreshing an existing block adds it without duplicating it.
-- [ ] The skill's record, ask, and confirm rules are stated as above, with the one-line read-back carrying the new record's id.
-- [ ] The drafted-ticket verb takes a ticket the session drafts, checks it against the ticket schema and the touch-set rules, and has code place it in the graph. A draft naming `research/` is refused.
-- [ ] Intake's `human_only` classes accept `objective` and `concern`.
-- [ ] The setup reference asks the ten items above in order, each as one question where the spec says one. Under `autonomous`, the setup ends only when every item is answered or explicitly left for later where the spec allows it (the front matter).
-- [ ] Under `autonomous`, the skill opens a conversation with "Decided for you" as one numbered item when any decision is not yet reviewed, and a yes journals `reviewed` for each one.
-- [ ] A batch of more than five items is shown as one line with its count and a link to the marks view.
-- [ ] Nothing installs a unit for `claude remote-control`; how to start it in a project is the user guide's (124).
+- [x] `skills/wayline/` holds a body that is the routing table and reference files for setup and evolve. The five phase skills are removed, `wayline-interval-claims` stays, and no skill names another skill to call.
+- [x] The routing table names only the verbs the conversation may run, and each is a CLI verb that exists. The registry's skill tests and the docs check pass over the new tree. The tickets before it planned these names, which the table uses unless the verb table says otherwise: `objective add` (76), `mark` (79), `document add --kind` (84), `passage add` and `consolidate <section>` (88), `review <id> stand|reverse` (89), `result merge` and `result rename` (90), `specify --amend <objective>` (92), the outline's verb (104), and the hand-over command (71).
+- [x] `init`'s CLAUDE.md block gains the one line about the `wayline` skill, and refreshing an existing block adds it without duplicating it.
+- [x] The skill's record, ask, and confirm rules are stated as above, with the one-line read-back carrying the new record's id.
+- [x] The drafted-ticket verb takes a ticket the session drafts, checks it against the ticket schema and the touch-set rules, and has code place it in the graph. A draft naming `research/` is refused.
+- [x] Intake's `human_only` classes accept `objective` and `concern`.
+- [x] The setup reference asks the ten items above in order, each as one question where the spec says one. Under `autonomous`, the setup ends only when every item is answered or explicitly left for later where the spec allows it (the front matter).
+- [x] Under `autonomous`, the skill opens a conversation with "Decided for you" as one numbered item when any decision is not yet reviewed, and a yes journals `reviewed` for each one.
+- [x] A batch of more than five items is shown as one line with its count and a link to the marks view.
+- [x] Nothing installs a unit for `claude remote-control`; how to start it in a project is the user guide's (124).
 - [ ] Tests:
   - the skill tree's shape and routing table against the verb table;
   - the CLAUDE.md block;
   - the drafted-ticket verb's checks over a temporary project;
   - the `human_only` classes;
   - the recorded setup conversation fixture (decision 12's fixtures) updated to the new setup order, run on demand.
-- [ ] The verb table of decision 1 gains the drafted-ticket verb in the same commit as the code.
-- [ ] The changelog's `## Unreleased` section describes the `wayline` skill and the phase skills' retirement.
-- [ ] `python -m unittest` passes.
+- [x] The verb table of decision 1 gains the drafted-ticket verb in the same commit as the code.
+- [x] The changelog's `## Unreleased` section describes the `wayline` skill and the phase skills' retirement.
+- [x] `python -m unittest` passes.

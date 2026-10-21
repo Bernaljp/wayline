@@ -228,7 +228,7 @@ def experiment_ticket(objective="O2"):
 
 def lit_ticket(objective="O2"):
     return {"key": "T2", "title": "Survey label noise and interaction terms", "kind": "lit", "difficulty": 2, "blocked_by": [],
-            "touches": ["notes/lit-o2/"], "acceptance": {"machine": ["test -f notes/lit-o2/queries.md"], "quality": []},
+            "touches": [], "acceptance": {"machine": [], "quality": []},
             "objectives": [objective], "context_pack": ["research/OBJECTIVES.md"], "origin": "research/OBJECTIVES.md",
             "demo": "The Introduction gains passages on label noise, each tagged at a dossier's abstract."}
 

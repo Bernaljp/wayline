@@ -36,6 +36,30 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The surveyor and `lit` tickets (ticket 99; Implementation Decisions 17, 1, 2, 10, and 14). The literature is searched
+  mid-run for each objective the Introduction does not yet cover, by a cheap session through free services.
+  - The new `surveyor` role takes `lit` tickets (`proposals.KIND_ROLE` routes `lit` to it, a worker's proposal of one
+    included). It runs at `policy.roles.surveyor`, Sonnet at medium, whatever the ticket's difficulty, under the budget
+    its rung gives; pacing never steps it down and the escalation chain never tiers it up (its resume, then the split,
+    then a person). Its tools are Read, Glob, Grep, `wayline scout`, and `wayline consult`, with `wayline accept`; it
+    writes no file, so a `lit` ticket's touch set is empty, and it returns Introduction passages tagged at a scouted
+    work's `#abstract`, its `references`, and proposals.
+  - `wayline scout search "<query>"` (`wayline.survey`) lists the works arXiv, Crossref, and Europe PMC find, free, and
+    OpenAlex's while the day's `policy.scout.openalex_per_day` (100) requests last, at USD 0.001 each, counted by code
+    from the journal. `--citing <identifier>` lists the works citing a seed (Europe PMC by its PMID, OpenAlex by its
+    `cites:` filter). Each work is listed once with the identifier `wayline scout` takes, and nothing is filed. A
+    search is always live and never cached, journaled as `scout_searched`, and a ticket makes at most
+    `policy.scout.searches_per_ticket` (20).
+  - The planner's first cut, and a revise or a replan that takes back the open tickets, owes a `lit` ticket to each open
+    objective no Introduction passage with a `ref` tag covers and no kept `lit` ticket serves (one ticket may serve
+    several that share a literature); a cut that leaves one uncovered is returned with the failure. An amendment's cut
+    already asks for one (ticket 92), and a worker's proposal or the owner's word cuts one.
+  - A search runs only for a `lit` ticket: under `WAYLINE_TICKET`, any other ticket is refused before a request, whatever
+    role's tools reach the verb. A title to scout is printed quoted for the shell.
+  - `wayline position` searches the memo's `missing_prior_work` at setup, once the memo is kept, records what it found in
+    `position.json`, and lists it under each gap in `POSITION.md`; the `lit` tickets of the first cut (or its revise) get
+    that section in their context pack.
+
 - The plotting library switch (ticket 102; Implementation Decisions 17, 1, and 2). `harness.json` gains `plotting`:
   matplotlib with seaborn (the default, and what a project without the key draws with), Altair, or R with ggplot2.
   `wayline switch --plotting <library>`, and the dashboard's select through `project.set_plotting`, first installs
@@ -168,8 +192,7 @@ lists it read-only, marked with its tag.
   - The verifier judges the amendment alone (subject `research/SPEC.md amendment for <O> at <sha>`). The planner then
     cuts tickets for the new claims alone (a cut of kind `amend`, each ticket naming the objective, nothing taken back,
     `plan.json` untouched), and a `lit` ticket serving the objective when no current Introduction passage with a `ref`
-    tag covers it. Until ticket 99 ships the surveyor, a `lit` ticket is cut on that role and its launch fails on the
-    missing role.
+    tag covers it, which runs on the surveyor (ticket 99).
   - Under `checkpoints` a "Confirm the amendment" decision ticket, opened in the same locked section as the tickets,
     pauses only them (`blocking: subgraph`), and the rest of the run goes on; under `autonomous` the decider answers it
     at once; under `interactive` the owner's word comes first (`wayline specify confirm --amend <O>` or
@@ -862,6 +885,43 @@ lists it read-only, marked with its tag.
   tier's context cap; the ticket file's `## Result` lists the passages, which is what a verdict on a `writing` ticket
   reads; and Results is re-rendered when a discarded run's findings are filed.
 
+- The `wayline` skill, and setup as one conversation (ticket 109; Implementation Decisions 17, 1, and 10). The owner
+  talks with a project normally, in any Claude Code session in it (Remote Control included), and never types a verb
+  or a label. One owner-facing skill, `skills/wayline/`, routes everything: its body is the routing table (what the
+  owner says, the rule, and the verbs, the only ones a conversation runs, each a verb of decision 1's table, which
+  `wayline.conversation` reads), and its reference files hold the procedures, `setup.md` and `evolve.md`. The
+  session records without asking what is clear and reads each record back in one line with its id, asks one line
+  only when something is unclear, and confirms first, with what will happen and what it costs, a paper order, a
+  consolidation, and anything on the irreversible list. It never does the research: it answers from the digests code
+  renders. A batch is shown as text only at five items or fewer, otherwise as one line with its count and a link to
+  the marks view; under `autonomous` a conversation opens with "Decided for you" as one numbered item recommending
+  "let them stand". The block `init` writes into a project's `CLAUDE.md` gains the line "When the owner talks with a
+  session here, use the `wayline` skill."; refreshing an older block adds it once. No unit is installed for
+  `claude remote-control`.
+
+- **The phase skills retire.** `wayline-intake`, `wayline-grill`, `wayline-plan`, `wayline-evolve`, and
+  `wayline-paper` are gone; their procedures are the `wayline` skill's reference files, and `upgrade` removes their
+  links from a project's `.claude/skills/`. `wayline-interval-claims` stays, and no skill names another skill to
+  call. Their fixtures under `fixtures/skill/` (but the paper shell's, which had nothing to check) now hold the
+  `wayline` skill's setup and evolve steps, and `fixtures/skill/wayline/` is the setup conversation in its new order,
+  run on demand. The registry lists the owner's skill and never assigns it to a ticket.
+
+- Setup asks ten questions, in this order, each as one question where decision 17 says one: the documents' sorts
+  (with the merges, contradictions, and concern placements of a start midway, in one batch), the objectives, the
+  concerns, the missing material, the stopping rule and budgets, the software, the code repository, under
+  `autonomous` the paper order, the front matter (which may be left for later), and the important unresolved
+  references. Intake's `human_only` classes may name `objective` and `concern`. `wayline plan --cut-only` cuts the
+  graph and leaves its confirmation, which ends setup, to a later run even under `autonomous`, so setup asks what the
+  planned work needs first; under `autonomous` nothing about any of these is asked after setup.
+
+- `wayline ticket add [<draft.json>|-]`, the drafted ticket: work the owner asks for becomes one ticket the session
+  drafts in the planner's shape, checked as the planner's are (the schemas, the touch-set rules, so a draft naming
+  `research/` is refused, the objectives it names, a criterion failing at the base commit), assigned a role and
+  skills, written, journaled `ticket_created` with `proposed_by: human`, and placed in `graph.json` by code.
+
+- `wayline review all stand --shown <ids>` lets each decision the owner was shown under "Decided for you" stand, one
+  `reviewed` each, and leaves listed any decided since: the owner's yes to the autonomous opening.
+
 - The dashboard's views, item links, and the projects page (ticket 110; Implementation Decisions 17 and 8). The one
   stacked page becomes views routed by the hash behind the project tabs: **Research** first, then **Run**, with
   **Paper** and **Inherited** (ticket 111) and **Marks** (ticket 112) to follow. The browser's back and forward move
@@ -884,6 +944,7 @@ lists it read-only, marked with its tag.
   since you last opened it shows a dot, kept in your browser, and sends no notice. The new reads are
   `research`, `run`, `waiting`, and `items/<id>` under `/api/projects/<id>/`, each answering 304 while nothing
   changed. Every view lays out at phone width. The dashboard spends no tokens.
+
 
 ## v1.0.0 (2026-09-27)
 

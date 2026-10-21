@@ -235,6 +235,9 @@ class PlanCase(ProjectTestCase):
 
     autonomy = "checkpoints"
     git = False
+    # The Introduction already cites the literature for both objectives, so the first cut owes no `lit` ticket (ticket 99);
+    # `tests/test_surveyor.py` cuts the graph of a project whose Introduction does not.
+    introduction_covered = True
 
     def setUp(self):
         super().setUp()
@@ -252,6 +255,10 @@ class PlanCase(ProjectTestCase):
         self.confirm_spec()
         open_objective(self.project)
         open_goal(self.project)  # O2, a goal on `auroc`, which the cut's E1 ticket names as its `goal`
+        if self.introduction_covered:
+            from wayline import sections
+            sections.add_passage(self.project, "introduction", "Interaction terms",
+                                 "Interaction terms help on tabular data {ref:paper-a#abstract}.", by="owner", objectives=["O1", "O2"])
         project.set_autonomy(self.project, self.autonomy)
         self.notified = []
         self.fake = self.enterContext(worker.use_fake())
@@ -333,7 +340,7 @@ class CutTest(PlanCase):
         for text in ("- the cut: the first cut", "## research/SPEC.md", "# Spec: Do pairwise interaction terms", "### E1 (claims: C1)",
                      "## research/OBJECTIVES.md", "## research/kb/query_pack.md", "paper-a extends paper-b",
                      "# The registry", "`coder` for code, harness tickets", "`documentarian` for docs tickets", "`experimenter` for experiment tickets",
-                     "no role covers `figure`, `review` tickets", "`lit` tickets run on the `surveyor` role, not shipped yet", "# The difficulty rubric", "- 3: a new code path",
+                     "no role covers `figure`, `review` tickets", "`surveyor` for lit tickets", "# The difficulty rubric", "- 3: a new code path",
                      "# What the journal says", "# The paths you may open", "## Plan", "# The plan", "adds_public_api"):
             self.assertIn(text, request.prompt)
         self.assertNotIn("## Specify", request.prompt)
@@ -556,6 +563,11 @@ class ObjectivesTest(PlanCase):
         objectives.change_objective(self.project, "O1", "parked", by="owner", answer="later")
         value = cut()
         value["tickets"][4]["objectives"] = []  # T5 named O1, which is parked now
+        # O3 is open and no Introduction passage cites for it, so the first cut serves it with a `lit` ticket (ticket 99).
+        value["tickets"].append({"key": "T20", "title": "Survey the later question", "kind": "lit", "difficulty": 2, "blocked_by": [],
+                                 "touches": [], "acceptance": {"machine": [], "quality": []}, "objectives": ["O3"],
+                                 "context_pack": ["research/OBJECTIVES.md"], "origin": "research/OBJECTIVES.md",
+                                 "demo": "The Introduction gains passages on O3."})
         self.script(planned(value))
         report = self.plan()
         self.assertIsNone(report["stopped"], report)
@@ -803,6 +815,20 @@ class AutonomousTest(PlanCase):
         self.assertEqual(self.statuses()[7], "parked")
         self.assertEqual(self.phases(), [(None, "P4")])
 
+    def test_setup_cuts_the_graph_and_leaves_its_confirmation_until_its_last_question_is_answered(self):
+        """Ticket 109: the confirmation ends setup, so setup cuts first, asks what the planned work needs, then confirms."""
+        self.script(planned(cut()))
+        report = self.plan(cut_only=True)
+        self.assertIsNone(report["stopped"], report)
+        self.assertEqual(report["state"]["state"], "pending")
+        self.assertEqual(self.calls(decider.DECIDER), [], "the decider is not launched on the confirmation yet")
+        self.assertEqual(self.phases(), [(None, "P4")], "setup has not ended")
+        self.fake.script(decided("confirm"), role=decider.DECIDER)
+        report = self.plan()
+        self.assertEqual((report["state"]["state"], report["state"]["decided_by"]), ("confirmed", "decider"))
+        self.assertEqual(self.phases(), [(None, "P4"), ("P4", "P5")])
+        self.assertEqual(len(self.calls(plan.PLANNER)), 1, "the graph is cut once")
+
     def test_a_decider_that_cannot_decide_leaves_it_for_the_owner(self):
         self.script(planned(cut()))
         report = self.plan()  # nothing scripted for the decider: its launch fails
@@ -922,6 +948,20 @@ class ReplanTest(PlanCase):
         self.assertIn("- #%d [open, kept] harness" % harness, self.calls(plan.PLANNER)[0].request.prompt)
         self.assertEqual(report["written"]["superseded"], [2, 4, 5, 6, 7, 8, 9])
         self.assertEqual(self.statuses()[harness], "open")
+
+    def test_a_stall_replan_keeps_a_ticket_the_owner_asked_for(self):
+        """Ticket 109: a drafted ticket is the owner's request, which no re-cut takes back."""
+        from wayline import drafts
+        drafted = drafts.add_drafted(self.project, {
+            "title": "Export the summary as CSV", "kind": "code", "difficulty": 2, "blocked_by": [], "touches": ["toy/export.py"],
+            "acceptance": {"machine": ["test -f toy/export.py"]}, "objectives": [], "context_pack": ["research/SPEC.md"],
+            "origin": "the owner, in the conversation", "demo": "toy/export.py writes summary.csv"})["ticket"]
+        self.script(planned(self.recut()))
+        report = plan.replan(self.project, notify=self.notify, pre_check=False)
+        self.assertIsNone(report["stopped"], report)
+        self.assertNotIn(drafted, report["written"]["superseded"])
+        self.assertEqual(self.statuses()[drafted], "open")
+        self.assertIn("- #%d [open, kept] code" % drafted, self.calls(plan.PLANNER)[0].request.prompt)
 
     def test_the_planner_is_never_asked_to_split_a_change_record_s_harness_ticket(self):
         harness = self.harness_ticket()

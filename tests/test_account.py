@@ -189,6 +189,54 @@ class ReviewTest(AccountCase):
         with redirect_stdout(io.StringIO()), redirect_stderr(err):
             self.assertEqual(cli.main(["review", "D2", "stand", "--project", str(self.project)]), 2)
 
+    def decided_twice(self):
+        """D2 from the fixture, and one more grill question the decider answered: the ids, in order."""
+        from wayline import grill
+        grill.ask(self.project, "Which metric does the goal read?")
+        grill.answer(self.project, "Q1", "auroc", "the spec names it", decided_by="decider", model="claude-opus-5")
+        return ["D2", "D%d" % len(self.events("decision"))]
+
+    def review_all(self, *shown):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["review", "all", "stand", "--shown", ",".join(shown), "--project", str(self.project)])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_owners_yes_to_the_autonomous_opening_lets_every_decision_shown_stand(self):
+        """Ticket 109: "Decided for you" is one numbered item recommending "let them stand"; a yes reviews each one shown."""
+        listed = self.decided_twice()
+        code, out, err = self.review_all(*listed)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([event["payload"]["decision"] for event in self.events("reviewed")], listed)
+        self.assertEqual({event["payload"]["review"] for event in self.events("reviewed")}, {"stand"})
+        self.assertEqual(len(out.splitlines()), 2, "one line read back per decision")
+
+    def test_a_decision_made_after_the_opening_was_shown_is_left_listed(self):
+        first, later = self.decided_twice()
+        code, out, err = self.review_all(first)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([event["payload"]["decision"] for event in self.events("reviewed")], [first])
+        self.assertIn(later, out, "the owner is told what is still listed")
+        self.assertIn(later, "\n".join(account.account_view(self.project, full=False)["sections"][account.TITLES[1]]))
+
+    def test_a_shown_decision_that_cannot_be_reviewed_is_said_and_the_rest_stand(self):
+        listed = self.decided_twice()
+        account.review(self.project, listed[0], "stand")
+        code, out, err = self.review_all(*listed)
+        self.assertEqual(code, 1)
+        self.assertIn(listed[0], err)
+        self.assertIn("%s stands" % listed[1], out)
+        self.assertEqual(len(self.events("reviewed")), 2)
+
+    def test_all_takes_only_stand_and_the_decisions_shown(self):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(cli.main(["review", "all", "reverse", "--shown", "D2", "--project", str(self.project)]), 2)
+        self.assertIn("one at a time", err.getvalue())
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(cli.main(["review", "all", "stand", "--project", str(self.project)]), 2)
+        self.assertIn("--shown", err.getvalue())
+        self.assertEqual(self.events("reviewed"), [])
+
     def test_undo_it_on_a_grill_question_asks_it_again_and_the_owners_answer_revises_it(self):
         from wayline import grill, project, tickets
         grill.ask(self.project, "Which metric does the goal read?")

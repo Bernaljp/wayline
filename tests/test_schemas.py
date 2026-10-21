@@ -122,6 +122,8 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(policy["plot_index"], {"crawl_rate_per_s": 1, "liveness": "monthly", "recrawl": "quarterly"})
         self.assertEqual(policy["plot_checks"], {"axis_label_max_chars": 40, "heatmap_label_max_cells": 36})
         self.assertEqual(policy["roles"]["plotter"], {"model": "opus", "effort": "medium"})
+        self.assertEqual(policy["roles"]["surveyor"], {"model": "sonnet", "effort": "medium"})
+        self.assertEqual(policy["scout"], {"give_up_days": 7, "calls_per_ticket": 20, "searches_per_ticket": 20, "openalex_per_day": 100})
         self.assertEqual(policy["drawings"], {"budget": "small", "step_down": {"model": "sonnet", "effort": "medium"},
                                               "max_plots": 20, "max_tables": 4, "max_headline": 4})
         self.assertIsNone(policy["quiet_hours"])

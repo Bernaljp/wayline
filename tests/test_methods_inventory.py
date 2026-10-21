@@ -432,7 +432,9 @@ class PositionSetupTest(SetupCase):
         with worker.use_fake() as fake:
             fake.script(Envelope(structured_output=self.memo(), session_id="critic-1", num_turns=3), role=position.CRITIC)
             fake.script(Envelope(structured_output=lead, session_id="lead-1", num_turns=1), role=methods.READER)
-            report = position.position(self.project, notify=lambda *args: None)
+            from tests.scout_net import quiet_search
+            with quiet_search():  # the setup search of the missing prior work (ticket 99)
+                report = position.position(self.project, notify=lambda *args: None)
         self.assertTrue(any("compared the inherited Methods with the code" in line for line in report["did"]), report["did"])
         [result] = verification.read_results(self.project)
         self.assertEqual([entry["text"] for entry in result["leads"]], ["The window is 512 here and 256 by default."])
