@@ -240,7 +240,24 @@ def main(argv=None):
     if refusal is not None:
         print("wayline %s: %s" % (verb.name, refusal), file=sys.stderr)
         return 1
+    refusal = refuse_in_chat(args)
+    if refusal is not None:
+        print("wayline %s: %s" % (verb.name, refusal), file=sys.stderr)
+        return 2
     return exit_code(verb.name, verb.handler(args[1:]))
+
+
+def refuse_in_chat(args):
+    """In a session of the dashboard's chat (`WAYLINE_CHAT` set), why `wayline <args>` may not run there, else None.
+
+    The chat's tool list allows only the routed verbs, and this holds the line whatever spelling slipped past it: a
+    verb the routing table confirms first is a card the owner confirms, never the session's (decision 17; ticket 114).
+    """
+    import os
+    if not os.environ.get("WAYLINE_CHAT"):
+        return None
+    from wayline import chat  # the chat reads the skill's routing table, which no other verb needs
+    return chat.refusal(args)
 
 
 def exit_code(name, result):

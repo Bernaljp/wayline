@@ -152,7 +152,9 @@ class ReviewTest(AccountCase):
         said = account.review(self.project, "D2", "reverse")
         self.assertEqual(len(said.splitlines()), 1)
         self.assertIn("human only", said)
-        self.assertIn("wayline answer 8", said)
+        self.assertIn("decision ticket 8", said)
+        self.assertIn("dashboard's chat", said)
+        self.assertNotIn("wayline answer", said)
         fields = {ticket["id"]: ticket for ticket in tickets.read_tickets(self.project)}[8]
         self.assertEqual((fields["status"], fields["human_only"]), ("open", True))
         self.assertEqual(self.events("ticket_rerun")[-1]["payload"]["ticket"], 8)
@@ -312,6 +314,9 @@ class WaitingOnYouTest(AccountCase):
         self.render()
         section = self.section("Waiting on you")
         self.assertIn("Decision ticket 6 (human only)", section)
+        [line] = [line for line in section.splitlines() if "Decision ticket 6" in line]
+        self.assertIn("Answer it in the dashboard's chat", line, "the owner talks; they never type a verb (ticket 114)")
+        self.assertNotIn("wayline answer", line)
         self.assertIn("Ticket 7, *Convert the second reference's PDF*, needs a person", section)
         self.assertIn("`wayline evolve --apply 003-hold-captions` applies it", section)
         self.assertNotIn("promote", section)

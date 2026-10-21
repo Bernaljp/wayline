@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "harness",
-  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, the fallback consent, the ladder consent, the environment, the plotting library, the stopping rule, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
+  "description": "A project's harness.json (Implementation Decisions 1): the pin, autonomy, radius, the fallback consent, the ladder consent, the environment, the plotting library, the chat's rung, the stopping rule, budgets, reservations, pacing, notify, dashboard, policy overrides, docs theme.",
   "type": "object",
   "required": ["harness_tag", "autonomy", "radius"],
   "additionalProperties": false,
@@ -29,6 +29,16 @@
       "type": "string",
       "enum": ["matplotlib", "altair", "ggplot2"],
       "description": "the plotting library (Implementation Decision 17; ticket 102): Python with matplotlib and seaborn, Altair, or R with ggplot2, applied at each result's next drawing; set only by `wayline switch --plotting` on the owner's word, never by the decider; a project without the key draws with matplotlib"
+    },
+    "chat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "effort"],
+      "description": "the chat's rung (Implementation Decision 17; ticket 114): the model and effort each message of the dashboard's chat runs on; a project without the key talks on opus high",
+      "properties": {
+        "model": {"type": "string", "pattern": "^(haiku|sonnet|opus|fable|claude-(haiku|sonnet|opus|fable)-[0-9][0-9a-z.-]*)$"},
+        "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]}
+      }
     },
     "human_only": {
       "type": "array",
