@@ -1565,11 +1565,22 @@ function wireViewer() {
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) dialog.close();
   });
-  dialog.addEventListener('close', () => {
+  // Closing is acted on as soon as the dialog's `open` goes, in the microtask after it, not at the `close` event, which
+  // the browser queues as a task of its own: a page busy with its polls ran other tasks in between, and anything that
+  // read the address there (the owner's next tap, a test) still found the item's route.
+  let shown = dialog.open;
+  const closed = () => {
+    if (!shown) return;
+    shown = false;
     viewer.reads += 1;
     replace(document.getElementById('viewer-doc'), []);
     leaveItem();
-  });
+  };
+  new MutationObserver(() => {
+    if (dialog.open) shown = true;
+    else closed();
+  }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
+  dialog.addEventListener('close', closed);
   const saved = ZOOM_STEPS.indexOf(Number(remembered(STORE.zoom)));
   setZoom(saved >= 0 ? saved : ZOOM_RESET);
 }
