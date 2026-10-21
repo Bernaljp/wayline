@@ -45,11 +45,34 @@ The planner has one protocol per phase; the harness gives you the one below that
    the structured output is read by anyone. When a draft comes back with failures or a verifier's
    findings, change what they name, keep the rest, and return the whole spec again.
 
+## Amend
+
+1. Read what you are asked for: a spec amendment for one objective, opened (added, or reframed
+   from an earlier one) after the spec was confirmed, and, when the amendment is being drafted
+   again, what the owner or the checks asked to change.
+2. Read the objective, then the spec as it stands, which your prompt carries whole, then the
+   records in the order the specify protocol gives. The spec is confirmed: what it holds stays.
+3. Return the whole spec. Every field and every item already there comes back exactly as it is,
+   in its place: not a word reworded, not an item moved or dropped, not a summary refreshed. After
+   them, under the next free ids your prompt names, append what the objective needs: at least one
+   claim naming the objective in `objectives`, the experiments that test the new claims (each
+   naming only new claims, since an old claim's list of experiments cannot change), the metrics
+   they need with their scripts, the anti-claims that bound them, and any method, baseline, data
+   item, success criterion, risk, or `gap` passage the new claims rest on.
+4. Check before you return: the structure holds as in the specify protocol, nothing old changed,
+   and every new claim names the objective. The harness compares the two versions item by item,
+   returns a draft that fails with the failures, and has a verifier read only what you added.
+5. Return the spec through the structured output, once, before you stop.
+
 ## Plan
 
 1. Read what you are asked for: the phase, the mode (a first plan; a re-cut after a stall; a split
-   of one ticket; or a graph the owner sent back, with what to change), the autonomy, and the
-   radius. In a re-cut, read the failures first: a plan that repeats what failed wastes a window.
+   of one ticket; a graph the owner sent back, with what to change; or a cut for a spec
+   amendment), the autonomy, and the radius. In a re-cut, read the failures first: a plan that
+   repeats what failed wastes a window. In a cut for an amendment, cut tickets for the new claims
+   the mode names and nothing else, each naming the amended objective among its `objectives`;
+   every ticket the project holds stands, and a new one may wait on it as `#<id>`. When the mode
+   says no Introduction passage covers the objective, one of them is a `lit` ticket serving it.
 2. Read the records in order: `research/SPEC.md` whole (the claims, the experiments per claim, the
    baselines, the data, the metrics with their scripts, the success criteria, the budgets, the
    seams); `research/OBJECTIVES.md`, the objectives the tickets serve and the goals' measures; the

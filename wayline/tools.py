@@ -51,7 +51,7 @@ __all__ = [
     "ToolsError", "ToolOutput", "run_tool", "failure_line", "read_json_file", "TOOLS", "TOOLS_JSON", "VENV",
     "tools_home", "Tools", "PACKAGES", "EXTRAS", "GROBID_IMAGE", "TORCH_INDEX", "driver_cuda", "torch_index",
     "install_steps", "install", "tools_command",
-    "SCHEMA_VERSION", "HARNESS", "OWNER", "SYSTEM", "MICROMAMBA_VERSION", "UV_VERSION", "PANDOC_VERSION", "MODEL",
+    "SCHEMA_VERSION", "PLOTTING_PACKAGES", "install_plotting_package", "HARNESS", "OWNER", "SYSTEM", "MICROMAMBA_VERSION", "UV_VERSION", "PANDOC_VERSION", "MODEL",
     "MODEL_REVISION", "MODEL_FILES", "SYSTEM_TOOLS", "PYTHON_PACKAGES", "CONDA_TOOLS", "HARNESS_INSTALLERS",
     "micromamba_url", "uv_url", "model_url", "model_tree_url", "parse_version", "sha256_file", "blob_sha1",
     "update_record", "record_entry", "tool_entry", "mamba_env", "uv_env", "venv_python", "install_micromamba",
@@ -592,6 +592,11 @@ PYTHON_PACKAGES = {
     "seaborn": (("seaborn",), {"MPLBACKEND": "Agg"}),
     "tree-sitter-matlab": (("tree-sitter", "tree-sitter-matlab"), {}),
 }
+# A plotting library's packages in the tools venv (ticket 102): a project's tool, installed after the owner's yes
+# (`wayline switch --plotting`), never by `wayline tools install` alone. vl-convert writes Altair's SVG and PNG.
+PLOTTING_PACKAGES = {
+    "altair": (("vl-convert-python", "altair"), {}),
+}
 PYPI = "https://pypi.org/simple"
 
 # Run inside the tools venv: the installed version of each distribution named.
@@ -641,7 +646,7 @@ def record_venv_packages(root, uv, run=run_tool):
     frozen = _ok(run([uv["executable"], "pip", "freeze", "--python", str(python)], timeout=INSTALL_TIMEOUT_S, env=uv["env"]),
                  "freezing the tools venv").stdout
     lock = _write_lock(root, "venv", frozen)
-    wanted = {name: (dists, env) for name, (dists, env) in PYTHON_PACKAGES.items()}
+    wanted = {name: (dists, env) for name, (dists, env) in list(PYTHON_PACKAGES.items()) + list(PLOTTING_PACKAGES.items())}
     wanted.update((name, ((dist,), {})) for name, (_, dist) in PACKAGES.items())
     found = _venv_versions(python, {dist for dists, _ in wanted.values() for dist in dists}, run)
     recorded = {}
@@ -653,11 +658,13 @@ def record_venv_packages(root, uv, run=run_tool):
     return recorded
 
 
-def _python_package_installer(name):
+def _python_package_installer(name, table=None):
+    table = PYTHON_PACKAGES if table is None else table
+
     def install_package(root, run=run_tool, echo=None):
         uv = install_uv(root, run, echo)
         python = ensure_venv(root, uv, run, echo)
-        argv = [uv["executable"], "pip", "install", "--python", str(python)] + list(PYTHON_PACKAGES[name][0])
+        argv = [uv["executable"], "pip", "install", "--python", str(python)] + list(table[name][0])
         (echo or _quiet)("%s: %s" % (name, " ".join(argv)))
         _ok(run(argv, timeout=INSTALL_TIMEOUT_S, env=uv["env"]), "installing %s" % name)
         recorded = record_venv_packages(root, uv, run)
@@ -771,6 +778,11 @@ def _one_program(installer, program):
         return installer(root, run, echo)[program]
 
     return install_program
+
+
+def install_plotting_package(name, root, run=run_tool, echo=None):
+    """A plotting library's packages into the tools venv through the harness's uv (ticket 102); returns its entry."""
+    return _python_package_installer(name, PLOTTING_PACKAGES)(Path(root), run, echo)
 
 
 HARNESS_INSTALLERS = {

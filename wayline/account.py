@@ -73,7 +73,7 @@ from wayline.project import NEEDS_HUMAN_NOTES, ProjectError, find_project, read_
 
 __all__ = [
     "ACCOUNT", "ACCOUNT_PATH", "REPORT_KIND", "FIRST_LINE", "TITLES", "STAND", "REVERSE", "REVIEWS", "AccountError",
-    "Rendered", "account_view", "render_account", "take_edit", "end_notice", "counts_line", "review", "settle_marks",
+    "Rendered", "account_view", "render_account", "take_edit", "commit_edit", "end_notice", "counts_line", "review", "settle_marks",
     "review_command",
 ]
 
@@ -348,7 +348,8 @@ def _edited_reports(context):
         name, payload = event.get("event"), event.get("payload") or {}
         if name == PASSAGE and payload.get("by") == OWNER:
             owner_since = True
-        elif name == REPORT_RENDERED and payload.get("edited") and payload.get("report") not in (REPORT_KIND,) and not owner_since:
+        elif (name == REPORT_RENDERED and payload.get("edited") and payload.get("report") not in (REPORT_KIND,) and not owner_since
+              and not payload.get("version")):  # a result's report lists its own edits, which are never taken in (ticket 101)
             lines.append("- %s was edited by hand (kept as it stood in commit `%s`); what it says becomes passages when you say so in the conversation." % (
                 "REPORT.md" if payload.get("report") in (None, "general") else payload.get("report"), str(payload["edited"])[:12]))
     return list(reversed(lines))
@@ -968,6 +969,12 @@ def take_edit(project, relative, report, events=None):
         return None
     if _digest(path.read_text(encoding="utf-8")) == last.get("sha256"):
         return None
+    return commit_edit(project, relative)
+
+
+def commit_edit(project, relative):
+    """Commit `research/<relative>` alone, as the owner left it; returns the commit, or "" when it could not be committed."""
+    project = Path(project).resolve()
     target = "research/" + relative
     git = ["git", "-C", str(project)]
     identity = [] if subprocess.run(git + ["config", "user.email"], capture_output=True, text=True).stdout.strip() else list(IDENTITY)
