@@ -53,7 +53,7 @@ from wayline.tools import ToolsError, failure_line, run_recorded, run_tool
 
 __all__ = [
     "RepeatsError", "EMBED_TOOL", "EMBED_SCRIPT", "READER", "CONFIRMER", "RECORD", "REPEATS_CHECK", "plain", "embed",
-    "near_pairs", "additions", "read_record", "check_setup", "take_marks", "contradictions", "dismissed", "grill_items", "account_lines",
+    "near_pairs", "additions", "read_record", "check_setup", "take_marks", "contradictions", "merges", "dismissed", "grill_items", "account_lines",
     "check_result", "Checked", "repeats_command",
 ]
 
@@ -676,6 +676,18 @@ def contradictions(project, heading=None):
             continue
         found.append({"a": entry["a"], "b": entry["b"], "why": entry["why"], "results": list(entry["results"])})
     return found
+
+
+def merges(project):
+    """The setup's merges, each `{a, b, passage, kept, text, outcome, batch, item, mark}`: merged and standing, or split by
+    the owner since, with the mark its batch item carries now, taken or not yet (None before any). Read only (ticket 111)."""
+    book = ledger_for(project)
+    record = read_record(book)
+    given = {id(entry): mark for entry, mark in _given(book, record)}
+    return [{"a": entry["a"], "b": entry["b"], "passage": entry["passage"], "kept": entry["kept"], "text": entry["text"],
+             "outcome": entry["outcome"], "batch": entry["batch"], "item": entry["item"],
+             "mark": given.get(id(entry)) or (SPLIT_MARK if entry["outcome"] in (SPLIT, SPLIT_LATE) else None)}
+            for entry in record["pairs"] if entry["outcome"] in (MERGED, SPLIT, SPLIT_LATE)]
 
 
 def _evidence(entry):

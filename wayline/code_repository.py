@@ -482,11 +482,16 @@ def check_answer(answer):
     return dict(answer)
 
 
-def last_push(project):
-    """The last `code_pushed` the journal holds, as `{commit, main}`, or None before the first push."""
-    events, _ = Ledger(project).read_events()
-    pushed = [event.get("payload") or {} for event in events if event.get("event") == CODE_PUSHED]
-    return {"commit": pushed[-1].get("commit"), "main": pushed[-1].get("main")} if pushed else None
+def last_push(project, events=None):
+    """The last `code_pushed` the journal holds, as `{commit, main, ts}`, or None before the first push. `events` is the
+    journal when the caller read it already (the dashboard's Paper view)."""
+    if events is None:
+        events, _ = Ledger(project).read_events()
+    pushed = [event for event in events if event.get("event") == CODE_PUSHED]
+    if not pushed:
+        return None
+    payload = pushed[-1].get("payload") or {}
+    return {"commit": payload.get("commit"), "main": payload.get("main"), "ts": pushed[-1].get("ts")}
 
 
 def settle(project, answer, run=run_tool, tools=None, push_url=_push_url):

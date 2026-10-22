@@ -50,7 +50,7 @@ from wayline.ledger import K_BY, K_HEADING, K_RELEASED, K_ROUTE, K_STANDING, VER
 
 __all__ = [
     "OBJECTIVE", "ROUTES", "VERIFICATIONS_JSON", "VERIFICATIONS_MD", "SCHEMA", "VerificationError", "VerificationUnreadable",
-    "midway", "inherited_results", "read_record", "read_results", "current_record", "follow", "render", "prompt_line",
+    "midway", "inherited_results", "read_record", "read_results", "current_record", "claim_rows", "follow", "render", "prompt_line",
     "material_failures", "memo_lines", "take_memo", "REPLIES", "LICENSED_REPLIES", "AS_RECOMMENDED", "recommended",
     "parse_replies", "material_question", "check_replies", "take_replies", "leave_unverifiable", "spec_inherited",
     "claim_failures", "spec_lines", "ties", "wire", "intake_commit", "check_result", "take_result", "attach_contradiction",
@@ -225,13 +225,13 @@ def _standing(ledger, result, view=None):
     return VERIFIED, None
 
 
-def _refresh(ledger, record):
+def _refresh(ledger, record, view=None):
     """Take in the results the passages hold now and each one's standing; returns the results changed.
 
     A result whose document withdrew every claim (a newer version without it) is no longer an inherited result, and leaves
-    the record.
+    the record. `view` is the passages as the caller read them, read here when None.
     """
-    view = _View(ledger)
+    view = view or _View(ledger)
     changed = []
     known = {}
     for result in record["results"]:
@@ -267,6 +267,41 @@ def current_record(project_or_ledger):
     record = read_record(ledger)
     _refresh(ledger, record)
     return record
+
+
+def claim_rows(project_or_ledger):
+    """Each inherited Results claim of each inherited result, followed to where it stands now, read only: `[{claim,
+    current, heading, standing, reason, verdict, route, ticket, by}]` in the record's order (ticket 111).
+
+    `current` is the passage holding the claim now. `standing` is `verified` once this project's evidence replaced it,
+    with `verdict` the evidence (supports, narrows, or contradicts), `by` the finding that replaced it, and the route and
+    ticket of the verification that recorded it, when one did; else the standing of its passage, unchecked or
+    unverifiable with its `reason`. A claim its document withdrew is left out.
+    """
+    from wayline import sections
+
+    ledger = ledger_for(project_or_ledger)
+    record = read_record(ledger)
+    view = _View(ledger)
+    _refresh(ledger, record, view)
+    rows = []
+    for result in record["results"]:
+        recorded = {entry["claim"]: verdict for verdict in result["verdicts"] for entry in verdict["claims"]}
+        for claim in result["claims"]:
+            ids, current, state = view.follow(claim)
+            if state == WITHDRAWN:
+                continue
+            row = {"claim": claim, "current": current, "heading": result["heading"], "standing": state, "reason": None,
+                   "verdict": None, "route": None, "ticket": None, "by": None}
+            if state == SETTLED:
+                replacing = next((item for item in view.replaced.get(current) or [] if not sections.is_inherited(item)), {})
+                verdict = next((recorded[identifier] for identifier in ids if identifier in recorded), None) or {}
+                row.update(standing=VERIFIED, verdict=replacing.get("evidence"), by=replacing.get("id"), route=verdict.get("route"),
+                           ticket=verdict.get("ticket"))
+            elif state == UNVERIFIABLE:
+                row["reason"] = _one_line((view.by_id.get(current) or {}).get("reason")) or result.get("reason")
+            rows.append(row)
+    return rows
 
 
 def follow(project):
