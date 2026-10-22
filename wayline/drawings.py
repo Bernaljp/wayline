@@ -3,7 +3,7 @@
 **When a result is drawn.** Code creates one ticket of the kind `drawing` per result (`open_drawings`); the planner
 never writes one (the plan schema's kinds leave it out). Results are drawn at rest points only (`RESTS`): at a run
 end, before a checkpoint pause under `checkpoints` (a run coming to rest on a decision ticket the owner answers), and
-on the owner's word ("draw R4 again", `draw_again`). At a run end or a checkpoint only the results changed since
+on the owner's word ("draw R4 again", `draw_again`), and at a paper order before the paper is composed (`ORDER`, ticket 115). At a run end or a checkpoint only the results changed since
 their last drawing are drawn (`due`), and only those holding at least one finding from the project's own evidence
 (`own_evidence`): a finding that cites a run's artifact. The stopping rule's results go first. What "changed" means is
 read from the records: a result whose current findings, leaving out the findings a drawing itself filed, are the ones
@@ -51,7 +51,7 @@ from wayline import sections, tickets
 from wayline.ledger import DRAWING, TICKET_CREATED, ledger_for, now_ts
 
 __all__ = [
-    "KIND", "ROLE", "RUN_END", "CHECKPOINT", "OWNER", "RESTS", "PLOTS_JSON", "DRAWINGS_DIR", "DRAFT", "DRAWING_CHECK", "TOOLS_PYTHON",
+    "KIND", "ROLE", "RUN_END", "CHECKPOINT", "OWNER", "ORDER", "RESTS", "PLOTS_JSON", "DRAWINGS_DIR", "DRAFT", "DRAWING_CHECK", "TOOLS_PYTHON",
     "DrawingError", "PlotterTier", "Limits", "Checked", "own_evidence", "signature", "read_records", "due", "tier", "limits",
     "plot_marks", "read_plots", "last_accepted", "drawing_of", "result_heading", "brief", "earlier_figures", "check", "accept",
     "fail", "record_path", "directory", "library_of", "library_of_record", "draw_again", "open_drawings", "follow_merge", "accepted_records", "under_way", "plot_order", "drawing_name",
@@ -62,8 +62,8 @@ PLOTS_SCHEMA = "plots"
 
 KIND = "drawing"
 ROLE = "plotter"
-RUN_END, CHECKPOINT, OWNER = "run_end", "checkpoint", "owner"
-RESTS = (RUN_END, CHECKPOINT, OWNER)
+RUN_END, CHECKPOINT, OWNER, ORDER = "run_end", "checkpoint", "owner", "order"
+RESTS = (RUN_END, CHECKPOINT, OWNER, ORDER)  # ORDER: the paper order's rest point draws every changed result first (ticket 115)
 PLOTS_JSON = "plots.json"
 DRAWINGS_DIR = "drawings"  # research/drawings/R<n>-<v>.json, and the drawing ticket's own directory in its worktree
 DRAFT = "drawing.json"

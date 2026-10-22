@@ -36,7 +36,7 @@ from wayline.stopping import BUDGET_SPENT, FRONTIER_EMPTY, GOAL_REACHED, OBJECTI
 
 __all__ = [
     "RULE_ENDS", "ONCE_ENDS", "NO_GATE_ENDS", "STALL_STRICT", "SAMPLED_CACHE", "REPORT_SUBJECT", "KILL_ORIGIN",
-    "runs_gates", "continues", "report_text", "report_digest", "kill_subject", "last_kill", "read_sampled",
+    "runs_gates", "continues", "report_text", "report_digest", "kill_subject", "last_kill", "last_kill_verdict", "read_sampled",
     "candidate_sentences", "sampled_verdicts", "kill_owed", "kill_argument", "is_scope_down", "scope_downs", "targets",
     "check_scope_down", "pending", "owed", "failed_marks", "MAX_ROUNDS", "rounds", "is_gate_event",
 ]
@@ -125,14 +125,19 @@ def kill_subject(digest):
     return "%s%s" % (_KILL_PREFIX, digest[:16])
 
 
-def last_kill(events):
-    """The subject of the last kill argument on the general report, or None."""
+def last_kill_verdict(events):
+    """The `verdict` payload of the last kill argument on the general report, or None: what the paper order's card shows."""
     for event in reversed(events):
         payload = event.get("payload") or {}
         if event.get("event") == VERDICT and payload.get("subject_kind") == REPORT_SUBJECT \
                 and payload.get("verdict_type") == gates.KILL_ARGUMENT:
-            return payload.get("subject")
+            return payload
     return None
+
+
+def last_kill(events):
+    """The subject of the last kill argument on the general report, or None."""
+    return (last_kill_verdict(events) or {}).get("subject")
 
 
 def candidate_sentences(text):

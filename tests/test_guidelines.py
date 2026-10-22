@@ -390,6 +390,37 @@ class ChecksTest(unittest.TestCase):
         pages = [finding for finding in findings if "page" in finding.message]
         self.assertEqual([finding.level for finding in pages], ["skipped"])
 
+    def structure_of(self, body, slug):
+        draft = Path(tempfile.mkdtemp(prefix="wayline-order-"))
+        self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
+        (draft / "paper.md").write_text(body, encoding="utf-8")
+        return self.by_check(venue.run_checks(draft, self.guidelines[slug]), "structure")
+
+    def test_sections_out_of_order_fail_at_a_venue_that_is_not_structure_flexible(self):
+        """Ticket 115: `check_structure` checks the order of the required sections where the venue fixes it."""
+        ordered = "".join("## %s\n\nText.\n\n" % name for name in ("Abstract", "Results", "Methods"))
+        swapped = "".join("## %s\n\nText.\n\n" % name for name in ("Abstract", "Methods", "Results"))
+        self.assertFalse(self.guidelines["nature-communications"]["structure_flexible"])
+        self.assertNotIn("order", " ".join(finding.message for finding in self.structure_of("# T\n\n" + ordered, "nature-communications")))
+        failed = [finding for finding in self.structure_of("# T\n\n" + swapped, "nature-communications") if "order" in finding.message]
+        self.assertEqual([finding.level for finding in failed], ["fail"])
+        self.assertIn("Results, Methods", failed[0].message)
+
+    def test_a_subsection_and_a_draft_of_several_files_say_nothing_of_the_order(self):
+        sub = "# T\n\n## Abstract\n\nText.\n\n### Methods of others\n\nText.\n\n## Results\n\nText.\n\n## Methods\n\nText.\n"
+        self.assertFalse([finding for finding in self.structure_of(sub, "nature-communications") if "order" in finding.message])
+        draft = Path(tempfile.mkdtemp(prefix="wayline-parts-"))
+        self.addCleanup(shutil.rmtree, draft, ignore_errors=True)
+        (draft / "a-methods.md").write_text("## Methods\n\nText.\n", encoding="utf-8")
+        (draft / "b-results.md").write_text("## Results\n\nText.\n", encoding="utf-8")
+        found = self.by_check(venue.run_checks(draft, self.guidelines["nature-communications"]), "structure")
+        self.assertFalse([finding for finding in found if "order" in finding.message], "files in name order are no sections' order")
+
+    def test_a_structure_flexible_venue_takes_its_sections_in_any_order(self):
+        self.assertTrue(self.guidelines["nature"]["structure_flexible"])
+        swapped = "# T\n\n## Methods\n\nText.\n\n## Summary paragraph\n\nText.\n"
+        self.assertFalse([finding for finding in self.structure_of(swapped, "nature") if "order" in finding.message])
+
     def test_a_word_count_over_the_limit_fails(self):
         draft = Path(tempfile.mkdtemp(prefix="wayline-long-"))
         self.addCleanup(shutil.rmtree, draft, ignore_errors=True)

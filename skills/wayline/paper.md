@@ -1,0 +1,61 @@
+# The paper order
+
+The paper is made only on an explicit order. Until one, the project holds only its five sections and its reports:
+the general report (`research/REPORT.md`) is always current, and nothing writes a paper on its own. The owner orders
+the paper by saying so ("write the paper", "compile the paper", "make the manuscript"); "compile" said of a section
+is a consolidation instead, and you ask one line when it is unclear which they mean.
+
+## Confirm first, with the card
+
+Before anything is ordered, show the card: run `wayline paper --project .` and relay what it prints. It is built by
+code at no cost and launches nothing. It carries the readiness list (the open objectives, the outline's gaps, the
+general report's last kill argument and its standing points, the results changed since their last drawing, the
+inherited claims unchecked or unverifiable, the open contradictions, the unresolved references, the concerns kept
+for the order, the outline's link, and the front matter not given yet) and the cost: about $35 to $40 for six
+figures when the first build passes, and about $10 more for each build that fails.
+
+Nothing on the card blocks the order. Say what it lists plainly, with your recommendation, and wait for the owner's
+word. On their yes run `wayline paper --yes --project .`; on "not now" do nothing at all: no decision ticket, no
+record. The dashboard shows the same card, and its Confirm runs the same order.
+
+## What the order does
+
+The order is a rest point. Running tickets finish, nothing new launches, the results changed since their last drawing
+are drawn first, and the paper is composed from that commit; then the run resumes if it had not ended. With no run
+going, the order starts a conductor for itself, whose run ends as the last one did. The order starts no research
+ticket: a point that needs new evidence is an objective (`wayline objective add`), never part of the order.
+
+Under `interactive` and `checkpoints` the order asks one batch before any writer launches, which `wayline paper --yes`
+prints: each open contradiction (code's suggested side, or "a typo, fix it"), each unverifiable claim the owner might
+keep (stated as not verified, with why), each unresolved reference (hand it over, drop it, or keep the claim marked
+"to be resolved"), the outline's open proposals, and, when no inherited result is verified yet, whether to keep the
+unchecked ones as stated (the default) or leave them out. Relay it as `wayline mark` prints it; each item has code's
+default, and "take all defaults" is one answer: `wayline mark <batch> --defaults --project .`. A reference the owner
+hands over is `wayline reference <slug> <doi> --project .`. Under `autonomous` no batch is asked of the owner.
+
+One writer session then composes the whole paper from the outline and the sections, each part in its own file under
+`research/paper/`: `title.md`, `abstract.md`, `introduction.md`, `results.md`, `discussion.md`, `methods.md`,
+`supplement.md`, and `front.md`, each heading carrying its outline id; `tables/`, `references.json`, `alternatives/`
+(the writer's three titles), and `PAPER.md`, the build report: the commit, each part with its version, the batch's
+answers, what was left out and why, the owner's passages whose wording changed, what the writer proposes, and the
+cost. Read `PAPER.md` to the owner when they ask how the paper stands; never compose or edit a part yourself.
+
+A change the writer wanted to the outline is a proposal in `PAPER.md`, never a move: the owner makes it, or not, by
+changing the outline (`wayline outline show` prints it). An owner's edit of a part file stands at the next order
+unless what that part is made from changed. Each order makes a new version; the previous one is kept under
+`research/paper/earlier/v<n>/`.
+
+## The front matter
+
+The authors with their affiliations, the corresponding author, the acknowledgments, the funding, and the competing
+interests are the owner's, asked once at setup at every autonomy and answerable at any time later; until said, each
+is a marked placeholder in `front.md`. Record what they give as one JSON object on stdin:
+
+```bash
+wayline paper front - --project . <<'EOF'
+{"authors": [{"name": "Ada Lovelace", "affiliations": ["Analytical Engines Ltd"], "corresponding": true,
+  "email": "ada@example.org"}], "funding": "None.", "competing_interests": "None declared."}
+EOF
+```
+
+The data and code availability statements are code's, written from the records; never write them for the owner.

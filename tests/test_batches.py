@@ -71,9 +71,13 @@ class OpenBatchTest(BatchTestCase):
             "contradictions": ["real", "not a contradiction"],
             "concern_placements": ["take it", "another place"],
             "outline_proposals": ["take", "decline"],
+            "paper_order": ["the first", "the second", "a typo, fix it", "leave out", "keep, not verified", "hand over", "drop",
+                            "to be resolved", "take", "decline", "keep as stated"],
         }
         self.assertEqual(set(batches.KINDS), set(expected))
         for kind, marks in expected.items():
+            if kind in batches.PER_ITEM:
+                continue
             with self.subTest(kind=kind):
                 batch = batches.open_batch(self.project, kind, "a %s batch" % kind, [{"ref": "x1", "text": "one item", "default": marks[0]}])
                 self.assertEqual(batches.read_batch(self.project, batch["id"])["items"][0]["marks"], marks)
@@ -83,6 +87,20 @@ class OpenBatchTest(BatchTestCase):
 
     def test_the_schema_names_the_same_kinds(self):
         self.assertEqual(load_schema("batch")["properties"]["kind"]["enum"], list(batches.KINDS))
+
+    def test_a_paper_order_item_carries_its_own_marks_and_a_file_repeating_one_is_refused(self):
+        batch = batches.open_batch(self.project, "paper_order", "Paper order 1", [
+            {"ref": "reference:smith2020", "text": "Unresolved.", "marks": ["hand over", "drop", "to be resolved"], "default": "to be resolved"}])
+        self.assertEqual(batches.read_batch(self.project, batch["id"])["items"][0]["marks"], ["hand over", "drop", "to be resolved"])
+        with self.assertRaisesRegex(batches.BatchError, "take"):
+            batches.mark(self.project, batch["id"], 1, "take")
+        with self.assertRaisesRegex(batches.BatchError, "its own marks"):
+            batches.open_batch(self.project, "paper_order", "Paper order 2", [{"ref": "x", "text": "y", "marks": ["take"]}])
+        record = self.on_disk(batch["id"])
+        record["items"][0]["marks"] = ["drop", "drop"]
+        (self.project / "research" / "batches" / ("%s.json" % batch["id"])).write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaises(batches.BatchError):
+            batches.read_batch(self.project, batch["id"])
 
     def test_a_file_whose_marks_are_not_its_kinds_is_refused_on_read(self):
         self.plots(count=1)

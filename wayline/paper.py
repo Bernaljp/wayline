@@ -1,45 +1,45 @@
-"""The paper on request (Implementation Decisions 13 and 11; BRIEF 13.3; ticket 53).
+"""The paper order and the paper's parts (Implementation Decision 17; ticket 115).
 
-`wayline paper --venue <slug>` after the report, or `wayline paper` and the decider picks the venue
-that fits best from `guidelines/` (`decider.decide_venue`, journaled as a `decision`). Then, in order:
+The paper is made only on an explicit **paper order**, and only from the outline and the sections: until one, the
+project holds only its sections and its reports, and the general report is always current.
 
-1. **`paper_started`** is journaled with the venue.
-2. **The draft.** One `writer` session (`policy.roles.writer`, `opus xhigh`), read-only, on the
-   `paper_draft` schema, is given the venue's guidelines, the findings grouped by claim with their tags,
-   the references the linter can resolve, the manifested results a figure may draw, and `REPORT.md` to
-   read. It returns the whole manuscript in Markdown and the figures it asks for; code writes it to
-   `research/paper/paper.md`, since the ledger is the only writer of `research/` (decision 2).
-3. **The figures.** Each figure the draft asks for is requested from the figure role (ticket 50) with
-   the venue's `target`: the column width, the smallest type, the resolution, and the formats the
-   venue takes. A figure whose request has not changed is not drawn again: a verified one is placed as
-   it is, and one that waited (the owner's pick, a window) is resumed. A verified figure is copied into
-   `research/paper/figures/` and its placeholder line becomes the image and the figure role's caption,
-   which sit between the records markers because the figure role's own `provenance` check and honesty
-   verdict are what trace them; everything else the writer wrote is prose the linter reads. A figure
-   the paper asked for files no proposal (ticket 66): what the figure role has to say about the text,
-   its `findings_for_text`, goes on the next build's list for the writer drafting that text, once.
-4. **Every build is checked.** The sentence classifier and the provenance linter of ticket 40 run on
-   the draft, and the seven checks of ticket 52 on `research/paper/` against the venue's
-   `guidelines.json`. A lint problem, a failing check, a figure that could not be placed, or a caption
-   that names another figure under `figures/` goes back to the same writer session with the list, up
-   to `MAX_BUILDS` builds; a draft still failing after that is left for the owner with its list, and
-   no verdict is spent on it. The next build sends a caption that named another figure back to the
-   figure role as a guided revision that drops the reference, and a build whose figures had new
-   points for the text is followed by one that gives them to the writer, though it failed nothing.
-5. **The gate.** A draft that builds is gated by the two-thread kill argument (`gates.kill_argument`)
-   and then one independent verdict, the read (`gates.PAPER_READ`), all fresh verifier sessions on the
-   table's model for the writer's. A fail files a `writing` ticket that scopes the claims down, unless
-   an open one for the same point stands; the next `wayline paper` gives the writer the open ones to
-   answer, and the read is not spent on a draft the kill argument already sent back. A draft that
-   passes both cancels the scope-down tickets it answered.
-6. **On request, the claims are sampled.** `wayline paper --verify` takes the verifier's sample of the
-   draft's tagged claims, as `wayline report --verify` does of the report's (decision 11: every claim
-   in the report and the paper, by sampling), after a gate that passed.
+**The card.** `wayline paper` alone builds the order's card with no model call (`card`): the readiness list (the open
+objectives, the outline's gaps, the general report's last kill argument and its standing points, the results changed
+since their last drawing, the inherited claims unchecked or unverifiable, the open contradictions, the unresolved
+references, the concerns for the order, the outline's link, and the front matter not given yet) and the cost. The
+conversation shows it and confirms first; the dashboard shows the same card (`/api/projects/<id>/paper/card`) and its Confirm
+runs the same order (the `paper` action). Nothing on the card blocks the order, and "Not now" does nothing: no decision
+ticket opens.
 
-It stops there: the owner reads `research/paper/`, and `research/paper/build.json` says what every
-build found and what the gate decided. Nothing here, and no verb, action, or role anywhere in the
-harness, submits a paper: this module imports no network seam, the writer and the verifier cannot
-reach the network, and no venue's submission step is ever taken.
+**The order** (`order`, `wayline paper --yes`): journaled as `paper_order` with `action: ordered`. Under `interactive`
+and `checkpoints` one batch (`batch_items`, kind `paper_order` of ticket 79's record) is opened before any writer
+launches: the open contradictions (code's suggested side, or "a typo, fix it"), the unverifiable claims the owner might
+keep, the unresolved references (hand over, drop, or keep the claim marked "to be resolved"), and the outline's open
+proposals, each with code's default, "take all defaults" one answer; an order with no inherited result verified asks
+whether to keep the unchecked ones as stated (the default) or leave them out. Under `autonomous` no batch is asked here:
+code's defaults stand until the decider answers it (ticket 120). With no conductor on the project the order starts one,
+whose run ends as the last one did once the paper is composed (`run` on the event).
+
+**The rest point.** The conductor takes the order (`Conductor._take_order`): running tickets finish, nothing new
+launches, the changed results are drawn (`drawings.ORDER`), and once the batch is settled `compose` writes the paper
+from that commit; then the run resumes if it had not ended. The order starts no research ticket.
+
+**The composition** (`compose`): one read-only writer session (`policy.roles.writer`, `opus xhigh`) on the
+`paper_parts` schema returns each part as its own field, each heading carrying its outline id (`## ... {#R3}`). Code
+checks it before writing anything (`check_structure`, the outline's order and placement; `kept_problems`, no inherited
+title, abstract, or caption; no reference list; three titles), resuming the session once with what failed, and writes
+`research/paper/`: `title.md`, `abstract.md`, `introduction.md`, `results.md`, `discussion.md`, `methods.md`,
+`supplement.md`, `front.md`, `tables/T<n>.csv` with `T<n>.md`, `references.json`, `alternatives/<part>-<n>.md`,
+`paper.json` (schema `paper`), and the build report `PAPER.md`. A change the writer wants is a proposal there, never a
+move. `front.md` is code's: the data and code availability statements from the records, and the authors, affiliations,
+acknowledgments, funding, and competing interests as the owner gave them (`wayline paper front`, the setup question at
+every autonomy), or a marked placeholder until said.
+
+**Versions.** Each order makes a new version, the previous one frozen under `research/paper/earlier/v<n>/`. A re-order
+recomposes only the parts whose inputs changed (`part_inputs`; the title and abstract whenever a main-text part did) and
+keeps an owner's edit of a part file unless its inputs changed; the writer always reads the whole version. The writer
+offers three titles; other alternatives only when asked. The build is recorded as not yet gated: the builds' gates are
+ticket 117's, the figures 116's, the compilations 118's. Nothing here submits anything anywhere.
 """
 
 import argparse
@@ -47,969 +47,1134 @@ import hashlib
 import json
 import re
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, decider, figure_checks, figure_role, gates, guidelines, provenance, tickets, worker
+from wayline import HARNESS_ROOT, batches, provenance, worker
 from wayline.cli import parse_args
-from wayline.ledger import PAPER_STARTED, Ledger
-from wayline.project import ProjectError, find_project, policy_for, steer_ticket
+from wayline.jsonschema import ValidationError, check, load_schema
+from wayline.ledger import PAPER_ORDER, LedgerError, conductor_holder, ledger_for, now_ts
+from wayline.project import ProjectError, find_project, policy_for, read_harness
 
 __all__ = [
-    "PaperError", "Paper", "PAPER_PATH", "BUILD_PATH", "MAX_BUILDS", "FIGURE_TARGET", "READ_QUESTION", "READ_SCOPE", "READ_TITLE",
-    "venues", "venue_lines", "figure_target", "figure_request", "caption_revision", "named_figures", "draw", "assemble", "fence_references", "check_build", "write_paper",
-    "summary", "render", "paper_command",
+    "PaperError", "PAPER_DIR", "PARTS", "MAIN_TEXT", "SCHEMA", "RECORD_SCHEMA", "FRONT_SCHEMA", "PAPER_MD", "PAPER_JSON",
+    "FRONT_JSON", "EARLIER", "COST", "PLACEHOLDER", "BATCH_KIND", "readiness", "card", "card_text", "batch_items", "open_order",
+    "order", "waiting_on", "answers", "compose", "fail", "check_structure", "inherited_kept", "kept_problems", "part_inputs",
+    "front_text", "read_front", "set_front", "read_record", "paper_command",
 ]
 
 PAPER_DIR = "paper"                       # research/paper/
-PAPER_MD = "paper.md"
-PAPER_PATH = "research/%s/%s" % (PAPER_DIR, PAPER_MD)
-BUILD_JSON = "build.json"
-BUILD_PATH = "research/%s/%s" % (PAPER_DIR, BUILD_JSON)
-FIGURES_DIR = "figures"                   # research/paper/figures/<figure_id>.<png|pdf>
-DRAFT_SCHEMA = "paper_draft"
-WRITER = provenance.WRITER
+PARTS = ("title", "abstract", "introduction", "results", "discussion", "methods", "supplement", "front")
+MAIN_TEXT = ("introduction", "results", "discussion", "methods")
+WRITTEN = PARTS[:-1]                      # the writer's; the front matter is code's
+SCHEMA = "paper_parts"
+RECORD_SCHEMA = "paper"
+FRONT_SCHEMA = "front_matter"
+PAPER_MD = "PAPER.md"
+PAPER_JSON = "paper.json"
+FRONT_JSON = "front.json"                 # research/front.json, the owner's front matter
+EARLIER = "earlier"                       # research/paper/earlier/v<n>/
+TABLES = "tables"
+ALTERNATIVES = "alternatives"
+REFERENCES_JSON = "references.json"
+ROLE = "writer"
 SESSIONS = "paper"                        # research/sessions/paper/<n>
-WRITER_BUDGET = "large"                   # a whole manuscript, read from the ledger, is the largest thing the writer does
+WRITER_BUDGET = "large"
+BATCH_KIND = "paper_order"
+OWNER, DECIDER, CODE = "owner", "decider", "code"
+AUTONOMOUS = "autonomous"
+ORDERED, COMPOSED, FAILED = "ordered", "composed", "failed"
 
-# A draft goes back to the writer at most this many times in all. Three is the report's own lesson (M5): the
-# redraft that answers the list is usually the second, and a third that still fails is a draft the owner reads.
-MAX_BUILDS = 3
+COST = ("about $35 to $40 for six figures when the first build passes, and about $10 more for each build that fails "
+        "(the writer, the figures, and the gates, at API prices)")
+PLACEHOLDER = "[TO BE GIVEN: %s]"
+FRONT_FIELDS = (("authors", "the authors and their affiliations"), ("acknowledgments", "the acknowledgments"),
+                ("funding", "the funding"), ("competing_interests", "the competing interests"))
 
-# The figure role's target where `guidelines.json` is silent. `figure_spec` names formats and a resolution but
-# no column width: 89 mm is the single column of the Nature and Cell families, which the M7 figure was drawn at,
-# and 6 pt the smallest type those families print. A venue's own `min_dpi` wins over 300 when it is higher.
-FIGURE_TARGET = {"width_mm": 89, "max_height_mm": 120, "min_font_pt": 6, "min_dpi": 300}
-FIGURE_TICKET = figure_role.PAPER_TICKET  # `figure_request.ticket`: no ticket asked for it, the paper did
-REVISION_FIELDS = ("mode", "revision_of", "change_requests")
+# The marks of each sort of item in the order's batch, with code's default where it is one mark for every item.
+FIRST, SECOND, TYPO = "the first", "the second", "a typo, fix it"
+LEAVE_OUT, KEEP_UNVERIFIED = "leave out", "keep, not verified"
+HAND_OVER, DROP, TO_BE_RESOLVED = "hand over", "drop", "to be resolved"
+TAKE, DECLINE = "take", "decline"
+KEEP_AS_STATED = "keep as stated"
+UNCHECKED_REF = "inherited:unchecked"
 
-# What a figure result's status means for the draft. A figure that waits is the owner's or a window's, not the
-# writer's to fix, so it holds the gate rather than going back to the writer.
-PLACED, WAITING, FAILED = "placed", "waiting", "failed"
-WAITS = ("candidates_ranked", "selected", "blocked")
-
-# What one `wayline paper` came to; `held` is a draft that builds but waits on a figure.
-PASSED, GATE_FAILED, BUILD_FAILED, HELD = "passed", "gate_failed", "build_failed", "held"
-
-READ_QUESTION = "Would a reader at this venue find the draft's claims carried by the run's evidence and the draft complete as a paper?"
-READ_SCOPE = (
-    "Read the draft as the venue's reviewer would, against the run's findings, the report, the manifest, and the "
-    "venue's guidelines at the paths below. It fails on a claim the findings or the references do not carry, a result "
-    "stated past what its artifact says, a limitation or a negative result the report records and the draft leaves "
-    "out, or a section the guidelines require that says nothing. Whether the science is interesting, or the prose "
-    "could be better, is not your question. Every finding is at a path and a locator you read. You are the one "
-    "independent verdict on this draft; a separate pair of sessions wrote and adjudicated the case against it."
-)
-READ_TITLE = "Scope the paper's claims the independent read did not accept"
-READ_ORIGIN = PAPER_PATH + "#read"
-
-_PLACEHOLDER = re.compile(r"^[ \t]*\{figure:([^{}\s]+)\}[ \t]*$", re.M)
-_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
-_ENTRY = re.compile(r"^\s*(?:\[\d+\]|\d+\.|[-*])\s+\S")   # a reference entry: `[1] ...`, `1. ...`, `- ...`
 REFERENCE_HEADINGS = ("references", "reference list", "bibliography", "literature cited", "works cited", "cited literature")
-_CAPTION_LEAD = re.compile(r"^\s*\**\s*(?:figure|fig\.?)\s*\d+\s*[.:|]\s*\**\s*", re.IGNORECASE)
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+_ATTRIBUTE = re.compile(r"\{#([^\s{}]+)[^{}]*\}\s*$")
+_WORDS = re.compile(r"[a-z0-9]+")
+_SENTENCES = re.compile(r"(?<=[.!?])\s+")
+_STAMP = re.compile(r"^<!-- wayline:render \{.*\} -->\n?")
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
-_ID_TOKEN = r"(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])"   # a figure id standing whole, not inside a longer name
-_COMPOUND = re.compile(r"[_\d-]")
+PROMPT = """\
+# Paper order %(order)d: version %(version)d of the paper
 
-RESUME_BUILD = (
-    "The draft you returned was written to research/paper/ and built. The build failed on the items below. "
-    "Return the whole draft again, through the structured output, with each one answered: a claim sentence ends "
-    "with a tag that resolves, a check the venue's guidelines fail is met, and a figure that could not be placed "
-    "is asked for again with a claim its data supports or taken out. Do not answer an item by deleting the evidence "
-    "it asks for; scope the claim down instead. An `untagged_claim` is a sentence the classifier read as a claim, "
-    "and it reads a statement of the study's scope or limits as one too: rewording it rarely changes that. End it "
-    "with the tag of the artifact that bounds it (the result, the generator's settings, the split it was measured "
-    "on), or leave the sentence out and say in `notes` what the owner should add by hand.\n\n%s"
-)
+You compose the paper from the outline and the sections, as one writer session that reads and writes nothing else.
+Return each part you are asked for as its own field through the structured output, and null for every other part:
+those stand as they are under research/paper/, and you read them as the rest of this version.
+
+The parts to write now: %(parts)s.
+
+## Rules
+
+- Write from the sections' current passages and the outline below, in prose, as a paper. Markdown with LaTeX math.
+- Every heading of a part carries its outline id as a pandoc attribute, `## <heading> {#<id>}`, and the headings follow
+  the outline's order and placement below exactly: no heading the outline does not have, none in another part. A change
+  you want (a heading moved, merged, added, or cut) goes in `proposals`; never make it.
+- Every claim sentence keeps the provenance tags of the passages it comes from, `{res:...}`, `{ref:...}`, `{code:...}`,
+  copied exactly, at its end. Write no reference list and no References heading: code writes `references.json` from
+  the `ref` tags.
+- An inherited claim still unchecked is built on, never copied word for word. The title, the abstract, and the
+  captions of the project's own earlier documents never reach the paper; write your own.
+- When the title is asked for, offer three titles in `titles`, your choice first. Offer no other alternative unless
+  this order asks for one.
+- The front matter (authors, affiliations, acknowledgments, funding, competing interests, the availability
+  statements) is code's: write none of it.
+- Figures come later at the order; place none. A table the Results needs is one of `tables`, given as CSV, and the
+  text refers to it as Table 1, Table 2.
+- List in `left_out` what you leave out of the paper and why, and in `notes` anything the owner should read.
+
+## The outline, part by part
+%(outline)s
+## The answers this paper follows
+%(answers)s
+## What to read
+%(read)s
+"""
 
 
 class PaperError(ValueError):
-    """A paper nobody could draft: no report yet, a venue with no guidelines, a writer with no usable answer."""
+    """A paper order refused or a paper that could not be composed: an order already open, a writer with no usable answer."""
 
 
-@dataclass
-class Paper:
-    """What one `wayline paper` came to: the venue, every build, the gate, and the tickets it filed."""
-
-    venue: str
-    path: Path
-    status: str                               # passed | gate_failed | build_failed | held
-    builds: list = field(default_factory=list)
-    decided: object = None                    # the decider's `Outcome`, when it picked the venue
-    kill: object = None                       # the kill argument's adjudication, a `gates.Verdict`
-    read: object = None                       # the one independent verdict, a `gates.Verdict`
-    tickets: list = field(default_factory=list)   # the scope-down tickets standing open after the gate
-    claims: object = None                     # `provenance.verify_claims`'s outcome, under --verify
-    notes: list = field(default_factory=list)
+# --- small readings -------------------------------------------------------------------------------------------------
 
 
-# --- the venue ------------------------------------------------------------------------------------
+def _one_line(text):
+    return " ".join(str(text or "").split())
 
 
-def venues(harness_root=HARNESS_ROOT):
-    """`{slug: display name}` for every venue `guidelines/` holds a `guidelines.json` for."""
-    found = {}
-    for path in sorted((Path(harness_root) / guidelines.GUIDELINES_DIR).glob("*/" + guidelines.GUIDELINES_JSON)):
+def _words(text):
+    return _WORDS.findall(provenance.strip_tags(str(text or "")).casefold())
+
+
+def _digest(*values):
+    return hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+
+
+def _sha(text):
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+
+
+def _paper(relpath=""):
+    return "%s/%s" % (PAPER_DIR, relpath) if relpath else PAPER_DIR
+
+
+def _events(book):
+    return book.read_events()[0]
+
+
+def _orders(events):
+    return [event.get("payload") or {} for event in events if event.get("event") == PAPER_ORDER]
+
+
+def open_order(project_or_ledger, events=None):
+    """The `paper_order` payload of the order that is open, or None: ordered, and neither composed nor failed since."""
+    events = _events(ledger_for(project_or_ledger)) if events is None else events
+    found = None
+    for payload in _orders(events):
+        if payload.get("action") == ORDERED:
+            found = payload
+        elif found is not None and payload.get("order") == found.get("order"):
+            found = None
+    return found
+
+
+def _section_body(book, section):
+    """A section file as rendered, its render stamp taken off; empty when it is not there."""
+    from wayline import sections
+    try:
+        text = (book.research / sections.section_path(section)).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    return _STAMP.sub("", text, count=1)
+
+
+def _current_passages(book):
+    """Every current passage of the four written sections, each once."""
+    from wayline import sections
+    found = []
+    for section in MAIN_TEXT:
         try:
-            found[path.parent.name] = guidelines.read_guidelines(path)["display_name"]
-        except (guidelines.GuidelinesError, ValueError, KeyError):
+            found += sections.arranged(book, section).current()
+        except (OSError, ValueError, LedgerError):
             continue
     return found
 
 
-def venue_lines(harness_root=HARNESS_ROOT):
-    """One line of evidence per venue for the decider: what each asks of a paper, off its `guidelines.json`."""
-    lines = []
-    for slug in venues(harness_root):
-        record = guidelines.read_guidelines(harness_root, slug)
-        limits, spec, style = record["length_limits"], record["figure_spec"], record["reference_style"]
-        size = ("%d words" % limits["word_count"] if limits["word_count"] else
-                "%d pages" % limits["page_count"] if limits["page_count"] else "no length limit")
-        forms = [form["name"] for form in record["reporting_checklists"] if form["required"]]
-        lines.append("%s (%s): %s; sections %s; up to %s display items; %s citations; required forms: %s; guidelines at %s" % (
-            slug, record["display_name"], size, ", ".join(record["required_structure"]) or "free",
-            spec["max_count"] if spec["max_count"] is not None else "any number of", style["citation"] or "unstated",
-            ", ".join(forms) or "none", Path(harness_root) / guidelines.GUIDELINES_DIR / slug / guidelines.GUIDELINES_JSON))
-    return lines
-
-
-def _choose_venue(project, harness_root, policy):
-    known = venues(harness_root)
-    if not known:
-        raise PaperError("guidelines/ holds no venue; run `wayline guidelines build`")
-    evidence = venue_lines(harness_root) + [
-        "the run's report: research/REPORT.md; its findings: research/findings.jsonl; the intent: research/INTAKE.md",
-        "nothing is submitted: the venue decides the guidelines the draft is written and checked under, and the owner "
-        "can draft for another venue with wayline paper --venue <slug>",
-    ]
-    outcome = decider.decide_venue(project, known, evidence, harness_root=harness_root, policy=policy)
-    if outcome.status != "decided":
-        raise PaperError("the decider did not pick a venue (%s); name one with --venue <slug>, one of %s"
-                         % (outcome.why, ", ".join(sorted(known))))
-    return outcome
-
-
-# --- the figures ----------------------------------------------------------------------------------
-
-
-def figure_target(record, project):
-    """The figure role's `target` at a venue: its formats and resolution, the house library, the column width."""
-    spec = record["figure_spec"]
-    accepted = {str(name).lower() for name in spec["formats"]}
-    formats = [name for name in ("pdf", "png") if not accepted or name in accepted] or ["pdf", "png"]
+def _guard(read, *args):
+    """`(value, None)`, or `(None, why)` when a record could not be read: the card says so and lists the rest."""
     try:
-        library = json.loads((Path(project) / "figures" / "style.json").read_text(encoding="utf-8")).get("library")
-    except (OSError, ValueError, AttributeError):
-        library = None
-    target = dict(FIGURE_TARGET, venue=record["venue"], max_words=None, formats=formats, library=library or "matplotlib")
-    if spec["min_dpi"]:
-        target["min_dpi"] = max(int(spec["min_dpi"]), FIGURE_TARGET["min_dpi"])
-    return target
+        return read(*args), None
+    except (OSError, ValueError, LedgerError) as failure:
+        return None, "could not be read: %s" % _one_line(failure)
 
 
-def figure_request(asked, record, project, manifest):
-    """The `figure_request/1` for one figure the draft asks for, or a string saying why there can be none.
-
-    The data are manifested results only: a figure draws what the run produced and the manifest hashed, which is
-    what the figure role's `provenance` check and the linter hold it to.
-    """
-    entries = {entry.get("path"): entry for entry in manifest.get("entries") or []}
-    missing = [path for path in asked["data"] if path not in entries]
-    if missing:
-        return "its data %s %s not in research/manifest.json" % (", ".join(missing), "is" if len(missing) == 1 else "are")
-    return {
-        "schema": "figure_request/1", "ticket": FIGURE_TICKET, "figure_id": asked["figure_id"], "mode": "unguided",
-        "kind": "result", "register": "quantitative",
-        "claim": {"claim_id": asked["figure_id"], "text": " ".join(asked["claim"].split()), "claim_type": asked["claim_type"],
-                  "evidence": list(asked.get("evidence") or [])},
-        "data": [{"path": path, "sha256": entries[path]["sha256"], "run_id": entries[path].get("run_id")} for path in asked["data"]],
-        "target": figure_target(record, project),
-    }
+# --- what the card and the batch read -------------------------------------------------------------------------------
 
 
-def draw(project, request, *, harness_root=None, policy=None, say=None):
-    """The figure role on one request: `(figure_result, reason)`, drawing nothing a previous build already has.
-
-    The same request as the one on disk is not drawn again: a result that waited is resumed (the owner may have
-    picked since), and any other is returned as it is, verified or failed, since drawing it again would spend the
-    same sessions on the same answer. A changed request is a new version of the figure; a request that differs only
-    in the venue's name, at the same size, type, resolution, formats, and library, is not a change.
-    """
-    previous = _figure_on_disk(project, request)
-    if previous is not None:
-        if previous.get("status") in WAITS:
-            return figure_role.resume_figure(project, request["figure_id"], harness_root=harness_root, policy=policy, say=say)
-        return previous, None
-    return figure_role.make(project, request, harness_root=harness_root, policy=policy, say=say)
+def _inherited(book):
+    """The current inherited passages standing unchecked or unverifiable, in each section's order."""
+    from wayline import sections
+    return [item for item in _current_passages(book)
+            if sections.is_inherited(item) and item.get("standing") in sections.STANDINGS and not item.get("withdrawn")]
 
 
-def _figure_on_disk(project, request):
-    """The result on disk of the figure `request` draws, or None when it has to be drawn.
+def _contradictions(project):
+    """The contradictions standing now that the owner did not mark not one: `[{a, b, why, results}]`."""
+    from wayline import repeats
+    dismissed = repeats.dismissed_pairs(project)
+    return [item for item in repeats.contradictions(project) if (item["a"], item["b"]) not in dismissed]
 
-    A caption revision that did not verify (refused, failing its checks or its honesty verdict) is not the figure its
-    own request draws: the revision replaced the verified result, so the figure is drawn again from that request, and
-    its new caption is checked like any other, rather than the paper placing it nowhere from then on.
-    """
-    previous = figure_role.read_result(project, request["figure_id"])
-    try:
-        asked = json.loads((Path(project) / figure_role.FIGURES / request["figure_id"] / figure_role.REQUEST_JSON).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        asked = None
-    if not isinstance(previous, dict) or not _drawn_alike(asked, request):
+
+def _unresolved(project):
+    from wayline import references
+    return references.references_view(project)["unresolved"]
+
+
+def _order_concerns(project):
+    from wayline import concerns
+    return [item for item in concerns.read_concerns(project) if item.get("place") == "order" and item.get("status") == "open"]
+
+
+def _kill(events):
+    """The last kill argument on the general report as `(passed, subject, points)`, or None before the first."""
+    from wayline import run_end
+    payload = run_end.last_kill_verdict(events)
+    if payload is None:
         return None
-    failed_revision = (isinstance(asked, dict) and asked.get("mode") == "guided" and request.get("mode") != "guided"
-                       and previous.get("status") not in WAITS + ("verified",))
-    return None if failed_revision else previous
+    points = [_one_line(item.get("text") if isinstance(item, dict) else item) for item in payload.get("findings") or []]
+    return bool(payload.get("pass")), payload.get("subject"), [point for point in points if point]
 
 
-def _drawn_alike(asked, request):
-    """Whether the request on disk, `asked`, draws the figure `request` asks for: equal, the target's `venue` label aside.
-
-    Against an unguided request a guided revision on disk counts as the figure it revised: the paper sends a figure
-    back only to fix its caption, and the next build, asking for the same figure, is given the revision rather than
-    a new figure drawn from the start. A guided request is compared whole.
-    """
-    guided = isinstance(request, dict) and request.get("mode") == "guided"
-
-    def unlabelled(value):
-        if not isinstance(value, dict):
-            return value
-        value = dict(value, target={key: item for key, item in (value.get("target") or {}).items() if key != "venue"})
-        return value if guided else {key: item for key, item in value.items() if key not in REVISION_FIELDS}
-    return unlabelled(asked) == unlabelled(request)
+def _verified_none(project):
+    """Whether the project inherited results and none of them is verified yet: the batch then asks about the unchecked."""
+    from wayline import verification
+    if not verification.midway(project):
+        return False
+    return not any(item.get("standing") == "verified" for item in verification.read_results(project))
 
 
-def _figure_ids(project):
-    """Every figure under the project's `figures/`: a directory holding a request or a result, this draft's or not."""
+def read_front(project_or_ledger):
+    """The front matter as the owner gave it (`research/front.json`); empty while nothing was given."""
+    book = ledger_for(project_or_ledger)
     try:
-        found = sorted((Path(project) / figure_role.FIGURES).iterdir())
+        record = book.read_json(FRONT_JSON)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as failure:
+        raise PaperError("research/%s cannot be read: %s" % (FRONT_JSON, failure)) from None
+    try:
+        check(record, load_schema(FRONT_SCHEMA), name="research/%s" % FRONT_JSON)
+    except ValidationError as failure:
+        raise PaperError(str(failure)) from None
+    return record
+
+
+def _front_missing(record):
+    return [words for key, words in FRONT_FIELDS if not record.get(key)]
+
+
+def readiness(project):
+    """The card's readiness list, built by code with no model call: `[{key, title, lines}]`, an empty `lines` meaning
+    nothing stands there. Nothing on it blocks the order."""
+    from wayline import drawings, objectives, outline
+    book = ledger_for(project)
+    events = _events(book)
+    items = []
+
+    def add(key, title, read, render, empty):
+        value, trouble = _guard(read)
+        lines = [trouble] if trouble else (render(value) or [])
+        items.append({"key": key, "title": title, "lines": lines, "empty": empty})
+
+    add("objectives", "Open objectives", lambda: objectives.open_objectives(book.project),
+        lambda found: ["%s: %s" % (item["id"], _one_line(item["text"])) for item in found], "none open")
+    add("gaps", "The outline's gaps", lambda: outline.gaps(book)[0],
+        lambda found: [line[2:] if line.startswith("- ") else line for line in found], "none in the main text")
+
+    def kill_lines(found):
+        if found is None:
+            return ["no kill argument has run on the general report yet"]
+        passed, subject, points = found
+        head = "the last one, on %s, %s" % (subject or "the general report", "passed" if passed else "failed")
+        return [head] + ["standing: %s" % point for point in ([] if passed else points)]
+    add("kill", "The general report's last kill argument", lambda: _kill(events), kill_lines, "")
+
+    def changed():
+        from wayline import results as results_module
+        found = {result.id: result for result in results_module.read_results(book)}
+        return [(identifier, found.get(identifier)) for identifier in drawings.due(book.project)]
+    add("changed", "Results changed since their last drawing", changed,
+        lambda found: ['%s "%s": drawn first at the order' % (identifier, result.heading if result else identifier)
+                       for identifier, result in found], "none")
+    add("inherited", "Inherited claims unchecked or unverifiable", lambda: _inherited(book),
+        lambda found: ["%s (%s, %s): %s" % (item["id"], item.get("section"), item.get("standing"),
+                                            _one_line(provenance.strip_tags(item.get("text")))[:160]) for item in found], "none")
+    add("contradictions", "Open contradictions", lambda: _contradictions(book.project),
+        lambda found: ["%s and %s: %s" % (item["a"], item["b"], _one_line(item.get("why")) or "they contradict each other")
+                       for item in found], "none")
+    add("references", "Unresolved references", lambda: _unresolved(book.project),
+        lambda found: ["%s: %s (%s)" % (work.slug or work.named, state, detail) for work, state, detail in found], "none")
+    add("concerns", "Concerns for the order", lambda: _order_concerns(book.project),
+        lambda found: ["%s: %s" % (item["id"], _one_line(item["sources"][0]["text"])[:160]) for item in found], "none")
+    add("front", "Front matter not given yet", lambda: _front_missing(read_front(book)),
+        lambda found: ["%s: a marked placeholder until said (wayline paper front)" % words for words in found], "all given")
+    items.append({"key": "outline", "title": "The outline", "lines": ["research/%s" % outline.OUTLINE_MD], "empty": ""})
+    return items
+
+
+def card(project):
+    """What the owner confirms, with no model call: the readiness list, the cost, the order open if one is, and the verb."""
+    book = ledger_for(project)
+    from wayline import outline
+    structure, _ = _guard(outline.paper_structure, book)
+    results = len([entry for entry in (structure or {}).get("results", []) if re.match(r"^R[1-9][0-9]*$", entry["key"])])
+    return {"readiness": readiness(book.project), "cost": COST, "main_results": results, "open": open_order(book),
+            "confirm": "wayline paper --yes", "blocks": False}
+
+
+def card_text(found):
+    """The card as the conversation shows it."""
+    lines = ["The paper order: nothing below blocks it; it composes the paper from the outline and the sections.", ""]
+    for number, item in enumerate(found["readiness"], start=1):
+        lines.append("%d. %s: %s" % (number, item["title"], item["lines"][0] if len(item["lines"]) == 1 else
+                                     ("%d" % len(item["lines"]) if item["lines"] else item["empty"])))
+        if len(item["lines"]) > 1:
+            lines += ["   - %s" % line for line in item["lines"]]
+    lines += ["", "Cost: %s; this outline has %d main-text result(s), one figure each." % (found["cost"], found["main_results"])]
+    if found["open"]:
+        lines.append("Paper order %d is open; a new one waits until it is composed." % found["open"]["order"])
+    else:
+        lines.append("Confirm: %s. Not now: nothing is done." % found["confirm"])
+    return "\n".join(lines)
+
+
+# --- the batch ------------------------------------------------------------------------------------------------------
+
+
+def _differ_in_numbers(first, second):
+    """Whether two claims say the same words and differ only in a number: code suggests a typo."""
+    return (_NUMBER.sub("#", " ".join(_words(first))) == _NUMBER.sub("#", " ".join(_words(second)))
+            and " ".join(_words(first)) != " ".join(_words(second)))
+
+
+def _supported(book, identifier):
+    from wayline import sections
+    return any(item.get("replaces") == identifier and item.get("evidence") == "supports"
+               for item in list(sections.read_findings(book)) + list(sections.read_passages(book)))
+
+
+def batch_items(project):
+    """The order's batch, `[{ref, text, marks, default}]`: open contradictions, unverifiable claims, unresolved references,
+    the outline's open proposals, and, with no inherited result verified, the unchecked ones as stated or left out."""
+    from wayline import sections
+    book = ledger_for(project)
+    passages = {item.get("id"): item for item in sections.read_passages(book)}
+    items = []
+    for found in _contradictions(book.project):
+        first, second = (passages.get(found["a"]) or {}).get("text"), (passages.get(found["b"]) or {}).get("text")
+        if _differ_in_numbers(first, second):
+            default = TYPO
+        elif _supported(book, found["a"]) and not _supported(book, found["b"]):
+            default = FIRST
+        else:
+            default = SECOND  # the later writing, unless the evidence holds to the first
+        items.append({"ref": "contradiction:%s+%s" % (found["a"], found["b"]), "marks": [FIRST, SECOND, TYPO], "default": default,
+                      "text": 'Contradiction: %s ("%s") against %s ("%s")%s. Which does the paper hold to?' % (
+                          found["a"], _one_line(provenance.strip_tags(first))[:200], found["b"],
+                          _one_line(provenance.strip_tags(second))[:200], ": %s" % _one_line(found["why"]) if found.get("why") else "")})
+    for item in _inherited(book):
+        if item.get("standing") == sections.UNVERIFIABLE:
+            items.append({"ref": "unverifiable:%s" % item["id"], "marks": [LEAVE_OUT, KEEP_UNVERIFIED], "default": LEAVE_OUT,
+                          "text": 'Unverifiable %s (%s): "%s"; %s. Kept, it is stated as not verified, with why.' % (
+                              item["id"], item.get("section"), _one_line(provenance.strip_tags(item.get("text")))[:200],
+                              _one_line(item.get("reason")) or "no reason recorded")})
+    for work, state, detail in _unresolved(book.project):
+        name = work.slug or work.named
+        items.append({"ref": "reference:%s" % name, "marks": [HAND_OVER, DROP, TO_BE_RESOLVED], "default": TO_BE_RESOLVED,
+                      "text": "Unresolved reference %s: %s (%s). Hand it over (wayline reference), drop it, or keep the claim "
+                              'marked "to be resolved".' % (name, state, detail)})
+    for batch in batches.read_batches(book.project, status="open"):
+        if batch["kind"] != "outline_proposals":
+            continue
+        for item in batch["items"]:
+            if item["mark"] is None:
+                items.append({"ref": "outline:%s#%d" % (batch["id"], item["id"]), "marks": [TAKE, DECLINE],
+                              "default": item.get("default") or DECLINE, "text": "The outline proposes: %s" % _one_line(item["text"])})
+    if _verified_none(book.project):
+        items.append({"ref": UNCHECKED_REF, "marks": [KEEP_AS_STATED, LEAVE_OUT], "default": KEEP_AS_STATED,
+                      "text": "None of the inherited results is verified yet. Keep the unchecked ones as stated, or leave them out?"})
+    return items
+
+
+def waiting_on(project, payload):
+    """The order's batch while it has an open item, else None: the writer waits for the owner's marks."""
+    identifier = (payload or {}).get("batch")
+    if not identifier:
+        return None
+    try:
+        batch = batches.read_batch(project, identifier)
+    except (batches.BatchError, ValidationError, OSError, ValueError):
+        return None
+    return identifier if batch["status"] == "open" else None
+
+
+def answers(project, payload):
+    """The answers the composition follows: `[{ref, text, mark, by, batch, item, note}]`, the batch's marks when one was
+    asked, and otherwise code's defaults on the items as they stand now (`by: code`)."""
+    identifier = (payload or {}).get("batch")
+    if identifier:
+        batch = batches.read_batch(project, identifier)
+        return [{"ref": item["ref"], "text": item["text"], "mark": item["mark"] or item["default"], "by": item["by"] or CODE,
+                 "batch": batch["id"], "item": item["id"], "note": item["note"]}
+                for item in batch["items"] if (item["mark"] or item["default"])]
+    return [{"ref": item["ref"], "text": item["text"], "mark": item["default"], "by": CODE, "batch": None, "item": None, "note": None}
+            for item in batch_items(project)]
+
+
+def _take_outline_answers(project, found):
+    """Give each outline proposal the order's answer on its own batch, then let the outline take the marks.
+
+    Only an answer someone gave (the owner's, or the decider's) is given there: code's default under `autonomous` leaves
+    the proposal open for the decider (ticket 120). A proposal marked in its own batch since keeps that mark, and the
+    answer the paper follows becomes it, so the record says what the outline holds.
+    """
+    from wayline import outline
+    taken = False
+    for answer in found:
+        match = re.match(r"^outline:(B[1-9][0-9]*)#([1-9][0-9]*)$", answer["ref"])
+        if not match or answer["by"] not in (OWNER, DECIDER):
+            continue
+        try:
+            batches.mark(project, match.group(1), int(match.group(2)), answer["mark"], by=answer["by"])
+            taken = True
+        except batches.BatchError:
+            try:
+                item = next(entry for entry in batches.read_batch(project, match.group(1))["items"]
+                            if entry["id"] == int(match.group(2)))
+            except (batches.BatchError, StopIteration, OSError, ValueError):
+                continue
+            if item["mark"] is not None:
+                answer.update(mark=item["mark"], by=item["by"] or answer["by"],
+                              note="marked %s in %s first" % (item["mark"], match.group(1)))
+    if taken:
+        outline.take_marks(project)
+
+
+# --- the order ------------------------------------------------------------------------------------------------------
+
+
+def _start_conductor(project):
+    from wayline import tick
+    return tick.launch_detached(project)
+
+
+_STARTS = object()  # `order`'s default: start the conductor as the transient unit, as `wayline run --detach` does
+
+
+def order(project, by=OWNER, start=_STARTS):
+    """The paper order: journal it, ask its batch under `interactive` and `checkpoints`, and start a conductor when none
+    runs, which takes the order at its next wave. Returns `{order, batch, run, conductor, started}`.
+
+    Refused while an order is open. `run` is how the last run ended when no run was going (a project never run counts as
+    stopped), so the order's own run ends the same way; None while a run was going, which resumes after the paper.
+    """
+    from wayline import replay
+    project = Path(project).resolve()
+    book = ledger_for(project)
+    with book.lock():
+        events = _events(book)
+        opened = open_order(book, events)
+        if opened is not None:
+            raise PaperError("paper order %d is open%s; a new order waits until its paper is composed" % (
+                opened["order"], " and waits on batch %s" % opened["batch"] if waiting_on(project, opened) else ""))
+        number = 1 + len([payload for payload in _orders(events) if payload.get("action") == ORDERED])
+        holder = conductor_holder(project)
+        view = replay.replay(events)
+        run = None if holder is not None else ("stopped" if view.run is None else view.run.get("ended"))
+        batch = None
+        if read_harness(project).get("autonomy") != AUTONOMOUS:
+            items = batch_items(project)
+            if items:
+                batch = batches.open_batch(project, BATCH_KIND, "Paper order %d: before the writer" % number, items)["id"]
+        book.append_event(PAPER_ORDER, {"order": number, "action": ORDERED, "by": by, "run": run, "batch": batch})
+    started = None
+    if holder is None and start is not None:
+        try:
+            started = (_start_conductor if start is _STARTS else start)(project) or ""
+        except (OSError, ValueError, RuntimeError) as failure:  # a unit the manager refused: the tick relaunches it
+            started = "not started (%s); the tick starts one, or wayline run --detach" % _one_line(failure)
+    return {"order": number, "batch": batch, "run": run, "conductor": holder is not None, "started": started}
+
+
+def fail(project, payload, reason):
+    """Close the open order `payload` as failed, with why; its run ends as the composition would have ended it."""
+    ledger_for(project).append_event(PAPER_ORDER, {"order": payload["order"], "action": FAILED, "by": payload.get("by") or OWNER,
+                                                   "reason": _one_line(reason)})
+
+
+# --- the checks -----------------------------------------------------------------------------------------------------
+
+
+def _headings(text):
+    """`[(line, heading text, id or None)]` of a part's Markdown headings, outside fenced code."""
+    found, fenced = [], False
+    for number, line in enumerate(str(text or "").splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        match = None if fenced else _HEADING.match(line)
+        if match:
+            attribute = _ATTRIBUTE.search(match.group(2))
+            words = _ATTRIBUTE.sub("", match.group(2)).strip()
+            found.append((number, words, attribute.group(1) if attribute else None))
+    return found
+
+
+def check_structure(structure, parts):
+    """The Type-A check of a paper's headings against the outline: problems, one line each, empty when it passes.
+
+    `structure` is `outline.paper_structure`'s; `parts` maps a part to its text (None for a part not checked). Every
+    heading carries an outline id; the ids of a part are the outline's for that part, all of them, in its order; an id
+    the outline places in another part, or does not have, fails; and a reference list is code's, never a part's.
+    """
+    placed = {entry["id"]: part for part, entries in structure.items() for entry in entries}
+    problems = []
+    for part, text in parts.items():
+        if text is None or part not in structure:
+            continue
+        expected = [entry["id"] for entry in structure[part]]
+        got = []
+        for line, words, identifier in _headings(text):
+            if words.casefold().strip(" .:") in REFERENCE_HEADINGS:
+                problems.append("%s, line %d: a reference list (%s) is code's, from the tags; write none" % (part, line, words))
+            elif identifier is None:
+                problems.append('%s, line %d: the heading "%s" carries no outline id; write it as `## %s {#<id>}`' % (part, line, words, words))
+            elif identifier not in placed:
+                problems.append('%s, line %d: {#%s} ("%s") is no line of the outline; a heading you want is a proposal' % (part, line, identifier, words))
+            elif placed[identifier] != part:
+                problems.append("%s, line %d: {#%s} is placed in %s by the outline, not here" % (part, line, identifier, placed[identifier]))
+            else:
+                got.append(identifier)
+        missing = [identifier for identifier in expected if identifier not in got]
+        if missing:
+            problems.append("%s: the outline's %s %s missing" % (part, ", ".join("{#%s}" % item for item in missing),
+                                                                  "is" if len(missing) == 1 else "are"))
+        shown = [identifier for identifier in got if identifier in expected]
+        if not missing and shown != expected:
+            problems.append("%s: the headings run %s, and the outline's order is %s" % (
+                part, ", ".join(shown), ", ".join(expected)))
+    return problems
+
+
+def inherited_kept(project):
+    """What a project's own earlier documents keep and the paper never carries: `[(what, text)]`, each inherited
+    document's title, its abstract, and its captions."""
+    from wayline import documents
+    book = ledger_for(project)
+    try:
+        held = documents.read_documents(book.project)
+    except (OSError, ValueError):
+        return []
+    found = []
+    for document in held:
+        if document.get("kind") != "inherited":
+            continue
+        name = document.get("id")
+        if document.get("title"):
+            found.append(("the title of %s" % name, document["title"]))
+        if document.get("abstract"):
+            found.append(("the abstract of %s" % name, document["abstract"]))
+        kept = [item["locator"] for item in (document.get("deconstructed") or {}).get("kept") or [] if item.get("part") == "caption"]
+        if kept:
+            try:
+                text = book.path("%s/%s/text.md" % (documents.DOCUMENTS_DIR, name)).read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            blocks = dict(documents.text_blocks(text)) if text else {}
+            found += [("a caption of %s (%s)" % (name, locator), blocks[locator]) for locator in kept if blocks.get(locator)]
+    return found
+
+
+def kept_problems(parts, kept):
+    """Problems, one line each, for any inherited title, abstract sentence, or caption sentence found in a part."""
+    problems = []
+    for part, text in parts.items():
+        if text is None:
+            continue
+        said = " %s " % " ".join(_words(text))
+        for what, source in kept:
+            pieces = [source] if what.startswith("the title") else _SENTENCES.split(str(source))
+            for piece in pieces:
+                words = _words(piece)
+                if len(words) >= (3 if what.startswith("the title") else 8) and " %s " % " ".join(words) in said:
+                    problems.append('%s carries %s ("%s"): write your own, never the inherited one' % (part, what, _one_line(piece)[:120]))
+                    break
+    return problems
+
+
+# --- the inputs of each part ----------------------------------------------------------------------------------------
+
+
+def _read_or(book, relpath):
+    try:
+        return book.read_json(relpath)
+    except (OSError, ValueError):
+        return None
+
+
+def _front_inputs(book):
+    from wayline import code_repository, methods_inventory
+    try:
+        record = read_front(book)
+    except PaperError:
+        record = {}
+    try:
+        available = methods_inventory.availability(book)
+    except (OSError, ValueError):
+        available = []
+    return record, code_repository.record(book.project), _intake_data(book), available, _manifest_count(book)
+
+
+def part_inputs(project, structure, followed):
+    """`{part: digest}` of what each part is made from now: its section as rendered, its lines of the outline, the
+    records it reads, and the answers it follows; the title and abstract from the main text's, the front matter from
+    the records code writes it from."""
+    book = ledger_for(project)
+    bodies = {section: _section_body(book, section) for section in MAIN_TEXT}
+    told = sorted((item["ref"], item["mark"], item.get("note")) for item in followed)
+    objectives = _read_or(book, "objectives.json")
+    found = {
+        "introduction": _digest(bodies["introduction"], structure.get("introduction"), objectives, told),
+        "results": _digest(bodies["results"], structure.get("results"), _read_or(book, "verifications.json"), told),
+        "discussion": _digest(bodies["discussion"], structure.get("discussion"), objectives, told),
+        "methods": _digest(bodies["methods"], structure.get("methods"), _read_or(book, "methods_inventory.json"), told),
+        "supplement": _digest(structure.get("supplement"), bodies, told),
+    }
+    found["title"] = found["abstract"] = _digest([found[part] for part in MAIN_TEXT])
+    found["front"] = _digest(_front_inputs(book))
+    return found
+
+
+# --- the front matter -----------------------------------------------------------------------------------------------
+
+
+def _intake_data(book):
+    """The Data bullets of `research/INTAKE.md`, as the intake wrote them."""
+    try:
+        text = book.path("INTAKE.md").read_text(encoding="utf-8")
     except OSError:
         return []
-    return [path.name for path in found
-            if path.is_dir() and ((path / figure_role.REQUEST_JSON).is_file() or (path / figure_role.RESULT_JSON).is_file())]
+    match = re.search(r"^## Data\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    lines = [line.strip()[2:].strip() for line in (match.group(1) if match else "").splitlines() if line.strip().startswith("- ")]
+    return [line for line in lines if line and line.lower() != "not stated."]
 
 
-def named_figures(caption, figure_id, project):
-    """The other figures under the project's `figures/` that a caption names by id, in order.
-
-    An id with a `_`, a `-`, or a digit in it is no word prose writes by chance, so it names its figure wherever it
-    stands whole, in any case: the M7 run's "the ceiling_gap figure". An id that is a plain word (`depth`) names its
-    figure only when it is written as one, in backticks or beside the word figure, since a caption says "depth" of
-    its own axes all the time.
-    """
-    named = []
-    for other in _figure_ids(project):
-        if other == figure_id:
-            continue
-        word = re.escape(other)
-        if _COMPOUND.search(other):
-            pattern = _ID_TOKEN % word
-        else:
-            pattern = r"`%s`|\bfig(?:ure|\.)?\s+%s\b|\b%s\s+fig(?:ure\b|\.|\b)" % (word, word, word)
-        if re.search(pattern, caption, re.IGNORECASE):
-            named.append(other)
-    return named
+def _manifest_count(book):
+    found = _read_or(book, "manifest.json")
+    return len((found or {}).get("entries") or []) if isinstance(found, dict) else 0
 
 
-def caption_revision(request, names, version):
-    """The guided revision that sends a figure back to have its caption drop the other figures it names.
+def front_text(project):
+    """`front.md`, written by code: the front matter as the owner gave it, a marked placeholder for what is not given yet,
+    and the data and code availability statements from the records."""
+    book = ledger_for(project)
+    record, repository, data, not_reproduced, manifested = _front_inputs(book)
+    lines = ["# Front matter", ""]
+    authors = record.get("authors") or []
+    lines += ["## Authors", ""]
+    if authors:
+        affiliations = []
+        for author in authors:
+            for place in author.get("affiliations") or []:
+                if place not in affiliations:
+                    affiliations.append(place)
+        for author in authors:
+            marks = ",".join(str(affiliations.index(place) + 1) for place in author.get("affiliations") or [])
+            lines.append("- %s%s%s" % (author["name"], "^%s^" % marks if marks else "",
+                                       " (corresponding author%s)" % (", %s" % author["email"] if author.get("email") else "")
+                                       if author.get("corresponding") else ""))
+        lines += [""] + ["%d. %s" % (number, place) for number, place in enumerate(affiliations, start=1)]
+    else:
+        lines.append(PLACEHOLDER % "the authors and their affiliations")
+    for key, title in (("acknowledgments", "Acknowledgments"), ("funding", "Funding"), ("competing_interests", "Competing interests")):
+        lines += ["", "## %s" % title, "", _one_line(record[key]) if record.get(key) else PLACEHOLDER % title.lower()]
+    lines += ["", "## Data availability", ""]
+    said = "The data this study analysed: %s." % "; ".join(data) if data else PLACEHOLDER % "the data this study analysed"
+    lines.append("%s The results it reports were produced by the project's own runs, %d artifact(s) recorded with their "
+                 "SHA-256 in the project's manifest. %s" % (said, manifested, PLACEHOLDER % "where the data are deposited"))
+    lines += ["", "## Code availability", ""]
+    remote = (repository or {}).get("remote") or {}
+    if remote.get("repository"):
+        public = (repository or {}).get("visibility") == "public"
+        lines.append("The code is in the repository %s (%s%s)%s." % (
+            remote["repository"], remote.get("url") or "https://github.com/%s" % remote["repository"],
+            ", %s" % repository["license"] if repository.get("license") else "",
+            "" if public else ", private until the authors make it public: %s" % PLACEHOLDER % "the public URL"))
+    else:
+        lines.append(PLACEHOLDER % "the code repository, which setup has not settled")
+    if not_reproduced:
+        lines.append("The code repository does not reproduce: %s." % "; ".join(
+            _one_line(item.get("method") or item.get("name") or item) for item in not_reproduced))
+    return "\n".join(lines) + "\n"
 
-    It is the figure's own request, drawn again from its `figure_result.json` with one change request, from the
-    paper; its id carries the version that named them, so a revision that still names one is asked for anew.
-    """
-    named = ", ".join("figure `%s`" % name for name in names)
-    return dict(request, mode="guided", revision_of="%s/%s/%s" % (figure_role.FIGURES, request["figure_id"], figure_role.RESULT_JSON),
-                change_requests=[{"id": "drop-figure-references-v%d" % version, "from": "paper", "text": (
-                    "Take %s out of the caption, and change nothing else: a caption describes its own figure and names no "
-                    "other, since cross-references between figures are the writer's, in the text." % named)}])
+
+def set_front(project, values):
+    """Record the front matter the owner gave: `values` merged into `research/front.json`, checked; returns the record."""
+    if not isinstance(values, dict) or not values:
+        raise PaperError("the front matter is a JSON object with authors, acknowledgments, funding, or competing_interests")
+    book = ledger_for(project)
+    with book.lock():
+        record = dict(read_front(book), **values)
+        try:
+            check(record, load_schema(FRONT_SCHEMA), name="the front matter")
+        except ValidationError as failure:
+            raise PaperError(str(failure)) from None
+        book.write_json(FRONT_JSON, record, schema=FRONT_SCHEMA)
+    return record
 
 
-def _revision(project, request, names):
-    """The request to send for a figure whose caption named `names`: its caption revision, or `request` itself.
-
-    Only a verified figure drawn from this same request is revised; a request that changed draws the figure anew, a
-    caption and all, and that caption is checked like any other.
-    """
-    previous = _figure_on_disk(project, request)
-    if previous is None or previous.get("status") != "verified":
-        return request
-    return caption_revision(request, names, previous.get("version") or 1)
+# --- the composition ------------------------------------------------------------------------------------------------
 
 
-def _figure_file(result, target, project):
-    """The file the draft points at: PNG where the venue takes it (or names no format), PDF where it takes only that."""
-    final = result.get("final") or {}
-    order = ("png", "pdf") if "png" in target["formats"] else ("pdf", "png")
-    for kind in order:
-        path = final.get(kind)
-        if path and (Path(project) / path).is_file():
-            return Path(project) / path
-    return None
-
-
-def _caption(result, project):
-    """The figure role's caption as text: `final.caption` is the path of its `caption.md` (ticket 50), never the words.
-
-    The M7 run placed the path itself as every legend, and the kill argument's adjudication caught it; the next
-    draft left the checks' `[[mixed-data]]` markers in, and it caught those too.
-    """
-    path = (result.get("final") or {}).get("caption")
+def read_record(project_or_ledger):
+    """`research/paper/paper.json`, the version record; None before the first composition."""
+    book = ledger_for(project_or_ledger)
     try:
-        text = (Path(project) / path).read_text(encoding="utf-8") if path else None
-    except (OSError, ValueError):
+        record = book.read_json(_paper(PAPER_JSON))
+    except FileNotFoundError:
         return None
-    # `[[mixed-data]]` is for `mixed_data_disclosed` to find beside the caption's own words; a reader has the words.
-    return " ".join(text.replace(figure_checks.MIXED_DATA_MARKER, " ").split()) if text else None
+    except (OSError, ValueError) as failure:
+        raise PaperError("research/%s cannot be read: %s" % (_paper(PAPER_JSON), failure)) from None
+    try:
+        check(record, load_schema(RECORD_SCHEMA), name="research/%s" % _paper(PAPER_JSON))
+    except ValidationError as failure:
+        raise PaperError(str(failure)) from None
+    return record
 
 
-def _place(project, draft, record, policy, harness_root, draw_figure, say, revise=None):
-    """Every figure the draft asks for, drawn or taken as it is: `(placed, points)`.
+def _file_text(book, part):
+    try:
+        return book.path(_paper("%s.md" % part)).read_text(encoding="utf-8")
+    except OSError:
+        return None
 
-    `placed` is `{figure_id: {state, file, caption, why}}`, with `names` on a placed figure whose caption names
-    another figure under `figures/`. `points` are the figure role's `findings_for_text`, each with its figure and
-    version. `revise` maps a figure the last build found naming others to their ids, and it is sent back to have
-    its caption drop them.
-    """
-    manifest = provenance.read_manifest(project)
-    placed, points = {}, []
-    for asked in draft["figures"]:
-        figure_id = asked["figure_id"]
-        request = figure_request(asked, record, project, manifest)
-        if isinstance(request, str):
-            placed[figure_id] = {"state": FAILED, "why": request}
-            continue
-        if (revise or {}).get(figure_id):
-            request = _revision(project, request, revise[figure_id])
-        try:
-            result, reason = draw_figure(project, request, harness_root=harness_root, policy=policy, say=say)
-        except (gates.UsageLimited, gates.FableHeld):
-            raise  # a window or the hold on Fable stops the whole paper, as it stops the writer (the caller's to say)
-        except figure_role.FigureError as failure:
-            placed[figure_id] = {"state": FAILED, "why": "the figure role refused the request: %s" % failure}
-            continue
-        except (gates.GateError, worker.LaunchError, worker.RoleError) as failure:
-            placed[figure_id] = {"state": WAITING, "why": "the figure role stopped: %s" % failure}
-            continue
-        points.extend({"figure_id": figure_id, "version": result.get("version"), "text": provenance.one_line(finding["text"]),
-                       "manuscript_locator": finding.get("manuscript_locator")}
-                      for finding in result.get("findings_for_text") or [] if isinstance(finding, dict) and finding.get("text"))
-        status = result.get("status")
-        source = _figure_file(result, request["target"], project) if status == "verified" else None
-        caption = _caption(result, project) if source is not None else None
-        if source is not None and caption:
-            placed[figure_id] = {"state": PLACED, "file": source, "caption": caption, "status": status, "version": result.get("version")}
-            names = named_figures(caption, figure_id, project)
-            if names:
-                placed[figure_id]["names"] = names
-        elif source is not None:
-            placed[figure_id] = {"state": FAILED, "status": status,
-                                 "why": "verified, but its caption %s cannot be read" % (result.get("final") or {}).get("caption")}
-        elif status in WAITS or status == "verified":
-            placed[figure_id] = {"state": WAITING, "status": status,
-                                 "why": reason or ("verified with no file on disk" if status == "verified" else status)}
+
+def _plan(book, previous, inputs):
+    """`(recompose, kept_edits)`: the parts to make afresh, and those whose owner's edit stands with their inputs unchanged."""
+    if previous is None:
+        return list(PARTS), []
+    recompose, edited = [], []
+    for part in PARTS:
+        held = previous["parts"][part]
+        text = _file_text(book, part)
+        if text is None or held["inputs"] != inputs[part]:
+            recompose.append(part)
+        elif _sha(text) != held["sha256"]:
+            edited.append(part)
+    return recompose, edited
+
+
+def _outline_lines(structure):
+    lines = []
+    for part in structure:
+        lines += ["", "### %s" % part.capitalize(), ""]
+        entries = structure[part]
+        if not entries:
+            lines.append("- no heading: %s" % ("nothing is placed in the supplement" if part == "supplement" else "write it unheaded"))
+        for entry in entries:
+            lines.append("- `{#%s}` %s%s" % (entry["id"], entry["heading"], "  Note from the owner: %s" % entry["note"] if entry.get("note") else ""))
+    return "\n".join(lines) + "\n"
+
+
+def _instruction(answer, passages):
+    ref, mark = answer["ref"], answer["mark"]
+    if ref.startswith("contradiction:"):
+        first, second = ref.split(":", 1)[1].split("+")
+        if mark == TYPO:
+            said = "%s and %s differ by a typo: state the claim once, as the evidence and the rest of the paper have it" % (first, second)
         else:
-            findings = (result.get("honesty_verdict") or {}).get("findings") or []
-            failed = [check["id"] for check in result.get("checks") or [] if not check.get("pass")]
-            why = "the figure role ended %s%s%s" % (status, ": %s" % reason if reason else "",
-                                                    "; failed checks %s" % ", ".join(failed) if failed else "")
-            if findings:
-                why += "; the honesty verdict found: %s" % "; ".join(" ".join(str(item.get("text", "")).split()) for item in findings)
-            placed[figure_id] = {"state": FAILED, "status": status, "why": why}
-    return placed, points
+            kept, other = (first, second) if mark == FIRST else (second, first)
+            said = "hold to %s's claim and not %s's" % (kept, other)
+    elif ref.startswith("unverifiable:"):
+        identifier = ref.split(":", 1)[1]
+        reason = _one_line((passages.get(identifier) or {}).get("reason")) or "no reason was recorded"
+        said = ("leave %s out" % identifier if mark == LEAVE_OUT else
+                "keep %s, stated as not verified, with why: %s" % (identifier, reason))
+    elif ref.startswith("reference:"):
+        name = ref.split(":", 1)[1]
+        said = ("cite %s nowhere: keep a sentence that cited it only where other evidence carries it" % name if mark == DROP else
+                'keep the claims citing %s, each marked "to be resolved"' % name)
+    elif ref == UNCHECKED_REF:
+        said = ("keep the unchecked inherited results as stated, saying that none was checked" if mark == KEEP_AS_STATED else
+                "leave the unchecked inherited results out")
+    else:
+        said = "the outline's proposal: %s" % ("taken" if mark == TAKE else "declined")
+    return "- %s: %s%s" % (ref, said, " (the owner's note: %s)" % answer["note"] if answer.get("note") else "")
 
 
-def _new_points(points, builds):
-    """The figure role's points for the text that no earlier build listed for the writer.
-
-    A figure not drawn again hands back the same points, and the writer is told each once.
-    """
-    told = {(item["figure_id"], item["text"]) for build in builds for item in build.get("for_writer") or []}
-    fresh = []
-    for point in points:
-        if (point["figure_id"], point["text"]) not in told:
-            told.add((point["figure_id"], point["text"]))
-            fresh.append(point)
-    return fresh
-
-
-def _point_lines(points):
-    return "\n".join("- figure `%s`%s: %s" % (point["figure_id"], ", at %s" % provenance.one_line(point["manuscript_locator"])
-                                              if point.get("manuscript_locator") else "", point["text"]) for point in points)
+def _prompt(role, number, version, written, structure, followed, passages, previous):
+    reads = ["- research/sections/%s.md: the %s's current passages, which the paper is made from" % (part, part) for part in MAIN_TEXT]
+    reads += ["- research/OUTLINE.md, research/OBJECTIVES.md, research/REPORT.md (the general report)",
+              "- research/CONCERNS.md (the concerns kept for the order), research/VERIFICATIONS.md when there is one"]
+    if previous is not None:
+        reads.append("- research/paper/: version %d, the whole of it; what you do not write now stands as it is there" % previous["version"])
+    text = PROMPT % {"order": number, "version": version, "parts": ", ".join(written) or "none",
+                     "outline": _outline_lines(structure),
+                     "answers": "\n".join(_instruction(answer, passages) for answer in followed) or "- none: nothing was asked",
+                     "read": "\n".join(reads)}
+    return provenance.joined(text, role.protocol, worker.schema_section("# The answer", SCHEMA))
 
 
-def _build_message(failures, points):
-    """What the writer is resumed with after a build: its list, and the figure role's points for the text."""
-    if not failures:
-        return RESUME_TEXT % _point_lines(points)
-    return RESUME_BUILD % "\n".join(failures) + (TEXT_POINTS % _point_lines(points) if points else "")
+def _answer_problems(answer, written, structure, kept):
+    problems = []
+    for part in WRITTEN:
+        if part == "title":
+            if "title" in written and len([title for title in answer.get("titles") or [] if str(title).strip()]) != 3:
+                problems.append("the title is asked for: offer three titles in `titles`, your choice first")
+        elif part in written and not (answer.get(part) or "").strip() and (part == "abstract" or structure.get(part)):
+            problems.append("%s is asked for and came back empty" % part)
+    texts = {part: answer.get(part) for part in written if part in WRITTEN and part != "title"}
+    problems += check_structure(structure, {part: text for part, text in texts.items() if part != "abstract"})
+    for part in ("abstract",):
+        if part in texts and _headings(texts[part]):
+            problems.append("the abstract is one paragraph with no heading")
+    problems += kept_problems(dict(texts, title="\n".join(answer.get("titles") or [])), kept)
+    return problems
 
 
-# --- a build --------------------------------------------------------------------------------------
+def _write_session(project, number, version, written, structure, followed, previous, harness_root, policy):
+    """The one writer session: its envelope, its answer checked and resumed once with what failed."""
+    from wayline import sections
+    book = ledger_for(project)
+    role = worker.read_role(ROLE, harness_root, project)
+    passages = {item.get("id"): item for item in sections.read_passages(book)}
+    prompt = _prompt(role, number, version, [part for part in WRITTEN if part in written], structure, followed, passages, previous)
+    request = provenance.structured_request(project, role, policy, harness_root, prompt, SCHEMA, WRITER_BUDGET,
+                                            provenance.session_dir(project, SESSIONS), read_only=True)
+    kept = inherited_kept(project)
+
+    def problem_of(envelope):
+        problem = provenance.schema_problem(envelope, SCHEMA)
+        if problem is not None:
+            return problem
+        found = _answer_problems(envelope.structured_output, written, structure, kept)
+        return "\n".join("- %s" % line for line in found) if found else None
+
+    try:
+        envelope = provenance._launch_structured(request, problem_of, "paper's writer")
+    except provenance.UsageLimited:
+        raise
+    except provenance.ProvenanceError as failure:
+        raise PaperError(str(failure)) from None
+    return envelope, request
 
 
-def assemble(markdown, placed):
-    """The draft with each placeholder line replaced: `(text, problems, files)`.
-
-    A placed figure becomes its image line and its caption, numbered in order, between the records markers; a
-    figure that waits leaves a marked gap; a failed one, or a placeholder for a figure the draft never asked for,
-    is a problem for the writer. `files` maps `figures/<name>` in the paper to the file it is copied from.
-    """
-    problems, files, number = [], {}, 0
-    seen = set()
-
-    def replace(match):
-        nonlocal number
-        figure_id = match.group(1)
-        seen.add(figure_id)
-        figure = placed.get(figure_id)
-        if figure is None:
-            problems.append({"problem": "figure", "detail": "the draft places {figure:%s} and asks for no figure %s" % (figure_id, figure_id)})
-            return ""
-        if figure["state"] == FAILED:
-            problems.append({"problem": "figure", "detail": "figure %s could not be placed: %s" % (figure_id, figure["why"])})
-            return ""
-        if figure["state"] == WAITING:
-            return "\n".join([provenance.RECORDS_BEGIN, "*[Figure %s is not drawn yet: %s.]*" % (figure_id, figure["why"]), provenance.RECORDS_END])
-        if figure.get("names"):
-            problems.append({"problem": "figure", "detail": (
-                "figure %s's caption names %s, which is not its own: a caption describes its own figure, and a cross-reference "
-                "between figures is yours, in the text. The next build has the figure role drop it from the caption; keep "
-                "asking for figure %s as it is" % (figure_id, ", ".join("figure %s" % name for name in figure["names"]), figure_id))})
-        number += 1
-        name = "%s/%s%s" % (FIGURES_DIR, figure_id, figure["file"].suffix.lower())
-        files[name] = figure["file"]
-        caption = " ".join(_CAPTION_LEAD.sub("", figure["caption"]).split())
-        return "\n".join([provenance.RECORDS_BEGIN, "![Figure %d](%s)" % (number, name), "",
-                          "**Figure %d.** %s" % (number, caption), provenance.RECORDS_END])
-
-    text = fence_references(_PLACEHOLDER.sub(replace, markdown))
-    for figure_id in sorted(set(placed) - seen):
-        problems.append({"problem": "figure", "detail": "figure %s was asked for and placed nowhere: put {figure:%s} on a line of its own "
-                                                        "where it goes, or stop asking for it" % (figure_id, figure_id)})
-    return text.rstrip("\n") + "\n", problems, files
-
-
-def fence_references(text):
-    """The draft with the entries of its reference list between the records markers, and nothing else of it.
-
-    A reference entry names a source; it claims nothing, and it is what a `ref` tag's claim cites. Left in the prose,
-    each entry is a sentence the classifier has to be asked about and may call a claim, and an entry cannot end
-    with a tag. Only the entries are fenced (a line opening `[1]`, `1.`, `-`, or `*`): the M7 run's writer moved
-    untagged sentences under `## References` when the whole section was fenced, and prose there is linted like prose
-    anywhere. The markers are comments, so the seven checks still count the references.
-    """
-    out, in_section, fenced = [], False, False
-
-    def close():
-        nonlocal fenced
-        if fenced:
-            while out and not out[-1].strip():
-                out.pop()
-            out.append(provenance.RECORDS_END)
-            out.append("")
-            fenced = False
-
-    for line in text.split("\n"):
-        heading = _HEADING.match(line)
-        if heading:
-            close()
-            in_section = heading.group(1).strip().lower() in REFERENCE_HEADINGS
-            out.append(line)
+def _freeze(book, previous):
+    """Copy the version on disk under `earlier/v<n>/`, everything of `research/paper/` but `earlier/` itself, once: a
+    composition that failed after freezing it leaves the frozen copy as it was, and the next order freezes nothing over it."""
+    root = book.path(_paper())
+    if not root.is_dir() or book.path(_paper("%s/v%d" % (EARLIER, previous["version"]))).is_dir():
+        return
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if not path.is_file() or relative.parts[0] == EARLIER:
             continue
-        if in_section and _ENTRY.match(line):
-            if not fenced:
-                out.append(provenance.RECORDS_BEGIN)
-                fenced = True
-            out.append(line)
-        elif in_section and line.strip():
-            close()
-            out.append(line)
-        else:
-            out.append(line)
-    close()
-    while out and not out[-1].strip():
-        out.pop()
-    return "\n".join(out)
+        book.write_bytes(_paper("%s/v%d/%s" % (EARLIER, previous["version"], relative.as_posix())), path.read_bytes())
 
 
-def check_build(project, record, text, *, harness_root=HARNESS_ROOT, policy=None):
-    """The linter and the seven checks on the draft as written: `(lint, findings)`.
-
-    The classifier classifies every prose sentence its cache does not hold (a haiku batch through the launcher),
-    the linter reads the tagged text, and the seven checks read `research/paper/` against `guidelines.json` with
-    the project's manifest and references for the provenance cross-check.
-    """
-    texts = [sentence.text for sentence in provenance.prose_sentences(text)]
-    classes = provenance.classify(project, texts, harness_root=harness_root, policy=policy)
-    lint = provenance.lint(project, text, classes, doc_only_fails=True)  # after the order a `doc` tag supports nothing
-    findings = guidelines.run_checks(guidelines.Manuscript(Path(project) / "research" / PAPER_DIR), record, project=project)
-    return lint, findings
-
-
-def _owners(finding, record, files):
-    """Whether a failing check is one no redraft can meet: a placed figure's format at a venue taking neither PDF nor PNG.
-
-    The figure role draws PDF and PNG only, so at a venue that takes TIFF or EPS alone the conversion is the owner's.
-    """
-    accepted = {str(name).lower() for name in record["figure_spec"]["formats"]}
-    return (finding.check == "figures" and accepted and not accepted & {"pdf", "png"}
-            and any(finding.message.startswith("%s is " % Path(name).name) for name in files))
+def _table_markdown(table):
+    import csv
+    import io
+    rows = [row for row in csv.reader(io.StringIO(table["csv"].strip()))]
+    lines = ["**Table %s.** %s" % (table["id"][1:], _one_line(table["caption"])), ""]
+    if rows:
+        width = max(len(row) for row in rows)
+        rows = [row + [""] * (width - len(row)) for row in rows]
+        lines.append("| %s |" % " | ".join(cell.replace("|", "\\|") for cell in rows[0]))
+        lines.append("|%s|" % "|".join(["---"] * width))
+        lines += ["| %s |" % " | ".join(cell.replace("|", "\\|") for cell in row) for row in rows[1:]]
+    return "\n".join(lines) + "\n"
 
 
-def _failures(lint, findings, figure_problems, record, files):
-    """The build's list for the writer, and the notes for the owner: `(failures, notes)`."""
-    listed = ["- lint `%s`: %s (%s%s)" % (problem["problem"], provenance.one_line(problem["sentence"]),
-                                          "tag `%s`: " % problem["tag"] if problem["tag"] else "", problem["detail"])
-              for problem in lint.problems]
-    failing = [finding for finding in findings if finding.level == "fail"]
-    listed += ["- check `%s`: %s" % (finding.check, finding.message) for finding in failing if not _owners(finding, record, files)]
-    listed += ["- figure: %s" % problem["detail"] for problem in figure_problems]
-    notes = ["%s: the figure role draws PDF and PNG, so converting it for the venue is the owner's" % finding.message
-             for finding in failing if _owners(finding, record, files)]
-    return listed, notes
+def _clear(book, relative_dir, prefix=""):
+    directory = book.path(_paper(relative_dir))
+    if directory.is_dir():
+        for path in sorted(directory.iterdir()):
+            if path.is_file() and path.name.startswith(prefix):
+                book.remove_file(_paper("%s/%s" % (relative_dir, path.name)))
 
 
-# --- the writer -----------------------------------------------------------------------------------
+def _references(book, texts, followed):
+    """The CSL items of the found works the parts cite, each once, less the references the order dropped."""
+    from wayline import references
+    dropped = {answer["ref"].split(":", 1)[1] for answer in followed if answer["ref"].startswith("reference:") and answer["mark"] == DROP}
+    index = references.identifier_index(book.project)
+    items, seen = [], set()
+    for part in PARTS:
+        for parts in references.ref_tags(texts.get(part)):
+            work = references.work_named(book, parts, index) if parts is not None else None
+            if work is None or work.key in seen or not work.found or (work.slug in dropped or work.named in dropped):
+                continue
+            seen.add(work.key)
+            items.append(references.csl_item(work.record))
+    return items
 
 
-def _references(project):
-    """The references a `ref` tag can name: a verified dossier with a knowledge-base node, as the linter resolves them."""
-    research = Path(project) / "research"
+def _reworded(book, texts):
+    """The owner's current passages the paper does not carry word for word."""
+    from wayline import sections
+    said = " %s " % " ".join(_words("\n".join(text or "" for text in texts.values())))
+    return [item["id"] for item in _current_passages(book)
+            if item.get("by") == sections.OWNER and " %s " % " ".join(_words(item.get("text"))) not in said]
+
+
+def _left_out(followed, passages, answer):
     found = []
-    for node_path in sorted((research / "kb" / "nodes").glob("*.json")):
-        slug = node_path.stem
-        try:
-            dossier = json.loads((research / "refs" / slug / "dossier.json").read_text(encoding="utf-8"))
-            node = json.loads(node_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(dossier, dict) or dossier.get("existence") != "verified" or not isinstance(node, dict):
-            continue
-        identifiers = dossier.get("identifiers") or {}
-        found.append("- `%s`: %s (%s)%s, level %s; its record is research/refs/%s/" % (
-            slug, node.get("title") or (dossier.get("metadata") or {}).get("title") or slug, node.get("year") or "no year",
-            ", doi %s" % identifiers["doi"] if identifiers.get("doi") else "", node.get("level", dossier.get("level")), slug))
+    for item in followed:
+        if item["ref"].startswith("unverifiable:") and item["mark"] == LEAVE_OUT:
+            identifier = item["ref"].split(":", 1)[1]
+            found.append({"what": "%s, an unverifiable claim" % identifier,
+                          "why": "unverifiable (%s), and the order left it out" % (_one_line((passages.get(identifier) or {}).get("reason")) or "no reason recorded")})
+        elif item["ref"].startswith("reference:") and item["mark"] == DROP:
+            found.append({"what": "the reference %s" % item["ref"].split(":", 1)[1], "why": "unresolved, and the order dropped it"})
+        elif item["ref"] == UNCHECKED_REF and item["mark"] == LEAVE_OUT:
+            found.append({"what": "the unchecked inherited results", "why": "none was verified, and the order left them out"})
+    found += [{"what": _one_line(item["what"]), "why": _one_line(item["why"])} for item in (answer or {}).get("left_out") or []]
     return found
 
 
-def _scope_downs(project):
-    """The open `writing` tickets a gate filed against the paper (origin the paper, or its read), oldest first."""
-    try:
-        listed = tickets.read_tickets(project)
-    except tickets.TicketError:
-        return []
-    return [fields for fields in listed
-            if fields["kind"] == "writing" and fields.get("origin") in (PAPER_PATH, READ_ORIGIN)
-            and fields["status"] not in tickets.SATISFIED + ("parked",)]
+def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=None):
+    """Compose the paper for the open order `payload` and write `research/paper/`; returns the version record.
 
-
-def _open_scope_downs(project):
-    """The scope-down tickets as the writer's prompt lists them, for it to answer this time."""
-    return ["- research/tickets/%s: %s" % (tickets.filename(fields), fields["title"]) for fields in _scope_downs(project)]
-
-
-def _guideline_summary(record):
-    keep = ("display_name", "length_limits", "required_structure", "structure_flexible", "figure_spec", "reference_style",
-            "reporting_checklists", "template")
-    summary = {key: record[key] for key in keep}
-    summary["reporting_checklists"] = [{key: form.get(key) for key in ("name", "required", "study_types")} for form in record["reporting_checklists"]]
-    return json.dumps(summary, ensure_ascii=False, indent=1)
-
-
-def _documents_and_concerns(project):
-    """The project's documents index and its concerns, inlined for the writer when it has them (decision 17; ticket 96),
-    through the records inliner the decider and the planner read them with."""
-    from wayline import decider  # the decider imports the gates and the grill, as this module's callers do
-
-    entries = decider.documents_and_concerns(project)
-    if not entries:
-        return []
-    text, _ = decider.inline_records(entries, None, "The project's own writing and the points the work must answer. Each "
-                                     "concern for the paper order is yours to answer in the text; a concern tied to an "
-                                     "objective is answered by its findings; a declined one keeps its reason.",
-                                     heading="# The project's documents and concerns")
-    return [""] + text.rstrip("\n").split("\n")
-
-
-def writer_prompt(role, project, record, harness_root=HARNESS_ROOT):
-    """The writer's prompt for a paper: the venue, the evidence, the references, the results, the form, the schema."""
-    context = provenance.report_context(project)
-    evidence = provenance.report_evidence(context)
-    slug = record["venue"]
-    lines = [
-        "# The paper you are drafting",
-        "",
-        "Draft a paper for %s from what this run established. It is a draft the owner reads; nothing is submitted. "
-        "Write under C8: every claim sentence ends with provenance tags that resolve, copied from the evidence below. "
-        "Read `research/REPORT.md` for the whole run first; the findings and the references below are what you may "
-        "claim from." % record["display_name"],
-        "",
-        "## The venue's guidelines",
-        "",
-        "From `%s`; `source.md` beside it says which fields are verified. The seven mechanical checks read this record "
-        "and nothing else, and they run on every build: the length with the venue's exclusions, the sections, the "
-        "figures and their legends, the citation form and count, the reporting checklists, the template, and the tags."
-        % (Path(harness_root) / guidelines.GUIDELINES_DIR / slug / guidelines.GUIDELINES_JSON),
-        "",
-        "```json",
-        _guideline_summary(record),
-        "```",
-        "",
-        "## The form",
-        "",
-        "- Markdown. The first line is `# <title>`; then one `## ` heading per section the venue asks for, named as it "
-        "names them, the abstract under `## Abstract`.",
-        "- A figure is a line of its own holding only `{figure:<figure_id>}`, where it goes, and an entry in `figures`: "
-        "the claim it carries and the manifested results it draws. The figure role draws it at this venue's size and "
-        "writes its caption; do not write one. A figure the run's data cannot carry is refused, so ask only for what "
-        "the findings say.",
-        "- Cite a reference in the venue's citation form (`numbered` is `[1]`, `author-date` is `(Author, 2021)`) and "
-        "list each under `## References`; its claim sentence also ends with `{ref:<slug>#<locator>}`.",
-        "- A required reporting checklist that is a form the authors fill in is the owner's: say so in `notes` rather "
-        "than writing a section named after it.",
-        "",
-    ]
-    for goal in evidence.get("goals") or []:
-        lines.extend(["The goal %s: `%s`, direction %s, target %s, on the held-out split `%s`." % (
-            goal.get("id"), goal.get("metric"), goal.get("direction"), goal.get("target"), goal.get("held_out_split")), ""])
-    lines.extend(["# The evidence", "", "Each finding carries the tags that trace it; a claim sentence of yours ends with the tags "
-                  "of the findings it rests on, copied exactly.", ""])
-    for group in evidence["groups"]:
-        lines.extend(["## Group `%s`" % group["group"], ""])
-        for item in group["findings"]:
-            lines.extend(provenance.finding_lines(item))
-        lines.append("")
-    lines.extend(["## Negative results", ""])
-    for item in evidence["negative"]:
-        lines.extend(provenance.finding_lines(item))
-    if not evidence["negative"]:
-        lines.append("None was recorded.")
-    lines.extend(["", "# The references a `ref` tag can name", ""])
-    lines.extend(_references(project) or ["None: the draft cites no reference with a `ref` tag."])
-    lines.extend(["", "# The results a figure can draw", "", "Paths in `research/manifest.json`, with the run that produced each:", ""])
-    entries = context.manifest.get("entries") or []
-    lines.extend("- `%s` (run %s)" % (entry.get("path"), entry.get("run_id")) for entry in entries[:200])
-    if len(entries) > 200:
-        lines.append("- [wayline: %d more in research/manifest.json]" % (len(entries) - 200))
-    lines.extend(_documents_and_concerns(project))
-    scope_downs = _open_scope_downs(project)
-    if scope_downs:
-        lines.extend(["", "# What the last gate left standing", "",
-                      "The kill argument or the independent read failed an earlier draft and filed these. Read each and "
-                      "answer its points in this draft, with the evidence it asks for or a claim scoped down:", ""] + scope_downs)
-    lines.extend(["", "Return the draft through the structured output; the harness writes it to `research/paper/` and builds it."])
-    return provenance.joined("\n".join(lines), role.protocol, worker.schema_section("# The draft", DRAFT_SCHEMA))
-
-
-def _answer(request, session_id=None, message=None):
-    """One writer turn: a launch, or a resume carrying the build's list; the schema is checked and asked for once more."""
-    envelope = worker.launch(request) if session_id is None else worker.resume(request, session_id, message)
-    provenance.raise_if_refused(envelope, "writer", request.model)
-    problem = provenance.schema_problem(envelope, DRAFT_SCHEMA)
-    if problem is not None and envelope.session_id:
-        envelope = worker.resume(request, envelope.session_id, provenance.RESUME_STRUCTURED % problem)
-        provenance.raise_if_refused(envelope, "writer", request.model)
-        problem = provenance.schema_problem(envelope, DRAFT_SCHEMA)
-    if problem is not None:
-        raise PaperError("the writer's draft could not be used: %s" % problem)
-    return envelope
-
-
-# --- the gate -------------------------------------------------------------------------------------
-
-
-def _gate_paths(record, harness_root, placed_files):
-    paths = [PAPER_PATH, provenance.REPORT_PATH, "research/findings.jsonl", "research/manifest.json",
-             str(Path(harness_root).resolve() / guidelines.GUIDELINES_DIR / record["venue"] / guidelines.GUIDELINES_JSON)]
-    if placed_files:
-        paths.append("research/%s/%s/" % (PAPER_DIR, FIGURES_DIR))
-    return paths
-
-
-def _read_ticket(project, book, read, paths):
-    """The `writing` ticket a failed read scopes the claims down with, unless one stands open already."""
-    if gates.open_writing_ticket(project, READ_ORIGIN) is not None:
-        return None
-    body = "\n".join([
-        "## What the independent read did not accept",
-        "",
-        "Verifier session `%s` (%s) read the draft against the run's evidence and the venue's guidelines and found:"
-        % (read.session_id, read.model),
-        "",
-        gates.findings_text(read.findings),
-        "",
-        "Scope each claim to what the artifacts support, or add the evidence the point asks for, then run "
-        "`wayline paper` again: the writer is given this ticket with the next draft.",
-        "",
-        "## The paths the read opened",
-        "",
-    ] + ["- `%s`" % item for item in paths])
-    return gates.file_writing_ticket(
-        # No touch set: the paper lives under research/, which only code writes (ticket 73).
-        project, book, title=READ_TITLE, touches=[], inputs=list(paths),
-        quality=["Does every point the independent read raised now have the evidence it asked for or a claim scoped down?"],
-        origin=READ_ORIGIN, demo="`wayline paper` drafts again and the independent read passes.", body=body,
-    )
-
-
-def _gate(project, book, record, author, policy, harness_root, placed_files):
-    """The kill argument, then the one independent verdict: `(kill, read, notes)`, `read` None when it was not spent.
-
-    Every thread is a fresh verifier session. A failed kill argument sends the draft back through its `writing`
-    ticket, and the read is not spent on a draft already going back (the owner orders by token cost). A gate that
-    passes both cancels the scope-down tickets earlier drafts left open, since this draft answered them.
+    The sections and the outline are rendered first, taking in the owner's edits; the outline's proposals answered in
+    the batch are taken; then each part whose inputs changed is made afresh, the writer's in one session, the front
+    matter by code, and the previous version is frozen. Journals `paper_order` with `action: composed`. Raises
+    `PaperError` when the writer gave nothing usable, and nothing is written then.
     """
-    paths = _gate_paths(record, harness_root, placed_files)
-    earlier = [fields["id"] for fields in _scope_downs(project)]
-    kill = gates.kill_argument(paths, project=project, author_model=author, subject_kind="paper", subject=PAPER_PATH,
-                               harness_root=harness_root, policy=policy, ledger=book)
-    if not kill.passed:
-        return kill, None, ["the read was not spent: the kill argument already sends this draft back"]
-    read = gates.verdict("paper", PAPER_PATH, READ_QUESTION, paths, READ_SCOPE, project=project, author_model=author,
-                         verdict_type=gates.PAPER_READ, harness_root=harness_root, policy=policy, ledger=book)
-    if not read.passed:
-        _read_ticket(project, book, read, paths)
-        return kill, read, []
-    for identifier in earlier:
-        steer_ticket(project, "cancel", identifier)
-    return kill, read, ["cancelled scope-down ticket(s) %s, which this draft answered" % ", ".join(map(str, earlier))] if earlier else []
-
-
-# --- the whole ------------------------------------------------------------------------------------
-
-
-def _verdict_record(taken):
-    if taken is None:
-        return None
-    return {"pass": taken.passed, "session_id": taken.session_id, "model": taken.model, "fallback_from": taken.fallback_from,
-            "findings": [dict(finding) for finding in taken.findings]}
-
-
-def summary(paper):
-    """What one `wayline paper` came to, as `build.json` and `--json` both give it."""
-    return {"venue": paper.venue, "path": str(paper.path), "status": paper.status,
-            "venue_decided_by": "decider" if paper.decided is not None else "owner", "builds": paper.builds,
-            "kill_argument": _verdict_record(paper.kill), "read": _verdict_record(paper.read), "tickets": paper.tickets,
-            "claims": paper.claims, "notes": paper.notes, "submitted": False}
-
-
-def _write_build(book, paper):
-    book.write_json("%s/%s" % (PAPER_DIR, BUILD_JSON), dict(summary(paper), schema_version=1))
-
-
-_TAKE_POINTS = ("take each into the text at the place it names, its claim tagged like any other, or say in `notes` why "
-                "the text stands as it is")
-RESUME_TEXT = (
-    "The draft you returned was written to research/paper/ and built, and the figure role, drawing the figures it asks "
-    "for, has points for the text they bear on. Return the whole draft again, through the structured output; "
-    + _TAKE_POINTS + ":\n\n%s"
-)
-TEXT_POINTS = "\n\nThe figure role, drawing the figures the draft asks for, also has points for the text they bear on; " + _TAKE_POINTS + ":\n\n%s"
-
-
-RESUME_GATE = (
-    "The draft built, and the gate failed it: the points below stand, each at the locator the verifier read it at. "
-    "Return the whole draft again, through the structured output, with each one answered: the evidence it asks for "
-    "where the run has it, or the claim scoped down to what the artifacts support. Do not answer a point by "
-    "asserting it away, and say in `notes` what only the owner can supply.\n\n%s"
-)
-
-
-RESUME_VENUE = (
-    "The owner has moved this draft to %s. From this build on it is checked against that venue's guidelines, "
-    "below, in place of the last venue's; write for its readers and its limits.\n\n```json\n%s\n```\n\n"
-)
-
-
-def _last_build(book, venue):
-    """What a `--continue` takes up: `(venue, builds, session_id, message, last venue)` off `build.json`, or a `PaperError`.
-
-    A draft left failing its build is resumed with that build's list; one the gate failed, with the points the kill
-    argument or the read left standing, which is how a fail scopes the claims down with the same writer session.
-    Whatever its status, a draft whose last build brought the figure role's points for the text, which no writer has
-    read, is resumed with them too. `venue` moves the draft to another venue, which the command says to the writer
-    with that venue's guidelines.
-    """
-    try:
-        last = book.read_json("%s/%s" % (PAPER_DIR, BUILD_JSON))
-    except (OSError, ValueError):
-        raise PaperError("%s is not there; --continue takes up a draft `wayline paper` left failing its build" % BUILD_PATH) from None
-    if not isinstance(last, dict):
-        raise PaperError("%s is not a build record" % BUILD_PATH)
-    builds = last.get("builds") or []
-    points = builds[-1].get("for_writer") or [] if builds else []   # the last build's points, which no later build gave the writer
-    if (last.get("status") not in (BUILD_FAILED, GATE_FAILED) and not points) or not builds or not builds[-1].get("session_id"):
-        raise PaperError("the last draft is %s, neither failing its build nor failed by the gate, and it leaves no point for "
-                         "the text unread; run wayline paper without --continue" % last.get("status"))
-    if last["status"] == GATE_FAILED:
-        failed = [taken for taken in (last.get("kill_argument"), last.get("read")) if taken and not taken.get("pass")]
-        message = RESUME_GATE % "\n".join(gates.findings_text(taken["findings"]) for taken in failed)
-        message += TEXT_POINTS % _point_lines(points) if points else ""
-    else:
-        message = _build_message(builds[-1]["failures"], points)
-    return venue or last["venue"], builds, builds[-1]["session_id"], message, last["venue"]
-
-
-def write_paper(project, venue=None, *, harness_root=HARNESS_ROOT, policy=None, draw_figure=None, say=None, verify=False,
-                carry_on=False):
-    """Draft `research/paper/` for `venue` (the decider's pick when None), build it until it passes or `MAX_BUILDS`, and gate it.
-
-    Returns a `Paper`. `draw_figure` stands in for `draw`, the figure role's door, in a test; `say` hears progress;
-    `verify` samples the draft's tagged claims after a gate that passed. `carry_on` (`--continue`) takes up the last
-    draft that failed its build or the gate: the same writer session is resumed with that build's list or the points
-    that stood, for up to `MAX_BUILDS` more builds, so the figures it asked for, and their requests, stay as they were;
-    with `venue` it moves the draft there.
-    Raises `PaperError` before anything is journaled when there is no report or the venue has no guidelines, and lets
-    a usage window's refusal (`provenance.UsageLimited`, `gates.UsageLimited`) or the hold on Fable out to the caller.
-    """
+    from wayline import code_repository, outline, sections
     project = Path(project).resolve()
-    say = say or (lambda text: None)
-    draw_figure = draw_figure or draw
-    book = Ledger(project)
-    if not (book.research / provenance.REPORT).is_file():
-        raise PaperError("%s is not there; the paper is drafted after the report: run wayline report first" % provenance.REPORT_PATH)
+    book = ledger_for(project)
     policy = policy_for(project, harness_root) if policy is None else policy
-    decided, earlier, session_id, message = None, [], None, None
-    if carry_on:
-        venue, earlier, session_id, message, drafted_for = _last_build(book, venue)
-    elif venue is None:
-        decided = _choose_venue(project, harness_root, policy)
-        venue = decided.answer
-        say("venue     %s, the decider's pick (confidence %s): %s" % (venue, decided.confidence, " ".join(decided.rationale.split())))
-    try:
-        record = guidelines.read_guidelines(harness_root, venue)
-    except guidelines.GuidelinesError as failure:
-        raise PaperError("%s; the venues with guidelines are %s" % (failure, ", ".join(sorted(venues(harness_root))) or "none")) from None
-    if carry_on and venue != drafted_for:
-        message = RESUME_VENUE % (record["display_name"], _guideline_summary(record)) + message
-    book.append_event(PAPER_STARTED, {"venue": venue})
-    role = worker.read_role(WRITER, harness_root, project)
-    request = provenance.structured_request(project, role, policy, harness_root, writer_prompt(role, project, record, harness_root),
-                                  DRAFT_SCHEMA, WRITER_BUDGET, provenance.session_dir(project, SESSIONS), read_only=True)
-    paper = Paper(venue=venue, path=book.research / PAPER_DIR / PAPER_MD, status=BUILD_FAILED, decided=decided, builds=list(earlier))
-    files, waiting = {}, []
-    for number in range(len(earlier) + 1, len(earlier) + MAX_BUILDS + 1):
-        say("build %d    the writer on %s %s%s" % (number, request.model, request.effort, "" if session_id is None else ", with the list"))
-        envelope = _answer(request, session_id, message)
-        session_id = envelope.session_id or session_id
-        draft = envelope.structured_output
-        revise = {figure_id: figure["names"] for figure_id, figure in (paper.builds[-1].get("figures") or {}).items()
-                  if figure.get("names")} if paper.builds else {}
-        placed, points = _place(project, draft, record, policy, harness_root, draw_figure, say, revise)
-        text, figure_problems, files = assemble(draft["markdown"], placed)
-        book.remove_tree("%s/%s" % (PAPER_DIR, FIGURES_DIR))
-        for name, source in files.items():
-            book.write_bytes("%s/%s" % (PAPER_DIR, name), source.read_bytes())
-        book.write_markdown("%s/%s" % (PAPER_DIR, PAPER_MD), text)
-        lint, findings = check_build(project, record, text, harness_root=harness_root, policy=policy)
-        failures, owners = _failures(lint, findings, figure_problems, record, files)
-        waiting = sorted(figure_id for figure_id, figure in placed.items() if figure["state"] == WAITING)
-        for_writer = _new_points(points, paper.builds)
-        paper.builds.append({
-            "build": number, "session_id": envelope.session_id, "model": envelope.model,
-            "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-            "lint": {"pass": lint.passed, "claims": lint.claims, "tagged": lint.tagged, "problems": lint.problems},
-            "checks": [finding._asdict() for finding in findings],
-            "figures": {figure_id: {key: str(value) if isinstance(value, Path) else value for key, value in figure.items()}
-                        for figure_id, figure in placed.items()},
-            "failures": failures, "for_writer": for_writer, "owners": owners, "notes": draft["notes"],
-        })
-        say("build %d    linter %s (%d claims, %d tagged), checks %s, %d figure(s) placed%s%s" % (
-            number, "pass" if lint.passed else "FAIL", lint.claims, lint.tagged, guidelines.worst(findings), len(files),
-            ", %d failure(s)" % len(failures) if failures else "",
-            ", %d point(s) for the text" % len(for_writer) if for_writer else ""))
-        if not failures and not for_writer:
-            break
-        message = _build_message(failures, for_writer)
-    if paper.builds[-1]["failures"]:
-        paper.notes.append("the draft still failed its build after %d builds; no verdict was spent on it; "
-                           "wayline paper --continue gives the same writer session %d more" % (MAX_BUILDS, MAX_BUILDS))
-    if paper.builds[-1]["for_writer"]:
-        late = sorted({item["figure_id"] for item in paper.builds[-1]["for_writer"]})
-        paper.notes.append("%s had points for the text after the last build, so no writer has read them: build.json keeps them "
-                           "under for_writer, and wayline paper --continue gives them to the writer"
-                           % ", ".join("figure %s" % figure_id for figure_id in late))
-    paper.notes.extend(paper.builds[-1]["owners"])
-    if draft["notes"].strip():
-        paper.notes.append("the writer: %s" % " ".join(draft["notes"].split()))
-    if not paper.builds[-1]["failures"]:
-        if waiting:
-            paper.status = HELD
-            paper.notes.append("figure(s) %s are not drawn yet; `wayline figure resume <figure_id>` once settled, then "
-                               "wayline paper again. No verdict was spent on an unfinished draft" % ", ".join(waiting))
-        else:
-            say("gate      the kill argument and the independent read, on the verifier for %s" % request.model)
-            paper.kill, paper.read, notes = _gate(project, book, record, request.model, policy, harness_root, files)
-            paper.notes.extend(notes)
-            paper.status = PASSED if paper.kill.passed and paper.read.passed else GATE_FAILED
-            paper.tickets = [fields["id"] for fields in _scope_downs(project)] if paper.status == GATE_FAILED else []
-            if verify and paper.status == PASSED:
-                say("claims    the verifier's sample of the draft's tagged claims")
-                paper.claims = provenance.verify_claims(project, harness_root=harness_root, policy=policy,
-                                                        document=PAPER_PATH, prose_author=request.model)
-                paper.tickets = paper.claims["tickets"]
-    _write_build(book, paper)
-    return paper
+    sections.render_sections(book)
+    outline.render_outline(book)
+    followed = answers(project, payload)
+    _take_outline_answers(project, followed)
+    structure = outline.paper_structure(book)
+    previous = read_record(book)
+    version = (previous["version"] + 1) if previous else 1
+    inputs = part_inputs(project, structure, followed)
+    recompose, kept_edits = _plan(book, previous, inputs)
+    written = [part for part in recompose if part in WRITTEN]
+    envelope, answer = None, {}
+    if written:
+        envelope, request = _write_session(project, payload["order"], version, written, structure, followed, previous,
+                                           harness_root, policy)
+        answer = envelope.structured_output
+    passages = {item.get("id"): item for item in sections.read_passages(book)}
+    texts = {}
+    with book.lock():
+        if previous is not None:
+            _freeze(book, previous)
+        for part in PARTS:
+            if part not in recompose:
+                texts[part] = _file_text(book, part)
+                continue
+            if part == "title":
+                text = _one_line(answer["titles"][0]) + "\n"
+            elif part == "front":
+                text = front_text(project)
+            else:
+                text = (answer.get(part) or "").strip() + "\n"
+                if not text.strip():
+                    text = ("Nothing is placed in the supplement.\n" if part == "supplement" else
+                            "The outline holds nothing for the %s yet.\n" % part.capitalize())
+            book.write_markdown(_paper("%s.md" % part), text)
+            texts[part] = text
+        tables = list((previous or {}).get("tables") or [])
+        if "results" in recompose:
+            _clear(book, TABLES)
+            tables = []
+            for table in answer.get("tables") or []:
+                book.write_markdown(_paper("%s/%s.csv" % (TABLES, table["id"])), table["csv"].strip() + "\n")
+                book.write_markdown(_paper("%s/%s.md" % (TABLES, table["id"])), _table_markdown(table))
+                tables.append(table["id"])
+        alternatives = [name for name in (previous or {}).get("alternatives") or []
+                        if name.split("-")[0] not in recompose]
+        for part in recompose:
+            if part in WRITTEN:
+                _clear(book, ALTERNATIVES, part + "-")
+        if "title" in recompose:
+            for number, title in enumerate(answer["titles"], start=1):
+                book.write_markdown(_paper("%s/title-%d.md" % (ALTERNATIVES, number)), _one_line(title) + "\n")
+                alternatives.append("title-%d" % number)
+        counts = {}
+        for item in answer.get("alternatives") or []:
+            if item["part"] not in recompose:
+                continue
+            counts[item["part"]] = counts.get(item["part"], 0) + 1
+            name = "%s-%d" % (item["part"], counts[item["part"]])
+            book.write_markdown(_paper("%s/%s.md" % (ALTERNATIVES, name)), "%s\n\n<!-- why: %s -->\n" % (item["text"].strip(), _one_line(item["why"])))
+            alternatives.append(name)
+        book.write_json(_paper(REFERENCES_JSON), _references(book, texts, followed))
+        unchecked = next((("kept" if item["mark"] == KEEP_AS_STATED else "left out") for item in followed if item["ref"] == UNCHECKED_REF), None)
+        record = {
+            "version": version, "order": payload["order"], "by": payload.get("by") or OWNER,
+            "commit": code_repository.main_commit(project), "composed": now_ts(),
+            "model": (envelope.model or request.model) if envelope is not None else None,
+            "parts": {part: {"version": version if part in recompose else previous["parts"][part]["version"],
+                             "inputs": inputs[part], "sha256": _sha(texts[part] or "")} for part in PARTS},
+            "tables": tables, "alternatives": sorted(set(alternatives)),
+            "answers": [{key: item[key] for key in ("ref", "text", "mark", "by", "batch", "item", "note")} for item in followed],
+            "unchecked": unchecked, "left_out": _left_out(followed, passages, answer),
+            "proposals": [_one_line(item) for item in answer.get("proposals") or []] if written else list((previous or {}).get("proposals") or []),
+            "reworded": _reworded(book, texts), "kept_edits": kept_edits, "gated": False,
+            "usage": ({"usage": envelope.usage, "turns": envelope.num_turns, "duration_ms": envelope.duration_ms,
+                       "session_id": envelope.session_id} if envelope is not None else None),
+        }
+        if not written and previous is not None:
+            record["model"] = previous.get("model")
+        book.write_json(_paper(PAPER_JSON), record, schema=RECORD_SCHEMA)
+        checks = {"structure": check_structure(structure, {part: texts.get(part) for part in outline.PAPER_PARTS}),
+                  "kept": kept_problems({part: texts.get(part) for part in WRITTEN}, inherited_kept(project))}
+        book.write_markdown(_paper(PAPER_MD), _report(record, recompose, answer, payload, checks))
+        book.append_event(PAPER_ORDER, {"order": payload["order"], "action": COMPOSED, "by": payload.get("by") or OWNER,
+                                        "version": version, "commit": record["commit"], "parts": recompose})
+    if say is not None:
+        say("  paper order %d: version %d composed (%s afresh)" % (payload["order"], version, ", ".join(recompose) or "nothing"))
+    return record
 
 
-# --- the command ----------------------------------------------------------------------------------
+def _report(record, recompose, answer, payload, checks):
+    """`PAPER.md`, the build report, rendered by code from the version record."""
+    lines = ["# The paper, version %d" % record["version"], "",
+             "Composed by code at paper order %d (%s) from commit %s of main, at %s. %s" % (
+                 record["order"], record["by"], record["commit"] or "none (the project has no repository)", record["composed"],
+                 "The writer was one read-only session on %s." % record["model"] if record["model"] else "No part needed the writer."),
+             "", "This build is not yet gated: no kill argument, independent read, or sampled verdict has judged it. "
+                 "Nothing was submitted anywhere.", "", "## Parts", "", "| Part | File | Version | This order |", "|---|---|---|---|"]
+    for part in PARTS:
+        state = ("made afresh" if part in recompose else "your edit kept" if part in record["kept_edits"] else "unchanged")
+        lines.append("| %s | %s.md | %d | %s |" % (part, part, record["parts"][part]["version"], state))
+    lines += ["", "Tables: %s. Alternatives: %s." % (", ".join(record["tables"]) or "none",
+                                                     ", ".join("alternatives/%s.md" % name for name in record["alternatives"]) or "none"), ""]
+    lines += ["## The batch's answers", ""]
+    if not record["answers"]:
+        lines.append("Nothing was asked: no contradiction, unverifiable claim, unresolved reference, or outline proposal stood.")
+    elif not payload.get("batch"):
+        lines.append("No batch was asked under `autonomous`: code's defaults were followed until the decider answers it.")
+    for item in record["answers"]:
+        lines.append("- %s: %s (by %s%s)%s" % (item["ref"], item["mark"], item["by"],
+                                                ", %s item %s" % (item["batch"], item["item"]) if item.get("batch") else "",
+                                                "; note: %s" % item["note"] if item.get("note") else ""))
+    lines += ["", "## Inherited results", ""]
+    if record["unchecked"] is not None:
+        lines.append("None of the inherited results was checked before this order; the unchecked ones were %s." % (
+            "kept as stated" if record["unchecked"] == "kept" else "left out"))
+    else:
+        lines.append("Either an inherited result was verified, or the project inherited none.")
+    lines += ["", "## Left out, and why", ""]
+    lines += ["- %s: %s" % (item["what"], item["why"]) for item in record["left_out"]] or ["Nothing."]
+    lines += ["", "## The owner's passages whose wording changed", ""]
+    lines += ["- %s: the paper does not carry it word for word" % identifier for identifier in record["reworded"]] or ["None."]
+    lines += ["", "## Proposed by the writer, never made", ""]
+    lines += ["- %s" % item for item in record["proposals"]] or ["Nothing."]
+    if (answer or {}).get("notes"):
+        lines += ["", "## The writer's notes", "", _one_line(answer["notes"])]
+    lines += ["", "## Checks", "", "On every part as it stands, an owner's edit included.", ""]
+    lines.append("- The headings follow the outline's order and placement, each carrying its outline id, and no part carries "
+                 "a reference list: %s" % ("passed." if not checks["structure"] else "failed:"))
+    lines += ["  - %s" % problem for problem in checks["structure"]]
+    lines.append("- No inherited title, abstract, or caption is in any part: %s" % ("passed." if not checks["kept"] else "failed:"))
+    lines += ["  - %s" % problem for problem in checks["kept"]]
+    lines += ["", "## Cost", ""]
+    usage = record["usage"]
+    if usage:
+        tokens = usage.get("usage") or {}
+        lines.append("The writer session %s: %s input and %s output token(s), %s turn(s), %s ms." % (
+            usage.get("session_id") or "", tokens.get("input_tokens", "?"), tokens.get("output_tokens", "?"),
+            usage.get("turns") if usage.get("turns") is not None else "?", usage.get("duration_ms") if usage.get("duration_ms") is not None else "?"))
+    else:
+        lines.append("No session: every part stood as it was.")
+    lines.append("The card's estimate for an order: %s." % COST)
+    return "\n".join(lines) + "\n"
+
+
+# --- the verb -------------------------------------------------------------------------------------------------------
 
 
 def paper_command(args):
-    """`wayline paper [--venue <slug>] [--continue] [--project <path>] [--verify] [--json]`."""
-    parser = argparse.ArgumentParser(prog="wayline paper", description=(
-        "draft research/paper/ under a venue's guidelines, build it with the linter and the seven checks, and gate it "
-        "with the kill argument and one independent read; nothing is submitted"))
-    parser.add_argument("--venue", help="the venue's slug under guidelines/ (default: the decider picks the best fit)")
-    parser.add_argument("--project", help="the project (default: the active one)")
-    parser.add_argument("--continue", dest="carry_on", action="store_true",
-                        help="take up the last draft that failed its build or the gate: resume its writer session with what failed")
-    parser.add_argument("--verify", action="store_true",
-                        help="after a gate that passed, take a verdict on a sample of the draft's tagged claims (10 percent, at least ten)")
-    parser.add_argument("--json", action="store_true", help="print the outcome as JSON")
+    """`wayline paper [--yes] [--json] [--project <path>]`, and `wayline paper front - [--project <path>]`.
+
+    Alone it prints the order's card and does nothing else; with `--yes`, the owner's confirmation, it makes the order.
+    `paper front -` records the front matter the owner gave, a JSON object on stdin.
+    """
+    if args and args[0] == "front":
+        return _front_command(args[1:])
+    parser = argparse.ArgumentParser(prog="wayline paper", description="the paper order: without --yes, its card (the readiness list "
+                                     "and the cost, with no model call); with --yes, the order, which composes the paper from the "
+                                     "outline and the sections")
+    parser.add_argument("--yes", action="store_true", help="the owner's confirmation; without it nothing is done")
+    parser.add_argument("--project", help="the project; the active one by default")
+    parser.add_argument("--json", action="store_true", help="print the card or the order as JSON")
     options, code = parse_args(parser, args)
     if options is None:
         return code
     try:
         project = find_project(options.project)
-    except ProjectError as failure:
+        if not options.yes:
+            found = card(project)
+            print(json.dumps(found, indent=2, default=str) if options.json else card_text(found))
+            return 0
+        made = order(project)
+    except PaperError as failure:
         print("wayline paper: %s" % failure, file=sys.stderr)
         return 2
-    say = (lambda text: None) if options.json else print
-    try:
-        paper = write_paper(project, options.venue, say=say, verify=options.verify, carry_on=options.carry_on)
-    except (PaperError, provenance.ProvenanceError, gates.GateError, guidelines.GuidelinesError, worker.LaunchError,
-            worker.RoleError, tickets.TicketError, decider.DeciderError) as failure:
+    except (ProjectError, LedgerError, OSError, ValueError) as failure:
         print("wayline paper: %s" % failure, file=sys.stderr)
         return 1
     if options.json:
-        print(json.dumps(summary(paper), ensure_ascii=False, indent=2))
+        print(json.dumps(made, indent=2))
+        return 0
+    print("paper order %d made." % made["order"])
+    if made["batch"]:
+        print(batches.render(project, made["batch"]))
+        print("The writer waits for these answers: wayline mark %s --defaults takes all defaults." % made["batch"])
+    if made["conductor"]:
+        print("The running conductor takes it at its next wave: running tickets finish, nothing new launches, the changed "
+              "results are drawn, and the paper is composed; then the run resumes.")
     else:
-        print(render(paper))
-    return 0 if paper.status == PASSED and not (paper.claims and paper.claims["failed"]) else 1
+        print("A conductor was started for it%s; once the paper is composed its run ends as the last one did (%s)."
+              % (" (%s)" % made["started"] if made["started"] else "", made["run"]))
+    return 0
 
 
-def render(paper):
-    """What the owner reads at the command: where the draft is, how it built, what the gate said, what was filed."""
-    last = paper.builds[-1] if paper.builds else None
-    lines = ["paper     %s (%s)" % (paper.path, paper.venue)]
-    if last is not None:
-        lines.append("builds    %d; the last: linter %s, %d of %d claim sentence(s) tagged; checks %s" % (
-            len(paper.builds), "pass" if last["lint"]["pass"] else "FAIL", last["lint"]["tagged"], last["lint"]["claims"],
-            guidelines.worst(guidelines.Finding(**finding) for finding in last["checks"])))
-        lines.extend("  %s" % failure for failure in last["failures"])
-    for name, taken in (("kill arg", paper.kill), ("read", paper.read)):
-        if taken is not None:
-            lines.append("%-9s %s, verifier session %s on %s%s" % (name, "pass" if taken.passed else "FAIL", taken.session_id, taken.model,
-                                                                  " in place of %s" % taken.fallback_from if taken.fallback_from else ""))
-            lines.extend("  - [%s] %s" % (finding.get("severity"), " ".join(str(finding.get("text", "")).split())) for finding in taken.findings)
-    if paper.claims is not None:
-        lines.append("claims    %d of %d tagged claims sampled: %d passed, %d failed, %d already had a verdict" % (
-            paper.claims["sampled"], paper.claims["claims"], len(paper.claims["passed"]), len(paper.claims["failed"]),
-            paper.claims["already_verdicted"]))
-    if paper.tickets:
-        lines.append("open      writing ticket(s) %s, to scope the claims down" % ", ".join(map(str, paper.tickets)))
-    lines.extend("note      %s" % note for note in paper.notes)
-    lines.append("status    %s; the owner reads research/paper/ and research/paper/build.json. Nothing was submitted." % paper.status)
-    return "\n".join(lines)
+def _front_command(args):
+    parser = argparse.ArgumentParser(prog="wayline paper front", description="record the paper's front matter the owner gave: "
+                                     "a JSON object of authors, acknowledgments, funding, and competing_interests on stdin")
+    parser.add_argument("source", help="- for stdin")
+    parser.add_argument("--project", help="the project; the active one by default")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    try:
+        project = find_project(options.project)
+        text = sys.stdin.read() if options.source == "-" else Path(options.source).read_text(encoding="utf-8")
+        record = set_front(project, json.loads(text))
+    except (PaperError, ProjectError, LedgerError, OSError, ValueError) as failure:
+        print("wayline paper front: %s" % failure, file=sys.stderr)
+        return 2
+    missing = _front_missing(record)
+    print("front matter recorded in research/%s%s" % (FRONT_JSON, "; still to be given: %s" % ", ".join(missing) if missing else ""))
+    return 0

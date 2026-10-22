@@ -1084,8 +1084,8 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
     `chosen` is the claims to judge when the caller drew them itself: the run-end gates draw from the claims never
     sampled (`wayline.run_end`, ticket 103) rather than from all of them.
 
-    `document` is the paper's `research/paper/paper.md` when `wayline paper --verify` samples it (decision 11: every
-    claim in the report and the paper, by sampling), with `prose_author` the model the paper's writer ran on.
+    `document` is another document whose claims are sampled (decision 11: every claim in the report and the paper, by
+    sampling; the paper's builds sample its parts from ticket 117), with `prose_author` the model its writer ran on.
 
     Every verdict goes through `gates.verdict` with `subject_kind: claim`, so it is journaled with
     its session and its model, on the verifier the table gives for the claim's author: the ticket that

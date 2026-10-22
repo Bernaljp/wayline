@@ -224,14 +224,21 @@ When the answer makes the project keep `code/` and a cut ticket writes code outs
 
 Under `autonomous` only: ask in one question whether the decider judges the paper order when the run's rule ends,
 and for which venue; the recommendation is yes, with no venue. No verb records the answer yet: tell the owner it
-stands at that default until the paper order is built, and that this question is asked again then. Under the other
+stands at that default until the decider's order is built, and that this question is asked again then. Under the other
 autonomies the owner orders the paper, so say in one line that this question is not theirs to answer now.
 
 ## Setup 9/10: the front matter
 
-Ask in one question for the front matter: the title, the authors and their affiliations, the corresponding author,
-funding, and acknowledgements. It may be left for later: it is needed only at the paper order, which marks what is
-not yet given as a placeholder. No verb records it yet; say so, and that the paper order asks for it again.
+Ask in one question for the front matter, at every autonomy: the authors and their affiliations, the corresponding
+author, the acknowledgments, the funding, and the competing interests. It may be left for later: it is needed only at
+the paper order, which marks what is not yet given as a placeholder, and the order's card lists it. Record what the
+owner gives as one JSON object (paper.md shows its fields):
+
+```bash
+wayline paper front - --project . <<'EOF'
+{"authors": [{"name": "Ada Lovelace", "affiliations": ["Analytical Engines Ltd"], "corresponding": true}]}
+EOF
+```
 
 ## Setup 10/10: the important unresolved references
 

@@ -53,7 +53,7 @@ from wayline.tools import ToolsError, failure_line, run_recorded, run_tool
 
 __all__ = [
     "RepeatsError", "EMBED_TOOL", "EMBED_SCRIPT", "READER", "CONFIRMER", "RECORD", "REPEATS_CHECK", "plain", "embed",
-    "near_pairs", "additions", "read_record", "check_setup", "take_marks", "contradictions", "merges", "dismissed", "grill_items", "account_lines",
+    "near_pairs", "additions", "read_record", "check_setup", "take_marks", "contradictions", "merges", "dismissed", "grill_items", "account_lines", "dismissed_pairs",
     "check_result", "Checked", "repeats_command",
 ]
 
@@ -694,6 +694,15 @@ def merges(project):
 
 def _evidence(entry):
     return "research/repeats.json, the pair %s+%s" % (entry["a"], entry["b"])
+
+
+def dismissed_pairs(project):
+    """`{(a, b)}` of every contradiction the owner marked not one, taken or not yet: what the paper order leaves out (ticket 115)."""
+    book = ledger_for(project)
+    record = read_record(book)
+    found = [entry for entry in record["pairs"] if entry["outcome"] == DISMISSED]
+    found += [entry for entry, given in _given(book, record) if entry["outcome"] == CONTRADICTION and given == NOT_ONE]
+    return {(entry["a"], entry["b"]) for entry in found}
 
 
 def dismissed(project):
