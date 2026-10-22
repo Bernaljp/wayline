@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "properties": {
     "id": {"type": "string", "pattern": "^B[1-9][0-9]*$", "description": "B1 onward, never reused"},
-    "kind": {"type": "string", "enum": ["plots", "objective_changes", "software_ask", "account_review", "merges", "contradictions", "concern_placements", "outline_proposals"]},
+    "kind": {"type": "string", "enum": ["plots", "objective_changes", "software_ask", "account_review", "merges", "contradictions", "concern_placements", "outline_proposals", "paper_order"]},
     "title": {"type": "string", "pattern": "\\S"},
     "decision": {"type": ["integer", "null"], "minimum": 1, "description": "the decision ticket this batch answers, or null when it answers none"},
     "status": {"type": "string", "enum": ["open", "closed"], "description": "closed once every item is settled"},

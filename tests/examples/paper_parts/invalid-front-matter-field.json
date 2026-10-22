@@ -1,0 +1,32 @@
+{
+  "titles": [
+    "Noise and the fit",
+    "How noise bends a fit",
+    "Fits under noise"
+  ],
+  "abstract": "We measured how noise changes a polynomial fit.",
+  "introduction": "## State of the art {#introduction-state-of-the-art}\n\nPolynomial fits are standard {ref:doi:10.1000/x}.",
+  "results": "## How does noise change the fit? {#O1}\n\n### The error grows {#R1}\n\nThe error rises {res:t2-a1/results/summary.json#rmse}.",
+  "discussion": "## Limits {#discussion-limits}\n\nThe noise is Gaussian.",
+  "methods": "## Fitting {#methods-fitting}\n\nWe fit by least squares.",
+  "supplement": null,
+  "tables": [
+    {
+      "id": "T1",
+      "caption": "The errors.",
+      "csv": "noise,rmse\n0.1,0.12\n"
+    }
+  ],
+  "alternatives": [],
+  "proposals": [
+    "Move Limits first."
+  ],
+  "left_out": [
+    {
+      "what": "the older fits",
+      "why": "no passage carries them"
+    }
+  ],
+  "notes": "",
+  "front": "# Front"
+}

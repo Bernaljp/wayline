@@ -1,0 +1,13 @@
+{
+  "authors": [
+    {
+      "name": "Ada Lovelace",
+      "affiliations": [
+        "Analytical Engines Ltd"
+      ],
+      "corresponding": true,
+      "email": "ada@example.org"
+    }
+  ],
+  "funding": "None."
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "paper",
+  "description": "The paper's version record (Implementation Decision 17; ticket 115): research/paper/paper.json, written only by wayline.paper through the ledger at each paper order, beside PAPER.md, the build report rendered from it. Each part carries the version it was last made in, what its inputs hashed to then (a re-order recomposes only the parts whose inputs changed, the title and abstract whenever a main-text part did), and what its file hashed to as code wrote it, so an owner's edit of a part whose inputs did not change is kept. The previous version is frozen under research/paper/earlier/v<n>/.",
+  "type": "object",
+  "required": ["version", "order", "by", "commit", "composed", "model", "parts", "tables", "alternatives", "answers", "unchecked", "left_out", "proposals", "reworded", "kept_edits", "gated", "usage"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "order": {"type": "integer", "minimum": 1, "description": "the paper order that made this version"},
+    "by": {"enum": ["owner", "decider"]},
+    "commit": {"type": ["string", "null"], "description": "the commit of main the paper was composed from"},
+    "composed": {"type": "string", "description": "when, as the journal spells a timestamp"},
+    "model": {"type": ["string", "null"], "description": "the writer session's model, null when no part needed one"},
+    "parts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "abstract", "introduction", "results", "discussion", "methods", "supplement", "front"],
+      "properties": {
+        "title": {"$ref": "#/$defs/part"}, "abstract": {"$ref": "#/$defs/part"}, "introduction": {"$ref": "#/$defs/part"},
+        "results": {"$ref": "#/$defs/part"}, "discussion": {"$ref": "#/$defs/part"}, "methods": {"$ref": "#/$defs/part"},
+        "supplement": {"$ref": "#/$defs/part"}, "front": {"$ref": "#/$defs/part"}
+      }
+    },
+    "tables": {"type": "array", "items": {"type": "string", "pattern": "^T[1-9][0-9]*$"}},
+    "alternatives": {"type": "array", "items": {"type": "string", "pattern": "^[a-z]+-[1-9][0-9]*$"}},
+    "answers": {
+      "type": "array",
+      "description": "the batch's answers the composition followed, or code's defaults where no batch was asked",
+      "items": {
+        "type": "object",
+        "required": ["ref", "text", "mark", "by"],
+        "additionalProperties": false,
+        "properties": {
+          "ref": {"type": "string", "pattern": "\\S"}, "text": {"type": "string"}, "mark": {"type": "string", "pattern": "\\S"},
+          "by": {"enum": ["owner", "decider", "code"]}, "batch": {"type": ["string", "null"]}, "item": {"type": ["integer", "null"]},
+          "note": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "unchecked": {"enum": ["kept", "left out", null], "description": "with no inherited result verified, whether the unchecked ones were kept as stated or left out; null when one was verified or none is inherited"},
+    "left_out": {"type": "array", "items": {"type": "object", "required": ["what", "why"], "additionalProperties": false,
+                                             "properties": {"what": {"type": "string"}, "why": {"type": "string"}}}},
+    "proposals": {"type": "array", "items": {"type": "string"}},
+    "reworded": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "the owner's passages the paper does not carry word for word"},
+    "kept_edits": {"type": "array", "items": {"type": "string"}, "description": "the parts whose owner's edit was kept"},
+    "gated": {"type": "boolean", "description": "false until a build's gates judged this version"},
+    "usage": {"type": ["object", "null"], "description": "the writer session's token usage, its turns, and its duration"}
+  },
+  "$defs": {
+    "part": {
+      "type": "object",
+      "required": ["version", "inputs", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {"type": "integer", "minimum": 1, "description": "the version this part was last made in"},
+        "inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "what the part's inputs hashed to when it was made"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "the part's file as code wrote it"}
+      }
+    }
+  }
+}

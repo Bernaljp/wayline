@@ -160,7 +160,7 @@ class MarksViewTest(MarksServedCase):
 class MarkActionTest(MarksServedCase):
     def test_mark_is_the_one_action_added(self):
         self.assertEqual(ACTIONS, ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback",
-                                   "ladder_changes", "intake", "feedback", "mark"))
+                                   "ladder_changes", "intake", "feedback", "paper", "mark"))  # paper: ticket 115's order
 
     def test_a_click_saves_its_mark_at_once_and_the_ledger_reads_it_back(self):
         answer = self.act({"batch": self.plots["id"], "item": 1, "mark": "keep"})

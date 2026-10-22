@@ -141,7 +141,7 @@ TEXT_TYPE = "text/plain; charset=utf-8"
 # The actions of Implementation Decisions 8 this dashboard takes (ticket 35), in the order the spec lists them.
 # `mark` is the marks view's (ticket 112): the one action decision 17 adds for it.
 ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake", "feedback",
-           "mark")
+           "paper", "mark")
 ACTION_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/actions/(?P<name>[^/]+)/?$")
 # The header an intake drop names its file in, and the largest JSON body any other action reads.
 FILENAME_HEADER = "X-Wayline-Filename"
@@ -1259,6 +1259,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/marks/?$"), "api_marks"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/waiting/?$"), "api_waiting"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/items/(?P<item>[^/]+)/?$"), "api_item"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/card/?$"), "api_paper_card"),
         (ACTION_ROUTE, "api_action_get"),
     )
 
@@ -1611,6 +1612,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                                                ensure_ascii=False).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-cache"),))
         return self._json(found, tag)
 
+    def api_paper_card(self, query, project):
+        """The paper order's card (ticket 115): the readiness list and the cost, built by code with no model call, which
+        the `paper` action's Confirm acts on; tagged by the ledger it is read from."""
+        from wayline import paper  # the paper order reads every part of the ledger
+        path = self._project(project)
+        tag = etag("paper_card", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)))
+        if self._not_modified(tag):
+            return None
+        found = paper.card(path)
+        found["text"] = paper.card_text(found)
+        return self._json(found, tag)
+
     def api_action_get(self, query, project, name):
         """An action asked for with `GET`: 405, with the method it takes."""
         return self._send(HTTPStatus.METHOD_NOT_ALLOWED, b"an action is a POST with the token in the X-Wayline-Token header\n",
@@ -1844,6 +1857,10 @@ def run_action(name, project, body, headers=None, server=None):
             return HTTPStatus.OK, changes.file_feedback(project, _string(fields, "text"), source="dashboard")
         except changes.ChangeError as failure:
             raise DashboardError(str(failure)) from None
+    if name == "paper":
+        from wayline import paper  # the paper order reads every part of the ledger
+        _fields(body)
+        return HTTPStatus.OK, paper.order(project, by="owner")
     if name == "mark":
         return _mark(project, _fields(body, ("batch",), ("item", "mark", "note", "defaults")))
     if name == "switch":

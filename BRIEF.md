@@ -65,7 +65,7 @@ output with downloads, and the controls the human needs, reachable from a laptop
 | R23 | Large literature intakes are not read in full; full reading happens when a paper is deemed important for the current front. |
 | R24 | Decision tickets: questions to the user that pause the dependent work until answered, picked up by the recurrent job. |
 | R25 | The owner may set a quantitative goal; it must be clear, measurable, and feasible, and the harness works toward it. |
-| R26 | The full report is the stopping point; then "continue to a paper" with a chosen journal (or the harness chooses), from a local repository of journal guidelines. |
+| R26 | The general report is always current; the paper is made only on an explicit order, from the owner, or from the decider in an autonomous run. (Revised by spec decision 17, ticket 115: it read "The full report is the stopping point; then continue to a paper with a chosen journal, or the harness chooses, from a local repository of journal guidelines.") |
 | R27 | A figures capability with an index of possible plots for given data (python-graph-gallery, r-graph-gallery, Altair as references). |
 | R28 | A documentation capability that makes implemented packages understandable, complete, and good-looking (Read the Docs style). |
 | R29 | While the harness runs it serves a local dashboard: a tab per project, an index of every output with downloads, and the controls the human needs, reachable from a laptop through a tunnel to the workstation. |
@@ -362,8 +362,8 @@ SpecDrivenResearch/
 | P4 Plan | SPEC | `tickets/`, `graph.json`, with roles and skills assigned, decision tickets where choices remain | DAG; every ticket has a demo, machine checks, touch set, difficulty, context pack, role, skills (A) | one approval in `checkpoints` |
 | P5 Execute | graph | closed tickets, code on main, results, findings, proposals | frontier empty and no jobs pending, or goal reached | only on decision tickets |
 | P6 Verify | results, claims | claim verdicts; `done` promoted to `accepted`; kill argument survived or claims scoped down | every claim has a verdict (A: present; B: supported) | no |
-| P7 Report | journal, findings | `REPORT.md` with provenance on every claim | linter passes (A); one independent read (B) | no; this is the stopping point |
-| P8 Paper | report, findings, a venue | `paper/` under the venue's guidelines | linter, guideline checks (A); kill argument, independent review (B) | on request |
+| P7 Report (retired by spec decision 17: the reports render by code all the time) | journal, findings | `REPORT.md` with provenance on every claim, rendered at every wave that integrates a ticket | linter passes (A); the run-end gates | no |
+| P8 Paper order | the outline, the sections, the reports | `research/paper/`: the paper's parts, each in its own file with the version it was last made in, and `PAPER.md` | the outline's order and placement, no inherited title, abstract, or caption (A); the builds' gates (B) | the order: the owner's, or the decider's in an autonomous run |
 
 ### 6.2 The autonomy switch (R5)
 
@@ -819,6 +819,10 @@ clarity and completeness against the package's purpose (B). Theme and layout are
 and recorded in `harness.json`.
 
 ### 13.3 The paper on request (R26)
+
+Revised by spec decision 17 (ticket 115): the paper is made only on an explicit paper order, from the outline and
+the sections, under no venue; a compilation typesets it under one venue's guidelines. What follows is revision 2's
+text.
 
 `paper --venue <name>` after the report, or `paper` alone and the decider picks the best-fitting venue
 from the guidelines repository. `guidelines/<venue>/` holds, per venue: format limits, required structure,

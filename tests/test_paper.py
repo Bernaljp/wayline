@@ -1,726 +1,635 @@
-"""The paper on request: the venue, the writer's builds, the figures, and the gate (ticket 53).
+"""The paper order and the paper's parts (Implementation Decision 17; ticket 115).
 
-Every model call goes through the fake launcher: the writer and the verifier by scripted envelopes, the
-classifier by the responder of `tests.test_report`, the decider by a scripted decision. The figure role is
-stood in for at its one door (`draw_figure`), except where the test is about that door. What is asserted is what
-the owner and the next component see: `research/paper/` on disk, its `build.json`, the journal's
-`paper_started`, `decision`, and `verdict` events, the requests the figure role was sent, and the `writing`
-tickets a failed gate files.
+The seams: `wayline paper` and `paper.order` over a temporary project, whose records go in through the ledger calls their
+own tickets built (objectives, findings, passages, concerns, contradictions, batches); the fake launcher standing in for
+the writer's one session; and the conductor, whose rest point at an order is read back from the journal it wrote. What
+is asserted is what the owner and the next component see: the card, the journal, the batch, and the files under
+`research/paper/`.
 """
 
 import io
 import json
+import re
 import shutil
-import struct
-import unittest
-import zlib
+import subprocess
+import sys
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from tests.paths import FIXTURES_DIR
-from tests.projects import ProjectTestCase
-from tests.test_report import Classifier
-from wayline import HARNESS_ROOT, cli, decider, dashboard, figure_role, gates, paper, provenance, tickets, worker
-from wayline.jsonschema import load_schema, validate
+from tests import machine
+from tests.paths import HARNESS_ROOT, SPEC_PATH
+from tests.spec_table import spec_verbs
+from tests.test_drawings import DrawingRunCase
+from tests.test_inherited import InheritedCase
+from tests.test_documents import MIDWAY
+from tests.test_outline import NOISE, OutlineCase
+from wayline import batches, cli, outline, paper, replay, sections, tickets, worker
+from wayline.conductor import Conductor
 from wayline.ledger import Ledger
 from wayline.worker import Envelope
 
-ENDED_RUN = FIXTURES_DIR / "projects" / "ended-run"
-
-INTERACTIONS = "{res:t3-a1/results/interactions/summary.json#auroc_mean}"
-BASELINE = "{res:t2-a1/results/baseline/summary.json#auroc_mean}"
-DEPTH = "{res:t4-a1/results/depth/summary.json#auroc_mean}"
-PAPER_A = "{ref:paper-a#s3}"
-
-GOOD = "\n".join([
-    "# Interaction terms carry the held-out gain",
-    "",
-    "## Abstract",
-    "",
-    "Pairwise interaction terms raise the held-out AUROC to 0.861." + INTERACTIONS,
-    "",
-    "## Results",
-    "",
-    "The baseline reaches a held-out AUROC of 0.812." + BASELINE,
-    "AUROC means the area under the receiver operating characteristic curve.",
-    "Interaction features helped tabular classifiers before [1]." + PAPER_A,
-    "Depth alone does not reach the goal." + DEPTH,
-    "",
-    "## References",
-    "",
-    "[1] Interaction features for tabular classification, 2021.",
-    "",
-])
-UNTAGGED = GOOD.replace("The baseline reaches a held-out AUROC of 0.812." + BASELINE, "The baseline reaches a held-out AUROC of 0.812.")
-WITH_FIGURE = GOOD.replace("## References", "{figure:gain}\n\n## References")
-
-GAIN = {"figure_id": "gain", "claim": "Pairwise interaction terms raise the held-out AUROC over the baseline.",
-        "claim_type": "comparison", "data": ["results/interactions/summary.json", "results/baseline/summary.json"],
-        "evidence": [INTERACTIONS, BASELINE]}
+STATE = "Polynomial fits are standard {ref:doi:10.1000/never-found}."
+FIT = "We fit the phase by least squares."
+LIMITS = "The noise model is Gaussian."
 
 
-def draft(markdown=GOOD, figures=(), notes=""):
-    return Envelope(structured_output={"markdown": markdown, "figures": list(figures), "notes": notes})
+def asked(prompt):
+    """The parts the writer's prompt asks for."""
+    found = re.search(r"^The parts to write now: (.*)\.$", prompt, re.M)
+    return [part.strip() for part in found.group(1).split(",")] if found and found.group(1) != "none" else []
 
 
-def verdict(passed=True, text="The abstract states 0.861 as a gain without its interval.", locator="research/paper/paper.md#abstract"):
-    findings = [] if passed else [{"text": text, "locator": locator, "severity": "major"}]
-    return Envelope(structured_output={"pass": passed, "findings": findings, "question_limit": "Only this draft against its paths."})
+def answer_for(structure, parts, **override):
+    """The writer's answer: each asked part with every heading of the outline, in order, carrying its id; null otherwise."""
+    texts = {part: "\n\n".join("## %s {#%s}\n\nWhat %s says, in prose." % (entry["heading"], entry["id"], entry["id"])
+                               for entry in structure[part]) for part in outline.PAPER_PARTS}
+    found = {"titles": ["Noise and the fit", "How noise bends a polynomial fit", "Fits under noise"],
+             "abstract": "We measured how noise changes the fit.", "tables": [{"id": "T1", "caption": "The errors by noise.",
+                                                                                "csv": "noise,rmse\n0.1,0.12\n"}],
+             "alternatives": [], "proposals": ["Put Limits before the Results' discussion."],
+             "left_out": [{"what": "the older fits", "why": "no passage carries them"}], "notes": "Read the Methods first."}
+    found.update(texts)
+    found.update(override)
+    for part in paper.WRITTEN:
+        if part not in parts:
+            found["titles" if part == "title" else part] = [] if part == "title" else None
+    if "results" not in parts:
+        found["tables"] = []
+    return found
 
 
-def decision(answer):
-    return Envelope(structured_output={"question": "as asked", "options": [], "answer": answer,
-                                       "rationale": "arXiv takes the draft as it is and names no form.", "confidence": 0.8,
-                                       "decided_by": "decider", "reversible": True, "timestamp": None})
+class Writer:
+    """The fake writer: answers each call from the outline as it stands, through `change` when given; keeps its prompts."""
+
+    def __init__(self, project, change=None):
+        self.project, self.change, self.prompts = project, change, []
+
+    def __call__(self, request, message):
+        self.prompts.append(request.prompt if message is None else message)
+        parts = asked(request.prompt)
+        found = answer_for(outline.paper_structure(self.project), parts)
+        if self.change is not None:
+            found = self.change(found, len(self.prompts))
+        return Envelope(structured_output=found, usage={"input_tokens": 1200, "output_tokens": 800}, num_turns=4, duration_ms=9000)
 
 
-def png(path, dpi=300):
-    """A one-pixel RGB PNG whose `pHYs` says `dpi`, which is all the figure check reads of it."""
-    def chunk(kind, body):
-        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
-    per_metre = round(dpi / 0.0254)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
-                     + chunk(b"pHYs", struct.pack(">IIB", per_metre, per_metre, 1))
-                     + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00")) + chunk(b"IEND", b""))
-    return path
-
-
-class Figures:
-    """The figure role's door, scripted: records every request and answers each with the next result.
-
-    Like `figure_role.make`, it leaves the request and the result under `figures/<figure_id>/` and hands the result
-    on, so what a paper's figure files, and what the next build reads back off the disk, are the role's own.
-    `captions` are the verified figures' captions in order, and `for_text` the `findings_for_text` each returns from
-    call `from_call` on.
-    """
-
-    CAPTION = "Figure 1. Held-out AUROC by arm. (a) Each arm's mean over three seeds."
-
-    def __init__(self, project, *statuses, captions=(), for_text=(), from_call=1):
-        self.project, self.statuses, self.requests = project, list(statuses), []
-        self.captions, self.for_text, self.from_call = list(captions), list(for_text), from_call
-
-    def __call__(self, project, request, **options):
-        self.requests.append(request)
-        status = self.statuses.pop(0) if self.statuses else "verified"
-        directory = self.project / "figures" / request["figure_id"]
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "request.json").write_text(json.dumps(request), encoding="utf-8")
-        result = {"schema": "figure_result/1", "ticket": request["ticket"], "figure_id": request["figure_id"],
-                  "version": len(self.requests), "status": status,
-                  "findings_for_text": list(self.for_text) if len(self.requests) >= self.from_call else []}
-        if status == "verified":
-            png(directory / "final.png")
-            (directory / "caption.md").write_text((self.captions.pop(0) if self.captions else self.CAPTION) + "\n", encoding="utf-8")
-            result["final"] = {"png": "figures/%s/final.png" % request["figure_id"], "pdf": None,
-                               "caption": "figures/%s/caption.md" % request["figure_id"]}
-        (directory / "figure_result.json").write_text(json.dumps(result), encoding="utf-8")
-        figure_role._hand_on(self.project, result)
-        if status == "verified":
-            return result, None
-        if status == "honesty_failed":
-            result["honesty_verdict"] = {"type": "B", "verdict": "fail", "findings": [{"text": "the bars hide the overlap of the intervals"}]}
-            return result, None
-        return result, "the pick is the owner's: decision ticket 12"
-
-
-class PaperCase(ProjectTestCase):
-    """A writable copy of the ended run with its report on disk, and the launcher faked."""
+class PaperCase(OutlineCase):
+    """A project with an objective, one result of its own evidence, and a passage in each written section."""
 
     def setUp(self):
         super().setUp()
-        self.project = self.temp / "ended-run"
-        shutil.copytree(ENDED_RUN, self.project)
-        self.book = Ledger(self.project)
-        self.book.write_markdown("REPORT.md", "# Report: ended-run\n\nThe report as rendered.\n")
-        self.calls = []
+        self.o1 = self.objective(NOISE)
+        self.finding("The error grows with the noise", objectives_=[self.o1])
+        self.passage("introduction", "State of the art", STATE)
+        self.owners = self.passage("methods", "Fitting", FIT, by="owner")["id"]
+        self.passage("discussion", "Limits", LIMITS)
+        self.started = []
 
-    def write(self, *writer, verifier=(), deciders=(), venue="arxiv", draw_figure=None, verify=False, carry_on=False):
-        """`write_paper` with the writer's and the verifier's envelopes scripted in order."""
+    def start(self, project):
+        self.started.append(project)
+        return "started"
+
+    def autonomy(self, level):
+        path = self.project / "harness.json"
+        harness = json.loads(path.read_text(encoding="utf-8"))
+        harness["autonomy"] = level
+        path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
+
+    def verb(self, *args, stdin=None):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err), mock.patch.object(paper, "_start_conductor", self.start):
+            if stdin is not None:
+                with mock.patch("sys.stdin", io.StringIO(stdin)):
+                    code = cli.main(["paper", *args, "--project", str(self.project)])
+            else:
+                code = cli.main(["paper", *args, "--project", str(self.project)])
+        return code, out.getvalue(), err.getvalue()
+
+    def journal(self):
+        return self.ledger.read_events()[0]
+
+    def orders(self):
+        return [event["payload"] for event in self.journal() if event["event"] == "paper_order"]
+
+    def compose(self, change=None, order=None):
+        """Order (when none is open) and compose with the fake writer, taking the batch's defaults first."""
+        payload = paper.open_order(self.project)
+        if payload is None:
+            paper.order(self.project, start=None)
+            payload = paper.open_order(self.project)
+        if payload.get("batch"):
+            batches.take_defaults(self.project, payload["batch"])
+        self.writer = Writer(self.project, change)
         with worker.use_fake() as fake:
-            self.classifier = Classifier()
-            for _ in range(6):
-                fake.script(respond=self.classifier, role="classifier")
-            for envelope in writer:
-                fake.script(envelope, role="writer")
-            for envelope in verifier:
-                fake.script(envelope, role="verifier")
-            for envelope in deciders:
-                fake.script(envelope, role="decider")
+            fake.script(respond=self.writer, role="writer")
+            fake.script(respond=self.writer, role="writer")
             try:
-                return paper.write_paper(self.project, venue, draw_figure=draw_figure, verify=verify, carry_on=carry_on)
+                return paper.compose(self.project, payload)
             finally:
                 self.calls = list(fake.calls)
 
-    def events(self, name):
-        found, _ = self.book.read_events()
-        return [event for event in found if event["event"] == name]
-
-    def paper_verdicts(self):
-        """The `verdict` payloads about the paper: the fixture's journal already holds its tickets' own."""
-        return [event["payload"] for event in self.events("verdict") if event["payload"]["subject_kind"] == "paper"]
-
-    def calls_of(self, role):
-        return [call for call in self.calls if call.request.role == role]
-
-    def text(self):
-        return (self.project / "research" / "paper" / "paper.md").read_text(encoding="utf-8")
-
-    def build(self):
-        return json.loads((self.project / "research" / "paper" / "build.json").read_text(encoding="utf-8"))
+    def read(self, name):
+        return (self.project / "research" / "paper" / name).read_text(encoding="utf-8")
 
 
-PASSING_GATE = (verdict(), verdict(), verdict())   # the memo finds no case, the adjudication and the read pass
+class CardTest(PaperCase):
+    def setUp(self):
+        super().setUp()
+        self.ledger.append_event("verdict", {"subject_kind": "report", "subject": "research/REPORT.md#v3", "verdict_type": "kill_argument",
+                                             "pass": False, "session_id": "s", "model": "opus",
+                                             "findings": [{"text": "The noise claim overreaches.", "locator": "REPORT.md:3"}]})
+        self.concerns({"said": "Cite the older fits.", "place": "order"})
 
-
-class DraftTest(PaperCase):
-    def test_a_draft_that_builds_is_written_linted_checked_and_gated(self):
-        written = self.write(draft(), verifier=PASSING_GATE)
-        self.assertEqual(written.status, paper.PASSED)
-        self.assertEqual(len(written.builds), 1)
-        self.assertIn("Pairwise interaction terms raise the held-out AUROC to 0.861." + INTERACTIONS, self.text())
-        self.assertEqual([event["payload"] for event in self.events("paper_started")], [{"venue": "arxiv"}])
-        build = self.build()
-        self.assertEqual((build["status"], build["venue"], build["submitted"]), ("passed", "arxiv", False))
-        self.assertTrue(build["builds"][0]["lint"]["pass"])
-        self.assertEqual(build["builds"][0]["lint"]["claims"], build["builds"][0]["lint"]["tagged"])
-        self.assertEqual({finding["check"] for finding in build["builds"][0]["checks"]},
-                         {"length", "structure", "figures", "references", "reporting_checklists", "template", "provenance"})
-
-    def test_the_writer_reads_the_concerns_when_the_project_has_them(self):
-        from wayline import concerns
-
-        self.write(draft(), verifier=PASSING_GATE)
-        self.assertNotIn("research/CONCERNS.md", self.calls_of("writer")[0].request.prompt, "none yet, so none read")
-        concerns.from_objection(self.project, {"index": 1, "text": "One seed gives no variance."}, "accept: for the order", "fair")
-        self.write(draft(), verifier=PASSING_GATE)
-        prompt = self.calls_of("writer")[0].request.prompt
-        self.assertIn("# research/CONCERNS.md", prompt)
-        self.assertIn("One seed gives no variance.", prompt)
-        self.assertIn("for the paper order", prompt)
-
-    def test_the_writer_is_one_read_only_session_on_the_writer_s_tier(self):
-        self.write(draft(), verifier=PASSING_GATE)
-        (call,) = self.calls_of("writer")
-        self.assertEqual((call.request.model, call.request.effort), ("opus", "xhigh"))
-        self.assertFalse(set(call.request.allowed_tools) - set(provenance.READ_ONLY_TOOLS))
-        self.assertTrue(str(call.request.schema_path).endswith("paper_draft.json"))
-        for said in ("arXiv", "research/REPORT.md", INTERACTIONS, "`paper-a`", "`results/interactions/summary.json` (run t3-a1)",
-                     "{figure:<figure_id>}"):
-            self.assertIn(said, call.request.prompt)
-
-    def test_the_reference_list_is_not_read_as_claims(self):
-        self.write(draft(), verifier=PASSING_GATE)
-        sent = [text for batch in self.classifier.batches for text in batch]
-        self.assertFalse([text for text in sent if "2021" in text and text.startswith("[1]")])
-        self.assertIn("[1] Interaction features for tabular classification, 2021.", self.text())
-
-    def test_a_reference_list_under_another_name_is_fenced_too(self):
-        for heading in ("Works cited", "Reference list", "Bibliography"):
-            fenced = paper.fence_references("## Results\n\nIt holds.\n\n## %s\n\n[1] A paper, 2021.\n" % heading)
-            self.assertEqual([sentence.text for sentence in provenance.prose_sentences(fenced)], ["It holds."], heading)
-
-    def test_prose_under_the_references_heading_is_still_linted(self):
-        fenced = paper.fence_references("## References\n\nReferences for DeLong's method are to be added.\n\n[1] A paper, 2021.\n[2] Another, 2022.\n")
-        self.assertEqual([sentence.text for sentence in provenance.prose_sentences(fenced)],
-                         ["References for DeLong's method are to be added."])
-        self.assertIn("\n".join([provenance.RECORDS_BEGIN, "[1] A paper, 2021.", "[2] Another, 2022.", provenance.RECORDS_END]), fenced)
-
-    def test_no_report_means_no_paper_and_nothing_journaled(self):
-        (self.project / "research" / "REPORT.md").unlink()
-        with self.assertRaisesRegex(paper.PaperError, "wayline report first"):
-            self.write(draft())
-        self.assertEqual(self.events("paper_started"), [])
-        self.assertEqual(self.calls, [])
-
-    def test_a_venue_with_no_guidelines_is_refused_with_the_ones_there_are(self):
-        with self.assertRaisesRegex(paper.PaperError, "nature-methods"):
-            self.write(draft(), venue="the-lancet")
-        self.assertEqual(self.events("paper_started"), [])
-
-
-class BuildTest(PaperCase):
-    def test_a_lint_failure_goes_back_to_the_same_writer_session_with_the_list(self):
-        written = self.write(draft(UNTAGGED), draft(), verifier=PASSING_GATE)
-        self.assertEqual((written.status, len(written.builds)), (paper.PASSED, 2))
-        first, second = self.calls_of("writer")
-        self.assertEqual((first.kind, second.kind), ("launch", "resume"))
-        self.assertIn("untagged_claim", second.message)
-        self.assertIn("The baseline reaches a held-out AUROC of 0.812.", second.message)
-        self.assertFalse(self.build()["builds"][0]["lint"]["pass"])
-
-    def test_a_failing_check_of_the_venue_goes_back_with_its_message(self):
-        # PLOS Computational Biology is not structure-flexible, so a missing section fails the draft there.
-        written = self.write(*[draft()] * paper.MAX_BUILDS, venue="plos-compbiol")
-        self.assertEqual(written.status, paper.BUILD_FAILED)
-        second = self.calls_of("writer")[1]
-        self.assertIn("check `structure`: missing sections", second.message)
-        self.assertIn("Author summary", second.message)
-
-    def test_a_draft_that_never_builds_spends_no_verdict(self):
-        written = self.write(*[draft(UNTAGGED)] * paper.MAX_BUILDS)
-        self.assertEqual((written.status, len(written.builds)), (paper.BUILD_FAILED, paper.MAX_BUILDS))
-        self.assertEqual(self.calls_of("verifier"), [])
-        self.assertEqual(self.paper_verdicts(), [])
-        self.assertIn("no verdict was spent", " ".join(written.notes))
-        self.assertEqual(self.build()["status"], "build_failed")
-
-
-class ContinueTest(PaperCase):
-    def test_continue_resumes_the_last_writer_session_with_the_last_list(self):
-        first = self.write(*[draft(UNTAGGED)] * paper.MAX_BUILDS)
-        session = first.builds[-1]["session_id"]
-        again = self.write(draft(), verifier=PASSING_GATE, carry_on=True, venue=None)
-        self.assertEqual((again.status, again.venue), (paper.PASSED, "arxiv"))
-        (call,) = self.calls_of("writer")
-        self.assertEqual((call.kind, call.session_id), ("resume", session))
-        self.assertIn("untagged_claim", call.message)
-        self.assertIn("rewording it rarely changes that", call.message)
-        self.assertEqual([build["build"] for build in self.build()["builds"]], list(range(1, paper.MAX_BUILDS + 2)))
-
-    def test_continue_at_another_venue_tells_the_writer_its_guidelines(self):
-        # The draft has none of Nature Methods' fixed sections, so it fails every build there; arXiv takes it.
-        first = self.write(*[draft()] * paper.MAX_BUILDS, venue="nature-methods")
-        self.assertEqual(first.status, paper.BUILD_FAILED)
-        again = self.write(draft(), verifier=PASSING_GATE, carry_on=True, venue="arxiv")
-        self.assertEqual((again.venue, again.status), ("arxiv", paper.PASSED))
-        (call,) = self.calls_of("writer")
-        self.assertIn("The owner has moved this draft to arXiv", call.message)
-        self.assertEqual([event["payload"]["venue"] for event in self.events("paper_started")], ["nature-methods", "arxiv"])
-
-    def test_continue_takes_up_only_a_draft_left_failing_its_build(self):
-        with self.assertRaisesRegex(paper.PaperError, "build.json is not there"):
-            self.write(carry_on=True)
-        self.write(draft(), verifier=PASSING_GATE)
-        with self.assertRaisesRegex(paper.PaperError, "the last draft is passed"):
-            self.write(carry_on=True)
-
-    def test_continue_after_a_failed_gate_resumes_the_writer_with_the_points_that_stand(self):
-        first = self.write(draft(), verifier=(verdict(False, text="The references are fixtures, not literature."), verdict(False, text="The references are fixtures, not literature.")))
-        self.assertEqual(first.status, paper.GATE_FAILED)
-        again = self.write(draft(), verifier=PASSING_GATE, carry_on=True, venue=None)
-        self.assertEqual(again.status, paper.PASSED)
-        (call,) = self.calls_of("writer")
-        self.assertEqual((call.kind, call.session_id), ("resume", first.builds[-1]["session_id"]))
-        self.assertIn("the gate failed it", call.message)
-        self.assertIn("The references are fixtures, not literature.", call.message)
-
-
-class FigureTest(PaperCase):
-    def test_a_figure_is_asked_for_at_the_venue_s_target_and_placed_with_its_caption(self):
-        figures = Figures(self.project)
-        written = self.write(draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
-        self.assertEqual(written.status, paper.PASSED)
-        (request,) = figures.requests
-        self.assertEqual(request["target"]["venue"], "arxiv")
-        self.assertEqual(request["target"]["formats"], ["pdf", "png"])
-        self.assertEqual((request["target"]["width_mm"], request["target"]["min_dpi"]), (89, 300))
-        manifest = {entry["path"]: entry for entry in provenance.read_manifest(self.project)["entries"]}
-        self.assertEqual(request["data"], [{"path": path, "sha256": manifest[path]["sha256"], "run_id": manifest[path]["run_id"]}
-                                           for path in GAIN["data"]])
-        self.assertEqual((request["claim"]["text"], request["kind"], request["mode"]), (GAIN["claim"], "result", "unguided"))
-        text = self.text()
-        self.assertIn("\n".join([provenance.RECORDS_BEGIN, "![Figure 1](figures/gain.png)", "",
-                                 "**Figure 1.** Held-out AUROC by arm. (a) Each arm's mean over three seeds.", provenance.RECORDS_END]), text)
-        self.assertNotIn("{figure:", text)
-        self.assertTrue((self.project / "research" / "paper" / "figures" / "gain.png").is_file())
-        figures_check = [finding for finding in self.build()["builds"][0]["checks"] if finding["check"] == "figures"]
-        self.assertEqual([finding["level"] for finding in figures_check], ["ok"])
-
-    def test_a_verified_figure_whose_caption_cannot_be_read_is_not_placed(self):
-        figures = Figures(self.project)
-        def no_caption(project, request, **options):
-            result, reason = figures(project, request)
-            (self.project / result["final"]["caption"]).unlink()
-            return result, reason
-        self.write(draft(WITH_FIGURE, [GAIN]), draft(), verifier=PASSING_GATE, draw_figure=no_caption)
-        self.assertIn("its caption figures/gain/caption.md cannot be read", self.calls_of("writer")[1].message)
-
-    def test_a_figure_drawn_for_one_venue_is_the_same_figure_at_another_of_the_same_size(self):
-        manifest = provenance.read_manifest(self.project)
-        nature = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "nature-methods"), self.project, manifest)
-        arxiv = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project, manifest)
-        self.assertNotEqual(nature, arxiv)
-        self.assertTrue(paper._drawn_alike(nature, arxiv))
-        self.assertFalse(paper._drawn_alike(nature, dict(arxiv, claim=dict(arxiv["claim"], text="Another claim."))))
-
-    def test_the_checks_markers_stay_out_of_the_legend(self):
-        (self.project / "figures" / "gain").mkdir(parents=True)
-        (self.project / "figures" / "gain" / "caption.md").write_text("Panel (a) draws two runs [[mixed-data]]. (b) one.\n", encoding="utf-8")
-        self.assertEqual(paper._caption({"final": {"caption": "figures/gain/caption.md"}}, self.project), "Panel (a) draws two runs . (b) one.")
-
-    def test_the_venue_s_resolution_and_formats_reach_the_target(self):
-        record = json.loads((HARNESS_ROOT / "guidelines" / "plos-compbiol" / "guidelines.json").read_text(encoding="utf-8"))
-        record["figure_spec"]["min_dpi"] = 600
-        record["figure_spec"]["formats"] = ["PDF", "TIFF"]
-        target = paper.figure_target(record, self.project)
-        self.assertEqual((target["min_dpi"], target["formats"], target["library"]), (600, ["pdf"], "matplotlib"))
-
-    def test_a_figure_the_role_failed_goes_back_to_the_writer_with_the_verdict(self):
-        figures = Figures(self.project, "honesty_failed")
-        written = self.write(draft(WITH_FIGURE, [GAIN]), draft(), verifier=PASSING_GATE, draw_figure=figures)
-        self.assertEqual((written.status, len(written.builds)), (paper.PASSED, 2))
-        message = self.calls_of("writer")[1].message
-        self.assertIn("figure gain could not be placed: the figure role ended honesty_failed", message)
-        self.assertIn("the bars hide the overlap of the intervals", message)
-
-    def test_a_request_the_figure_role_refuses_goes_back_to_the_writer(self):
-        def refuse(project, request, **options):
-            raise figure_role.FigureError("the request is not a figure_request/1: target: bad")
-        written = self.write(draft(WITH_FIGURE, [GAIN]), draft(), verifier=PASSING_GATE, draw_figure=refuse)
-        self.assertEqual(written.status, paper.PASSED)
-        self.assertIn("figure gain could not be placed: the figure role refused the request", self.calls_of("writer")[1].message)
-
-    def test_a_window_that_refuses_the_figure_role_stops_the_paper(self):
-        def refused(project, request, **options):
-            raise gates.UsageLimited("the figure critic was refused by the usage limit")
-        with self.assertRaises(gates.UsageLimited):
-            self.write(draft(WITH_FIGURE, [GAIN]), draw_figure=refused)
-        self.assertEqual(self.calls_of("verifier"), [])
-
-    def test_a_format_only_the_owner_can_convert_is_a_note_not_a_failure(self):
-        # PLOS Computational Biology takes TIFF and EPS, which the figure role does not draw.
-        record = paper.guidelines.read_guidelines(HARNESS_ROOT, "plos-compbiol")
-        finding = paper.guidelines.Finding("figures", "fail", "gain.png is PNG; PLOS Computational Biology accepts EPS, TIFF.")
-        lint = provenance.Lint(passed=True, claims=0, tagged=0, unclassified=0)
-        failures, notes = paper._failures(lint, [finding], [], record, {"figures/gain.png": None})
-        self.assertEqual(failures, [])
-        self.assertEqual(notes, ["gain.png is PNG; PLOS Computational Biology accepts EPS, TIFF.: the figure role draws PDF and PNG, "
-                                 "so converting it for the venue is the owner's"])
-
-    def test_data_outside_the_manifest_is_refused_without_drawing(self):
-        figures = Figures(self.project)
-        asked = dict(GAIN, data=["results/nowhere.json"])
-        self.write(draft(WITH_FIGURE, [asked]), draft(), verifier=PASSING_GATE, draw_figure=figures)
-        self.assertEqual(figures.requests, [])
-        self.assertIn("results/nowhere.json is not in research/manifest.json", self.calls_of("writer")[1].message)
-
-    def test_a_figure_that_waits_on_the_owner_holds_the_gate(self):
-        written = self.write(draft(WITH_FIGURE, [GAIN]), draw_figure=Figures(self.project, "candidates_ranked"))
-        self.assertEqual(written.status, paper.HELD)
-        self.assertEqual(self.calls_of("verifier"), [])
-        self.assertIn("*[Figure gain is not drawn yet: the pick is the owner's: decision ticket 12.]*", self.text())
-
-    def test_a_placeholder_for_no_figure_and_a_figure_placed_nowhere_are_both_listed(self):
-        text, problems, files = paper.assemble(GOOD + "\n{figure:other}\n", {"gain": {"state": paper.PLACED}})
-        self.assertEqual(files, {})
-        self.assertEqual([problem["detail"].split(":")[0] for problem in problems],
-                         ["the draft places {figure", "figure gain was asked for and placed nowhere"])
-
-    def test_the_same_request_is_not_drawn_again(self):
-        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
-                                       provenance.read_manifest(self.project))
-        directory = self.project / "figures" / "gain"
-        directory.mkdir(parents=True)
-        (directory / "request.json").write_text(json.dumps(request), encoding="utf-8")
-        (directory / "figure_result.json").write_text(json.dumps({"figure_id": "gain", "version": 1, "status": "verified"}), encoding="utf-8")
+    def test_the_card_lists_the_readiness_and_the_cost_and_launches_nothing(self):
         with worker.use_fake() as fake:
-            result, reason = paper.draw(self.project, request)
-            self.assertEqual(fake.calls, [])
-        self.assertEqual((result["status"], reason), ("verified", None))
+            code, out, _ = self.verb()
+            self.assertEqual(fake.calls, [], "the card is code's: no model is called")
+        self.assertEqual(code, 0)
+        for words in ("Open objectives: %s: %s" % (self.o1, NOISE), "The outline's gaps", "kill argument",
+                      "standing: The noise claim overreaches.", "Results changed since their last drawing", "R1",
+                      "Unresolved references", "Concerns for the order", "K1: Cite the older fits.", "research/OUTLINE.md",
+                      "Front matter not given yet", "$35 to $40", "$10 more", "Confirm: wayline paper --yes"):
+            self.assertIn(words, out)
+
+    def test_not_now_does_nothing(self):
+        before = self.journal()
+        self.verb()
+        self.verb("--json")
+        self.assertEqual(self.journal(), before)
+        self.assertEqual(batches.read_batches(self.project), [])
+        self.assertEqual(tickets.read_tickets(self.project), [], "no decision ticket opens")
+
+    def test_the_card_as_json_carries_each_readiness_item(self):
+        _, out, _ = self.verb("--json")
+        found = json.loads(out)
+        self.assertEqual([item["key"] for item in found["readiness"]],
+                         ["objectives", "gaps", "kill", "changed", "inherited", "contradictions", "references", "concerns", "front",
+                          "outline"])
+        self.assertFalse(found["blocks"])
+        self.assertEqual(found["main_results"], 1)
 
 
-RUNTIME = {"text": "The results say the gain holds on every seed; the figure shows two seeds within the interval.",
-           "manuscript_locator": "Results, second paragraph", "suggested_ticket": True}
+class OrderTest(PaperCase):
+    def setUp(self):
+        super().setUp()
+        self.claim = self.inherited("Earlier noise study", "Noise inflates the error.", "D1#p1.s1")["id"]
+        self.other = self.inherited("Earlier noise study", "Noise inflates the error tenfold.", "D1#p1.s2")["id"]
+        self.gone = sections.add_passage(self.ledger, "results", "Old SINDy cases", "SINDy recovers the cubic.", by="document:D1",
+                                         doc="D1#p2.s1", standing="unverifiable", reason="the data are gone")["id"]
+        self.contradiction(self.claim, self.other, "Earlier noise study")
+        self.merges = batches.open_batch(self.project, "outline_proposals", "Merges", [{"ref": "R1+R2", "text": "Merge R1 and R2?",
+                                                                                         "default": "decline"}])["id"]
+
+    def test_the_owners_confirm_journals_the_order_and_asks_one_batch_with_defaults(self):
+        code, out, err = self.verb("--yes")
+        self.assertEqual(code, 0, err)
+        [made] = self.orders()
+        self.assertEqual((made["order"], made["action"], made["by"], made["run"]), (1, "ordered", "owner", "stopped"))
+        batch = batches.read_batch(self.project, made["batch"])
+        self.assertEqual(batch["kind"], "paper_order")
+        by_ref = {item["ref"]: item for item in batch["items"]}
+        contradiction = by_ref["contradiction:%s+%s" % (self.claim, self.other)]
+        self.assertEqual(contradiction["marks"], ["the first", "the second", "a typo, fix it"])
+        self.assertEqual(by_ref["unverifiable:%s" % self.gone]["default"], "leave out")
+        self.assertIn("the data are gone", by_ref["unverifiable:%s" % self.gone]["text"])
+        reference = next(ref for ref in by_ref if ref.startswith("reference:"))
+        self.assertEqual((by_ref[reference]["marks"], by_ref[reference]["default"]), (["hand over", "drop", "to be resolved"], "to be resolved"))
+        self.assertEqual(by_ref["outline:%s#1" % self.merges]["default"], "decline")
+        self.assertEqual(by_ref[paper.UNCHECKED_REF]["default"], "keep as stated", "nothing inherited is verified yet")
+        self.assertTrue(all(item["default"] for item in batch["items"]))
+        _, settled = batches.take_defaults(self.project, made["batch"])
+        self.assertEqual(len(settled), len(batch["items"]), "take all defaults is one answer")
+        self.assertEqual(self.started, [self.project.resolve()], "no conductor ran, so the order started one")
+        self.assertIn("paper order 1 made", out)
+        self.assertEqual(tickets.read_tickets(self.project), [], "no decision ticket")
+
+    def test_a_contradiction_that_differs_only_in_a_number_suggests_a_typo(self):
+        first = self.inherited("Rates", "The rate is 10 Hz.", "D1#p3.s1")["id"]
+        second = self.inherited("Rates", "The rate is 100 Hz.", "D1#p3.s2")["id"]
+        self.contradiction(first, second, "Rates")
+        items = {item["ref"]: item for item in paper.batch_items(self.project)}
+        self.assertEqual(items["contradiction:%s+%s" % (first, second)]["default"], "a typo, fix it")
+
+    def test_under_autonomous_no_batch_is_asked(self):
+        self.autonomy("autonomous")
+        paper.order(self.project, start=None)
+        self.assertIsNone(self.orders()[0]["batch"])
+        self.assertEqual(batches.read_batches(self.project, status="open"), [batches.read_batch(self.project, self.merges)])
+
+    def test_under_autonomous_codes_defaults_leave_the_outlines_proposals_for_the_decider(self):
+        self.autonomy("autonomous")
+        self.compose()
+        self.assertIsNone(batches.read_batch(self.project, self.merges)["items"][0]["mark"])
+        self.assertIn("No batch was asked under `autonomous`", self.read("PAPER.md"))
+
+    def test_a_proposal_marked_first_in_its_own_batch_is_what_the_paper_follows(self):
+        made = paper.order(self.project, start=None)
+        batches.mark(self.project, self.merges, 1, "take")
+        record = self.compose()
+        [followed] = [item for item in record["answers"] if item["ref"].startswith("outline:")]
+        self.assertEqual(followed["mark"], "take")
+        self.assertIn("marked take in %s first" % self.merges, followed["note"])
+        self.assertIsNotNone(made["batch"])
+
+    def test_a_second_order_while_one_is_open_is_refused(self):
+        paper.order(self.project, start=None)
+        code, _, err = self.verb("--yes")
+        self.assertEqual(code, 2)
+        self.assertIn("paper order 1 is open", err)
+
+    def test_the_batch_waits_and_the_composition_follows_its_answers(self):
+        made = paper.order(self.project, start=None)
+        self.assertEqual(paper.waiting_on(self.project, paper.open_order(self.project)), made["batch"])
+        batch = batches.read_batch(self.project, made["batch"])
+        number = {item["ref"]: item["id"] for item in batch["items"]}
+        batches.mark(self.project, made["batch"], number["unverifiable:%s" % self.gone], "keep, not verified")
+        batches.mark(self.project, made["batch"], number[paper.UNCHECKED_REF], "leave out")
+        record = self.compose()
+        prompt = self.writer.prompts[0]
+        self.assertIn("keep %s, stated as not verified, with why: the data are gone" % self.gone, prompt)
+        self.assertIn("leave the unchecked inherited results out", prompt)
+        self.assertIn("hold to %s's claim" % self.other, prompt, "code's default side for the contradiction")
+        self.assertEqual(record["unchecked"], "left out")
+        report = self.read("PAPER.md")
+        self.assertIn("None of the inherited results was checked before this order; the unchecked ones were left out.", report)
+        self.assertIn("unverifiable:%s: keep, not verified (by owner, %s item" % (self.gone, made["batch"]), report)
+        self.assertEqual(batches.read_batch(self.project, self.merges)["items"][0]["mark"], "decline",
+                         "the order's answer is given on the outline's own batch")
 
 
-class TextAndCaptionTest(PaperCase):
-    """What a paper's figure has to say about the text goes to the writer, and its caption names no other figure (ticket 66)."""
+class ComposeTest(PaperCase):
+    def setUp(self):
+        super().setUp()
+        self.record = self.compose()
 
-    def earlier_figure(self, figure_id="ceiling_gap"):
-        """A figure an earlier draft asked for and this one does not: its directory is all that is left of it."""
-        directory = self.project / "figures" / figure_id
-        directory.mkdir(parents=True)
-        (directory / "figure_result.json").write_text(json.dumps({"figure_id": figure_id, "version": 1, "status": "verified"}),
-                                                      encoding="utf-8")
+    def test_one_read_only_writer_session_on_opus_xhigh_returns_each_part(self):
+        [call] = self.calls
+        self.assertEqual((call.request.role, call.request.model, call.request.effort), ("writer", "opus", "xhigh"))
+        self.assertTrue(str(call.request.schema_path).endswith("paper_parts.json"))
+        for tool in ("Edit", "Write", "Bash"):
+            self.assertIn(tool, call.request.disallowed_tools)
+        self.assertEqual(asked(call.request.prompt), list(paper.WRITTEN))
+        self.assertIn("{#R1}", call.request.prompt)
+        self.assertIn("{#introduction-state-of-the-art}", call.request.prompt)
 
-    def proposals(self):
-        """Every proposal the journal holds, admitted or parked: the fixture's journal holds its tickets' own already."""
-        return self.events("proposal_admitted") + self.events("proposal_parked")
+    def test_code_writes_the_eight_parts_with_outline_ids_and_the_records_beside_them(self):
+        directory = self.project / "research" / "paper"
+        for part in paper.PARTS:
+            self.assertTrue((directory / ("%s.md" % part)).is_file(), part)
+        self.assertEqual(self.read("title.md"), "Noise and the fit\n")
+        self.assertIn("## State of the art {#introduction-state-of-the-art}", self.read("introduction.md"))
+        results = self.read("results.md")
+        self.assertLess(results.index("{#%s}" % self.o1), results.index("{#R1}"))
+        self.assertIn("{#methods-fitting}", self.read("methods.md"))
+        self.assertIn("{#discussion-limits}", self.read("discussion.md"))
+        self.assertEqual(self.read("tables/T1.csv"), "noise,rmse\n0.1,0.12\n")
+        self.assertIn("**Table 1.** The errors by noise.", self.read("tables/T1.md"))
+        self.assertIn("| noise | rmse |", self.read("tables/T1.md"))
+        self.assertEqual(json.loads(self.read("references.json")), [], "the one cited work never resolved")
+        for number, title in enumerate(["Noise and the fit", "How noise bends a polynomial fit", "Fits under noise"], start=1):
+            self.assertEqual(self.read("alternatives/title-%d.md" % number), title + "\n", "the writer offers three titles")
+        record = json.loads(self.read("paper.json"))
+        self.assertEqual(record["version"], 1)
+        self.assertEqual({part: entry["version"] for part, entry in record["parts"].items()}, {part: 1 for part in paper.PARTS})
+        self.assertFalse(record["gated"])
 
-    def writing_tickets(self):
-        return [fields for fields in tickets.read_tickets(self.project) if fields["kind"] == "writing"]
+    def test_the_build_report_says_what_was_made_and_from_what(self):
+        report = self.read("PAPER.md")
+        for words in ("# The paper, version 1", "paper order 1 (owner)", "not yet gated", "| introduction | introduction.md | 1 | made afresh |",
+                      "the older fits: no passage carries them", "Put Limits before the Results' discussion.",
+                      "Read the Methods first.", "1200 input and 800 output token(s)", "$35 to $40", "Nothing was submitted"):
+            self.assertIn(words, report)
 
-    def test_a_paper_figure_s_findings_for_the_text_go_to_the_writer_and_admit_no_ticket(self):
-        before, proposed = self.writing_tickets(), self.proposals()
-        figures = Figures(self.project, for_text=[RUNTIME])
-        written = self.write(draft(WITH_FIGURE, [GAIN]), draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
-        self.assertEqual((written.status, len(written.builds)), (paper.PASSED, 2))
-        self.assertEqual(self.proposals(), proposed)
-        self.assertEqual(self.writing_tickets(), before)
-        message = self.calls_of("writer")[1].message
-        self.assertIn("- figure `gain`, at Results, second paragraph: %s" % RUNTIME["text"], message)
-        builds = self.build()["builds"]
-        self.assertEqual(builds[0]["failures"], [])
-        self.assertEqual(builds[0]["for_writer"], [{"figure_id": "gain", "version": 1, "text": RUNTIME["text"],
-                                                    "manuscript_locator": "Results, second paragraph"}])
-        self.assertEqual(builds[1]["for_writer"], [])  # the same point from the same figure is listed once
+    def test_the_owners_passage_reworded_by_the_writer_is_listed(self):
+        self.assertEqual(self.record["reworded"], [self.owners])
+        self.assertIn("- %s: the paper does not carry it word for word" % self.owners, self.read("PAPER.md"))
 
-    def test_findings_for_the_text_ride_with_a_failing_build_s_list(self):
-        figures = Figures(self.project, for_text=[dict(RUNTIME, manuscript_locator=None)])
-        self.write(draft(UNTAGGED.replace("## References", "{figure:gain}\n\n## References"), [GAIN]), draft(WITH_FIGURE, [GAIN]),
-                   verifier=PASSING_GATE, draw_figure=figures)
-        message = self.calls_of("writer")[1].message
-        self.assertIn("untagged_claim", message)
-        self.assertIn("- figure `gain`: %s" % RUNTIME["text"], message)
+    def test_the_composition_is_journaled_and_closes_the_order(self):
+        composed = self.orders()[-1]
+        self.assertEqual((composed["action"], composed["order"], composed["version"]), ("composed", 1, 1))
+        self.assertEqual(composed["parts"], list(paper.PARTS))
+        self.assertIsNone(paper.open_order(self.project))
+        self.assertIsNone(replay.replay(self.journal()).paper_order)
 
-    def test_findings_after_the_last_build_reach_the_writer_on_continue(self):
-        failing = draft(UNTAGGED.replace("## References", "{figure:gain}\n\n## References"), [GAIN])
-        figures = Figures(self.project, for_text=[RUNTIME], from_call=paper.MAX_BUILDS)
-        first = self.write(*[failing] * paper.MAX_BUILDS, draw_figure=figures)
-        self.assertEqual(first.status, paper.BUILD_FAILED)
-        self.assertEqual([len(build["for_writer"]) for build in first.builds], [0] * (paper.MAX_BUILDS - 1) + [1])
-        self.assertTrue([note for note in first.notes if "figure gain" in note and "for_writer" in note], first.notes)
-        self.write(draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, carry_on=True, venue=None, draw_figure=figures)
-        (call,) = self.calls_of("writer")
-        self.assertIn("untagged_claim", call.message)
-        self.assertIn("- figure `gain`, at Results, second paragraph: %s" % RUNTIME["text"], call.message)
-        self.assertEqual(self.build()["builds"][-1]["for_writer"], [])   # told on --continue, so not listed again
-
-    def test_a_ticket_s_figure_still_admits_its_proposals(self):
-        figures = Figures(self.project, for_text=[RUNTIME])
-        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
-                                       provenance.read_manifest(self.project))
-        figures(self.project, dict(request, ticket="7"))
-        (admitted,) = [event for event in self.proposals() if event["payload"]["from"] == 7]
-        self.assertEqual(admitted["payload"]["kind"], "writing")
-
-    def test_a_caption_naming_an_earlier_draft_s_figure_fails_its_build_and_is_revised_on_the_next(self):
-        self.earlier_figure()
-        figures = Figures(self.project, captions=["Held-out AUROC by arm; the ceiling_gap figure shows the gap to the ceiling.",
-                                                  Figures.CAPTION])
-        written = self.write(draft(WITH_FIGURE, [GAIN]), draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
-        self.assertEqual((written.status, len(written.builds)), (paper.PASSED, 2))
-        first, second = self.build()["builds"]
-        self.assertEqual(first["figures"]["gain"]["names"], ["ceiling_gap"])
-        self.assertTrue([failure for failure in first["failures"] if "caption names figure ceiling_gap" in failure], first["failures"])
-        self.assertIn("caption names figure ceiling_gap", self.calls_of("writer")[1].message)
-        unguided, guided = figures.requests
-        self.assertEqual((unguided["mode"], guided["mode"]), ("unguided", "guided"))
-        self.assertEqual(guided["revision_of"], "figures/gain/figure_result.json")
-        (change,) = guided["change_requests"]
-        self.assertEqual((change["from"], change["id"]), ("paper", "drop-figure-references-v1"))
-        self.assertIn("`ceiling_gap`", change["text"])
-        self.assertEqual({key: value for key, value in guided.items() if key not in ("mode", "revision_of", "change_requests")},
-                         {key: value for key, value in unguided.items() if key != "mode"})
-        self.assertEqual(validate(guided, load_schema("figure_request")), [])
-        self.assertEqual(second["failures"], [])
-        self.assertNotIn("names", second["figures"]["gain"])
-        self.assertNotIn("ceiling_gap", self.text())
-
-    def test_a_caption_naming_no_other_figure_passes_and_is_never_sent_back(self):
-        self.earlier_figure()
-        self.earlier_figure("depth")
-        figures = Figures(self.project, captions=["Held-out AUROC by arm: the gain over the baseline at every depth of tree."])
-        written = self.write(draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
-        self.assertEqual((written.status, len(written.builds)), (paper.PASSED, 1))
-        self.assertEqual([request["mode"] for request in figures.requests], ["unguided"])
-        self.assertNotIn("names", self.build()["builds"][0]["figures"]["gain"])
-
-    def test_a_figure_is_named_by_its_id_and_a_plain_word_only_as_a_reference(self):
-        self.earlier_figure()
-        self.earlier_figure("depth")
-        self.earlier_figure("gain")
-        for caption, named in (("See the ceiling_gap figure.", ["ceiling_gap"]), ("As in Ceiling_Gap, the gap closes.", ["ceiling_gap"]),
-                               ("The ceiling gap closes.", []), ("The ceiling_gapped arm.", []),
-                               ("AUROC at every depth.", []), ("The depth figure shows it.", ["depth"]),
-                               ("As figure depth shows.", ["depth"]), ("As `depth` shows.", ["depth"]),
-                               ("The gain figure is this one.", [])):
-            self.assertEqual(paper.named_figures(caption, "gain", self.project), named, caption)
-
-    def test_points_after_the_last_build_of_a_draft_the_gate_passed_reach_the_writer_on_continue(self):
-        failing = draft(UNTAGGED.replace("## References", "{figure:gain}\n\n## References"), [GAIN])
-        figures = Figures(self.project, for_text=[RUNTIME], from_call=paper.MAX_BUILDS)
-        first = self.write(*[failing] * (paper.MAX_BUILDS - 1), draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, draw_figure=figures)
-        self.assertEqual((first.status, len(first.builds[-1]["for_writer"])), (paper.PASSED, 1))
-        self.write(draft(WITH_FIGURE, [GAIN]), verifier=PASSING_GATE, carry_on=True, venue=None, draw_figure=figures)
-        (call,) = self.calls_of("writer")
-        self.assertIn("- figure `gain`, at Results, second paragraph: %s" % RUNTIME["text"], call.message)
-        self.assertIn("and built, and the figure role", call.message)
-
-    def drawn(self, request, status="verified"):
-        """`figures/gain/` as `figure_role.make` leaves it after drawing `request`."""
-        directory = self.project / "figures" / "gain"
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "request.json").write_text(json.dumps(request), encoding="utf-8")
-        (directory / "figure_result.json").write_text(json.dumps({"figure_id": "gain", "version": 1, "status": status}), encoding="utf-8")
-
-    def door(self, request):
-        """`paper.draw`, the real door, with the figure role's own `make` and `resume_figure` recording what they are sent."""
-        sent = []
-        def make(project, asked, **options):
-            sent.append(("make", asked))
-            return {"figure_id": "gain", "version": 2, "status": "verified"}, None
-        def resume(project, figure_id, **options):
-            sent.append(("resume", figure_id))
-            return {"figure_id": "gain", "version": 1, "status": "verified"}, None
-        with mock.patch.object(figure_role, "make", make), mock.patch.object(figure_role, "resume_figure", resume):
-            result, _ = paper.draw(self.project, request)
-        return result, sent
-
-    def test_the_door_draws_a_caption_revision_and_then_gives_it_for_the_unguided_request(self):
-        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
-                                       provenance.read_manifest(self.project))
-        revised = paper.caption_revision(request, ["ceiling_gap"], 1)
-        self.drawn(request)
-        _, sent = self.door(revised)
-        self.assertEqual(sent, [("make", revised)])
-        self.drawn(revised)
-        result, sent = self.door(request)
-        self.assertEqual((sent, result["version"]), ([], 1))
-
-    def test_a_caption_revision_that_failed_is_drawn_again_from_the_figure_s_own_request(self):
-        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project,
-                                       provenance.read_manifest(self.project))
-        for status in ("honesty_failed", "refused", "failed_checks"):
-            self.drawn(paper.caption_revision(request, ["ceiling_gap"], 1), status)
-            _, sent = self.door(request)
-            self.assertEqual(sent, [("make", request)], status)
-            self.assertEqual(paper._revision(self.project, request, ["ceiling_gap"]), request, status)
-
-    def test_a_guided_revision_on_disk_is_the_figure_its_unguided_request_draws(self):
-        manifest = provenance.read_manifest(self.project)
-        request = paper.figure_request(GAIN, paper.guidelines.read_guidelines(HARNESS_ROOT, "arxiv"), self.project, manifest)
-        revised = paper.caption_revision(request, ["ceiling_gap"], 2)
-        self.assertTrue(paper._drawn_alike(revised, request))
-        self.assertFalse(paper._drawn_alike(request, revised))
-        self.assertTrue(paper._drawn_alike(revised, revised))
+    def test_the_front_matter_is_code_s_with_placeholders_and_the_availability_statements(self):
+        front = self.read("front.md")
+        for words in ("[TO BE GIVEN: the authors and their affiliations]", "[TO BE GIVEN: acknowledgments]", "[TO BE GIVEN: funding]",
+                      "[TO BE GIVEN: competing interests]", "## Data availability", "1 artifact(s) recorded with their SHA-256",
+                      "## Code availability", "[TO BE GIVEN: the code repository, which setup has not settled]"):
+            self.assertIn(words, front)
+        [call] = self.calls
+        self.assertIn("The front matter", call.request.prompt)
+        self.assertNotIn("front", asked(call.request.prompt))
 
 
-class GateTest(PaperCase):
-    def test_both_verdicts_are_journaled_on_the_paper_on_the_writer_s_verifier(self):
-        self.write(draft(), verifier=PASSING_GATE)
-        verdicts = self.paper_verdicts()
-        self.assertEqual([(payload["subject_kind"], payload["subject"], payload["verdict_type"]) for payload in verdicts],
-                         [("paper", paper.PAPER_PATH, gates.KILL_ARGUMENT), ("paper", paper.PAPER_PATH, gates.PAPER_READ)])
-        calls = self.calls_of("verifier")
-        self.assertEqual(len(calls), 3)
-        self.assertEqual({(call.request.model, call.request.effort) for call in calls}, {("opus", "max")})
-        self.assertEqual(len({call.request.run_dir for call in calls}), 3)
-        for call in calls:
-            self.assertIn(paper.PAPER_PATH, call.request.prompt)
-            self.assertIn("guidelines/arxiv/guidelines.json", call.request.prompt)
+class FrontMatterTest(PaperCase):
+    def test_the_owners_front_matter_replaces_the_placeholders(self):
+        code, out, err = self.verb("front", "-", stdin=json.dumps({
+            "authors": [{"name": "Ada Lovelace", "affiliations": ["Analytical Engines Ltd"], "corresponding": True, "email": "ada@example.org"},
+                        {"name": "Charles Babbage", "affiliations": ["Analytical Engines Ltd"]}],
+            "funding": "None."}))
+        self.assertEqual(code, 0, err)
+        self.assertIn("still to be given: the acknowledgments, the competing interests", out)
+        self.compose()
+        front = self.read("front.md")
+        self.assertIn("- Ada Lovelace^1^ (corresponding author, ada@example.org)", front)
+        self.assertIn("1. Analytical Engines Ltd", front)
+        self.assertIn("## Funding\n\nNone.", front)
+        self.assertNotIn("the authors and their affiliations]", front)
+        self.assertIn("[TO BE GIVEN: acknowledgments]", front)
 
-    def test_a_kill_argument_that_stands_files_a_writing_ticket_and_spends_no_read(self):
-        written = self.write(draft(), verifier=(verdict(False), verdict(False)))
-        self.assertEqual(written.status, paper.GATE_FAILED)
-        self.assertEqual(len(self.calls_of("verifier")), 2)
-        self.assertIsNone(written.read)
-        (ticket,) = [fields for fields in tickets.read_tickets(self.project) if fields["id"] in written.tickets]
-        self.assertEqual((ticket["kind"], ticket["origin"], ticket["touches"]), ("writing", paper.PAPER_PATH, []))
-        self.assertFalse(self.build()["kill_argument"]["pass"])
-        self.assertIsNone(self.build()["read"])
-
-    def test_a_point_that_stands_again_files_no_second_ticket(self):
-        first = self.write(draft(), verifier=(verdict(False), verdict(False)))
-        again = self.write(draft(), verifier=(verdict(False), verdict(False)))
-        self.assertEqual(first.tickets, again.tickets)
-        self.assertEqual(len([fields for fields in tickets.read_tickets(self.project) if fields["kind"] == "writing"]), 1)
-
-    def test_a_read_that_fails_files_a_ticket_the_next_draft_is_given_and_a_pass_cancels(self):
-        written = self.write(draft(), verifier=(verdict(), verdict(), verdict(False)))
-        self.assertEqual(written.status, paper.GATE_FAILED)
-        (ticket,) = [fields for fields in tickets.read_tickets(self.project) if fields["id"] in written.tickets]
-        self.assertEqual((ticket["title"], ticket["origin"]), (paper.READ_TITLE, paper.PAPER_PATH + "#read"))
-        passed = self.write(draft(), verifier=PASSING_GATE)
-        prompt = self.calls_of("writer")[0].request.prompt
-        self.assertIn("# What the last gate left standing", prompt)
-        self.assertIn(tickets.filename(ticket), prompt)
-        self.assertEqual((passed.status, passed.tickets), (paper.PASSED, []))
-        cancels = [event["payload"] for event in self.events("control") if event["payload"].get("command") == "cancel"]
-        self.assertEqual([payload["args"]["ticket"] for payload in cancels], [ticket["id"]])
-
-    def test_verify_samples_the_draft_s_claims_after_a_gate_that_passed(self):
-        claims = [verdict() for _ in range(4)]
-        written = self.write(draft(), verifier=PASSING_GATE + tuple(claims), verify=True)
-        self.assertEqual(written.status, paper.PASSED)
-        self.assertEqual(written.claims["sampled"], written.claims["claims"])
-        sampled = [payload for payload in (event["payload"] for event in self.events("verdict")) if payload["subject_kind"] == "claim"]
-        self.assertEqual(len(sampled), written.claims["claims"])
-        self.assertTrue(all(payload["subject"].startswith(paper.PAPER_PATH + "#claim-") for payload in sampled))
+    def test_front_matter_outside_its_schema_is_refused(self):
+        code, _, err = self.verb("front", "-", stdin=json.dumps({"authors": [{"name": ""}]}))
+        self.assertEqual(code, 2)
+        self.assertIn("front matter", err)
+        self.assertFalse((self.project / "research" / "front.json").exists())
 
 
-class VenueTest(PaperCase):
-    def test_without_a_venue_the_decider_picks_one_and_it_is_journaled(self):
-        written = self.write(draft(), verifier=PASSING_GATE, deciders=[decision("arxiv")], venue=None)
-        self.assertEqual(written.venue, "arxiv")
-        (event,) = self.events("decision")[-1:]
-        self.assertEqual((event["payload"]["answer"], event["payload"]["decided_by"], event["payload"]["ticket"]),
-                         ("paper venue: arxiv", "decider", None))
-        self.assertEqual([event["payload"] for event in self.events("paper_started")], [{"venue": "arxiv"}])
-        prompt = self.calls_of("decider")[0].request.prompt
-        self.assertIn("- subject: the venue of the paper", prompt)
-        for slug in ("nature-methods", "plos-compbiol", "arxiv", "neurips"):
-            self.assertIn(slug, prompt)
-        self.assertEqual(self.build()["venue_decided_by"], "decider")
+class StructureTest(PaperCase):
+    def test_headings_off_the_outlines_order_are_sent_back_once_and_then_fail_the_order(self):
+        def swapped(found, call):
+            found["results"] = "## The error grows {#R1}\n\nText.\n\n## %s {#%s}\n\nText." % (NOISE, self.o1)
+            return found
+        with self.assertRaisesRegex(paper.PaperError, "the outline's order is %s, R1" % self.o1):
+            self.compose(swapped)
+        self.assertEqual(len(self.calls), 2, "resumed once with what failed")
+        self.assertIn("the outline's order is", self.writer.prompts[1])
+        self.assertFalse((self.project / "research" / "paper" / "results.md").exists(), "nothing is written")
 
-    def test_a_decider_that_names_no_venue_stops_before_the_paper_starts(self):
-        with self.assertRaisesRegex(paper.PaperError, "did not pick a venue"):
-            self.write(draft(), deciders=[decision("a good journal")], venue=None)
-        self.assertEqual(self.events("paper_started"), [])
-        self.assertEqual(self.calls_of("writer"), [])
+    def test_a_writer_mended_on_its_resume_is_written(self):
+        def mended(found, call):
+            if call == 1:
+                found["methods"] = "## Fitting {#methods-fitting}\n\nText.\n\n## References\n\n1. A work."
+            return found
+        self.compose(mended)
+        self.assertEqual(len(self.calls), 2)
+        self.assertIn("a reference list (References) is code's", self.writer.prompts[1])
+        self.assertNotIn("References", self.read("methods.md"))
 
-    def test_the_answer_is_read_for_one_whole_slug(self):
-        known = {"nature": "Nature", "nature-methods": "Nature Methods", "arxiv": "arXiv"}
-        self.assertEqual(decider.venue_of("nature-methods", known), "nature-methods")
-        self.assertEqual(decider.venue_of("Nature Methods fits: the run is a method.", known), "nature-methods")
-        self.assertEqual(decider.venue_of("Nature Methods", known), "nature-methods")
-        self.assertEqual(decider.venue_of("I would send it to `nature`.", known), "nature")
-        self.assertEqual(decider.venue_of("option 1", known), "arxiv")
-        self.assertIsNone(decider.venue_of("nature or arxiv", known))
+    def test_the_check_names_a_heading_placed_elsewhere_an_unknown_one_and_one_missing(self):
+        structure = outline.paper_structure(self.project)
+        problems = paper.check_structure(structure, {
+            "introduction": "## Fitting {#methods-fitting}\n\nText.\n\n## A new idea {#introduction-new}\n\n## No id\n",
+            "methods": "Text with no heading."})
+        joined = "\n".join(problems)
+        self.assertIn("{#methods-fitting} is placed in methods by the outline", joined)
+        self.assertIn("{#introduction-new}", joined)
+        self.assertIn('"No id" carries no outline id', joined)
+        self.assertIn("introduction: the outline's {#introduction-state-of-the-art} is missing", joined)
+        self.assertIn("methods: the outline's {#methods-fitting} is missing", joined)
 
-    def test_the_account_lists_the_venue_among_the_decider_s_decisions(self):
-        from wayline import account
-        self.write(draft(), verifier=PASSING_GATE, deciders=[decision("arxiv")], venue=None)
-        section = "\n".join(account.account_view(self.project)["sections"]["Decided for you"])
-        self.assertIn("the paper's venue: **arxiv** (by the decider", section)
+    def test_a_writers_wanted_change_is_a_proposal_in_the_report(self):
+        self.compose()
+        self.assertIn("## Proposed by the writer, never made\n\n- Put Limits before the Results' discussion.", self.read("PAPER.md"))
+
+    def test_three_titles_are_asked_for(self):
+        with self.assertRaisesRegex(paper.PaperError, "three titles"):
+            self.compose(lambda found, call: dict(found, titles=["Only one"]))
 
 
-class NothingIsSubmittedTest(unittest.TestCase):
-    def test_no_verb_or_dashboard_action_submits(self):
-        for verb in cli.VERBS:
-            self.assertNotIn("submit", verb.name)
-            self.assertNotRegex(verb.usage, r"\bsubmit")
-        self.assertFalse([action for action in dashboard.ACTIONS if "submit" in action])
+class ReorderTest(PaperCase):
+    def setUp(self):
+        super().setUp()
+        self.compose()
+        self.first = json.loads(self.read("paper.json"))
+        (self.project / "research" / "paper" / "introduction.md").write_text("## State of the art {#introduction-state-of-the-art}\n\n"
+                                                                             "The owner's own wording.\n", encoding="utf-8")
+        self.passage("discussion", "Limits", "The noise model is Gaussian, and heavier tails are untested.")
+        self.second = self.compose()
 
-    def test_the_paper_reaches_no_network_and_its_roles_cannot(self):
+    def test_the_first_version_is_frozen_under_earlier(self):
+        earlier = self.project / "research" / "paper" / "earlier" / "v1"
+        for name in ("title.md", "results.md", "PAPER.md", "paper.json", "tables/T1.csv", "alternatives/title-2.md"):
+            self.assertTrue((earlier / name).is_file(), name)
+        self.assertEqual(json.loads((earlier / "paper.json").read_text(encoding="utf-8"))["version"], 1)
+        self.assertIn("The owner's own wording", (earlier / "introduction.md").read_text(encoding="utf-8"),
+                      "the version is frozen as the order found it on disk, the owner's edit of it included")
+
+    def test_only_the_parts_whose_inputs_changed_are_recomposed_with_the_title_and_abstract(self):
+        [call] = self.calls
+        self.assertEqual(asked(call.request.prompt), ["title", "abstract", "discussion", "supplement"])
+        self.assertIn("research/paper/: version 1, the whole of it", call.request.prompt, "the writer reads the whole version")
+        versions = {part: entry["version"] for part, entry in self.second["parts"].items()}
+        self.assertEqual(versions, {"title": 2, "abstract": 2, "introduction": 1, "results": 1, "discussion": 2, "methods": 1,
+                                    "supplement": 2, "front": 1})
+        self.assertEqual(self.orders()[-1]["parts"], ["title", "abstract", "discussion", "supplement"])
+
+    def test_the_owners_edit_of_an_unchanged_part_is_kept(self):
+        self.assertIn("The owner's own wording.", self.read("introduction.md"))
+        self.assertEqual(self.second["kept_edits"], ["introduction"])
+        self.assertIn("| introduction | introduction.md | 1 | your edit kept |", self.read("PAPER.md"))
+
+    def test_a_version_is_frozen_once(self):
+        frozen = self.project / "research" / "paper" / "earlier" / "v1" / "title.md"
+        before = frozen.read_bytes()
+        (self.project / "research" / "paper" / "paper.json").write_text(json.dumps(dict(self.first)), encoding="utf-8")
+        self.passage("discussion", "Limits", "Heavier tails come next.")
+        self.compose()
+        self.assertEqual(frozen.read_bytes(), before, "a second freeze of v1, as after a composition that failed partway, writes nothing")
+
+    def test_an_owners_edit_of_a_part_whose_inputs_changed_is_recomposed(self):
+        (self.project / "research" / "paper" / "discussion.md").write_text("## Limits {#discussion-limits}\n\nMine.\n", encoding="utf-8")
+        self.passage("discussion", "Limits", "The noise model is Gaussian; heavier tails come next.")
+        third = self.compose()
+        self.assertNotIn("Mine.", self.read("discussion.md"))
+        self.assertEqual(third["parts"]["discussion"]["version"], 3)
+        self.assertIn("Mine.", (self.project / "research" / "paper" / "earlier" / "v2" / "discussion.md").read_text(encoding="utf-8"))
+
+
+class KeptTest(InheritedCase):
+    """An earlier manuscript's title, abstract, and captions never reach the paper."""
+
+    def setUp(self):
+        super().setUp()
+        self.add(MIDWAY / "manuscript-v2.docx")
+        self.deconstruct()
+        self.kept = paper.inherited_kept(self.project)
+
+    def test_the_title_the_abstract_and_the_captions_are_what_is_kept(self):
+        whats = [what for what, _ in self.kept]
+        self.assertIn("the title of D1", whats)
+        self.assertTrue(any(what.startswith("the abstract of D1") for what in whats) or any("caption" in what for what in whats))
+
+    def test_a_part_carrying_the_inherited_title_fails_the_check(self):
+        title = dict(self.kept)["the title of D1"]
+        problems = paper.kept_problems({"results": "## Old {#R1}\n\nAs %s showed." % title, "methods": "Our own words."}, self.kept)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("results carries the title of D1", problems[0])
+
+
+class OrderRunTest(DrawingRunCase):
+    """The conductor at a paper order: the rest point, read back from the journal it wrote."""
+
+    def setUp(self):
+        super().setUp()
+        third = dict(self.ticket(1), id=3, status="open", title="Write another file", touches=["other.txt"], outputs=["other.txt"],
+                     acceptance={"machine": ["test -f other.txt"], "quality": []})
+        tickets.write_ticket(self.ledger, third, "\nAnother.\n")
+        fourth = dict(third, id=4, title="Write a third file", touches=["third.txt"], outputs=["third.txt"], blocked_by=[3],
+                      acceptance={"machine": ["test -f third.txt"], "quality": []})
+        tickets.write_ticket(self.ledger, fourth, "\nA third.\n")
+        self.git("add", "-A")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "two more tickets")
+
+    def conductor(self):
+        driven = Conductor(self.project, out=io.StringIO())
+        driven.readings = machine.recorded
+        driven.drawing_python = sys.executable
+        self.addCleanup(driven.settle, 30)
+        return driven
+
+    def wrote(self, identifier, name):
+        from tests.test_conductor import done, patch
+        return dict(envelope=done(ticket_id=identifier, outputs_written=[name]),
+                    patch=patch({name: "written\n"}, "ticket %d: write %s" % (identifier, name)), ticket=str(identifier))
+
+    def until(self, driven, done_when, waves=20):
+        for _ in range(waves):
+            result = driven.wave()
+            driven.settle()
+            if result.ended or done_when():
+                return result
+        self.fail("never came about: %s" % self.sequence())
+
+    def order_events(self):
+        return [event for event in self.events() if event["event"] == "paper_order"]
+
+    def index(self, predicate):
+        return next(number for number, event in enumerate(self.events()) if predicate(event))
+
+    def test_running_tickets_finish_nothing_new_launches_the_results_are_drawn_and_the_run_resumes(self):
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": None, "autonomy": "interactive",
+                                                 "radius": "moderate", "pid": 1})
+        with worker.use_fake() as fake:
+            fake.script(delay=600, **self.wrote(3, "other.txt"))
+            fake.script(respond=self.plotter(), role="plotter")
+            fake.script(respond=Writer(self.project), role="writer")
+            fake.script(**self.wrote(4, "third.txt"))
+            driven = self.conductor()
+            self.assertEqual(driven.wave().launched, [3])
+            made = paper.order(self.project, start=None)
+            self.assertIsNone(made["run"], "a run was going: it resumes after the paper")
+            waiting = driven.wave()
+            self.assertEqual(waiting.launched, [])
+            self.assertIn("waits for ticket(s) 3 to finish", driven.out.getvalue())
+            fake.release(ticket="3")
+            driven.settle()
+            self.until(driven, lambda: any(event["payload"]["action"] == "composed" for event in self.order_events()))
+            self.until(driven, lambda: 4 in [event["payload"]["ticket"] for event in self.events("ticket_launched")])
+        done3 = self.index(lambda event: event["event"] == "ticket_done" and event["payload"]["ticket"] == 3)
+        drawn = self.index(lambda event: event["event"] == "drawing" and event["payload"]["outcome"] == "opened")
+        composed = self.index(lambda event: event["event"] == "paper_order" and event["payload"]["action"] == "composed")
+        launched4 = self.index(lambda event: event["event"] == "ticket_launched" and event["payload"]["ticket"] == 4)
+        self.assertLess(done3, drawn)
+        self.assertLess(drawn, composed)
+        self.assertLess(composed, launched4, "nothing new launched before the paper was composed")
+        self.assertEqual(self.events("drawing")[0]["payload"]["rest"], "order")
+        self.assertNotIn("run_ended", [event["event"] for event in self.events()[:launched4]])
+        self.assertTrue((self.project / "research" / "paper" / "results.md").is_file())
+
+    def test_an_order_with_no_run_going_runs_for_itself_and_ends_as_the_last_run_did(self):
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": None, "autonomy": "interactive",
+                                                 "radius": "moderate", "pid": 1})
+        self.ledger.append_event("run_ended", {"reason": "objectives_closed"})
+        made = paper.order(self.project, start=None)
+        self.assertEqual(made["run"], "objectives_closed")
+        with worker.use_fake() as fake:
+            fake.script(respond=self.plotter(), role="plotter")
+            fake.script(respond=Writer(self.project), role="writer")
+            driven = self.conductor()  # a conductor started afresh replays the order from the journal
+            last = self.until(driven, lambda: False)
+        self.assertTrue(last.ended)
+        self.assertEqual(last.reason, "objectives_closed")
+        self.assertEqual([event["payload"]["ticket"] for event in self.events("ticket_launched")],
+                         [self.events("drawing")[0]["payload"]["ticket"]], "the drawing alone launched; ticket 3 never")
+        self.assertEqual(self.events("run_ended")[-1]["payload"]["reason"], "objectives_closed")
+        composed = self.index(lambda event: event["event"] == "paper_order" and event["payload"]["action"] == "composed")
+        self.assertLess(composed, len(self.events()) - 1)
+
+    def test_a_composition_that_fails_closes_the_order_and_is_said(self):
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": None, "autonomy": "interactive",
+                                                 "radius": "moderate", "pid": 1})
+        self.ledger.append_event("run_ended", {"reason": "frontier_empty"})
+        paper.order(self.project, start=None)
+        with worker.use_fake() as fake:
+            fake.script(respond=self.plotter(), role="plotter")
+            for _ in range(2):
+                fake.script(Envelope(structured_output=None, errors=["no answer"]), role="writer")
+            driven = self.conductor()
+            last = self.until(driven, lambda: False)
+        self.assertEqual([event["payload"]["action"] for event in self.order_events()], ["ordered", "failed"])
+        self.assertIn("paper order 1 failed", driven.out.getvalue())
+        self.assertEqual(last.reason, "frontier_empty")
+
+
+class ReplayTest(PaperCase):
+    def test_the_view_holds_the_open_order_until_it_is_composed_or_failed(self):
+        events = [{"event": "paper_order", "payload": {"order": 1, "action": "ordered", "by": "owner", "run": None, "batch": None}}]
+        self.assertEqual(replay.replay(events).paper_order["order"], 1)
+        self.assertIsNone(replay.replay(events + [{"event": "paper_order", "payload": {"order": 1, "action": "composed"}}]).paper_order)
+        self.assertIsNone(replay.replay(events + [{"event": "paper_order", "payload": {"order": 1, "action": "failed"}}]).paper_order)
+
+    def test_the_tick_relaunches_a_conductor_for_an_order_on_a_project_never_run(self):
+        from wayline import tick
+        made = paper.order(self.project, start=lambda path: (_ for _ in ()).throw(ValueError("the unit is busy")))
+        self.assertIn("not started (the unit is busy)", made["started"])
+        reason, _ = tick.relaunch_decision(self.project, self.ledger, json.loads((HARNESS_ROOT / "policy.json").read_text()), None, 0)
+        self.assertIn("paper order 1 is open", reason)
+
+    def test_the_tick_relaunches_a_conductor_for_an_open_order(self):
+        from wayline import tick
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": None, "autonomy": "interactive",
+                                                 "radius": "moderate", "pid": 1})
+        self.ledger.append_event("run_ended", {"reason": "stopped"})
+        paper.order(self.project, start=None)
+        reason, why = tick.relaunch_decision(self.project, self.ledger, json.loads((HARNESS_ROOT / "policy.json").read_text()),
+                                             None, 0)
+        self.assertIn("paper order 1 is open", reason or why)
+        self.ledger.append_event("run_started", {"resume": True, "harness_tag": None, "autonomy": "interactive",
+                                                 "radius": "moderate", "pid": 2})
+        self.ledger.append_event("run_ended", {"reason": "stopped"})
+        reason, why = tick.relaunch_decision(self.project, self.ledger, json.loads((HARNESS_ROOT / "policy.json").read_text()),
+                                             None, 0)
+        self.assertIsNone(reason, "the owner's stop since the order holds")
+
+
+class RetiredTest(PaperCase):
+    def test_paper_md_build_json_continue_and_the_gates_writing_tickets_are_gone(self):
+        verb = cli.lookup("paper")
+        self.assertNotIn("--continue", verb.usage)
+        self.assertNotIn("--venue", verb.usage)
+        self.assertIn("--yes", verb.usage)
+        self.assertIn("paper", spec_verbs(SPEC_PATH))
         source = (HARNESS_ROOT / "wayline" / "paper.py").read_text(encoding="utf-8")
-        for seam in ("wayline.fetch", "from wayline import fetch", "urllib", "http.client", "socket", "subprocess"):
-            self.assertNotIn(seam, source)
-        for name in ("writer", "verifier"):
-            role = worker.read_role(name, HARNESS_ROOT)
-            self.assertIn("WebFetch", role.disallowed_tools)
-            self.assertIn("WebSearch", role.disallowed_tools)
-            self.assertFalse([tool for tool in role.allowed_tools if any(word in tool for word in ("curl", "wget", "push", "gh "))])
+        for gone in ("paper.md", "build.json", "carry_on", "READ_TITLE"):
+            self.assertNotIn(gone, source)
+        self.assertFalse((HARNESS_ROOT / "schemas" / "paper_draft.json").exists())
+        self.compose()
+        names = sorted(path.name for path in (self.project / "research" / "paper").iterdir())
+        self.assertNotIn("paper.md", names)
+        self.assertNotIn("build.json", names)
+        self.assertEqual([fields for fields in tickets.read_tickets(self.project) if fields["kind"] == "writing"], [])
 
+    def test_the_skill_carries_the_paper_reference_file(self):
+        reference = (HARNESS_ROOT / "skills" / "wayline" / "paper.md").read_text(encoding="utf-8")
+        for words in ("wayline paper --project .", "wayline paper --yes --project .", "readiness", "rest point", "wayline paper front"):
+            self.assertIn(words, reference)
+        skill = (HARNESS_ROOT / "skills" / "wayline" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("`paper.md`", skill)
 
-class CommandTest(PaperCase):
-    def test_the_command_prints_what_the_owner_reads_and_exits_0_on_a_pass(self):
-        with worker.use_fake() as fake:
-            fake.script(respond=Classifier(), role="classifier")
-            fake.script(draft(), role="writer")
-            for envelope in PASSING_GATE:
-                fake.script(envelope, role="verifier")
-            out = io.StringIO()
-            with redirect_stdout(out), redirect_stderr(io.StringIO()):
-                code = cli.main(["paper", "--project", str(self.project), "--venue", "arxiv"])
-        self.assertEqual(code, 0, out.getvalue())
-        self.assertIn("status    passed", out.getvalue())
-        self.assertIn("Nothing was submitted.", out.getvalue())
+    def test_the_changelog_names_the_paper_order_under_unreleased(self):
+        changelog = (HARNESS_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        unreleased = changelog.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("The paper order and the paper's parts (ticket 115", unreleased)
 
-    def test_a_gate_that_fails_exits_1(self):
-        with worker.use_fake() as fake:
-            fake.script(respond=Classifier(), role="classifier")
-            fake.script(draft(), role="writer")
-            for envelope in (verdict(), verdict(), verdict(False)):
-                fake.script(envelope, role="verifier")
-            out = io.StringIO()
-            with redirect_stdout(out), redirect_stderr(io.StringIO()):
-                code = cli.main(["paper", "--project", str(self.project), "--venue", "arxiv"])
-        self.assertEqual(code, 1)
-        self.assertIn("open      writing ticket(s)", out.getvalue())
+    def test_the_docs_carry_p7s_retirement_p8_as_the_paper_order_and_r26s_wording(self):
+        brief = (HARNESS_ROOT / "BRIEF.md").read_text(encoding="utf-8")
+        self.assertIn("The general report is always current; the paper is made only on an explicit order, from the owner, or "
+                      "from the decider in an autonomous run.", " ".join(brief.split()))
+        self.assertRegex(brief, r"P7[^\n]*retire")
+        self.assertRegex(brief, r"P8[^\n]*Paper order")
 
 
 if __name__ == "__main__":
+    import unittest
     unittest.main()

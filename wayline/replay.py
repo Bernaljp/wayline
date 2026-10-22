@@ -21,7 +21,7 @@ from wayline.ledger import (
     JOB_LAUNCHED, JOB_RETRIED, JOB_WAITING, PACING, PAUSED, RUN_ENDED, RUN_STARTED, STALL, SWITCHED,
     TICKET_ACCEPTED, TICKET_BLOCKED, TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED,
     TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN, TICKET_RESULT, TICKET_RESUMED, TICKET_SESSION,
-    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED, DIFFICULTY_RAISED, CODE_PUSHED,
+    UNPAUSED, VERDICT, WAVE, PROGRESS, DISCARDED, DIFFICULTY_RAISED, CODE_PUSHED, PAPER_ORDER,
 )
 # The model a `paused` and an `unpaused` name for the hold on Fable's weekly window, the fallback consents a `control` may set,
 # and the window a ticket's origin names when it is the ask of decision 15.
@@ -344,6 +344,9 @@ class View:
     # `main` it was cut from (decision 17, ticket 85), which the next wave's push is measured against and its split
     # walks on from, so a restart pushes nothing a run before it pushed.
     code_pushed: Optional[dict] = None
+    # The paper order that is open (decision 17; ticket 115): the `paper_order` payload that made it, until the one that
+    # composed its paper or failed it. While it is open the run rests: nothing new launches, and the paper is composed.
+    paper_order: Optional[dict] = None
 
     def apply(self, event):
         """Fold one journal record into the view; returns the view."""
@@ -440,6 +443,11 @@ class View:
             self._job(name, payload, event)
         elif name == CODE_PUSHED and payload.get("commit"):
             self.code_pushed = {"commit": payload["commit"], "main": payload.get("main")}
+        elif name == PAPER_ORDER:
+            if payload.get("action") == "ordered":
+                self.paper_order = dict(payload)
+            elif self.paper_order is not None and payload.get("order") == self.paper_order.get("order"):
+                self.paper_order = None
         return self
 
     @staticmethod
