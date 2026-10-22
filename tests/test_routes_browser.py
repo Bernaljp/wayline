@@ -1,5 +1,6 @@
-"""The routed views (ticket 110) in a real browser over HTTP: the hash routes, back and forward, item links opening in
-the viewer, the strip's count in the title, and every view at phone width with no sideways scroll.
+"""The routed views (tickets 110 and 111) in a real browser over HTTP: the hash routes, back and forward, item links
+opening in the viewer, the strip's count in the title, Inherited only for a project with documents, and every view at
+phone width with no sideways scroll.
 
 What the routes promise is only observable where the page runs, so these tests start the real server over a project
 built as a run builds it (`test_dashboard_views.DrawnProjectCase`) and load the page in a headless Chromium
@@ -10,6 +11,7 @@ import json
 import unittest
 
 from tests.browser import Browser, find_chromium
+from tests.test_dashboard_paper import MidwayServedCase
 from tests.test_dashboard_views import DrawnProjectCase
 
 CHROMIUM = find_chromium()
@@ -25,8 +27,9 @@ SHOWN = """(() => ({
 }))()"""
 
 
-@unittest.skipUnless(CHROMIUM, "no Chromium on this machine (set WAYLINE_CHROMIUM to one)")
-class RoutesTestCase(DrawnProjectCase):
+class BrowserCase:
+    """A page in a headless Chromium over the served project, and the routes of its views."""
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -39,8 +42,6 @@ class RoutesTestCase(DrawnProjectCase):
 
     def setUp(self):
         super().setUp()
-        from wayline.decisions import open_decision
-        self.decision = open_decision(self.project, "Which split is held out?", options=["a", "b"], proposed_by="conductor")["ticket"]
         self.page = self.browser.page()
         self.addCleanup(self.page.close)
 
@@ -52,6 +53,23 @@ class RoutesTestCase(DrawnProjectCase):
 
     def route(self, suffix):
         return "#/%s/%s" % (self.project_id, suffix)
+
+    def fits_the_phone(self, views):
+        """Each view, `(route, what shows it is drawn)`, keeps to a phone's 390 pixels with no sideways scroll."""
+        self.page.screen(390, 844, mobile=True)
+        for route, ready in views:
+            with self.subTest(view=route or "projects"):
+                self.open(self.route(route) if route else "#/")
+                self.page.wait_for(ready)
+                self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390, json.dumps(self.shown()))
+
+
+@unittest.skipUnless(CHROMIUM, "no Chromium on this machine (set WAYLINE_CHROMIUM to one)")
+class RoutesTestCase(BrowserCase, DrawnProjectCase):
+    def setUp(self):
+        super().setUp()
+        from wayline.decisions import open_decision
+        self.decision = open_decision(self.project, "Which split is held out?", options=["a", "b"], proposed_by="conductor")["ticket"]
 
 
 class RoutingTest(RoutesTestCase):
@@ -111,12 +129,49 @@ class ItemLinkTest(RoutesTestCase):
 
 class PhoneWidthTest(RoutesTestCase):
     def test_every_view_keeps_to_the_phones_width(self):
-        self.page.screen(390, 844, mobile=True)
-        for route, ready in (("research", "document.querySelector('#objectives-body li.row')"),
+        self.fits_the_phone((("research", "document.querySelector('#objectives-body li.row')"),
+                             ("paper", "document.querySelector('#paper-sections-body li.row[data-item=\"results\"]')"),
                              ("run", "document.querySelector('#software-body h3') && document.querySelector('#overview-body .grid')"),
-                             ("", "document.querySelector('#projects-body li.project-row')")):
-            with self.subTest(view=route or "projects"):
-                self.open(self.route(route) if route else "#/")
-                self.page.wait_for(ready)
-                self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390,
-                                     json.dumps(self.shown()))
+                             ("", "document.querySelector('#projects-body li.project-row')")))
+
+
+class PaperRouteTest(RoutesTestCase):
+    """Paper for a start from zero (ticket 111), and no Inherited view: the project has no documents."""
+
+    def test_paper_lists_the_sections_and_a_section_opens_in_the_viewer_over_it(self):
+        self.open(self.route("paper"))
+        link = "document.querySelector('#paper-sections-body li.row[data-item=\"results\"] a.row-id')"
+        self.page.wait_for(link)
+        self.assertTrue(self.page.evaluate("document.querySelector('#views a[data-route=\"inherited\"]').hidden"))
+        self.page.click(link)
+        self.page.wait_for("document.getElementById('viewer').open && document.querySelector('#viewer-doc .markdown')")
+        self.assertEqual((self.shown()["view"], self.shown()["hash"]), ("paper", self.route("results")))
+
+    def test_inherited_without_documents_lands_on_research(self):
+        self.open(self.route("inherited"))
+        self.page.wait_for("document.body.dataset.view === 'research' && location.hash.endsWith('/research')")
+
+
+@unittest.skipUnless(CHROMIUM, "no Chromium on this machine (set WAYLINE_CHROMIUM to one)")
+class InheritedRouteTest(BrowserCase, MidwayServedCase):
+    """Inherited and Paper for a start midway (ticket 111), in the browser."""
+
+    def test_inherited_lists_every_record_and_a_pair_opens_side_by_side(self):
+        self.open(self.route("inherited"))
+        for body, item in (("documents", "D1"), ("concerns", "K1"), ("claims", "P5"), ("pairs", "P5+P11"), ("pairs", "P1+P14"),
+                           ("material", "M1")):
+            self.page.wait_for("document.querySelector('#inherited-%s-body li.row[data-item=\"%s\"]')" % (body, item))
+        self.assertFalse(self.page.evaluate("document.querySelector('#views a[data-route=\"inherited\"]').hidden"))
+        self.page.click("document.querySelector('#inherited-pairs-body li.row[data-item=\"P5+P11\"] a.row-id')")
+        self.page.wait_for("document.getElementById('viewer').open && document.querySelectorAll('#viewer-doc .side').length === 2")
+        self.assertIn("lowest against peaks at dusk", self.shown()["viewer"])
+        self.assertEqual(self.shown()["view"], "inherited")
+
+    def test_a_concern_from_a_notice_opens_over_inherited(self):
+        self.open(self.route("K1"))
+        self.page.wait_for("document.getElementById('viewer').open && document.querySelector('#viewer-doc .markdown')")
+        self.assertEqual(self.shown()["view"], "inherited")
+
+    def test_paper_and_inherited_keep_to_the_phones_width(self):
+        self.fits_the_phone((("paper", "document.querySelector('#paper-references-body li.row')"),
+                             ("inherited", "document.querySelector('#inherited-material-body li.row')")))

@@ -978,6 +978,23 @@ lists it read-only, marked with its tag.
   `research`, `run`, `waiting`, and `items/<id>` under `/api/projects/<id>/`, each answering 304 while nothing
   changed. Every view lays out at phone width. The dashboard spends no tokens.
 
+- The dashboard's Paper and Inherited views (ticket 111; Implementation Decisions 17 and 8), thin lists like Research
+  and Run. **Paper** lists the five sections and the outline, each opening in the viewer (`#/<project>/results`,
+  `#/<project>/outline`); References' numbered entries and its Not yet resolved rows, each with its state (to the
+  scout, retrying, gave up, claim kept); the code repository with its link, its visibility, and its last push; Methods'
+  parameter table, with whose reason each row shows, and each method with no code behind it, by the passage naming it;
+  and the place the paper order's card takes (ticket 121). **Inherited** is offered only for a project with documents
+  (the projects page counts them, and the view's link shows only then): the documents with their headings, the concerns
+  with their sources verbatim and their standing, every inherited claim with its standing and, for a Results claim, the
+  verdict, the route, and the ticket that reached it, the unverifiable claims with their reasons, the contradicting
+  pairs, the setup's merges with what was kept and the owner's mark, and the missing material with the owner's
+  replies. New item links: a passage (`P12`, its section at its heading, over Inherited for an inherited claim), a
+  document (`D1`, its converted text), a concern (`K3`, in `CONCERNS.md`), a missing item (`M2`, in
+  `VERIFICATIONS.md`), and a pair of claims (`P5+P11`, a contradiction or a merge, both claims side by side in the
+  viewer). The new reads are `paper` and `inherited` (404 for a project with no documents) under
+  `/api/projects/<id>/`, answering 304 while neither the ledger nor a section file moved. `verification.claim_rows` and
+  `repeats.merges` are the read-only records they use.
+
 
 ## v1.0.0 (2026-09-27)
 

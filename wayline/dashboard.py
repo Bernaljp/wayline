@@ -350,16 +350,18 @@ def projects_view(active=None, entries=None, settings=None):
 
 def _summary(path, entry):
     """The projects page's fields of one listed project (ticket 110): the account's standing line, the run state, and the
-    waiting count, whose count is also on its tab. None for a project that cannot be read or is of another version: an old
+    waiting count, whose count is also on its tab; and how many documents it holds, which offer its Inherited view (ticket
+    111). None for a project that cannot be read or is of another version: an old
     project's account is not this release's to read."""
     if not entry["readable"] or entry["read_only"]:
-        return {"standing": None, "run_state": None, "waiting": None, "problem": None}
+        return {"standing": None, "run_state": None, "waiting": None, "documents": None, "problem": None}
     try:
         summary = dashboard_views.project_summary(path, ledger_snapshot(path))
     except Exception as failure:  # noqa: BLE001 - one project's ledger must never take every tab off the page
-        return {"standing": None, "run_state": None, "waiting": None, "problem": "%s: %s" % (type(failure).__name__, failure)}
+        return {"standing": None, "run_state": None, "waiting": None, "documents": None,
+                "problem": "%s: %s" % (type(failure).__name__, failure)}
     return {"standing": summary["standing"], "run_state": summary["run_state"], "waiting": summary["waiting"],
-            "problem": "; ".join(summary["problems"]) or None}
+            "documents": summary["documents"], "problem": "; ".join(summary["problems"]) or None}
 
 
 def _same(path, other):
@@ -1251,6 +1253,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/changes/?$"), "api_changes"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/research/?$"), "api_research"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/run/?$"), "api_run"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/?$"), "api_paper"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/inherited/?$"), "api_inherited"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/waiting/?$"), "api_waiting"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/items/(?P<item>[^/]+)/?$"), "api_item"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/card/?$"), "api_paper_card"),
@@ -1552,6 +1556,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self._not_modified(tag):
             return None
         return self._json(dashboard_views.run_view(path), tag)
+
+    def api_paper(self, query, project):
+        """The Paper view (ticket 111), tagged by the ledger, the section files, and the minute a reference gives up at."""
+        path = self._project(project)
+        tag = etag("paper", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
+                   dashboard_views.paper_snapshot(path))
+        if self._not_modified(tag):
+            return None
+        return self._json(dashboard_views.paper_view(path), tag)
+
+    def api_inherited(self, query, project):
+        """The Inherited view (ticket 111), tagged by the ledger and the section files; a project with no documents has none."""
+        path = self._project(project)
+        tag = etag("inherited", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
+                   dashboard_views.section_snapshot(path))
+        if self._not_modified(tag):
+            return None
+        view = dashboard_views.inherited_view(path)
+        if view is None:
+            return self._send(HTTPStatus.NOT_FOUND, json.dumps({"found": False, "line": "this project has no documents, so no Inherited view"},
+                                                               ensure_ascii=False).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-cache"),))
+        return self._json(view, tag)
 
     def api_waiting(self, query, project):
         """The "Waiting on you" strip (ticket 110): the account's section, tagged by the ledger the account is read from."""

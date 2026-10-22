@@ -1,14 +1,16 @@
-"""The dashboard's routed views (Implementation Decision 17; ticket 110): what each view reads, and what an item link opens.
+"""The dashboard's routed views (Implementation Decision 17; tickets 110 and 111): what each view reads, and what an
+item link opens.
 
-The dashboard is five hash-routed views behind the project tabs; this module builds the JSON of the two this ticket
-adds, **Research** and the additions to **Run**, the "Waiting on you" strip every view shows, the projects page's row
-for each project, and the resolution of an item link `#/<project>/<id>`. Paper and Inherited (ticket 111) and Marks
-(ticket 112) follow. Like every view the dashboard polls, each function here reads and never writes: no lock, no
-render, no model, so the dashboard spends no tokens.
+The dashboard is five hash-routed views behind the project tabs; this module builds the JSON of four of them,
+**Research** and the additions to **Run** (ticket 110), **Paper** and **Inherited** (ticket 111), the "Waiting on you"
+strip every view shows, the projects page's row for each project, and the resolution of an item link
+`#/<project>/<id>`. Marks (ticket 112) follows. Like every view the dashboard polls, each function here reads and never
+writes: no lock, no render, no model, so the dashboard spends no tokens.
 
 **Thin lists.** A view lists items, each an id, a title, a status, and what opens it; it never carries a rendered
-file. Every Markdown file code renders (the general report, a result's reports, the account, `OBJECTIVES.md`) is
-named here by its path and read only in the popup viewer, so nothing is rendered twice.
+file. Every Markdown file code renders (the general report, a result's reports, the account, `OBJECTIVES.md`, the
+sections, the outline, `CONCERNS.md`, `VERIFICATIONS.md`) is named here by its path and read only in the popup viewer,
+so nothing is rendered twice. Inherited is offered only for a project with documents: without one it is None.
 
 **Item ids.** An item link names one of:
 
@@ -17,7 +19,12 @@ named here by its path and read only in the popup viewer, so nothing is rendered
 - `R4.3`, a plot, and `R4.T1`, a table, which open the image with its explanation, or the table's rows;
 - `R4-2`, one of a result's reports, and `report`, the general report;
 - `12`, a ticket or a decision ticket, which opens its file over Run;
-- `account`, `research/ACCOUNT.md`, over Run.
+- `account`, `research/ACCOUNT.md`, over Run;
+- `introduction`, `results`, `discussion`, `methods`, `references`, a section, and `outline`, `OUTLINE.md`, over Paper;
+- `P12`, a passage, which opens its section at its heading: over Inherited for an inherited claim, else over Paper;
+- `D1`, a document, which opens its converted text over Inherited;
+- `K3`, a concern, and `M2`, a missing item, which open `CONCERNS.md` and `VERIFICATIONS.md` at their headings;
+- `P5+P11`, a pair of the repeated-claims check, a contradiction or a merge, which opens both claims side by side.
 
 An id that names nothing resolves to None, and the server answers 404 with one line the page shows in the viewer.
 
@@ -26,23 +33,25 @@ journaled. The page keeps, in its own browser, the hash each report had when the
 report whose hash moved with a dot. A renewed report notifies nowhere: nothing here or in the renders sends a notice.
 """
 
+import os
 import re
 from pathlib import Path
 
 from wayline.ledger import REPORT_RENDERED, TICKET_CANCELLED, Ledger
 from wayline.project import RESEARCH, ProjectError, read_harness
 
-__all__ = ["VIEWS", "research_view", "item_view", "ITEM_ID"]
+__all__ = ["VIEWS", "research_view", "run_view", "paper_view", "inherited_view", "item_view", "ITEM_ID"]
 
-# The views this ticket routes; Paper and Inherited (111) and Marks (112) join them.
-VIEWS = ("research", "run")
-RESEARCH_VIEW, RUN_VIEW = VIEWS
+# The views routed so far: Research and Run (110), Paper and Inherited (111); Marks (112) joins them.
+VIEWS = ("research", "run", "paper", "inherited")
+RESEARCH_VIEW, RUN_VIEW, PAPER_VIEW, INHERITED_VIEW = VIEWS
 
 REPORT_MD = RESEARCH + "/REPORT.md"
 OBJECTIVES_MD = RESEARCH + "/OBJECTIVES.md"
 
 # Every id an item link may name, and nothing else: the route matches it before anything is read.
-ITEM_ID = re.compile(r"^(?:O[1-9][0-9]*|R[1-9][0-9]*(?:\.T?[1-9][0-9]*|-[1-9][0-9]*)?|[1-9][0-9]*|report|account)$")
+ITEM_ID = re.compile(r"^(?:O[1-9][0-9]*|R[1-9][0-9]*(?:\.T?[1-9][0-9]*|-[1-9][0-9]*)?|[1-9][0-9]*|report|account|outline|"
+                     r"introduction|results|discussion|methods|references|[DKM][1-9][0-9]*|P[1-9][0-9]*(?:\+P[1-9][0-9]*)?)$")
 
 
 def _events(project, problems):
@@ -311,6 +320,295 @@ def move_alive(project):
     return environment.move_in_progress(project)
 
 
+# --- Paper: the sections, the outline, References, the code repository, Methods' generated part -------------------
+
+OUTLINE_MD = RESEARCH + "/OUTLINE.md"
+
+
+def _section_rows(project, problems):
+    """The five sections, each an item opening its file: its title, whether code rendered it yet, when, and how many
+    passages stand in it (References takes none: code writes it from what the others cite)."""
+    from wayline import sections
+    rows = []
+    for name in sections.SECTIONS:
+        path = "%s/%s" % (RESEARCH, sections.section_path(name))
+        stamp = sections.read_stamp(project, name) or {}
+        standing = None
+        if name != sections.REFERENCES:
+            try:
+                standing = len(sections.current_ids(project, name))
+            except (OSError, ValueError) as failure:
+                problems.append("%s: %s" % (sections.TITLES[name], failure))
+        rows.append({"id": name, "title": sections.TITLES[name], "path": path, "exists": (project / path).is_file(),
+                     "rendered": stamp.get("rendered_at"), "passages": standing})
+    return rows
+
+
+def _outline_row(project):
+    from wayline import outline
+    stamp = outline.read_stamp(project) or {}
+    return {"id": "outline", "title": "The outline", "path": OUTLINE_MD, "exists": (project / OUTLINE_MD).is_file(),
+            "rendered": stamp.get("rendered_at")}
+
+
+def _references(project, problems):
+    """References as code reads it now: its numbered entries and its Not yet resolved rows, each with its state."""
+    from wayline import references, sections
+    path = "%s/%s" % (RESEARCH, sections.section_path(sections.REFERENCES))
+    try:
+        view = references.references_view(project)
+    except (OSError, ValueError) as failure:
+        problems.append("References: %s" % failure)
+        view = {"entries": [], "unresolved": []}
+    entries = []
+    for number, record in enumerate(view["entries"], start=1):
+        metadata = record.get("metadata") or {}
+        entries.append({"number": number, "slug": record.get("slug"), "title": metadata.get("title") or record.get("slug"),
+                        "authors": list(metadata.get("authors") or [])[:3], "more_authors": len(metadata.get("authors") or []) > 3,
+                        "year": metadata.get("year"), "venue": metadata.get("container"),
+                        "identifier": references.identifier_of(record)})
+    unresolved = []
+    for work, state, detail in view["unresolved"]:
+        record = work.record or {}
+        query = record.get("query") or {}
+        unresolved.append({"named": work.named, "slug": work.slug, "state": state, "detail": detail,
+                           "title": (record.get("metadata") or {}).get("title") or (query.get("value") if query.get("kind") == "title" else None)})
+    return {"path": path, "exists": (project / path).is_file(), "entries": entries, "unresolved": unresolved}
+
+
+def _code_repository(project, events, problems):
+    """The code repository: its remote's link, its visibility, and the last push code made, from `harness.json` and the
+    journal's last `code_pushed`; `settled` is False until the setup question made a remote."""
+    from wayline import code_repository
+    try:
+        record = code_repository.record(project)
+    except (ProjectError, OSError, ValueError) as failure:
+        problems.append("harness.json: %s" % failure)
+        record = {}
+    remote = record.get("remote") or {}
+    pushed = code_repository.last_push(project, events)
+    return {"settled": bool(remote), "repository": remote.get("repository"), "url": remote.get("url"),
+            "visibility": record.get("visibility"), "shape": record.get("shape"), "license": record.get("license"),
+            "last_push": pushed}
+
+
+def _methods(project):
+    """Methods' generated part as its last render wrote it (`methods_inventory.json`): the parameter table, each row with
+    whose reason it shows, and each Methods method with no code behind it, by the passage naming it."""
+    from wayline import methods_inventory
+    record = methods_inventory.read_record(project)
+    return {"parameters": [dict(row) for row in record.get("parameters") or []],
+            "no_code": [{key: entry.get(key) for key in ("passage", "heading", "named", "why")} for entry in record.get("not_reproduced") or []]}
+
+
+# How often Paper's and Inherited's tags move with no file moving, so a reference's give-up time reaches the page.
+REFERENCES_TICK_S = 60
+
+
+def paper_snapshot(project):
+    """What Paper reads outside the ledger's snapshot: the section files (`section_snapshot`), and the minute: a retried
+    reference gives up at the moment its flag's days run out, with no file moving, so the tag moves each minute and
+    References shows it given up within one."""
+    import time
+    return dict(section_snapshot(project), minute=int(time.time() // REFERENCES_TICK_S))
+
+
+def section_snapshot(project):
+    """The `(mtime_ns, size)` of each section file, which the ledger's snapshot does not scan: an owner's edit of one
+    moves no ledger file until the next render takes it in."""
+    from wayline import sections
+    found = {}
+    try:
+        with os.scandir(Path(project) / RESEARCH / sections.SECTIONS_DIR) as entries:
+            for entry in entries:
+                if not entry.name.startswith(".") and entry.is_file(follow_symlinks=False):
+                    stamp = entry.stat()
+                    found[entry.name] = (stamp.st_mtime_ns, stamp.st_size)
+    except OSError:
+        pass
+    return found
+
+
+def paper_view(project):
+    """The Paper view: the five sections and the outline, each opening in the viewer, References with its Not yet
+    resolved rows, the code repository, and Methods' parameter table and the methods with no code behind them."""
+    project = Path(project).resolve()
+    problems = []
+    events = _events(project, problems)
+    return {
+        "sections": _section_rows(project, problems),
+        "outline": _outline_row(project),
+        "references": _references(project, problems),
+        "code_repository": _code_repository(project, events, problems),
+        "methods": _methods(project),
+        "problems": problems,
+    }
+
+
+# --- Inherited: what a start midway brought, and what became of it ------------------------------------------------
+
+
+def _documents(project, problems):
+    from wayline import documents
+    try:
+        return documents.read_documents(project)
+    except (OSError, ValueError) as failure:
+        problems.append("documents.json: %s" % failure)
+        return []
+
+
+def _document_count(project, problems):
+    """How many documents the project holds, or None when `documents.json` cannot be read: not known is not none, so the
+    page still offers Inherited, which says why."""
+    found = []
+    held = _documents(project, found)
+    problems.extend(found)
+    return None if found else len(held)
+
+
+def _document_path(project, document):
+    """What a document opens, `(path, focus)`: its converted `text.md`, or `DOCUMENTS.md` at its entry for one kept as given."""
+    from wayline import documents
+    path = "%s/%s/%s/text.md" % (RESEARCH, documents.DOCUMENTS_DIR, document["id"])
+    if (project / path).is_file():
+        return path, None
+    return "%s/%s" % (RESEARCH, documents.DOCUMENTS_MD), document["id"]
+
+
+def _document_rows(project, held):
+    rows = []
+    for document in held:
+        path, focus = _document_path(project, document)
+        rows.append({"id": document["id"], "title": document.get("title"), "kind": document.get("kind"), "version": document.get("version"),
+                     "converted": document.get("converted"), "path": path, "focus": focus,
+                     "headings": [{key: heading.get(key) for key in ("level", "locator", "text")} for heading in document.get("headings") or []]})
+    return rows
+
+
+def _concern_rows(project, problems):
+    """Each concern with its sources, verbatim, and its standing: its place, its status, and the answer or the reason."""
+    from wayline import concerns
+    try:
+        held = concerns.read_concerns(project)
+    except (OSError, ValueError) as failure:
+        problems.append(str(failure))
+        return []
+    rows = []
+    for concern in held:
+        sources = [{key: source.get(key) for key in ("critique", "locator", "text")} for source in concern.get("sources") or []]
+        rows.append({"id": concern["id"], "text": sources[0]["text"] if sources else None, "sources": sources,
+                     "targets": list(concern.get("targets") or []), "place": concern.get("place"),
+                     "objectives": list(concern.get("objectives") or []), "status": concern.get("status"),
+                     "answer": concern.get("answer"), "reason": concern.get("reason")})
+    return rows
+
+
+def _words(text):
+    """A passage's words, its tags taken off: what a row shows."""
+    from wayline import provenance
+    return " ".join(provenance.strip_tags(str(text or "")).split())
+
+
+def _claim_rows(project, passages, problems):
+    """The inherited claims standing now: each Results claim of an inherited result with its standing, its verdict, and
+    its route (`verification.claim_rows`), followed wherever it went, then the other sections' claims, which no
+    verification reaches, with their standing. Each once, by the passage that holds it now, which its link opens."""
+    from wayline import sections, verification
+    try:
+        followed = verification.claim_rows(project)
+    except (OSError, ValueError) as failure:
+        problems.append("the inherited claims: %s" % failure)
+        return []
+    rows = []
+    for row in followed:
+        passage = passages.get(row["current"]) or {}
+        rows.append({"id": row["current"], "claim": row["claim"], "section": passage.get("section") or sections.RESULTS,
+                     "heading": passage.get("heading") or row["heading"], "result": row["heading"], "text": _words(passage.get("text")),
+                     "standing": row["standing"], "reason": row["reason"], "verdict": row["verdict"], "route": row["route"],
+                     "ticket": row["ticket"], "by": row["by"]})
+    listed = {row["id"] for row in rows}
+    for section in sections.INHERITED:
+        if section == sections.RESULTS:
+            continue
+        try:
+            items = sections.section_items(project, section)
+            standing = {item.get("id") for item in sections.arrange(items).current()}
+        except (OSError, ValueError) as failure:
+            problems.append("%s: %s" % (sections.TITLES[section], failure))
+            continue
+        for item in items:
+            if (item.get("id") in standing and item.get("id") not in listed and sections.is_inherited(item)
+                    and item.get("standing") in sections.STANDINGS):
+                rows.append({"id": item["id"], "claim": item["id"], "section": section, "heading": item.get("heading"), "result": None,
+                             "text": _words(item.get("text")), "standing": item["standing"],
+                             "reason": item.get("reason") if item["standing"] == sections.UNVERIFIABLE else None,
+                             "verdict": None, "route": None, "ticket": None, "by": None})
+    return rows
+
+
+def pair_id(first, second):
+    """A pair's item id, `P5+P11`: the two claims in the order the check read them."""
+    return "%s+%s" % (first, second)
+
+
+def _pairs(project, passages, problems):
+    """`(contradictions, merges)` of the repeated-claims check (ticket 95), each pair by its id with both claims' words."""
+    from wayline import repeats
+    try:
+        contradicting, merged = repeats.contradictions(project), repeats.merges(project)
+    except (OSError, ValueError) as failure:
+        problems.append("the repeated claims: %s" % failure)
+        return [], []
+
+    def row(entry):
+        texts = [_words((passages.get(entry[side]) or {}).get("text")) for side in ("a", "b")]
+        return dict(entry, id=pair_id(entry["a"], entry["b"]), texts=texts)
+
+    return [row(entry) for entry in contradicting], [row(entry) for entry in merged]
+
+
+def _material(project, problems):
+    """The missing material each inherited result needs, with the owner's (or the decider's) reply, or none yet."""
+    from wayline import verification
+    try:
+        held = verification.read_record(project)["material"]
+    except (OSError, ValueError) as failure:
+        problems.append(str(failure))
+        return []
+    return [{key: item.get(key) for key in ("id", "heading", "kind", "item", "licensed", "rebuild", "reply", "by", "found_by")}
+            for item in held]
+
+
+def inherited_view(project):
+    """The Inherited view, or None for a project with no documents: the documents and their headings, the concerns, the
+    inherited claims with their standing, verdict, and route, the unverifiable ones with their reasons, the contradicting
+    pairs, the setup's merges, and the missing material with the owner's replies."""
+    from wayline import sections
+    project = Path(project).resolve()
+    problems = []
+    held = _documents(project, problems)
+    if not held and not problems:
+        return None
+    try:  # read once for the claims and the pairs
+        passages = {item.get("id"): item for item in sections.read_passages(project)}
+    except (OSError, ValueError) as failure:
+        problems.append("passages.jsonl: %s" % failure)
+        passages = {}
+    claims = _claim_rows(project, passages, problems)
+    contradictions, merges = _pairs(project, passages, problems)
+    return {
+        "documents": _document_rows(project, held),
+        "concerns": _concern_rows(project, problems),
+        "claims": claims,
+        "unverifiable": [{key: claim[key] for key in ("id", "section", "heading", "text", "reason")} for claim in claims
+                         if claim["standing"] == "unverifiable"],
+        "contradictions": contradictions,
+        "merges": merges,
+        "material": _material(project, problems),
+        "problems": problems,
+    }
+
+
 # --- "Waiting on you" and the projects page ----------------------------------------------------------------------
 
 # The account's lines that name a ticket, which the strip links to: `- Decision ticket 12 ...`, `- Ticket 7, ...`.
@@ -364,7 +662,8 @@ _SUMMARIES = {}
 
 
 def project_summary(project, snapshot=None):
-    """The projects page's row for one current project: the account's standing line, the run state, the waiting count.
+    """The projects page's row for one current project: the account's standing line, the run state, the waiting count,
+    and how many documents it holds (the page offers Inherited only for a project with one, ticket 111).
 
     `snapshot` is the project's ledger snapshot: the account's part is read again only once it moved. Whether a
     conductor holds the project is asked at every call, since no file moves when one dies."""
@@ -374,12 +673,13 @@ def project_summary(project, snapshot=None):
         problems = []
         events = _events(project, problems)
         view = _account(project, problems, events) or {}
-        held = (snapshot, {"standing": view.get("stands"), "runs": _runs(events), "waiting": view.get("waiting"), "problems": problems})
+        held = (snapshot, {"standing": view.get("stands"), "runs": _runs(events), "waiting": view.get("waiting"),
+                           "documents": _document_count(project, problems), "problems": problems})
         if snapshot is not None:
             _SUMMARIES[str(project)] = held
     summary = held[1]
     return {"standing": summary["standing"], "run_state": dict(summary["runs"], conductor=conductor_alive(project)),
-            "waiting": summary["waiting"], "problems": list(summary["problems"])}
+            "waiting": summary["waiting"], "documents": summary["documents"], "problems": list(summary["problems"])}
 
 
 _ASKED = re.compile(r"#([1-9][0-9]*)\Z")
@@ -469,13 +769,124 @@ def item_view(project, item):
         return _item("account", RUN_VIEW, item, "The account", ACCOUNT_MD) if (project / ACCOUNT_MD).is_file() else None
     if item.isdigit():
         return _ticket_item(project, int(item))
-    if item.startswith("O"):
-        return _objective_item(project, item)
+    if item in _PAPER_FILES:
+        return _paper_file_item(project, item)
+    resolve = _BY_LETTER.get(item[0])
+    if resolve is not None:
+        return resolve(project, item)
     if _PLOT.match(item):
         return _plot_item(project, item)
     if _REPORT.match(item):
         return _report_item(project, item)
     return _result_item(project, item)
+
+
+# --- Paper's and Inherited's items (ticket 111) ---------------------------------------------------------------------
+
+# What a title shows of a passage or a concern before it is cut: the viewer's bar is one line.
+TITLE_CHARS = 160
+
+
+def _clip(text):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= TITLE_CHARS else text[:TITLE_CHARS - 1].rstrip() + "…"
+
+
+def _paper_files():
+    from wayline import sections
+    files = {name: ("section", sections.TITLES[name], "%s/%s" % (RESEARCH, sections.section_path(name))) for name in sections.SECTIONS}
+    files["outline"] = ("outline", "The outline", OUTLINE_MD)
+    return files
+
+
+def _paper_file_item(project, name):
+    kind, title, path = _PAPER_FILES[name]
+    return _item(kind, PAPER_VIEW, name, title, path) if (project / path).is_file() else None
+
+
+def _passage_item(project, identifier):
+    """A passage opens its section at its heading: an inherited claim over Inherited with its standing, any other over Paper;
+    a pair `P5+P11` of the repeated-claims check opens both claims side by side."""
+    from wayline import sections
+    if "+" in identifier:
+        return _pair_item(project, identifier)
+    passages = sections.read_passages(project)
+    passage = next((item for item in passages if item.get("id") == identifier), None)
+    if passage is None:
+        return None
+    claim = sections.is_inherited(passage) and passage.get("standing") in sections.STANDINGS
+    status, shown = (passage.get("standing") if claim else None), passage
+    later = [item for item in passages + sections.read_findings(project) if item.get("replaces") == identifier]
+    if later:
+        # Replaced: by this project's evidence (a verdict on an inherited claim), or by a later word. It opens where the
+        # replacement stands, unless a withdrawal took it out of the section.
+        replacement = next((item for item in later if not sections.is_inherited(item) and item.get("evidence")), later[-1])
+        status = "verified" if claim and replacement.get("evidence") and not sections.is_inherited(replacement) else "replaced"
+        if not replacement.get("withdrawn"):
+            shown = dict(replacement, section=replacement.get("section") or sections.RESULTS)
+    else:
+        replacement = None
+    return _item("claim" if claim else "passage", INHERITED_VIEW if claim else PAPER_VIEW, identifier, _clip(_words(passage.get("text"))),
+                 "%s/%s" % (RESEARCH, sections.section_path(shown.get("section"))), focus=shown.get("heading"), status=status,
+                 replaced_by=(replacement or {}).get("id"))
+
+
+# A pair's kind by what came of it: a merge (standing, or split by the owner since) or a contradiction (or one dismissed).
+_PAIR_KINDS = {"merged": "merge", "split": "merge", "split_late": "merge", "contradiction": "contradiction", "dismissed": "contradiction"}
+
+
+def _pair_item(project, identifier):
+    from wayline import repeats, sections
+    first, second = identifier.split("+")
+    try:
+        held = repeats.read_record(project)["pairs"]
+    except (OSError, ValueError):  # the Inherited view says why; a link to a pair it cannot read names nothing
+        return None
+    entry = next((entry for entry in held if (entry["a"], entry["b"]) == (first, second)), None)
+    if entry is None:
+        return None
+    passages = {item.get("id"): item for item in sections.read_passages(project)}
+    sides = []
+    for side in (first, second):
+        passage = passages.get(side) or {}
+        sides.append({"id": side, "section": passage.get("section"), "heading": passage.get("heading"), "text": _words(passage.get("text"))})
+    kind = _PAIR_KINDS.get(entry["outcome"], "pair")
+    fields = [["why", entry.get("why")], ["outcome", entry["outcome"]]]
+    if kind == "merge":
+        fields += [["kept", entry.get("text")], ["merged into", entry.get("passage")]]
+    title = "Merged at setup" if kind == "merge" else "Contradicting claims" if kind == "contradiction" else "Claims compared"
+    return _item(kind, INHERITED_VIEW, identifier, title, None, status=entry["outcome"], sides=sides,
+                 fields=[pair for pair in fields if pair[1]])
+
+
+def _document_item(project, identifier):
+    document = next((document for document in _documents(project, []) if document.get("id") == identifier), None)
+    if document is None:
+        return None
+    path, focus = _document_path(project, document)
+    return _item("document", INHERITED_VIEW, identifier, document.get("title"), path, focus=focus, status=document.get("kind"))
+
+
+def _concern_item(project, identifier):
+    from wayline import concerns
+    row = next((row for row in _concern_rows(project, []) if row["id"] == identifier), None)
+    if row is None:
+        return None
+    return _item("concern", INHERITED_VIEW, identifier, _clip(row["text"]), "%s/%s" % (RESEARCH, concerns.CONCERNS_MD), focus=identifier,
+                 status=row["status"])
+
+
+# The heading `VERIFICATIONS.md` lists the missing material under, which a missing item's link scrolls to.
+MISSING_MATERIAL = "Missing material"
+
+
+def _material_item(project, identifier):
+    from wayline import verification
+    found = next((item for item in _material(project, []) if item["id"] == identifier), None)
+    if found is None:
+        return None
+    return _item("material", INHERITED_VIEW, identifier, found["item"], "%s/%s" % (RESEARCH, verification.VERIFICATIONS_MD),
+                 focus=MISSING_MATERIAL, status=found["reply"] or "waiting")
 
 
 def _ticket_item(project, number):
@@ -532,4 +943,9 @@ def _plot_item(project, identifier):
                      caption={"purpose": entry.get("purpose"), "data": entry.get("data"), "shows": entry.get("shows")})
     return _item("plot", RESEARCH_VIEW, identifier, entry.get("chart_type") or identifier, entry.get("png"), status=plot.get("status"),
                  caption={"purpose": entry.get("purpose"), "data": entry.get("data"), "shows": entry.get("shows")})
+
+
+# How `item_view` resolves an id past the words and the tickets: a section's or the outline's name, else by its letter.
+_PAPER_FILES = _paper_files()
+_BY_LETTER = {"O": _objective_item, "P": _passage_item, "D": _document_item, "K": _concern_item, "M": _material_item}
 

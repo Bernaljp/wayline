@@ -35,15 +35,15 @@ Not part of this ticket:
 
 It blocks 113.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#258](https://github.com/Bernaljp/wayline/issues/258) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: Paper and Inherited), 8 (the dashboard); milestone M8 criterion 16; user story 169.
 
-- [ ] `#/<project>/paper` lists the sections and the outline (each opening in the viewer), References' entries and Not yet resolved rows, the code repository's link, visibility, and last push, Methods' parameter table, and the methods with no code.
-- [ ] `#/<project>/inherited` is offered only for a project with documents and lists every record above. Each item has its link: a document, a concern (K), an inherited claim, a contradicting pair, a merge, or a missing-material item.
-- [ ] Each item links by `#/<project>/<id>` and opens in the popup viewer over its view.
+- [x] `#/<project>/paper` lists the sections and the outline (each opening in the viewer), References' entries and Not yet resolved rows, the code repository's link, visibility, and last push, Methods' parameter table, and the methods with no code.
+- [x] `#/<project>/inherited` is offered only for a project with documents and lists every record above. Each item has its link: a document, a concern (K), an inherited claim, a contradicting pair, a merge, or a missing-material item.
+- [x] Each item links by `#/<project>/<id>` and opens in the popup viewer over its view.
 - [ ] Both views work at phone width with no sideways scroll, checked live with 110's pass and recorded in `docs/verification/m8.md`.
-- [ ] Tests, over HTTP against a fixture ledger of a start midway: each view's JSON, the Inherited view absent with no documents, and each item's link.
-- [ ] `python -m unittest` passes.
+- [x] Tests, over HTTP against a fixture ledger of a start midway: each view's JSON, the Inherited view absent with no documents, and each item's link.
+- [x] `python -m unittest` passes.
