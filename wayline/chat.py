@@ -79,7 +79,7 @@ CARD_FIELDS = {
     "stop_when": (("stop_when",), ()),
     "budget": (("name", "hours"), ()),
     "consolidate": (("section",), ()),
-    "paper": ((), ("venue",)),
+    "paper": ((), ()),
     "public": ((), ()),
 }
 # A confirmed command whose irreversible part arrives on stdin, so no word of the command line says it: making the
@@ -120,7 +120,8 @@ Return through the structured output (`chat_reply`):
   their args: `run` {} (start the run, which spends the budgets); `stop_when` {"stop_when": "objectives" or
   "frontier" or ["O1", ...]}; `budget` {"name": "wallclock_hours" or "gpu_hours", "hours": a number or null for no
   limit}; `consolidate` {"section": "introduction", "results", "discussion", "methods", or "references"};
-  `paper` {"venue": "<slug>"}; `public` {} (make the code repository public).
+  `paper` {} (the paper order, what `wayline paper --yes` does: the paper has no venue, a compilation names one);
+  `public` {} (make the code repository public).
 
 Each message carries, in brackets before the owner's words, the view of the dashboard they were looking at and the
 item open there, so "drop this one" means that item."""
@@ -675,8 +676,6 @@ def card_problems(card):
         from wayline.sections import SECTIONS  # the sections module reads the ledger; only a card needs it here
         if args["section"] not in SECTIONS:
             problems.append("the section is one of %s, got %r" % (", ".join(SECTIONS), args["section"]))
-    elif action == "paper" and args.get("venue") is not None and not (isinstance(args["venue"], str) and args["venue"].strip()):
-        problems.append("the venue is a slug, got %r" % (args["venue"],))
     return problems
 
 

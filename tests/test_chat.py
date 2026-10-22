@@ -192,7 +192,7 @@ class LaunchRequestTest(ChatCase):
 
     def test_no_confirmed_verb_is_allowed_and_each_is_denied_by_name(self):
         request = self.request()
-        for verb in ("paper --venue", "consolidate", "run --detach", "switch --stop-when", "switch --budget", "promote skill"):
+        for verb in ("paper --yes", "consolidate", "run --detach", "switch --stop-when", "switch --budget", "promote skill"):
             with self.subTest(verb=verb):
                 self.assertNotIn("Bash(wayline %s:*)" % verb, request.allowed_tools)
                 self.assertIn("Bash(wayline %s:*)" % verb, request.disallowed_tools)
@@ -212,7 +212,7 @@ class LaunchRequestTest(ChatCase):
         self.assertTrue(validate(dict(harness, chat={"model": "opus"}), schema))
 
 
-ORDER = {"action": "paper", "args": {"venue": "neurips"}, "what": "Write the paper's parts for NeurIPS and compile them.",
+ORDER = {"action": "paper", "args": {}, "what": "Order the paper: rest the run, draw the changed results, and write its parts.",
          "cost": "About $4 of model time."}
 
 
@@ -254,7 +254,7 @@ class CardTest(ChatCase):
         record = self.say("order the paper")
         ran = []
         settled, outcome = chat.settle_card(self.project, record["id"], "confirm", lambda action, args: ran.append((action, args)) or "done")
-        self.assertEqual((settled["card"]["state"], outcome, ran), ("confirmed", "done", [("paper", {"venue": "neurips"})]))
+        self.assertEqual((settled["card"]["state"], outcome, ran), ("confirmed", "done", [("paper", {})]))
         with self.assertRaises(chat.ChatError):
             chat.settle_card(self.project, record["id"], "confirm", lambda action, args: ran.append(action))
         self.assertEqual(len(ran), 1)
@@ -274,12 +274,12 @@ class CardTest(ChatCase):
         record = self.say("order the paper")
 
         def refuse(action, args):
-            raise ValueError("no venue named neurips")
+            raise ValueError("paper order 1 is open; a new order waits until its paper is composed")
 
         with self.assertRaises(ValueError):
             chat.settle_card(self.project, record["id"], "confirm", refuse)
         card = chat.read_message(self.project, record["id"])["card"]
-        self.assertEqual((card["state"], card["error"]), ("open", "no venue named neurips"))
+        self.assertEqual((card["state"], card["error"]), ("open", "paper order 1 is open; a new order waits until its paper is composed"))
 
 
 class PacingTest(ChatCase):
@@ -330,7 +330,7 @@ class CommandGuardTest(ChatCase):
         for argv in (["switch", "--budget", "gpu_hours=none", "--project", str(self.project)],
                      ["switch", "--project", str(self.project), "--budget=gpu_hours=none"],
                      ["switch", "--autonomy", "autonomous", "--stop-when", "frontier", "--project", str(self.project)],
-                     ["paper", "--venue", "neurips", "--project", str(self.project)],
+                     ["paper", "--yes", "--project", str(self.project)],
                      ["consolidate", "results", "--yes", "--project", str(self.project)],
                      ["run", "--detach", "--project", str(self.project)]):
             with self.subTest(argv=argv):

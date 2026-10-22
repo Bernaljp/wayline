@@ -1954,8 +1954,9 @@ CARD_ACTIONS = ("run", "stop_when", "budget", "consolidate", "paper", "public")
 
 def _card_action(name, project, body, server, on_failure=None):
     """`run` starts the run as `run --detach` does; `stop_when` and `budget` are `switch --stop-when` and `--budget`;
-    `consolidate` and `paper` start the consolidation and the paper on a thread of their own and answer 202 at once,
-    since each runs model sessions; `public` makes the code repository public, the owner's word."""
+    `consolidate` starts the consolidation on a thread of its own and answers 202 at once, since it runs model sessions;
+    `public` makes the code repository public, the owner's word. A `paper` card is the paper order (ticket 115), which
+    `run_action` takes before the cards: it journals the order and starts a conductor, so it answers at once."""
     from wayline import stopping  # the stopping rule reads the objectives, which no other action needs
     if name == "stop_when":
         fields = _fields(body, ("stop_when",))
@@ -1977,9 +1978,7 @@ def _card_action(name, project, body, server, on_failure=None):
         from wayline import consolidation
         section = _string(_fields(body, ("section",)), "section")
         return _on_a_thread(server, project, name, lambda: consolidation.consolidate(project, section), on_failure)
-    from wayline import paper
-    venue = _string(_fields(body, (), ("venue",)), "venue", required=False)
-    return _on_a_thread(server, project, name, lambda: paper.write_paper(project, venue), on_failure)
+    raise DashboardError("no card action %r; the cards' actions are %s" % (name, ", ".join(CARD_ACTIONS)))
 
 
 def _start_run(project):
