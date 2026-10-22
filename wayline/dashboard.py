@@ -139,10 +139,14 @@ JSON_TYPE = "application/json; charset=utf-8"
 TEXT_TYPE = "text/plain; charset=utf-8"
 
 # The actions of Implementation Decisions 8 this dashboard takes (ticket 35), in the order the spec lists them.
-# `mark` is the marks view's (ticket 112): the one action decision 17 adds for it.
+# `mark` is the marks view's (ticket 112): the one action decision 17 adds for it. The last six are what a card of the
+# chat runs on the owner's Confirm (ticket 114): the routing table's confirmed verbs, each the function its verb calls.
 ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake", "feedback",
-           "paper", "mark")
+           "mark", "run", "stop_when", "budget", "consolidate", "paper", "public")
 ACTION_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/actions/(?P<name>[^/]+)/?$")
+# The chat (ticket 114): a message posted, and the owner's Confirm or Not now on one message's card.
+CHAT_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/chat/?$")
+CARD_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/chat/(?P<number>[1-9][0-9]*)/card/?$")
 # The header an intake drop names its file in, and the largest JSON body any other action reads.
 FILENAME_HEADER = "X-Wayline-Filename"
 JSON_BODY_MAX = 64 * 1024
@@ -1219,6 +1223,9 @@ class DashboardServer(ThreadingHTTPServer):
         self.stopping = threading.Event()
         # Held while a switch waits for a draining conductor, so a second switch is refused rather than queued behind it.
         self.switching = threading.Lock()
+        # The long actions a card runs on a thread (a consolidation, the paper), by project and name: one of each at a time.
+        self.working = set()
+        self.working_lock = threading.Lock()
         super().__init__(address, handler)
 
     def shutdown(self):
@@ -1259,6 +1266,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/marks/?$"), "api_marks"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/waiting/?$"), "api_waiting"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/items/(?P<item>[^/]+)/?$"), "api_item"),
+        (CHAT_ROUTE, "api_chat"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/card/?$"), "api_paper_card"),
         (ACTION_ROUTE, "api_action_get"),
     )
@@ -1295,6 +1303,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """An action (ticket 35): the token in its header, a body within its cap, then the verb's own function."""
         parsed = urlparse(self.path)
         self.carry_token = False
+        for route, write in ((CHAT_ROUTE, self._chat_post), (CARD_ROUTE, self._card_post)):
+            found = route.match(parsed.path)
+            if found:
+                return self._chat_write(write, found)
         match = ACTION_ROUTE.match(parsed.path)
         if match is None:
             self.close_connection = True  # the body is not read, so the connection cannot carry another request
@@ -1323,6 +1335,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except OSError as failure:
             return self._action_reply(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "action": name, "error": str(failure)})
         return self._action_reply(status, dict(report, ok=True, action=name))
+
+    def _chat_write(self, write, match):
+        """A write of the chat (ticket 114), held to an action's rules: the token in its header, a JSON body within its cap."""
+        name = "chat"
+        if not self._action_authorized():
+            self.close_connection = True
+            return self._action_reply(HTTPStatus.FORBIDDEN, {
+                "ok": False, "action": name,
+                "error": "the chat needs the dashboard's token in the %s header; open the URL wayline serve printed, which "
+                         "carries it (it is kept in %s)" % (TOKEN_HEADER, dashboard_path())})
+        body = self._action_body(name)
+        if body is None:
+            return None
+        try:
+            project = self._project(match.group("project"))
+            refusal = old_project_problem(project)
+            if refusal is not None:
+                raise DashboardError(refusal)
+            status, report = write(project, body, match)
+        except ActionConflict as failure:
+            return self._action_reply(HTTPStatus.CONFLICT, {"ok": False, "action": name, "error": str(failure)})
+        except ValueError as failure:  # a message the chat cannot take, a card settled already, or the action's own refusal
+            return self._action_reply(HTTPStatus.BAD_REQUEST, {"ok": False, "action": name, "error": str(failure)})
+        except OSError as failure:
+            return self._action_reply(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "action": name, "error": str(failure)})
+        return self._action_reply(status, dict(report, ok=True, action=name))
+
+    def _chat_post(self, project, body, match):
+        """One message from the owner, queued, and the queue answered on a thread while it lasts: 202 with the record."""
+        from wayline import chat  # the chat reads the skill's routing table, which no view needs
+        fields = _fields(body, ("text",), ("view", "item"))
+        record = chat.post(project, _string(fields, "text"), view=_string(fields, "view", required=False),
+                           item=_string(fields, "item", required=False))
+        chat.start(project)
+        return HTTPStatus.ACCEPTED, {"message": record}
+
+    def _card_post(self, project, body, match):
+        """Confirm or Not now on one message's card: Confirm runs the card's action as the dashboard's own, through
+        `ACTIONS`, never from the session that proposed it."""
+        from wayline import chat
+        fields = _fields(body, ("choice",))
+        server, headers, number = self.server, self.headers, int(match.group("number"))
+
+        def run(action, args):
+            if action not in ACTIONS:
+                raise DashboardError("a card's action %r is no action of the dashboard" % action)
+            status, report = run_action(action, project, json.dumps(args).encode("utf-8"), headers, server,
+                                        on_failure=lambda failure: chat.card_failed(project, number, failure))
+            return {"status": int(status), "action": action, "report": report}
+
+        record, outcome = chat.settle_card(project, number, _string(fields, "choice"), run)
+        return HTTPStatus.OK, {"message": record, "outcome": outcome}
 
     def _action_authorized(self):
         """Whether this request may act: the token in the `X-Wayline-Token` header, and nothing else stands in for it.
@@ -1612,6 +1676,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                                                ensure_ascii=False).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-cache"),))
         return self._json(found, tag)
 
+    def api_chat(self, query, project):
+        """The chat's conversation (ticket 114), tagged by its messages and a running session's stream. A queue no thread
+        here answers (the dashboard restarted) is taken up first, so the poll that finds it starts it again."""
+        from wayline import chat
+        path = self._project(project)
+        records = chat.read_messages(path)
+        if old_project_problem(path) is None and chat.start(path, records=records):
+            records = chat.read_messages(path)  # what the start changed: a recovered message, or the next one running
+        tag = etag("chat", project, chat.snapshot(path, records))
+        if self._not_modified(tag):
+            return None
+        return self._json(chat.thread_view(path, records), tag)
+
     def api_paper_card(self, query, project):
         """The paper order's card (ticket 115): the readiness list and the cost, built by code with no model call, which
         the `paper` action's Confirm acts on; tagged by the ledger it is read from."""
@@ -1800,7 +1877,7 @@ def _string(fields, key, required=True):
     return value
 
 
-def run_action(name, project, body, headers=None, server=None):
+def run_action(name, project, body, headers=None, server=None, on_failure=None):
     """Take one action on one project: `(status, report)`, the report being what the verb's function returned.
 
     `body` is the raw request body. The functions are the ones the verbs call, told `by="dashboard"`
@@ -1866,7 +1943,110 @@ def run_action(name, project, body, headers=None, server=None):
     if name == "switch":
         _fields(body)
         return _switch(project, server)
+    if name in CARD_ACTIONS:
+        return _card_action(name, project, body, server, on_failure)
     raise DashboardError("no action %r; the actions are %s" % (name, ", ".join(ACTIONS)))
+
+
+# The actions a chat's card runs on the owner's Confirm (ticket 114), each the function its confirmed verb calls.
+CARD_ACTIONS = ("run", "stop_when", "budget", "consolidate", "paper", "public")
+
+
+def _card_action(name, project, body, server, on_failure=None):
+    """`run` starts the run as `run --detach` does; `stop_when` and `budget` are `switch --stop-when` and `--budget`;
+    `consolidate` starts the consolidation on a thread of its own and answers 202 at once, since it runs model sessions;
+    `public` makes the code repository public, the owner's word. A `paper` card is the paper order (ticket 115), which
+    `run_action` takes before the cards: it journals the order and starts a conductor, so it answers at once."""
+    from wayline import stopping  # the stopping rule reads the objectives, which no other action needs
+    if name == "stop_when":
+        fields = _fields(body, ("stop_when",))
+        return HTTPStatus.OK, stopping.set_stop_when(project, fields["stop_when"], by="dashboard")
+    if name == "budget":
+        fields = _fields(body, ("name", "hours"))
+        hours = fields["hours"]
+        if hours is not None and (isinstance(hours, bool) or not isinstance(hours, (int, float))):
+            raise DashboardError("hours is a number of hours or null for no limit, got %r" % (hours,))
+        return HTTPStatus.OK, stopping.set_budget(project, _string(fields, "name"), hours, by="dashboard")
+    if name == "public":
+        from wayline import code_repository
+        _fields(body)
+        return HTTPStatus.OK, {"code_repository": code_repository.make_public(project, by="owner")}
+    if name == "run":
+        _fields(body)
+        return _start_run(project)
+    if name == "consolidate":
+        from wayline import consolidation
+        section = _string(_fields(body, ("section",)), "section")
+        return _on_a_thread(server, project, name, lambda: consolidation.consolidate(project, section), on_failure)
+    raise DashboardError("no card action %r; the cards' actions are %s" % (name, ", ".join(CARD_ACTIONS)))
+
+
+def _start_run(project):
+    """Start the run on `project` as `wayline run --detach` does, after the refusals a run makes at its start."""
+    from wayline import conductor, tick  # the conductor imports most of the harness; only this action needs it
+    problems = conductor.refuse_to_start(project)
+    if problems:
+        raise DashboardError("; ".join(problems))
+    holder = conductor_holder(project)
+    if holder is not None:
+        raise ActionConflict("a conductor (pid %s) already runs on this project" % holder.get("pid", "?"))
+    try:
+        said = tick.launch_detached(project, [])
+    except tick.UnitError as failure:
+        raise DashboardError(str(failure)) from None
+    return HTTPStatus.OK, {"detached": said}
+
+
+_WORKING = set()
+_WORKING_LOCK = threading.Lock()
+
+
+def _on_a_thread(server, project, name, work, on_failure=None):
+    """Run `work` on a thread of its own, one of each `name` at a time per project, and answer once it has ended or
+    `SWITCH_REPLY_S` has passed: 200 when it ended, its own refusal (a section with nothing to consolidate, a venue with no
+    guidelines) raised as the verb would raise it, else 202 with what started.
+
+    What it writes lands in the ledger as the verb's would, and the views read it there. A failure after the reply has
+    gone is printed where the server's log is and handed to `on_failure`, which keeps it on the card that started it."""
+    working = getattr(server, "working", _WORKING)
+    lock = getattr(server, "working_lock", _WORKING_LOCK)
+    key = (str(project), name)
+    with lock:
+        if key in working:
+            raise ActionConflict("a %s is already running on this project; it ends on its own" % name)
+        working.add(key)
+
+    outcome = {"replied": False}
+    reply_lock = threading.Lock()
+
+    def run():
+        try:
+            outcome["report"] = work()
+        except Exception as failure:
+            with reply_lock:
+                outcome["failure"] = failure
+                late = outcome["replied"]
+            if late:
+                print("wayline serve: the %s on %s failed: %s" % (name, project, failure), file=sys.stderr, flush=True)
+                if on_failure is not None:
+                    try:
+                        on_failure(failure)
+                    except Exception as kept:  # the card could not be told; the log line above says it
+                        print("wayline serve: the failure of the %s could not be kept: %s" % (name, kept), file=sys.stderr, flush=True)
+        finally:
+            with lock:
+                working.discard(key)
+
+    thread = threading.Thread(target=run, name="wayline-%s" % name, daemon=True)
+    thread.start()
+    thread.join(SWITCH_REPLY_S)
+    with reply_lock:
+        outcome["replied"] = True
+        if not thread.is_alive():
+            if "failure" in outcome:
+                raise outcome["failure"]
+            return HTTPStatus.OK, {"done": name}
+    return HTTPStatus.ACCEPTED, {"started": name}
 
 
 def _mark(project, fields):

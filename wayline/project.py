@@ -82,7 +82,9 @@ GITIGNORE_ENTRIES = (".worktrees/", "results/", "research/.cache/", "research/se
                     # A project's packages (decision 17; ticket 82): the venv, the R library, and its own Octave Forge prefix.
                     ".venv/", ".wayline/packages/",
                     # A project's environment (decision 17; ticket 83): the conda prefix, the venv, the image, and their record.
-                    ".wayline/env*")
+                    ".wayline/env*",
+                    # The dashboard's chat (decision 17; ticket 114): the owner's conversation and its sessions, never committed.
+                    "research/chat/")
 
 # The directories of the `research/` tree of Implementation Decisions 1.
 RESEARCH_DIRS = ("tickets", "refs", "kb", "jobs", "sessions", "paper", "feedback", ".cache")

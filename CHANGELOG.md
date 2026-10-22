@@ -1023,6 +1023,41 @@ lists it read-only, marked with its tag.
   dashboard mark until then, and refuses every other later answer as before, naming where the first was given. A
   batch file written before these fields is read with both null.
 
+- The dashboard's chat (ticket 114; Implementation Decisions 17, 8, 3, and 1), the main place to talk with a project.
+  One collapsible panel sits over every view, the whole screen at phone width, holding one conversation per project:
+  the project being looked at, or the one picked in "chat with" on the projects page. Every item's insert button puts
+  its reference into the message at the cursor, and the view and the item open travel with each message, unseen in the
+  conversation, so "drop this one" under a plot means that plot. Each message is one `claude -p` in the project through
+  the worker seam (`wayline.chat`), on the chat's rung, `opus high` unless `harness.json`'s new `chat`
+  (`{"model", "effort"}`) names another; the session of the last message is resumed while that reply is under an hour
+  old, and otherwise a fresh one starts from the digest: the `wayline` skill, `research/ACCOUNT.md` first, and the last
+  few exchanges. A project answers one message at a time and queues the rest in order, on a thread of the dashboard
+  that ends with the queue, so no process runs between messages. The conversation is kept under `research/chat/`
+  (gitignored, one file per message and the sessions beside them), and the panel polls it, reading what a running
+  session has said so far. The chat answers at every pacing level but a hit limit, where code answers that it cannot
+  and launches nothing; at `stop` the reply says the windows stand there. A chat session has the read tools on the
+  project and the skill's own files, and one `Bash(wayline <verb>:*)` per verb the skill's routing table names outside
+  its confirmed rows, under `dontAsk`, with edits, the web, MCP, and subagents denied by name and each confirmed verb
+  denied as well. Under `WAYLINE_CHAT`, which its environment carries, the command itself refuses a verb the chat may
+  not run, one with no `--project` or naming another project, and an intake that would change a budget, and
+  `code_repository.make_public` refuses outright; a session a chat verb launches (a consultant, a planner) does not
+  inherit it. A resumed session that took no turn is started fresh; one that ran verbs and then failed is not run again. What the owner asks that the table confirms first (starting the run,
+  the stopping rule or a budget, a consolidation, the paper order, making the code repository public) comes back as a
+  card, through the new `chat_reply` schema, with what will happen, its cost, Confirm, and Not now; Confirm runs the
+  card's action from the dashboard through its `ACTIONS` whitelist, which gains `run`, `stop_when`, `budget`,
+  `consolidate`, `paper`, and `public` (the last two and a consolidation start on a thread and answer 202), so text in
+  a document a session reads can make at most a card. A batch shows in the chat as `wayline mark` prints it, as text at
+  five items or fewer and otherwise one line with its count and a link that opens the marks view. The new routes are
+  `GET` and `POST /api/projects/<id>/chat` and `POST /api/projects/<id>/chat/<n>/card`, each write token-guarded like
+  an action. The account's "Waiting on you" and `wayline review`'s reversal now say to answer a decision ticket in the
+  dashboard's chat or any conversation with the project, not with a typed `wayline answer`, and the strip's decision
+  lines carry an answer button that starts the message in the chat. The panel reads the conversation only while it is
+  open or a message sent from it is being answered. Closing the viewer over an item route puts the view in the address
+  as soon as the dialog closes, in the microtask after it, not at its `close` event, which the browser queues as a task
+  of its own and which a page busy with its polls ran late, so a read in between found the item's route still there.
+  It also lands on the view however many times the route was applied: only a `hashchange` (an entry the owner's
+  navigation pushed) is stepped back over, and every other pass replaces the item's entry with the view's.
+
 
 ## v1.0.0 (2026-09-27)
 

@@ -109,6 +109,25 @@ class ItemLinkTest(RoutesTestCase):
         self.page.wait_for("!document.getElementById('viewer').open")
         self.assertEqual(self.shown()["hash"], self.route("research"))
 
+    def test_closing_an_item_lands_on_its_view_when_the_route_is_applied_again_while_it_is_open(self):
+        # A second pass of the route (the projects' read, a poll, `go` to the hash shown) is no navigation of the owner's:
+        # closing must still replace the item's entry with the view, never step back off the page (ticket 114's CI).
+        self.open(self.route("R1.1"))
+        self.page.wait_for("document.getElementById('viewer').open && document.querySelector('#viewer-doc img')")
+        self.page.evaluate("route(), loadProjects(), true")
+        self.page.wait_for("document.getElementById('viewer').open && document.querySelector('#viewer-doc img')")
+        self.page.press("Escape")
+        self.page.wait_for("!document.getElementById('viewer').open && location.hash.endsWith('/research')")
+        self.assertEqual(self.shown()["hash"], self.route("research"))
+
+    def test_the_view_is_in_the_address_as_soon_as_the_viewer_closes_not_only_at_its_close_event(self):
+        # The `close` event is a task of its own, which a page busy with its polls runs late: whatever reads the address
+        # between the close and that task (the owner's next tap, a test) must already find the view (ticket 114's CI).
+        self.open(self.route("R1.1"))
+        self.page.wait_for("document.getElementById('viewer').open && document.querySelector('#viewer-doc img')")
+        hash_now = self.page.evaluate("(async () => { document.getElementById('viewer').close(); await Promise.resolve(); return location.hash; })()")
+        self.assertEqual(hash_now, self.route("research"))
+
     def test_a_result_opened_from_its_row_opens_its_report_and_back_closes_it(self):
         self.open(self.route("research"))
         link = "document.querySelector('#beyond-body li.row[data-item=\"R1\"] a.row-id')"

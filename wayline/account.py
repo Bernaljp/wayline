@@ -267,6 +267,10 @@ def _decided_line(decision, context):
 
 # --- waiting on you ---------------------------------------------------------------------------------------
 
+# Where the owner answers a decision ticket: by saying so, in the dashboard's chat or a session in the project, which
+# records it (ticket 114); the owner never types a verb.
+ANSWER_IT = "Answer it in the dashboard's chat, or in any conversation with the project."
+
 
 def _waiting(context):
     from wayline.decisions import decider_ready, decision_question  # the decisions module imports the project module
@@ -277,9 +281,9 @@ def _waiting(context):
     for number in sorted(context.tickets):
         fields = context.tickets[number]
         if tickets.is_open_decision(fields) and awaits_owner(fields, autonomy, decider):
-            lines.append("- Decision ticket %d%s: %s Answer with `wayline answer %d \"<answer>\"`." % (
+            lines.append("- Decision ticket %d%s: %s %s" % (
                 number, " (human only)" if fields.get("human_only") else "",
-                _one_line(decision_question(fields, context.bodies.get(number))), number))
+                _one_line(decision_question(fields, context.bodies.get(number))), ANSWER_IT))
     asked, why = {}, {}
     for event in context.events:
         if event.get("event") == TICKET_NEEDS_HUMAN:
@@ -1254,13 +1258,13 @@ def _reverse(project, context, decision, answer, told):
         if decision.ticket is not None:
             question = _reopen(project, decision.ticket)
             if answer is None:
-                return "%s reopened for you, human only: %s Answer with wayline answer %d \"<answer>\"." % (
-                    decision.id, question, decision.ticket)
+                return "%s reopened for you, human only, as decision ticket %d: %s %s" % (
+                    decision.id, decision.ticket, question, ANSWER_IT)
             try:
                 answer_ticket(project, decision.ticket, answer, rationale=why)
             except ProjectError as failure:  # reopened for the owner all the same: the reversal stands, the answer waits
-                return "%s reopened for you, human only, but your answer was refused (%s): %s Answer with wayline answer %d \"<answer>\"." % (
-                    decision.id, failure, question, decision.ticket)
+                return "%s reopened for you, human only, as decision ticket %d, but your answer was refused (%s): %s %s" % (
+                    decision.id, decision.ticket, failure, question, ANSWER_IT)
             return "%s reversed: ticket %d is answered \"%s\", by you; the conductor closes it at its next wave" % (
                 decision.id, decision.ticket, answer)
         if answer is not None:
@@ -1280,8 +1284,8 @@ def _reverse(project, context, decision, answer, told):
                                          notify=lambda event, text, where, ticket: told.append((event, text, where, ticket)))
     except (ProjectError, tickets.TicketError, grill.GrillError) as failure:
         raise AccountError("%s could not be reversed: %s" % (decision.id, failure)) from None
-    return "%s reopened for you, human only: %s Answer with wayline answer %d \"<answer>\"." % (
-        decision.id, _one_line(question), opened["ticket"])
+    return "%s reopened for you, human only, as decision ticket %d: %s %s" % (
+        decision.id, opened["ticket"], _one_line(question), ANSWER_IT)
 
 
 def _admitted(events, identifier):

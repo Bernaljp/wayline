@@ -590,6 +590,9 @@ def make_public(project, by, run=run_tool, tools=None):
     if by != "owner":
         raise CodeRepositoryError("making the code repository public is on the irreversible list and is the owner's "
                                   "word only, never %s's" % by)
+    if os.environ.get("WAYLINE_CHAT"):
+        raise CodeRepositoryError("making the code repository public is on the irreversible list: in the dashboard's chat "
+                                  "it is a card the owner confirms, never a chat session's to do")
     remote = record(project).get("remote")
     if not remote:
         raise CodeRepositoryError("the code repository has no remote yet; the setup question makes one")

@@ -59,7 +59,9 @@
 
   <div class="view" id="view-projects" data-view="projects" hidden>
   <section id="projects-page" aria-labelledby="projects-heading">
-    <div class="view-head"><h2 id="projects-heading">Projects</h2></div>
+    <div class="view-head"><h2 id="projects-heading">Projects</h2>
+      <!-- Which project's conversation the chat holds (ticket 114): one per project. -->
+      <label class="chat-pick" for="chat-pick">chat with <select id="chat-pick"></select></label></div>
     <div id="projects-body" class="panel">
       <p class="state loading">reading the projects</p>
     </div>
@@ -345,6 +347,23 @@
     <div id="viewer-doc" class="viewer-doc"></div>
   </div>
 </dialog>
+
+<!-- The chat (ticket 114): one panel over every view, the conversation with one project, the whole screen on a phone.
+     It sits outside the panels the polls redraw, so a message being written survives every poll. -->
+<button type="button" id="chat-open" class="chat-open" aria-controls="chat" aria-expanded="false">chat</button>
+<aside id="chat" class="chat" aria-labelledby="chat-title" hidden>
+  <div class="chat-bar">
+    <h2 id="chat-title">Chat</h2>
+    <span id="chat-with" class="chat-with"></span>
+    <button type="button" id="chat-close" class="action">close</button>
+  </div>
+  <ol id="chat-thread" class="chat-thread" aria-live="polite"></ol>
+  <form id="chat-form" class="chat-form">
+    <textarea id="chat-text" rows="3" aria-label="your message"
+      placeholder="Talk with the project: hand something over, say what you want, or ask how it stands"></textarea>
+    <div class="chat-send"><p id="chat-note" class="note" role="status"></p><button type="submit" id="chat-send" class="action primary">send</button></div>
+  </form>
+</aside>
 
 <footer>
   <p class="note">Every action needs the token carried by the URL <code>wayline serve</code> printed.</p>

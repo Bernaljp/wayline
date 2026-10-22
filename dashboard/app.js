@@ -432,6 +432,7 @@ async function loadProjects() {
     return tab;
   }));
   state.projectsLoaded = true;
+  syncChatPicker();
   markViews(); // a project's first document offers its Inherited view
   if (state.view === 'projects') renderProjectsPage();
   if (state.project && !state.projects.some((project) => project.id === state.project && project.readable)) {
@@ -475,6 +476,8 @@ function select(id) {
   const entry = state.projects.find((project) => project.id === id);
   document.body.dataset.readOnly = String(Boolean(entry && entry.read_only));
   showTitle();
+  // The chat follows the project being looked at, so what is inserted from a view is talked about with its project.
+  if (entry && entry.readable && !entry.read_only) setChatProject(id);
   controlsState('reading the controls');
   for (const tab of document.querySelectorAll('button.tab')) {
     tab.setAttribute('aria-current', String(tab.dataset.id === id));
@@ -1562,11 +1565,22 @@ function wireViewer() {
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) dialog.close();
   });
-  dialog.addEventListener('close', () => {
+  // Closing is acted on as soon as the dialog's `open` goes, in the microtask after it, not at the `close` event, which
+  // the browser queues as a task of its own: a page busy with its polls ran other tasks in between, and anything that
+  // read the address there (the owner's next tap, a test) still found the item's route.
+  let shown = dialog.open;
+  const closed = () => {
+    if (!shown) return;
+    shown = false;
     viewer.reads += 1;
     replace(document.getElementById('viewer-doc'), []);
     leaveItem();
-  });
+  };
+  new MutationObserver(() => {
+    if (dialog.open) shown = true;
+    else closed();
+  }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
+  dialog.addEventListener('close', closed);
   const saved = ZOOM_STEPS.indexOf(Number(remembered(STORE.zoom)));
   setZoom(saved >= 0 ? saved : ZOOM_RESET);
 }
@@ -2200,7 +2214,10 @@ function go(hash) {
   else location.hash = hash;
 }
 
-function route() {
+// `event` is the `hashchange` that called it, when one did: only then did the route push an entry of its own, which
+// closing an item steps back over. Every other call (the first load, the projects' read, `go` to the hash shown) applies
+// the route in place, so closing an item it opened replaces the entry with the view's, whichever call came first.
+function route(event) {
   let target = parseRoute(location.hash);
   if (target === null) {
     // Not a route of ours (`#ticket/3`, a fragment a rendered file linked to): left alone once a view is shown, and
@@ -2220,7 +2237,7 @@ function route() {
   }
   if (!state.projectsLoaded) return;
   const known = state.projects.find((project) => project.id === target.project);
-  const landed = !routing.done;
+  const landed = !(event && event.type === 'hashchange');
   routing.done = true;
   if (!known || !known.readable) {
     closeItem();
@@ -2279,7 +2296,9 @@ function markViews() {
 // owner landed on the item from a notice.
 
 async function openItem(project, id, landed) {
-  const opening = { project, id, landed };
+  // The same item asked for again while it is open (a second call of the route) keeps how it was reached.
+  const same = viewer.item && viewer.item.project === project && viewer.item.id === id;
+  const opening = { project, id, landed: same ? viewer.item.landed : landed };
   viewer.item = opening;
   if (!state.view || state.view === 'projects') showView('research');
   const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
@@ -2318,12 +2337,16 @@ function closeItem() {
   viewer.item = null;
 }
 
-// The viewer closed: an item route goes back to its view.
+// The viewer closed: an item route goes back to its view. Whatever opened the viewer, closing it never leaves an item's
+// route in the address: one this page no longer counts as open is replaced by the view under it.
 function leaveItem() {
   const item = viewer.item;
   viewer.item = null;
-  if (!item) return;
   const now = parseRoute(location.hash);
+  if (!item) {
+    if (now && now.item) history.replaceState(null, '', routeTo(now.project, state.view && state.view !== 'projects' ? state.view : 'research'));
+    return;
+  }
   if (!now || now.item !== item.id || now.project !== item.project) return;
   if (item.landed) history.replaceState(null, '', routeTo(item.project, state.view && state.view !== 'projects' ? state.view : 'research'));
   else history.back();
@@ -2416,18 +2439,10 @@ function more(text, children) {
   return el('p', { class: 'row-more', text: children ? null : text }, children || []);
 }
 
-// The chat panel arrives with ticket 114; until then insert copies the item's reference, to paste into a conversation.
+// Insert puts the item's reference into the chat's message, at the cursor, and opens the chat on the item's project.
 function insertButton(project, id) {
   const button = el('button', { type: 'button', class: 'action', text: 'insert', title: `insert ${id} into the chat` });
-  button.addEventListener('click', async () => {
-    const reference = `${id} (${location.pathname}${routeTo(project, id)})`;
-    try {
-      await navigator.clipboard.writeText(reference);
-      say(`${id}: its reference is copied, to paste into a conversation`);
-    } catch (failure) {
-      say(`${id}: copy its reference by hand: ${reference}`);
-    }
-  });
+  button.addEventListener('click', () => insertIntoChat(project, id));
   return button;
 }
 
@@ -2461,6 +2476,8 @@ function renderStrip(view, project) {
     ? view.items.map((item) => el('li', { class: 'row' }, [el('div', { class: 'row-line' }, [
       ...(item.item ? [itemLink(project, item.item, `#${item.item}`)] : []),
       el('span', { class: 'row-title', text: item.text }),
+      // A decision ticket is answered by saying so in the chat, which records it (ticket 114): no verb is typed.
+      ...(item.item && /^Decision ticket /.test(item.text) ? [el('span', { class: 'row-acts acts' }, [answerButton(project, item.item)])] : []),
     ])]))
     : [el('li', {}, [emptyState('nothing waits on you')])]);
   state.waiting = view.count;
@@ -2487,6 +2504,7 @@ function runStateLine(run) {
 function renderProjectsPage() {
   const body = document.getElementById('projects-body');
   if (!state.projectsLoaded) return;
+  syncChatPicker();
   if (!state.projects.length) {
     replace(body, [emptyState('no project is registered: run wayline init <path>')]);
     return;
@@ -3204,7 +3222,10 @@ function kindFields(decision, project) {
 // that refuses storage (a private window, blocked site data) still works; it just forgets.
 
 const THEMES = [['auto', 'auto'], ['light', 'day'], ['dark', 'night']];
-const STORE = { theme: 'wayline.theme', folded: 'wayline.folded', view: 'wayline.view', zoom: 'wayline.viewer.zoom', seen: 'wayline.seen' };
+const STORE = {
+  theme: 'wayline.theme', folded: 'wayline.folded', view: 'wayline.view', zoom: 'wayline.viewer.zoom', seen: 'wayline.seen',
+  chat: 'wayline.chat', chatOpen: 'wayline.chat.open',
+};
 
 function remember(key, value) {
   try {
@@ -3358,6 +3379,296 @@ function wireIndex() {
   else window.addEventListener('resize', measureHeader);
 }
 
+// --- the chat (ticket 114) ----------------------------------------------------------------------
+//
+// The owner talks with a project here, the main place to talk with it. One panel over every view holds the
+// conversation with one project, picked on the projects page and otherwise the project being looked at. Each message
+// is one session in the project, which the server runs one at a time and queues; the panel polls the conversation,
+// which carries what a running session has said so far. The view and the item open when a message is sent travel with
+// it, unseen here, so "drop this one" under a plot means that plot. A card the session returns is a confirmed action:
+// Confirm runs it from the dashboard, through the same whitelist as every action, and Not now sets it aside.
+
+// What a card's Confirm runs: each one of the dashboard's actions, in the owner's words.
+const CARD_LABELS = {
+  'run': 'Start the run',
+  'stop_when': 'Set the stopping rule',
+  'budget': 'Set a budget',
+  'consolidate': 'Consolidate a section',
+  'paper': 'Order the paper',
+  'public': 'Make the code repository public',
+};
+// The item ids the server takes with a message, as an item link names them.
+const CHAT_ITEM = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,79}$/;
+const CHAT_POLL_S = 2;
+
+const chat = {
+  project: null, // the project whose conversation the panel holds
+  open: false,
+  busy: false, // whether that project has a message queued or running: polled while the panel is closed, too
+  signature: null, // the conversation last drawn, so a poll that changed nothing leaves the thread alone
+  answered: 0, // how many messages were answered at the last read, so one answered while the panel was closed shows
+};
+
+function chatEntry(id) {
+  return state.projects.find((project) => project.id === id && project.readable && !project.read_only) || null;
+}
+
+function chatProject() {
+  return chat.project && chatEntry(chat.project) ? chat.project : null;
+}
+
+function chatSay(text, failed) {
+  noteText('chat-note', text, failed);
+}
+
+function setChatProject(id) {
+  if (!id || chat.project === id || !chatEntry(id)) {
+    syncChatPicker();
+    return;
+  }
+  chat.project = id;
+  chat.signature = null;
+  chat.answered = 0;
+  chat.busy = false; // the other project's message being answered is not this one's
+  remember(STORE.chat, id);
+  replace(document.getElementById('chat-thread'), [el('li', {}, [loadingState('reading the conversation')])]);
+  chatSay('');
+  syncChatPicker();
+  chatPolling();
+  loadChat();
+}
+
+// The picker on the projects page, and the name in the panel's bar: the projects that can talk, the chat's one chosen.
+function syncChatPicker() {
+  const picker = document.getElementById('chat-pick');
+  const talking = state.projects.filter((project) => project.readable && !project.read_only);
+  if (!chatProject()) {
+    const kept = remembered(STORE.chat);
+    const first = chatEntry(state.project) || chatEntry(kept) || talking.find((project) => project.active) || talking[0];
+    if (first && first.id !== chat.project) {
+      setChatProject(first.id);
+      return;
+    }
+  }
+  const current = chatProject();
+  replace(picker, talking.map((project) => el('option', { value: project.id, text: project.name })));
+  picker.disabled = !talking.length;
+  if (current) picker.value = current;
+  const entry = chatEntry(current);
+  document.getElementById('chat-with').textContent = entry ? entry.name : 'no project can talk';
+}
+
+function openChat(open, quietly) {
+  chat.open = open;
+  const panel = document.getElementById('chat');
+  panel.hidden = !open;
+  document.body.dataset.chat = open ? 'open' : 'closed';
+  const button = document.getElementById('chat-open');
+  button.setAttribute('aria-expanded', String(open));
+  if (open) button.classList.remove('news');
+  remember(STORE.chatOpen, open ? '1' : '');
+  chatPolling();
+  if (open && !quietly) document.getElementById('chat-text').focus();
+}
+
+// The conversation is read only while the panel is open, or while a message sent from it is still being answered (so a
+// reply that lands while the panel is closed shows on its button). A closed, quiet panel asks the server for nothing.
+function chatPolling() {
+  const wanted = chat.open || chat.busy;
+  if (wanted && !state.timers.chat) every('chat', CHAT_POLL_S, loadChat);
+  else if (!wanted && state.timers.chat) {
+    clearInterval(state.timers.chat);
+    state.timers.chat = null;
+  }
+}
+
+function chatUrl(project, suffix) {
+  return `/api/projects/${encodeURIComponent(project)}/chat${suffix || ''}`;
+}
+
+async function loadChat() {
+  const project = chatProject();
+  if (!project || (!chat.open && !chat.busy)) return;
+  // A conversation not drawn yet is asked for whole: a tag kept from before would answer 304 to a thread still saying it reads.
+  if (chat.signature === null) delete state.tags[`chat:${project}`];
+  try {
+    const view = await get(chatUrl(project), `chat:${project}`);
+    if (view && project === chatProject()) renderChat(view, project);
+  } catch (failure) {
+    if (project === chatProject()) replace(document.getElementById('chat-thread'), [el('li', {}, [errorState(failure)])]);
+  }
+}
+
+function renderChat(view, project) {
+  chat.busy = view.busy;
+  chatPolling();
+  const answered = view.messages.filter((message) => !['queued', 'running'].includes(message.status)).length;
+  if (!chat.open && chat.signature !== null && answered > chat.answered) document.getElementById('chat-open').classList.add('news');
+  chat.answered = answered;
+  const signature = JSON.stringify(view.messages);
+  if (signature === chat.signature) return;
+  chat.signature = signature;
+  const thread = document.getElementById('chat-thread');
+  const atEnd = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
+  replace(thread, view.messages.length
+    ? view.messages.map((message) => chatMessage(project, message))
+    : [el('li', {}, [emptyState(`Nothing said yet. Messages run on ${view.rung}; ask how the project stands, hand something over, or say what you want.`)])]);
+  if (atEnd) thread.scrollTop = thread.scrollHeight;
+}
+
+// A reply is Markdown a session wrote, rendered and sanitized as every rendered file is; an item link it carries
+// (`#/<project>/B3`, the marks view's line for a long batch) becomes a link that opens it.
+function chatMarkdown(text) {
+  const linked = String(text || '').replace(/(^|[\s(])(#\/[^\s)<>\]]+)/g, (whole, before, link) => `${before}[${link}](${link})`);
+  return renderMarkdown(linked, '');
+}
+
+const CHAT_STATES = {
+  queued: 'queued: answered once the message before it is',
+  running: 'answering',
+};
+
+function chatMessage(project, message) {
+  const parts = [el('div', { class: 'chat-owner' }, [el('p', { text: message.text })])];
+  if (message.status === 'queued') parts.push(el('p', { class: 'chat-state', text: CHAT_STATES.queued }));
+  if (message.status === 'running') {
+    parts.push(el('div', { class: 'chat-reply running' }, [
+      el('p', { class: 'chat-state', text: message.resumed ? CHAT_STATES.running : `${CHAT_STATES.running}: a fresh session reads the account first` }),
+      ...(message.partial || []).map((line) => el('p', { class: 'chat-partial', text: line })),
+    ]));
+  }
+  if (message.reply) parts.push(el('div', { class: `chat-reply${message.status === 'refused' ? ' refused' : ''}` }, [chatMarkdown(message.reply)]));
+  if (message.status === 'failed') {
+    parts.push(el('p', { class: 'chat-state problems', text: `not answered: ${(message.errors || []).join('; ') || 'the session returned no reply'}; send it again` }));
+  }
+  if (message.card) parts.push(chatCard(project, message));
+  return el('li', { class: `chat-message s-${message.status}`, 'data-message': String(message.id) }, parts);
+}
+
+// A card: what will happen and what it costs, with Confirm and Not now while it is open, and how it was settled after.
+function chatCard(project, message) {
+  const card = message.card;
+  const lines = [
+    el('p', { class: 'chat-card-title', text: CARD_LABELS[card.action] || card.action }),
+    el('p', { text: card.what }),
+    el('p', { class: 'note', text: `Cost: ${card.cost}` }),
+  ];
+  if (card.state === 'open') {
+    const confirm = el('button', { type: 'button', class: 'action primary', text: 'Confirm' });
+    const later = el('button', { type: 'button', class: 'action', text: 'Not now' });
+    confirm.addEventListener('click', () => settleCard(project, message.id, 'confirm', [confirm, later]));
+    later.addEventListener('click', () => settleCard(project, message.id, 'not now', [confirm, later]));
+    lines.push(el('div', { class: 'chat-card-acts acts' }, [confirm, later]));
+    if (card.error) lines.push(el('p', { class: 'note problems', text: `Confirm was refused: ${card.error}` }));
+  } else {
+    lines.push(statusChip(card.state));
+  }
+  return el('div', { class: 'chat-card', role: 'group', 'aria-label': 'confirm or set aside' }, lines);
+}
+
+async function chatPost(project, suffix, body) {
+  if (!TOKEN) throw new Error('the chat needs the token: open the URL wayline serve printed, which carries it');
+  const response = await fetch(chatUrl(project, suffix), {
+    method: 'POST', cache: 'no-store', headers: { 'X-Wayline-Token': TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  let reply;
+  try {
+    reply = await response.json();
+  } catch (failure) {
+    reply = { ok: false, error: `${response.status} ${response.statusText}` };
+  }
+  if (!response.ok || !reply.ok) throw new Error(reply.error || `${response.status} ${response.statusText}`);
+  return reply;
+}
+
+async function settleCard(project, number, choice, buttons) {
+  for (const button of buttons) button.disabled = true;
+  try {
+    const reply = await chatPost(project, `/${number}/card`, { choice });
+    const outcome = reply.outcome;
+    chatSay(choice === 'confirm' ? `${CARD_LABELS[outcome.action] || outcome.action}: ${outcome.status === 202 ? 'started' : 'done'}` : 'set aside');
+  } catch (failure) {
+    chatSay(failure.message || String(failure), true);
+  } finally {
+    delete state.tags[`chat:${project}`];
+    chat.signature = null;
+    loadChat();
+    refreshViews();
+  }
+}
+
+async function sendChat(event) {
+  event.preventDefault();
+  const box = document.getElementById('chat-text');
+  const text = box.value.trim();
+  const project = chatProject();
+  if (!text) return;
+  if (!project) {
+    chatSay('no project can talk: pick one on the projects page', true);
+    return;
+  }
+  const body = { text };
+  // The view and the item open travel with the message, so what the owner says is read against what they see.
+  if (state.view && (state.view === 'projects' || state.project === project)) body.view = state.view;
+  if (viewer.item && viewer.item.project === project && CHAT_ITEM.test(viewer.item.id)) body.item = viewer.item.id;
+  const send = document.getElementById('chat-send');
+  send.disabled = true;
+  try {
+    await chatPost(project, '', body);
+    box.value = '';
+    chat.busy = true;
+    chatPolling();
+    chatSay('');
+  } catch (failure) {
+    chatSay(failure.message || String(failure), true);
+  } finally {
+    send.disabled = false;
+    delete state.tags[`chat:${project}`];
+    loadChat();
+  }
+}
+
+// Put `text` into the message at the cursor, with a space on either side, and open the chat on `project`.
+function insertIntoChat(project, text) {
+  setChatProject(project);
+  if (!chat.open) openChat(true);
+  const box = document.getElementById('chat-text');
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? start;
+  const before = box.value.slice(0, start);
+  const after = box.value.slice(end);
+  const inserted = `${before && !/\s$/.test(before) ? ' ' : ''}${text}${after && /^\s/.test(after) ? '' : ' '}`;
+  box.value = before + inserted + after;
+  const caret = before.length + inserted.length;
+  box.setSelectionRange(caret, caret);
+  box.focus();
+}
+
+function answerButton(project, ticket) {
+  const button = el('button', { type: 'button', class: 'action', text: 'answer', title: `answer decision ticket ${ticket} in the chat` });
+  button.addEventListener('click', () => insertIntoChat(project, `Decision ticket ${ticket}:`));
+  return button;
+}
+
+function wireChat() {
+  document.getElementById('chat-open').addEventListener('click', () => openChat(!chat.open));
+  document.getElementById('chat-close').addEventListener('click', () => openChat(false));
+  document.getElementById('chat-form').addEventListener('submit', sendChat);
+  // Enter sends from a keyboard; Shift+Enter is a new line. A phone's return key writes a new line, with send beside it.
+  document.getElementById('chat-text').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && window.matchMedia('(min-width: 721px)').matches) {
+      event.preventDefault();
+      document.getElementById('chat-form').requestSubmit();
+    }
+  });
+  document.getElementById('chat-pick').addEventListener('change', (event) => setChatProject(event.target.value));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && chat.open && !document.getElementById('viewer').open) openChat(false);
+  });
+  if (!TOKEN) chatSay('The chat needs the dashboard token: open the URL wayline serve printed, which carries it.');
+  openChat(remembered(STORE.chatOpen) === '1', true);
+}
+
 // --- start ---------------------------------------------------------------------------------------
 
 wireTheme();
@@ -3369,6 +3680,7 @@ wireGraph();
 wireControls();
 wireIntake();
 wireFeedback();
+wireChat();
 intakeEmpty();
 if (!TOKEN) say('Actions need the dashboard token: open the URL wayline serve printed, which carries it. The views work without it.');
 window.addEventListener('hashchange', route);

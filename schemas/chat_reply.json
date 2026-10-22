@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "chat_reply",
+  "description": "What one session of the dashboard's chat returns (Implementation Decision 17, Talking with the project; ticket 114): the reply the owner reads, and a card when what the owner asked for is one the routing table confirms first. The session never runs a confirmed verb: the dashboard shows the card with Confirm and Not now and runs its action through its ACTIONS whitelist on the owner's Confirm. Code checks the card's arguments again against the action it names.",
+  "type": "object",
+  "required": ["reply", "card"],
+  "additionalProperties": false,
+  "properties": {
+    "reply": {"type": "string", "description": "Markdown the owner reads in the chat: what was recorded with each id, the one line asked, or the answer from the digests"},
+    "card": {
+      "type": ["object", "null"],
+      "description": "null, or the one confirmed action the owner asked for, which the dashboard runs only on their Confirm",
+      "required": ["action", "args", "what", "cost"],
+      "additionalProperties": false,
+      "properties": {
+        "action": {"type": "string", "enum": ["run", "stop_when", "budget", "consolidate", "paper", "public"], "description": "the dashboard action Confirm runs"},
+        "args": {"type": "object", "description": "the action's arguments: run {}; stop_when {stop_when: objectives, frontier, or a list of objective ids}; budget {name: wallclock_hours or gpu_hours, hours: a number or null}; consolidate {section}; paper {venue}; public {}"},
+        "what": {"type": "string", "pattern": "\\S", "description": "what will happen, in one or two sentences"},
+        "cost": {"type": "string", "pattern": "\\S", "description": "what it costs: tokens, hours of a budget, or that it cannot be undone"}
+      }
+    }
+  }
+}
