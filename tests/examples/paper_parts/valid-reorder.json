@@ -1,0 +1,21 @@
+{
+  "titles": [],
+  "abstract": "We measured how noise changes a polynomial fit.",
+  "introduction": null,
+  "results": null,
+  "discussion": null,
+  "methods": "## Fitting {#methods-fitting}\n\nWe fit by least squares.",
+  "supplement": null,
+  "tables": [],
+  "alternatives": [],
+  "proposals": [
+    "Move Limits first."
+  ],
+  "left_out": [
+    {
+      "what": "the older fits",
+      "why": "no passage carries them"
+    }
+  ],
+  "notes": ""
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "paper_parts",
+  "description": "What the paper order's one writer session returns (Implementation Decision 17; ticket 115, in place of `paper_draft`): each part of the paper as its own field, Markdown with LaTeX math, each heading carrying its outline id as a pandoc attribute (`## ... {#R3}`), every claim keeping the tags of the passages it comes from, and no reference list, which code writes. A part the order does not recompose is null. Code checks the headings against the outline's order and placement, and that no inherited title, abstract, or caption is in any part, before it writes `research/paper/`. The front matter is code's, from the records, and is no field.",
+  "type": "object",
+  "required": ["titles", "abstract", "introduction", "results", "discussion", "methods", "supplement", "tables", "alternatives", "proposals", "left_out", "notes"],
+  "additionalProperties": false,
+  "properties": {
+    "titles": {"type": "array", "maxItems": 3, "items": {"type": "string", "pattern": "\\S"},
+               "description": "three titles, the first the writer's choice, when the title is recomposed; empty when it is not"},
+    "abstract": {"type": ["string", "null"], "description": "the abstract, one paragraph, or null when it is not recomposed"},
+    "introduction": {"type": ["string", "null"]},
+    "results": {"type": ["string", "null"]},
+    "discussion": {"type": ["string", "null"]},
+    "methods": {"type": ["string", "null"]},
+    "supplement": {"type": ["string", "null"]},
+    "tables": {
+      "type": "array",
+      "description": "the numbered tables the parts refer to, each from its CSV; only with the Results recomposed",
+      "items": {
+        "type": "object",
+        "required": ["id", "caption", "csv"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^T[1-9][0-9]*$"},
+          "caption": {"type": "string", "pattern": "\\S"},
+          "csv": {"type": "string", "pattern": "\\S", "description": "the table as CSV, its first row the header"}
+        }
+      }
+    },
+    "alternatives": {
+      "type": "array",
+      "description": "another wording of a part, only when the order asks for one",
+      "items": {
+        "type": "object",
+        "required": ["part", "text", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "part": {"enum": ["abstract", "introduction", "results", "discussion", "methods", "supplement"]},
+          "text": {"type": "string", "pattern": "\\S"},
+          "why": {"type": "string", "pattern": "\\S"}
+        }
+      }
+    },
+    "proposals": {
+      "type": "array",
+      "description": "the changes to the outline the writer wants, never made: a heading moved, placed, added, or cut",
+      "items": {"type": "string", "pattern": "\\S"}
+    },
+    "left_out": {
+      "type": "array",
+      "description": "what the writer left out of the paper, and why",
+      "items": {
+        "type": "object",
+        "required": ["what", "why"],
+        "additionalProperties": false,
+        "properties": {"what": {"type": "string", "pattern": "\\S"}, "why": {"type": "string", "pattern": "\\S"}}
+      }
+    },
+    "notes": {"type": "string", "description": "anything else the owner should read in PAPER.md"}
+  }
+}

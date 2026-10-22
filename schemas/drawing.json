@@ -11,7 +11,7 @@
     "result": {"type": "string", "pattern": "^R[1-9][0-9]*$"},
     "version": {"type": "integer", "minimum": 1, "description": "1 onward per result; R4-2 is R4's second drawing"},
     "ticket": {"type": "integer", "minimum": 1, "description": "the drawing ticket"},
-    "rest": {"type": "string", "enum": ["run_end", "checkpoint", "owner"], "description": "the rest point it was opened at"},
+    "rest": {"type": "string", "enum": ["run_end", "checkpoint", "owner", "order"], "description": "the rest point it was opened at; `order` the paper order's (ticket 115)"},
     "status": {"type": "string", "enum": ["open", "accepted", "failed"]},
     "library": {"type": "string", "enum": ["matplotlib", "altair", "ggplot2"], "description": "the plotting library it is drawn, rerun, and checked in, harness.json's plotting when it was opened (ticket 102); a record without it was drawn with matplotlib"},
     "findings": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "description": "the result's current findings it was opened over, leaving out those a drawing filed"},

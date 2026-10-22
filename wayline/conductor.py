@@ -137,6 +137,10 @@ What M0 and M1 build here, and what they leave to the tickets that extend them:
   out and listed; a drawing that still fails after its resume journals `ticket_failed` with `next: none` and keeps its
   result's last accepted drawing: no tier up, no split, no ask. An accepted drawing writes `plots.json` and its record
   at its close, and earns no verdict.
+- The paper order (decision 17; ticket 115, `wayline.paper`). While an order is open the run rests: running tickets
+  finish and nothing new launches but the drawings of the results changed since their last drawing (rest `order`);
+  once the order's batch is settled, one writer session composes the paper from that commit, and the run resumes, or,
+  when the order was made with no run going, ends as the last one had. A composition that fails closes the order.
 - The run-end gates (decision 17; ticket 103, `wayline.run_end`). After the drawings and before `run_ended`, the general
   report is rendered and its claims never sampled are sampled for verdicts, then the kill argument runs on it when it
   changed since the last one; each failure files a scope-down whose findings name in `replaces` what they narrow. At an
@@ -849,6 +853,7 @@ class Conductor:
         self._said_gates, self._gates_held = None, False
         self.drawing_python = drawings.TOOLS_PYTHON
         self._closed_without_step = False  # a drawing closed failed in this wave: progress, as a closed ticket is
+        self._said_order = None  # what was said of the paper order's rest point, once each (ticket 115)
         self._said_no_plotting = False  # the rest point that drew nothing for want of the tools venv's matplotlib was said
         self._replanned = None
         self._objectives_trouble = None
@@ -919,7 +924,11 @@ class Conductor:
         self._verifications()
         self._references()
         self._pace()
-        if self._resting_on_rule_end(result):
+        if self.view.paper_order is not None and not result.ended:
+            # A paper order rests the run (ticket 115): running tickets finish, only the drawings of the changed results
+            # launch, and the paper is composed; then the run resumes, or ends as it had before the order.
+            self._order_wave(result, self.view.paper_order)
+        elif self._resting_on_rule_end(result):
             # An end holds and drawings are owed, or the run-end gates' scope-downs at an end of the rule: they alone run
             # before the run ends (tickets 100 and 103), with the verdicts a scope-down earned.
             if not self._holds_launches():
@@ -1192,6 +1201,8 @@ class Conductor:
             self.ledger.append_event(RUN_ENDED, {"reason": requested.reason})
             result.ended, result.reason = True, requested.reason
             return
+        if self.view.paper_order is not None:
+            return  # a paper order rests the run until its paper is composed (ticket 115)
         if self._resting is not None:
             return  # the run rests on an end that holds (the rule, a budget, a strict stall): that end, not this one, ends it
         if self.flight or self.verdicts:
@@ -3289,6 +3300,73 @@ class Conductor:
         return [fields["id"] for fields in run_end.scope_downs(self.project)
                 if fields["status"] == "running" or fields["id"] in self.flight or fields["id"] in judged
                 or fields["id"] in stepping or (fields["status"] == "open" and fields["id"] in frontier)]
+
+    # --- the paper order (decision 17; ticket 115) ---
+
+    def _order_ids(self):
+        """The tickets a wave resting on a paper order launches: the drawings alone."""
+        return {fields["id"] for fields in tickets.read_tickets(self.project) if _is_drawing(fields)}
+
+    def _order_graph(self):
+        graph = self._graph()
+        wanted = self._order_ids()
+        graph["tickets"] = [entry for entry in graph["tickets"] if entry["id"] in wanted or entry["status"] == "running"]
+        return graph
+
+    def _say_order(self, order, words):
+        if self._said_order != (order.get("order"), words):
+            self.say("  paper order %s %s" % (order.get("order"), words))
+            self._said_order = (order.get("order"), words)
+
+    def _order_wave(self, result, order):
+        """A wave while a paper order is open: the drawings alone launch, with the verdicts owed; then `_take_order`."""
+        if not self._holds_launches():
+            self._escalate(result, only=self._order_ids())
+            picks = self._picks(self._order_graph())
+            if picks:
+                self._start(picks, result)
+            self._drain_verdicts(result)
+        self._take_order(result, order)
+
+    def _take_order(self, result, order):
+        """The order's rest point, step by step: the running tickets finish, the changed results are drawn, the batch is
+        settled, and then the paper is composed from this commit (`paper.compose`). A run the order started for itself ends
+        as the last run had (`run` on the order); one that was going resumes at the next wave. A composition that fails
+        closes the order as failed, said; a usage window pauses the run, and the order is taken after it."""
+        from wayline import paper
+        drawn = self._order_ids()
+        running = sorted({identifier for identifier in self.flight if identifier not in drawn}
+                         | {entry["id"] for entry in self._graph()["tickets"] if entry["status"] == "running" and entry["id"] not in drawn})
+        if running:
+            self._say_order(order, "waits for ticket(s) %s to finish; nothing new launches" % ", ".join(map(str, running)))
+            return
+        if self._draws_before_the_end(drawings.ORDER):
+            self._say_order(order, "draws the changed results first")
+            return
+        if self.verdicts and self.view.hold is None:
+            # A failed verdict sends its ticket back, whose findings the paper is made from; one held on Fable's spent
+            # window is not waited for, or the order would wait for the window.
+            self._say_order(order, "waits for the verdicts of ticket(s) %s" % ", ".join(
+                str(identifier) for identifier in sorted({entry.ticket for entry in self.verdicts})))
+            return
+        batch = paper.waiting_on(self.project, order)
+        if batch:
+            self._say_order(order, "waits on its batch %s: the owner's marks, or wayline mark %s --defaults" % (batch, batch))
+            return
+        if self._holds_launches() or self.action != schedule.NORMAL:
+            return  # the writer is model work: it waits on the pause, the stop, or pacing
+        try:
+            paper.compose(self.project, order, harness_root=self.harness_root, policy=self.policy, say=self.say)
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, "the paper's writer")
+            return
+        except (paper.PaperError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
+            self.say("  paper order %s failed: %s" % (order.get("order"), failure))
+            paper.fail(self.project, order, str(failure))
+        self._tail()
+        if order.get("run"):
+            self.ledger.append_event(RUN_ENDED, {"reason": order["run"]})
+            result.ended, result.reason = True, order["run"]
 
     # --- drawings at rest points (decision 17; ticket 100) ---
 

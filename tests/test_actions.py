@@ -446,6 +446,37 @@ class DecisionsEndpointTest(ActionCase):
         self.assertEqual([(entry["ticket"], entry["decided_by"]) for entry in after.json["log"]], [(2, "human")])
 
 
+class PaperActionTest(ActionCase):
+    """Ticket 115: the dashboard shows the paper order's card, and its Confirm makes the same order the conversation does."""
+
+    def setUp(self):
+        super().setUp()
+        self.started = []
+        patcher = mock.patch("wayline.paper._start_conductor", lambda path: self.started.append(path) or "started")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_card_carries_the_readiness_list_and_the_cost_and_journals_nothing(self):
+        before = self.ledger.journal_path.read_bytes()
+        response = self.request("GET", "/api/projects/%s/paper/card" % self.project.name)
+        self.assertEqual(response.status, 200, response.text)
+        self.assertEqual(response.json["readiness"][0]["title"], "Open objectives")
+        self.assertIn("$35 to $40", response.json["cost"])
+        self.assertIn("Confirm: wayline paper --yes", response.json["text"])
+        self.assertFalse(response.json["blocks"])
+        self.assertEqual(self.ledger.journal_path.read_bytes(), before, "the card, and Not now, change nothing")
+
+    def test_confirm_makes_the_order_and_a_second_while_it_is_open_is_refused(self):
+        response = self.act("paper")
+        self.assertEqual(response.status, 200, response.text)
+        self.assertEqual((response.json["order"], response.json["conductor"]), (1, False))
+        self.assertEqual([(event["payload"]["action"], event["payload"]["by"]) for event in self.events("paper_order")], [("ordered", "owner")])
+        self.assertEqual(len(self.started), 1)
+        again = self.act("paper")
+        self.assertEqual(again.status, 400)
+        self.assertIn("paper order 1 is open", again.json["error"])
+
+
 class FeedbackActionTest(ActionCase):
     """Ticket 45: the feedback form files what `wayline feedback` files, and the changes view reads it back."""
 
