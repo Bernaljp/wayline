@@ -310,9 +310,24 @@ class AcceptTest(DrawnCase):
         record = self.accept()
         plots = self.plots()
         self.assertEqual((plots["R1.1"]["status"], plots["R1.1"]["mark"]), ("current", "keep"))
+        self.assertEqual([(item["mark"], bool(item["acted"])) for item in batches.read_batch(self.project, first["batch"])["items"]][:3],
+                         [("keep", True), ("drop", True), ("maybe", True)], "the next drawing took each mark: none changes now")
         self.assertEqual(record["carried"], ["R1.1"])
         self.assertEqual((plots["R1.2"]["status"], plots["R1.2"]["mark"]), ("retired", "drop"))
         self.assertEqual((plots["R1.3"]["status"], plots["R1.3"]["note"]), ("current", "Colour the strip by split."))
+
+    def test_an_acceptance_that_fails_half_way_leaves_the_marks_changeable(self):
+        from unittest import mock
+        from wayline import batches
+        self.draw()
+        first = self.accept()
+        batches.mark(self.project, first["batch"], 1, "keep", via="dashboard")
+        self.again()
+        self.draw(tables={})
+        with mock.patch.object(batches, "open_batch", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            self.accept()
+        item = batches.read_batch(self.project, first["batch"])["items"][0]
+        self.assertEqual((item["mark"], item["acted"]), ("keep", None), "the drawing took no mark: it can still change")
 
     def test_a_redraw_that_fails_its_checks_leaves_the_plot_as_its_last_accepted_drawing_drew_it(self):
         self.draw(plots={"auroc_box": "matplotlib-clean", "seed_violin": "seaborn-clean"})

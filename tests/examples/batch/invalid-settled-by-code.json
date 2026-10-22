@@ -5,6 +5,6 @@
   "decision": null,
   "status": "closed",
   "items": [
-    {"id": 1, "ref": "R2+R5", "text": "R2 and R5 report one effect", "marks": ["right", "split"], "default": "right", "note": null, "mark": "right", "by": "code", "at": "2026-10-18T09:12:44.120Z"}
+    {"id": 1, "ref": "R2+R5", "text": "R2 and R5 report one effect", "marks": ["right", "split"], "default": "right", "note": null, "mark": "right", "by": "code", "via": null, "at": "2026-10-18T09:12:44.120Z", "acted": null}
   ]
 }

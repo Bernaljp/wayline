@@ -1102,10 +1102,15 @@ def settle_marks(project, told=None, problems=None):
     events, _ = Ledger(project).read_events()
     reviewed = _reviews(events)
     standing = {decision.id for decision in _decisions(_context(project))}
-    taken = []
+    taken, acted = [], {}
     for ref, (batch, item) in sorted(_review_items(project).items()):
-        if item["mark"] is None or item["by"] != OWNER or ref in reviewed or ref not in standing:
-            continue  # one superseded since its item was opened has nothing left to review
+        if item["mark"] is None or item["by"] != OWNER:
+            continue
+        if ref in reviewed or ref not in standing:
+            # Reviewed another way, or superseded since its item was opened: nothing is left for the mark to do.
+            if not item.get("acted"):
+                acted.setdefault(batch["id"], {})[item["id"]] = item["mark"]
+            continue
         try:
             _apply(project, ref, item["mark"], item["note"] if item["mark"] == REVERSE else None, told)
         except AccountError as failure:
@@ -1113,7 +1118,10 @@ def settle_marks(project, told=None, problems=None):
                 problems.append("your %s mark on %s (item %d of %s) could not be taken: %s; `wayline review %s %s` takes it again"
                                 % (item["mark"], ref, item["id"], batch["id"], failure, ref, item["mark"]))
             continue
+        acted.setdefault(batch["id"], {})[item["id"]] = item["mark"]
         taken.append(ref)
+    for identifier, given in acted.items():  # reviewed: a later click in the marks view changes nothing
+        batches.acted_on(project, identifier, given)
     return taken
 
 

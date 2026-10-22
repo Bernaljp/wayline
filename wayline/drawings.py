@@ -914,6 +914,23 @@ def _batch_items(entries):
     return items
 
 
+def _acted_on_marks(book, plot_ids):
+    """Every settled mark on `plot_ids` steered this drawing (its brief, what it retired and carried): none changes now.
+
+    A batch that cannot be read is passed over, as `plot_marks` passes it over: it never stops a drawing's acceptance."""
+    from wayline import batches
+    try:
+        held = batches.read_batches(book)
+    except (batches.BatchError, ValueError, OSError):
+        return
+    for batch in held:
+        if batch["kind"] == PLOTS_BATCH:
+            taken = {item["id"]: item["mark"] for item in batch["items"]
+                     if item["ref"] in plot_ids and item["mark"] is not None and not item.get("acted")}
+            if taken:
+                batches.acted_on(book, batch["id"], taken)
+
+
 def accept(project, ticket, checked):
     """Record an accepted drawing: its plots' ids, `plots.json`, its record, its `plots` batch, and `drawing` accepted.
 
@@ -971,6 +988,7 @@ def accept(project, ticket, checked):
             else:
                 plot.update(status=RETIRED, headline=False)
                 retired.append(plot["id"])
+        steered = {plot["id"] for plot in plots if plot.get("result") == result_id}
         batch = None
         if drawn["plot"] or drawn["table"]:
             batch = batches.open_batch(book, PLOTS_BATCH, "Plots of %s, drawing %s: keep, maybe, or drop" % (result_id, name),
@@ -994,6 +1012,8 @@ def accept(project, ticket, checked):
         book.append_event(DRAWING, {"result": result_id, "version": version, "ticket": ticket["id"], "rest": record["rest"],
                                     "outcome": ACCEPTED, "plots": sorted(ids, key=_plot_order), "left_out": list(checked.left_out),
                                     "retired": retired}, ticket=ticket["id"])
+        # Last, once the drawing is recorded: an acceptance that failed half-way took no mark, so none is final yet.
+        _acted_on_marks(book, steered)
     return record
 
 

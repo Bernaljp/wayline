@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "batch",
-  "description": "One batch of items put before the owner, or the decider, in the marks view and the conversation (Implementation Decision 17; ticket 79): research/batches/<id>.json, written only by wayline.batches through the ledger. A producer opens it with its items; each item is settled by the first mark given for it, journaled as `marked`; a batch whose items are all settled is closed, and its producer reads the marks back. The mark options of each kind are the marks view's: the kind names which marks an item may take, and wayline.batches checks that every item's `marks` are its kind's and its `default` one of them.",
+  "description": "One batch of items put before the owner, or the decider, in the marks view and the conversation (Implementation Decision 17; ticket 79): research/batches/<id>.json, written only by wayline.batches through the ledger. A producer opens it with its items; each item is settled by the first mark given for it, journaled as `marked`, and only a mark the owner gives again in the marks view changes one the owner gave there, until the producer acts on it (ticket 112); a batch whose items are all settled is closed, and its producer reads the marks back. The mark options of each kind are the marks view's: the kind names which marks an item may take, and wayline.batches checks that every item's `marks` are its kind's and its `default` one of them.",
   "type": "object",
   "required": ["id", "kind", "title", "decision", "status", "items"],
   "additionalProperties": false,
@@ -27,7 +27,9 @@
           "note": {"type": ["string", "null"], "description": "the owner's note, kept with or without a mark"},
           "mark": {"type": ["string", "null"], "description": "the settled mark, null while the item is open"},
           "by": {"type": ["string", "null"], "enum": ["owner", "decider", null], "description": "who settled the item"},
-          "at": {"type": ["string", "null"], "description": "when the item was settled, as the journal spells a timestamp"}
+          "via": {"type": ["string", "null"], "enum": ["dashboard", "conversation", null], "description": "where the owner gave the settling mark: the dashboard's marks view or the conversation's `wayline mark` (ticket 112; absent in a batch written before it, read as null); null for the decider's, and for a mark code gave on another answer such as a decision ticket's"},
+          "at": {"type": ["string", "null"], "description": "when the item was settled, as the journal spells a timestamp"},
+          "acted": {"type": ["string", "null"], "description": "when the batch's producer acted on the settled mark (`wayline.batches.acted_on`), after which no click in the marks view changes it; null until then (ticket 112; absent in a batch written before it, read as null)"}
         }
       }
     }

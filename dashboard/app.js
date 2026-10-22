@@ -41,7 +41,7 @@ const state = {
   ticket: null, // the ticket id whose page is open, or null when the graph is showing
   log: null, // { kind, id, since } of the log tail that is open, or null
 
-  view: null, // the view shown: 'projects', or one of VIEW_NAMES (tickets 110 and 111)
+  view: null, // the view shown: 'projects', or one of VIEW_NAMES (tickets 110, 111, and 112)
   projectsLoaded: false, // whether /api/projects has answered once, so a route naming a project can be applied
   research: null, // { project, view } of the last Research view read, for the dot of the report the owner opens
   waiting: 0, // the selected project's "Waiting on you" count, which the browser tab's title carries
@@ -2139,12 +2139,12 @@ function wireIntake() {
 // Inherited only for a project with documents; Marks (112) joins them. A hash that is not a route
 // (`#ticket/3`, a graph node's) is left alone.
 
-const VIEW_NAMES = ['research', 'paper', 'inherited', 'run'];
+const VIEW_NAMES = ['research', 'paper', 'inherited', 'run', 'marks'];
 const routing = { done: false };
 
 // The views that read only while they are shown, each by its loader: every poll asks, and a hidden view
 // returns at once. Run's panels are read whatever is shown, since its overview feeds the tabs.
-const VIEW_LOADERS = { research: loadResearch, paper: loadPaper, inherited: loadInherited };
+const VIEW_LOADERS = { research: loadResearch, paper: loadPaper, inherited: loadInherited, marks: loadMarks };
 
 // Each routed view's panels, with what each says until its project's first answer lands.
 const READING = {
@@ -2162,6 +2162,8 @@ const READING = {
   'inherited-claims-body': 'reading the inherited claims',
   'inherited-pairs-body': 'reading the repeated claims',
   'inherited-material-body': 'reading the missing material',
+  'marks-body': 'reading the batches',
+  'marks-settled-body': 'reading the settled batches',
 };
 
 // Whether a project offers Inherited: only one with documents does (decision 17). A count not known (its record
@@ -2188,6 +2190,7 @@ function parseRoute(hash) {
   const [project, rest] = parts;
   if (rest === undefined) return { project, view: 'research' };
   if (VIEW_NAMES.includes(rest)) return { project, view: rest };
+  if (BATCH_ID.test(rest)) return { project, view: 'marks', batch: rest }; // a batch opens Marks at it, not the viewer
   return { project, item: rest };
 }
 
@@ -2235,6 +2238,7 @@ function route() {
   }
   if (target.view) {
     closeItem();
+    if (target.batch) marks.focus = target.batch;
     showView(target.view);
     return;
   }
@@ -2819,6 +2823,292 @@ function renderInherited(view, project) {
     id: item.id, title: item.item, status: item.reply || 'waiting',
     more: [more(`${item.heading}, ${item.kind}${item.licensed ? ', licensed' : ''}; ${item.reply ? `${item.reply}, said by the ${item.by}` : 'no reply yet'}`)],
   }), 'no material is missing')]);
+}
+
+// --- Marks (ticket 112) -----------------------------------------------------------------------------------------
+//
+// Every open batch put before the owner, each item whole with its marks and a note box. A mark saves when
+// clicked, through the `mark` action, which calls the `wayline mark` verb's function; a note saves when the
+// owner leaves its box, or with the mark clicked while it is still in it. The first answer, here or in the
+// conversation, settles an item; a mark given here changes with another click until its batch's producer acts
+// on it. "Take all defaults" answers a batch in one click. At phone width one item fills the screen, with
+// previous and next. The settled batches follow, folded, newest first.
+
+// A batch's item link, `#/<project>/B3`: it opens Marks at that batch rather than the viewer.
+const BATCH_ID = /^B[1-9][0-9]*$/;
+
+// What each kind of batch is called on its card.
+const BATCH_KINDS = {
+  plots: 'plots',
+  objective_changes: 'objective changes',
+  software_ask: 'the software ask',
+  account_review: 'account review',
+  merges: 'merges',
+  contradictions: 'contradictions',
+  concern_placements: 'concern placements',
+  outline_proposals: 'outline proposals',
+};
+
+// The kinds whose refs are item ids the viewer opens: a plot or a table, a pair of passages, a concern. An account
+// review's `D1` is a decision, not a document, so a ref of any other kind is shown as words.
+const LINKED_REFS = new Set(['plots', 'merges', 'contradictions', 'concern_placements']);
+
+const marks = {
+  project: null, // the project `view` was read from
+  view: null, // the view last read, drawn again when the owner moves between items or a link names a batch
+  current: null, // `B1.2`, the item the phone's one screen shows
+  order: [], // the open items as last drawn, so an item a click took out of them (its batch closed) hands on to the next
+  focus: null, // the batch a link `#/<project>/B3` named, shown once the view is drawn
+  unfolded: new Set(), // the settled batches the owner opened, which stay open through the redraws
+  // By `<project>/B1.2`, so a note typed in one project is still there when the owner comes back from another:
+  notes: {}, // a note typed and not saved yet, which a redraw keeps
+  saving: {}, // the note's save under way, which a mark clicked meanwhile waits for
+};
+
+async function loadMarks() {
+  const project = state.project;
+  if (!project || state.view !== 'marks') return;
+  try {
+    const view = await get(projectPath('/marks'), 'marks');
+    if (project !== state.project) return;
+    if (view) {
+      if (marks.project !== project) Object.assign(marks, { current: null, order: [], unfolded: new Set() });
+      Object.assign(marks, { project, view });
+    }
+    if (view || marks.focus) renderMarks();
+  } catch (failure) {
+    if (project === state.project) replace(document.getElementById('marks-body'), [errorState(failure)]);
+  }
+}
+
+function itemKey(batch, item) {
+  return `${batch.id}.${item.id}`;
+}
+
+// Where a note typed for an item is kept until it is saved: by project, since `B1.2` names an item in each of them.
+function draftKey(project, batch, item) {
+  return `${project}/${itemKey(batch, item)}`;
+}
+
+function isOpen(item) {
+  return item.mark === null || item.mark === undefined;
+}
+
+// Where an item stands: open with its default, or its mark with who gave it and where.
+function standingLine(item) {
+  if (isOpen(item)) return item.default ? `open; its default is ${item.default}` : 'open; it has no default';
+  const who = item.by === 'decider' ? 'the decider' : 'you';
+  const where = item.via ? ` in the ${item.via}` : '';
+  const after = item.changeable ? '; another click changes it until its work acts on it'
+    : item.acted ? `; acted on at ${item.acted}` : '';
+  return `${item.mark}, by ${who}${where}${item.at ? ` at ${item.at}` : ''}${after}`;
+}
+
+// The item whole: a plot's SVG as its drawing wrote it, with its three explanations; a table's explanations and its
+// rows in the viewer; a merge's or a contradiction's two texts side by side; a proposal's fields; else its text.
+function itemWhole(project, item) {
+  const plot = item.plot;
+  if (plot) {
+    const shown = plot.kind === 'plot' && plot.svg
+      ? [el('figure', { class: 'mark-plot' }, [el('img', { src: downloadUrl(plot.svg), alt: `${item.ref}: ${plot.chart_type || 'a plot'}` })])]
+      : plot.kind === 'table' ? [el('p', { class: 'note' }, [itemLink(project, item.ref, `the table ${item.ref}`), document.createTextNode(' opens with its rows')])]
+        : [el('p', { class: 'mark-text', text: item.text })];
+    return [...shown, ...captionOf(plot.caption)];
+  }
+  if (item.sides) return [sidesOf(item.sides), el('p', { class: 'mark-text', text: item.text })];
+  if (item.fields) return [fields(item.fields)];
+  return [el('p', { class: 'mark-text', text: item.text })];
+}
+
+function markButtons(project, batch, item) {
+  const open = isOpen(item);
+  return el('div', { class: 'mark-choices acts', role: 'group', 'aria-label': `marks for item ${item.id} of ${batch.id}` }, item.marks.map((name) => {
+    const button = el('button', {
+      type: 'button', class: `action mark${open && name === item.default ? ' default' : ''}`, text: name,
+      'aria-pressed': String(name === item.mark), title: name === item.default ? `${name}, its default` : null,
+    });
+    button.disabled = !(open || item.changeable);
+    // This item's note box keeps the focus, so a note typed and not left yet goes with this mark rather than on its own
+    // first; another item's box is left, which saves its note.
+    button.addEventListener('mousedown', (event) => {
+      const typing = noteInFocus();
+      if (typing && typing.key === itemKey(batch, item)) event.preventDefault();
+    });
+    button.addEventListener('click', () => giveMark(project, batch, item, name));
+    return button;
+  }));
+}
+
+function noteBox(project, batch, item) {
+  const key = draftKey(project, batch, item);
+  const box = el('textarea', {
+    class: 'mark-note', rows: '2', 'data-key': itemKey(batch, item), placeholder: 'a note, kept with the item',
+    'aria-label': `note on item ${item.id} of ${batch.id}`,
+  });
+  box.value = key in marks.notes ? marks.notes[key] : (item.note || '');
+  box.disabled = readOnlyNow() || !(isOpen(item) || item.changeable);
+  box.addEventListener('input', () => { marks.notes[key] = box.value; });
+  // Saved when the owner leaves the box, whatever drew it: a box a redraw gave back the focus to fires no `change`, so
+  // leaving is the moment, and `unsavedNote` sends nothing the item holds already. A box a redraw takes away is not left
+  // by the owner: its note is not saved half typed.
+  box.addEventListener('blur', () => { if (box.isConnected) saveNote(project, batch, item); });
+  return el('label', { class: 'mark-note-label' }, [el('span', { text: 'note' }), box]);
+}
+
+// The note typed for an item and not saved yet, or null: `''` when the owner emptied the box of a note the item holds,
+// which takes the note away.
+function unsavedNote(item, key) {
+  const typed = marks.notes[key];
+  if (typed === undefined || typed === (item.note || '')) return null;
+  if (typed.trim()) return typed;
+  return item.note ? '' : null;
+}
+
+async function giveMark(project, batch, item, name) {
+  const key = draftKey(project, batch, item);
+  if (marks.saving[key]) await marks.saving[key];
+  const note = unsavedNote(item, key);
+  const body = { batch: batch.id, item: item.id, mark: name };
+  if (note) body.note = note;
+  const reply = await perform('mark', body, () => `${batch.id}, item ${item.id}: ${name}${note ? ' and its note' : ''} saved`, project);
+  if (reply && note === '') await saveNote(project, batch, item); // an emptied box: the note goes once the mark is in
+  else if (reply && marks.notes[key] === note) delete marks.notes[key];
+}
+
+async function saveNote(project, batch, item) {
+  const key = draftKey(project, batch, item);
+  const note = unsavedNote(item, key);
+  if (note === null) return;
+  const saving = perform('mark', { batch: batch.id, item: item.id, note },
+    () => `${batch.id}, item ${item.id}: ${note ? 'note saved' : 'note taken away'}`, project);
+  marks.saving[key] = saving;
+  const reply = await saving;
+  if (marks.saving[key] === saving) delete marks.saving[key];
+  if (reply && marks.notes[key] === note) delete marks.notes[key];
+}
+
+function takeDefaults(project, batch) {
+  const button = el('button', {
+    type: 'button', class: 'action acts', text: `take all defaults (${batch.defaults})`,
+    title: `settle each unsettled item of ${batch.id} that has a default with it`,
+  });
+  button.addEventListener('click', () => perform('mark', { batch: batch.id, defaults: true },
+    (reply) => `${batch.id}: ${reply.settled.length} item${reply.settled.length === 1 ? '' : 's'} settled by ${reply.settled.length === 1 ? 'its default' : 'their defaults'}`, project));
+  return button;
+}
+
+function markItem(project, batch, item) {
+  const key = itemKey(batch, item);
+  const ref = LINKED_REFS.has(batch.kind) ? itemLink(project, item.ref) : el('span', { class: 'mono', text: item.ref });
+  const head = [el('span', { class: 'row-id', text: `${item.id}.` }), ref];
+  if (!isOpen(item)) head.push(statusChip(item.mark));
+  return el('li', { class: `mark-item${isOpen(item) ? '' : ' settled'}${key === marks.current ? ' current' : ''}`, 'data-item': key }, [
+    el('div', { class: 'row-line' }, head),
+    ...itemWhole(project, item),
+    more(standingLine(item)),
+    markButtons(project, batch, item),
+    noteBox(project, batch, item),
+  ]);
+}
+
+function batchCard(project, batch) {
+  const acts = [];
+  if (batch.decision) acts.push(el('a', { class: 'action', href: routeTo(project, String(batch.decision)), text: `decision ${batch.decision}` }));
+  acts.push(insertButton(project, batch.id));
+  if (batch.status === 'open' && batch.defaults) acts.push(takeDefaults(project, batch));
+  const count = batch.items.length;
+  const current = batch.items.some((item) => itemKey(batch, item) === marks.current);
+  return el('article', { class: `batch${current ? ' has-current' : ''}`, 'data-batch': batch.id }, [
+    el('div', { class: 'row-line batch-head' }, [
+      el('span', { class: 'row-id', text: batch.id }),
+      el('span', { class: 'row-title', text: batch.title }),
+      statusChip(BATCH_KINDS[batch.kind] || batch.kind),
+      el('span', { class: 'row-acts' }, acts),
+    ]),
+    more(batch.status === 'open' ? `${batch.open} of ${count} unsettled` : `settled, ${count} item${count === 1 ? '' : 's'}`),
+    el('ol', { class: 'mark-items' }, batch.items.map((item) => markItem(project, batch, item))),
+  ]);
+}
+
+// Previous and next, which only the phone shows: one item per screen.
+function pager(order) {
+  const index = order.indexOf(marks.current);
+  const step = (by, text) => {
+    const button = el('button', { type: 'button', class: 'action', text });
+    button.disabled = index + by < 0 || index + by >= order.length;
+    button.addEventListener('click', () => {
+      marks.current = order[index + by];
+      renderMarks();
+      const shown = document.querySelector('#marks-body .mark-item.current');
+      if (shown && shown.scrollIntoView) shown.scrollIntoView({ block: 'start' });
+    });
+    return button;
+  };
+  return el('nav', { class: 'pager', 'aria-label': 'items, one at a time' }, [
+    step(-1, 'previous'), el('span', { class: 'pager-at', text: `${index + 1} of ${order.length}` }), step(1, 'next'),
+  ]);
+}
+
+// The note box the owner is typing in, to give the focus back to once the view is drawn again.
+function noteInFocus() {
+  const active = document.activeElement;
+  if (!active || !active.classList || !active.classList.contains('mark-note')) return null;
+  return { key: active.dataset.key, start: active.selectionStart, end: active.selectionEnd };
+}
+
+function restoreNote(typing) {
+  if (!typing) return;
+  const box = [...document.querySelectorAll('#view-marks textarea.mark-note')].find((node) => node.dataset.key === typing.key);
+  if (!box || box.disabled) return;
+  box.focus();
+  if (box.setSelectionRange) box.setSelectionRange(typing.start, typing.end);
+}
+
+// A settled batch, folded unless the owner opened it or a link named it; opened, it stays open through the redraws.
+function settledFold(project, batch) {
+  if (batch.id === marks.focus) marks.unfolded.add(batch.id);
+  const fold = el('details', { class: 'batch-fold', 'data-batch': batch.id, open: marks.unfolded.has(batch.id) ? '' : null }, [
+    el('summary', { text: `${batch.id} ${batch.title}` }), batchCard(project, batch),
+  ]);
+  fold.addEventListener('toggle', () => {
+    if (fold.open) marks.unfolded.add(batch.id);
+    else marks.unfolded.delete(batch.id);
+  });
+  return fold;
+}
+
+function renderMarks() {
+  const project = state.project;
+  if (marks.project !== project || !marks.view) return;
+  const view = marks.view;
+  const open = view.batches || [];
+  const settled = view.settled || [];
+  const order = open.flatMap((batch) => batch.items.map((item) => itemKey(batch, item)));
+  const named = marks.focus ? open.find((batch) => batch.id === marks.focus) : null;
+  if (named) marks.current = itemKey(named, named.items.find(isOpen) || named.items[0]);
+  if (!order.includes(marks.current)) {
+    // Gone from the open items, its batch closed: the next one that was after it, else the first one still open.
+    const after = marks.order.slice(marks.order.indexOf(marks.current) + 1).find((key) => order.includes(key));
+    const firstOpen = open.flatMap((batch) => batch.items.filter(isOpen).map((item) => itemKey(batch, item)))[0];
+    marks.current = (marks.current && after) || firstOpen || order[order.length - 1] || null;
+  }
+  marks.order = order;
+  const typing = noteInFocus();
+  replace(document.getElementById('marks-body'), [
+    open.length ? el('div', { class: 'batches' }, open.map((batch) => batchCard(project, batch)))
+      : emptyState('nothing waits for a mark: every batch put before you is settled'),
+    ...(order.length > 1 ? [pager(order)] : []),
+    ...problemsList(view.problems),
+  ]);
+  replace(document.getElementById('marks-settled-body'), [settled.length
+    ? el('div', { class: 'batches' }, settled.map((batch) => settledFold(project, batch)))
+    : emptyState('no batch is settled yet')]);
+  restoreNote(typing);
+  if (marks.focus) {
+    const shown = document.querySelector(`#view-marks [data-batch="${marks.focus}"]`);
+    if (shown && shown.scrollIntoView) shown.scrollIntoView({ block: 'start' });
+    marks.focus = null;
+  }
 }
 
 // --- Run's additions: the account and Software ------------------------------------------------------------

@@ -139,8 +139,9 @@ JSON_TYPE = "application/json; charset=utf-8"
 TEXT_TYPE = "text/plain; charset=utf-8"
 
 # The actions of Implementation Decisions 8 this dashboard takes (ticket 35), in the order the spec lists them.
+# `mark` is the marks view's (ticket 112): the one action decision 17 adds for it.
 ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake", "feedback",
-           "paper")
+           "paper", "mark")
 ACTION_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/actions/(?P<name>[^/]+)/?$")
 # The header an intake drop names its file in, and the largest JSON body any other action reads.
 FILENAME_HEADER = "X-Wayline-Filename"
@@ -1255,6 +1256,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/run/?$"), "api_run"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/?$"), "api_paper"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/inherited/?$"), "api_inherited"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/marks/?$"), "api_marks"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/waiting/?$"), "api_waiting"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/items/(?P<item>[^/]+)/?$"), "api_item"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/card/?$"), "api_paper_card"),
@@ -1579,6 +1581,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                                                ensure_ascii=False).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-cache"),))
         return self._json(view, tag)
 
+    def api_marks(self, query, project):
+        """The marks view (ticket 112), tagged by the ledger and by the batch and drawing records, which the ledger's
+        snapshot does not scan: a producer saying it acted on a mark moves only its batch."""
+        path = self._project(project)
+        tag = etag("marks", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
+                   dashboard_views.marks_snapshot(path))
+        if self._not_modified(tag):
+            return None
+        return self._json(dashboard_views.marks_view(path), tag)
+
     def api_waiting(self, query, project):
         """The "Waiting on you" strip (ticket 110): the account's section, tagged by the ledger the account is read from."""
         path = self._project(project)
@@ -1793,8 +1805,9 @@ def run_action(name, project, body, headers=None, server=None):
 
     `body` is the raw request body. The functions are the ones the verbs call, told `by="dashboard"`
     wherever the journal records who asked: `project.answer`, `set_autonomy`, `control`,
-    `switch_project`, `steer_ticket`, `set_pacing`, `set_model_fallback`, `set_ladder_changes`, and `documents.drop_document`
-    (code's cautious guess at a dropped file, a reference going on to `intake.drop_material`). Raises
+    `switch_project`, `steer_ticket`, `set_pacing`, `set_model_fallback`, `set_ladder_changes`, `documents.drop_document`
+    (code's cautious guess at a dropped file, a reference going on to `intake.drop_material`), and the `wayline mark` verb's
+    `batches.mark` and `batches.take_defaults`, told the mark was given in the dashboard (`_mark`). Raises
     `DashboardError` for a body the action cannot take and `ActionConflict` for a switch already under
     way, and lets a verb's own refusal (a `ValueError`) through, which the handler answers with 400.
     """
@@ -1848,10 +1861,36 @@ def run_action(name, project, body, headers=None, server=None):
         from wayline import paper  # the paper order reads every part of the ledger
         _fields(body)
         return HTTPStatus.OK, paper.order(project, by="owner")
+    if name == "mark":
+        return _mark(project, _fields(body, ("batch",), ("item", "mark", "note", "defaults")))
     if name == "switch":
         _fields(body)
         return _switch(project, server)
     raise DashboardError("no action %r; the actions are %s" % (name, ", ".join(ACTIONS)))
+
+
+def _mark(project, fields):
+    """One click of the marks view (ticket 112): `{batch, item, mark?, note?}` saves a mark, a note, or both on one item (an
+    empty note with no mark takes the item's note away), and `{batch, defaults: true}` takes all defaults; the owner's,
+    given in the dashboard. A batch's own refusal (an item settled
+    in the conversation, a mark its producer acted on, a mark the kind does not take) is a `BatchError`, answered 400."""
+    from wayline import batches  # the batches import the project module, which the views do not need
+    batch = _string(fields, "batch")
+    if fields.get("defaults") is not None:
+        if fields["defaults"] is not True or any(key in fields for key in ("item", "mark", "note")):
+            raise DashboardError("take all defaults is {batch, defaults: true}, with no item, mark, or note")
+        record, settled = batches.take_defaults(project, batch, by=batches.OWNER, via=batches.DASHBOARD)
+        return HTTPStatus.OK, {"batch": record, "settled": settled}
+    if "item" not in fields:
+        raise DashboardError("a mark or a note is given on an item: name it")
+    if isinstance(fields["item"], bool) or not isinstance(fields["item"], int):
+        raise DashboardError("item is the item's number in the batch, got %r" % (fields["item"],))
+    given, note = _string(fields, "mark", required=False), _string(fields, "note", required=False)
+    # A note box emptied by the owner, with no mark, takes the item's note away.
+    clear = given is None and note is not None and not note.strip()
+    record = batches.mark(project, batch, fields["item"], given, note=None if clear else note, by=batches.OWNER, via=batches.DASHBOARD,
+                          clear_note=clear)
+    return HTTPStatus.OK, {"batch": record, "settled": []}
 
 
 def _switch(project, server):

@@ -995,6 +995,34 @@ lists it read-only, marked with its tag.
   `/api/projects/<id>/`, answering 304 while neither the ledger nor a section file moved. `verification.claim_rows` and
   `repeats.merges` are the read-only records they use.
 
+- The dashboard's Marks view (ticket 112; Implementation Decisions 17 and 8). `#/<project>/marks` holds every open
+  batch with its unsettled count, each item shown whole: a plot's SVG as its drawing wrote it, with its three
+  explanations (a table's explanations, its rows a click away); a merge's or a contradiction's two texts side by side;
+  an objective change's reason, evidence, feasibility, and the verifier's judgment; every other kind as its batch
+  carries it. Each item has its marks (plots keep, maybe, drop; objective changes and the software ask approve,
+  decline; account review stand, reverse; merges right, split; contradictions real, not a contradiction; concern
+  placements take it, another place; outline proposals take, decline) and a note box. A mark saves when clicked, with
+  no submit, and a note when its box is left or with the mark clicked while it is still in it (an emptied box takes
+  the note away, journaled as a `marked` with an empty note), through the one new
+  action, `mark`, token-guarded like the others, which calls the `wayline mark` verb's function. "Take all defaults"
+  settles every unsettled item with a default in one click. A settled item shows its mark and who gave it, the owner in
+  the dashboard or in the conversation, or the decider. The first answer, either place, settles an item; a mark given
+  in the dashboard changes with another click there until the batch's producer acts on it, and one settled in the
+  conversation is never answered a second time from the dashboard. Settled batches follow, folded, newest first. At
+  phone width the view shows one item per screen with previous and next. A batch's link from the conversation,
+  `#/<project>/B3`, opens Marks at that batch. The new read is `marks` under `/api/projects/<id>/`, answering 304
+  while the ledger, its batches, and its drawings did not move.
+
+- Where a mark was given, and when its producer acted on it (ticket 112). A batch item carries `via` (`dashboard` or
+  `conversation`, null for the decider's and for a mark code gave on another answer) and `acted`, stamped by
+  `batches.acted_on` when the producer has done what the mark asks (a split merge, a dismissed contradiction, a placed
+  concern, merged results, a review taken, an objective change made or its ticket answered by the marks, the software
+  ask's decision answered, a drawing that took the plots' marks) or knows it never will (the decision answered another
+  way first, the concern sorted, the review superseded). It stamps only the mark the producer read, so a click that
+  landed in between stays the owner's to change. `batches.mark` lets the owner's dashboard mark change on a later
+  dashboard mark until then, and refuses every other later answer as before, naming where the first was given. A
+  batch file written before these fields is read with both null.
+
 
 ## v1.0.0 (2026-09-27)
 

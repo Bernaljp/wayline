@@ -749,12 +749,14 @@ def _place_words(parsed):
 
 def _apply_marks(project, report, say):
     """Every approved item not applied yet, applied in item order, `by` whoever marked it; an answer with no text owed."""
+    from wayline import batches
     from wayline.objectives import ObjectiveError, named, read_objectives
 
     events, _ = ledger_for(project).read_events()
     applied = _applied(events)
     records = {record["id"]: record for record in read_proposals(events)}
     for batch in _batches(project):
+        acted = {}
         for item in batch["items"]:
             record = records.get(item["ref"])
             if item["mark"] != APPROVE or record is None or item["ref"] in applied:
@@ -769,6 +771,8 @@ def _apply_marks(project, report, say):
                     status = (named(held, identifier) or {}).get("status")
                     if status != {"reopen": "open", "reframe": "reframed"}.get(record["kind"], CLOSES.get(record["kind"])):
                         say("  objective change %s was approved and cannot be made now: %s" % (item["ref"], problem))
+                    else:
+                        acted[item["id"]] = APPROVE  # the objective stands where the change would put it already
                     continue  # the objective already stands where the change would put it, or elsewhere by the owner's word
             placements = [(concern, parsed) for concern, parsed in placements_in(item.get("note"))
                           if concern in [found for found, _ in _concerns_of(project, identifier)]] if record["kind"] == "drop" else []
@@ -778,10 +782,13 @@ def _apply_marks(project, report, say):
                 say("  objective change %s could not be made: %s" % (item["ref"], failure))
                 continue
             applied.add(item["ref"])
+            acted[item["id"]] = APPROVE
             report["applied"].append(item["ref"])
             say("  objective change %s approved by the %s: %s %s%s" % (
                 item["ref"], item["by"], record["kind"], done["objective"],
                 "; ticket(s) %s parked" % ", ".join(str(number) for number in done["cancelled"]) if done["cancelled"] else ""))
+        if acted:  # made: a later click in the marks view changes nothing
+            batches.acted_on(project, batch["id"], acted)
 
 
 def _close_settled(project):
@@ -801,6 +808,11 @@ def _close_settled(project):
             answer(project, fields["id"], said, rationale="every item of batch %s is marked" % batch["id"])
         except ProjectError:
             continue
+        # The ticket's answer is these marks: a later click in the marks view would leave it saying another. An approval
+        # not made yet ("cannot be made now") stays open to a decline.
+        applied = _applied(ledger_for(project).read_events()[0])
+        batches.acted_on(project, batch["id"], {item["id"]: item["mark"] for item in batch["items"]
+                                                if item["mark"] == DECLINE or item["ref"] in applied})
 
 
 def _gather(project, report, notify, say):
@@ -943,8 +955,9 @@ def settle(project, notify=None, say=None):
     say = say or (lambda line: None)
     report = {"opened": [], "joined": [], "applied": [], "declined": []}
     _take_answers(project, report, say)
-    _apply_marks(project, report, say)
-    _close_settled(project)
+    with ledger_for(project).lock():  # the marks read, acted on, and stamped with no click of the marks view between
+        _apply_marks(project, report, say)
+        _close_settled(project)
     _gather(project, report, notify, say)
     _sync(project)
     return report

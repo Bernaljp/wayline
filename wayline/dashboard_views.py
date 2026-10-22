@@ -1,11 +1,12 @@
-"""The dashboard's routed views (Implementation Decision 17; tickets 110 and 111): what each view reads, and what an
-item link opens.
+"""The dashboard's routed views (Implementation Decision 17; tickets 110, 111, and 112): what each view reads, and what
+an item link opens.
 
-The dashboard is five hash-routed views behind the project tabs; this module builds the JSON of four of them,
-**Research** and the additions to **Run** (ticket 110), **Paper** and **Inherited** (ticket 111), the "Waiting on you"
-strip every view shows, the projects page's row for each project, and the resolution of an item link
-`#/<project>/<id>`. Marks (ticket 112) follows. Like every view the dashboard polls, each function here reads and never
-writes: no lock, no render, no model, so the dashboard spends no tokens.
+The dashboard is five hash-routed views behind the project tabs; this module builds the JSON of each of them,
+**Research** and the additions to **Run** (ticket 110), **Paper** and **Inherited** (ticket 111), and **Marks** (ticket
+112), the "Waiting on you" strip every view shows, the projects page's row for each project, and the resolution of an
+item link `#/<project>/<id>`. Like every view the dashboard polls, each function here reads and never writes: no lock, no
+render, no model, so the dashboard spends no tokens. A mark the owner gives in Marks is the `mark` action's, which calls
+the `wayline mark` verb's function.
 
 **Thin lists.** A view lists items, each an id, a title, a status, and what opens it; it never carries a rendered
 file. Every Markdown file code renders (the general report, a result's reports, the account, `OBJECTIVES.md`, the
@@ -24,7 +25,8 @@ so nothing is rendered twice. Inherited is offered only for a project with docum
 - `P12`, a passage, which opens its section at its heading: over Inherited for an inherited claim, else over Paper;
 - `D1`, a document, which opens its converted text over Inherited;
 - `K3`, a concern, and `M2`, a missing item, which open `CONCERNS.md` and `VERIFICATIONS.md` at their headings;
-- `P5+P11`, a pair of the repeated-claims check, a contradiction or a merge, which opens both claims side by side.
+- `P5+P11`, a pair of the repeated-claims check, a contradiction or a merge, which opens both claims side by side;
+- `B3`, a batch, which the page opens in Marks at that batch rather than in the viewer, so it is no id here.
 
 An id that names nothing resolves to None, and the server answers 404 with one line the page shows in the viewer.
 
@@ -40,11 +42,11 @@ from pathlib import Path
 from wayline.ledger import REPORT_RENDERED, TICKET_CANCELLED, Ledger
 from wayline.project import RESEARCH, ProjectError, read_harness
 
-__all__ = ["VIEWS", "research_view", "run_view", "paper_view", "inherited_view", "item_view", "ITEM_ID"]
+__all__ = ["VIEWS", "research_view", "run_view", "paper_view", "inherited_view", "marks_view", "item_view", "ITEM_ID"]
 
-# The views routed so far: Research and Run (110), Paper and Inherited (111); Marks (112) joins them.
-VIEWS = ("research", "run", "paper", "inherited")
-RESEARCH_VIEW, RUN_VIEW, PAPER_VIEW, INHERITED_VIEW = VIEWS
+# The five views: Research and Run (110), Paper and Inherited (111), Marks (112).
+VIEWS = ("research", "run", "paper", "inherited", "marks")
+RESEARCH_VIEW, RUN_VIEW, PAPER_VIEW, INHERITED_VIEW, MARKS_VIEW = VIEWS
 
 REPORT_MD = RESEARCH + "/REPORT.md"
 OBJECTIVES_MD = RESEARCH + "/OBJECTIVES.md"
@@ -417,13 +419,19 @@ def section_snapshot(project):
     """The `(mtime_ns, size)` of each section file, which the ledger's snapshot does not scan: an owner's edit of one
     moves no ledger file until the next render takes it in."""
     from wayline import sections
+    return _stamps(Path(project) / RESEARCH / sections.SECTIONS_DIR)
+
+
+def _stamps(directory, prefix=""):
+    """`{prefix + name: (mtime_ns, size)}` of the files directly in `directory`, dot files left out; nothing when it is
+    not there. What a view's tag carries of files the ledger's snapshot does not scan."""
     found = {}
     try:
-        with os.scandir(Path(project) / RESEARCH / sections.SECTIONS_DIR) as entries:
+        with os.scandir(directory) as entries:
             for entry in entries:
                 if not entry.name.startswith(".") and entry.is_file(follow_symlinks=False):
                     stamp = entry.stat()
-                    found[entry.name] = (stamp.st_mtime_ns, stamp.st_size)
+                    found[prefix + entry.name] = (stamp.st_mtime_ns, stamp.st_size)
     except OSError:
         pass
     return found
@@ -607,6 +615,121 @@ def inherited_view(project):
         "material": _material(project, problems),
         "problems": problems,
     }
+
+
+# --- Marks: every batch put before the owner, each item whole ------------------------------------------------------
+
+
+def _drawn(project, problems):
+    """`{batch id: {plot or table id: its entry}}`: what each accepted drawing drew, by the `plots` batch it opened."""
+    from wayline import drawings
+    try:
+        records = drawings.read_records(project)
+    except (OSError, ValueError) as failure:
+        problems.append("the drawings: %s" % failure)
+        return {}
+    found = {}
+    for record in records:
+        if record.get("batch"):
+            entries = found.setdefault(record["batch"], {})
+            for kind, key in (("plot", "plots"), ("table", "tables")):
+                for entry in record.get(key) or []:
+                    if isinstance(entry, dict) and entry.get("id"):
+                        entries[entry["id"]] = (kind, entry)
+    return found
+
+
+def _plot_shown(drawn, ref):
+    """A plot as its drawing drew it, its SVG and PNG as written beside it (never a re-render), with its three explanations;
+    a table with its CSV, which opens in the viewer by the item's id."""
+    kind, entry = drawn.get(ref) or (None, None)
+    if entry is None:
+        return None
+    return {"kind": kind, "svg": entry.get("svg"), "png": entry.get("png"), "csv": entry.get("csv"), "chart_type": entry.get("chart_type"),
+            "data_view": entry.get("data_view"), "caption": {"purpose": entry.get("purpose"), "data": entry.get("data"), "shows": entry.get("shows")}}
+
+
+def _sides(passages, ref):
+    """The two passages a merge or a contradiction names (`P5+P11`), each with where it stands, to show side by side: in
+    the viewer for a pair's link, in Marks for a merges or contradictions batch's item."""
+    sides = []
+    for side in ref.split("+"):
+        passage = passages.get(side) or {}
+        sides.append({"id": side, "section": passage.get("section"), "heading": passage.get("heading"), "text": _words(passage.get("text"))})
+    return sides
+
+
+def _proposal_fields(record):
+    """An objective change as the verifier judged it: what it changes, its reason, evidence, feasibility, and judgment."""
+    change = "%s %s" % (record.get("kind"), record.get("objective"))
+    if record.get("successor"):
+        change += ' as "%s"' % record["successor"]
+    feasibility = record.get("feasibility") if isinstance(record.get("feasibility"), dict) else None
+    upheld = record.get("upheld")
+    judgment = None if upheld is None else "%s: %s" % ("upheld" if upheld else "not upheld", record.get("why") or "no reason given")
+    return [[name, value] for name, value in (
+        ("change", change), ("reason", record.get("reason")), ("evidence", ", ".join(record.get("evidence") or []) or None),
+        ("feasibility", "%s: %s" % (feasibility.get("verdict"), feasibility.get("reasoning")) if feasibility else None),
+        ("judgment", judgment), ("answer", record.get("answer")), ("from", "ticket %s" % record["ticket"] if record.get("ticket") else None))
+        if value]
+
+
+def _mark_item(batch, item, read):
+    """One item whole: its own fields, whether a click may still change it, and what its kind shows of it."""
+    from wayline import batches
+    shown = dict(item, changeable=batches.changeable(item))
+    kind = batch["kind"]
+    if kind == "plots":
+        shown["plot"] = _plot_shown(read["drawn"].get(batch["id"], {}), item["ref"])
+    elif kind in ("merges", "contradictions") and "+" in item["ref"]:
+        shown["sides"] = _sides(read["passages"], item["ref"])
+    elif kind == "objective_changes" and item["ref"] in read["proposals"]:
+        shown["fields"] = _proposal_fields(read["proposals"][item["ref"]])
+    return shown
+
+
+def _batch_row(batch, read):
+    open_items = sum(1 for item in batch["items"] if item["mark"] is None)
+    return {"id": batch["id"], "kind": batch["kind"], "title": batch["title"], "decision": batch["decision"], "status": batch["status"],
+            "open": open_items, "marks": list(batch["items"][0]["marks"]), "defaults": sum(1 for item in batch["items"] if item["mark"] is None
+                                                                                       and item["default"] is not None),
+            "items": [_mark_item(batch, item, read) for item in batch["items"]]}
+
+
+def marks_snapshot(project):
+    """The `(mtime_ns, size)` of each batch and drawing record, which Marks reads and the ledger's snapshot does not scan:
+    only Marks' tag moves with them, so a mark moves no other view's."""
+    found = {}
+    for folder in ("batches", "drawings"):
+        found.update(_stamps(Path(project) / RESEARCH / folder, folder + "/"))
+    return found
+
+
+def marks_view(project):
+    """The Marks view: every open batch, oldest first, each with its unsettled count and its items whole (a plot's SVG with
+    its three explanations, a merge's or a contradiction's two texts side by side, a proposal's reason, evidence,
+    feasibility, and judgment, and every other kind as its batch carries it), then the settled batches, newest first, whose
+    marks given here may still change until their producer acts on them."""
+    from wayline import batches, objective_changes, sections
+    project = Path(project).resolve()
+    problems, held = [], []
+    for identifier in batches.batch_ids(project):
+        try:
+            held.append(batches.read_batch(project, identifier))
+        except (OSError, ValueError) as failure:  # a batch file a hand broke: said, and the other batches still show
+            problems.append("batch %s: %s" % (identifier, failure))
+    kinds = {batch["kind"] for batch in held}
+    read = {"drawn": _drawn(project, problems) if "plots" in kinds else {}, "passages": {}, "proposals": {}}
+    if kinds & {"merges", "contradictions"}:
+        try:
+            read["passages"] = {item.get("id"): item for item in sections.read_passages(project)}
+        except (OSError, ValueError) as failure:
+            problems.append("passages.jsonl: %s" % failure)
+    if "objective_changes" in kinds:
+        read["proposals"] = {record["id"]: record for record in objective_changes.read_proposals(_events(project, problems))}
+    rows = [_batch_row(batch, read) for batch in held]
+    return {"batches": [row for row in rows if row["status"] == batches.OPEN],
+            "settled": [row for row in reversed(rows) if row["status"] != batches.OPEN], "problems": problems}
 
 
 # --- "Waiting on you" and the projects page ----------------------------------------------------------------------
@@ -845,11 +968,7 @@ def _pair_item(project, identifier):
     entry = next((entry for entry in held if (entry["a"], entry["b"]) == (first, second)), None)
     if entry is None:
         return None
-    passages = {item.get("id"): item for item in sections.read_passages(project)}
-    sides = []
-    for side in (first, second):
-        passage = passages.get(side) or {}
-        sides.append({"id": side, "section": passage.get("section"), "heading": passage.get("heading"), "text": _words(passage.get("text"))})
+    sides = _sides({item.get("id"): item for item in sections.read_passages(project)}, identifier)
     kind = _PAIR_KINDS.get(entry["outcome"], "pair")
     fields = [["why", entry.get("why")], ["outcome", entry["outcome"]]]
     if kind == "merge":

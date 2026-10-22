@@ -941,33 +941,39 @@ def settle(project, runner, tools=None, notify=None, say=None, harness_root=None
         fields = {item["id"]: item for item in _read_tickets(project)}
         return (events, fields) + _read_asks(project, events, fields)
 
-    events, fields_by_id, asks, blocked = current()
-    # 1. marks and answers in step
-    changed = False
-    for ask in asks.values():
-        if ask.batch is None:
-            continue
-        item = ask.batch["items"][0]
-        if ask.marked is not None and ask.answer is None:
-            text = _answer_from_mark(ask, item)
-            try:
-                if item["by"] == batches.DECIDER:
-                    decisions.decide(project, ask.id, text, "the decider's mark on item 1 of %s" % ask.batch["id"])
-                else:
-                    answer_ticket(project, ask.id, text, rationale="the owner's mark on item 1 of %s" % ask.batch["id"])
-                changed = True
-                say("  decision ticket %d answered by the %s's mark in %s: %s" % (ask.id, item["by"], ask.batch["id"], text))
-            except ProjectError as failure:
-                say("  decision ticket %d: the mark in %s is not taken (%s)" % (ask.id, ask.batch["id"], failure))
-        elif ask.answer is not None and item["mark"] is None and ask.batch["status"] == "open":
-            picked = choice(ask.answer[1], ask.licensed)
-            try:
-                batches.mark(project, ask.batch["id"], 1, APPROVE if picked == INSTALL else DECLINE,
-                             note=GO_WITHOUT if picked == GO_WITHOUT else (where(ask.answer[1]) if ask.licensed else None),
-                             by=batches.DECIDER if ask.answer[2] == "decider" else batches.OWNER)
-                changed = True
-            except batches.BatchError:
-                pass
+    # 1. marks and answers in step, under the ledger's lock: a mark read, answered, and stamped with no click of the
+    # marks view between, so the stamp is on the mark the answer came from
+    with ledger.lock():
+        events, fields_by_id, asks, blocked = current()
+        changed = False
+        for ask in asks.values():
+            if ask.batch is None:
+                continue
+            item = ask.batch["items"][0]
+            if ask.marked is not None and ask.answer is None:
+                text = _answer_from_mark(ask, item)
+                try:
+                    if item["by"] == batches.DECIDER:
+                        decisions.decide(project, ask.id, text, "the decider's mark on item 1 of %s" % ask.batch["id"])
+                    else:
+                        answer_ticket(project, ask.id, text, rationale="the owner's mark on item 1 of %s" % ask.batch["id"])
+                    batches.acted_on(project, ask.batch["id"], {item["id"]: item["mark"]})  # the decision's answer: no click changes it
+                    changed = True
+                    say("  decision ticket %d answered by the %s's mark in %s: %s" % (ask.id, item["by"], ask.batch["id"], text))
+                except ProjectError as failure:
+                    say("  decision ticket %d: the mark in %s is not taken (%s)" % (ask.id, ask.batch["id"], failure))
+            elif ask.answer is not None and item["mark"] is None and ask.batch["status"] == "open":
+                picked = choice(ask.answer[1], ask.licensed)
+                try:
+                    batches.mark(project, ask.batch["id"], 1, APPROVE if picked == INSTALL else DECLINE,
+                                 note=GO_WITHOUT if picked == GO_WITHOUT else (where(ask.answer[1]) if ask.licensed else None),
+                                 by=batches.DECIDER if ask.answer[2] == "decider" else batches.OWNER)
+                    changed = True
+                except batches.BatchError:
+                    pass
+            elif ask.answer is not None and item["mark"] is not None and not item.get("acted"):
+                # Answered in the conversation or on the decision's card: the first answer stands, and the mark does no more.
+                batches.acted_on(project, ask.batch["id"], {item["id"]: item["mark"]})
     if changed:
         events, fields_by_id, asks, blocked = current()
 

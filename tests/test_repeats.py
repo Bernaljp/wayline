@@ -383,8 +383,9 @@ class BatchTest(SetupCase):
         self.assertEqual((self.pair("P1", "P14")["batch"], self.pair("P1", "P14")["item"]), (self.merges["id"], 1))
 
     def test_a_split_mark_undoes_the_merge_and_restores_both_passages(self):
-        batches.mark(self.project, self.merges["id"], 1, "split")
+        batches.mark(self.project, self.merges["id"], 1, "split", via="dashboard")
         self.assertEqual(repeats.take_marks(self.project), [])
+        self.assertTrue(batches.read_batch(self.project, self.merges["id"])["items"][0]["acted"], "a split done is final")
         self.assertNotIn("P15", self.current("introduction"))
         standing = set(self.current("introduction")) | set(self.current("discussion"))
         restored = {item["text"]: item for item in sections.read_passages(self.project) if item["id"] in standing}
@@ -437,15 +438,17 @@ class BatchTest(SetupCase):
         self.assertIn(self.contradicting["id"], record["rationale"])
 
     def test_a_right_mark_leaves_the_merge(self):
-        batches.mark(self.project, self.merges["id"], 1, "right")
+        batches.mark(self.project, self.merges["id"], 1, "right", via="dashboard")
         repeats.take_marks(self.project)
         self.assertIn("P15", self.current("introduction"))
+        self.assertIsNone(batches.read_batch(self.project, self.merges["id"])["items"][0]["acted"], "right does nothing: it may still be split")
         self.assertEqual(self.pair("P1", "P14")["outcome"], "merged")
 
     def test_not_a_contradiction_takes_it_off_the_lists_and_real_keeps_it(self):
         batches.mark(self.project, self.contradicting["id"], 1, "not a contradiction")
         repeats.take_marks(self.project)
         self.assertEqual(repeats.contradictions(self.project), [])
+        self.assertTrue(batches.read_batch(self.project, self.contradicting["id"])["items"][0]["acted"])
         self.assertEqual(repeats.grill_items(self.project), [])
         self.assertIn("P5", self.current("results"))
         self.assertIn("P11", self.current("results"))

@@ -27,8 +27,8 @@
       <button type="button" id="tick-log-button" class="action">tick log</button>
     </div>
   </div>
-  <!-- The views, routed by hash (tickets 110 and 111): #/ is the projects page, #/<project>/<view> a view of
-       one project, and #/<project>/<id> opens one item in the viewer over its view. -->
+  <!-- The views, routed by hash (tickets 110, 111, and 112): #/ is the projects page, #/<project>/<view> a view of
+       one project, #/<project>/<id> opens one item in the viewer over its view, and #/<project>/B<n> a batch in Marks. -->
   <div class="routes">
     <nav id="views" aria-label="views">
       <a href="#/" data-route="projects">projects</a>
@@ -37,6 +37,7 @@
       <!-- Offered only for a project with documents (ticket 111): app.js hides it for one without. -->
       <a data-route="inherited" hidden>inherited</a>
       <a data-route="run">run</a>
+      <a data-route="marks">marks</a>
     </nav>
   </div>
   <div class="meta">
@@ -149,6 +150,23 @@
     <div class="view-head"><h2 id="inherited-material-heading">Missing material</h2></div>
     <div id="inherited-material-body" class="panel">
       <p class="state loading">reading the missing material</p>
+    </div>
+  </section>
+  </div>
+
+  <!-- Marks (ticket 112): every open batch, each item whole with its marks and a note box, saving per click. At phone
+       width one item fills the screen, with previous and next. -->
+  <div class="view" id="view-marks" data-view="marks" hidden>
+  <section id="marks" aria-labelledby="marks-heading">
+    <div class="view-head"><h2 id="marks-heading">Marks</h2><p class="note">A mark saves when clicked, and a note when you leave its box. The first answer, here or in a conversation, settles an item; one you gave here changes with another click until its batch's work acts on it.</p></div>
+    <div id="marks-body" class="panel">
+      <p class="state loading">reading the batches</p>
+    </div>
+  </section>
+  <section id="marks-settled" aria-labelledby="marks-settled-heading">
+    <div class="view-head"><h2 id="marks-settled-heading">Settled</h2></div>
+    <div id="marks-settled-body" class="panel">
+      <p class="state loading">reading the settled batches</p>
     </div>
   </section>
   </div>

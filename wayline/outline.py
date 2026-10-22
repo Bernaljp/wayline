@@ -1376,20 +1376,25 @@ def take_marks(project_or_ledger):
         for batch in batches.read_batches(book.project):
             if batch["kind"] != BATCH_KIND:
                 continue
+            acted = {}
             for item in batch["items"]:
-                if item["mark"] != TAKE:
-                    continue
+                if item["mark"] != TAKE or item.get("acted"):
+                    continue  # a take acted on is merged, or was found to have nothing left to merge
                 clusters = results_module.load(book)
                 pair = [clusters.resolve(identifier) for identifier in item["ref"].split("+")]
                 live = {result["id"] for result in clusters.live()}
                 if len(pair) != 2 or pair[0] == pair[1] or not set(pair) <= live:
+                    acted[item["id"]] = TAKE  # merged already, or gone: nothing is left for the mark to do
                     continue
                 into, source = sorted(pair, key=_id_number)
                 try:
                     results_module.merge(book.project, source, into, by=item["by"] or OWNER, render=False)
                 except results_module.ResultError:
                     continue  # a drawing of it is under way (ticket 101): the mark stays, taken at a later pass
+                acted[item["id"]] = TAKE  # merged: no later click in the marks view undoes it
                 merged.append((source, into))
+            if acted:
+                batches.acted_on(book, batch["id"], acted)
         if merged:
             sections.render_section(book, sections.RESULTS)
     return merged

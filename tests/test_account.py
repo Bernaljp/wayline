@@ -144,6 +144,7 @@ class ReviewTest(AccountCase):
         self.render()
         (event,) = self.events("reviewed")
         self.assertEqual(event["payload"]["review"], "stand")
+        self.assertTrue(batches.read_batch(self.project, "B1")["items"][0]["acted"], "a review taken is final")
 
     def test_undo_it_reopens_the_decision_ticket_human_only_and_asks_in_one_line(self):
         from wayline import tickets
