@@ -21,16 +21,16 @@ Not part of this ticket:
 
 **Blocked by:** 103 - The run-end gates; 116 - Figures at the order; 117 - Builds at the order; 118 - Compilations; 119 - Code at the order. It blocks 122 and 124.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#267](https://github.com/Bernaljp/wayline/issues/267) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (The paper order and what it compiles: under `autonomous`; The outline: the decider settles open proposals; The account: Decided for you; Setup, at every autonomy; Vocabulary the build adds: the paper order's setup answer in `harness.json`), 10 (the decider), 1 (`harness.json`); M8 criteria 17 and 19; user stories 157, 172.
 
-- [ ] Setup under `autonomous` asks one question, default yes with no venue, recorded in `harness.json`; the schema gains the key in the same commit.
-- [ ] The decider is considered only at `objectives_closed`, `goal_reached`, or `frontier_empty` after the run-end gates and drawings, never after `budget_spent`, `stall_strict`, `stopped`, or `switched`; replayed from journals of each end.
-- [ ] Code's five checks run first with no model call, and a failing check records why no session launched.
-- [ ] One decider session on `opus max` reads `REPORT.md`, `OBJECTIVES.md`, and `OUTLINE.md` and returns order or not with its reason; an order runs `wayline paper` with the setup's venue.
-- [ ] The decider answers the batch (an oversized figure split, never dropped), settles the outline's open proposals without moving an owner-placed line, and picks a title; each answer appears under "Decided for you".
-- [ ] Tests: the fake launcher scripts the decider ordering and declining; journal replay covers each end kind and idempotence of a second wave; the account's lines are asserted on the rendered `ACCOUNT.md`.
+- [x] Setup under `autonomous` asks one question, default yes with no venue, recorded in `harness.json`; the schema gains the key in the same commit.
+- [x] The decider is considered only at `objectives_closed`, `goal_reached`, or `frontier_empty` after the run-end gates and drawings, never after `budget_spent`, `stall_strict`, `stopped`, or `switched`; replayed from journals of each end.
+- [x] Code's five checks run first with no model call, and a failing check records why no session launched.
+- [x] One decider session on `opus max` reads `REPORT.md`, `OBJECTIVES.md`, and `OUTLINE.md` and returns order or not with its reason; an order runs `wayline paper` with the setup's venue.
+- [x] The decider answers the batch (an oversized figure split, never dropped), settles the outline's open proposals without moving an owner-placed line, and picks a title; each answer appears under "Decided for you".
+- [x] Tests: the fake launcher scripts the decider ordering and declining; journal replay covers each end kind and idempotence of a second wave; the account's lines are asserted on the rendered `ACCOUNT.md`.
 - [ ] `python -m unittest` passes.
