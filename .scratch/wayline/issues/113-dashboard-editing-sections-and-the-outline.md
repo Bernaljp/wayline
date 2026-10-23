@@ -39,4 +39,4 @@ It blocks 122, the M8 demo that waits for every ticket, and 124, the user guide.
   - a save over a newer render stamp;
   - a parameter reason;
   - refusals without the token and for a report.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
