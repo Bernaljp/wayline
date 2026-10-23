@@ -24,6 +24,7 @@ Not part of this ticket:
 - [ ] The reference hand-over form accepts a DOI or title (back to the scout), a PDF drop (the reference's source), "drop it", or "keep the claim marked 'to be resolved'", each through its CLI verb.
 - [ ] The Run view's select sets `harness.json.plotting` through `switch --plotting`.
 - [ ] The Paper view lists the paper's parts with versions and alternatives, earlier versions, and each compilation with downloads of the PDF, `.docx`, LaTeX `.zip` (passing `zipfile.testzip`), and Markdown; choosing an alternative marks each compilation "made before part X changed".
+- [ ] The cards cover what ticket 118 added: the paper order's card takes an optional venue (`wayline paper --yes --for <venue>`, `paper.order(..., venue=)`), and a `compile` card takes one (`wayline paper compile <venue> --yes`). Both are in the chat's card fields (`chat.CARD_FIELDS`, ticket 114) and the session's card list as well as on the buttons. Until then the chat's `paper` card takes no arguments and no card compiles, while the routing table already lists both commands as confirm.
 - [ ] The `ACTIONS` whitelist gains exactly these actions, each refusing without the token; an order's end sends a notice outside `autonomous`.
 - [ ] Tests: HTTP over a fixture ledger for every action with and without the token, the downloads with range and integrity checks, and the stale-compilation mark; built in the dashboard's designed style and usable at phone width.
 - [ ] `python -m unittest` passes.
