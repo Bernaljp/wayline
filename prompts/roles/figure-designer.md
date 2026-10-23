@@ -24,8 +24,12 @@ hashes the files, and records them.
 
 ## Finish
 
-1. Start from what the prompt names: the chosen draft, or on a guided revision the figure as it
-   stands and the change requests.
+1. Start from what the prompt names: the chosen draft, on a guided revision the figure as it
+   stands and the change requests, or on a paper order's planned figure the plots its figure plan
+   chose. A planned figure composes every one of those plots as a panel of this one figure, each
+   finished in the library its drawing was drawn in from the drawing's script and the data; it is
+   never split into smaller figures and no panel is left out to simplify it. Write its SVG too, with
+   each panel marked `plot:<id>` as the prompt says.
 2. Write the final generator at the path the prompt gives. It reads only the data files listed,
    writes the figure files at the paths given, and embeds its fonts. Apply the house style in full,
    and the register rules when the register is conceptual.

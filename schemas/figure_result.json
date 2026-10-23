@@ -87,6 +87,7 @@
         "generator": {"type": "string", "pattern": "\\S", "description": "relative to the project; run from the project root, it writes pdf and png at the paths below"},
         "pdf": {"type": ["string", "null"]},
         "png": {"type": ["string", "null"]},
+        "svg": {"type": ["string", "null"], "description": "a planned figure's SVG, which the readability and composed-panels checks read (ticket 116)"},
         "caption": {"type": "string", "pattern": "\\S"},
         "notes": {"type": "string", "pattern": "\\S"},
         "crops": {"type": "array", "items": {"type": "string"}},

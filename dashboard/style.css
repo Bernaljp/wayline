@@ -828,6 +828,34 @@ dialog#viewer {
 dialog#viewer[open] { display: flex; flex-direction: column; }
 dialog#viewer::backdrop { background: var(--backdrop); }
 
+/* The editor (ticket 113): the viewer's frame around a plain text area, two side by side when a newer render came. */
+html:has(dialog#editor[open]) { overflow: hidden; }
+dialog#editor {
+  width: min(100vw - 2 * var(--space-5), 1100px);
+  height: min(100dvh - 2 * var(--space-5), 1400px);
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+}
+dialog#editor[open] { display: flex; flex-direction: column; }
+dialog#editor::backdrop { background: var(--backdrop); }
+.editor .note { margin: var(--space-2) var(--space-3) 0; }
+.editor-panes { flex: 1 1 auto; min-height: 0; display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3); }
+.editor-pane { flex: 1 1 18em; min-height: 12em; display: flex; flex-direction: column; gap: var(--space-1); }
+.editor-pane[hidden] { display: none; }
+.editor-pane textarea {
+  flex: 1 1 auto; width: 100%; resize: none; font: var(--text-sm)/1.5 var(--mono, ui-monospace, monospace);
+  color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-2); padding: var(--space-2);
+}
+.editor-choice { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3); }
+.editor-choice[hidden] { display: none; }
+.reason-edit { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: flex-start; }
+.reason-edit textarea { flex: 1 1 14em; min-height: 3em; font: inherit; }
+
 .viewer-bar {
   flex: none;
   display: flex;

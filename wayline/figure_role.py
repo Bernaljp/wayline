@@ -41,6 +41,13 @@ and a human-only decision ticket asks the owner whether to override it. Only an 
 records as the owner's (`decided_by: human`) sets `overridden_by`; `resume` then has the request
 carried out and writes the override into the caption and the notes itself.
 
+**Planned** (a paper order's figure; ticket 116): the figure plan chose the plots (`panels`), so there are no drafts,
+no critic, and no pick. One designer session composes every planned panel into the one figure, each finished in the
+library its drawing was drawn in, and writes an SVG beside the PDF and the PNG, marking each panel `plot:<id>`. The
+19 checks run with the five readability checks of `wayline.plot_checks` and the Type-A composed-panels check
+(`figure_checks.check_planned_panels`) on that SVG, the repair once as above, then the one honesty verdict: two
+sessions in all when nothing fails.
+
 **What leaves the role.** Every `findings_for_text` entry of a figure a ticket asked for becomes a
 proposal (`proposals`, kind `writing`). A figure the paper asked for (`ticket: "paper"`) files none:
 `wayline paper` hands its findings to the writer drafting that text, in the next build's list. The
@@ -100,6 +107,7 @@ AUTONOMOUS = "autonomous"
 OVERRIDE = "override"
 KEEP = "keep the refusal"
 OVERRIDE_OPTION = "override: draw it as asked"
+PLANNED = "planned"                   # a paper order's figure from the plots its figure plan chose (ticket 116)
 TERMINAL = ("verified", "failed_checks", "honesty_failed", "refused")
 
 HONESTY_QUESTION = "Does this figure, with its caption and notes, assert something its data does not?"
@@ -623,6 +631,8 @@ class _Run:
                   "- the final generator: `%s`, run from the project root" % self.paths["generator"]]
         for fmt in self.request["target"]["formats"]:
             lines.append("- the %s it writes: `%s`" % (fmt.upper(), self.paths[fmt]))
+        if self.request["mode"] == PLANNED:
+            lines.append("- the SVG it writes: `%s`, which the readability checks and the composed-panels check read" % self.paths["svg"])
         lines += ["- the caption: `%s`; it describes this figure and names no other" % self.paths["caption"],
                   "- the notes: `%s`" % self.paths["notes"]]
         if self.request["mode"] == "guided":
@@ -813,6 +823,37 @@ class _Run:
         ]
         return self.finish(start)
 
+    def planned(self):
+        """A planned figure (ticket 116): the finishing session composes every plot the figure plan chose, each finished in
+        the library its drawing was drawn in, then the checks (the readability checks and the composed-panels check among
+        them) and the honesty verdict. No drafts, no critic, no pick: the owner's marks chose the panels."""
+        panels = self.request["panels"]
+        start = ["The figure plan chose these plots of the drawings, one panel each, in this order. Compose every panel "
+                 "into this one figure: never split it into smaller figures, and never leave a panel out to simplify it. "
+                 "Finish each panel in the library its drawing was drawn in, from the drawing's script and the data, "
+                 "redrawn by the generator (no image of a drawing is pasted in), in the house style, at the target.", ""]
+        for letter, panel in zip("abcdefghijklmnopqrstuvwxyz", panels):
+            start.append("- panel (%s): plot `%s`%s, drawn in %s by drawing %s" % (
+                letter, panel["plot"], " (%s)" % panel["chart_type"] if panel.get("chart_type") else "", panel["library"], panel["drawing"]))
+            start.append("  - its PNG `%s` and its SVG `%s`; the script that drew it: `%s`" % (panel["png"], panel["svg"], panel.get("script") or "none recorded"))
+            if panel.get("purpose"):
+                start.append("  - Purpose: %s" % _one_line(panel["purpose"]))
+            if panel.get("shows"):
+                start.append("  - What it shows: %s" % _one_line(panel["shows"]))
+        start += ["", "Mark each panel in the SVG with the plot it draws, `%s`, on an element of the panel that draws "
+                  "something: with matplotlib on the axes' background patch, `ax.patch.set_gid(\"plot:R4.3\")` (the axes' own gid "
+                  "is its `panel:<letter>`); with Altair as the panel chart's `description`, its aria-label; with any other writer "
+                  "as the panel group's id or its `<title>`. The composed-panels check fails a figure missing one: here %s." % (
+                      figure_checks.PLOT_MARKER % "<id>", ", ".join(figure_checks.PLOT_MARKER % panel["plot"] for panel in panels))]
+        return self.finish(start)
+
+    def _planned_checks(self):
+        """The five readability checks and the composed-panels check on a planned figure's SVG."""
+        from wayline import plot_checks
+        svg = self.project / self.result["final"]["svg"]
+        return (plot_checks.run_readability_checks(svg, self.policy or None)
+                + [figure_checks.check_planned_panels(svg, [panel["plot"] for panel in self.request["panels"]])])
+
     def guided(self, overridden=()):
         """A guided revision: the finishing session on the figure as it stands and the change requests (research-notes 11 Section 4.1).
 
@@ -842,6 +883,7 @@ class _Run:
         request, role = self._launch_request(DESIGNER, "", FINISH_SCHEMA, self.directory + "/")
         request.prompt = self.finish_prompt(start, role, overridden)
         guided = self.request["mode"] == "guided"
+        planned = self.request["mode"] == PLANNED
         asked = [item["id"] for item in (overridden or self.request.get("change_requests") or [])] if guided else []
         overridden_ids = {item["id"] for item in overridden}
         data = {entry["path"] for entry in self.request["data"]}
@@ -850,7 +892,7 @@ class _Run:
             problems = []
             refused = [refusal["change_request"] for refusal in value["refusals"]]
             if value["drew_final"]:
-                for key in ["generator", "caption", "notes"] + list(self.request["target"]["formats"]):
+                for key in ["generator", "caption", "notes"] + list(self.request["target"]["formats"]) + (["svg"] if planned else []):
                     if not self._inside_file(self.paths[key]):
                         problems.append("the %s is not at %s" % (key, self.paths[key]))
                 if not value["inputs"]:
@@ -940,9 +982,12 @@ class _Run:
                 item["panels"] = list(entry["panels"])
             inputs.append(item)
         formats = self.request["target"]["formats"]
-        return {"generator": self.paths["generator"], "pdf": self.paths["pdf"] if "pdf" in formats else None,
-                "png": self.paths["png"] if "png" in formats else None,
-                "caption": self.paths["caption"], "notes": self.paths["notes"], "crops": [], "inputs": inputs}
+        final = {"generator": self.paths["generator"], "pdf": self.paths["pdf"] if "pdf" in formats else None,
+                 "png": self.paths["png"] if "png" in formats else None,
+                 "caption": self.paths["caption"], "notes": self.paths["notes"], "crops": [], "inputs": inputs}
+        if self.request["mode"] == PLANNED:
+            final["svg"] = self.paths["svg"]
+        return final
 
     def _ask_override(self, refusal):
         text = next((item["text"] for item in self.request.get("change_requests") or [] if item["id"] == refusal["change_request"]), "")
@@ -985,7 +1030,9 @@ class _Run:
     def _checks(self):
         """The machine checks on the final figure, with its crops made fresh: none left from an earlier drawing is read."""
         shutil.rmtree(self.project / self.directory / "crops", ignore_errors=True)
-        checks = self.checks(self.project, self.request, self.result, policy=self.policy.get("figures") or {})
+        checks = list(self.checks(self.project, self.request, self.result, policy=self.policy.get("figures") or {}))
+        if self.request["mode"] == PLANNED:
+            checks += self._planned_checks()
         self.result["checks"] = checks
         crops = sorted((self.project / self.directory / "crops").glob("*.png"))
         self.result["final"]["crops"] = [path.relative_to(self.project).as_posix() for path in crops]
@@ -1159,7 +1206,7 @@ def _write_json(path, value):
 
 def _final_paths(directory, figure_id):
     base = "%s/%s" % (directory, figure_id)
-    return {"generator": base + ".py", "pdf": base + ".pdf", "png": base + ".png",
+    return {"generator": base + ".py", "pdf": base + ".pdf", "png": base + ".png", "svg": base + ".svg",
             "caption": directory + "/caption.md", "notes": directory + "/notes.md"}
 
 
@@ -1336,6 +1383,8 @@ def make(project, request, *, harness_root=None, policy=None, autonomy=None, che
     if request["mode"] == "guided":
         result["data_shape"] = classify_shape(project, request["data"])
         step = lambda run: run.guided()
+    elif request["mode"] == PLANNED:
+        step = lambda run: run.planned()
     else:
         step = lambda run: run.unguided()
     return _run(project, request, result, harness_root, policy, _autonomy(project, autonomy), checks, notify, say, step)
@@ -1384,6 +1433,8 @@ def resume_figure(project, figure_id, *, harness_root=None, policy=None, autonom
         return go(lambda run: _verdict_again(run, figure_id))
     if request["mode"] == "guided":
         return go(lambda run: run.guided())
+    if request["mode"] == PLANNED:
+        return go(lambda run: run.planned())
     if result.get("selected"):
         return go(lambda run: run.finish_selected())
     ranked = [candidate for candidate in result.get("candidates") or [] if candidate.get("rank")]

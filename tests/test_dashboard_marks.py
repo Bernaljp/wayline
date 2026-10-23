@@ -161,7 +161,7 @@ class MarkActionTest(MarksServedCase):
     def test_mark_is_the_one_action_the_marks_view_adds(self):
         self.assertEqual(ACTIONS[:13], ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback",
                                         "ladder_changes", "intake", "feedback", "mark"))
-        self.assertEqual(ACTIONS[13:], ("run", "stop_when", "budget", "consolidate", "paper", "public"), "the chat's cards' (ticket 114)")
+        self.assertEqual(ACTIONS[13:19], ("run", "stop_when", "budget", "consolidate", "paper", "public"), "the chat's cards' (ticket 114)")
 
     def test_a_click_saves_its_mark_at_once_and_the_ledger_reads_it_back(self):
         answer = self.act({"batch": self.plots["id"], "item": 1, "mark": "keep"})

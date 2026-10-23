@@ -14,9 +14,10 @@ ticket opens.
 **The order** (`order`, `wayline paper --yes`): journaled as `paper_order` with `action: ordered`. Under `interactive`
 and `checkpoints` one batch (`batch_items`, kind `paper_order` of ticket 79's record) is opened before any writer
 launches: the open contradictions (code's suggested side, or "a typo, fix it"), the unverifiable claims the owner might
-keep, the unresolved references (hand over, drop, or keep the claim marked "to be resolved"), and the outline's open
-proposals, each with code's default, "take all defaults" one answer; an order with no inherited result verified asks
-whether to keep the unchecked ones as stated (the default) or leave them out. Under `autonomous` no batch is asked here:
+keep, the unresolved references (hand over, drop, or keep the claim marked "to be resolved"), the outline's open
+proposals, and the figure plan's items (`paper_figures.batch_items`, ticket 116), each with code's default, "take all
+defaults" one answer; an order with no inherited result verified asks whether to keep the unchecked ones as stated (the
+default) or leave them out. Under `autonomous` no batch is asked here:
 code's defaults stand until the decider answers it (ticket 120). With no conductor on the project the order starts one,
 whose run ends as the last one did once the paper is composed (`run` on the event).
 
@@ -130,12 +131,15 @@ The parts to write now: %(parts)s.
   this order asks for one.
 - The front matter (authors, affiliations, acknowledgments, funding, competing interests, the availability
   statements) is code's: write none of it.
-- Figures come later at the order; place none. A table the Results needs is one of `tables`, given as CSV, and the
-  text refers to it as Table 1, Table 2.
+- The figures and the plan's tables are code's, listed under "The figures and tables" below: refer to each by the
+  name given there where the text discusses its result, and write no caption and place no file. A further table the
+  Results needs is one of `tables`, given as CSV, numbered after the plan's: from T%(table)d, Table %(table)d in the text.
 - List in `left_out` what you leave out of the paper and why, and in `notes` anything the owner should read.
 
 ## The outline, part by part
 %(outline)s
+## The figures and tables
+%(figures)s
 ## The answers this paper follows
 %(answers)s
 ## What to read
@@ -412,6 +416,8 @@ def batch_items(project):
             if item["mark"] is None:
                 items.append({"ref": "outline:%s#%d" % (batch["id"], item["id"]), "marks": [TAKE, DECLINE],
                               "default": item.get("default") or DECLINE, "text": "The outline proposes: %s" % _one_line(item["text"])})
+    from wayline import paper_figures
+    items += paper_figures.batch_items(book.project, autonomous=read_harness(book.project).get("autonomy") == AUTONOMOUS)
     if _verified_none(book.project):
         items.append({"ref": UNCHECKED_REF, "marks": [KEEP_AS_STATED, LEAVE_OUT], "default": KEEP_AS_STATED,
                       "text": "None of the inherited results is verified yet. Keep the unchecked ones as stated, or leave them out?"})
@@ -654,20 +660,23 @@ def _front_inputs(book):
     return record, code_repository.record(book.project), _intake_data(book), available, _manifest_count(book)
 
 
-def part_inputs(project, structure, followed):
+def part_inputs(project, structure, followed, plan=None):
     """`{part: digest}` of what each part is made from now: its section as rendered, its lines of the outline, the
     records it reads, and the answers it follows; the title and abstract from the main text's, the front matter from
     the records code writes it from."""
     book = ledger_for(project)
     bodies = {section: _section_body(book, section) for section in MAIN_TEXT}
-    told = sorted((item["ref"], item["mark"], item.get("note")) for item in followed)
+    from wayline import paper_figures
+    # The figure plan's answers reach the results and the supplement through the plan's lines, and no other part.
+    told = sorted((item["ref"], item["mark"], item.get("note")) for item in followed if not paper_figures.is_figure_ref(item["ref"]))
+    figures = paper_figures.plan_lines(plan) if plan is not None else None
     objectives = _read_or(book, "objectives.json")
     found = {
         "introduction": _digest(bodies["introduction"], structure.get("introduction"), objectives, told),
-        "results": _digest(bodies["results"], structure.get("results"), _read_or(book, "verifications.json"), told),
+        "results": _digest(bodies["results"], structure.get("results"), _read_or(book, "verifications.json"), told, figures),
         "discussion": _digest(bodies["discussion"], structure.get("discussion"), objectives, told),
         "methods": _digest(bodies["methods"], structure.get("methods"), _read_or(book, "methods_inventory.json"), told),
-        "supplement": _digest(structure.get("supplement"), bodies, told),
+        "supplement": _digest(structure.get("supplement"), bodies, told, figures),
     }
     found["title"] = found["abstract"] = _digest([found[part] for part in MAIN_TEXT])
     found["front"] = _digest(_front_inputs(book))
@@ -806,7 +815,10 @@ def _outline_lines(structure):
 
 
 def _instruction(answer, passages):
+    from wayline import paper_figures
     ref, mark = answer["ref"], answer["mark"]
+    if paper_figures.is_figure_ref(ref):
+        return None  # the figure plan follows it, and the writer reads the plan
     if ref.startswith("contradiction:"):
         first, second = ref.split(":", 1)[1].split("+")
         if mark == TYPO:
@@ -831,21 +843,32 @@ def _instruction(answer, passages):
     return "- %s: %s%s" % (ref, said, " (the owner's note: %s)" % answer["note"] if answer.get("note") else "")
 
 
-def _prompt(role, number, version, written, structure, followed, passages, previous):
+def _prompt(role, number, version, written, structure, followed, passages, previous, plan):
     reads = ["- research/sections/%s.md: the %s's current passages, which the paper is made from" % (part, part) for part in MAIN_TEXT]
     reads += ["- research/OUTLINE.md, research/OBJECTIVES.md, research/REPORT.md (the general report)",
               "- research/CONCERNS.md (the concerns kept for the order), research/VERIFICATIONS.md when there is one"]
     if previous is not None:
         reads.append("- research/paper/: version %d, the whole of it; what you do not write now stands as it is there" % previous["version"])
+    from wayline import paper_figures
+    told = [line for line in (_instruction(answer, passages) for answer in followed) if line]
     text = PROMPT % {"order": number, "version": version, "parts": ", ".join(written) or "none",
-                     "outline": _outline_lines(structure),
-                     "answers": "\n".join(_instruction(answer, passages) for answer in followed) or "- none: nothing was asked",
+                     "outline": _outline_lines(structure), "figures": paper_figures.writer_lines(plan),
+                     "table": 1 + len(_plan_tables(plan)),
+                     "answers": "\n".join(told) or "- none: nothing was asked",
                      "read": "\n".join(reads)}
     return provenance.joined(text, role.protocol, worker.schema_section("# The answer", SCHEMA))
 
 
-def _answer_problems(answer, written, structure, kept):
+def _plan_tables(plan):
+    return [table["id"] for table in (plan or {}).get("tables") or [] if table["main"]]
+
+
+def _answer_problems(answer, written, structure, kept, plan=None):
     problems = []
+    taken = [table["id"] for table in answer.get("tables") or [] if table.get("id") in _plan_tables(plan)]
+    if taken:
+        problems.append("%s %s the figure plan's, rendered from its CSV: number your tables from T%d" % (
+            ", ".join(taken), "is" if len(taken) == 1 else "are", 1 + len(_plan_tables(plan))))
     for part in WRITTEN:
         if part == "title":
             if "title" in written and len([title for title in answer.get("titles") or [] if str(title).strip()]) != 3:
@@ -861,13 +884,13 @@ def _answer_problems(answer, written, structure, kept):
     return problems
 
 
-def _write_session(project, number, version, written, structure, followed, previous, harness_root, policy):
+def _write_session(project, number, version, written, structure, followed, previous, harness_root, policy, plan=None):
     """The one writer session: its envelope, its answer checked and resumed once with what failed."""
     from wayline import sections
     book = ledger_for(project)
     role = worker.read_role(ROLE, harness_root, project)
     passages = {item.get("id"): item for item in sections.read_passages(book)}
-    prompt = _prompt(role, number, version, [part for part in WRITTEN if part in written], structure, followed, passages, previous)
+    prompt = _prompt(role, number, version, [part for part in WRITTEN if part in written], structure, followed, passages, previous, plan)
     request = provenance.structured_request(project, role, policy, harness_root, prompt, SCHEMA, WRITER_BUDGET,
                                             provenance.session_dir(project, SESSIONS), read_only=True)
     kept = inherited_kept(project)
@@ -876,7 +899,7 @@ def _write_session(project, number, version, written, structure, followed, previ
         problem = provenance.schema_problem(envelope, SCHEMA)
         if problem is not None:
             return problem
-        found = _answer_problems(envelope.structured_output, written, structure, kept)
+        found = _answer_problems(envelope.structured_output, written, structure, kept, plan)
         return "\n".join("- %s" % line for line in found) if found else None
 
     try:
@@ -970,7 +993,7 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
     matter by code, and the previous version is frozen. Journals `paper_order` with `action: composed`. Raises
     `PaperError` when the writer gave nothing usable, and nothing is written then.
     """
-    from wayline import code_repository, outline, sections
+    from wayline import code_repository, outline, paper_figures, sections
     project = Path(project).resolve()
     book = ledger_for(project)
     policy = policy_for(project, harness_root) if policy is None else policy
@@ -979,16 +1002,19 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
     followed = answers(project, payload)
     _take_outline_answers(project, followed)
     structure = outline.paper_structure(book)
+    plan = paper_figures.build(project, followed, autonomous=read_harness(project).get("autonomy") == AUTONOMOUS,
+                               venue=payload.get("venue"))
     previous = read_record(book)
     version = (previous["version"] + 1) if previous else 1
-    inputs = part_inputs(project, structure, followed)
+    inputs = part_inputs(project, structure, followed, plan)
     recompose, kept_edits = _plan(book, previous, inputs)
     written = [part for part in recompose if part in WRITTEN]
     envelope, answer = None, {}
     if written:
         envelope, request = _write_session(project, payload["order"], version, written, structure, followed, previous,
-                                           harness_root, policy)
+                                           harness_root, policy, plan)
         answer = envelope.structured_output
+    made = paper_figures.make_figures(project, plan, previous, harness_root=harness_root, policy=policy, say=say)
     passages = {item.get("id"): item for item in sections.read_passages(book)}
     texts = {}
     with book.lock():
@@ -1034,6 +1060,9 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
             name = "%s-%d" % (item["part"], counts[item["part"]])
             book.write_markdown(_paper("%s/%s.md" % (ALTERNATIVES, name)), "%s\n\n<!-- why: %s -->\n" % (item["text"].strip(), _one_line(item["why"])))
             alternatives.append(name)
+        figures = paper_figures.write(book, plan, made)
+        planned = [item["id"] for item in figures["tables"]]
+        tables = planned + [table for table in tables if table not in planned and not table.startswith("ST")]
         book.write_json(_paper(REFERENCES_JSON), _references(book, texts, followed))
         unchecked = next((("kept" if item["mark"] == KEEP_AS_STATED else "left out") for item in followed if item["ref"] == UNCHECKED_REF), None)
         record = {
@@ -1044,7 +1073,7 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
                              "inputs": inputs[part], "sha256": _sha(texts[part] or "")} for part in PARTS},
             "tables": tables, "alternatives": sorted(set(alternatives)),
             "answers": [{key: item[key] for key in ("ref", "text", "mark", "by", "batch", "item", "note")} for item in followed],
-            "unchecked": unchecked, "left_out": _left_out(followed, passages, answer),
+            "unchecked": unchecked, "left_out": _left_out(followed, passages, answer) + plan["left_out"], "figures": figures,
             "proposals": [_one_line(item) for item in answer.get("proposals") or []] if written else list((previous or {}).get("proposals") or []),
             "reworded": _reworded(book, texts), "kept_edits": kept_edits, "gated": False,
             "usage": ({"usage": envelope.usage, "turns": envelope.num_turns, "duration_ms": envelope.duration_ms,
@@ -1076,6 +1105,10 @@ def _report(record, recompose, answer, payload, checks):
         lines.append("| %s | %s.md | %d | %s |" % (part, part, record["parts"][part]["version"], state))
     lines += ["", "Tables: %s. Alternatives: %s." % (", ".join(record["tables"]) or "none",
                                                      ", ".join("alternatives/%s.md" % name for name in record["alternatives"]) or "none"), ""]
+    lines += ["## Figures", "", "Code's figure plan, from the outline and the owner's marks on the plots: each figure's plan line "
+              "and how it stands.", ""]
+    from wayline import paper_figures
+    lines += paper_figures.report_lines(record.get("figures")) + [""]
     lines += ["## The batch's answers", ""]
     if not record["answers"]:
         lines.append("Nothing was asked: no contradiction, unverifiable claim, unresolved reference, or outline proposal stood.")

@@ -59,7 +59,7 @@ __all__ = [
     "check_generator_clean", "check_regenerates", "check_palette", "check_one_ramp_per_quantity",
     "check_required_vs_optional_line_style", "check_selection_representativeness",
     "check_schematic_disclosed", "check_mixed_data_disclosed", "check_crops", "check_text_overlap",
-    "check_provenance", "hue_problems", "style_colors",
+    "check_provenance", "hue_problems", "style_colors", "PLANNED_PANELS", "PLOT_MARKER", "marked_panels", "check_planned_panels",
 ]
 
 CHECK_IDS = (
@@ -1512,6 +1512,65 @@ def check_provenance(context):
             problems.append("%s is manifested as run %s with another hash or run" % (relative, manifested.get("run_id")))
     detail = _shorten(problems) if problems else "%d input(s), each on disk, hashed, and manifested to its run" % len(inputs)
     return check_outcome("provenance", not problems, detail, tool="sha256+manifest")
+
+
+PLANNED_PANELS = "planned_panels"
+PLOT_MARKER = "plot:%s"  # how a composed figure's SVG marks the plot a panel draws (ticket 116)
+_DRAWN = {"path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "text", "image", "use"}
+
+
+def _local_tag(element):
+    return element.tag.rsplit("}", 1)[-1] if isinstance(element.tag, str) else ""
+
+
+def marked_panels(svg_path):
+    """The plot ids a composed figure's SVG marks as its panels: `{plot id}` of each element below the root that carries
+    `plot:<id>` as its `id`, its `aria-label`, or its own `<title>` or `<desc>`, and draws something of its own: a shape
+    or text under it that no other marked element below it holds. A marker on the root, or on a group whose every mark
+    belongs to panels marked inside it, marks nothing. Raises OSError or ParseError."""
+    import xml.etree.ElementTree as ElementTree
+    root = ElementTree.parse(str(svg_path)).getroot()
+    marks = {}
+    for element in root.iter():
+        if element is root:
+            continue
+        names = [element.get("id"), element.get("aria-label")]
+        names += [(child.text or "").strip() for child in element if _local_tag(child) in ("title", "desc")]
+        plots = {name.strip()[len("plot:"):] for name in names if name and name.strip().startswith("plot:")}
+        if plots:
+            marks[element] = plots
+
+    def draws_its_own(element):
+        stack = [element]
+        while stack:
+            current = stack.pop()
+            if current is not element and current in marks:
+                continue  # another panel's
+            if _local_tag(current) in _DRAWN:
+                return True
+            stack.extend(list(current))
+        return False
+
+    found = set()
+    for element, plots in marks.items():
+        if draws_its_own(element):
+            found |= plots
+    return found
+
+
+def check_planned_panels(svg_path, planned):
+    """The Type-A check of a figure composed from a figure plan (ticket 116): every planned panel is in it, marked
+    `plot:<id>` in the figure's SVG on an element that draws something. A figure composed without one fails."""
+    import xml.etree.ElementTree as ElementTree
+    try:
+        marked = marked_panels(svg_path)
+    except (OSError, ElementTree.ParseError) as failure:
+        return check_outcome(PLANNED_PANELS, False, "the figure's SVG %s could not be read: %s" % (Path(svg_path).name, failure), tool="svg")
+    missing = [plot for plot in planned if plot not in marked]
+    if missing:
+        return check_outcome(PLANNED_PANELS, False, "planned panel(s) %s are not in the composed figure: no element of its SVG "
+                             "draws one marked %s" % (", ".join(missing), PLOT_MARKER % "<id>"), tool="svg")
+    return check_outcome(PLANNED_PANELS, True, "all %d planned panel(s) are in the composed figure: %s" % (len(planned), ", ".join(planned)), tool="svg")
 
 
 CHECKS = {

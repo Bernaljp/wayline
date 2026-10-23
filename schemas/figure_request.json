@@ -35,6 +35,14 @@
             "revision_of": {"type": "string", "pattern": "\\S"},
             "change_requests": {"type": "array", "minItems": 1}
           }
+        },
+        {
+          "description": "planned: a paper order's figure from the plots its figure plan chose (ticket 116), entered at the finish",
+          "required": ["panels"],
+          "properties": {
+            "mode": {"const": "planned"},
+            "panels": {"type": "array", "minItems": 1}
+          }
         }
       ]
     }
@@ -43,7 +51,7 @@
     "schema": {"const": "figure_request/1"},
     "ticket": {"type": "string", "pattern": "\\S", "description": "the figure ticket's id"},
     "figure_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$", "description": "names the figure's directory, figures/<figure_id>/"},
-    "mode": {"type": "string", "enum": ["unguided", "guided"]},
+    "mode": {"type": "string", "enum": ["unguided", "guided", "planned"]},
     "kind": {"type": "string", "enum": ["result", "framework", "graphical_abstract"]},
     "register": {"type": "string", "enum": ["quantitative", "conceptual"]},
     "claim": {
@@ -109,6 +117,26 @@
         "gene_names": {"type": ["string", "null"], "description": "a file of names, one per line, relative to the project"},
         "dataset_names": {"type": "array", "items": {"type": "string", "pattern": "\\S"}},
         "allow_regex": {"type": "array", "items": {"type": "string"}, "description": "a token matching one of these in full is allowed (panel letters, exponents)"}
+      }
+    },
+    "panels": {
+      "type": "array",
+      "description": "planned mode: the plots the figure plan chose, in their order, each composed as one panel and finished in the library its drawing was drawn in",
+      "items": {
+        "type": "object",
+        "required": ["plot", "drawing", "library", "png", "svg", "script"],
+        "additionalProperties": false,
+        "properties": {
+          "plot": {"type": "string", "pattern": "^R[1-9][0-9]*\\.[1-9][0-9]*$"},
+          "drawing": {"type": "string", "pattern": "^R[1-9][0-9]*-[1-9][0-9]*$"},
+          "library": {"type": "string", "pattern": "\\S"},
+          "chart_type": {"type": ["string", "null"]},
+          "png": {"type": "string", "pattern": "\\S", "description": "relative to the project"},
+          "svg": {"type": "string", "pattern": "\\S"},
+          "script": {"type": ["string", "null"], "description": "the drawing's script that drew it"},
+          "purpose": {"type": ["string", "null"]},
+          "shows": {"type": ["string", "null"]}
+        }
       }
     },
     "revision_of": {"type": ["string", "null"], "description": "the figure_result or final PDF a guided revision starts from"},

@@ -36,6 +36,17 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The dashboard edits the sections and the outline (ticket 113; Implementation Decisions 17 and 8). Introduction,
+  Results, Discussion, Methods, and the outline each get an edit button in the Paper view, opening a plain text editor on
+  the rendered file. Its save is the new `wayline edit <section|outline>` verb (`wayline.edits`): the text is written back
+  under the render stamp the editor opened, exactly as a terminal edit leaves the file, so the next render takes it in as
+  the owner's passages, replacements, withdrawals, and outline entries. When code rendered the file again meanwhile, the
+  save is refused with both versions side by side and goes through only on the owner's choice (`--over-newer`). A reason
+  in Methods' parameter table is edited in its row and saved as the owner's reason for that row. References (written by
+  code from what the sections cite), the reports, the account, and the paper's parts offer no edit. The `ACTIONS`
+  whitelist gains `edit` and `reason`, token-guarded like the rest; the editor opens from `GET
+  /api/projects/<id>/edit/<target>`.
+
 - Compilations (ticket 118; Implementation Decisions 17, 13, 1, and 2). The venue-free paper becomes files the owner
   can submit, made by code alone through pandoc (`wayline.compilations`), every tool called through the tool runner.
   - Every paper order compiles `research/paper/compilations/plain/`, and `compilations/<venue>/` for the venue
@@ -93,6 +104,26 @@ lists it read-only, marked with its tag.
     reference file, and setup question 9 now records the front matter. BRIEF's P7 Report retires, P8 is the Paper
     order, and R26 reads "The general report is always current; the paper is made only on an explicit order, from the
     owner, or from the decider in an autonomous run."
+
+- Figures from marks at the paper order (ticket 116; Implementation Decisions 17 and 13). The paper's figures come from
+  the plots the owner explored and marked, with no panel cap and no splitting into thin figures.
+  - Code builds the **figure plan** (`wayline.paper_figures`) from the outline and `research/plots.json` with no model
+    call: each main-text result gets one figure whose panels are every plot marked keep, or, with none marked keep,
+    every plot its synthesis cites; maybe-marked and other plots go to its supplementary figure, drop-marked plots
+    never appear. A venue's display-item limit moves the last results in outline order to the supplement. Chosen
+    tables become numbered tables rendered from their CSV (`T<n>`, the others `ST<n>`), and the writer is told the
+    plan and numbers its own tables after the plan's.
+  - The plan joins the order's batch: each figure's planned panels (as planned, or to the supplement), each figure too
+    large for one page (split, the default, or drop the panels past the page to its supplementary figure), and each
+    drawn result with no figure (no figure, the default, or a figure from nothing). Under `autonomous` an oversized
+    figure is split, never dropped. A figure from nothing is made only on that request.
+  - The figure role gains a planned mode (`figure_request` mode `planned`, with its `panels`): two sessions, the
+    designer's finish composing every planned panel in the library its drawing was drawn in and the honesty verdict,
+    with the five readability checks and the Type-A composed-panels check (`planned_panels`: each panel marked
+    `plot:<id>` in the figure's SVG) beside the 19.
+  - Code writes `research/paper/figures/F<n>/` and `S<n>/`, each with `caption.md` (a marked placeholder for a figure
+    not made); `paper.json` records the plan, and `PAPER.md` gains a Figures section with each figure's plan line and
+    what was left out. A re-order reuses a verified figure whose plan and drawings are unchanged.
 
 - The surveyor and `lit` tickets (ticket 99; Implementation Decisions 17, 1, 2, 10, and 14). The literature is searched
   mid-run for each objective the Introduction does not yet cover, by a cheap session through free services.
