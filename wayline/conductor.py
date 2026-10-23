@@ -3330,10 +3330,12 @@ class Conductor:
 
     def _take_order(self, result, order):
         """The order's rest point, step by step: the running tickets finish, the changed results are drawn, the batch is
-        settled, and then the paper is composed from this commit (`paper.compose`). A run the order started for itself ends
-        as the last run had (`run` on the order); one that was going resumes at the next wave. A composition that fails
-        closes the order as failed, said; a usage window pauses the run, and the order is taken after it."""
-        from wayline import paper
+        settled, code takes its steps (`paper_code.step`: the tag `paper-N` and its push, the stale re-runs, `code/figures/`,
+        the environment, the code-to-Methods check; ticket 119), and then the paper is composed from this commit
+        (`paper.compose`). A run the order started for itself ends as the last run had (`run` on the order); one that was
+        going resumes at the next wave. A composition that fails closes the order as failed, said; a usage window pauses the
+        run, and the order is taken after it."""
+        from wayline import paper, paper_code
         drawn = self._order_ids()
         running = sorted({identifier for identifier in self.flight if identifier not in drawn}
                          | {entry["id"] for entry in self._graph()["tickets"] if entry["status"] == "running" and entry["id"] not in drawn})
@@ -3356,11 +3358,18 @@ class Conductor:
         if self._holds_launches() or self.action != schedule.NORMAL:
             return  # the writer is model work: it waits on the pause, the stop, or pacing
         try:
+            # Code's steps before the writer (ticket 119): the tag and its push, the stale results re-run at it (jobs polled
+            # once a wave, so this waits across waves), the scripts behind the figures, the environment, the Methods check.
+            if not paper_code.step(self.project, order, run=self.code_run, methods_run=self.methods_run,
+                                   methods_tools=self.methods_tools, policy=self.policy, harness_root=self.harness_root, say=self.say):
+                self._say_order(order, "waits for its re-runs at %s to end" % (paper_code.TAG % order["order"]))
+                self._tail()
+                return
             paper.compose(self.project, order, harness_root=self.harness_root, policy=self.policy, say=self.say)
         except gates.UsageLimited as refused:
             self._pause(refused.limit, "the paper's writer")
             return
-        except (paper.PaperError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
+        except (paper.PaperError, paper_code.PaperCodeError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
             self.say("  paper order %s failed: %s" % (order.get("order"), failure))
             paper.fail(self.project, order, str(failure))
         else:

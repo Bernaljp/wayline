@@ -140,6 +140,8 @@ The parts to write now: %(parts)s.
 %(outline)s
 ## The figures and tables
 %(figures)s
+## Code at the order
+%(code)s
 ## The answers this paper follows
 %(answers)s
 ## What to read
@@ -843,16 +845,17 @@ def _instruction(answer, passages):
     return "- %s: %s%s" % (ref, said, " (the owner's note: %s)" % answer["note"] if answer.get("note") else "")
 
 
-def _prompt(role, number, version, written, structure, followed, passages, previous, plan):
+def _prompt(role, number, version, written, structure, followed, passages, previous, plan, code=None):
     reads = ["- research/sections/%s.md: the %s's current passages, which the paper is made from" % (part, part) for part in MAIN_TEXT]
     reads += ["- research/OUTLINE.md, research/OBJECTIVES.md, research/REPORT.md (the general report)",
               "- research/CONCERNS.md (the concerns kept for the order), research/VERIFICATIONS.md when there is one"]
     if previous is not None:
         reads.append("- research/paper/: version %d, the whole of it; what you do not write now stands as it is there" % previous["version"])
-    from wayline import paper_figures
+    from wayline import paper_code, paper_figures
     told = [line for line in (_instruction(answer, passages) for answer in followed) if line]
     text = PROMPT % {"order": number, "version": version, "parts": ", ".join(written) or "none",
                      "outline": _outline_lines(structure), "figures": paper_figures.writer_lines(plan),
+                     "code": paper_code.writer_lines(code),
                      "table": 1 + len(_plan_tables(plan)),
                      "answers": "\n".join(told) or "- none: nothing was asked",
                      "read": "\n".join(reads)}
@@ -884,13 +887,14 @@ def _answer_problems(answer, written, structure, kept, plan=None):
     return problems
 
 
-def _write_session(project, number, version, written, structure, followed, previous, harness_root, policy, plan=None):
+def _write_session(project, number, version, written, structure, followed, previous, harness_root, policy, plan=None, code=None):
     """The one writer session: its envelope, its answer checked and resumed once with what failed."""
     from wayline import sections
     book = ledger_for(project)
     role = worker.read_role(ROLE, harness_root, project)
     passages = {item.get("id"): item for item in sections.read_passages(book)}
-    prompt = _prompt(role, number, version, [part for part in WRITTEN if part in written], structure, followed, passages, previous, plan)
+    prompt = _prompt(role, number, version, [part for part in WRITTEN if part in written], structure, followed, passages, previous, plan,
+                     code)
     request = provenance.structured_request(project, role, policy, harness_root, prompt, SCHEMA, WRITER_BUDGET,
                                             provenance.session_dir(project, SESSIONS), read_only=True)
     kept = inherited_kept(project)
@@ -993,7 +997,7 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
     matter by code, and the previous version is frozen. Journals `paper_order` with `action: composed`. Raises
     `PaperError` when the writer gave nothing usable, and nothing is written then.
     """
-    from wayline import code_repository, outline, paper_figures, sections
+    from wayline import code_repository, outline, paper_code, paper_figures, sections
     project = Path(project).resolve()
     book = ledger_for(project)
     policy = policy_for(project, harness_root) if policy is None else policy
@@ -1010,9 +1014,10 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
     recompose, kept_edits = _plan(book, previous, inputs)
     written = [part for part in recompose if part in WRITTEN]
     envelope, answer = None, {}
+    code = paper_code.read_record(book, payload["order"])  # code's steps at this order (ticket 119), taken before the writer
     if written:
         envelope, request = _write_session(project, payload["order"], version, written, structure, followed, previous,
-                                           harness_root, policy, plan)
+                                           harness_root, policy, plan, code)
         answer = envelope.structured_output
     made = paper_figures.make_figures(project, plan, previous, harness_root=harness_root, policy=policy, say=say)
     passages = {item.get("id"): item for item in sections.read_passages(book)}
@@ -1078,13 +1083,15 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
             "reworded": _reworded(book, texts), "kept_edits": kept_edits, "gated": False,
             "usage": ({"usage": envelope.usage, "turns": envelope.num_turns, "duration_ms": envelope.duration_ms,
                        "session_id": envelope.session_id} if envelope is not None else None),
+            "code": ({"tag": code["tag"] if code.get("commit") else None, "commit": code.get("commit"), "pushed": bool(code.get("pushed")),
+                      "record": paper_code.record_path(payload["order"])} if code else None),
         }
         if not written and previous is not None:
             record["model"] = previous.get("model")
         book.write_json(_paper(PAPER_JSON), record, schema=RECORD_SCHEMA)
         checks = {"structure": check_structure(structure, {part: texts.get(part) for part in outline.PAPER_PARTS}),
                   "kept": kept_problems({part: texts.get(part) for part in WRITTEN}, inherited_kept(project))}
-        book.write_markdown(_paper(PAPER_MD), _report(record, recompose, answer, payload, checks))
+        book.write_markdown(_paper(PAPER_MD), _report(record, recompose, answer, payload, checks, code))
         book.append_event(PAPER_ORDER, {"order": payload["order"], "action": COMPOSED, "by": payload.get("by") or OWNER,
                                         "version": version, "commit": record["commit"], "parts": recompose})
     if say is not None:
@@ -1092,11 +1099,14 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
     return record
 
 
-def _report(record, recompose, answer, payload, checks):
-    """`PAPER.md`, the build report, rendered by code from the version record."""
+def _report(record, recompose, answer, payload, checks, code=None):
+    """`PAPER.md`, the build report, rendered by code from the version record and code's steps at the order (`code`)."""
+    from wayline import paper_code
+    tagged = record.get("code") or {}
     lines = ["# The paper, version %d" % record["version"], "",
-             "Composed by code at paper order %d (%s) from commit %s of main, at %s. %s" % (
+             "Composed by code at paper order %d (%s) from commit %s of main, at %s.%s %s" % (
                  record["order"], record["by"], record["commit"] or "none (the project has no repository)", record["composed"],
+                 " The code repository's tag is `%s`, at commit %s." % (tagged["tag"], tagged["commit"]) if tagged.get("tag") else "",
                  "The writer was one read-only session on %s." % record["model"] if record["model"] else "No part needed the writer."),
              "", "This build is not yet gated: no kill argument, independent read, or sampled verdict has judged it. "
                  "Nothing was submitted anywhere.", "", "## Parts", "", "| Part | File | Version | This order |", "|---|---|---|---|"]
@@ -1109,6 +1119,9 @@ def _report(record, recompose, answer, payload, checks):
               "and how it stands.", ""]
     from wayline import paper_figures
     lines += paper_figures.report_lines(record.get("figures")) + [""]
+    lines += ["## Code at the order", "", "Code's steps before the writer: the tag, the stale results re-run at it, the scripts behind "
+              "the figures, the environment, and the code-to-Methods check over all of code/.", ""]
+    lines += paper_code.report_lines(code) + [""]
     lines += ["## The batch's answers", ""]
     if not record["answers"]:
         lines.append("Nothing was asked: no contradiction, unverifiable claim, unresolved reference, or outline proposal stood.")

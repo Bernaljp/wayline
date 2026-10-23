@@ -33,6 +33,14 @@ unchecked ones as stated (the default) or leave them out. Relay it as `wayline m
 default, and "take all defaults" is one answer: `wayline mark <batch> --defaults --project .`. A reference the owner
 hands over is `wayline reference <slug> <doi> --project .`. Under `autonomous` no batch is asked of the owner.
 
+Before the writer, code takes its own steps on `code/`: it copies the scripts behind the figures and the cited drawing
+numbers into `code/figures/`, writes an environment file and a Dockerfile from the locks, tags `paper-N` on `main`, and
+pushes the code repository's split with the tag (never forced, never made public). Each result whose code changed since
+its run is re-run at the tag as a job, and the order waits for those jobs: a result whose numbers held stands, and one
+whose numbers moved gets a ticket the run takes after the paper. The code-to-Methods check then runs over all of
+`code/`, and what it finds goes to the writer. `PAPER.md` lists all of it under "Code at the order". A code repository
+still private at the order is under "Waiting on you"; making it public is the owner's word alone.
+
 One writer session then composes the whole paper from the outline and the sections, each part in its own file under
 `research/paper/`: `title.md`, `abstract.md`, `introduction.md`, `results.md`, `discussion.md`, `methods.md`,
 `supplement.md`, and `front.md`, each heading carrying its outline id; `tables/`, `references.json`, `alternatives/`
