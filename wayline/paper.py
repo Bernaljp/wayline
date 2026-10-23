@@ -17,8 +17,8 @@ launches: the open contradictions (code's suggested side, or "a typo, fix it"), 
 keep, the unresolved references (hand over, drop, or keep the claim marked "to be resolved"), the outline's open
 proposals, and the figure plan's items (`paper_figures.batch_items`, ticket 116), each with code's default, "take all
 defaults" one answer; an order with no inherited result verified asks whether to keep the unchecked ones as stated (the
-default) or leave them out. Under `autonomous` no batch is asked here:
-code's defaults stand until the decider answers it (ticket 120). With no conductor on the project the order starts one,
+default) or leave them out. Under `autonomous` no batch is asked here: the decider's own order at a run's end comes
+with the batch it answered (`wayline.paper_judge`, ticket 120), and any other order follows code's defaults. With no conductor on the project the order starts one,
 whose run ends as the last one did once the paper is composed (`run` on the event).
 
 **The rest point.** The conductor takes the order (`Conductor._take_order`): running tickets finish, nothing new
@@ -504,13 +504,19 @@ def _start_conductor(project):
 _STARTS = object()  # `order`'s default: start the conductor as the transient unit, as `wayline run --detach` does
 
 
-def order(project, by=OWNER, start=_STARTS, venue=None, harness_root=HARNESS_ROOT):
+_UNSET = object()  # `order`'s default `run`: read off the journal and whether a conductor holds the project
+
+
+def order(project, by=OWNER, start=_STARTS, venue=None, harness_root=HARNESS_ROOT, run=_UNSET, batch=None):
     """The paper order: journal it, ask its batch under `interactive` and `checkpoints`, and start a conductor when none
     runs, which takes the order at its next wave. Returns `{order, batch, run, conductor, started, venue}`.
 
     Refused while an order is open. `run` is how the last run ended when no run was going (a project never run counts as
     stopped), so the order's own run ends the same way; None while a run was going, which resumes after the paper.
     `venue`, a slug of `guidelines/`, is compiled for beside `compilations/plain/` once the paper is composed (ticket 118).
+
+    The decider's order at a run's end under `autonomous` (ticket 120) passes `run`, the end it judged at, so the run ends
+    so once the paper is made, and `batch`, the order's batch it already answered, which no one is asked again.
     """
     from wayline import replay
     project = Path(project).resolve()
@@ -525,10 +531,10 @@ def order(project, by=OWNER, start=_STARTS, venue=None, harness_root=HARNESS_ROO
                 opened["order"], " and waits on batch %s" % opened["batch"] if waiting_on(project, opened) else ""))
         number = 1 + len([payload for payload in _orders(events) if payload.get("action") == ORDERED])
         holder = conductor_holder(project)
-        view = replay.replay(events)
-        run = None if holder is not None else ("stopped" if view.run is None else view.run.get("ended"))
-        batch = None
-        if read_harness(project).get("autonomy") != AUTONOMOUS:
+        if run is _UNSET:
+            view = replay.replay(events)
+            run = None if holder is not None else ("stopped" if view.run is None else view.run.get("ended"))
+        if batch is None and read_harness(project).get("autonomy") != AUTONOMOUS:
             items = batch_items(project)
             if items:
                 batch = batches.open_batch(project, BATCH_KIND, "Paper order %d: before the writer" % number, items)["id"]

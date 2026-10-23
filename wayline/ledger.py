@@ -122,6 +122,7 @@ SCOUT_SEARCHED = "scout_searched"  # one `wayline scout search`, counted against
 PAPER_ORDER = "paper_order"  # a paper order made, its paper composed, or the order failing (decision 17; ticket 115)
 OUTLINE = "outline"  # one change the owner (or the decider, or code dropping a gone placement) made to research/outline.json (decision 17; ticket 104)
 PAPER_CODE = "paper_code"  # one of code's steps at a paper order: the tag, a stale result's re-run launched or concluded, and the end (decision 17; ticket 119)
+PAPER_JUDGED = "paper_judged"  # the decider's judgment of the paper order at a rule's end under autonomous, or code's checks that held it (decision 17; ticket 120)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -286,6 +287,9 @@ K_PARTS = "parts"  # `paper_order`: the parts a composition wrote afresh
 K_BUILD = "build"  # `paper_order`: the build a composition or its gates belong to, 1 onward (ticket 117)
 K_POINTS = "points"  # `paper_order`: the points a build's gates left standing (ticket 117)
 K_CHOICE = "choice"  # `paper_order`: the owner's choice after a paper not passed: more, keep, or objectives (ticket 117)
+K_END = "end"  # `paper_judged`: the run's end the order was judged at, objectives_closed, goal_reached, or frontier_empty (ticket 120)
+K_CHECKS = "checks"  # `paper_judged`: code's checks that failed, each `{check, said}`; empty when all passed (ticket 120)
+K_ORDERED = "ordered"  # `paper_judged`: whether the decider ordered the paper, null when no session judged it (ticket 120)
 K_REST = "rest"  # `drawing`: the rest point it was opened at, run_end, checkpoint, or owner
 K_PLOTS = "plots"  # `drawing`: the plot and table ids an accepted drawing drew
 K_LEFT_OUT = "left_out"  # `drawing`: what acceptance left out, each with why
@@ -380,6 +384,7 @@ EVENTS = {
     PAPER_ORDER: (K_ORDER, K_ACTION, K_BY, K_RUN, K_BATCH, K_VERSION, K_COMMIT, K_PARTS, K_REASON, K_VENUE, K_BUILD, K_POINTS,
                   K_CHOICE),
     PAPER_CODE: (K_ORDER, K_STEP, K_TAG, K_COMMIT, K_SPLIT, K_PUSHED, K_RESULT, K_JOBS, K_OUTCOME, K_TICKET, K_REASON),
+    PAPER_JUDGED: (K_END, K_CHECKS, K_ORDERED, K_ORDER, K_VENUE, K_REASON),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -463,6 +468,8 @@ PAYLOAD_ENUMS = {
     # Code's steps at an order (ticket 119): the tag, a stale result's re-run launched, its outcome, and the end.
     (PAPER_CODE, K_STEP): ("tagged", "rerun_launched", "rerun", "done"),
     (PAPER_CODE, K_OUTCOME): ("held", "moved", "failed", "not_rerun"),
+    # The decider judges the order only at the stopping rule's own ends (ticket 120).
+    (PAPER_JUDGED, K_END): ("objectives_closed", "goal_reached", "frontier_empty"),
 }
 
 

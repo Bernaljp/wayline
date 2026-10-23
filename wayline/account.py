@@ -233,7 +233,19 @@ def _subject(decision, context):
         return "parked %s" % answer.split(":", 1)[0]
     if answer.startswith(VENUE_PREFIX):
         return "the paper's venue"
+    parts = _paper_parts(decision)
+    if parts is not None:  # the decider's paper order under `autonomous` (ticket 120): the judgment, or one of its choices
+        order, ref, _ = parts
+        return "the paper order" if ref is None else "paper order %d, `%s`" % (order, ref)
     return "a question with no ticket"
+
+
+def _paper_parts(decision):
+    """`(order, ref, choice)` of a paper order decision the decider made at a run's end, or None (ticket 120)."""
+    if decision.ticket is not None or decision.record:
+        return None
+    from wayline import paper_judge  # the judgment reads the paper, which reads every record
+    return paper_judge.decision_parts(decision.answer)
 
 
 def _answer_of(decision):
@@ -244,6 +256,9 @@ def _answer_of(decision):
         return answer.split(":", 1)[1].strip()
     if answer.startswith(VENUE_PREFIX):
         return answer[len(VENUE_PREFIX):]
+    parts = _paper_parts(decision)
+    if parts is not None:
+        return parts[2]
     return answer
 
 
@@ -1248,6 +1263,8 @@ def _reverse(project, context, decision, answer, told):
     - A parked proposal the decider kept parked is admitted by `admit`; one it admitted has its ticket, which
       `wayline cancel` parks. With no answer it is asked again on a human-only decision ticket.
     - The paper's venue is the owner's to name when the paper is compiled for one (the paper order is under no venue).
+    - A paper order decision the decider made at a run's end (ticket 120) makes the paper order the owner's from then
+      on: the decider no longer judges it, and an answer is refused for the owner's own `wayline paper` or `choose`.
 
     Refused, with nothing written, for an answer the decision's verb would not take.
     """
@@ -1263,6 +1280,14 @@ def _reverse(project, context, decision, answer, told):
         admitted = _admitted(context.events, prefix[len(PROPOSAL_PREFIX):].rstrip(": "))
         if answer != PROPOSAL_ANSWERS[0] and admitted is not None:
             raise AccountError("%s admitted that proposal as ticket %s; `wayline cancel %s` parks it" % (decision.id, admitted, admitted))
+    if _paper_parts(decision) is not None:
+        # The decider's paper order (ticket 120): the order is the owner's from now on, and the decider never judges it again.
+        if answer is not None:
+            raise AccountError("%s is about the paper order the decider made; order the paper yourself (wayline paper --yes) "
+                               "or choose another alternative (wayline paper choose <part>-<n>), or reverse it with no answer"
+                               % decision.id)
+        return ("%s reversed: the paper order is yours from now on, and the decider no longer judges it at a run's end; order "
+                "the paper when you want it (wayline paper)." % decision.id)
     if decision.ticket is None and not decision.record and not proposal:
         if answer is not None:
             raise AccountError("%s chose %s; name it yourself when the paper is compiled for a venue, or reverse it with no answer"

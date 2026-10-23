@@ -223,9 +223,15 @@ When the answer makes the project keep `code/` and a cut ticket writes code outs
 ## Setup 8/10: the paper order
 
 Under `autonomous` only: ask in one question whether the decider judges the paper order when the run's rule ends,
-and for which venue; the recommendation is yes, with no venue. No verb records the answer yet: tell the owner it
-stands at that default until the decider's order is built, and that this question is asked again then. Under the other
-autonomies the owner orders the paper, so say in one line that this question is not theirs to answer now.
+and for which venue; the recommendation is yes, with no venue (a venue is a slug of the harness's `guidelines/`, such
+as `nature-methods`). The decider judges only at the stopping rule's own ends, after the run-end gates and the
+drawings, and only once code's checks pass (no objective the rule names open, the last kill argument passed or its
+scope-downs done, no main-text gap in the outline, every changed result drawn, and at a start midway "Do the inherited
+results hold?" answered); then it orders the paper or writes why not, and every choice it makes is listed under
+"Decided for you". Record the answer by sending the intake's spec again with `paper_order` added: `wayline intake
+--from - --project .`, the same spec plus `"paper_order": {"decider": true, "venue": null}` (or `false`, or the venue's
+slug). Under the other autonomies the owner orders the paper, so say in one line that this question is not theirs to
+answer now.
 
 ## Setup 9/10: the front matter
 

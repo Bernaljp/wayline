@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "paper_judgment",
+  "description": "What the decider's one session at a run's end returns under `autonomous` (Implementation Decision 17; ticket 120): whether it orders the paper, with the reason the owner reads, and, when it orders, its answer to each item of the order's batch by the item's ref, one of that item's marks.",
+  "type": "object",
+  "required": ["order", "reason", "confidence", "answers"],
+  "additionalProperties": false,
+  "properties": {
+    "order": {"type": "boolean", "description": "true orders the paper now; false writes why not in reason"},
+    "reason": {"type": "string", "pattern": "\\S", "description": "why the paper is ordered now, or why not: the owner reads it cold"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "answers": {
+      "type": "array",
+      "description": "one per item of the order's batch when it orders, by its ref; empty when it does not order",
+      "items": {
+        "type": "object",
+        "required": ["ref", "mark", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "ref": {"type": "string", "pattern": "\\S"},
+          "mark": {"type": "string", "pattern": "\\S", "description": "one of the item's marks, in its words"},
+          "why": {"type": ["string", "null"], "description": "the reason for this answer, when it is not the order's reason"}
+        }
+      }
+    }
+  }
+}

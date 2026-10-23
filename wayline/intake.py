@@ -82,7 +82,7 @@ NAMED_CLASSES = {
 }
 
 SPEC_FIELDS = ("intent", "plan", "references", "data", "code", "constraints", "materials", "autonomy", "radius",
-               "model_fallback", "ladder_changes", "budgets", "human_only", "clone", "code_repository")
+               "model_fallback", "ladder_changes", "budgets", "human_only", "clone", "code_repository", "paper_order")
 # The fields a goal came with before decision 17; a spec that carries one is told where the goal goes now.
 GOAL_FIELDS = ("goal", "sample", "rationale")
 GOAL_ELSEWHERE = ("intake takes information only, so it records no goal (Implementation Decision 17): a goal is an "
@@ -427,6 +427,13 @@ def normalize_spec(raw):
                 value = code_repository.check_answer(value)
             except code_repository.CodeRepositoryError as failure:
                 raise IntakeError(str(failure)) from None
+        elif key == "paper_order":
+            # Setup question 8, under `autonomous` (ticket 120): whether the decider judges the paper order, for which venue.
+            from wayline import paper_judge
+            try:
+                value = paper_judge.check_answer(value)
+            except paper_judge.PaperJudgeError as failure:
+                raise IntakeError(str(failure)) from None
         spec[key] = value
     if spec.get("autonomy") is not None and spec["autonomy"] not in AUTONOMY:
         raise IntakeError("autonomy is one of %s, got %r" % (", ".join(AUTONOMY), spec["autonomy"]))
@@ -506,6 +513,8 @@ def take_intake(project, spec, base=None, run=run_tool, tools=None, push_url=Non
         updated["model_fallback"] = spec["model_fallback"]
     if spec.get("ladder_changes"):
         updated["ladder_changes"] = spec["ladder_changes"]  # the ladder consent of decision 16, written the same way
+    if spec.get("paper_order"):
+        updated["paper_order"] = spec["paper_order"]  # the setup's answer on the paper order under `autonomous` (ticket 120)
     updated["human_only"] = list(classes)
     budgets = {key: harness.get("budgets", {}).get(key) for key in BUDGET_FIELDS}
     budgets.update({key: value for key, value in spec.get("budgets", {}).items() if value is not None})

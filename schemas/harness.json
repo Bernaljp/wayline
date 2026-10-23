@@ -122,6 +122,16 @@
       }
     },
     "owner_email": {"type": ["string", "null"], "description": "sent in the scout's User-Agent to the polite pools"},
+    "paper_order": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decider", "venue"],
+      "description": "the setup's answer on the paper order under `autonomous` (Implementation Decision 17; ticket 120): whether the decider judges the order at the stopping rule's own ends, and the venue the order compiles for beside compilations/plain/; a project without the key judges it for no venue",
+      "properties": {
+        "decider": {"type": "boolean"},
+        "venue": {"type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "a slug of guidelines/, or null for no venue"}
+      }
+    },
     "code_repository": {
       "type": "object",
       "additionalProperties": false,

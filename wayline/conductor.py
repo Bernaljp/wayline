@@ -1220,7 +1220,8 @@ class Conductor:
         # tool nobody is installing keeps none going either: it waits on its software decision (ticket 82).
         if not [entry for entry in tickets.frontier(graph)
                 if not schedule.awaits_owner(entry, autonomy, decider) and not self._needs_tools(entry)] and not running:
-            if not self._decider_takes_the_frontier(autonomy, decider):
+            rested = not self._decider_takes_the_frontier(autonomy, decider)
+            if rested:
                 if self._draws_before_the_end(self._rest_point(autonomy, decider)):
                     return  # the changed results are drawn before the run ends or pauses (ticket 100)
                 if self._gates_before_the_end(stopping.FRONTIER_EMPTY):
@@ -1228,6 +1229,8 @@ class Conductor:
             takes, notice = self._empty_frontier(autonomy, decider)
             if takes:
                 return  # the decider takes this empty frontier's tickets at the next wave
+            if rested and self._judges_the_order(stopping.FRONTIER_EMPTY) is not None:
+                return  # under `autonomous` the decider's paper order, after the drawings and the gates (ticket 120)
             for line in schedule.held_back(graph, autonomy, decider):
                 self.say(line)
             self.ledger.append_event(RUN_ENDED, {"reason": stopping.FRONTIER_EMPTY})
@@ -3196,7 +3199,9 @@ class Conductor:
         elif self._gates_before_the_end(reason):
             waits = "its run-end gates and their scope-downs are done"
         else:
-            return False
+            waits = self._judges_the_order(reason)  # then, under `autonomous`, the decider's paper order (ticket 120)
+            if waits is None:
+                return False
         if self._said_resting != (reason, waits):
             self.say("  %s; the run ends once %s" % (words, waits))
         self._resting = reason
@@ -3301,6 +3306,72 @@ class Conductor:
                 if fields["status"] == "running" or fields["id"] in self.flight or fields["id"] in judged
                 or fields["id"] in stepping or (fields["status"] == "open" and fields["id"] in frontier)]
 
+    # --- the decider orders the paper under `autonomous` (decision 17; ticket 120) ---
+
+    def _judges_the_order(self, end):
+        """At an end of the stopping rule, after the drawings and the run-end gates: what the end waits on for the paper
+        order, or None once the run may end.
+
+        Under `autonomous`, with the setup's yes, once per end (`paper_judge.considered`): code's checks first, and a
+        failing one is journaled and launches nothing; then one decider session, which orders the paper or says why not.
+        An order rests the run on it, and its run ends as `end` once the paper is made. The session waits on the pause,
+        the stop, or pacing like any model work, and a usage window that refused it pauses the run.
+        """
+        from wayline import paper_judge
+        waits = "the decider has judged the paper order"
+        what = "the decider on the paper order"
+        try:
+            events, _ = self.ledger.read_events()
+            if not paper_judge.considered(self.project, end, events):
+                return None
+            failed = paper_judge.checks(self.project, events)  # code's, with no model call: never held
+            if failed:
+                paper_judge.record_held(self.project, end, failed)
+                self.say("  the decider does not judge the paper order: %s" % "; ".join(item["said"] for item in failed))
+                return None
+            # The session waits on the pause, the stop, pacing, and the hold on Fable's weekly window while the consent
+            # waits, as every launch of the decider does.
+            if self._holds_launches() or self.action != schedule.NORMAL:
+                return waits
+            on_fable = decider.decides_on_fable(self.policy) and self._fable_held()
+            falls_back = on_fable and self._falls_back()
+            if on_fable and not falls_back:
+                self._held_back(what)
+                return waits
+            judged = paper_judge.judge(self.project, end, harness_root=self.harness_root, policy=self.policy,
+                                       fall_back=falls_back, say=self.say)
+        except gates.FableHeld:
+            self._held_back(what)
+            return waits
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, what)
+            return waits
+        except (ValueError, OSError) as failure:
+            self.say("  the paper order was not judged: %s; the run ends without it" % failure)
+            return None
+        self._tail()
+        return "the paper the decider ordered is made" if judged["ordered"] else None
+
+    def _decider_chooses(self, order):
+        """Once the builds of the decider's order settled: its pick among the writer's titles and the paper's other
+        alternatives (ticket 120), under the hold on Fable's weekly window as any decider launch. One that cannot be taken
+        is said and the writer's own choices stand; a usage window that refused it pauses the run as well."""
+        from wayline import paper_judge
+        what = "the decider on paper order %s's alternatives" % order.get("order")
+        on_fable = decider.decides_on_fable(self.policy) and self._fable_held()
+        falls_back = on_fable and self._falls_back()
+        if on_fable and not falls_back:
+            self.say("  %s waits on Fable's weekly window, held; the writer's own choices stand" % what)
+            return
+        try:
+            paper_judge.choose_alternatives(self.project, order, harness_root=self.harness_root, policy=self.policy,
+                                            fall_back=falls_back, say=self.say)
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, what)
+            self.say("  %s: the usage limit refused it; the writer's own choices stand" % what)
+        except (gates.FableHeld, ValueError, OSError) as failure:
+            self.say("  %s: none was picked (%s); the writer's own choices stand" % (what, failure))
+
     # --- the paper order (decision 17; ticket 115) ---
 
     def _order_ids(self):
@@ -3388,6 +3459,8 @@ class Conductor:
                 return  # the next build is the next wave's
             if built["outcome"] == builds.NOT_PASSED:
                 self._not_passed(order, built)
+            if order.get("by") == "decider":
+                self._decider_chooses(order)  # the title and the alternatives, before the paper is compiled (ticket 120)
             made = self._compile(order)
             ended = "composed%s: research/paper/PAPER.md says what was made%s" % (
                 ", its gates not passed" if built["outcome"] == builds.NOT_PASSED else "",
