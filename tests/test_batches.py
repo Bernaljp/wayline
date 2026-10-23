@@ -72,7 +72,8 @@ class OpenBatchTest(BatchTestCase):
             "concern_placements": ["take it", "another place"],
             "outline_proposals": ["take", "decline"],
             "paper_order": ["the first", "the second", "a typo, fix it", "leave out", "keep, not verified", "hand over", "drop",
-                            "to be resolved", "take", "decline", "keep as stated"],
+                            "to be resolved", "take", "decline", "keep as stated", "as planned", "to the supplement", "split",
+                            "no figure", "a figure from nothing"],
         }
         self.assertEqual(set(batches.KINDS), set(expected))
         for kind, marks in expected.items():

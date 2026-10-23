@@ -22,7 +22,32 @@
         "supplement": {"$ref": "#/$defs/part"}, "front": {"$ref": "#/$defs/part"}
       }
     },
-    "tables": {"type": "array", "items": {"type": "string", "pattern": "^T[1-9][0-9]*$"}},
+    "tables": {"type": "array", "items": {"type": "string", "pattern": "^S?T[1-9][0-9]*$"}, "description": "the figure plan's tables (T<n>, supplementary ST<n>) and then the writer's"},
+    "figures": {
+      "type": "object",
+      "description": "the figure plan this version followed and its figures (ticket 116): each figure's plan line, the figure role's id and status, and the key a re-order compares to reuse a verified figure",
+      "required": ["venue", "limit", "figures", "tables", "moved", "without"],
+      "additionalProperties": false,
+      "properties": {
+        "venue": {"type": ["string", "null"]},
+        "limit": {"type": ["integer", "null"], "description": "the venue's display-item limit"},
+        "figures": {"type": "array", "items": {"type": "object",
+          "required": ["id", "result", "main", "panels", "line", "figure_id", "key", "status", "version", "reused", "reason", "findings_for_text"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"type": "string", "pattern": "^[FS][1-9][0-9]*$"}, "result": {"type": "string", "pattern": "^R[1-9][0-9]*$"},
+            "main": {"type": "boolean"}, "panels": {"type": "array", "items": {"type": "string"}}, "line": {"type": "string"},
+            "figure_id": {"type": "string"}, "key": {"type": ["string", "null"]}, "status": {"type": "string"},
+            "version": {"type": ["integer", "null"]}, "reused": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
+            "findings_for_text": {"type": "array", "items": {"type": "string"}}
+          }}},
+        "tables": {"type": "array", "items": {"type": "object", "required": ["id", "result", "plot", "main"], "additionalProperties": false,
+          "properties": {"id": {"type": "string", "pattern": "^S?T[1-9][0-9]*$"}, "result": {"type": "string"}, "plot": {"type": "string"},
+                         "main": {"type": "boolean"}}}},
+        "moved": {"type": "array", "items": {"type": "string"}},
+        "without": {"type": "array", "items": {"type": "string"}}
+      }
+    },
     "alternatives": {"type": "array", "items": {"type": "string", "pattern": "^[a-z]+-[1-9][0-9]*$"}},
     "answers": {
       "type": "array",

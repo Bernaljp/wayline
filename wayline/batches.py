@@ -49,7 +49,9 @@ KINDS = {
     "outline_proposals": ("take", "decline"),
     # The paper order's one batch (ticket 115): its items are of several sorts, each item carrying its own marks among these.
     "paper_order": ("the first", "the second", "a typo, fix it", "leave out", "keep, not verified", "hand over", "drop",
-                    "to be resolved", "take", "decline", "keep as stated"),
+                    "to be resolved", "take", "decline", "keep as stated",
+                    # the figure plan's items (ticket 116): a figure, one too large for a page, a figure from nothing
+                    "as planned", "to the supplement", "split", "no figure", "a figure from nothing"),
 }
 # The kinds whose items each carry their own marks, at least two of the kind's: a batch that asks several sorts of thing.
 PER_ITEM = ("paper_order",)

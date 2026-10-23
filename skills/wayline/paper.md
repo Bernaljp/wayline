@@ -40,6 +40,15 @@ One writer session then composes the whole paper from the outline and the sectio
 answers, what was left out and why, the owner's passages whose wording changed, what the writer proposes, and the
 cost. Read `PAPER.md` to the owner when they ask how the paper stands; never compose or edit a part yourself.
 
+The figures come from the plots the owner marked, through code's figure plan: each main-text result gets one figure
+holding every plot marked keep (or, with none marked keep, every plot its synthesis cites), with no panel cap; maybe
+and unmarked plots go to its supplementary figure, and dropped plots never appear. The batch shows each figure's
+planned panels (as planned, or to the supplement), each figure too large for one page (split, the default, or drop the
+panels past the page to its supplementary figure), and each drawn result with no figure (no figure, the default, or a
+figure from nothing). A figure from nothing is made only when the owner asks for one there. To change what a figure
+holds, the owner marks its plots (keep, maybe, drop) before ordering. The figures land in `research/paper/figures/F<n>/`
+and `S<n>/`, each with its `caption.md`, and `PAPER.md` gives each figure's plan line and what was left out.
+
 A change the writer wanted to the outline is a proposal in `PAPER.md`, never a move: the owner makes it, or not, by
 changing the outline (`wayline outline show` prints it). An owner's edit of a part file stands at the next order
 unless what that part is made from changed. Each order makes a new version; the previous one is kept under

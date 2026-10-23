@@ -69,6 +69,26 @@ lists it read-only, marked with its tag.
     order, and R26 reads "The general report is always current; the paper is made only on an explicit order, from the
     owner, or from the decider in an autonomous run."
 
+- Figures from marks at the paper order (ticket 116; Implementation Decisions 17 and 13). The paper's figures come from
+  the plots the owner explored and marked, with no panel cap and no splitting into thin figures.
+  - Code builds the **figure plan** (`wayline.paper_figures`) from the outline and `research/plots.json` with no model
+    call: each main-text result gets one figure whose panels are every plot marked keep, or, with none marked keep,
+    every plot its synthesis cites; maybe-marked and other plots go to its supplementary figure, drop-marked plots
+    never appear. A venue's display-item limit moves the last results in outline order to the supplement. Chosen
+    tables become numbered tables rendered from their CSV (`T<n>`, the others `ST<n>`), and the writer is told the
+    plan and numbers its own tables after the plan's.
+  - The plan joins the order's batch: each figure's planned panels (as planned, or to the supplement), each figure too
+    large for one page (split, the default, or drop the panels past the page to its supplementary figure), and each
+    drawn result with no figure (no figure, the default, or a figure from nothing). Under `autonomous` an oversized
+    figure is split, never dropped. A figure from nothing is made only on that request.
+  - The figure role gains a planned mode (`figure_request` mode `planned`, with its `panels`): two sessions, the
+    designer's finish composing every planned panel in the library its drawing was drawn in and the honesty verdict,
+    with the five readability checks and the Type-A composed-panels check (`planned_panels`: each panel marked
+    `plot:<id>` in the figure's SVG) beside the 19.
+  - Code writes `research/paper/figures/F<n>/` and `S<n>/`, each with `caption.md` (a marked placeholder for a figure
+    not made); `paper.json` records the plan, and `PAPER.md` gains a Figures section with each figure's plan line and
+    what was left out. A re-order reuses a verified figure whose plan and drawings are unchanged.
+
 - The surveyor and `lit` tickets (ticket 99; Implementation Decisions 17, 1, 2, 10, and 14). The literature is searched
   mid-run for each objective the Introduction does not yet cover, by a cheap session through free services.
   - The new `surveyor` role takes `lit` tickets (`proposals.KIND_ROLE` routes `lit` to it, a worker's proposal of one

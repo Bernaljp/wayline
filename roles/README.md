@@ -169,8 +169,10 @@ and asks the verifier for the honesty verdict through the gate.
 
 The designer has two jobs, each a fresh session given only its own section of
 `prompts/roles/figure-designer.md`: `## Drafts` returns `figure_drafts` (the sidecar's
-`output_schema`), and `## Finish` returns `figure_finish`, on the chosen draft or on a guided
-revision's change requests. It writes only under `figures/<figure_id>/` (`TICKET_TOUCHES`), runs
+`output_schema`), and `## Finish` returns `figure_finish`, on the chosen draft, on a guided
+revision's change requests, or on a paper order's planned panels (ticket 116: the plots the figure
+plan chose, composed into one figure with no drafts, critic, or pick, then the checks with the five
+readability checks and the composed-panels check, and the honesty verdict). It writes only under `figures/<figure_id>/` (`TICKET_TOUCHES`), runs
 Python and nothing else, and commits nothing. Its prompt carries doctrine and never a library fact:
 what a library gets wrong arrives candidate by candidate from the plot index, and the designer says
 which pitfalls it read as `pitfalls_consulted`.
