@@ -224,6 +224,15 @@ class NotPassedTest(BuildCase):
         self.assertIn("The noise claim overreaches.", self.writers[3].prompts[0], "build 4 is given the points standing")
         self.assertEqual(outcomes[-1]["outcome"], "not_passed")
 
+    def test_three_more_builds_keep_an_owners_edit_made_after_the_paper_was_not_passed(self):
+        path = self.project / "research" / "paper" / "methods.md"
+        path.write_text(path.read_text(encoding="utf-8") + "\nThe owner states the noise model here.\n", encoding="utf-8")
+        self.verb("more")
+        self.take(self.verifier)
+        self.assertNotIn("methods", asked(self.writers[3].prompts[0]))
+        self.assertIn("The owner states the noise model here.", self.read("methods.md"))
+        self.assertIn("methods", json.loads(self.read("paper.json"))["kept_edits"])
+
     def test_the_points_as_objectives_are_the_owners_open_objectives(self):
         before = len(objectives.read_objectives(self.project))
         code, out, _ = self.verb("objectives")
@@ -237,6 +246,9 @@ class NotPassedTest(BuildCase):
     def test_keeping_it_closes_the_choice_and_a_second_choice_is_refused(self):
         self.assertEqual(self.verb("keep")[0], 0)
         self.assertEqual(builds.waiting_lines(self.project), [])
+        report = self.read("PAPER.md")
+        self.assertIn("the owner chose to keep it as it is, marked not passed", report)
+        self.assertNotIn("Choose three more builds", report)
         code, _, err = self.verb("more")
         self.assertEqual(code, 2)
         self.assertIn("no paper waits on a choice", err)
@@ -255,8 +267,13 @@ class SampledTest(BuildCase):
                       " ".join(first["points"]))
         claims = [prompt for prompt in verifier.prompts if CLAIM in prompt]
         self.assertEqual(len(claims), 1)
-        second = self.take(Verifier(), change=self.tagged)
-        self.assertEqual(second["outcome"], "passed", "the same claim, sampled once, is not drawn again")
+        later = Verifier()
+        second = self.take(later, change=self.tagged)
+        self.assertEqual([prompt for prompt in later.prompts if CLAIM in prompt], [], "the same claim, sampled once, is not drawn again")
+        self.assertEqual(second["outcome"], "next", "but a claim that failed and was left as it was still stands")
+        self.assertIn('the claim "The error rises to 0.12 with the noise." is not supported', " ".join(second["points"]))
+        third = self.take(Verifier())
+        self.assertEqual(third["outcome"], "passed", "a build that scoped the claim out passes")
         self.assertEqual(tickets.read_tickets(self.project), [])
 
 
@@ -323,12 +340,12 @@ class InheritedTableTest(InheritedCase):
         def kept(found, number):
             found = self.routes(found, number)
             found["results"] += ("\n\nSINDy recovers the cubic {doc:D1#p2.s1}." if number == 1 else
-                                 "\n\nSINDy recovered the cubic, not verified here because the data are gone {doc:D1#p2.s1}.")
+                                 "\n\nSINDy recovered the cubic, which has not been verified because the data are gone {doc:D1#p2.s1}.")
             return found
         self.take(Verifier(), change=kept)
         self.assertIn("the sentence carrying %s ({doc:D1#p2.s1}) does not say it is not verified" % self.gone, self.writers[0].prompts[1])
         self.assertIn("keep %s, stated as not verified, with why: the data are gone" % self.gone, self.writers[0].prompts[0])
-        self.assertIn("not verified here because the data are gone {doc:D1#p2.s1}", self.read("results.md"))
+        self.assertIn("has not been verified because the data are gone {doc:D1#p2.s1}", self.read("results.md"))
 
 
 class ConcernsTest(BuildCase):
@@ -377,9 +394,11 @@ class ConcernsTest(BuildCase):
         [check] = builds.concern_checks(self.project, record)
         self.assertEqual((check["check"], check["level"]), ("concern", "ok"))
         self.assertIn("K1, kept for the paper order", check["message"])
-        [check] = builds.concern_checks(self.project, {"concerns": []})
+        [check] = builds.concern_checks(self.project, {"concerns": [], "concerns_asked": ["K1"]})
         self.assertEqual(check["level"], "fail")
         self.assertIn("the paper does not say how it answers it", check["message"])
+        [check] = builds.concern_checks(self.project, {"concerns": [], "concerns_asked": []})
+        self.assertEqual(check["level"], "warn", "a concern placed on the order after the parts were written is the next order's")
 
 
 class ConcernsAtTheFigureTest(PlannedFigureCase):
@@ -407,12 +426,14 @@ class CompilationConcernsTest(CompilationCase):
             "targets": [], "place": "order", "objectives": [], "status": "open", "answer": None, "reason": None, "proposed": None,
             "returned": None, "sorted_by": "owner"}], "split": []}, schema="concern")
         self.retry()
+        record = paper.read_record(self.project)
+        record["concerns_asked"] = ["K1"]
+        self.book.write_json("paper/paper.json", record, schema="paper")
         made = compilations.compile_paper(self.project, None, tools=self.tools, run=self.run)
         [check] = [item for item in made["checks"] if item["check"] == "concern"]
         self.assertEqual(check["level"], "fail")
         self.assertIn("K1, kept for the paper order (The noise model is never stated.): the paper does not say how it answers it",
                       check["message"])
-        record = paper.read_record(self.project)
         record["concerns"] = [{"id": "K1", "answer": "The Methods state the Gaussian noise model."}]
         self.book.write_json("paper/paper.json", record, schema="paper")
         made = compilations.compile_paper(self.project, None, tools=self.tools, run=self.run)

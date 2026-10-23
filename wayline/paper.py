@@ -1014,7 +1014,9 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
     inputs = part_inputs(project, structure, followed, plan)
     recompose, kept_edits = _plan(book, previous, inputs)
     if rebuilding:
-        recompose, kept_edits = [part for part in PARTS if part in WRITTEN or part in recompose], []
+        # Every part the writer writes is made again from the points, but an owner's edit since the last build (made
+        # after a paper not passed, before choosing more builds) stands, as at an order.
+        recompose = [part for part in PARTS if (part in WRITTEN and part not in kept_edits) or part in recompose]
     written = [part for part in recompose if part in WRITTEN]
     envelope, answer = None, {}
     if written:
@@ -1088,6 +1090,8 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
             "builds": list(previous.get("builds") or []) if rebuilding else [], "outcome": None,
             "concerns": ([{"id": item["id"], "answer": _one_line(item["answer"])} for item in answer.get("concerns") or []]
                          if written else list((previous or {}).get("concerns") or [])),
+            "concerns_asked": ([item["id"] for item in builds.order_concerns(project)] if written
+                               else list((previous or {}).get("concerns_asked") or [])),
             "usage": ({"usage": envelope.usage, "turns": envelope.num_turns, "duration_ms": envelope.duration_ms,
                        "session_id": envelope.session_id} if envelope is not None else None),
         }

@@ -433,9 +433,10 @@ def _key(project, request):
         return sha256_of(target) if path and target.is_file() else None
     panels = [(panel["plot"], panel["drawing"], panel["library"], digest(panel["png"]), digest(panel["svg"]), digest(panel.get("script")))
               for panel in request.get("panels") or []]
+    # The concerns a request carries (ticket 117) are not in the key: a concern placed on the order would otherwise make
+    # every figure again, most of which it does not bear on. A figure made afresh reads them.
     return hashlib.sha256(json.dumps([request["mode"], panels, [(entry["path"], entry["sha256"]) for entry in request["data"]],
-                                      request["target"]] + ([request["change_requests"]] if request.get("change_requests") else []),
-                                     sort_keys=True).encode("utf-8")).hexdigest()
+                                      request["target"]], sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def make_figures(project, plan, previous=None, *, harness_root=None, policy=None, say=None):

@@ -81,6 +81,8 @@
                                                                                            "points": {"type": "array", "items": {"type": "string"}},
                                                                                            "note": {"type": ["string", "null"]}}}}}}},
     "outcome": {"enum": [null, "passed", "not_passed"], "description": "passed once a build's gates all passed; not_passed when the last build the order allowed failed (ticket 117); null while ungated or a next build is owed"},
+    "concerns_asked": {"type": "array", "items": {"type": "string", "pattern": "^K[1-9][0-9]*$"},
+                       "description": "the concerns kept for the order the writer was asked about when the parts were written (ticket 117)"},
     "concerns": {"type": "array", "description": "how the writer says the paper answers each concern kept for the order (ticket 117)",
                  "items": {"type": "object", "required": ["id", "answer"], "additionalProperties": false,
                            "properties": {"id": {"type": "string", "pattern": "^K[1-9][0-9]*$"}, "answer": {"type": "string"}}}},

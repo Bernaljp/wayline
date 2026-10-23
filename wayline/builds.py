@@ -66,7 +66,9 @@ MORE, KEEP, OBJECTIVES = "more", "keep", "objectives"
 CHOICES = {MORE: "three more builds", KEEP: "keep it as it is", OBJECTIVES: "the points as objectives"}
 PAPER_SUBJECT = "research/paper"
 RESPONSE_DIR = "response"                 # research/paper/response/<critique>.md
-NOT_VERIFIED = "not verified"
+# How a sentence says an inherited claim is not verified: "not verified", "not been verified", "unverified", "could not
+# be verified", "cannot be verified", "unverifiable".
+NOT_VERIFIED = re.compile(r"\b(?:not\s+(?:yet\s+)?(?:been\s+)?verified|unverified|unverifiable|(?:could|can)\s*not\s+be\s+verified)\b", re.I)
 TABLE_MARK = "<!-- wayline: the inherited results, rendered by code from research/verifications.json -->"
 _CRITIQUE = re.compile(r"^D[1-9][0-9]*$")
 
@@ -229,20 +231,29 @@ def gate(project, record, build, *, harness_root=HARNESS_ROOT, policy=None, clas
         taken = gates.verdict("paper", named, READ_QUESTION, paths, READ_SCOPE, project=project, author_model=author,
                               verdict_type=gates.PAPER_READ, harness_root=harness_root, policy=policy, ledger=book).payload
     found.append(_entry(READ, taken))
-    sampled = run_end.sample_new(project, _parts_text(book), PAPER_SUBJECT, harness_root=harness_root, policy=policy,
+    text = _parts_text(book)
+    sampled = run_end.sample_new(project, text, PAPER_SUBJECT, harness_root=harness_root, policy=policy,
                                  classifier=classifier, prose_author=author, scope_down=False)
-    judged = {}
+    if sampled["waiting"]:
+        # A drawn claim not judged is no pass: the gate waits for Fable's weekly window, as the run-end gates do, and the
+        # verdicts taken so far are read back when it is taken again.
+        raise gates.FableHeld("%d claim(s) of the paper's build %d wait on Fable's weekly window" % (len(sampled["waiting"]), build))
+    # Every claim the parts make now whose latest verdict failed is a point: one judged in this build or before a pause,
+    # and one an earlier build failed that this build left as it was, which is never drawn again.
+    latest = {}
     for event in book.read_events()[0]:
         payload = event.get("payload") or {}
-        if event.get("event") == "verdict" and payload.get("subject") in sampled["failed"]:
-            judged[payload["subject"]] = payload
+        if event.get("event") == "verdict" and payload.get("subject_kind") == provenance.CLAIM:
+            latest[payload.get("subject")] = payload
     points = []
-    for item in sampled["failed"]:
-        reasons = "; ".join(_points((judged.get(item) or {}).get("findings"))) or "its cited artifacts do not support it"
-        points.append('the claim "%s" is not supported: %s' % (_plain(sampled["claims"].get(item)), reasons))
-    note = "%d claim(s) never sampled, %d drawn, %d judged now%s" % (
-        sampled["new"], sampled["sampled"], len(sampled["passed"]) + len(sampled["failed"]),
-        "; %d wait on Fable's weekly window" % len(sampled["waiting"]) if sampled["waiting"] else "")
+    for claim in provenance.tagged_claims(text, provenance.read_claims_cache(book)):
+        payload = latest.get(provenance.claim_subject(claim, PAPER_SUBJECT))
+        if payload is None or payload.get("pass"):
+            continue
+        reasons = "; ".join(_points(payload.get("findings"))) or "its cited artifacts do not support it"
+        points.append('the claim "%s" is not supported: %s' % (_plain(claim.text), reasons))
+    note = "%d claim(s) never sampled, %d drawn, %d judged now" % (
+        sampled["new"], sampled["sampled"], len(sampled["passed"]) + len(sampled["failed"]))
     found.append({"gate": SAMPLED, "pass": not points, "session_id": None, "model": None, "fallback_from": None,
                   "points": points, "note": note})
     return found
@@ -302,9 +313,9 @@ BUILDS_BEGIN = "<!-- wayline:builds -->"
 BUILDS_END = "<!-- /wayline:builds -->"
 
 
-def report_lines(record):
+def report_lines(record, closing=None):
     """`PAPER.md`'s builds section, between its markers: each build's gates with the points still standing, and how the
-    paper stands."""
+    paper stands; `closing` in place of that last line when the order ended otherwise (it failed, or the owner chose)."""
     lines = [BUILDS_BEGIN, "## Builds and their gates", ""]
     builds = (record or {}).get("builds") or []
     if not builds:
@@ -321,7 +332,9 @@ def report_lines(record):
             lines += ["  - standing: %s" % point for point in item["points"]]
         lines.append("")
     outcome = (record or {}).get("outcome")
-    if outcome == PASSED:
+    if closing:
+        lines.append(closing)
+    elif outcome == PASSED:
         lines.append("The paper passed at build %d. Nothing was submitted anywhere." % builds[-1]["build"])
     elif outcome == NOT_PASSED:
         lines.append("The paper is **not passed**: its last build left the points above standing. Choose %s, %s, or %s "
@@ -332,14 +345,31 @@ def report_lines(record):
     return lines
 
 
-def _rewrite_report(book, record):
+def closing_note(project, text):
+    """Say in `PAPER.md`'s builds section how the order ended when no build did: it failed (a gate that could not be
+    taken, a later build that could not be composed), or the owner chose after a paper not passed. Nothing when no paper
+    is composed."""
+    from wayline import paper
+    book = ledger_for(project)
+    try:
+        record = paper.read_record(book)
+    except paper.PaperError:
+        return
+    if record is not None:
+        try:
+            _rewrite_report(book, record, closing=text)
+        except (OSError, ValueError, LedgerError):
+            pass  # the journal holds how the order ended; the report says it at the next build
+
+
+def _rewrite_report(book, record, closing=None):
     from wayline import paper
     path = book.path("paper/%s" % paper.PAPER_MD)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return
-    section = "\n".join(report_lines(record))
+    section = "\n".join(report_lines(record, closing))
     if BUILDS_BEGIN in text and BUILDS_END in text:
         head, rest = text.split(BUILDS_BEGIN, 1)
         text = head + section + rest.split(BUILDS_END, 1)[1]
@@ -400,13 +430,21 @@ def choose(project, choice, by="owner", start=_STARTS):
         if choice == MORE:
             view = replay.replay(events)
             run = None if holder is not None else ("stopped" if view.run is None else view.run.get("ended"))
+        if choice == OBJECTIVES:
+            # Before the choice is journaled, so a point that cannot be recorded leaves the choice to be made again; a
+            # point an earlier try recorded is not recorded twice.
+            held = {_one_line(item["text"]) for item in objectives_module.read_objectives(project)}
+            for point in found.get("points") or []:
+                if _one_line(point) not in held:
+                    added.append(objectives_module.add_objective(project, point, by=by)[0]["id"])
         payload = {"order": found["order"], "action": CHOSEN, "by": by, "choice": choice, "version": found.get("version")}
         if choice == MORE:
             payload["run"] = run
         book.append_event(PAPER_ORDER, payload)
-    if choice == OBJECTIVES:
-        for point in found.get("points") or []:
-            added.append(objectives_module.add_objective(project, point, by=by)[0]["id"])
+    closing_note(project, {MORE: "The paper was not passed, and the owner chose %s: they follow from the points above.",
+                           KEEP: "The paper was not passed, and the owner chose to %s, marked not passed.",
+                           OBJECTIVES: "The paper was not passed, and the owner chose %s: the points above are open objectives."}[choice]
+                 % CHOICES[choice])
     started = None
     if choice == MORE and holder is None and start is not None:
         try:
@@ -514,10 +552,6 @@ def _doc_tag(item):
     return "{doc:%s}" % item["doc"] if item.get("doc") else None
 
 
-def _words(text):
-    return re.findall(r"[a-z0-9]+", provenance.strip_tags(str(text or "")).casefold())
-
-
 def answer_problems(project, answer, written, followed, passages):
     """The Type-A checks of a writer's answer this ticket adds: problems, one line each, empty when it passes.
 
@@ -525,6 +559,7 @@ def answer_problems(project, answer, written, followed, passages):
     not verified in each sentence carrying its tag; the Methods name every route the verifications took; and a concern
     answered is one kept for the order.
     """
+    from wayline import paper
     texts = {part: answer.get(part) for part in ("abstract", "introduction", "results", "discussion", "methods", "supplement")
              if part in written and answer.get(part)}
     problems = []
@@ -534,17 +569,17 @@ def answer_problems(project, answer, written, followed, passages):
         identifier = item["ref"].split(":", 1)[1]
         passage = passages.get(identifier) or {}
         tag = _doc_tag(passage)
-        words = _words(passage.get("text"))
+        words = paper._words(passage.get("text"))
         said = " %s " % " ".join(words)
         for part, text in texts.items():
-            sentences = [sentence for sentence in re.split(r"(?<=[.!?}])\s+", text) if tag and tag in sentence]
-            if item["mark"] == "leave out":
-                if sentences or (len(words) >= 5 and said in " %s " % " ".join(_words(text))):
+            sentences = [sentence for sentence in re.split(r"(?<=[.!?])\s+", text) if tag and tag in sentence]
+            if item["mark"] == paper.LEAVE_OUT:
+                if sentences or (len(words) >= 5 and said in " %s " % " ".join(paper._words(text))):
                     problems.append("%s carries %s, an unverifiable claim the order left out: leave it out of every part" % (part, identifier))
             else:
                 problems += ['%s: the sentence carrying %s (%s) does not say it is not verified: say "not verified" and why (%s)' % (
                     part, identifier, tag, _one_line(passage.get("reason")) or "its reason") for sentence in sentences
-                    if NOT_VERIFIED not in sentence.casefold()]
+                    if not NOT_VERIFIED.search(sentence)]
     routes = _routes(project)
     if "methods" in written and routes:
         missing = [route for route in routes if not re.search(r"\b%s\b" % route, str(answer.get("methods") or ""), re.I)]
@@ -678,10 +713,19 @@ def change_requests(project):
 
 
 def concern_checks(project, record):
-    """The compilation's checks on the concerns kept for the order: one per concern, `ok` when the paper's writer said how
-    the paper answers it, `fail` when it did not."""
+    """The compilation's checks on the concerns kept for the order: one per concern open for it now, `ok` when the paper's
+    writer said how the paper answers it, `fail` when the writer was asked and did not, and `warn` for one placed on the
+    order after the parts were written, which the next order asks about."""
     answered = {item["id"]: _one_line(item["answer"]) for item in (record or {}).get("concerns") or [] if _one_line(item.get("answer"))}
-    return [{"check": "concern", "level": "ok" if item["id"] in answered else "fail",
-             "message": "%s, kept for the paper order (%s): %s" % (item["id"], item["text"][:120], "the paper answers it: %s" % answered[item["id"]]
-                                                                     if item["id"] in answered else "the paper does not say how it answers it")}
-            for item in order_concerns(project)]
+    asked = set((record or {}).get("concerns_asked") or [])
+    found = []
+    for item in order_concerns(project):
+        if item["id"] in answered:
+            level, said = "ok", "the paper answers it: %s" % answered[item["id"]]
+        elif item["id"] in asked:
+            level, said = "fail", "the paper does not say how it answers it"
+        else:
+            level, said = "warn", "placed on the order after this version was written; the next paper order asks about it"
+        found.append({"check": "concern", "level": level, "message": "%s, kept for the paper order (%s): %s" % (
+            item["id"], item["text"][:120], said)})
+    return found

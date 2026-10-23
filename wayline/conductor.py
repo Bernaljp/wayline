@@ -3370,6 +3370,8 @@ class Conductor:
         except (paper.PaperError, gates.GateError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
             self.say("  paper order %s failed: %s" % (order.get("order"), failure))
             paper.fail(self.project, order, str(failure))
+            builds.closing_note(self.project, "Paper order %s failed: %s. No further build was made or gated." % (
+                order.get("order"), " ".join(str(failure).split())))
         else:
             self._tail()
             if built["outcome"] == builds.NEXT:
