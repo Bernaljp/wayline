@@ -30,4 +30,4 @@ Not part of this ticket:
 - [x] The code-to-Methods check runs over all of `code/` at the order, and its findings go to the writer and to `PAPER.md`.
 - [x] `code/` gains an environment file and a Dockerfile rendered from the locks, whatever `harness.json.environment` says.
 - [x] Tests: journal replay of an order with one changed result whose numbers held and one whose numbers moved; the tool runner's recordings carry the tag push; the files written under `code/` are asserted over a temporary project.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
