@@ -33,4 +33,4 @@ Not part of this ticket:
 - [x] Every order writes `compilations/plain/`; a venue writes `compilations/<venue>/`; compiling for another venue later runs only the compilation, behind a card.
 - [x] Before compiling, every unresolved cited work is looked up live once through the scout; one still unresolved is not cited, following the batch's answer (dropped, or its claim kept marked "to be resolved").
 - [x] Tests: the tool runner's recordings carry pandoc out, `latexmk`, and pandoc-crossref; the fetcher's recordings carry the last retry finding one work and failing on another; the fake launcher scripts the fitting session; the verb table of decision 1 gains the compilation's form in the same commit; CHANGELOG `## Unreleased` names compilations.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
