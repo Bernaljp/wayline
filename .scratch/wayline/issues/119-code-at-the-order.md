@@ -18,16 +18,16 @@ Not part of this ticket:
 
 **Blocked by:** 106 - Reproducing from the code repository; 107 - The rule from code to Methods; 115 - The paper order and the paper's parts. It blocks 120.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#266](https://github.com/Bernaljp/wayline/issues/266) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (Methods and the code: aligned, the `paper-N` tag, stale re-runs, `code/figures/`; Tools, packages, and environments: the order's environment file and Dockerfile; The paper order and what it compiles: code's steps); M8 criteria 13 and 17; user stories 148, 152.
 
-- [ ] An order tags `paper-N` (N counting orders) and pushes the code repository's split with the tag through the tool runner; the tag is recorded in `PAPER.md`.
-- [ ] Every result whose code changed since its run is re-run at the tag; a ticket is cut only when a number its findings cite moved, and `PAPER.md` lists each re-run with its outcome.
-- [ ] The scripts behind every figure and every cited drawing number are copied into `code/figures/`, one per figure or drawing, and the split includes them.
-- [ ] The code-to-Methods check runs over all of `code/` at the order, and its findings go to the writer and to `PAPER.md`.
-- [ ] `code/` gains an environment file and a Dockerfile rendered from the locks, whatever `harness.json.environment` says.
-- [ ] Tests: journal replay of an order with one changed result whose numbers held and one whose numbers moved; the tool runner's recordings carry the tag push; the files written under `code/` are asserted over a temporary project.
+- [x] An order tags `paper-N` (N counting orders) and pushes the code repository's split with the tag through the tool runner; the tag is recorded in `PAPER.md`.
+- [x] Every result whose code changed since its run is re-run at the tag; a ticket is cut only when a number its findings cite moved, and `PAPER.md` lists each re-run with its outcome.
+- [x] The scripts behind every figure and every cited drawing number are copied into `code/figures/`, one per figure or drawing, and the split includes them.
+- [x] The code-to-Methods check runs over all of `code/` at the order, and its findings go to the writer and to `PAPER.md`.
+- [x] `code/` gains an environment file and a Dockerfile rendered from the locks, whatever `harness.json.environment` says.
+- [x] Tests: journal replay of an order with one changed result whose numbers held and one whose numbers moved; the tool runner's recordings carry the tag push; the files written under `code/` are asserted over a temporary project.
 - [ ] `python -m unittest` passes.

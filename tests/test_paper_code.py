@@ -261,6 +261,18 @@ class TheFilesUnderCodeTest(CodeAtOrderCase):
         self.assertEqual([(entry["drawing"], entry["file"], entry["findings"]) for entry in record["figures"]],
                          [("R1-1", "code/figures/R1-1.py", ["t9-a1-f1"])])
 
+    def test_the_script_behind_each_planned_figure_s_panels_is_copied_once_per_drawing(self):
+        self.drawing()
+        plot = {"id": "R1.1", "result": "R1", "kind": "plot", "chart_type": "line", "index_entries": [], "data_view": "r by window",
+                "status": "current", "headline": True, "mark": "keep", "note": None, "drawings": ["R1-1"]}
+        self.ledger.write_json(drawings.PLOTS_JSON, {"schema_version": 1, "plots": [plot, dict(plot, id="R1.2", headline=False)]},
+                               schema=drawings.PLOTS_SCHEMA)
+        plan = {"figures": [{"id": "F1", "panels": ["R1.1"]}], "supplementary": [{"id": "S1", "panels": ["R1.2"]}], "tables": []}
+        copied = paper_code.copy_figure_scripts(self.project, plan)
+        self.assertEqual([(entry["drawing"], entry["file"], entry["figures"]) for entry in copied],
+                         [("R1-1", "code/figures/R1-1.py", ["F1", "S1"])])
+        self.assertIn("behind F1, S1", (self.project / "code" / "figures" / "FIGURES.md").read_text())
+
     def test_an_environment_file_and_a_dockerfile_are_rendered_from_the_locks(self):
         self.take(self.order())
         environment = (self.project / "code" / "environment.yml").read_text()
