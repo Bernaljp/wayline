@@ -3354,21 +3354,50 @@ class Conductor:
             self._say_order(order, "waits on its batch %s: the owner's marks, or wayline mark %s --defaults" % (batch, batch))
             return
         if self._holds_launches() or self.action != schedule.NORMAL:
-            return  # the writer is model work: it waits on the pause, the stop, or pacing
+            return  # the writer and the gates are model work: they wait on the pause, the stop, or pacing
+        from wayline import builds
         try:
-            paper.compose(self.project, order, harness_root=self.harness_root, policy=self.policy, say=self.say)
+            # One build per wave (ticket 117): its composition when owed, then its three gates; the order stays open
+            # until a build passes or the last one it allows fails.
+            built = builds.take(self.project, order, harness_root=self.harness_root, policy=self.policy, say=self.say,
+                                classifier=self.classifier)
         except gates.UsageLimited as refused:
-            self._pause(refused.limit, "the paper's writer")
+            self._pause(refused.limit, "the paper's writer or its gates")
             return
-        except (paper.PaperError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
+        except gates.FableHeld:
+            self._say_order(order, "waits for its gates on Fable's weekly window")
+            return
+        except (paper.PaperError, gates.GateError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
             self.say("  paper order %s failed: %s" % (order.get("order"), failure))
             paper.fail(self.project, order, str(failure))
+            builds.closing_note(self.project, "Paper order %s failed: %s. No further build was made or gated." % (
+                order.get("order"), " ".join(str(failure).split())))
         else:
+            self._tail()
+            if built["outcome"] == builds.NEXT:
+                return  # the next build is the next wave's
+            if built["outcome"] == builds.NOT_PASSED:
+                self._not_passed(order, built)
             self._compile(order)
         self._tail()
         if order.get("run"):
             self.ledger.append_event(RUN_ENDED, {"reason": order["run"]})
             result.ended, result.reason = True, order["run"]
+
+    def _not_passed(self, order, built):
+        """A paper whose last build failed (ticket 117): the owner chooses three more builds, keeping it, or the points as
+        objectives. Under `interactive` and `checkpoints` the owner is told; under `autonomous` the paper stops under the
+        account's "Waiting on you", and nothing is asked."""
+        from wayline import builds
+        words = ("%s: the paper (paper order %s) is not passed after build %d, with %d point(s) standing in "
+                 "research/paper/PAPER.md; choose %s, %s, or %s" % (self.project.name, order.get("order"), built["build"],
+                                                                    len(built["points"]), builds.CHOICES[builds.MORE],
+                                                                    builds.CHOICES[builds.KEEP], builds.CHOICES[builds.OBJECTIVES]))
+        if read_harness(self.project).get("autonomy") == "autonomous":
+            self.say("  %s: it waits under \"Waiting on you\"" % words)
+            return
+        self.say("  " + words)
+        self.notify(decisions.DECISION, words, self.project, None)
 
     def _compile(self, order):
         """Once the paper is composed: the scout's last retry and the order's compilations (ticket 118), code alone but for

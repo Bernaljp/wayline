@@ -39,8 +39,9 @@ every autonomy), or a marked placeholder until said.
 **Versions.** Each order makes a new version, the previous one frozen under `research/paper/earlier/v<n>/`. A re-order
 recomposes only the parts whose inputs changed (`part_inputs`; the title and abstract whenever a main-text part did) and
 keeps an owner's edit of a part file unless its inputs changed; the writer always reads the whole version. The writer
-offers three titles; other alternatives only when asked. The build is recorded as not yet gated: the builds' gates are
-ticket 117's, the figures 116's, the compilations 118's. Nothing here submits anything anywhere.
+offers three titles; other alternatives only when asked. A composition is one build: `composed` carries its number and
+leaves the order open for its gates, and a later build is `compose` with `rebuild`, the points standing (`wayline.builds`,
+ticket 117); the figures are 116's, the compilations 118's. Nothing here submits anything anywhere.
 """
 
 import argparse
@@ -143,8 +144,7 @@ The parts to write now: %(parts)s.
 ## The answers this paper follows
 %(answers)s
 ## What to read
-%(read)s
-"""
+%(read)s%(builds)s"""
 
 
 class PaperError(ValueError):
@@ -183,15 +183,11 @@ def _orders(events):
 
 
 def open_order(project_or_ledger, events=None):
-    """The `paper_order` payload of the order that is open, or None: ordered, and neither composed nor failed since."""
+    """The `paper_order` payload of the order that is open, or None: ordered (or reopened by the owner's choice of more
+    builds, ticket 117), and its builds neither passed nor ran out, nor its paper failed, since (`replay.open_paper_order`)."""
+    from wayline import replay
     events = _events(ledger_for(project_or_ledger)) if events is None else events
-    found = None
-    for payload in _orders(events):
-        if payload.get("action") == ORDERED:
-            found = payload
-        elif found is not None and payload.get("order") == found.get("order"):
-            found = None
-    return found
+    return replay.open_paper_order(_orders(events))
 
 
 def _section_body(book, section):
@@ -676,7 +672,7 @@ def part_inputs(project, structure, followed, plan=None):
         "results": _digest(bodies["results"], structure.get("results"), _read_or(book, "verifications.json"), told, figures),
         "discussion": _digest(bodies["discussion"], structure.get("discussion"), objectives, told),
         "methods": _digest(bodies["methods"], structure.get("methods"), _read_or(book, "methods_inventory.json"), told),
-        "supplement": _digest(structure.get("supplement"), bodies, told, figures),
+        "supplement": _digest(structure.get("supplement"), bodies, told, figures, _read_or(book, "verifications.json")),
     }
     found["title"] = found["abstract"] = _digest([found[part] for part in MAIN_TEXT])
     found["front"] = _digest(_front_inputs(book))
@@ -843,7 +839,7 @@ def _instruction(answer, passages):
     return "- %s: %s%s" % (ref, said, " (the owner's note: %s)" % answer["note"] if answer.get("note") else "")
 
 
-def _prompt(role, number, version, written, structure, followed, passages, previous, plan):
+def _prompt(role, number, version, written, structure, followed, passages, previous, plan, extra=""):
     reads = ["- research/sections/%s.md: the %s's current passages, which the paper is made from" % (part, part) for part in MAIN_TEXT]
     reads += ["- research/OUTLINE.md, research/OBJECTIVES.md, research/REPORT.md (the general report)",
               "- research/CONCERNS.md (the concerns kept for the order), research/VERIFICATIONS.md when there is one"]
@@ -855,7 +851,7 @@ def _prompt(role, number, version, written, structure, followed, passages, previ
                      "outline": _outline_lines(structure), "figures": paper_figures.writer_lines(plan),
                      "table": 1 + len(_plan_tables(plan)),
                      "answers": "\n".join(told) or "- none: nothing was asked",
-                     "read": "\n".join(reads)}
+                     "read": "\n".join(reads), "builds": extra}
     return provenance.joined(text, role.protocol, worker.schema_section("# The answer", SCHEMA))
 
 
@@ -884,13 +880,16 @@ def _answer_problems(answer, written, structure, kept, plan=None):
     return problems
 
 
-def _write_session(project, number, version, written, structure, followed, previous, harness_root, policy, plan=None):
-    """The one writer session: its envelope, its answer checked and resumed once with what failed."""
-    from wayline import sections
+def _write_session(project, number, version, written, structure, followed, previous, harness_root, policy, plan=None, build=1,
+                   rebuild=None):
+    """The one writer session: its envelope, its answer checked and resumed once with what failed. A later build of the
+    order (`rebuild`, the points its last build left standing; ticket 117) is a fresh session all the same."""
+    from wayline import builds, sections
     book = ledger_for(project)
     role = worker.read_role(ROLE, harness_root, project)
     passages = {item.get("id"): item for item in sections.read_passages(book)}
-    prompt = _prompt(role, number, version, [part for part in WRITTEN if part in written], structure, followed, passages, previous, plan)
+    prompt = _prompt(role, number, version, [part for part in WRITTEN if part in written], structure, followed, passages, previous, plan,
+                     extra=builds.writer_lines(project, rebuild, build, plan))
     request = provenance.structured_request(project, role, policy, harness_root, prompt, SCHEMA, WRITER_BUDGET,
                                             provenance.session_dir(project, SESSIONS), read_only=True)
     kept = inherited_kept(project)
@@ -900,6 +899,7 @@ def _write_session(project, number, version, written, structure, followed, previ
         if problem is not None:
             return problem
         found = _answer_problems(envelope.structured_output, written, structure, kept, plan)
+        found += builds.answer_problems(project, envelope.structured_output, written, followed, passages)
         return "\n".join("- %s" % line for line in found) if found else None
 
     try:
@@ -985,15 +985,19 @@ def _left_out(followed, passages, answer):
     return found
 
 
-def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=None):
+def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=None, build=1, rebuild=None):
     """Compose the paper for the open order `payload` and write `research/paper/`; returns the version record.
 
     The sections and the outline are rendered first, taking in the owner's edits; the outline's proposals answered in
     the batch are taken; then each part whose inputs changed is made afresh, the writer's in one session, the front
-    matter by code, and the previous version is frozen. Journals `paper_order` with `action: composed`. Raises
-    `PaperError` when the writer gave nothing usable, and nothing is written then.
+    matter by code, and the previous version is frozen. Journals `paper_order` with `action: composed` and its `build`,
+    which leaves the order open for the build's gates (`wayline.builds`, ticket 117). Raises `PaperError` when the writer
+    gave nothing usable, and nothing is written then.
+
+    `rebuild`, the points the last build left standing, makes this a later build of the same version: a fresh writer
+    session writes every part again from the previous build's parts and those points, and nothing is frozen.
     """
-    from wayline import code_repository, outline, paper_figures, sections
+    from wayline import builds, code_repository, outline, paper_figures, sections
     project = Path(project).resolve()
     book = ledger_for(project)
     policy = policy_for(project, harness_root) if policy is None else policy
@@ -1005,20 +1009,25 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
     plan = paper_figures.build(project, followed, autonomous=read_harness(project).get("autonomy") == AUTONOMOUS,
                                venue=payload.get("venue"))
     previous = read_record(book)
-    version = (previous["version"] + 1) if previous else 1
+    rebuilding = rebuild is not None and previous is not None
+    version = previous["version"] if rebuilding else (previous["version"] + 1) if previous else 1
     inputs = part_inputs(project, structure, followed, plan)
     recompose, kept_edits = _plan(book, previous, inputs)
+    if rebuilding:
+        # Every part the writer writes is made again from the points, but an owner's edit since the last build (made
+        # after a paper not passed, before choosing more builds) stands, as at an order.
+        recompose = [part for part in PARTS if (part in WRITTEN and part not in kept_edits) or part in recompose]
     written = [part for part in recompose if part in WRITTEN]
     envelope, answer = None, {}
     if written:
         envelope, request = _write_session(project, payload["order"], version, written, structure, followed, previous,
-                                           harness_root, policy, plan)
+                                           harness_root, policy, plan, build=build, rebuild=rebuild if rebuilding else None)
         answer = envelope.structured_output
     made = paper_figures.make_figures(project, plan, previous, harness_root=harness_root, policy=policy, say=say)
     passages = {item.get("id"): item for item in sections.read_passages(book)}
     texts = {}
     with book.lock():
-        if previous is not None:
+        if previous is not None and not rebuilding:
             _freeze(book, previous)
         for part in PARTS:
             if part not in recompose:
@@ -1033,6 +1042,8 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
                 if not text.strip():
                     text = ("Nothing is placed in the supplement.\n" if part == "supplement" else
                             "The outline holds nothing for the %s yet.\n" % part.capitalize())
+                if part == "supplement":
+                    text = builds.with_table(text, project, plan)  # the inherited results' table is code's (ticket 117)
             book.write_markdown(_paper("%s.md" % part), text)
             texts[part] = text
         tables = list((previous or {}).get("tables") or [])
@@ -1076,19 +1087,25 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
             "unchecked": unchecked, "left_out": _left_out(followed, passages, answer) + plan["left_out"], "figures": figures,
             "proposals": [_one_line(item) for item in answer.get("proposals") or []] if written else list((previous or {}).get("proposals") or []),
             "reworded": _reworded(book, texts), "kept_edits": kept_edits, "gated": False,
+            "builds": list(previous.get("builds") or []) if rebuilding else [], "outcome": None,
+            "concerns": ([{"id": item["id"], "answer": _one_line(item["answer"])} for item in answer.get("concerns") or []]
+                         if written else list((previous or {}).get("concerns") or [])),
+            "concerns_asked": ([item["id"] for item in builds.order_concerns(project)] if written
+                               else list((previous or {}).get("concerns_asked") or [])),
             "usage": ({"usage": envelope.usage, "turns": envelope.num_turns, "duration_ms": envelope.duration_ms,
                        "session_id": envelope.session_id} if envelope is not None else None),
         }
         if not written and previous is not None:
             record["model"] = previous.get("model")
         book.write_json(_paper(PAPER_JSON), record, schema=RECORD_SCHEMA)
+        builds.write_responses(book, record)
         checks = {"structure": check_structure(structure, {part: texts.get(part) for part in outline.PAPER_PARTS}),
                   "kept": kept_problems({part: texts.get(part) for part in WRITTEN}, inherited_kept(project))}
         book.write_markdown(_paper(PAPER_MD), _report(record, recompose, answer, payload, checks))
         book.append_event(PAPER_ORDER, {"order": payload["order"], "action": COMPOSED, "by": payload.get("by") or OWNER,
-                                        "version": version, "commit": record["commit"], "parts": recompose})
+                                        "version": version, "commit": record["commit"], "parts": recompose, "build": build})
     if say is not None:
-        say("  paper order %d: version %d composed (%s afresh)" % (payload["order"], version, ", ".join(recompose) or "nothing"))
+        say("  paper order %d: version %d, build %d, composed (%s afresh)" % (payload["order"], version, build, ", ".join(recompose) or "nothing"))
     return record
 
 
@@ -1098,8 +1115,9 @@ def _report(record, recompose, answer, payload, checks):
              "Composed by code at paper order %d (%s) from commit %s of main, at %s. %s" % (
                  record["order"], record["by"], record["commit"] or "none (the project has no repository)", record["composed"],
                  "The writer was one read-only session on %s." % record["model"] if record["model"] else "No part needed the writer."),
-             "", "This build is not yet gated: no kill argument, independent read, or sampled verdict has judged it. "
-                 "Nothing was submitted anywhere.", "", "## Parts", "", "| Part | File | Version | This order |", "|---|---|---|---|"]
+             ""]
+    from wayline import builds
+    lines += builds.report_lines(record) + ["", "## Parts", "", "| Part | File | Version | This order |", "|---|---|---|---|"]
     for part in PARTS:
         state = ("made afresh" if part in recompose else "your edit kept" if part in record["kept_edits"] else "unchanged")
         lines.append("| %s | %s.md | %d | %s |" % (part, part, record["parts"][part]["version"], state))
@@ -1155,18 +1173,23 @@ def _report(record, recompose, answer, payload, checks):
 
 
 def paper_command(args):
-    """`wayline paper [--yes] [--for <slug>] [--json] [--project <path>]`, `wayline paper front - [--project <path>]`, and
-    `wayline paper compile <slug> [--yes] [--json] [--project <path>]`.
+    """`wayline paper [--yes] [--for <slug>] [--json] [--project <path>]`, `wayline paper front - [--project <path>]`,
+    `wayline paper compile <slug> [--yes] [--json] [--project <path>]`, and `wayline paper builds more|keep|objectives
+    [--project <path>]`.
 
     Alone it prints the order's card and does nothing else; with `--yes`, the owner's confirmation, it makes the order,
     which compiles the paper plainly and for the venue `--for` names. `paper front -` records the front matter the owner
-    gave, a JSON object on stdin; `paper compile` compiles the current version for another venue (ticket 118).
+    gave, a JSON object on stdin; `paper compile` compiles the current version for another venue (ticket 118); `paper
+    builds` is the owner's choice after a paper not passed (ticket 117).
     """
     if args and args[0] == "front":
         return _front_command(args[1:])
     if args and args[0] == "compile":
         from wayline import compilations
         return compilations.compile_command(args[1:])
+    if args and args[0] == "builds":
+        from wayline import builds
+        return builds.builds_command(args[1:])
     parser = argparse.ArgumentParser(prog="wayline paper", description="the paper order: without --yes, its card (the readiness list "
                                      "and the cost, with no model call); with --yes, the order, which composes the paper from the "
                                      "outline and the sections and compiles it")

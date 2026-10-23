@@ -350,7 +350,7 @@ class VerbTest(CompilationCase):
         self.assertIn("compiled nature from version 1: compiled", out)
         self.assertIsNone(json.loads(self.text("nature", "compilation.json"))["retried"], "a compilation alone asks no scout")
         self.assertEqual([event["payload"]["action"] for event in self.book.read_events()[0] if event["event"] == "paper_order"],
-                         ["ordered", "composed"], "no order was made")
+                         ["ordered", "composed", "passed"], "no order was made")
 
     def test_an_unknown_venue_is_refused(self):
         code, _, err = self.verb("compile", "nowhere")

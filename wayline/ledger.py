@@ -282,6 +282,9 @@ K_RELEASED = "released"  # `verification`: the tickets an unverifiable result st
 K_ORDER = "order"  # `paper_order`: the order's number, 1 onward
 K_RUN = "run"  # `paper_order`: how the last run ended when the order was made with no run going, null while one was going
 K_PARTS = "parts"  # `paper_order`: the parts a composition wrote afresh
+K_BUILD = "build"  # `paper_order`: the build a composition or its gates belong to, 1 onward (ticket 117)
+K_POINTS = "points"  # `paper_order`: the points a build's gates left standing (ticket 117)
+K_CHOICE = "choice"  # `paper_order`: the owner's choice after a paper not passed: more, keep, or objectives (ticket 117)
 K_REST = "rest"  # `drawing`: the rest point it was opened at, run_end, checkpoint, or owner
 K_PLOTS = "plots"  # `drawing`: the plot and table ids an accepted drawing drew
 K_LEFT_OUT = "left_out"  # `drawing`: what acceptance left out, each with why
@@ -370,7 +373,8 @@ EVENTS = {
     OUTLINE: (K_ACTION, K_ITEM, K_TO, K_NOTE, K_BY),
     REFERENCE_RAISED: (K_SLUG, K_REASON, K_OUTCOME, K_AUTONOMY),
     SCOUT_SEARCHED: (K_QUERY, K_CITING, K_WORKS, K_OPENALEX),
-    PAPER_ORDER: (K_ORDER, K_ACTION, K_BY, K_RUN, K_BATCH, K_VERSION, K_COMMIT, K_PARTS, K_REASON, K_VENUE),
+    PAPER_ORDER: (K_ORDER, K_ACTION, K_BY, K_RUN, K_BATCH, K_VERSION, K_COMMIT, K_PARTS, K_REASON, K_VENUE, K_BUILD, K_POINTS,
+                  K_CHOICE),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -448,7 +452,8 @@ PAYLOAD_ENUMS = {
     (REFERENCE_RAISED, K_OUTCOME): ("no such work", "gave up", "not looked up"),
     (REFERENCE_RAISED, K_AUTONOMY): ("interactive", "checkpoints"),
     # The order made, the paper composed from it, or the composition failing, which closes the order (ticket 115).
-    (PAPER_ORDER, K_ACTION): ("ordered", "composed", "failed"),
+    (PAPER_ORDER, K_ACTION): ("ordered", "composed", "gated", "passed", "not_passed", "chosen", "failed"),
+    (PAPER_ORDER, K_CHOICE): ("more", "keep", "objectives"),
     (PAPER_ORDER, K_BY): ("owner", "decider"),
 }
 

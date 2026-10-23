@@ -90,6 +90,7 @@
   "plot_checks": {"axis_label_max_chars": 40, "heatmap_label_max_cells": 36},
   "drawings": {"budget": "small", "step_down": {"model": "sonnet", "effort": "medium"}, "max_plots": 20, "max_tables": 4, "max_headline": 4},
   "repeats": {"similarity": 0.70, "max_pairs": 100},
+  "paper": {"builds": 3},
   "quiet_hours": null,
   "per_window_worker_budget": null
 }
