@@ -33,6 +33,21 @@ refuses a project made before it, which keeps its old tag or starts again on the
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
 lists it read-only, marked with its tag.
 
+- The decider orders the paper under `autonomous` (ticket 120; Implementation Decision 17). Setup question 8 is
+  recorded: `harness.json` gains `paper_order`, `{decider, venue}`, sent with the intake's spec (`wayline intake
+  --from -`), yes with no venue when absent. At the stopping rule's own ends (`objectives_closed`, `goal_reached`,
+  `frontier_empty`), after the drawings and the run-end gates and never after `budget_spent`, `stall_strict`,
+  `stopped`, or `switched`, code checks first with no model call (no objective the rule names open, the last kill
+  argument passed or its scope-downs done, no main-text gap, every changed result drawn, "Do the inherited results
+  hold?" answered at a start midway); a failing check is journaled as the new event `paper_judged` and launches
+  nothing. Otherwise one decider session on `opus max` reads `REPORT.md`, `OBJECTIVES.md`, and `OUTLINE.md` and
+  returns `paper_judgment` (the new schema): order or not, with its reason. An order answers the batch in the same
+  session, marked `by: decider` (an oversized figure split, never dropped; a merge that would move a line the owner
+  placed declined), runs `paper.order` with the setup's venue, and ends the run as judged once the paper is made;
+  once its builds settle the decider picks among the writer's titles and the alternatives. Each choice is a
+  `decision` listed under "Decided for you" in `ACCOUNT.md`; reversing one makes the paper order the owner's from
+  then on. Each end is judged once, read back from the journal (`wayline.paper_judge`).
+
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 

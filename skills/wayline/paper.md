@@ -31,7 +31,10 @@ keep (stated as not verified, with why), each unresolved reference (hand it over
 "to be resolved"), the outline's open proposals, and, when no inherited result is verified yet, whether to keep the
 unchecked ones as stated (the default) or leave them out. Relay it as `wayline mark` prints it; each item has code's
 default, and "take all defaults" is one answer: `wayline mark <batch> --defaults --project .`. A reference the owner
-hands over is `wayline reference <slug> <doi> --project .`. Under `autonomous` no batch is asked of the owner.
+hands over is `wayline reference <slug> <doi> --project .`. Under `autonomous` no batch is asked of the owner: when
+the setup said yes, the decider judges the order at the run's end, answers this batch itself (an oversized figure split,
+never dropped; never a line the owner placed moved), and picks the title, each choice listed under "Decided for you".
+Reversing one of them (`wayline review <id> reverse`) makes the paper order the owner's from then on.
 
 Before the writer, code takes its own steps on `code/`: it copies the scripts behind the figures and the cited drawing
 numbers into `code/figures/`, writes an environment file and a Dockerfile from the locks, tags `paper-N` on `main`, and

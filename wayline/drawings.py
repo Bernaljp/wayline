@@ -52,7 +52,7 @@ from wayline.ledger import DRAWING, TICKET_CREATED, ledger_for, now_ts
 
 __all__ = [
     "KIND", "ROLE", "RUN_END", "CHECKPOINT", "OWNER", "ORDER", "RESTS", "PLOTS_JSON", "DRAWINGS_DIR", "DRAFT", "DRAWING_CHECK", "TOOLS_PYTHON",
-    "DrawingError", "PlotterTier", "Limits", "Checked", "own_evidence", "signature", "read_records", "due", "tier", "limits",
+    "DrawingError", "PlotterTier", "Limits", "Checked", "own_evidence", "signature", "read_records", "due", "undrawn", "tier", "limits",
     "plot_marks", "read_plots", "last_accepted", "drawing_of", "result_heading", "brief", "earlier_figures", "check", "accept",
     "fail", "record_path", "directory", "library_of", "library_of_record", "draw_again", "open_drawings", "follow_merge", "accepted_records", "under_way", "plot_order", "drawing_name",
 ]
@@ -213,6 +213,26 @@ def due(project):
         chosen.append(result)
     first = [result.id for result in chosen if set(result.objectives) & rule]
     return first + [result.id for result in chosen if result.id not in first]
+
+
+def undrawn(project):
+    """The results whose current findings of their own evidence no accepted drawing was drawn over, in id order: changed
+    since their last drawing whether a drawing of them is under way, failed, or never opened. The decider judges the
+    paper order only when none is (ticket 120); `due` is what a rest point opens."""
+    book = ledger_for(project)
+    drawn_by = set(_drawing_tickets(book.project))
+    records = {}
+    for record in read_records(book):
+        records.setdefault(record.get("result"), []).append(record)
+    manifested = _manifested(book.project)
+    found = []
+    for result in results_module.read_results(book):
+        if not [finding for finding in _drawn_from(result, drawn_by) if own_evidence(finding, manifested)]:
+            continue
+        accepted = [record for record in records.get(result.id) or [] if record.get("status") == ACCEPTED]
+        if not accepted or accepted[-1].get("signature") != signature(finding["id"] for finding in _drawn_from(result, drawn_by)):
+            found.append(result.id)
+    return found
 
 
 # --- the plotter's tier and the drawing's limits -------------------------------------------------------------------

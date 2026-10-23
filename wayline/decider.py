@@ -166,7 +166,7 @@ class DeciderError(ValueError):
 class Subject:
     """One decision the decider is asked for: a grill question, a decision ticket, a parked proposal, or the paper's venue."""
 
-    kind: str                      # question | ticket | proposal | venue | frontier
+    kind: str                      # question | ticket | proposal | venue | frontier | paper (ticket 120)
     key: str                       # Q8 | 2 | the proposal's id
     question: str
     options: list = field(default_factory=list)
@@ -179,7 +179,7 @@ class Subject:
     @property
     def name(self):
         return {"question": "the grill's %s", "ticket": "decision ticket %s", "proposal": "parked proposal %s",
-                "venue": "the venue of the %s", "frontier": "%s"}[self.kind] % self.key
+                "venue": "the venue of the %s", "frontier": "%s", "paper": "%s"}[self.kind] % self.key
 
     @classmethod
     def from_record(cls, record, records=()):

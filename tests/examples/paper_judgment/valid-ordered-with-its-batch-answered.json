@@ -1,0 +1,9 @@
+{
+  "order": true,
+  "reason": "Both objectives are answered, the kill argument passed, and the outline holds every result: the paper is worth reading now.",
+  "confidence": 0.8,
+  "answers": [
+    {"ref": "contradiction:P3+P5", "mark": "the second", "why": "P5 is the later measurement on three seeds."},
+    {"ref": "oversized:R2", "mark": "split", "why": null}
+  ]
+}
