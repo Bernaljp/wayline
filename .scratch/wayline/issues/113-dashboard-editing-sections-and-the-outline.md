@@ -21,22 +21,22 @@ Not part of this ticket:
 
 It blocks 122, the M8 demo that waits for every ticket, and 124, the user guide.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#260](https://github.com/Bernaljp/wayline/issues/260) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** Implementation Decision 17 (the dashboard: the editor; sections and passages: the owner's edit taken in; the outline: the owner's changes), 8 (the dashboard: the `ACTIONS` whitelist); milestone M8 criteria 4, 8, and 16; user stories 119 and 171.
 
 - [ ] Each of the five sections and the outline has an edit button that opens the file's text in a plain editor.
-- [ ] Saving writes through a CLI verb that does what a file edit does. The next render takes it in exactly as it would a terminal edit, and the passages, withdrawals, and outline entries it creates name the owner.
-- [ ] The editor carries the render stamp it opened. When the file's stamp changed before the save, the dashboard shows both versions, and the save goes through only on the owner's choice.
-- [ ] A parameter table reason is edited in place and taken in as the owner's reason for that row.
-- [ ] Reports, the account, and the paper's parts offer no edit.
-- [ ] The `ACTIONS` whitelist gains the edit actions and nothing else, each token-guarded.
-- [ ] Tests, over HTTP against a fixture ledger:
+- [x] Saving writes through a CLI verb that does what a file edit does. The next render takes it in exactly as it would a terminal edit, and the passages, withdrawals, and outline entries it creates name the owner.
+- [x] The editor carries the render stamp it opened. When the file's stamp changed before the save, the dashboard shows both versions, and the save goes through only on the owner's choice.
+- [x] A parameter table reason is edited in place and taken in as the owner's reason for that row.
+- [x] Reports, the account, and the paper's parts offer no edit.
+- [x] The `ACTIONS` whitelist gains the edit actions and nothing else, each token-guarded.
+- [x] Tests, over HTTP against a fixture ledger:
   - a section save that adds, changes, and removes text, asserted on the passages after the next render;
   - an outline save with a move and a note;
   - a save over a newer render stamp;
   - a parameter reason;
   - refusals without the token and for a report.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.

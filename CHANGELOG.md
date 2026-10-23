@@ -36,6 +36,17 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- The dashboard edits the sections and the outline (ticket 113; Implementation Decisions 17 and 8). Introduction,
+  Results, Discussion, Methods, and the outline each get an edit button in the Paper view, opening a plain text editor on
+  the rendered file. Its save is the new `wayline edit <section|outline>` verb (`wayline.edits`): the text is written back
+  under the render stamp the editor opened, exactly as a terminal edit leaves the file, so the next render takes it in as
+  the owner's passages, replacements, withdrawals, and outline entries. When code rendered the file again meanwhile, the
+  save is refused with both versions side by side and goes through only on the owner's choice (`--over-newer`). A reason
+  in Methods' parameter table is edited in its row and saved as the owner's reason for that row. References (written by
+  code from what the sections cite), the reports, the account, and the paper's parts offer no edit. The `ACTIONS`
+  whitelist gains `edit` and `reason`, token-guarded like the rest; the editor opens from `GET
+  /api/projects/<id>/edit/<target>`.
+
 - The paper order and the paper's parts (ticket 115; Implementation Decisions 17, 13, 1, and 2). The paper is made only
   on an explicit order, from the outline and the sections; until one, the project holds only its sections and reports.
   - `wayline paper` now prints the order's card and does nothing else: the readiness list (open objectives, the
