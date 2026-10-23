@@ -789,6 +789,8 @@ def compile_paper(project, venue=None, *, harness_root=HARNESS_ROOT, guidelines_
                     made, plan, checks = fitted, fitted_plan, _checks(fitted, found)
                     fitting["still_over"] = _over(checks, plan, found)
         leaked = sorted({tag for text in _output_texts(made).values() for tag in tag_text(text)})
+        from wayline import builds
+        checks = list(checks) + builds.concern_checks(project, record)  # the concerns kept for the order (ticket 117)
         with book.lock():
             _clear(book, name)
             kept = _keep(book, name, made, fitted_texts)

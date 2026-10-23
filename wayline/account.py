@@ -17,8 +17,8 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
 - **Waiting on you**: the decision tickets for the owner, the tickets needing a person, the proposed global
   harness changes (one wording: `wayline evolve --apply <id>`), the important unresolved references whose failure is
   final (ticket 105: the owner named it, or a standing passage, a concern, or an objective cites it), the reports
-  edited and not yet turned into passages, a code repository still private at the order, and the outline's open
-  proposals as one line with their count (ticket 104).
+  edited and not yet turned into passages, a code repository still private at the order, the outline's open
+  proposals as one line with their count (ticket 104), and a paper not passed whose choice is the owner's (ticket 117).
 - **Changed without asking you**: every passage and finding journaled with `replaces_owner` (ticket 88), each with
   the owner's passage (or the consolidation made from the owner's text) it replaced, its reason, and its evidence; a
   consolidation the owner asked for is not listed (ticket 90).
@@ -67,7 +67,7 @@ from pathlib import Path
 from wayline import batches, grill, pacing, replay, tickets
 from wayline.cli import parse_args
 from wayline.ledger import (
-    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, FINDING, PACING, PAPER_STARTED, PASSAGE, PAUSED,
+    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, FINDING, PACING, PAPER_ORDER, PAPER_STARTED, PASSAGE, PAUSED,
     PROMOTED, PROPOSAL_ADMITTED, PROPOSAL_PARKED, REPORT_RENDERED, REVIEWED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
     TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN,
     TICKET_RESULT, VERDICT, WAVE, Ledger, LedgerError, now_ts,
@@ -301,7 +301,15 @@ def _waiting(context):
     lines.extend(_edited_reports(context))
     lines.extend(_private_repository(context))
     lines.extend(_outline_proposals(context))
+    lines.extend(_paper_not_passed(context))
     return lines
+
+
+def _paper_not_passed(context):
+    """A paper whose last build failed, waiting on the owner's choice (ticket 117): three more builds, keep it, or the
+    points as objectives. Under `autonomous` this line is all that asks."""
+    from wayline import builds  # the builds read the paper, which reads every record
+    return builds.waiting_lines(context.events)
 
 
 def _outline_proposals(context):
@@ -368,10 +376,16 @@ def _private_repository(context):
         record = code_repository.record(context.project)
     except (ProjectError, OSError, ValueError):
         return []
-    ordered = any(event.get("event") == PAPER_STARTED for event in context.events)
-    if not ordered or not record.get("remote") or record.get("visibility") != "private":
+    # The order: a paper order made (ticket 115), or the v1.0 paper's start, which a project of that version journaled.
+    ordered = [event for event in context.events if event.get("event") == PAPER_STARTED
+               or (event.get("event") == PAPER_ORDER and (event.get("payload") or {}).get("action") == "ordered")]
+    remote = record.get("remote")
+    if not ordered or not remote or record.get("visibility") != "private":
         return []
-    return ["- The code repository `%s` is still private, and the paper order names it; making it public is your word alone." % record["remote"]]
+    name = remote.get("repository") if isinstance(remote, dict) else remote
+    tag = "paper-%s" % (ordered[-1].get("payload") or {}).get("order") if ordered[-1].get("event") == PAPER_ORDER else None
+    return ["- The code repository `%s` is still private at the paper order%s, and the paper's code availability statement "
+            "names it; making it public is your word alone." % (name, " (its tag `%s`)" % tag if tag else "")]
 
 
 # --- changed without asking you ---------------------------------------------------------------------------

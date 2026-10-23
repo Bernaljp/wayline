@@ -51,7 +51,7 @@
     "checks": {"type": "array", "items": {"type": "object", "required": ["check", "level", "message"], "additionalProperties": false,
                                           "properties": {"check": {"type": "string"}, "level": {"enum": ["ok", "skipped", "warn", "fail"]},
                                                          "message": {"type": "string"}}},
-               "description": "the venue's checks on the compiled output, after the fitting when there was one; empty for plain"},
+               "description": "the venue's checks on the compiled output, after the fitting when there was one (none for plain), then one `concern` check per concern kept for the paper order: ok when the paper's writer said how the paper answers it, fail when it did not (ticket 117)"},
     "fitting": {
       "type": ["object", "null"],
       "description": "the one fitting session, when the paper exceeded a limit",

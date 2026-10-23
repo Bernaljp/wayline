@@ -1,0 +1,13 @@
+{
+  "order": 1, "tag": "paper-1", "commit": "0123456789abcdef0123456789abcdef01234567", "split": "89abcdef0123456789abcdef0123456789abcdef",
+  "pushed": true, "push_problem": null, "committed": null,
+  "figures": [{"drawing": "R1-1", "file": "code/figures/R1-1.py", "figures": ["F1"], "findings": [], "missing": null}],
+  "environment": ["code/environment.yml", "code/Dockerfile"], "kept": [],
+  "stale": [{"result": "ticket 3", "ticket": 3, "runs": ["t3-a1"], "jobs": ["t3-1"], "sessions": []}],
+  "reruns": [{"result": "ticket 3", "ticket": 3, "jobs": [{"job": "t3-1", "rerun": "paper1-t3-1", "outputs": ["results/t3-a1/metrics.json"],
+              "state": "exited", "exit_code": 0, "reason": null, "devices": [], "handle": {"id": "paper1-t3-1"}}],
+              "outcome": "moved", "reason": null,
+              "moved": [{"finding": "t3-a1-f1", "sentence": "Synchrony rises to r = 0.91.", "numbers": ["0.91"]}], "cut": 7}],
+  "methods": {"passed": true, "files": 2, "problems": [], "notes": []},
+  "started": "2026-10-23T00:00:00.000Z", "done": "2026-10-23T00:10:00.000Z"
+}

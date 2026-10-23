@@ -36,6 +36,19 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Code at the order (ticket 119; Implementation Decision 17). Before the paper order's writer launches, code takes its
+  steps on `code/` (`wayline.paper_code`, called by the conductor's rest point once a wave): the scripts behind every
+  figure and every cited drawing number are copied into `code/figures/` (one per drawing, with `FIGURES.md`), an
+  environment file and a Dockerfile are rendered from the locks whatever `harness.json.environment` says (an owner's
+  file of that name is kept, wayline's beside it), and all of it is committed; `paper-N` is tagged on `main` and the
+  code repository's split is pushed with the tag through the tool runner, never forced. Every result whose code changed
+  since its run is re-run at the tag as detached jobs in `.worktrees/paper-N` (a run no job made is listed as not re-run);
+  the numbers check reads its findings against the re-run, and a ticket is cut only when a cited number moved. The
+  code-to-Methods check then runs over all of `code/` (`methods.check(changed=...)`), its problems going to the writer.
+  Each step is journaled as the new event `paper_code`; the record is `research/orders/<N>/code.json` (schema
+  `paper_code`), `paper.json` gains `code`, and `PAPER.md` a "Code at the order" section. The account's "Waiting on you"
+  now lists a code repository still private at a paper order (it read the retired `paper_started` event before).
+
 - The dashboard's cards and new actions (ticket 121; Implementation Decisions 17 and 8). Buttons in the Paper view open
   the cards the chat shows, read from `GET /api/projects/<id>/cards/<action>` with no model and no write: order the paper
   (its readiness list and cost, with an optional venue), compile for another venue, ask for a consolidation, and make
@@ -63,6 +76,30 @@ lists it read-only, marked with its tag.
   code from what the sections cite), the reports, the account, and the paper's parts offer no edit. The `ACTIONS`
   whitelist gains `edit` and `reason`, token-guarded like the rest; the editor opens from `GET
   /api/projects/<id>/edit/<target>`.
+
+- Builds at the order (ticket 117; Implementation Decisions 17, 11, 14, 1, and 2). Every build of the paper is tested
+  before the owner reads it (`wayline.builds`).
+  - Each build runs three gates on the paper's parts, in order, each a fresh verifier session: the kill argument, its
+    two threads told the general report's last verdict (`gates.kill_argument`'s new `told`); the independent read
+    (`paper_read`); and sampled verdicts on the claims never sampled, over the sample cache the run-end gates keep
+    (`run_end.sample_new`). No gate files a ticket: a failed build's points go to the next build, a fresh writer
+    session given the previous parts and the points. `PAPER.md` lists each gate of each build with its points standing,
+    and `paper.json` records them (`builds`, `outcome`).
+  - The order stays open through its builds: `paper_order` gains `gated`, `passed`, `not_passed`, and `chosen`, and the
+    keys `build`, `points`, and `choice`; `composed` closes nothing now. At most `policy.paper.builds` (3, a new row of
+    decision 14's table) builds; after them the paper is not passed, compiled all the same, and the owner chooses with
+    the new `wayline paper builds more|keep|objectives`: three more builds (the order reopens, and the tick relaunches
+    a conductor for it), keeping it as it is, or the points as the owner's objectives. Under `interactive` and
+    `checkpoints` the owner is told; under `autonomous` it waits under the account's "Waiting on you".
+  - What the paper says about inherited work: an unverifiable claim the batch left out is in no part (its `{doc:...}`
+    tag or its words) and is listed in `PAPER.md`; one the batch kept says "not verified" and why in the sentence that
+    carries its tag; code appends a supplementary table of every inherited result's verdict, route, narrowed wording,
+    and reasons to the supplement, and the writer adds one Methods paragraph naming the routes. Each is checked before
+    anything is written, the writer resumed once with what failed.
+  - The concerns kept for the order reach the figure finish (change requests `from: paper`), the writer (who says in
+    the new `concerns` field how the paper answers each), and each compilation's checks (one `concern` check each). A
+    project with critiques gets `research/paper/response/<critique>.md` per critique, each point verbatim with its
+    answer; nothing sends one.
 
 - Compilations (ticket 118; Implementation Decisions 17, 13, 1, and 2). The venue-free paper becomes files the owner
   can submit, made by code alone through pandoc (`wayline.compilations`), every tool called through the tool runner.

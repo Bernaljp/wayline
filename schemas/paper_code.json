@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "paper_code",
+  "description": "Code's steps at one paper order (Implementation Decision 17; ticket 119): research/orders/<N>/code.json, written only by wayline.paper_code through the ledger before the writer launches. The tag paper-N on main and whether the code repository's split was pushed with it; the scripts behind the figures and the cited drawing numbers copied into code/figures/; the environment file and the Dockerfile rendered from the locks; each result whose code changed since its run, re-run at the tag, with its outcome and the ticket cut when its numbers moved; and the code-to-Methods check over all of code/.",
+  "type": "object",
+  "required": ["order", "tag", "commit", "split", "pushed", "push_problem", "committed", "figures", "environment", "kept", "stale", "reruns", "methods", "started", "done"],
+  "additionalProperties": false,
+  "properties": {
+    "order": {"type": "integer", "minimum": 1},
+    "tag": {"type": "string", "pattern": "^paper-[1-9][0-9]*$"},
+    "commit": {"type": ["string", "null"], "description": "the commit of main tagged paper-N; null when the project has no repository"},
+    "split": {"type": ["string", "null"], "description": "the code repository's split commit at the tag"},
+    "pushed": {"type": "boolean", "description": "whether the split and the tag reached the code repository's remote"},
+    "push_problem": {"type": ["string", "null"], "description": "why nothing was tagged or pushed"},
+    "committed": {"type": ["string", "null"], "description": "the commit on main carrying what the order rendered into code/, null when nothing changed"},
+    "figures": {"type": "array", "items": {"type": "object", "required": ["drawing", "file", "figures", "findings", "missing"],
+      "additionalProperties": false, "properties": {
+        "drawing": {"type": "string", "pattern": "^R[1-9][0-9]*-[1-9][0-9]*$"},
+        "file": {"type": ["string", "null"], "description": "the copy under code/figures/, null when the drawing's script is not on disk"},
+        "figures": {"type": "array", "items": {"type": "string"}, "description": "the planned figures and tables it is behind"},
+        "findings": {"type": "array", "items": {"type": "string"}, "description": "the findings citing a number it computes"},
+        "missing": {"type": ["string", "null"]}}}},
+    "environment": {"type": "array", "items": {"type": "string"}, "description": "the environment file and the Dockerfile written under code/"},
+    "kept": {"type": "array", "items": {"type": "string"}, "description": "the owner's files of those names, kept, with wayline's beside them"},
+    "stale": {"type": ["array", "null"], "description": "the results whose code changed since their runs, null before they were read",
+      "items": {"type": "object", "required": ["result", "ticket", "runs", "jobs", "sessions"], "additionalProperties": false, "properties": {
+        "result": {"type": "string"}, "ticket": {"type": "integer", "minimum": 0},
+        "runs": {"type": "array", "items": {"type": "string"}, "description": "the stale runs"}, "jobs": {"type": "array", "items": {"type": "string"}, "description": "the jobs that made them, each once"},
+        "sessions": {"type": "array", "items": {"type": "string"}, "description": "the stale runs no job made, which code cannot re-run"}}}},
+    "reruns": {"type": "array", "items": {"type": "object", "required": ["result", "ticket", "jobs", "outcome", "reason", "moved", "cut"],
+      "additionalProperties": false, "properties": {
+        "result": {"type": "string"}, "ticket": {"type": "integer", "minimum": 0},
+        "jobs": {"type": "array", "items": {"type": "object", "required": ["job", "rerun", "outputs", "state", "exit_code", "reason", "devices", "handle"],
+          "additionalProperties": false, "properties": {
+            "job": {"type": "string"}, "rerun": {"type": "string"}, "outputs": {"type": "array", "items": {"type": "string"}},
+            "state": {"type": ["string", "null"]}, "exit_code": {"type": ["integer", "null"]}, "reason": {"type": ["string", "null"]},
+            "devices": {"type": "array", "items": {"type": "string"}, "description": "the GPUs (gpu:<uuid>) and cores (core:<n>) it holds while it runs"},
+            "handle": {"type": "object"}}}},
+        "outcome": {"enum": ["held", "moved", "failed", "not_rerun", null]},
+        "reason": {"type": ["string", "null"]},
+        "moved": {"type": "array", "items": {"type": "object", "required": ["finding", "sentence", "numbers"], "additionalProperties": false,
+          "properties": {"finding": {"type": "string"}, "sentence": {"type": "string"}, "numbers": {"type": "array", "items": {"type": "string"}}}}},
+        "cut": {"type": ["integer", "null"], "minimum": 1, "description": "the ticket cut when its numbers moved"}}}},
+    "methods": {"type": ["object", "null"], "required": ["passed", "files", "problems", "notes"], "additionalProperties": false, "properties": {
+      "passed": {"type": "boolean"}, "files": {"type": "integer", "minimum": 0},
+      "problems": {"type": "array", "items": {"type": "string"}}, "notes": {"type": "array", "items": {"type": "string"}}}},
+    "started": {"type": "string"},
+    "done": {"type": ["string", "null"]}
+  }
+}

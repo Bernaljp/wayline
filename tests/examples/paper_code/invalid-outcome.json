@@ -1,0 +1,6 @@
+{
+  "order": 1, "tag": "paper-1", "commit": null, "split": null, "pushed": false, "push_problem": "no repository", "committed": null,
+  "figures": [], "environment": [], "kept": [], "stale": [],
+  "reruns": [{"result": "ticket 3", "ticket": 3, "jobs": [], "outcome": "drifted", "reason": null, "moved": [], "cut": null}],
+  "methods": null, "started": "2026-10-23T00:00:00.000Z", "done": null
+}

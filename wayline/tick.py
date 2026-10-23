@@ -1288,7 +1288,8 @@ def relaunch_decision(project, ledger, policy, reading, now):
     if switched.get("from") == str(project) and switched.get("to") != str(project):
         return None, "the project was switched away from, to %s" % switched.get("to")
     ordered_at = max((index for index, event in enumerate(events) if event.get("event") == "paper_order"
-                      and (event.get("payload") or {}).get("action") == "ordered"), default=-1)
+                      and ((event.get("payload") or {}).get("action") == "ordered"
+                           or (event.get("payload") or {}).get("choice") == "more")), default=-1)
     stopped_since = any(event.get("event") == RUN_ENDED and (event.get("payload") or {}).get("reason") == "stopped"
                         for event in events[ordered_at + 1:])
     if view.paper_order is not None and view.stop is None and not stopped_since:

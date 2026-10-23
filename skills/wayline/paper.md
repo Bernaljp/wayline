@@ -33,6 +33,14 @@ unchecked ones as stated (the default) or leave them out. Relay it as `wayline m
 default, and "take all defaults" is one answer: `wayline mark <batch> --defaults --project .`. A reference the owner
 hands over is `wayline reference <slug> <doi> --project .`. Under `autonomous` no batch is asked of the owner.
 
+Before the writer, code takes its own steps on `code/`: it copies the scripts behind the figures and the cited drawing
+numbers into `code/figures/`, writes an environment file and a Dockerfile from the locks, tags `paper-N` on `main`, and
+pushes the code repository's split with the tag (never forced, never made public). Each result whose code changed since
+its run is re-run at the tag as a job, and the order waits for those jobs: a result whose numbers held stands, and one
+whose numbers moved gets a ticket the run takes after the paper. The code-to-Methods check then runs over all of
+`code/`, and what it finds goes to the writer. `PAPER.md` lists all of it under "Code at the order". A code repository
+still private at the order is under "Waiting on you"; making it public is the owner's word alone.
+
 One writer session then composes the whole paper from the outline and the sections, each part in its own file under
 `research/paper/`: `title.md`, `abstract.md`, `introduction.md`, `results.md`, `discussion.md`, `methods.md`,
 `supplement.md`, and `front.md`, each heading carrying its outline id; `tables/`, `references.json`, `alternatives/`
@@ -57,6 +65,23 @@ A change the writer wanted to the outline is a proposal in `PAPER.md`, never a m
 changing the outline (`wayline outline show` prints it). An owner's edit of a part file stands at the next order
 unless what that part is made from changed. Each order makes a new version; the previous one is kept under
 `research/paper/earlier/v<n>/`.
+
+## The builds
+
+Every build of the paper is tested before the owner reads it: the kill argument (told the general report's last
+verdict), then the independent read, then sampled verdicts on the claims never sampled. A build that fails sends the
+points still standing to the next build, a fresh writer session, with no ticket; an order runs at most three.
+`PAPER.md` lists each gate of each build with its points. Read them to the owner when they ask how the paper stands.
+
+After three failed builds the paper is not passed, and it is the owner's choice, which "Waiting on you" lists: three
+more builds, keeping it as it is, or the points as objectives. Ask in one line with your recommendation, and on their
+word run `wayline paper builds more --project .`, `wayline paper builds keep --project .`, or `wayline paper builds
+objectives --project .`. Never choose for them.
+
+An unverifiable inherited claim stays out of the paper unless the owner kept it in the batch, and then the paper
+says it is not verified and why. The supplement ends with code's table of every inherited result's verdict and route.
+When the project has critiques, `research/paper/response/<critique>.md` answers each point verbatim; it is the owner's
+to send, never yours.
 
 ## The compilations
 

@@ -58,6 +58,20 @@ def answer_for(structure, parts, **override):
     return found
 
 
+def close_as_passed(project, payload):
+    """Close the order as its builds would once they passed: these tests are of the composition, and the builds' gates are
+    ticket 117's (`tests/test_builds.py`)."""
+    Ledger(project).append_event("paper_order", {"order": payload["order"], "action": "passed", "by": payload.get("by") or "owner",
+                                                 "build": 1})
+
+
+def gates_pass(fake):
+    """A build's three gates, each a verifier session that passes: the memo, its adjudication, and the read. A paper whose
+    sentences carry no tag samples no claim."""
+    for _ in range(3):
+        fake.script(Envelope(structured_output={"pass": True, "findings": [], "question_limit": "the paper as built"}), role="verifier")
+
+
 class Writer:
     """The fake writer: answers each call from the outline as it stands, through `change` when given; keeps its prompts."""
 
@@ -111,8 +125,9 @@ class PaperCase(OutlineCase):
     def orders(self):
         return [event["payload"] for event in self.journal() if event["event"] == "paper_order"]
 
-    def compose(self, change=None, order=None):
-        """Order (when none is open) and compose with the fake writer, taking the batch's defaults first."""
+    def compose(self, change=None, order=None, close=True):
+        """Order (when none is open) and compose with the fake writer, taking the batch's defaults first; the order is then
+        closed as passed unless `close` is false (`close_as_passed`)."""
         payload = paper.open_order(self.project)
         if payload is None:
             paper.order(self.project, start=None)
@@ -124,9 +139,12 @@ class PaperCase(OutlineCase):
             fake.script(respond=self.writer, role="writer")
             fake.script(respond=self.writer, role="writer")
             try:
-                return paper.compose(self.project, payload)
+                record = paper.compose(self.project, payload)
             finally:
                 self.calls = list(fake.calls)
+        if close:
+            close_as_passed(self.project, payload)
+        return record
 
     def read(self, name):
         return (self.project / "research" / "paper" / name).read_text(encoding="utf-8")
@@ -260,7 +278,7 @@ class OrderTest(PaperCase):
 class ComposeTest(PaperCase):
     def setUp(self):
         super().setUp()
-        self.record = self.compose()
+        self.record = self.compose(close=False)
 
     def test_one_read_only_writer_session_on_opus_xhigh_returns_each_part(self):
         [call] = self.calls
@@ -304,12 +322,12 @@ class ComposeTest(PaperCase):
         self.assertEqual(self.record["reworded"], [self.owners])
         self.assertIn("- %s: the paper does not carry it word for word" % self.owners, self.read("PAPER.md"))
 
-    def test_the_composition_is_journaled_and_closes_the_order(self):
+    def test_the_composition_is_journaled_with_its_build_and_the_order_lasts_through_its_gates(self):
         composed = self.orders()[-1]
-        self.assertEqual((composed["action"], composed["order"], composed["version"]), ("composed", 1, 1))
+        self.assertEqual((composed["action"], composed["order"], composed["version"], composed["build"]), ("composed", 1, 1, 1))
         self.assertEqual(composed["parts"], list(paper.PARTS))
-        self.assertIsNone(paper.open_order(self.project))
-        self.assertIsNone(replay.replay(self.journal()).paper_order)
+        self.assertEqual(paper.open_order(self.project)["order"], 1, "the build's gates are owed (ticket 117)")
+        self.assertEqual(replay.replay(self.journal()).paper_order["order"], 1)
 
     def test_the_front_matter_is_code_s_with_placeholders_and_the_availability_statements(self):
         front = self.read("front.md")
@@ -412,7 +430,7 @@ class ReorderTest(PaperCase):
         versions = {part: entry["version"] for part, entry in self.second["parts"].items()}
         self.assertEqual(versions, {"title": 2, "abstract": 2, "introduction": 1, "results": 1, "discussion": 2, "methods": 1,
                                     "supplement": 2, "front": 1})
-        self.assertEqual(self.orders()[-1]["parts"], ["title", "abstract", "discussion", "supplement"])
+        self.assertEqual(self.orders()[-2]["parts"], ["title", "abstract", "discussion", "supplement"])
 
     def test_the_owners_edit_of_an_unchanged_part_is_kept(self):
         self.assertIn("The owner's own wording.", self.read("introduction.md"))
@@ -504,6 +522,7 @@ class OrderRunTest(DrawingRunCase):
             fake.script(delay=600, **self.wrote(3, "other.txt"))
             fake.script(respond=self.plotter(), role="plotter")
             fake.script(respond=Writer(self.project), role="writer")
+            gates_pass(fake)
             fake.script(**self.wrote(4, "third.txt"))
             driven = self.conductor()
             self.assertEqual(driven.wave().launched, [3])
@@ -536,6 +555,7 @@ class OrderRunTest(DrawingRunCase):
         with worker.use_fake() as fake:
             fake.script(respond=self.plotter(), role="plotter")
             fake.script(respond=Writer(self.project), role="writer")
+            gates_pass(fake)
             driven = self.conductor()  # a conductor started afresh replays the order from the journal
             last = self.until(driven, lambda: False)
         self.assertTrue(last.ended)
@@ -556,9 +576,10 @@ class OrderRunTest(DrawingRunCase):
         with worker.use_fake() as fake:
             fake.script(respond=self.plotter(), role="plotter")
             fake.script(respond=Writer(self.project), role="writer")
+            gates_pass(fake)
             driven = self.conductor()
             self.until(driven, lambda: False)
-        self.assertEqual([event["payload"]["action"] for event in self.order_events()], ["ordered", "composed"])
+        self.assertEqual([event["payload"]["action"] for event in self.order_events()], ["ordered", "composed", "passed"])
         record = json.loads((self.project / "research" / "paper" / "compilations" / "plain" / "compilation.json").read_text())
         self.assertEqual(record["outcome"], "failed")
         self.assertIn("is not recorded", record["outputs"]["latex"]["problem"])
@@ -607,11 +628,13 @@ class OrderRunTest(DrawingRunCase):
 
 
 class ReplayTest(PaperCase):
-    def test_the_view_holds_the_open_order_until_it_is_composed_or_failed(self):
+    def test_the_view_holds_the_open_order_through_its_builds_until_they_settle_or_it_fails(self):
         events = [{"event": "paper_order", "payload": {"order": 1, "action": "ordered", "by": "owner", "run": None, "batch": None}}]
         self.assertEqual(replay.replay(events).paper_order["order"], 1)
-        self.assertIsNone(replay.replay(events + [{"event": "paper_order", "payload": {"order": 1, "action": "composed"}}]).paper_order)
-        self.assertIsNone(replay.replay(events + [{"event": "paper_order", "payload": {"order": 1, "action": "failed"}}]).paper_order)
+        for action in ("composed", "gated"):
+            self.assertEqual(replay.replay(events + [{"event": "paper_order", "payload": {"order": 1, "action": action}}]).paper_order["order"], 1)
+        for action in ("passed", "not_passed", "failed"):
+            self.assertIsNone(replay.replay(events + [{"event": "paper_order", "payload": {"order": 1, "action": action}}]).paper_order)
 
     def test_the_tick_relaunches_a_conductor_for_an_order_on_a_project_never_run(self):
         from wayline import tick
