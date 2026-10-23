@@ -342,7 +342,8 @@ def _section_rows(project, problems):
             except (OSError, ValueError) as failure:
                 problems.append("%s: %s" % (sections.TITLES[name], failure))
         rows.append({"id": name, "title": sections.TITLES[name], "path": path, "exists": (project / path).is_file(),
-                     "rendered": stamp.get("rendered_at"), "passages": standing})
+                     "rendered": stamp.get("rendered_at"), "passages": standing,
+                     "editable": name != sections.REFERENCES})  # References is code's alone (ticket 113)
     return rows
 
 
@@ -350,7 +351,7 @@ def _outline_row(project):
     from wayline import outline
     stamp = outline.read_stamp(project) or {}
     return {"id": "outline", "title": "The outline", "path": OUTLINE_MD, "exists": (project / OUTLINE_MD).is_file(),
-            "rendered": stamp.get("rendered_at")}
+            "rendered": stamp.get("rendered_at"), "editable": True}
 
 
 def _references(project, problems):
@@ -399,7 +400,9 @@ def _methods(project):
     whose reason it shows, and each Methods method with no code behind it, by the passage naming it."""
     from wayline import methods_inventory
     record = methods_inventory.read_record(project)
-    return {"parameters": [dict(row) for row in record.get("parameters") or []],
+    rows = [dict(row, parameter=methods_inventory.parameter_key(row.get("method"), row.get("name"), row.get("path")))
+            for row in record.get("parameters") or []]  # what the editor's `reason` names its row by (ticket 113)
+    return {"parameters": rows,
             "no_code": [{key: entry.get(key) for key in ("passage", "heading", "named", "why")} for entry in record.get("not_reproduced") or []]}
 
 
