@@ -139,8 +139,9 @@ JSON_TYPE = "application/json; charset=utf-8"
 TEXT_TYPE = "text/plain; charset=utf-8"
 
 # The actions of Implementation Decisions 8 this dashboard takes (ticket 35), in the order the spec lists them.
-# `mark` is the marks view's (ticket 112): the one action decision 17 adds for it. The last six are what a card of the
+# `mark` is the marks view's (ticket 112): the one action decision 17 adds for it. The six after it are what a card of the
 # chat runs on the owner's Confirm (ticket 114): the routing table's confirmed verbs, each the function its verb calls.
+# The last two are the editor's saves (ticket 113): `edit`, a section or the outline, and `reason`, one parameter's.
 ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake", "feedback",
            "mark", "run", "stop_when", "budget", "consolidate", "paper", "public",
            "edit", "reason")
@@ -151,6 +152,8 @@ CARD_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/chat/(?P<number>[1-9
 # The header an intake drop names its file in, and the largest JSON body any other action reads.
 FILENAME_HEADER = "X-Wayline-Filename"
 JSON_BODY_MAX = 64 * 1024
+# The editor's save carries a whole section, which a long Results or Methods outgrows 64 KiB by (ticket 113).
+EDIT_BODY_MAX = 4 * 1024 * 1024
 # How long a switch with no conductor to drain waits for its thread before it answers 202 all the same.
 SWITCH_REPLY_S = 5.0
 
@@ -163,7 +166,12 @@ class DashboardError(ValueError):
 
 
 class ActionConflict(DashboardError):
-    """An action that cannot be taken now, because another like it is still under way (409)."""
+    """An action that cannot be taken now, because another like it is still under way, or (the editor's save) because
+    the file changed since it was opened (409). `details` are merged into the reply: the editor's two versions."""
+
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = dict(details or {})
 
 
 def dashboard_path():
@@ -1332,7 +1340,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             status, report = run_action(name, project, body, self.headers, self.server)
         except ActionConflict as failure:
             return self._action_reply(HTTPStatus.CONFLICT, dict({"ok": False, "action": name, "error": str(failure)},
-                                                                **getattr(failure, "versions", {})))
+                                                                **failure.details))
         except ValueError as failure:  # a request the action cannot take, or a verb's own refusal (ProjectError, TicketError)
             return self._action_reply(HTTPStatus.BAD_REQUEST, {"ok": False, "action": name, "error": str(failure)})
         except OSError as failure:
@@ -1414,7 +1422,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         raw = (self.headers.get("Content-Length") or "0").strip()
         if not raw.isdigit():
             return refuse(HTTPStatus.BAD_REQUEST, "Content-Length is %r, which is not a byte count" % raw)
-        length, cap = int(raw), _intake_cap() if name == "intake" else JSON_BODY_MAX
+        length, cap = int(raw), _intake_cap() if name == "intake" else EDIT_BODY_MAX if name == "edit" else JSON_BODY_MAX
         if length > cap:
             return refuse(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the body is %d bytes, over the %d an %s action takes%s" % (
                 length, cap, name, "; run wayline intake <path> on the workstation for a file this large" if name == "intake" else ""))
@@ -1974,15 +1982,14 @@ def _edit(name, project, body):
         if name == "reason":
             fields = _fields(body, ("parameter", "reason"))
             return HTTPStatus.OK, {"passage": edits.reason(project, _string(fields, "parameter"), _string(fields, "reason"))}
-        fields = _fields(body, ("target", "text", "stamp"), ("over_newer",))
+        fields = _fields(body, ("target", "text", "stamp"), ("over_newer", "base"))
         over = fields.get("over_newer", False)
         if not isinstance(over, bool):
             raise DashboardError("over_newer is true or false")
-        return HTTPStatus.OK, edits.save(project, _string(fields, "target"), _string(fields, "text"), _string(fields, "stamp"), over)
+        return HTTPStatus.OK, edits.save(project, _string(fields, "target"), _string(fields, "text"), _string(fields, "stamp"), over,
+                                         base=_string(fields, "base", required=False))
     except edits.EditConflict as failure:
-        conflict = ActionConflict(str(failure))
-        conflict.versions = {"current": failure.current, "yours": failure.yours}
-        raise conflict from None
+        raise ActionConflict(str(failure), {"current": failure.current, "yours": failure.yours}) from None
 
 
 # The actions a chat's card runs on the owner's Confirm (ticket 114), each the function its confirmed verb calls.

@@ -156,6 +156,8 @@ def refuse_old_project(name, args):
         return None
     if name == "switch" and args and not args[0].startswith("-"):
         return None
+    if name == "edit" and args[:1] == ["show"]:  # reads the file as the editor opens it
+        return None
     from wayline import project as projects  # the project module imports this one
     try:
         return projects.old_project_problem(projects.find_project(_named_project(args)))

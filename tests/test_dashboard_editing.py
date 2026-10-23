@@ -96,6 +96,19 @@ class SectionEditTest(SectionEditCase):
                          "read against the render it opened, the passage that arrived since is no withdrawal")
         self.assertIn("A ticket wrote this meanwhile.", self.text("introduction"))
 
+    def test_a_save_over_an_edit_made_in_a_terminal_since_it_opened_is_a_conflict_too(self):
+        opened = self.opened("introduction")
+        self.edit("introduction", "Nobody knows why.", "Nobody knows why, yet.")
+        answer = self.save("introduction", opened["text"].replace("dusk", "dawn"), opened["stamp"], base=opened["base"])
+        self.assertEqual(answer.status, 409, answer.body)
+        self.assertIn("Nobody knows why, yet.", answer.json["current"]["text"])
+        self.assertIn("Nobody knows why, yet.", self.text("introduction"), "the terminal's edit stands")
+
+    def test_a_long_section_saves_past_the_64_kib_an_action_body_otherwise_takes(self):
+        opened = self.opened("introduction")
+        text = opened["text"] + "\n## Long\n\n" + ("A sentence that goes on. " * 4000) + "\n"
+        self.assertEqual(self.save("introduction", text, opened["stamp"], base=opened["base"]).status, 200)
+
     def test_a_save_of_the_text_as_opened_writes_nothing_new(self):
         opened = self.opened("introduction")
         self.assertEqual(self.save("introduction", opened["text"], opened["stamp"]).status, 200)

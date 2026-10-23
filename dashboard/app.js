@@ -2672,6 +2672,7 @@ function passagesLine(section) {
 }
 
 function renderPaper(view, project) {
+  state.paperShown = { view, project };  // what a reason's edit or cancel redraws from, with no request
   const files = (view.sections || []).map((section) => renderedRow(project, section, [passagesLine(section)]));
   if (view.outline) files.push(renderedRow(project, view.outline, [more('the proposed shape of the paper, built by code')]));
   replace(document.getElementById('paper-sections-body'), [
@@ -2779,7 +2780,7 @@ async function openEditor(project, target, title) {
     const response = await fetch(`/api/projects/${encodeURIComponent(project)}/edit/${encodeURIComponent(target)}`, { cache: 'no-store', headers });
     const found = await response.json();
     if (!response.ok) throw new Error(found.line || `${response.status}`);
-    Object.assign(editor, { project, target, title, stamp: found.stamp, opened: found.text, newer: null });
+    Object.assign(editor, { project, target, title, stamp: found.stamp, base: found.base, opened: found.text, newer: null });
     document.getElementById('editor-title').textContent = `Edit ${title}`;
     document.getElementById('editor-text').value = found.text;
     noteText('editor-note', TOKEN ? 'Saved here, it is taken in by the next render as your edit of the file.'
@@ -2794,13 +2795,17 @@ async function openEditor(project, target, title) {
 
 async function saveEditor(overNewer) {
   const text = document.getElementById('editor-text').value;
-  const body = { target: editor.target, text, stamp: editor.stamp, over_newer: Boolean(overNewer) };
+  if (!TOKEN) {
+    noteText('editor-note', 'Saving needs the dashboard token: open the URL wayline serve printed, which carries it.', true);
+    return;
+  }
+  const body = { target: editor.target, text, stamp: editor.stamp, base: editor.base, over_newer: Boolean(overNewer) };
   const sent = { 'X-Wayline-Token': TOKEN, 'Content-Type': 'application/json' };
   try {
     const response = await fetch(`/api/projects/${encodeURIComponent(editor.project)}/actions/edit`, { method: 'POST', cache: 'no-store', headers: sent, body: JSON.stringify(body) });
     const reply = await response.json().catch(() => ({ ok: false, error: `${response.status} ${response.statusText}` }));
     if (response.status === 409 && reply.current) {
-      noteText('editor-note', 'Code rendered this file again while it was open. Keep yours (read against what you opened), or take the new render.', true);
+      noteText('editor-note', 'This file changed while it was open (code rendered it again, or it was edited elsewhere). Keep yours (read against what you opened), or take the new version.', true);
       editorMode(true, reply.current);
       editor.newer = reply.current;
       return;
@@ -2817,11 +2822,13 @@ async function saveEditor(overNewer) {
 function takeTheirs() {
   const newer = editor.newer;
   if (!newer) return;
+  if (!window.confirm('Take the new render and drop your text? Your edit is not saved anywhere.')) return;
   editor.stamp = newer.stamp;
+  editor.base = newer.base;
   editor.opened = newer.text;
   editor.newer = null;
   document.getElementById('editor-text').value = newer.text;
-  noteText('editor-note', 'This is the new render; your text was set aside. Edit it and save, or close.');
+  noteText('editor-note', 'This is the new render; your text was dropped. Edit it and save, or close.');
   editorMode(false);
 }
 
@@ -2853,7 +2860,19 @@ function reasonCell(project, row) {
   }
   const box = el('textarea', { 'aria-label': `the reason for ${row.parameter}` });
   box.value = draft.text;
-  box.addEventListener('input', () => { draft.text = box.value; });
+  const keep = () => { draft.text = box.value; draft.caret = [box.selectionStart, box.selectionEnd]; };
+  for (const name of ['input', 'select', 'keyup', 'click']) box.addEventListener(name, keep);
+  box.addEventListener('focus', () => { draft.focused = true; });
+  box.addEventListener('blur', () => setTimeout(() => { if (box.isConnected) draft.focused = false; }, 0));
+  // A poll that redraws the table rebuilds this box: it takes the focus and the caret back where they were.
+  if (draft.focused !== false) {
+    queueMicrotask(() => {
+      if (!box.isConnected) return;
+      box.focus();
+      const [start, end] = draft.caret || [box.value.length, box.value.length];
+      box.setSelectionRange(start, end);
+    });
+  }
   const save = el('button', { type: 'button', class: 'action', text: 'save' });
   save.addEventListener('click', async () => {
     const reply = await perform('reason', { parameter: row.parameter, reason: box.value }, () => `the reason for ${row.parameter}: saved as yours`, project);
@@ -2864,10 +2883,10 @@ function reasonCell(project, row) {
   return el('span', { class: 'reason-edit' }, [box, save, cancel]);
 }
 
-// Draw Paper again from the server now, whatever the tag: a reason's row changed between shown and being written.
+// Draw Methods again from the view already held: a reason's row turning into its editor, or back.
 function loadPaperAgain() {
-  delete state.tags.paper;
-  loadPaper();
+  const shown = state.paperShown;
+  if (shown && shown.project === state.project) renderMethods(shown.view.methods || {}, shown.project);
 }
 
 // --- Inherited (ticket 111) ----------------------------------------------------------------------------------

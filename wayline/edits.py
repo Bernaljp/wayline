@@ -17,6 +17,8 @@ parameter table is not edited through the file: `reason` writes the owner's pass
 --parameter` does (ticket 108).
 """
 
+import hashlib
+
 from wayline import outline, sections
 from wayline.ledger import ledger_for
 
@@ -32,10 +34,10 @@ class EditError(ValueError):
 
 
 class EditConflict(EditError):
-    """The file was rendered again since the editor opened it: `current` is the file as it is now, `yours` the save."""
+    """The file changed (rendered again, or edited) since the editor opened it: `current` is the file as it is now, `yours` the save."""
 
     def __init__(self, target, current, yours):
-        super().__init__("%s was rendered again since you opened it: keep yours over the new render, or take the new one"
+        super().__init__("%s changed since you opened it: keep yours over the new render, or take the new one"
                          % _title(target))
         self.target, self.current, self.yours = target, current, yours
 
@@ -62,20 +64,23 @@ def _read(book, target):
     stamp, _, text = whole.partition("\n")
     if not sections.STAMP_RE.match(stamp):
         raise EditError("%s carries no render stamp, so an edit of it could not be taken in" % _title(target))
-    return {"target": target, "path": "research/%s" % _relative(target), "stamp": stamp, "text": text}
+    return {"target": target, "path": "research/%s" % _relative(target), "stamp": stamp, "text": text,
+            "base": hashlib.sha256(whole.encode("utf-8")).hexdigest()}
 
 
 def opened(project_or_ledger, target):
-    """What the editor opens: `{target, path, stamp, text}`, the file's first-line render stamp and the text below it."""
+    """What the editor opens: `{target, path, stamp, text, base}`, the file's first-line render stamp, the text below it,
+    and `base`, the digest of the whole file, which tells a save that anything (a render, a terminal edit, another save)
+    changed the file since."""
     book = ledger_for(project_or_ledger)
     _relative(target)
     return _read(book, target)
 
 
-def save(project_or_ledger, target, text, stamp=None, over_newer=False):
+def save(project_or_ledger, target, text, stamp=None, over_newer=False, base=None):
     """Write `text` below `stamp` (the stamp the editor opened; the file's own when None), as a terminal edit would.
 
-    A stamp other than the file's is refused with both versions (`EditConflict`) unless `over_newer`: then the text is
+    A stamp other than the file's, or a `base` (`opened`'s digest) other than the file's now, is refused with both versions (`EditConflict`) unless `over_newer`: then the text is
     written under the stamp it was read against, so the next render reads it against what the owner saw.
     """
     book = ledger_for(project_or_ledger)
@@ -87,7 +92,8 @@ def save(project_or_ledger, target, text, stamp=None, over_newer=False):
         stamp = current["stamp"] if stamp is None else stamp
         if not isinstance(stamp, str) or not sections.STAMP_RE.match(stamp):
             raise EditError("the stamp is the file's first line as the editor opened it, a wayline:render comment")
-        if stamp != current["stamp"] and not over_newer:
+        changed = stamp != current["stamp"] or (base is not None and base != current["base"])
+        if changed and not over_newer:
             raise EditConflict(target, current, {"stamp": stamp, "text": text})
         body = text.replace("\r\n", "\n")
         if body and not body.endswith("\n"):
