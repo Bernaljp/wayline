@@ -44,12 +44,14 @@ ENDS = ("objectives_closed", "goal_reached", "frontier_empty")  # the stopping r
 SCHEMA = "paper_judgment"
 SLUG = "paper-order"  # research/sessions/decider/paper-order/<n>
 DECIDER = "decider"
+CONDUCTOR = "conductor"  # `decided_by` on a choice code made in the decider's batch: a default, or an override of its answer
 # The `decision` each choice is journaled as, which the account lists under "Decided for you": the judgment
 # (`paper order: order it, ...` or `paper order: not now`), and each answer of the order's batch and each alternative
 # picked (`paper order 1 (<ref>): <mark>`).
 PREFIX = "paper order"
 ORDER_IT, NOT_NOW = "order it", "not now"
-_DECISION = re.compile(r"^paper order(?: ([1-9][0-9]*) \(([^()]+)\))?: (.*)$", re.S)
+# A ref may hold parentheses (a DOI such as `10.1016/S0140-6736(20)30183-5`): it runs to the first `): `.
+_DECISION = re.compile(r"^paper order(?: ([1-9][0-9]*) \((.+?)\))?: (.*)$", re.S)
 RESUME = ("The judgment you returned could not be used: %s. Return it again through the structured output, as the "
           "paper_judgment schema asks, and change nothing else about it.")
 
@@ -164,14 +166,16 @@ def checks(project, events=None):
 
 
 def judged(events):
-    """The `paper_judged` payload of the end the run is at now, or None: one journaled since the last `run_ended`, so a wave
-    replayed after a restart never judges the same end again."""
-    from wayline.ledger import RUN_ENDED
+    """The `paper_judged` payload of the end the run is at now, or None: one journaled since the last `run_ended` and the
+    last run the owner started afresh, so a wave replayed after a restart never judges the same end again, and a run
+    started afresh after a conductor that died judges its own end."""
+    from wayline.ledger import RUN_ENDED, RUN_STARTED
     found = None
     for event in events:
-        if event.get("event") == PAPER_JUDGED:
+        name = event.get("event")
+        if name == PAPER_JUDGED:
             found = event.get("payload") or {}
-        elif event.get("event") == RUN_ENDED:
+        elif name == RUN_ENDED or (name == RUN_STARTED and not (event.get("payload") or {}).get("resume")):
             found = None
     return found
 
@@ -186,7 +190,8 @@ def reversed_by_owner(events):
     if not reversed_ids:
         return None
     for entry in decision_log(events):
-        if entry["decision"] in reversed_ids and entry["decided_by"] == DECIDER and decision_parts(entry["answer"]) is not None:
+        if entry["decision"] in reversed_ids and entry["decided_by"] in (DECIDER, CONDUCTOR) \
+                and decision_parts(entry["answer"]) is not None:
             return entry["decision"]
     return None
 
@@ -254,9 +259,9 @@ findings, the objectives' answers, and the outline make a paper worth the owner'
 why not in `reason`, which the owner reads cold. The paper is made from the outline and the sections, never from new
 work: ordering it starts no research ticket.
 
-When you order it, answer the order's batch below in the same answer, one entry of `answers` per item by its `ref`, with
-one of that item's marks in its words and, where it is not the order's reason, why. An item you leave out takes code's
-default. The rules:
+When you order it, answer every item of the order's batch below in the same answer, one entry of `answers` per item by
+its `ref`, with one of that item's marks in its words and, where it is not the order's reason, why. An item you leave
+out takes code's default, listed for the owner as code's and not yours. The rules:
 
 - An oversized figure is split, never dropped.
 - You settle the outline's open proposals here, and you never move a line the owner placed: a merge that would take one
@@ -357,8 +362,9 @@ def _unusable(envelope, items):
 
 
 def _settle(project, items, given, placed):
-    """Each item's answer, `[(item, mark, why, note)]`: the decider's, or code's default where it gave none; an oversized
-    figure it would drop is split, and a merge that would take a line the owner placed is declined."""
+    """Each item's answer, `[(item, mark, why, note, by)]`: the decider's (`by: decider`), or code's (`by: conductor`)
+    where the decider gave none, or where code overrode it: an oversized figure it would drop is split, and a merge that
+    would take a line the owner placed is declined."""
     from wayline import paper, paper_figures
     answered = {entry["ref"]: entry for entry in given}
     settled = []
@@ -366,17 +372,25 @@ def _settle(project, items, given, placed):
         entry = answered.get(item["ref"])
         mark = entry["mark"] if entry else (item.get("default") or item["marks"][0])
         why, note = (entry or {}).get("why"), None if entry else "code's default: the decider gave no answer"
+        by = DECIDER if entry else CONDUCTOR
         if item["ref"].startswith(paper_figures.OVERSIZED) and mark == paper_figures.DROP:
-            mark, note = paper_figures.SPLIT, "split, never dropped under autonomous; the decider said drop"
+            mark, note, by = paper_figures.SPLIT, "split, never dropped under autonomous; the decider said drop", CONDUCTOR
         if item["ref"].startswith("outline:") and mark == paper.TAKE:
             touched = [line for line in _merge_pair(project, item["ref"]) if line in placed]
             if touched:
-                mark, note = paper.DECLINE, "declined: the merge would move %s, a line the owner placed" % ", ".join(touched)
-        settled.append((item, mark, why, note))
+                mark, by = paper.DECLINE, CONDUCTOR
+                note = "declined: the merge would move %s, a line the owner placed" % ", ".join(touched)
+        settled.append((item, mark, why, note, by))
     return settled
 
 
-def _decision(book, answer, rationale, confidence, model, fallback_from, session_id):
+def _decision(book, answer, rationale, confidence, model, fallback_from, session_id, by=None):
+    """One choice as a `decision` the account lists under "Decided for you": the decider's, or code's default or override
+    (`decided_by: conductor`, with no model, session, or confidence of its own)."""
+    if by == CONDUCTOR:
+        book.append_event(DECISION, {"ticket": None, "answer": answer, "decided_by": CONDUCTOR,
+                                     "rationale": _one_line(rationale) or None, "confidence": None})
+        return
     payload = {"ticket": None, "answer": answer, "decided_by": DECIDER, "rationale": _one_line(rationale) or None,
                "confidence": confidence}
     payload.update({key: value for key, value in (("model", model), ("fallback_from", fallback_from)) if value})
@@ -403,14 +417,20 @@ def judge(project, end, *, harness_root=HARNESS_ROOT, policy=None, fall_back=Non
     from wayline import paper
     project = Path(project).resolve()
     say = say or (lambda text: None)
-    policy = policy_for(project, harness_root) if policy is None else policy
     book = ledger_for(project)
-    venue = setting(read_harness(project))["venue"]
-    items = paper.batch_items(project)
-    placed = owner_placed(project)
     what = "the decider on the paper order"
-    envelope, model, fallback_from = None, None, None
+    envelope, model, fallback_from, venue = None, None, None, None
+
+    def not_judged(reason, session=None):
+        book.append_event(PAPER_JUDGED, {"end": end, "checks": [], "ordered": None, "venue": venue, "reason": reason},
+                          session_id=session)
+        say("  " + reason)
+        return {"ordered": False, "order": None, "reason": reason}
     try:
+        policy = policy_for(project, harness_root) if policy is None else policy
+        venue = setting(read_harness(project))["venue"]
+        items = paper.batch_items(project)
+        placed = owner_placed(project)
         request, model, fallback_from = _request(project, end, venue, items, placed, harness_root, policy, fall_back)
         envelope = worker.launch(request)
         gates.raise_if_refused(envelope, model, what)
@@ -419,14 +439,12 @@ def judge(project, end, *, harness_root=HARNESS_ROOT, policy=None, fall_back=Non
             envelope = worker.resume(request, envelope.session_id, RESUME % problem)
             gates.raise_if_refused(envelope, model, what)
             problem = _unusable(envelope, items)
+    except (gates.UsageLimited, gates.FableHeld):
+        raise  # nothing is journaled: the conductor pauses, or holds, and judges this end afterward
     except (worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
         problem = _one_line(failure)
     if problem is not None:
-        reason = "the decider could not judge the paper order: %s" % problem
-        book.append_event(PAPER_JUDGED, {"end": end, "checks": [], "ordered": None, "venue": venue, "reason": reason},
-                          session_id=getattr(envelope, "session_id", None))
-        say("  " + reason)
-        return {"ordered": False, "order": None, "reason": reason}
+        return not_judged("the decider could not judge the paper order: %s" % problem, getattr(envelope, "session_id", None))
     returned = envelope.structured_output
     model, session = envelope.model or model, envelope.session_id
     reason, confidence = _one_line(returned["reason"]), returned["confidence"]
@@ -439,25 +457,28 @@ def judge(project, end, *, harness_root=HARNESS_ROOT, policy=None, fall_back=Non
     settled = _settle(project, items, returned["answers"], placed)
     batch = None
     try:
+        # What would refuse the order is read before its batch is opened, so no answered batch is left with no order.
+        opened = paper.open_order(book)
+        if opened is not None:
+            raise paper.PaperError("paper order %d is open already" % opened["order"])
+        if venue:
+            paper._venue_named(venue, harness_root)
         if settled:
             batch = batches.open_batch(project, paper.BATCH_KIND, "The paper order: answered by the decider",
-                                       [item for item, _, _, _ in settled])["id"]
+                                       [item for item, _, _, _, _ in settled])["id"]
             numbers = {item["ref"]: item["id"] for item in batches.read_batch(project, batch)["items"]}
-            for item, mark, why, note in settled:
+            for item, mark, why, note, _ in settled:
                 batches.mark(project, batch, numbers[item["ref"]], mark, note=note, by=DECIDER)
         made = paper.order(project, by=DECIDER, start=None, venue=venue, harness_root=harness_root, run=end, batch=batch)
     except (paper.PaperError, batches.BatchError, ValidationError, LedgerError, OSError, ValueError) as failure:
-        reason = "the decider ordered the paper, and the order could not be made: %s" % _one_line(failure)
-        book.append_event(PAPER_JUDGED, {"end": end, "checks": [], "ordered": None, "venue": venue, "reason": reason},
-                          session_id=session)
-        say("  " + reason)
-        return {"ordered": False, "order": None, "reason": reason}
+        return not_judged("the decider ordered the paper, and the order could not be made%s: %s" % (
+            " (its answers stand in batch %s, with no order behind them)" % batch if batch else "", _one_line(failure)), session)
     number = made["order"]
     _decision(book, "%s: %s, as paper order %d%s" % (PREFIX, ORDER_IT, number, " for %s" % venue if venue else ""), reason,
               confidence, model, fallback_from, session)
-    for item, mark, why, note in settled:
+    for item, mark, why, note, by in settled:
         _decision(book, "%s %d (%s): %s" % (PREFIX, number, item["ref"], mark), note or why or reason, confidence, model,
-                  fallback_from, session)
+                  fallback_from, session, by=by)
     book.append_event(PAPER_JUDGED, {"end": end, "checks": [], "ordered": True, "order": number, "venue": venue,
                                      "reason": reason}, session_id=session)
     say("  the decider ordered the paper as paper order %d%s: %s" % (number, " for %s" % venue if venue else "", reason))

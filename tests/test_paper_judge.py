@@ -229,11 +229,11 @@ class JudgeTest(JudgeCase):
         self.assertEqual(by_ref["figure:R1"]["mark"], by_ref["figure:R1"]["default"], "an item left unanswered takes code's default")
         [judged] = self.journaled("paper_judged")
         self.assertEqual((judged["ordered"], judged["order"], judged["venue"]), (True, 1, "nature-methods"))
-        decided = self.decided()
-        self.assertEqual(decided[0], "paper order: order it, as paper order 1 for nature-methods")
-        self.assertIn("paper order 1 (%s): the first" % contradiction, decided)
-        self.assertIn("paper order 1 (oversized:R1): split", decided)
-        self.assertIn("paper order 1 (outline:%s#1): decline" % self.merges, decided)
+        decided = {payload["answer"]: payload["decided_by"] for payload in self.journaled("decision")}
+        self.assertEqual(self.decided()[0], "paper order: order it, as paper order 1 for nature-methods")
+        self.assertEqual(decided["paper order 1 (%s): the first" % contradiction], "decider")
+        self.assertEqual(decided["paper order 1 (oversized:R1): split"], "conductor", "code overrode the decider's drop")
+        self.assertEqual(decided["paper order 1 (outline:%s#1): decline" % self.merges], "conductor")
         self.assertEqual(len(decided), 1 + len(batch["items"]), "the order and each answer of its batch")
 
     def test_the_owner_reversing_a_paper_decision_makes_the_order_theirs(self):
@@ -247,6 +247,27 @@ class JudgeTest(JudgeCase):
         said = account.review(self.project, identifier, "reverse")
         self.assertIn("the paper order is yours from now on", said)
         self.assertFalse(paper_judge.considered(self.project, "objectives_closed"))
+
+    def test_items_the_decider_left_out_are_code_s_defaults_listed_as_the_conductor_s(self):
+        contradiction = "contradiction:%s+%s" % (self.claim, self.other)
+        self.judge(judgment(True, answers=[answer(contradiction, "the first")]))
+        by_answer = {payload["answer"]: payload["decided_by"] for payload in self.journaled("decision")}
+        self.assertEqual(by_answer["paper order 1 (%s): the first" % contradiction], "decider")
+        self.assertEqual(by_answer["paper order 1 (oversized:R1): split"], "conductor", "code's default, not the decider's")
+
+    def test_a_usage_window_that_refuses_the_session_journals_nothing_and_raises_for_the_pause(self):
+        refused = Envelope(api_error_status=429, is_error=True, exit_code=1, session_id="refused",
+                           errors=["You've hit your session limit · resets 3:45pm (UTC)"])
+        with self.assertRaises(gates.UsageLimited):
+            self.judge(refused)
+        self.assertEqual(self.journaled("paper_judged"), [])
+        self.assertTrue(paper_judge.considered(self.project, "objectives_closed"), "judged after the pause")
+
+    def test_a_ref_holding_parentheses_is_read_back_from_its_decision(self):
+        self.assertEqual(paper_judge.decision_parts("paper order 2 (reference:doi:10.1016/S0140-6736(20)30183-5): drop"),
+                         (2, "reference:doi:10.1016/S0140-6736(20)30183-5", "drop"))
+        self.assertEqual(paper_judge.decision_parts("paper order: not now"), (None, None, "not now"))
+        self.assertIsNone(paper_judge.decision_parts("paper venue: nature-methods"))
 
     def test_a_session_with_no_usable_judgment_is_resumed_once_then_recorded_as_not_judged(self):
         unknown = judgment(True, answers=[answer("figure:R9", "as planned")])
@@ -338,6 +359,14 @@ class EndKindsTest(EndCase):
         self.assertEqual(len(self.judged()), 1)
         self.assertEqual(self.deciders(), [])
         self.conduct()  # a later run's end is a new end, judged once more
+        self.assertEqual(len(self.judged()), 2)
+
+    def test_a_run_started_afresh_after_a_conductor_that_died_judges_its_own_end(self):
+        self.ledger.append_event("paper_judged", {"end": "frontier_empty", "checks": [], "ordered": False,
+                                                  "reason": "judged before the conductor died, with no run_ended"})
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": "v1.1.0", "autonomy": "autonomous",
+                                                 "radius": "moderate", "pid": 1})
+        self.conduct()
         self.assertEqual(len(self.judged()), 2)
 
 

@@ -3318,38 +3318,59 @@ class Conductor:
         the stop, or pacing like any model work, and a usage window that refused it pauses the run.
         """
         from wayline import paper_judge
+        waits = "the decider has judged the paper order"
+        what = "the decider on the paper order"
         try:
-            if not paper_judge.considered(self.project, end):
+            events, _ = self.ledger.read_events()
+            if not paper_judge.considered(self.project, end, events):
                 return None
-            failed = paper_judge.checks(self.project)
-        except (ValueError, OSError) as failure:
-            self.say("  the paper order was not judged: %s" % failure)
-            return None
-        if failed:
-            paper_judge.record_held(self.project, end, failed)
-            self.say("  the decider does not judge the paper order: %s" % "; ".join(item["said"] for item in failed))
-            return None
-        if self._holds_launches() or self.action != schedule.NORMAL:
-            return "the decider has judged the paper order"
-        try:
+            failed = paper_judge.checks(self.project, events)  # code's, with no model call: never held
+            if failed:
+                paper_judge.record_held(self.project, end, failed)
+                self.say("  the decider does not judge the paper order: %s" % "; ".join(item["said"] for item in failed))
+                return None
+            # The session waits on the pause, the stop, pacing, and the hold on Fable's weekly window while the consent
+            # waits, as every launch of the decider does.
+            if self._holds_launches() or self.action != schedule.NORMAL:
+                return waits
+            on_fable = decider.decides_on_fable(self.policy) and self._fable_held()
+            falls_back = on_fable and self._falls_back()
+            if on_fable and not falls_back:
+                self._held_back(what)
+                return waits
             judged = paper_judge.judge(self.project, end, harness_root=self.harness_root, policy=self.policy,
-                                       fall_back=self._falls_back(), say=self.say)
+                                       fall_back=falls_back, say=self.say)
+        except gates.FableHeld:
+            self._held_back(what)
+            return waits
         except gates.UsageLimited as refused:
-            self._pause(refused.limit, "the decider on the paper order")
-            return "the decider has judged the paper order"
+            self._pause(refused.limit, what)
+            return waits
+        except (ValueError, OSError) as failure:
+            self.say("  the paper order was not judged: %s; the run ends without it" % failure)
+            return None
         self._tail()
         return "the paper the decider ordered is made" if judged["ordered"] else None
 
     def _decider_chooses(self, order):
         """Once the builds of the decider's order settled: its pick among the writer's titles and the paper's other
-        alternatives (ticket 120). One that cannot be taken is said; the writer's own choices stand."""
+        alternatives (ticket 120), under the hold on Fable's weekly window as any decider launch. One that cannot be taken
+        is said and the writer's own choices stand; a usage window that refused it pauses the run as well."""
         from wayline import paper_judge
+        what = "the decider on paper order %s's alternatives" % order.get("order")
+        on_fable = decider.decides_on_fable(self.policy) and self._fable_held()
+        falls_back = on_fable and self._falls_back()
+        if on_fable and not falls_back:
+            self.say("  %s waits on Fable's weekly window, held; the writer's own choices stand" % what)
+            return
         try:
             paper_judge.choose_alternatives(self.project, order, harness_root=self.harness_root, policy=self.policy,
-                                            fall_back=self._falls_back(), say=self.say)
-        except (gates.UsageLimited, gates.FableHeld, ValueError, OSError) as failure:
-            self.say("  the decider picked no alternative of paper order %s: %s; the writer's own choices stand" % (
-                order.get("order"), failure))
+                                            fall_back=falls_back, say=self.say)
+        except gates.UsageLimited as refused:
+            self._pause(refused.limit, what)
+            self.say("  %s: the usage limit refused it; the writer's own choices stand" % what)
+        except (gates.FableHeld, ValueError, OSError) as failure:
+            self.say("  %s: none was picked (%s); the writer's own choices stand" % (what, failure))
 
     # --- the paper order (decision 17; ticket 115) ---
 

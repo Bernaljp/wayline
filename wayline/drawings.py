@@ -178,6 +178,26 @@ def _rule_objectives(project):
     return {record.get("id") for record in stopping.covered(rule, records)}
 
 
+def _changed(book, by_id):
+    """`[(result, its records, the signature of its findings now)]` for each result of its own evidence whose last
+    accepted drawing was not drawn over the findings it holds now, in id order: what `due` and `undrawn` both read."""
+    drawn_by = set(by_id)
+    records = {}
+    for record in read_records(book):
+        records.setdefault(record.get("result"), []).append(record)
+    manifested = _manifested(book.project)
+    found = []
+    for result in results_module.read_results(book):
+        if not [finding for finding in _drawn_from(result, drawn_by) if own_evidence(finding, manifested)]:
+            continue
+        held = records.get(result.id) or []
+        now = signature(finding["id"] for finding in _drawn_from(result, drawn_by))
+        accepted = [record for record in held if record.get("status") == ACCEPTED]
+        if not (accepted and accepted[-1].get("signature") == now):
+            found.append((result, held, now))
+    return found
+
+
 def due(project):
     """The results a rest point draws, the stopping rule's first, then in id order (the module's docstring).
 
@@ -187,25 +207,12 @@ def due(project):
     """
     book = ledger_for(project)
     by_id = _drawing_tickets(book.project)
-    drawn_by = set(by_id)
     events, _ = book.read_events()
     resuming, started = _awaiting_resume(events), _run_started(events)
-    records = {}
-    for record in read_records(book):
-        records.setdefault(record.get("result"), []).append(record)
-    manifested = _manifested(book.project)
     rule = _rule_objectives(book.project)
     chosen = []
-    for result in results_module.read_results(book):
-        own = [finding for finding in _drawn_from(result, drawn_by) if own_evidence(finding, manifested)]
-        if not own:
-            continue
-        held = records.get(result.id) or []
+    for result, held, now in _changed(book, by_id):
         if held and _in_progress(held[-1], by_id, resuming):
-            continue
-        now = signature(finding["id"] for finding in _drawn_from(result, drawn_by))
-        accepted = [record for record in held if record.get("status") == ACCEPTED]
-        if accepted and accepted[-1].get("signature") == now:
             continue
         if any(record.get("status") != ACCEPTED and record.get("signature") == now
                and (started is None or str(record.get("opened") or "") >= started) for record in held):
@@ -220,19 +227,7 @@ def undrawn(project):
     since their last drawing whether a drawing of them is under way, failed, or never opened. The decider judges the
     paper order only when none is (ticket 120); `due` is what a rest point opens."""
     book = ledger_for(project)
-    drawn_by = set(_drawing_tickets(book.project))
-    records = {}
-    for record in read_records(book):
-        records.setdefault(record.get("result"), []).append(record)
-    manifested = _manifested(book.project)
-    found = []
-    for result in results_module.read_results(book):
-        if not [finding for finding in _drawn_from(result, drawn_by) if own_evidence(finding, manifested)]:
-            continue
-        accepted = [record for record in records.get(result.id) or [] if record.get("status") == ACCEPTED]
-        if not accepted or accepted[-1].get("signature") != signature(finding["id"] for finding in _drawn_from(result, drawn_by)):
-            found.append(result.id)
-    return found
+    return [result.id for result, _, _ in _changed(book, _drawing_tickets(book.project))]
 
 
 # --- the plotter's tier and the drawing's limits -------------------------------------------------------------------
