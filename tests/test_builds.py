@@ -532,7 +532,10 @@ class ConductorTest(DrawingRunCase):
         self.assertTrue(last.ended)
         self.assertEqual(last.reason, "objectives_closed")
         self.assertIn('waits under "Waiting on you"', driven.out.getvalue())
-        self.assertEqual([item for item in notified if "not passed" in str(item)], [], "under autonomous nothing is asked")
+        from wayline import decisions
+        # Under autonomous nothing is asked: no decision notice. The order's end notice (ticket 121) is still sent, and
+        # notify.holds keeps it from the owner under autonomous.
+        self.assertEqual([item for item in notified if item[0] == decisions.DECISION], [], "under autonomous nothing is asked")
         self.assertEqual(len(builds.waiting_lines(self.project)), 1)
         self.assertTrue((self.project / "research" / "paper" / "compilations" / "plain" / "compilation.json").is_file(),
                         "the paper not passed is compiled all the same")

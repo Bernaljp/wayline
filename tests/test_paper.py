@@ -592,11 +592,14 @@ class OrderRunTest(DrawingRunCase):
                                                  "radius": "moderate", "pid": 1})
         self.ledger.append_event("run_ended", {"reason": "objectives_closed"})
         paper.order(self.project, start=None)
+        from tests.test_builds import Verifier  # ticket 117's gates run after the composition
         notices = []
         with worker.use_fake() as fake:
             fake.script(respond=self.plotter(), role="plotter")
             for _ in range(2):
                 fake.script(writer, role="writer") if isinstance(writer, Envelope) else fake.script(respond=writer, role="writer")
+            for _ in range(3):
+                fake.script(respond=Verifier(), role="verifier")
             driven = self.conductor()
             driven.notify = lambda event, text, project=None, ticket=None: notices.append((event, text))
             self.until(driven, lambda: False)
