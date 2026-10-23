@@ -41,9 +41,7 @@ suite replays recordings of real runs (`recorded_runner`, made by `fixtures/comp
 """
 
 import argparse
-import csv
 import hashlib
-import io
 import json
 import re
 import shutil
@@ -101,6 +99,8 @@ _HEADING_ID = re.compile(r"\{#[^{}]*\}")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(\[])")
 _TABLE_CAPTION = re.compile(r"^\*\*Table [^*]*\*\*\s*(.*)$")
 _PAGES = re.compile(rb"^Pages:\s+(\d+)", re.M)
+MAIN_END = "wayline-main-end"           # the label the main text ends on, read back from the LaTeX run's .aux
+_MAIN_END_PAGE = re.compile(r"\\newlabel\{%s\}\{\{[^{}]*\}\{(\d+)\}" % MAIN_END)
 
 FITTING_PROMPT = """\
 # Fitting the paper to %(venue)s
@@ -226,6 +226,8 @@ def plan_citations(project_or_ledger, texts, answers, max_count=None):
             work = references.work_named(book, parts, index) if parts is not None else None
             if work is None:
                 decisions[key] = ("drop", key)
+            elif work.found and paper.DROP in (answers.get(work.slug), answers.get(work.named)):
+                decisions[key] = ("drop", work.slug)  # the owner dropped it while unresolved; the last retry finding it changes nothing
             elif work.found:
                 decisions[key] = ("cite", work.slug)
                 if work.slug not in works:
@@ -341,20 +343,33 @@ def _front_sections(text):
 
 
 def _table(book, identifier):
-    """A table as pandoc reads it, from its CSV and the caption its `.md` carries, labeled for pandoc-crossref."""
+    """`(pipe table, caption)` of a table as the paper renders it (`tables/T<n>.md`, `paper._table_markdown`), or None."""
     try:
-        rows = list(csv.reader(io.StringIO(book.path(paper._paper("%s/%s.csv" % (paper.TABLES, identifier))).read_text(encoding="utf-8"))))
         described = book.path(paper._paper("%s/%s.md" % (paper.TABLES, identifier))).read_text(encoding="utf-8")
     except OSError:
         return None
-    rows = [row for row in rows if row]
-    if not rows:
-        return None
-    caption = next((match.group(1) for match in map(_TABLE_CAPTION.match, described.splitlines()) if match), "")
-    width = max(len(row) for row in rows)
-    rows = [[cell.replace("|", "\\|") for cell in row] + [""] * (width - len(row)) for row in rows]
-    lines = ["| %s |" % " | ".join(rows[0]), "|%s|" % "|".join(["---"] * width)] + ["| %s |" % " | ".join(row) for row in rows[1:]]
-    return "\n".join(lines) + "\n\n: %s {#tbl:%s}\n" % (_one_line(caption), identifier)
+    lines = described.splitlines()
+    caption = next((match.group(1) for match in map(_TABLE_CAPTION.match, lines) if match), "")
+    rows = [line for line in lines if line.strip().startswith("|")]
+    return ("\n".join(rows), caption) if rows else None
+
+
+def _table_block(table, identifier, decisions):
+    """A table labeled for pandoc-crossref, its caption's tags marked like the text's."""
+    rows, caption = table
+    return "%s\n\n: %s {#tbl:%s}\n" % (rows, _one_line(_marked(caption, decisions)), identifier)
+
+
+def _figure_block(identifier, image, caption, decisions):
+    return "![%s](figures/%s%s){#fig:%s}" % (_marked(caption, decisions), identifier, image.suffix.lower(), identifier)
+
+
+def _supplement_text(text):
+    """The supplement as written, less the placeholder code writes for an empty one (a fitting may write after it)."""
+    text = (text or "").strip()
+    if text.startswith(_EMPTY_SUPPLEMENT):
+        text = text[len(_EMPTY_SUPPLEMENT):].lstrip(".").strip()
+    return text
 
 
 def _figures(book):
@@ -390,16 +405,17 @@ def _source(book, texts, decisions, found, tables, figures, natbib=False):
         body = _marked(texts.get(part), decisions).strip()
         blocks.append("# %s\n\n%s" % (names[part], body))
         if part == "results":
-            blocks += [table for table in tables if table]
-            blocks += ["![%s](figures/%s%s){#fig:%s}" % (caption, identifier, image.suffix.lower(), identifier)
-                       for identifier, image, caption in figures if identifier.startswith("F")]
+            blocks += [_table_block(table, identifier, decisions) for identifier, table in tables if table]
+            blocks += [_figure_block(identifier, image, caption, decisions) for identifier, image, caption in figures
+                       if identifier.startswith("F")]
+    blocks.append("```{=latex}\n\\label{%s}\n```" % MAIN_END)  # where the main text ends: its page is the page count
     blocks += ["# %s\n\n%s" % (title, _marked(body, decisions)) for title, body in _front_sections(texts.get("front"))]
     if not natbib:
         blocks.append("# References\n\n::: {#refs}\n:::")
-    supplement = _marked(texts.get("supplement"), decisions).strip()
-    shown = [supplement] if supplement and not supplement.startswith(_EMPTY_SUPPLEMENT) else []
-    shown += ["![%s](figures/%s%s){#fig:%s}" % (caption, identifier, image.suffix.lower(), identifier)
-              for identifier, image, caption in figures if identifier.startswith("S")]
+    supplement = _marked(_supplement_text(texts.get("supplement")), decisions).strip()
+    shown = [supplement] if supplement else []
+    shown += [_figure_block(identifier, image, caption, decisions) for identifier, image, caption in figures
+              if identifier.startswith("S")]
     if shown:
         blocks.append("# %s\n\n%s" % (SUPPLEMENT, "\n\n".join(shown)))
     return "\n\n".join(blocks) + "\n"
@@ -437,8 +453,9 @@ def _metadata(project, texts, decisions, document_class, package):
 class _Tools:
     """The compilation's calls, each through the tool runner by its recorded executable; what failed is kept."""
 
-    def __init__(self, tools, run):
+    def __init__(self, tools, run, beat=None):
         self.tools, self.run = tools if tools is not None else Tools(), run
+        self.beat = beat or (lambda: None)  # the conductor's heartbeat between calls, so a long build is no stall
         self.versions = {}
 
     def executable(self, name):
@@ -450,6 +467,7 @@ class _Tools:
 
     def call(self, name, args, timeout=600):
         self.executable(name)
+        self.beat()
         done = run_recorded(name, [str(part) for part in args], tools=self.tools, run=self.run, timeout=timeout)
         if done.returncode != 0:
             raise ToolsError("%s failed (%s)" % (name, failure_line(done)))
@@ -484,7 +502,7 @@ def _build(book, scratch, name, texts, plan, found, harness_root, tools):
             package = vendored[0].stem
     csl = _csl(harness_root, venue, found) if venue else None
     bibtex = bool(((found or {}).get("reference_style") or {}).get("bibtex"))
-    tables = [_table(book, identifier) for identifier in (paper.read_record(book) or {}).get("tables") or []]
+    tables = [(identifier, _table(book, identifier)) for identifier in (paper.read_record(book) or {}).get("tables") or []]
     figures = _figures(book)
     for identifier, image, _ in figures:
         for where in (build / "figures", latex / "figures"):
@@ -498,7 +516,7 @@ def _build(book, scratch, name, texts, plan, found, harness_root, tools):
                                ensure_ascii=False) + "\n", encoding="utf-8")
     refs.write_text(json.dumps(plan["items"], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     made = {"build": build, "document_class": document_class, "class_vendored": vendored is not None, "csl": csl.name if csl else None,
-            "bibtex": bibtex, "outputs": {}, "pages": None}
+            "bibtex": bibtex, "outputs": {}, "pages": None, "main_pages": None}
 
     def attempt(output, action):
         try:
@@ -525,6 +543,11 @@ def _build(book, scratch, name, texts, plan, found, harness_root, tools):
             made["pages"] = int(pages.group(1)) if pages else None
         except ToolsError as failure:
             made["pages_problem"] = str(failure)
+        try:
+            ended = _MAIN_END_PAGE.search((latex / "paper.aux").read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            ended = None
+        made["main_pages"] = int(ended.group(1)) if ended else made["pages"]
     attempt("docx", lambda: tools.call("pandoc", _pandoc_common(tools, source, build, meta) + ["--to", "docx"]
                                        + _citing_args(bibtex, refs, bib, csl, False) + ["-o", build / "paper.docx"]))
     attempt("markdown", lambda: tools.call("pandoc", _pandoc_common(tools, source, build, meta)
@@ -571,7 +594,7 @@ def _checks(made, found):
     for path in main.glob("*.pdf"):
         path.unlink()  # the page count is pdfinfo's, read off the compiled PDF
     manuscript = venues.Manuscript(main)
-    manuscript.pdf_pages = lambda: made["pages"]
+    manuscript.pdf_pages = lambda: made["main_pages"]  # a venue's page limit is the main text's, not its references or supplement's
     counted = json.loads(json.dumps(found))
     counted["length_limits"]["excluded_sections"] = list(counted["length_limits"]["excluded_sections"]) + list(NOT_MAIN_TEXT)
     return [finding._asdict() for finding in venues.run_checks(manuscript, counted)]
@@ -612,16 +635,26 @@ def fitting_problems(before, after):
 
 def _fit(project, book, venue, found, texts, limits, plan, harness_root, policy):
     """The one fitting session: `(fitted texts or None, record)`."""
-    role = worker.read_role(ROLE, harness_root, project)
+    record = {"limits": limits, "outcome": None, "problems": [], "moved": [], "model": None, "session_id": None, "usage": None}
+    try:
+        role = worker.read_role(ROLE, harness_root, project)
+    except (worker.RoleError, ValueError, OSError) as failure:
+        record.update(outcome="not run", problems=["the writer role could not be read: %s" % _one_line(failure)])
+        return None, record
     citations = ("\n- Over the cap now: %d works cited, %d allowed; code already dropped %s." % (
         len(plan["cited"]), found["reference_style"]["max_count"], ", ".join(item["work"] for item in plan["dropped"]) or "none")
         if found["reference_style"].get("max_count") is not None and len(plan["cited"]) > found["reference_style"]["max_count"] else "")
     shown = "\n\n".join("### %s (research/paper/%s.md)\n\n%s" % (part, part, (texts.get(part) or "").strip()) for part in FITTED_PARTS)
     prompt = FITTING_PROMPT % {"venue": "%s (%s)" % (found["display_name"], venue), "limits": "\n".join("- %s" % line for line in limits),
                                "citations": citations, "parts": shown}
-    prompt = provenance.joined(prompt, role.protocol, worker.schema_section("# The answer", FITTING_SCHEMA))
-    request = provenance.structured_request(project, role, policy, harness_root, prompt, FITTING_SCHEMA, FITTING_BUDGET,
-                                            provenance.session_dir(project, SESSIONS), read_only=True)
+    try:
+        prompt = provenance.joined(prompt, role.protocol, worker.schema_section("# The answer", FITTING_SCHEMA))
+        request = provenance.structured_request(project, role, policy, harness_root, prompt, FITTING_SCHEMA, FITTING_BUDGET,
+                                                provenance.session_dir(project, SESSIONS), read_only=True)
+    except (provenance.ProvenanceError, worker.RoleError, ValueError, OSError) as failure:
+        record.update(outcome="not run", problems=["the session could not be set up: %s" % _one_line(failure)])
+        return None, record
+    record["model"] = request.model
 
     def fitted_of(answer):
         return dict(texts, **{part: answer[part] for part in FITTED_PARTS if answer.get(part) is not None})
@@ -633,7 +666,6 @@ def _fit(project, book, venue, found, texts, limits, plan, harness_root, policy)
         found_problems = fitting_problems(texts, fitted_of(envelope.structured_output))
         return "\n".join("- %s" % line for line in found_problems) if found_problems else None
 
-    record = {"limits": limits, "outcome": None, "problems": [], "moved": [], "model": request.model, "session_id": None, "usage": None}
     try:
         envelope = provenance._launch_structured(request, problem_of, "compilation's fitting writer")
     except provenance.UsageLimited as limited:
@@ -683,11 +715,13 @@ def _keep(book, name, made, fitted_texts):
 
 
 def compile_paper(project, venue=None, *, harness_root=HARNESS_ROOT, guidelines_root=None, tools=None, run=run_tool, policy=None, say=None,
-                  retried=None):
+                  retried=None, beat=None):
     """Compile the paper's current version, for `venue` or plain; writes `compilations/<name>/` and returns its record.
 
     Raises CompilationError when no paper is composed yet or the venue has no guidelines. A tool that fails leaves its
-    output out and says why in the record (`outputs`); the compilation itself never fails the order.
+    output out and says why in the record (`outputs`); the compilation itself never fails the order. A fitted paper that
+    compiles to less than the unfitted one made is set aside, said, and the unfitted compilation kept. `beat` is called
+    before each tool and the fitting session (the conductor's heartbeat).
     """
     project = Path(project).resolve()
     book = ledger_for(project)
@@ -701,7 +735,7 @@ def compile_paper(project, venue=None, *, harness_root=HARNESS_ROOT, guidelines_
     answers = _answers(record)
     cap = (found or {}).get("reference_style", {}).get("max_count") if found else None
     plan = plan_citations(book, texts, answers, cap)
-    runner = _Tools(tools, run)
+    runner = _Tools(tools, run, beat)
     fitting, fitted_texts = None, None
     with tempfile.TemporaryDirectory(prefix="wayline-compile-") as scratch:
         made = _build(book, scratch, name, texts, plan, found, shelves, runner)
@@ -709,12 +743,20 @@ def compile_paper(project, venue=None, *, harness_root=HARNESS_ROOT, guidelines_
         limits = _over(checks, plan, found) if found else []
         if limits:
             policy = policy_for(project, harness_root) if policy is None else policy
+            runner.beat()
             fitted_texts, fitting = _fit(project, book, venue, found, texts, limits, plan, harness_root, policy)
             if fitted_texts is not None:
-                plan = plan_citations(book, fitted_texts, answers, cap)
-                made = _build(book, scratch, name + "-" + FITTED, fitted_texts, plan, found, shelves, runner)
-                checks = _checks(made, found)
-                fitting["still_over"] = _over(checks, plan, found)
+                fitted_plan = plan_citations(book, fitted_texts, answers, cap)
+                fitted = _build(book, scratch, name + "-" + FITTED, fitted_texts, fitted_plan, found, shelves, runner)
+                lost = [output for output in OUTPUTS if fitted["outputs"].get(output, {}).get("problem") is not None
+                        and made["outputs"].get(output, {}).get("problem") is None]
+                if lost:
+                    fitting.update(outcome="refused", problems=["the fitted paper's %s could not be made: %s" % (
+                        output, fitted["outputs"][output]["problem"]) for output in lost])
+                    fitted_texts = None
+                else:
+                    made, plan, checks = fitted, fitted_plan, _checks(fitted, found)
+                    fitting["still_over"] = _over(checks, plan, found)
         leaked = sorted({tag for text in _output_texts(made).values() for tag in tag_text(text)})
         with book.lock():
             _clear(book, name)
@@ -727,7 +769,7 @@ def compile_paper(project, venue=None, *, harness_root=HARNESS_ROOT, guidelines_
                 "name": name, "venue": venue, "paper_version": record["version"], "compiled": now_ts(),
                 "outcome": "compiled" if made_all and not leaked else ("failed" if not any(item["file"] for item in outputs.values()) else "partial"),
                 "outputs": outputs, "document_class": made["document_class"], "class_vendored": made["class_vendored"],
-                "csl": made["csl"], "bibtex": made["bibtex"], "pages": made["pages"],
+                "csl": made["csl"], "bibtex": made["bibtex"], "pages": made["pages"], "main_pages": made["main_pages"],
                 "tools": {key: value for key, value in sorted(runner.versions.items())},
                 "citations": {"cited": plan["cited"], "to_be_resolved": plan["to_be_resolved"], "dropped": plan["dropped"]},
                 "retried": retried, "checks": checks, "fitting": fitting, "tag_text": leaked,
@@ -789,22 +831,27 @@ def last_retry(project, fetcher=None, clock=None):
 
 
 def after_order(project, order, *, harness_root=HARNESS_ROOT, guidelines_root=None, tools=None, run=run_tool, policy=None, fetcher=None,
-                clock=None, say=None):
+                clock=None, say=None, beat=None):
     """What the order does once the paper is composed: the last retry, then `compilations/plain/`, and the order's venue's.
 
-    Returns `{retried, compilations}`. A compilation that cannot be made is said and recorded; it never fails the order.
+    Returns `{retried, compilations}`. A last retry that fails is said and the compilations are made all the same, with
+    what the dossiers hold; a compilation that cannot be made is said and recorded; neither fails the order.
     """
     say = say or (lambda line: None)
-    retried = last_retry(project, fetcher=fetcher, clock=clock)
-    if retried["asked"]:
+    try:
+        retried = last_retry(project, fetcher=fetcher, clock=clock)
+    except (LedgerError, OSError, ValueError) as failure:
+        retried = None
+        say("  paper order %s: the scout's last retry failed (%s); the compilations cite what the dossiers hold" % (
+            order.get("order"), _one_line(failure)))
+    if retried and retried["asked"]:
         say("  paper order %s: the scout asked once more about %d unresolved work(s): %d found" % (
             order.get("order"), len(retried["asked"]), len(retried["found"])))
     made = []
     for venue in [None] + ([order["venue"]] if order.get("venue") else []):
         try:
             made.append(compile_paper(project, venue, harness_root=harness_root, guidelines_root=guidelines_root, tools=tools, run=run,
-                                      policy=policy, say=say,
-                                      retried=retried))
+                                      policy=policy, say=say, retried=retried, beat=beat))
         except (CompilationError, LedgerError, OSError, ValueError) as failure:
             say("  compilation %s could not be made: %s" % (venue or PLAIN, failure))
     return {"retried": retried, "compilations": made}
@@ -949,7 +996,7 @@ def recording_runner(target, run=run_tool):
         (where / "argv.json").write_text(json.dumps([clean(str(part).encode()).decode() for part in argv], indent=1) + "\n", encoding="utf-8")
         written = (Path(argv[argv.index("-o") + 1]),) if "-o" in [str(part) for part in argv] else ()
         if tool == "latexmk":
-            written = (Path(str(argv[-1])).with_suffix(".pdf"),)
+            written = tuple(Path(str(argv[-1])).with_suffix(suffix) for suffix in (".pdf", ".aux"))
         for path in written:
             if path.is_file():
                 (where / "files").mkdir(exist_ok=True)

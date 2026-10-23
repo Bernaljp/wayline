@@ -32,7 +32,7 @@ and Eq. 1 holds at every noise level we ran, as Fig. 1 shows. Table 1 lists t
 
   : Table 1: The error of the fit at each noise level. {#tbl:T1}
 
-![Figure 1: The error of the fit grows with the noise.](figures/F1.png)
+![Figure 1: The error of the fit grows with the noise^[4](#ref-lee-2018-noise)^.](figures/F1.png)
 
 # Discussion
 
@@ -45,6 +45,8 @@ The noise model is Gaussian, as Lee assumed^[4](#ref-lee-2018-noise)^. A heavier
 ## Fitting
 
 We fit by least squares, as Jones did^[2](#ref-jones-2019-least)^.
+
+\label{wayline-main-end}
 
 # Acknowledgments
 

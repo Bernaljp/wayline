@@ -140,16 +140,24 @@ Package natbib Warning: Citation `smith-2020-fits' on page 1 undefined on input
 
 
 Package natbib Warning: Citation `lee-2018-noise' on page 1 undefined on input 
-line 180.
+line 174.
+
+
+Package natbib Warning: Citation `lee-2018-noise' on page 1 undefined on input 
+line 174.
+
+
+Package natbib Warning: Citation `lee-2018-noise' on page 1 undefined on input 
+line 181.
 
 [1]
 
 Package natbib Warning: Citation `jones-2019-least' on page 2 undefined on inpu
-t line 186.
+t line 187.
 
 
 Package natbib Warning: Citation `late-work' on page 2 undefined on input line 
-213.
+216.
 
 No file paper.bbl.
 
@@ -163,7 +171,7 @@ LaTeX Warning: There were undefined references.
 LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
 
  )
-Output written on paper.xdv (2 pages, 20464 bytes).
+Output written on paper.xdv (2 pages, 20520 bytes).
 Transcript written on paper.log.
 Latexmk: Getting log file 'paper.log'
 Latexmk: Examining 'paper.fls'
@@ -314,16 +322,24 @@ Package natbib Warning: Citation `smith-2020-fits' on page 1 undefined on input
 
 
 Package natbib Warning: Citation `lee-2018-noise' on page 1 undefined on input 
-line 180.
+line 174.
+
+
+Package natbib Warning: Citation `lee-2018-noise' on page 1 undefined on input 
+line 174.
+
+
+Package natbib Warning: Citation `lee-2018-noise' on page 1 undefined on input 
+line 181.
 
 [1]
 
 Package natbib Warning: Citation `jones-2019-least' on page 2 undefined on inpu
-t line 186.
+t line 187.
 
 
 Package natbib Warning: Citation `late-work' on page 2 undefined on input line 
-213.
+216.
 
 (./paper.bbl [2])
 
@@ -335,7 +351,7 @@ Package natbib Warning: Citation(s) may have changed.
 (natbib)                Rerun to get citations correct.
 
 ) )
-Output written on paper.xdv (3 pages, 25800 bytes).
+Output written on paper.xdv (3 pages, 25852 bytes).
 Transcript written on paper.log.
 Latexmk: Getting log file 'paper.log'
 Latexmk: Examining 'paper.fls'
@@ -467,7 +483,7 @@ For additional information on amsmath, use the `?' option.
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsb.fd)
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-msb.cfg) [1] (./paper.bbl
  [2]) [3] (./paper.aux) )
-Output written on paper.xdv (3 pages, 28356 bytes).
+Output written on paper.xdv (3 pages, 28800 bytes).
 Transcript written on paper.log.
 Latexmk: Getting log file 'paper.log'
 Latexmk: Examining 'paper.fls'

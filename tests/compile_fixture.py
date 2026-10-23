@@ -69,7 +69,7 @@ FITTED = {
     "results": None,
     "discussion": "## Limits {#discussion-limits}\n\nThe noise model is Gaussian, as Lee assumed {ref:lee-2018-noise#abstract}.\n",
     "methods": None,
-    "supplement": "## Earlier claims {#supplement-earlier-claims}\n\nA lost work claimed it first {ref:lost-work#abstract}, "
+    "supplement": "Nothing is placed in the supplement.\n\n## Earlier claims {#supplement-earlier-claims}\n\nA lost work claimed it first {ref:lost-work#abstract}, "
                   "and a late one agreed {ref:doi:10.5555/late#abstract}. A third said it again {ref:dropped-work#abstract}. "
                   "A heavier tail would bend the fit further, and the next runs should try one.\n",
     "moved": ["the Introduction's earlier claims", "the Discussion's next runs"],
@@ -133,10 +133,10 @@ def make_paper(project):
     for part, text in TEXTS.items():
         book.write_markdown("paper/%s.md" % part, text)
     book.write_markdown("paper/tables/T1.csv", "noise,rmse\n0.1,0.03\n0.2,0.05\n0.4,0.15\n")
-    book.write_markdown("paper/tables/T1.md", paper._table_markdown({"id": "T1", "caption": "The error of the fit at each noise level.",
+    book.write_markdown("paper/tables/T1.md", paper._table_markdown({"id": "T1", "caption": "The error of the fit at each noise level {res:t2-a1/results/summary.json#table}.",
                                                                      "csv": "noise,rmse\n0.1,0.03\n0.2,0.05\n0.4,0.15\n"}))
     book.write_bytes("paper/figures/F1/figure.png", png())
-    book.write_markdown("paper/figures/F1/caption.md", "The error of the fit grows with the noise.\n")
+    book.write_markdown("paper/figures/F1/caption.md", "The error of the fit grows with the noise {plot:R1.1} {ref:lee-2018-noise#abstract}.\n")
     book.write_json("front.json", {"authors": [{"name": "Ada Lovelace", "affiliations": ["Analytical Engine Institute"],
                                                 "corresponding": True, "email": "ada@example.org"}]})
     answers = [{"ref": "reference:%s" % name, "text": "Unresolved reference %s" % name, "mark": mark, "by": "owner", "batch": "B1",

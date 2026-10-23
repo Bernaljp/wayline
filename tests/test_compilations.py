@@ -56,7 +56,7 @@ class CompilationCase(ProjectTestCase):
         return compilations.after_order(self.project, {"order": 1, "venue": "nature"}, tools=self.tools, run=self.run,
                                         fetcher=fetcher, clock=lambda: fixture.NOW, say=self.said.append)
 
-    def testconf(self, answers=(), tools=None):
+    def compile_testconf(self, answers=(), tools=None):
         """`testconf` compiled after the last retry, the fitting session answering `answers` in turn."""
         self.retry()
         shelf = fixture.guidelines_shelf(self.temp / "shelf")
@@ -169,10 +169,20 @@ class OrderCompilationTest(CompilationCase):
 
     def test_the_venues_checks_run_on_the_compiled_output(self):
         checks = {(check["check"], check["message"]) for check in self.nature["checks"]}
-        self.assertIn(("length", "the compiled PDF is 3 pages against a limit of 8."), checks)
+        self.assertIn(("length", "the compiled PDF is 2 pages against a limit of 8."), checks)
         self.assertTrue(any(check == "template" for check, _ in checks))
         self.assertEqual(self.plain["checks"], [])
         self.assertIsNone(self.nature["fitting"], "nothing exceeds Nature's limits")
+
+    def test_a_venues_page_limit_is_checked_against_the_main_text_not_its_references_or_supplement(self):
+        self.assertLess(self.nature["main_pages"], self.nature["pages"])
+        self.assertIn(("length", "the compiled PDF is %d pages against a limit of 8." % self.nature["main_pages"]),
+                      {(check["check"], check["message"]) for check in self.nature["checks"]})
+
+    def test_a_captions_tags_are_marked_like_the_texts(self):
+        markdown = self.text("plain", "paper.md")
+        self.assertIn("Table 1: The error of the fit at each noise level.", markdown)
+        self.assertIn("grows with the noise ([Lee and Hall 2018](#ref-lee-2018-noise)).", markdown)
 
     def test_the_conductor_is_said_what_was_compiled(self):
         self.assertTrue(any("1 found" in line for line in self.said))
@@ -184,7 +194,7 @@ class VenueTest(CompilationCase):
 
     def setUp(self):
         super().setUp()
-        self.made = self.testconf([fixture.fitted_answer()])
+        self.made = self.compile_testconf([fixture.fitted_answer()])
 
     def test_a_vendored_class_is_the_documentclass_and_is_kept_beside_the_latex(self):
         self.assertEqual((self.made["document_class"], self.made["class_vendored"]), ("testconf", True))
@@ -231,7 +241,7 @@ class FittingRefusedTest(CompilationCase):
     def test_a_fitted_paper_missing_a_claim_tag_or_with_a_changed_number_is_refused_and_the_paper_compiled_unfitted(self):
         bad = dict(fixture.fitted_answer(), discussion="## Limits {#discussion-limits}\n\nThe noise model is Gaussian.\n",
                    results=fixture.TEXTS["results"].replace("0.8", "0.9"))
-        made = self.testconf([bad, bad])
+        made = self.compile_testconf([bad, bad])
         fitting = made["fitting"]
         self.assertEqual(fitting["outcome"], "refused")
         self.assertEqual(len(self.fake_calls), 2, "the session, resumed once with what failed")
@@ -254,7 +264,31 @@ class FittingRefusedTest(CompilationCase):
                                     "results: the number 0.9 is not one the paper has; a fitted paper changes no number"])
 
 
+class FittedBuildFailsTest(CompilationCase):
+    def test_a_fitted_paper_that_compiles_to_less_than_the_unfitted_is_set_aside_and_the_unfitted_kept(self):
+        recorded = self.run
+
+        def run(argv, cwd=None, timeout=None, env=None):
+            if argv[0].endswith("/latexmk") and "/compile-testconf-fitted/" in str(argv[-1]):
+                return compilations.ToolOutput(12, b"", b"! LaTeX Error: something the fitted text broke")
+            return recorded(argv, cwd=cwd, timeout=timeout, env=env)
+        self.run = run
+        self.run.calls = recorded.calls
+        made = self.compile_testconf([fixture.fitted_answer()])
+        self.assertEqual(made["fitting"]["outcome"], "refused")
+        self.assertIn("the fitted paper's pdf could not be made", made["fitting"]["problems"][0])
+        self.assertEqual(made["outputs"]["pdf"]["file"], "paper.pdf", "the unfitted PDF is kept")
+        self.assertFalse(self.compiled("testconf", "fitted").exists())
+        self.assertTrue(made["checks"], "the unfitted compilation's checks stand")
+
+
 class CitationPlanTest(CompilationCase):
+    def test_a_work_the_order_dropped_stays_dropped_when_the_last_retry_finds_it(self):
+        texts = {part: fixture.TEXTS[part] for part in fixture.TEXTS}
+        plan = compilations.plan_citations(self.project, texts, {"kim-2017-survey": paper.DROP})
+        self.assertEqual(plan["decisions"]["kim-2017-survey#abstract"], ("drop", "kim-2017-survey"))
+        self.assertNotIn("kim-2017-survey", plan["cited"])
+
     def test_no_work_a_result_or_a_method_rests_on_is_dropped_however_low_the_cap(self):
         texts = {part: fixture.TEXTS[part] for part in fixture.TEXTS}
         plan = compilations.plan_citations(self.project, texts, {"dropped-work": paper.DROP}, max_count=1)

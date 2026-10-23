@@ -16,6 +16,7 @@
   "csl": null,
   "bibtex": true,
   "pages": null,
+  "main_pages": null,
   "tools": {"pandoc": "3.11"},
   "citations": {"cited": ["smith-2020-fits"], "to_be_resolved": [],
                 "dropped": [{"work": "kim-2017-survey", "why": "over the venue's 3 references, cited only in Introduction sentences citing several works"}]},

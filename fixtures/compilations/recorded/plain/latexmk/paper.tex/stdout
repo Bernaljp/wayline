@@ -144,12 +144,20 @@ LaTeX Warning: Citation `ref-smith-2020-fits' on page 1 undefined on input line
 
 
 LaTeX Warning: Citation `ref-lee-2018-noise' on page 1 undefined on input line 
-216.
+209.
+
+
+LaTeX Warning: Citation `ref-lee-2018-noise' on page 1 undefined on input line 
+209.
+
+
+LaTeX Warning: Citation `ref-lee-2018-noise' on page 1 undefined on input line 
+217.
 
 [1]
 
 LaTeX Warning: Citation `ref-jones-2019-least' on page 2 undefined on input lin
-e 224.
+e 225.
 
 [2] [3] (./paper.aux)
 
@@ -159,7 +167,7 @@ LaTeX Warning: There were undefined references.
 LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
 
  )
-Output written on paper.xdv (3 pages, 28284 bytes).
+Output written on paper.xdv (3 pages, 28344 bytes).
 Transcript written on paper.log.
 Latexmk: Getting log file 'paper.log'
 Latexmk: Examining 'paper.fls'
@@ -271,7 +279,7 @@ For additional information on amsmath, use the `?' option.
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsb.fd)
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-msb.cfg) [1] [2] [3]
 (./paper.aux) )
-Output written on paper.xdv (3 pages, 30344 bytes).
+Output written on paper.xdv (3 pages, 30664 bytes).
 Transcript written on paper.log.
 Latexmk: Getting log file 'paper.log'
 Latexmk: Examining 'paper.fls'

@@ -15,6 +15,7 @@
   "csl": "nature.csl",
   "bibtex": false,
   "pages": 3,
+  "main_pages": 2,
   "tools": {},
   "citations": {"cited": [], "to_be_resolved": [], "dropped": []},
   "retried": null,
